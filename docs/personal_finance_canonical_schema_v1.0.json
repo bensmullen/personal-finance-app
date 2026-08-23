@@ -1,0 +1,4340 @@
+{
+  "specification": {
+    "name": "Personal Financial Modeling Canonical Schema",
+    "version": "1.0.0",
+    "status": "draft-canonical",
+    "namespace": "pfm",
+    "description": "Canonical domain and simulation specification from which database schemas, validation code, dependency resolution, accounting postings, and simulation-engine interfaces can be derived.",
+    "source_basis": "User-provided prior-conversation summary and the previously established conceptual model.",
+    "design_principles": [
+      "Core domain objects represent financial entities and facts; derived statements and metrics are computed.",
+      "Temporal behavior is compositional rather than a single mutually exclusive type.",
+      "Transactions are accounting realizations of economic activity and may contain multiple accounting legs.",
+      "Events modify state, behavior, or relationships and may be scheduled, conditional, stochastic, or dependency-driven.",
+      "Assumptions parameterize future behavior and are scenario-scoped unless explicitly global.",
+      "Scenarios select coherent alternate assumptions, events, and decisions.",
+      "Dependency graphs are directed acyclic graphs within a time slice unless an explicitly stateful recurrence is declared.",
+      "Simulation operates by state transition across discrete timesteps.",
+      "Database persistence must preserve immutable historical facts and reproducible simulation inputs.",
+      "Validation invariants are first-class parts of the specification."
+    ]
+  },
+  "conventions": {
+    "identifier_format": "UUID",
+    "money": {
+      "type": "decimal",
+      "precision": 19,
+      "scale": 4
+    },
+    "rate": {
+      "type": "decimal",
+      "unit": "fraction",
+      "recommended_scale": 10
+    },
+    "date_format": "ISO-8601 date",
+    "datetime_format": "ISO-8601 timestamp with offset",
+    "enum_extension": "closed-by-default; new enum members require specification-version change",
+    "null_semantics": "null means unknown/not-applicable unless field definition says otherwise",
+    "signed_effects": "accounting effect amounts are signed relative to the target account/classification",
+    "time_granularity": [
+      "daily",
+      "monthly",
+      "quarterly",
+      "annual"
+    ],
+    "currency": "ISO-4217 code",
+    "jurisdiction": "ISO country/subdivision/local identifier where applicable"
+  },
+  "enums": {
+    "person_relationship_status": [
+      "single",
+      "married",
+      "partnered",
+      "divorced",
+      "widowed",
+      "other"
+    ],
+    "employment_status": [
+      "employed",
+      "unemployed",
+      "retired",
+      "self_employed",
+      "student",
+      "other"
+    ],
+    "household_type": [
+      "individual",
+      "couple",
+      "family",
+      "other"
+    ],
+    "account_type": [
+      "checking",
+      "savings",
+      "cash",
+      "taxable_brokerage",
+      "traditional_401k",
+      "roth_401k",
+      "traditional_ira",
+      "roth_ira",
+      "hsa",
+      "hsa_investment",
+      "529",
+      "403b",
+      "457b",
+      "sep_ira",
+      "simple_ira",
+      "pension",
+      "cash_value_insurance",
+      "other"
+    ],
+    "liquidity_class": [
+      "liquid",
+      "semi_liquid",
+      "illiquid",
+      "restricted"
+    ],
+    "tax_treatment": [
+      "taxable",
+      "tax_deferred",
+      "tax_free",
+      "mixed",
+      "inherited"
+    ],
+    "asset_type": [
+      "cash",
+      "investment",
+      "real_estate",
+      "vehicle",
+      "business",
+      "personal_property",
+      "other"
+    ],
+    "valuation_method": [
+      "market",
+      "appraisal",
+      "cost",
+      "formula",
+      "custom"
+    ],
+    "liability_type": [
+      "mortgage",
+      "auto",
+      "student",
+      "credit_card",
+      "personal",
+      "heloc",
+      "business",
+      "tax",
+      "other"
+    ],
+    "rate_type": [
+      "fixed",
+      "variable",
+      "indexed"
+    ],
+    "payment_frequency": [
+      "daily",
+      "weekly",
+      "biweekly",
+      "semimonthly",
+      "monthly",
+      "bimonthly",
+      "quarterly",
+      "semiannual",
+      "annual",
+      "irregular"
+    ],
+    "income_type": [
+      "salary",
+      "bonus",
+      "commission",
+      "overtime",
+      "equity_compensation",
+      "business",
+      "rental",
+      "interest",
+      "dividend",
+      "capital_gain",
+      "pension",
+      "social_security",
+      "government_benefit",
+      "unemployment",
+      "severance",
+      "gift",
+      "inheritance",
+      "other"
+    ],
+    "income_tax_character": [
+      "ordinary",
+      "qualified_dividend",
+      "short_term_capital_gain",
+      "long_term_capital_gain",
+      "tax_free",
+      "deferred",
+      "other"
+    ],
+    "expense_essentiality": [
+      "essential",
+      "discretionary"
+    ],
+    "transaction_type": [
+      "income",
+      "expense",
+      "transfer",
+      "investment_purchase",
+      "investment_sale",
+      "debt_draw",
+      "debt_payment",
+      "tax",
+      "insurance_premium",
+      "insurance_claim",
+      "asset_purchase",
+      "asset_sale",
+      "gift",
+      "inheritance",
+      "conversion",
+      "distribution",
+      "contribution",
+      "other"
+    ],
+    "cash_flow_class": [
+      "operating",
+      "investing",
+      "financing",
+      "non_cash"
+    ],
+    "event_type": [
+      "marriage",
+      "divorce",
+      "childbirth",
+      "adoption",
+      "death",
+      "job_change",
+      "promotion",
+      "layoff",
+      "unemployment_start",
+      "unemployment_end",
+      "retirement",
+      "relocation",
+      "home_purchase",
+      "home_sale",
+      "vehicle_purchase",
+      "vehicle_sale",
+      "education_start",
+      "education_end",
+      "medical_event",
+      "inheritance",
+      "gift",
+      "business_creation",
+      "business_sale",
+      "insurance_claim",
+      "refinance",
+      "debt_issuance",
+      "debt_payoff",
+      "account_open",
+      "account_close",
+      "other"
+    ],
+    "trigger_type": [
+      "scheduled",
+      "stochastic",
+      "conditional",
+      "dependency",
+      "external"
+    ],
+    "assumption_category": [
+      "inflation",
+      "market_return",
+      "salary_growth",
+      "longevity",
+      "healthcare",
+      "tax",
+      "housing",
+      "employment",
+      "demographic",
+      "interest_rate",
+      "expense_growth",
+      "education",
+      "insurance",
+      "other"
+    ],
+    "investment_type": [
+      "equity",
+      "bond",
+      "fund",
+      "cash",
+      "real_estate",
+      "option",
+      "commodity",
+      "crypto",
+      "other"
+    ],
+    "insurance_type": [
+      "health",
+      "dental",
+      "vision",
+      "homeowners",
+      "auto",
+      "life",
+      "disability",
+      "long_term_care",
+      "umbrella",
+      "other"
+    ],
+    "tax_type": [
+      "federal_income",
+      "state_income",
+      "local_income",
+      "payroll",
+      "capital_gain",
+      "property",
+      "sales",
+      "niit",
+      "conversion",
+      "rmd",
+      "credit",
+      "deduction",
+      "other"
+    ],
+    "filing_status": [
+      "single",
+      "married_joint",
+      "married_separate",
+      "head_of_household",
+      "qualifying_widow_er"
+    ],
+    "calculation_method": [
+      "progressive",
+      "flat",
+      "proportional",
+      "custom"
+    ],
+    "source_type": [
+      "user",
+      "historical",
+      "external",
+      "model"
+    ],
+    "distribution_type": [
+      "normal",
+      "lognormal",
+      "uniform",
+      "triangular",
+      "discrete",
+      "empirical",
+      "mixture",
+      "custom"
+    ],
+    "timestep": [
+      "daily",
+      "monthly",
+      "quarterly",
+      "annual"
+    ],
+    "primitive_class": [
+      "temporal",
+      "functional",
+      "dependency",
+      "financial_mechanics",
+      "event_uncertainty"
+    ],
+    "aggregation": [
+      "sum",
+      "mean",
+      "median",
+      "min",
+      "max",
+      "ending",
+      "beginning",
+      "rate_of_change",
+      "ratio"
+    ],
+    "statement_type": [
+      "income_statement",
+      "balance_sheet",
+      "cash_flow_statement"
+    ],
+    "statement_section": [
+      "operating",
+      "investing",
+      "financing",
+      "assets",
+      "liabilities",
+      "equity",
+      "income",
+      "expense"
+    ],
+    "accounting_effect_type": [
+      "asset",
+      "liability",
+      "income",
+      "expense",
+      "equity",
+      "gain",
+      "loss",
+      "tax",
+      "cash"
+    ],
+    "posting_sign": [
+      "debit",
+      "credit"
+    ],
+    "comparison_operator": [
+      "eq",
+      "neq",
+      "lt",
+      "lte",
+      "gt",
+      "gte",
+      "in",
+      "not_in",
+      "contains",
+      "starts_with",
+      "between"
+    ],
+    "logical_operator": [
+      "and",
+      "or",
+      "not"
+    ],
+    "dependency_node_type": [
+      "input",
+      "state",
+      "flow",
+      "event",
+      "rule",
+      "derived",
+      "simulation_output"
+    ],
+    "dependency_edge_type": [
+      "reads",
+      "writes",
+      "modifies",
+      "triggers",
+      "constrains",
+      "aggregates"
+    ]
+  },
+  "object_model": {
+    "Person": {
+      "description": "Individual human participant in the financial model.",
+      "fields": {
+        "person_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "first_name": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "last_name": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "date_of_birth": {
+          "type": "date",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "date_of_death": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true
+        },
+        "household_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true,
+          "ref": "Household"
+        },
+        "relationship_status": {
+          "type": "enum",
+          "required": false,
+          "cardinality": "1",
+          "default": "single",
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true,
+          "enum": "person_relationship_status"
+        },
+        "employment_status": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "employed",
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true,
+          "enum": "employment_status"
+        },
+        "residence_jurisdiction": {
+          "type": "jurisdiction",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true
+        },
+        "filing_status": {
+          "type": "enum",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "annual/event-driven",
+          "derived": true,
+          "mutable": true,
+          "enum": "filing_status"
+        },
+        "life_expectancy": {
+          "type": "decimal",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "assumption-driven",
+          "derived": false,
+          "mutable": true,
+          "unit": "years"
+        },
+        "risk_profile": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": "moderate",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        }
+      },
+      "required_fields": [
+        "person_id",
+        "first_name",
+        "last_name",
+        "date_of_birth",
+        "employment_status",
+        "residence_jurisdiction"
+      ],
+      "object_invariants": [
+        "date_of_birth < date_of_death when date_of_death is not null"
+      ]
+    },
+    "Household": {
+      "description": "Economic household grouping one or more persons.",
+      "fields": {
+        "household_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "household_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "individual",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "household_type"
+        },
+        "formation_date": {
+          "type": "date",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "dissolution_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true
+        },
+        "members": {
+          "type": "uuid[]",
+          "required": true,
+          "cardinality": "1..*",
+          "default": null,
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true,
+          "ref": "Person"
+        },
+        "primary_jurisdiction": {
+          "type": "jurisdiction",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true
+        },
+        "filing_status": {
+          "type": "enum",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "annual/event-driven",
+          "derived": true,
+          "mutable": true,
+          "enum": "filing_status"
+        },
+        "household_income": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "time-series",
+          "derived": true,
+          "mutable": false
+        },
+        "household_expenses": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "time-series",
+          "derived": true,
+          "mutable": false
+        },
+        "household_net_worth": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "time-series",
+          "derived": true,
+          "mutable": false
+        }
+      },
+      "required_fields": [
+        "household_id",
+        "name",
+        "household_type",
+        "formation_date",
+        "members",
+        "primary_jurisdiction"
+      ],
+      "object_invariants": [
+        "members cardinality >= 1",
+        "formation_date < dissolution_date when dissolution_date is not null"
+      ]
+    },
+    "Account": {
+      "description": "Financial account or container that holds cash, investments, or tax-advantaged assets.",
+      "fields": {
+        "account_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "account_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "cash",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "enum": "account_type"
+        },
+        "owner_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true,
+          "ref": "Person|Household"
+        },
+        "institution": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "currency": {
+          "type": "currency",
+          "required": true,
+          "cardinality": "1",
+          "default": "USD",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "opening_date": {
+          "type": "date",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "closing_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true
+        },
+        "opening_balance": {
+          "type": "money",
+          "required": true,
+          "cardinality": "1",
+          "default": "0.0000",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "current_balance": {
+          "type": "money",
+          "required": true,
+          "cardinality": "1",
+          "default": "opening_balance",
+          "temporal_behavior": "transaction-driven",
+          "derived": true,
+          "mutable": true
+        },
+        "liquidity_class": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "liquid",
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true,
+          "enum": "liquidity_class"
+        },
+        "tax_treatment": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "taxable",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "enum": "tax_treatment"
+        },
+        "contribution_limit_rule_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "TaxRule"
+        },
+        "withdrawal_rule_ids": {
+          "type": "uuid[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "TaxRule"
+        },
+        "fee_rule_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "TaxRule"
+        },
+        "return_model_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "PrimitiveInstance"
+        },
+        "transaction_ids": {
+          "type": "uuid[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "accumulating",
+          "derived": false,
+          "mutable": false,
+          "ref": "Transaction"
+        }
+      },
+      "required_fields": [
+        "account_id",
+        "name",
+        "account_type",
+        "owner_id",
+        "currency",
+        "opening_date",
+        "opening_balance",
+        "current_balance",
+        "liquidity_class",
+        "tax_treatment"
+      ],
+      "object_invariants": [
+        "closing_date is null or closing_date >= opening_date",
+        "current_balance equals opening_balance plus signed cash-flow legs posted to the account"
+      ]
+    },
+    "Asset": {
+      "description": "Owned economic resource with a modeled value.",
+      "fields": {
+        "asset_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "asset_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "other",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "enum": "asset_type"
+        },
+        "owner_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true,
+          "ref": "Person|Household"
+        },
+        "account_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true,
+          "ref": "Account"
+        },
+        "acquisition_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "acquisition_cost": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "current_value": {
+          "type": "money",
+          "required": true,
+          "cardinality": "1",
+          "default": "acquisition_cost",
+          "temporal_behavior": "mark-to-market/depreciation/appraisal",
+          "derived": true,
+          "mutable": true
+        },
+        "valuation_method": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "market",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "valuation_method"
+        },
+        "appreciation_model_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "PrimitiveInstance"
+        },
+        "depreciation_model_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "PrimitiveInstance"
+        },
+        "sale_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true
+        },
+        "sale_cost": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": "0.0000",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "tax_basis": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": "acquisition_cost",
+          "temporal_behavior": "transaction-driven",
+          "derived": true,
+          "mutable": true
+        },
+        "liquidity_class": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "illiquid",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "liquidity_class"
+        }
+      },
+      "required_fields": [
+        "asset_id",
+        "name",
+        "asset_type",
+        "owner_id",
+        "current_value",
+        "valuation_method",
+        "liquidity_class"
+      ],
+      "object_invariants": [
+        "current_value >= 0",
+        "tax_basis >= 0 when present",
+        "sale_date is null or acquisition_date is null or sale_date >= acquisition_date"
+      ]
+    },
+    "Liability": {
+      "description": "Obligation requiring future economic outflows.",
+      "fields": {
+        "liability_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "liability_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "other",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "enum": "liability_type"
+        },
+        "owner_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Person|Household"
+        },
+        "principal": {
+          "type": "money",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "current_balance": {
+          "type": "money",
+          "required": true,
+          "cardinality": "1",
+          "default": "principal",
+          "temporal_behavior": "amortization-driven",
+          "derived": false,
+          "mutable": true
+        },
+        "interest_rate": {
+          "type": "rate",
+          "required": true,
+          "cardinality": "1",
+          "default": "0.0",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "rate_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "fixed",
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true,
+          "enum": "rate_type"
+        },
+        "payment_frequency": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "monthly",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "payment_frequency"
+        },
+        "scheduled_payment": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "amortization-driven",
+          "derived": true,
+          "mutable": true
+        },
+        "minimum_payment": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": "0.0000",
+          "temporal_behavior": "rule-driven",
+          "derived": true,
+          "mutable": true
+        },
+        "extra_payment": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": "0.0000",
+          "temporal_behavior": "conditional",
+          "derived": false,
+          "mutable": true
+        },
+        "origination_date": {
+          "type": "date",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "maturity_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "finite-duration",
+          "derived": false,
+          "mutable": true
+        },
+        "amortization_model_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "PrimitiveInstance"
+        },
+        "fee_rule_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "TaxRule"
+        },
+        "prepayment_rule_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "TaxRule"
+        },
+        "collateral_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Asset"
+        },
+        "tax_treatment": {
+          "type": "enum",
+          "required": false,
+          "cardinality": "1",
+          "default": "taxable",
+          "temporal_behavior": "rule-driven",
+          "derived": false,
+          "mutable": true,
+          "enum": "tax_treatment"
+        }
+      },
+      "required_fields": [
+        "liability_id",
+        "name",
+        "liability_type",
+        "owner_id",
+        "principal",
+        "current_balance",
+        "interest_rate",
+        "rate_type",
+        "payment_frequency",
+        "origination_date"
+      ],
+      "object_invariants": [
+        "principal >= 0",
+        "current_balance >= 0",
+        "current_balance <= principal + cumulative_new_draws - cumulative_principal_payments when applicable",
+        "maturity_date is null or maturity_date > origination_date"
+      ]
+    },
+    "Income": {
+      "description": "Projected or realized inflow to a person or household.",
+      "fields": {
+        "income_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "owner_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Person|Household"
+        },
+        "income_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "salary",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "enum": "income_type"
+        },
+        "source": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "amount": {
+          "type": "money",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "time-series",
+          "derived": false,
+          "mutable": true
+        },
+        "frequency": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "annual",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "payment_frequency"
+        },
+        "start_date": {
+          "type": "date",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "end_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "finite-duration",
+          "derived": false,
+          "mutable": true
+        },
+        "growth_model_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "PrimitiveInstance"
+        },
+        "probability_model_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "PrimitiveInstance"
+        },
+        "tax_character": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "ordinary",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "income_tax_character"
+        },
+        "gross_or_net": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": "gross",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "related_event_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Event"
+        }
+      },
+      "required_fields": [
+        "income_id",
+        "owner_id",
+        "income_type",
+        "amount",
+        "frequency",
+        "start_date",
+        "tax_character",
+        "gross_or_net"
+      ],
+      "object_invariants": [
+        "amount >= 0",
+        "end_date is null or end_date >= start_date"
+      ]
+    },
+    "Expense": {
+      "description": "Projected or realized outflow incurred by a person or household.",
+      "fields": {
+        "expense_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "owner_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Person|Household"
+        },
+        "category": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "amount": {
+          "type": "money",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "time-series",
+          "derived": false,
+          "mutable": true
+        },
+        "frequency": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "monthly",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "payment_frequency"
+        },
+        "start_date": {
+          "type": "date",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "end_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "finite-duration",
+          "derived": false,
+          "mutable": true
+        },
+        "growth_model_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "PrimitiveInstance"
+        },
+        "essentiality": {
+          "type": "enum",
+          "required": false,
+          "cardinality": "1",
+          "default": "discretionary",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "expense_essentiality"
+        },
+        "tax_deductibility_rule_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "TaxRule"
+        },
+        "payment_account_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Account"
+        },
+        "event_trigger_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Event"
+        }
+      },
+      "required_fields": [
+        "expense_id",
+        "owner_id",
+        "category",
+        "amount",
+        "frequency",
+        "start_date"
+      ],
+      "object_invariants": [
+        "amount >= 0",
+        "end_date is null or end_date >= start_date"
+      ]
+    },
+    "Transaction": {
+      "description": "Atomic realized financial activity represented by one or more accounting legs.",
+      "fields": {
+        "transaction_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "transaction_date": {
+          "type": "datetime",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "transaction_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "transfer",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "enum": "transaction_type"
+        },
+        "amount": {
+          "type": "money",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "currency": {
+          "type": "currency",
+          "required": true,
+          "cardinality": "1",
+          "default": "USD",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "source_account_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Account"
+        },
+        "destination_account_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Account"
+        },
+        "cash_flow_class": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "operating",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "cash_flow_class"
+        },
+        "event_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Event"
+        },
+        "scenario_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "ref": "Scenario"
+        },
+        "tax_effect": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": "0.0000",
+          "temporal_behavior": "static",
+          "derived": true,
+          "mutable": false
+        },
+        "description": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "legs": {
+          "type": "uuid[]",
+          "required": true,
+          "cardinality": "2..*",
+          "default": null,
+          "temporal_behavior": "one-time",
+          "derived": false,
+          "mutable": false,
+          "ref": "AccountingLeg"
+        }
+      },
+      "required_fields": [
+        "transaction_id",
+        "transaction_date",
+        "transaction_type",
+        "amount",
+        "currency",
+        "cash_flow_class",
+        "scenario_id",
+        "legs"
+      ],
+      "object_invariants": [
+        "amount >= 0",
+        "every transaction has at least two accounting legs",
+        "sum of monetary debit legs equals sum of monetary credit legs",
+        "transaction legs have the same transaction_id",
+        "all legs share transaction currency unless explicit FX legs are present"
+      ]
+    },
+    "Event": {
+      "description": "Discrete occurrence that can modify financial state, behavior, relationships, or future schedules.",
+      "fields": {
+        "event_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "event_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "other",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "enum": "event_type"
+        },
+        "description": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "start_date": {
+          "type": "date",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "end_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true
+        },
+        "duration_days": {
+          "type": "integer",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": true,
+          "mutable": false
+        },
+        "trigger_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "scheduled",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "trigger_type"
+        },
+        "trigger_condition": {
+          "type": "expression",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "conditional",
+          "derived": false,
+          "mutable": true
+        },
+        "probability_model_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "stochastic",
+          "derived": false,
+          "mutable": true,
+          "ref": "PrimitiveInstance"
+        },
+        "effect_ids": {
+          "type": "uuid[]",
+          "required": true,
+          "cardinality": "0..*",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "EventEffect"
+        },
+        "dependencies": {
+          "type": "uuid[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "DependencyEdge"
+        },
+        "precedence": {
+          "type": "integer",
+          "required": false,
+          "cardinality": "1",
+          "default": 0,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "scenario_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "ref": "Scenario"
+        },
+        "enabled": {
+          "type": "boolean",
+          "required": true,
+          "cardinality": "1",
+          "default": true,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        }
+      },
+      "required_fields": [
+        "event_id",
+        "name",
+        "event_type",
+        "start_date",
+        "trigger_type",
+        "effect_ids",
+        "scenario_id",
+        "enabled"
+      ],
+      "object_invariants": [
+        "end_date is null or end_date >= start_date",
+        "stochastic event requires probability_model_id",
+        "conditional trigger requires trigger_condition"
+      ]
+    },
+    "Scenario": {
+      "description": "Coherent simulation configuration containing assumptions, events, and decision policies.",
+      "fields": {
+        "scenario_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "description": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "base_scenario_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "ref": "Scenario"
+        },
+        "start_date": {
+          "type": "date",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "end_date": {
+          "type": "date",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "timestep": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "monthly",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "enum": "timestep"
+        },
+        "assumption_ids": {
+          "type": "uuid[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Assumption"
+        },
+        "event_ids": {
+          "type": "uuid[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Event"
+        },
+        "enabled": {
+          "type": "boolean",
+          "required": true,
+          "cardinality": "1",
+          "default": true,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "stochastic": {
+          "type": "boolean",
+          "required": true,
+          "cardinality": "1",
+          "default": false,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "simulation_count": {
+          "type": "integer",
+          "required": false,
+          "cardinality": "1",
+          "default": 1,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        }
+      },
+      "required_fields": [
+        "scenario_id",
+        "name",
+        "start_date",
+        "end_date",
+        "timestep",
+        "enabled",
+        "stochastic"
+      ],
+      "object_invariants": [
+        "start_date < end_date",
+        "base_scenario_id is null or base_scenario_id != scenario_id",
+        "stochastic = true implies simulation_count >= 1",
+        "stochastic = false implies simulation_count = 1"
+      ]
+    },
+    "Assumption": {
+      "description": "Scenario-scoped parameter representing an explicit belief about future conditions.",
+      "fields": {
+        "assumption_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "name": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "category": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "other",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "assumption_category"
+        },
+        "value": {
+          "type": "decimal",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "time-series",
+          "derived": false,
+          "mutable": true
+        },
+        "unit": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "start_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "end_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "finite-duration",
+          "derived": false,
+          "mutable": true
+        },
+        "distribution_type": {
+          "type": "enum",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "distribution_type"
+        },
+        "distribution_parameters": {
+          "type": "object",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "correlation_group": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "source": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "user",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "source_type"
+        },
+        "confidence": {
+          "type": "rate",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "scenario_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "ref": "Scenario"
+        }
+      },
+      "required_fields": [
+        "assumption_id",
+        "name",
+        "category",
+        "value",
+        "unit",
+        "source",
+        "scenario_id"
+      ],
+      "object_invariants": [
+        "end_date is null or start_date is null or end_date >= start_date",
+        "distribution_type is not null iff stochastic behavior is intended"
+      ]
+    },
+    "Investment": {
+      "description": "Position or strategy held in an Account and valued through an investment model.",
+      "fields": {
+        "investment_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "account_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Account"
+        },
+        "asset_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Asset"
+        },
+        "investment_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "equity",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "investment_type"
+        },
+        "symbol": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "quantity": {
+          "type": "decimal",
+          "required": true,
+          "cardinality": "1",
+          "default": "0.0000",
+          "temporal_behavior": "transaction-driven",
+          "derived": false,
+          "mutable": true
+        },
+        "price": {
+          "type": "money",
+          "required": true,
+          "cardinality": "1",
+          "default": "0.0000",
+          "temporal_behavior": "market-dependent",
+          "derived": true,
+          "mutable": true
+        },
+        "market_value": {
+          "type": "money",
+          "required": true,
+          "cardinality": "1",
+          "default": "0.0000",
+          "temporal_behavior": "mark-to-market",
+          "derived": true,
+          "mutable": true
+        },
+        "expected_return": {
+          "type": "rate",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "volatility": {
+          "type": "rate",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "contribution_model_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "PrimitiveInstance"
+        },
+        "return_model_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "PrimitiveInstance"
+        },
+        "tax_treatment": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "inherited",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "tax_treatment"
+        },
+        "rebalancing_rule_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Rule"
+        }
+      },
+      "required_fields": [
+        "investment_id",
+        "account_id",
+        "investment_type",
+        "quantity",
+        "price",
+        "market_value",
+        "tax_treatment"
+      ],
+      "object_invariants": [
+        "quantity >= 0",
+        "price >= 0",
+        "market_value = quantity * price unless the valuation model explicitly defines another formula",
+        "volatility is null or volatility >= 0"
+      ]
+    },
+    "Insurance": {
+      "description": "Insurance policy that transforms specified financial risks into premiums, deductibles, coverage, and claims.",
+      "fields": {
+        "insurance_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "owner_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Person|Household"
+        },
+        "insurance_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "other",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "enum": "insurance_type"
+        },
+        "provider": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "policy_number": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "premium": {
+          "type": "money",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "recurring",
+          "derived": false,
+          "mutable": true
+        },
+        "premium_frequency": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "monthly",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "payment_frequency"
+        },
+        "coverage_amount": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "deductible": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": "0.0000",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "copay": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": "0.0000",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "coinsurance": {
+          "type": "rate",
+          "required": false,
+          "cardinality": "1",
+          "default": "0.0",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "out_of_pocket_max": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "start_date": {
+          "type": "date",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "end_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "event-driven",
+          "derived": false,
+          "mutable": true
+        },
+        "claim_probability_model_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "PrimitiveInstance"
+        },
+        "claim_effect_ids": {
+          "type": "uuid[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "EventEffect"
+        }
+      },
+      "required_fields": [
+        "insurance_id",
+        "owner_id",
+        "insurance_type",
+        "premium",
+        "premium_frequency",
+        "start_date"
+      ],
+      "object_invariants": [
+        "premium >= 0",
+        "deductible >= 0",
+        "copay >= 0",
+        "coinsurance is between 0 and 1",
+        "out_of_pocket_max is null or out_of_pocket_max >= 0"
+      ]
+    },
+    "TaxRule": {
+      "description": "Jurisdiction- and date-scoped tax or tax-advantaged-account rule.",
+      "fields": {
+        "tax_rule_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "jurisdiction": {
+          "type": "jurisdiction",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "tax_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "federal_income",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "tax_type"
+        },
+        "filing_status": {
+          "type": "enum",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "filing_status"
+        },
+        "effective_date": {
+          "type": "date",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "expiration_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "finite-duration",
+          "derived": false,
+          "mutable": true
+        },
+        "brackets": {
+          "type": "object[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "rates": {
+          "type": "rate[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "deduction_rules": {
+          "type": "object[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "credit_rules": {
+          "type": "object[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "contribution_limits": {
+          "type": "object[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "withdrawal_rules": {
+          "type": "object[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "taxability_rules": {
+          "type": "object[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "calculation_method": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": "progressive",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "calculation_method"
+        }
+      },
+      "required_fields": [
+        "tax_rule_id",
+        "jurisdiction",
+        "tax_type",
+        "effective_date",
+        "calculation_method"
+      ],
+      "object_invariants": [
+        "expiration_date is null or expiration_date >= effective_date",
+        "progressive brackets must be ordered and non-overlapping"
+      ]
+    },
+    "PrimitiveInstance": {
+      "description": "Configured instance of a registered time-series primitive.",
+      "fields": {
+        "primitive_instance_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "primitive_id": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "input_bindings": {
+          "type": "object",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "parameters": {
+          "type": "object",
+          "required": false,
+          "cardinality": "1",
+          "default": {},
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "start_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "end_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "scenario_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Scenario"
+        },
+        "enabled": {
+          "type": "boolean",
+          "required": true,
+          "cardinality": "1",
+          "default": true,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        }
+      },
+      "required_fields": [
+        "primitive_instance_id",
+        "primitive_id",
+        "input_bindings",
+        "scenario_id",
+        "enabled"
+      ],
+      "object_invariants": [
+        "primitive_id exists in primitive_registry"
+      ]
+    },
+    "DependencyNode": {
+      "description": "Node in the financial dependency graph.",
+      "fields": {
+        "node_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "node_key": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "node_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "enum": "dependency_node_type"
+        },
+        "entity_type": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "entity_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "field_path": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "timestep_scope": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": "current",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "scenario_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Scenario"
+        }
+      },
+      "required_fields": [
+        "node_id",
+        "node_key",
+        "node_type",
+        "entity_type",
+        "entity_id",
+        "scenario_id"
+      ],
+      "object_invariants": []
+    },
+    "DependencyEdge": {
+      "description": "Directed relationship specifying read/write/trigger/constraint semantics.",
+      "fields": {
+        "edge_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "from_node_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "ref": "DependencyNode"
+        },
+        "to_node_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "ref": "DependencyNode"
+        },
+        "edge_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "enum": "dependency_edge_type"
+        },
+        "expression": {
+          "type": "expression",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "lag": {
+          "type": "integer",
+          "required": false,
+          "cardinality": "1",
+          "default": 0,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "priority": {
+          "type": "integer",
+          "required": false,
+          "cardinality": "1",
+          "default": 0,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "scenario_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "ref": "Scenario"
+        }
+      },
+      "required_fields": [
+        "edge_id",
+        "from_node_id",
+        "to_node_id",
+        "edge_type",
+        "scenario_id"
+      ],
+      "object_invariants": [
+        "lag >= 0",
+        "self-loop forbidden unless explicitly marked as stateful recurrence",
+        "non-stateful dependency subgraph must be acyclic"
+      ]
+    },
+    "EventEffect": {
+      "description": "State or flow modification emitted by an Event.",
+      "fields": {
+        "event_effect_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "target_entity_type": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "target_entity_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "target_field_path": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "operation": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "value": {
+          "type": "expression",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "primitive_instance_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "PrimitiveInstance"
+        }
+      },
+      "required_fields": [
+        "event_effect_id",
+        "target_entity_type",
+        "target_entity_id",
+        "operation"
+      ],
+      "object_invariants": []
+    },
+    "AccountingLeg": {
+      "description": "One balanced debit/credit posting generated by a Transaction.",
+      "fields": {
+        "accounting_leg_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "transaction_id": {
+          "type": "uuid",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "ref": "Transaction"
+        },
+        "posting_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "enum": "posting_sign"
+        },
+        "effect_type": {
+          "type": "enum",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false,
+          "enum": "accounting_effect_type"
+        },
+        "entity_type": {
+          "type": "string",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "entity_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "amount": {
+          "type": "money",
+          "required": true,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "currency": {
+          "type": "currency",
+          "required": true,
+          "cardinality": "1",
+          "default": "USD",
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": false
+        },
+        "statement_section": {
+          "type": "enum",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "statement_section"
+        },
+        "cash_flow_class": {
+          "type": "enum",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "enum": "cash_flow_class"
+        },
+        "memo": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        }
+      },
+      "required_fields": [
+        "accounting_leg_id",
+        "transaction_id",
+        "posting_type",
+        "effect_type",
+        "entity_type",
+        "amount",
+        "currency"
+      ],
+      "object_invariants": [
+        "amount >= 0",
+        "posting_type plus effect_type must be semantically valid",
+        "transaction_id references existing Transaction"
+      ]
+    }
+  },
+  "primitive_registry": {
+    "P01": {
+      "name": "static",
+      "class": "temporal",
+      "signature": {
+        "inputs": {},
+        "parameters": {
+          "value": "scalar"
+        },
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = X_0",
+        "stateful": false,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "all"
+      ],
+      "composable_with": [],
+      "validation": []
+    },
+    "P02": {
+      "name": "one_time",
+      "class": "temporal",
+      "signature": {
+        "inputs": {
+          "date": "date",
+          "value": "scalar"
+        },
+        "parameters": {
+          "date": "trigger date"
+        },
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = V if t = t* else 0",
+        "stateful": false,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Transaction",
+        "Event",
+        "Income",
+        "Expense"
+      ],
+      "composable_with": [
+        "event_trigger",
+        "conditional"
+      ],
+      "validation": []
+    },
+    "P03": {
+      "name": "recurring",
+      "class": "temporal",
+      "signature": {
+        "inputs": {
+          "amount": "scalar",
+          "frequency": "enum(payment_frequency)"
+        },
+        "parameters": {
+          "calendar": "recurrence calendar"
+        },
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = A on recurrence timestamps",
+        "stateful": false,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Income",
+        "Expense",
+        "Transaction",
+        "Insurance"
+      ],
+      "composable_with": [
+        "growth",
+        "inflation_linked",
+        "finite_duration"
+      ],
+      "validation": []
+    },
+    "P04": {
+      "name": "finite_duration",
+      "class": "temporal",
+      "signature": {
+        "inputs": {
+          "series": "series",
+          "start_date": "date",
+          "end_date": "date"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = f(t) for a <= t <= b else 0",
+        "stateful": false,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "all"
+      ],
+      "composable_with": [
+        "recurring",
+        "growth",
+        "event_modification"
+      ],
+      "validation": []
+    },
+    "P05": {
+      "name": "perpetual",
+      "class": "temporal",
+      "signature": {
+        "inputs": {
+          "series": "series",
+          "start_date": "date"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = f(t) for t >= a",
+        "stateful": false,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "all"
+      ],
+      "composable_with": [
+        "recurring",
+        "growth",
+        "inflation_linked"
+      ],
+      "validation": []
+    },
+    "P06": {
+      "name": "constant",
+      "class": "functional",
+      "signature": {
+        "inputs": {
+          "value": "scalar"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = c",
+        "stateful": false,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "all"
+      ],
+      "composable_with": [
+        "temporal"
+      ],
+      "validation": []
+    },
+    "P07": {
+      "name": "linear",
+      "class": "functional",
+      "signature": {
+        "inputs": {
+          "initial": "scalar",
+          "slope": "scalar"
+        },
+        "parameters": {
+          "time_basis": "period"
+        },
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = X_0 + g t",
+        "stateful": false,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Income",
+        "Expense",
+        "Asset"
+      ],
+      "composable_with": [
+        "finite_duration",
+        "event"
+      ],
+      "validation": []
+    },
+    "P08": {
+      "name": "geometric_growth",
+      "class": "functional",
+      "signature": {
+        "inputs": {
+          "initial": "scalar",
+          "rate": "rate"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = X_0 (1+g)^t",
+        "stateful": false,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Income",
+        "Expense",
+        "Asset"
+      ],
+      "composable_with": [
+        "recurring",
+        "stepwise",
+        "conditional"
+      ],
+      "validation": []
+    },
+    "P09": {
+      "name": "geometric_decline",
+      "class": "functional",
+      "signature": {
+        "inputs": {
+          "initial": "scalar",
+          "rate": "rate"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = X_0 (1-d)^t",
+        "stateful": false,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Asset",
+        "Expense"
+      ],
+      "composable_with": [
+        "finite_duration"
+      ],
+      "validation": []
+    },
+    "P10": {
+      "name": "stepwise",
+      "class": "functional",
+      "signature": {
+        "inputs": {
+          "steps": "ordered_map[date->scalar]"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = L_k for t in interval k",
+        "stateful": false,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Income",
+        "Expense",
+        "TaxRule"
+      ],
+      "composable_with": [
+        "growth",
+        "event"
+      ],
+      "validation": []
+    },
+    "P11": {
+      "name": "piecewise",
+      "class": "functional",
+      "signature": {
+        "inputs": {
+          "segments": "segment[]"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = f_k(t) by segment predicate",
+        "stateful": false,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "TaxRule",
+        "Income",
+        "Expense"
+      ],
+      "composable_with": [
+        "conditional"
+      ],
+      "validation": []
+    },
+    "P12": {
+      "name": "periodic",
+      "class": "functional",
+      "signature": {
+        "inputs": {
+          "period": "integer",
+          "values": "series"
+        },
+        "parameters": {
+          "phase": "integer"
+        },
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = f(t mod p)",
+        "stateful": false,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Income",
+        "Expense"
+      ],
+      "composable_with": [
+        "growth",
+        "inflation_linked"
+      ],
+      "validation": []
+    },
+    "P13": {
+      "name": "inflation_linked",
+      "class": "functional",
+      "signature": {
+        "inputs": {
+          "base": "series",
+          "inflation": "series"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = X_0 product_i(1+pi_i)",
+        "stateful": true,
+        "randomness": "deterministic_or_stochastic"
+      },
+      "compatible_objects": [
+        "Income",
+        "Expense",
+        "Asset"
+      ],
+      "composable_with": [
+        "recurring",
+        "finite_duration",
+        "probabilistic"
+      ],
+      "validation": []
+    },
+    "P14": {
+      "name": "index_linked",
+      "class": "functional",
+      "signature": {
+        "inputs": {
+          "base": "series",
+          "index": "series",
+          "base_index": "scalar"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = X_0 * I_t/I_0",
+        "stateful": true,
+        "randomness": "deterministic_or_stochastic"
+      },
+      "compatible_objects": [
+        "Income",
+        "Expense",
+        "Asset"
+      ],
+      "composable_with": [
+        "recurring",
+        "market_dependent"
+      ],
+      "validation": []
+    },
+    "P15": {
+      "name": "balance_dependent",
+      "class": "dependency",
+      "signature": {
+        "inputs": {
+          "balance_ref": "node_ref",
+          "function": "expression"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "F_t = f(B_t)",
+        "stateful": true,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Liability",
+        "Account",
+        "Investment",
+        "Expense"
+      ],
+      "composable_with": [
+        "recurring",
+        "conditional"
+      ],
+      "validation": []
+    },
+    "P16": {
+      "name": "income_dependent",
+      "class": "dependency",
+      "signature": {
+        "inputs": {
+          "income_ref": "node_ref",
+          "function": "expression"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "F_t = f(I_t)",
+        "stateful": true,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Account",
+        "Income",
+        "Expense",
+        "TaxRule"
+      ],
+      "composable_with": [
+        "conditional",
+        "piecewise"
+      ],
+      "validation": []
+    },
+    "P17": {
+      "name": "age_dependent",
+      "class": "dependency",
+      "signature": {
+        "inputs": {
+          "person_ref": "Person",
+          "function": "expression"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = f(age_t)",
+        "stateful": true,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Income",
+        "Expense",
+        "Insurance",
+        "Account"
+      ],
+      "composable_with": [
+        "stepwise",
+        "conditional"
+      ],
+      "validation": []
+    },
+    "P18": {
+      "name": "account_dependent",
+      "class": "dependency",
+      "signature": {
+        "inputs": {
+          "account_ref": "Account",
+          "function": "expression"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = f(A_t)",
+        "stateful": true,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Expense",
+        "Investment",
+        "Account"
+      ],
+      "composable_with": [
+        "conditional",
+        "recurring"
+      ],
+      "validation": []
+    },
+    "P19": {
+      "name": "market_dependent",
+      "class": "dependency",
+      "signature": {
+        "inputs": {
+          "market_ref": "node_ref",
+          "exposure": "expression"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = f(M_t)",
+        "stateful": true,
+        "randomness": "stochastic"
+      },
+      "compatible_objects": [
+        "Investment",
+        "Asset"
+      ],
+      "composable_with": [
+        "probabilistic",
+        "mark_to_market",
+        "correlated_random_process"
+      ],
+      "validation": []
+    },
+    "P20": {
+      "name": "tax_dependent",
+      "class": "dependency",
+      "signature": {
+        "inputs": {
+          "taxable_base_ref": "node_ref",
+          "tax_rule_ref": "TaxRule"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "T_t = TaxRule(B_t)",
+        "stateful": true,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Income",
+        "Transaction",
+        "Account"
+      ],
+      "composable_with": [
+        "piecewise",
+        "conditional"
+      ],
+      "validation": []
+    },
+    "P21": {
+      "name": "dependency_driven",
+      "class": "dependency",
+      "signature": {
+        "inputs": {
+          "dependencies": "node_ref[]",
+          "expression": "expression"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = f(X_1,t,...,X_n,t)",
+        "stateful": true,
+        "randomness": "either"
+      },
+      "compatible_objects": [
+        "all"
+      ],
+      "composable_with": [
+        "all"
+      ],
+      "validation": []
+    },
+    "P22": {
+      "name": "amortization",
+      "class": "financial_mechanics",
+      "signature": {
+        "inputs": {
+          "principal": "money",
+          "rate": "rate",
+          "term": "integer",
+          "payment_frequency": "enum(payment_frequency)"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "PMT=P r(1+r)^n/((1+r)^n-1); B_{t+1}=B_t-Principal_t",
+        "stateful": true,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Liability"
+      ],
+      "composable_with": [
+        "recurring",
+        "balance_dependent"
+      ],
+      "validation": []
+    },
+    "P23": {
+      "name": "compounding",
+      "class": "financial_mechanics",
+      "signature": {
+        "inputs": {
+          "balance": "money",
+          "rate": "rate",
+          "period": "integer"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "V_{t+1}=V_t(1+r_t)",
+        "stateful": true,
+        "randomness": "deterministic_or_stochastic"
+      },
+      "compatible_objects": [
+        "Account",
+        "Investment",
+        "Asset"
+      ],
+      "composable_with": [
+        "market_dependent",
+        "recurring"
+      ],
+      "validation": []
+    },
+    "P24": {
+      "name": "accrual",
+      "class": "financial_mechanics",
+      "signature": {
+        "inputs": {
+          "balance": "money",
+          "flow": "series",
+          "rule": "expression"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "B_{t+1}=B_t+F_t",
+        "stateful": true,
+        "randomness": "deterministic"
+      },
+      "compatible_objects": [
+        "Account",
+        "Asset",
+        "Liability"
+      ],
+      "composable_with": [
+        "recurring"
+      ],
+      "validation": []
+    },
+    "P25": {
+      "name": "depreciation",
+      "class": "financial_mechanics",
+      "signature": {
+        "inputs": {
+          "value": "money",
+          "rate": "rate",
+          "method": "enum_or_expression"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "V_{t+1}=V_t(1-d_t)",
+        "stateful": true,
+        "randomness": "deterministic_or_stochastic"
+      },
+      "compatible_objects": [
+        "Asset"
+      ],
+      "composable_with": [
+        "finite_duration",
+        "event"
+      ],
+      "validation": []
+    },
+    "P26": {
+      "name": "mark_to_market",
+      "class": "financial_mechanics",
+      "signature": {
+        "inputs": {
+          "quantity": "node_ref",
+          "price": "node_ref"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "V_t=Q_t P_t",
+        "stateful": true,
+        "randomness": "stochastic"
+      },
+      "compatible_objects": [
+        "Investment",
+        "Asset"
+      ],
+      "composable_with": [
+        "market_dependent",
+        "probabilistic"
+      ],
+      "validation": []
+    },
+    "P27": {
+      "name": "event_trigger",
+      "class": "event_uncertainty",
+      "signature": {
+        "inputs": {
+          "event_ref": "Event",
+          "condition": "expression"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "activate effect when event condition is true",
+        "stateful": true,
+        "randomness": "either"
+      },
+      "compatible_objects": [
+        "all"
+      ],
+      "composable_with": [
+        "conditional",
+        "event_modification",
+        "event_termination"
+      ],
+      "validation": []
+    },
+    "P28": {
+      "name": "conditional",
+      "class": "event_uncertainty",
+      "signature": {
+        "inputs": {
+          "condition": "expression",
+          "then": "series_or_expression",
+          "else": "series_or_expression"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = f1 if C else f2",
+        "stateful": true,
+        "randomness": "either"
+      },
+      "compatible_objects": [
+        "all"
+      ],
+      "composable_with": [
+        "all"
+      ],
+      "validation": []
+    },
+    "P29": {
+      "name": "event_modification",
+      "class": "event_uncertainty",
+      "signature": {
+        "inputs": {
+          "base": "series",
+          "event_ref": "Event",
+          "modification": "expression"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X <- M(X) after/because of event",
+        "stateful": true,
+        "randomness": "either"
+      },
+      "compatible_objects": [
+        "all"
+      ],
+      "composable_with": [
+        "event_trigger",
+        "conditional"
+      ],
+      "validation": []
+    },
+    "P30": {
+      "name": "event_termination",
+      "class": "event_uncertainty",
+      "signature": {
+        "inputs": {
+          "base": "series",
+          "event_ref": "Event"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = 0 after termination event",
+        "stateful": true,
+        "randomness": "either"
+      },
+      "compatible_objects": [
+        "Income",
+        "Expense",
+        "Account",
+        "Insurance"
+      ],
+      "composable_with": [
+        "event_trigger",
+        "finite_duration"
+      ],
+      "validation": []
+    },
+    "P31": {
+      "name": "probabilistic",
+      "class": "event_uncertainty",
+      "signature": {
+        "inputs": {
+          "distribution": "distribution",
+          "parameters": "object"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t ~ P(theta_t)",
+        "stateful": false,
+        "randomness": "stochastic"
+      },
+      "compatible_objects": [
+        "all"
+      ],
+      "composable_with": [
+        "conditional",
+        "scenario_dependent",
+        "correlated_random_process"
+      ],
+      "validation": []
+    },
+    "P32": {
+      "name": "scenario_dependent",
+      "class": "event_uncertainty",
+      "signature": {
+        "inputs": {
+          "scenario_ref": "Scenario",
+          "mapping": "object"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = f_s(t)",
+        "stateful": false,
+        "randomness": "deterministic_or_stochastic"
+      },
+      "compatible_objects": [
+        "all"
+      ],
+      "composable_with": [
+        "all"
+      ],
+      "validation": []
+    },
+    "P33": {
+      "name": "correlated_random_process",
+      "class": "event_uncertainty",
+      "signature": {
+        "inputs": {
+          "marginals": "distribution[]",
+          "correlation_matrix": "matrix"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "R_t ~ D(mu,Sigma)",
+        "stateful": true,
+        "randomness": "stochastic"
+      },
+      "compatible_objects": [
+        "Investment",
+        "Event",
+        "Income"
+      ],
+      "composable_with": [
+        "probabilistic",
+        "market_dependent"
+      ],
+      "validation": []
+    },
+    "P34": {
+      "name": "path_dependent",
+      "class": "event_uncertainty",
+      "signature": {
+        "inputs": {
+          "history_ref": "node_ref",
+          "function": "expression"
+        },
+        "parameters": {},
+        "output": "series"
+      },
+      "semantics": {
+        "equation_or_rule": "X_t = f(X_0:t)",
+        "stateful": true,
+        "randomness": "either"
+      },
+      "compatible_objects": [
+        "Investment",
+        "Account",
+        "Liability"
+      ],
+      "composable_with": [
+        "market_dependent",
+        "conditional",
+        "probabilistic"
+      ],
+      "validation": []
+    }
+  },
+  "dependency_graph": {
+    "model": "directed_typed_dependency_graph",
+    "nodes": {
+      "required_fields": [
+        "node_id",
+        "node_key",
+        "node_type",
+        "entity_type",
+        "entity_id",
+        "scenario_id"
+      ],
+      "node_types": {
+        "input": "Externally specified model input.",
+        "state": "Persisted or simulated financial state.",
+        "flow": "Per-timestep financial flow.",
+        "event": "Discrete event trigger or event state.",
+        "rule": "Deterministic transformation or policy.",
+        "derived": "Calculated value not independently authoritative.",
+        "simulation_output": "Persisted result of a simulation run."
+      }
+    },
+    "edges": {
+      "semantics": {
+        "reads": "Target calculation reads source node without mutating it.",
+        "writes": "Source calculation produces/updates target node.",
+        "modifies": "Source event/rule changes target model or state.",
+        "triggers": "Source becoming true activates target behavior/event.",
+        "constrains": "Source imposes a valid-domain restriction on target.",
+        "aggregates": "Target is an aggregation over one or more source nodes."
+      },
+      "rules": [
+        "Edges are directed.",
+        "Each edge is scenario-scoped.",
+        "Within a timestep, non-stateful read/derive dependencies must be acyclic.",
+        "Cycles are permitted only when at least one node represents carried state from a prior timestep.",
+        "A stateful recurrence must declare an explicit lag >= 1 or equivalent prior-state reference.",
+        "Evaluation order is topological after expanding event precedence and lagged state boundaries.",
+        "Conflicting writes to the same target require explicit priority; equal-priority conflicting writes are invalid.",
+        "Derived nodes cannot be direct write targets of user-authored transactions.",
+        "Event-triggered modifications are evaluated before downstream derived calculations."
+      ],
+      "evaluation_phases": [
+        "load_inputs",
+        "sample_random_state",
+        "activate_events",
+        "apply_event_modifications",
+        "resolve_dependencies",
+        "calculate_flows",
+        "post_transactions",
+        "update_state",
+        "calculate_derived_outputs",
+        "validate_invariants",
+        "persist_result"
+      ]
+    }
+  },
+  "accounting": {
+    "model": "double_entry_personal_financial_accounting",
+    "transaction_rule": "Every realized transaction must generate at least two legs and total debits must equal total credits in each currency.",
+    "leg_semantics": {
+      "posting_type": {
+        "debit": "Increase in asset/expense or decrease in liability/equity, subject to account semantics.",
+        "credit": "Increase in liability/equity/income or decrease in asset/expense, subject to account semantics."
+      },
+      "effect_type_semantics": {
+        "asset": "Economic resource owned.",
+        "liability": "Economic obligation owed.",
+        "income": "Recognized inflow affecting current-period income.",
+        "expense": "Recognized outflow/consumption affecting current-period income.",
+        "equity": "Residual net-worth/equity change not classified as income/expense.",
+        "gain": "Increase in net worth from asset valuation/disposal classified as gain.",
+        "loss": "Decrease in net worth from valuation/disposal classified as loss.",
+        "tax": "Tax obligation or tax expense.",
+        "cash": "Cash movement; normally represented through an asset leg for a cash account."
+      }
+    },
+    "standard_templates": {
+      "salary_cash_receipt": {
+        "legs": [
+          {
+            "posting_type": "debit",
+            "effect_type": "cash",
+            "cash_flow_class": "operating"
+          },
+          {
+            "posting_type": "credit",
+            "effect_type": "income",
+            "cash_flow_class": "operating"
+          }
+        ]
+      },
+      "ordinary_expense_paid_cash": {
+        "legs": [
+          {
+            "posting_type": "debit",
+            "effect_type": "expense",
+            "cash_flow_class": "operating"
+          },
+          {
+            "posting_type": "credit",
+            "effect_type": "cash",
+            "cash_flow_class": "operating"
+          }
+        ]
+      },
+      "mortgage_payment": {
+        "legs": [
+          {
+            "posting_type": "debit",
+            "effect_type": "liability",
+            "cash_flow_class": "financing",
+            "memo": "principal_reduction"
+          },
+          {
+            "posting_type": "debit",
+            "effect_type": "expense",
+            "cash_flow_class": "operating",
+            "memo": "interest"
+          },
+          {
+            "posting_type": "credit",
+            "effect_type": "cash",
+            "cash_flow_class": "financing"
+          }
+        ],
+        "note": "Interest may be tax-reclassified but remains an expense component in personal income/cash-flow modeling unless the statement convention explicitly separates it."
+      },
+      "investment_purchase": {
+        "legs": [
+          {
+            "posting_type": "debit",
+            "effect_type": "asset",
+            "cash_flow_class": "investing"
+          },
+          {
+            "posting_type": "credit",
+            "effect_type": "cash",
+            "cash_flow_class": "investing"
+          }
+        ]
+      },
+      "investment_sale_with_gain": {
+        "legs": [
+          {
+            "posting_type": "debit",
+            "effect_type": "cash",
+            "cash_flow_class": "investing"
+          },
+          {
+            "posting_type": "credit",
+            "effect_type": "asset",
+            "cash_flow_class": "investing",
+            "memo": "book_value"
+          },
+          {
+            "posting_type": "credit",
+            "effect_type": "gain",
+            "cash_flow_class": "investing",
+            "memo": "realized_gain"
+          }
+        ]
+      },
+      "loan_draw": {
+        "legs": [
+          {
+            "posting_type": "debit",
+            "effect_type": "cash",
+            "cash_flow_class": "financing"
+          },
+          {
+            "posting_type": "credit",
+            "effect_type": "liability",
+            "cash_flow_class": "financing"
+          }
+        ]
+      },
+      "loan_principal_payment": {
+        "legs": [
+          {
+            "posting_type": "debit",
+            "effect_type": "liability",
+            "cash_flow_class": "financing"
+          },
+          {
+            "posting_type": "credit",
+            "effect_type": "cash",
+            "cash_flow_class": "financing"
+          }
+        ]
+      },
+      "tax_payment": {
+        "legs": [
+          {
+            "posting_type": "debit",
+            "effect_type": "tax",
+            "cash_flow_class": "operating"
+          },
+          {
+            "posting_type": "credit",
+            "effect_type": "cash",
+            "cash_flow_class": "operating"
+          }
+        ]
+      },
+      "account_transfer": {
+        "legs": [
+          {
+            "posting_type": "debit",
+            "effect_type": "cash",
+            "cash_flow_class": "non_cash",
+            "memo": "destination_account"
+          },
+          {
+            "posting_type": "credit",
+            "effect_type": "cash",
+            "cash_flow_class": "non_cash",
+            "memo": "source_account"
+          }
+        ],
+        "note": "Transfers between accounts are excluded from consolidated household cash-flow totals."
+      },
+      "employer_retirement_contribution": {
+        "legs": [
+          {
+            "posting_type": "debit",
+            "effect_type": "asset",
+            "cash_flow_class": "investing",
+            "memo": "retirement_account"
+          },
+          {
+            "posting_type": "credit",
+            "effect_type": "income",
+            "cash_flow_class": "operating",
+            "memo": "employer_compensation"
+          }
+        ]
+      },
+      "roth_conversion": {
+        "legs": [
+          {
+            "posting_type": "debit",
+            "effect_type": "asset",
+            "cash_flow_class": "financing",
+            "memo": "roth_account"
+          },
+          {
+            "posting_type": "credit",
+            "effect_type": "asset",
+            "cash_flow_class": "financing",
+            "memo": "traditional_account"
+          }
+        ],
+        "tax_overlay": "Separate tax transaction generated from TaxRule."
+      }
+    },
+    "statement_mapping": {
+      "income_statement": [
+        "income",
+        "expense",
+        "gain",
+        "loss",
+        "tax"
+      ],
+      "balance_sheet": [
+        "asset",
+        "liability",
+        "equity"
+      ],
+      "cash_flow_statement": [
+        "cash"
+      ]
+    },
+    "invariants": [
+      "Assets - Liabilities = NetWorth",
+      "BeginningCash + NetCashFlow = EndingCash",
+      "BeginningBalance + Inflows - Outflows + Returns = EndingBalance",
+      "BeginningDebt + NewDebt - PrincipalPayments = EndingDebt",
+      "BeginningInvestmentValue + Purchases - Sales + Returns + Income = EndingInvestmentValue, subject to explicit classification conventions",
+      "Every posted transaction is balanced per currency",
+      "Consolidated internal transfers do not change household net worth or consolidated cash"
+    ]
+  },
+  "simulation": {
+    "state_transition": {
+      "notation": "S[t+1] = F(S[t], Flow[t], Event[t], Dependency[t], Assumption[t], RandomState[t], Scenario)",
+      "state_components": [
+        "accounts",
+        "assets",
+        "liabilities",
+        "investments",
+        "active_events",
+        "active_policies",
+        "tax_state",
+        "insurance_state"
+      ],
+      "flow_components": [
+        "income",
+        "expense",
+        "tax",
+        "contributions",
+        "withdrawals",
+        "debt_service",
+        "investment_activity"
+      ],
+      "event_components": [
+        "scheduled",
+        "conditional",
+        "stochastic",
+        "dependency_triggered"
+      ]
+    },
+    "run": {
+      "inputs": [
+        "Scenario",
+        "Person[]",
+        "Household[]",
+        "Account[]",
+        "Asset[]",
+        "Liability[]",
+        "Income[]",
+        "Expense[]",
+        "Event[]",
+        "Assumption[]",
+        "Investment[]",
+        "Insurance[]",
+        "TaxRule[]"
+      ],
+      "outputs": [
+        "time_series_state",
+        "transactions",
+        "financial_statements",
+        "derived_metrics",
+        "validation_results",
+        "simulation_metadata"
+      ],
+      "deterministic_requirements": [
+        "Same immutable inputs, specification version, seed (if stochastic), and engine version must reproduce the same run."
+      ],
+      "stochastic_requirements": [
+        "Random draws are isolated by named stochastic process.",
+        "Random processes may declare correlation groups.",
+        "Simulation seed must be persisted.",
+        "Each run records engine version and specification version."
+      ]
+    }
+  },
+  "validation": {
+    "schema_level": [
+      "All required fields are present.",
+      "All UUID references resolve to the correct object type.",
+      "All enum values belong to their declared enumeration.",
+      "All monetary values use declared currency.",
+      "Date intervals are valid.",
+      "Cardinality constraints hold.",
+      "Derived fields are not directly user-authored as authoritative inputs."
+    ],
+    "domain_level": [
+      "A Person belongs to zero or one Household at any timestep unless household-sharing semantics explicitly allow otherwise.",
+      "A Household contains at least one Person.",
+      "An Account has exactly one owner.",
+      "An Asset and Liability owner must be a Person or Household.",
+      "Account closing cannot precede opening.",
+      "Income and Expense end dates cannot precede start dates.",
+      "Liability balance cannot become negative unless the specific liability model explicitly permits a credit balance.",
+      "Investment quantity and price cannot be negative under the standard long-only model.",
+      "Coinsurance must be within [0,1].",
+      "TaxRule effective intervals cannot overlap for the same unique rule key unless explicit precedence exists."
+    ],
+    "accounting_level": [
+      "Every Transaction has >= 2 AccountingLegs.",
+      "For each currency, total debit amount equals total credit amount per Transaction.",
+      "Consolidated Balance Sheet equation holds at every timestep.",
+      "Consolidated cash-flow roll-forward holds at every timestep.",
+      "No transaction can simultaneously increase and decrease the same atomic balance in an ambiguous way without separate legs.",
+      "Internal account transfers must net to zero at household consolidation."
+    ],
+    "dependency_level": [
+      "No unresolved node references.",
+      "No unintended cycles in a single-timestep dependency graph.",
+      "All stateful recurrences identify prior-state inputs.",
+      "No conflicting equal-priority writes.",
+      "All event effects reference valid targets.",
+      "Topological evaluation order is valid after lag expansion."
+    ],
+    "simulation_level": [
+      "Every timestep produces a valid state or a classified hard failure.",
+      "All validation failures are recorded with object/node/field context.",
+      "Stochastic runs record seed and run ID.",
+      "Simulation outputs reference the exact scenario and specification version used."
+    ],
+    "severity": {
+      "error": "Simulation/model is invalid and cannot be considered authoritative.",
+      "warning": "Model may run, but user should be alerted to ambiguity or unusual assumptions.",
+      "info": "Non-blocking diagnostic."
+    }
+  },
+  "derived_outputs": {
+    "core_statements": {
+      "balance_sheet": {
+        "equation": "NetWorth = TotalAssets - TotalLiabilities",
+        "frequency": "every_timestep"
+      },
+      "income_statement": {
+        "equation": "NetIncome = GrossIncome - Taxes - Expenses + Gains - Losses",
+        "frequency": "every_timestep"
+      },
+      "cash_flow_statement": {
+        "equation": "NetCashFlow = OperatingCF + InvestingCF + FinancingCF",
+        "frequency": "every_timestep"
+      }
+    },
+    "core_metrics": {
+      "total_assets": "sum(asset values + account cash + investment values, with no double counting)",
+      "total_liabilities": "sum(liability balances)",
+      "net_worth": "total_assets - total_liabilities",
+      "gross_income": "sum recognized income",
+      "taxes": "sum recognized tax expense/outflow according to statement convention",
+      "expenses": "sum recognized household expenses excluding transfers",
+      "disposable_income": "gross_income - taxes - expenses",
+      "savings": "disposable_income - net_consumption_or_definition",
+      "savings_rate": "savings / gross_income when gross_income > 0",
+      "liquidity": "liquid assets / modeled mandatory near-term outflows",
+      "debt_service_ratio": "mandatory debt service / gross income when gross_income > 0"
+    },
+    "non_authoritative_rule": "Derived outputs are recalculated from authoritative state, flows, transactions, rules, and assumptions and are not independently stored as source-of-truth inputs."
+  }
+}

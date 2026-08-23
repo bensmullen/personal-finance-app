@@ -1,0 +1,1975 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/personal-finance/model-instance.schema.json",
+  "title": "Personal Finance Model Instance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "specification_version",
+    "model_id",
+    "objects"
+  ],
+  "properties": {
+    "specification_version": {
+      "type": "string"
+    },
+    "model_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "objects": {
+      "$ref": "#/$defs/ModelInstance"
+    }
+  },
+  "$defs": {
+    "Person": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "person_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "first_name": {
+          "type": "string"
+        },
+        "last_name": {
+          "type": "string"
+        },
+        "date_of_birth": {
+          "type": "string",
+          "format": "date"
+        },
+        "date_of_death": {
+          "type": "string",
+          "format": "date"
+        },
+        "household_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Household"
+        },
+        "relationship_status": {
+          "type": "string",
+          "enum": [
+            "single",
+            "married",
+            "partnered",
+            "divorced",
+            "widowed",
+            "other"
+          ],
+          "default": "single"
+        },
+        "employment_status": {
+          "type": "string",
+          "enum": [
+            "employed",
+            "unemployed",
+            "retired",
+            "self_employed",
+            "student",
+            "other"
+          ],
+          "default": "employed"
+        },
+        "residence_jurisdiction": {
+          "type": "string"
+        },
+        "filing_status": {
+          "type": "string",
+          "enum": [
+            "single",
+            "married_joint",
+            "married_separate",
+            "head_of_household",
+            "qualifying_widow_er"
+          ]
+        },
+        "life_expectancy": {
+          "type": "number"
+        },
+        "risk_profile": {
+          "type": "string",
+          "default": "moderate"
+        }
+      },
+      "required": [
+        "person_id",
+        "first_name",
+        "last_name",
+        "date_of_birth",
+        "employment_status",
+        "residence_jurisdiction"
+      ]
+    },
+    "Household": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "household_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "household_type": {
+          "type": "string",
+          "enum": [
+            "individual",
+            "couple",
+            "family",
+            "other"
+          ],
+          "default": "individual"
+        },
+        "formation_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "dissolution_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "primary_jurisdiction": {
+          "type": "string"
+        },
+        "filing_status": {
+          "type": "string",
+          "enum": [
+            "single",
+            "married_joint",
+            "married_separate",
+            "head_of_household",
+            "qualifying_widow_er"
+          ]
+        },
+        "household_income": {
+          "type": "number"
+        },
+        "household_expenses": {
+          "type": "number"
+        },
+        "household_net_worth": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "household_id",
+        "name",
+        "household_type",
+        "formation_date",
+        "members",
+        "primary_jurisdiction"
+      ]
+    },
+    "Account": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "account_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "account_type": {
+          "type": "string",
+          "enum": [
+            "checking",
+            "savings",
+            "cash",
+            "taxable_brokerage",
+            "traditional_401k",
+            "roth_401k",
+            "traditional_ira",
+            "roth_ira",
+            "hsa",
+            "hsa_investment",
+            "529",
+            "403b",
+            "457b",
+            "sep_ira",
+            "simple_ira",
+            "pension",
+            "cash_value_insurance",
+            "other"
+          ],
+          "default": "cash"
+        },
+        "owner_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Person|Household"
+        },
+        "institution": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "default": "USD"
+        },
+        "opening_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "closing_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "opening_balance": {
+          "type": "number",
+          "default": "0.0000"
+        },
+        "current_balance": {
+          "type": "number",
+          "default": "opening_balance"
+        },
+        "liquidity_class": {
+          "type": "string",
+          "enum": [
+            "liquid",
+            "semi_liquid",
+            "illiquid",
+            "restricted"
+          ],
+          "default": "liquid"
+        },
+        "tax_treatment": {
+          "type": "string",
+          "enum": [
+            "taxable",
+            "tax_deferred",
+            "tax_free",
+            "mixed",
+            "inherited"
+          ],
+          "default": "taxable"
+        },
+        "contribution_limit_rule_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "TaxRule"
+        },
+        "withdrawal_rule_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        },
+        "fee_rule_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "TaxRule"
+        },
+        "return_model_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "PrimitiveInstance"
+        },
+        "transaction_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "account_id",
+        "name",
+        "account_type",
+        "owner_id",
+        "currency",
+        "opening_date",
+        "opening_balance",
+        "current_balance",
+        "liquidity_class",
+        "tax_treatment"
+      ]
+    },
+    "Asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "asset_type": {
+          "type": "string",
+          "enum": [
+            "cash",
+            "investment",
+            "real_estate",
+            "vehicle",
+            "business",
+            "personal_property",
+            "other"
+          ],
+          "default": "other"
+        },
+        "owner_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Person|Household"
+        },
+        "account_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Account"
+        },
+        "acquisition_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "acquisition_cost": {
+          "type": "number"
+        },
+        "current_value": {
+          "type": "number",
+          "default": "acquisition_cost"
+        },
+        "valuation_method": {
+          "type": "string",
+          "enum": [
+            "market",
+            "appraisal",
+            "cost",
+            "formula",
+            "custom"
+          ],
+          "default": "market"
+        },
+        "appreciation_model_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "PrimitiveInstance"
+        },
+        "depreciation_model_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "PrimitiveInstance"
+        },
+        "sale_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "sale_cost": {
+          "type": "number",
+          "default": "0.0000"
+        },
+        "tax_basis": {
+          "type": "number",
+          "default": "acquisition_cost"
+        },
+        "liquidity_class": {
+          "type": "string",
+          "enum": [
+            "liquid",
+            "semi_liquid",
+            "illiquid",
+            "restricted"
+          ],
+          "default": "illiquid"
+        }
+      },
+      "required": [
+        "asset_id",
+        "name",
+        "asset_type",
+        "owner_id",
+        "current_value",
+        "valuation_method",
+        "liquidity_class"
+      ]
+    },
+    "Liability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "liability_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "liability_type": {
+          "type": "string",
+          "enum": [
+            "mortgage",
+            "auto",
+            "student",
+            "credit_card",
+            "personal",
+            "heloc",
+            "business",
+            "tax",
+            "other"
+          ],
+          "default": "other"
+        },
+        "owner_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Person|Household"
+        },
+        "principal": {
+          "type": "number"
+        },
+        "current_balance": {
+          "type": "number",
+          "default": "principal"
+        },
+        "interest_rate": {
+          "type": "number",
+          "default": "0.0"
+        },
+        "rate_type": {
+          "type": "string",
+          "enum": [
+            "fixed",
+            "variable",
+            "indexed"
+          ],
+          "default": "fixed"
+        },
+        "payment_frequency": {
+          "type": "string",
+          "enum": [
+            "daily",
+            "weekly",
+            "biweekly",
+            "semimonthly",
+            "monthly",
+            "bimonthly",
+            "quarterly",
+            "semiannual",
+            "annual",
+            "irregular"
+          ],
+          "default": "monthly"
+        },
+        "scheduled_payment": {
+          "type": "number"
+        },
+        "minimum_payment": {
+          "type": "number",
+          "default": "0.0000"
+        },
+        "extra_payment": {
+          "type": "number",
+          "default": "0.0000"
+        },
+        "origination_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "maturity_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "amortization_model_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "PrimitiveInstance"
+        },
+        "fee_rule_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "TaxRule"
+        },
+        "prepayment_rule_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "TaxRule"
+        },
+        "collateral_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Asset"
+        },
+        "tax_treatment": {
+          "type": "string",
+          "enum": [
+            "taxable",
+            "tax_deferred",
+            "tax_free",
+            "mixed",
+            "inherited"
+          ],
+          "default": "taxable"
+        }
+      },
+      "required": [
+        "liability_id",
+        "name",
+        "liability_type",
+        "owner_id",
+        "principal",
+        "current_balance",
+        "interest_rate",
+        "rate_type",
+        "payment_frequency",
+        "origination_date"
+      ]
+    },
+    "Income": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "income_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "owner_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Person|Household"
+        },
+        "income_type": {
+          "type": "string",
+          "enum": [
+            "salary",
+            "bonus",
+            "commission",
+            "overtime",
+            "equity_compensation",
+            "business",
+            "rental",
+            "interest",
+            "dividend",
+            "capital_gain",
+            "pension",
+            "social_security",
+            "government_benefit",
+            "unemployment",
+            "severance",
+            "gift",
+            "inheritance",
+            "other"
+          ],
+          "default": "salary"
+        },
+        "source": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "frequency": {
+          "type": "string",
+          "enum": [
+            "daily",
+            "weekly",
+            "biweekly",
+            "semimonthly",
+            "monthly",
+            "bimonthly",
+            "quarterly",
+            "semiannual",
+            "annual",
+            "irregular"
+          ],
+          "default": "annual"
+        },
+        "start_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "end_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "growth_model_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "PrimitiveInstance"
+        },
+        "probability_model_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "PrimitiveInstance"
+        },
+        "tax_character": {
+          "type": "string",
+          "enum": [
+            "ordinary",
+            "qualified_dividend",
+            "short_term_capital_gain",
+            "long_term_capital_gain",
+            "tax_free",
+            "deferred",
+            "other"
+          ],
+          "default": "ordinary"
+        },
+        "gross_or_net": {
+          "type": "string",
+          "default": "gross"
+        },
+        "related_event_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Event"
+        }
+      },
+      "required": [
+        "income_id",
+        "owner_id",
+        "income_type",
+        "amount",
+        "frequency",
+        "start_date",
+        "tax_character",
+        "gross_or_net"
+      ]
+    },
+    "Expense": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "expense_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "owner_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Person|Household"
+        },
+        "category": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "frequency": {
+          "type": "string",
+          "enum": [
+            "daily",
+            "weekly",
+            "biweekly",
+            "semimonthly",
+            "monthly",
+            "bimonthly",
+            "quarterly",
+            "semiannual",
+            "annual",
+            "irregular"
+          ],
+          "default": "monthly"
+        },
+        "start_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "end_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "growth_model_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "PrimitiveInstance"
+        },
+        "essentiality": {
+          "type": "string",
+          "enum": [
+            "essential",
+            "discretionary"
+          ],
+          "default": "discretionary"
+        },
+        "tax_deductibility_rule_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "TaxRule"
+        },
+        "payment_account_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Account"
+        },
+        "event_trigger_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Event"
+        }
+      },
+      "required": [
+        "expense_id",
+        "owner_id",
+        "category",
+        "amount",
+        "frequency",
+        "start_date"
+      ]
+    },
+    "Transaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "transaction_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "transaction_date": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "transaction_type": {
+          "type": "string",
+          "enum": [
+            "income",
+            "expense",
+            "transfer",
+            "investment_purchase",
+            "investment_sale",
+            "debt_draw",
+            "debt_payment",
+            "tax",
+            "insurance_premium",
+            "insurance_claim",
+            "asset_purchase",
+            "asset_sale",
+            "gift",
+            "inheritance",
+            "conversion",
+            "distribution",
+            "contribution",
+            "other"
+          ],
+          "default": "transfer"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "default": "USD"
+        },
+        "source_account_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Account"
+        },
+        "destination_account_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Account"
+        },
+        "cash_flow_class": {
+          "type": "string",
+          "enum": [
+            "operating",
+            "investing",
+            "financing",
+            "non_cash"
+          ],
+          "default": "operating"
+        },
+        "event_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Event"
+        },
+        "scenario_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Scenario"
+        },
+        "tax_effect": {
+          "type": "number",
+          "default": "0.0000"
+        },
+        "description": {
+          "type": "string"
+        },
+        "legs": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/AccountingLeg"
+          }
+        }
+      },
+      "required": [
+        "transaction_id",
+        "transaction_date",
+        "transaction_type",
+        "amount",
+        "currency",
+        "cash_flow_class",
+        "scenario_id",
+        "legs"
+      ]
+    },
+    "Event": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "marriage",
+            "divorce",
+            "childbirth",
+            "adoption",
+            "death",
+            "job_change",
+            "promotion",
+            "layoff",
+            "unemployment_start",
+            "unemployment_end",
+            "retirement",
+            "relocation",
+            "home_purchase",
+            "home_sale",
+            "vehicle_purchase",
+            "vehicle_sale",
+            "education_start",
+            "education_end",
+            "medical_event",
+            "inheritance",
+            "gift",
+            "business_creation",
+            "business_sale",
+            "insurance_claim",
+            "refinance",
+            "debt_issuance",
+            "debt_payoff",
+            "account_open",
+            "account_close",
+            "other"
+          ],
+          "default": "other"
+        },
+        "description": {
+          "type": "string"
+        },
+        "start_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "end_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "duration_days": {
+          "type": "integer"
+        },
+        "trigger_type": {
+          "type": "string",
+          "enum": [
+            "scheduled",
+            "stochastic",
+            "conditional",
+            "dependency",
+            "external"
+          ],
+          "default": "scheduled"
+        },
+        "trigger_condition": {
+          "type": "string"
+        },
+        "probability_model_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "PrimitiveInstance"
+        },
+        "effect_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EventDependency"
+          },
+          "default": []
+        },
+        "precedence": {
+          "type": "integer",
+          "default": 0
+        },
+        "scenario_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Scenario"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "event_id",
+        "name",
+        "event_type",
+        "start_date",
+        "trigger_type",
+        "effect_ids",
+        "scenario_id",
+        "enabled"
+      ]
+    },
+    "Scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scenario_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "base_scenario_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Scenario"
+        },
+        "start_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "end_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "timestep": {
+          "type": "string",
+          "enum": [
+            "daily",
+            "monthly",
+            "quarterly",
+            "annual"
+          ],
+          "default": "monthly"
+        },
+        "assumption_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        },
+        "event_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "stochastic": {
+          "type": "boolean",
+          "default": false
+        },
+        "simulation_count": {
+          "type": "integer",
+          "default": 1
+        }
+      },
+      "required": [
+        "scenario_id",
+        "name",
+        "start_date",
+        "end_date",
+        "timestep",
+        "enabled",
+        "stochastic"
+      ]
+    },
+    "Assumption": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "assumption_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "inflation",
+            "market_return",
+            "salary_growth",
+            "longevity",
+            "healthcare",
+            "tax",
+            "housing",
+            "employment",
+            "demographic",
+            "interest_rate",
+            "expense_growth",
+            "education",
+            "insurance",
+            "other"
+          ],
+          "default": "other"
+        },
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "start_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "end_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "distribution_type": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "lognormal",
+            "uniform",
+            "triangular",
+            "discrete",
+            "empirical",
+            "mixture",
+            "custom"
+          ]
+        },
+        "distribution_parameters": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "correlation_group": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "user",
+            "historical",
+            "external",
+            "model"
+          ],
+          "default": "user"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "scenario_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Scenario"
+        }
+      },
+      "required": [
+        "assumption_id",
+        "name",
+        "category",
+        "value",
+        "unit",
+        "source",
+        "scenario_id"
+      ]
+    },
+    "Investment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "investment_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "account_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Account"
+        },
+        "asset_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Asset"
+        },
+        "investment_type": {
+          "type": "string",
+          "enum": [
+            "equity",
+            "bond",
+            "fund",
+            "cash",
+            "real_estate",
+            "option",
+            "commodity",
+            "crypto",
+            "other"
+          ],
+          "default": "equity"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "number",
+          "default": "0.0000"
+        },
+        "price": {
+          "type": "number",
+          "default": "0.0000"
+        },
+        "market_value": {
+          "type": "number",
+          "default": "0.0000"
+        },
+        "expected_return": {
+          "type": "number"
+        },
+        "volatility": {
+          "type": "number"
+        },
+        "contribution_model_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "PrimitiveInstance"
+        },
+        "return_model_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "PrimitiveInstance"
+        },
+        "tax_treatment": {
+          "type": "string",
+          "enum": [
+            "taxable",
+            "tax_deferred",
+            "tax_free",
+            "mixed",
+            "inherited"
+          ],
+          "default": "inherited"
+        },
+        "rebalancing_rule_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Rule"
+        }
+      },
+      "required": [
+        "investment_id",
+        "account_id",
+        "investment_type",
+        "quantity",
+        "price",
+        "market_value",
+        "tax_treatment"
+      ]
+    },
+    "Insurance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "insurance_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "owner_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Person|Household"
+        },
+        "insurance_type": {
+          "type": "string",
+          "enum": [
+            "health",
+            "dental",
+            "vision",
+            "homeowners",
+            "auto",
+            "life",
+            "disability",
+            "long_term_care",
+            "umbrella",
+            "other"
+          ],
+          "default": "other"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "policy_number": {
+          "type": "string"
+        },
+        "premium": {
+          "type": "number"
+        },
+        "premium_frequency": {
+          "type": "string",
+          "enum": [
+            "daily",
+            "weekly",
+            "biweekly",
+            "semimonthly",
+            "monthly",
+            "bimonthly",
+            "quarterly",
+            "semiannual",
+            "annual",
+            "irregular"
+          ],
+          "default": "monthly"
+        },
+        "coverage_amount": {
+          "type": "number"
+        },
+        "deductible": {
+          "type": "number",
+          "default": "0.0000"
+        },
+        "copay": {
+          "type": "number",
+          "default": "0.0000"
+        },
+        "coinsurance": {
+          "type": "number",
+          "default": "0.0"
+        },
+        "out_of_pocket_max": {
+          "type": "number"
+        },
+        "start_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "end_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "claim_probability_model_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "PrimitiveInstance"
+        },
+        "claim_effect_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "insurance_id",
+        "owner_id",
+        "insurance_type",
+        "premium",
+        "premium_frequency",
+        "start_date"
+      ]
+    },
+    "TaxRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tax_rule_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "jurisdiction": {
+          "type": "string"
+        },
+        "tax_type": {
+          "type": "string",
+          "enum": [
+            "federal_income",
+            "state_income",
+            "local_income",
+            "payroll",
+            "capital_gain",
+            "property",
+            "sales",
+            "niit",
+            "conversion",
+            "rmd",
+            "credit",
+            "deduction",
+            "other"
+          ],
+          "default": "federal_income"
+        },
+        "filing_status": {
+          "type": "string",
+          "enum": [
+            "single",
+            "married_joint",
+            "married_separate",
+            "head_of_household",
+            "qualifying_widow_er"
+          ]
+        },
+        "effective_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "expiration_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "brackets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TaxBracket"
+          },
+          "default": []
+        },
+        "rates": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "default": []
+        },
+        "deduction_rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GenericRule"
+          },
+          "default": []
+        },
+        "credit_rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GenericRule"
+          },
+          "default": []
+        },
+        "contribution_limits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GenericRule"
+          },
+          "default": []
+        },
+        "withdrawal_rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GenericRule"
+          },
+          "default": []
+        },
+        "taxability_rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GenericRule"
+          },
+          "default": []
+        },
+        "calculation_method": {
+          "type": "string",
+          "enum": [
+            "progressive",
+            "flat",
+            "proportional",
+            "custom"
+          ],
+          "default": "progressive"
+        }
+      },
+      "required": [
+        "tax_rule_id",
+        "jurisdiction",
+        "tax_type",
+        "effective_date",
+        "calculation_method"
+      ]
+    },
+    "PrimitiveInstance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "primitive_instance_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "primitive_id": {
+          "type": "string"
+        },
+        "input_bindings": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        },
+        "start_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "end_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "scenario_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Scenario"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "primitive_instance_id",
+        "primitive_id",
+        "input_bindings",
+        "scenario_id",
+        "enabled"
+      ]
+    },
+    "DependencyNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "node_key": {
+          "type": "string"
+        },
+        "node_type": {
+          "type": "string",
+          "enum": [
+            "input",
+            "state",
+            "flow",
+            "event",
+            "rule",
+            "derived",
+            "simulation_output"
+          ]
+        },
+        "entity_type": {
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "field_path": {
+          "type": "string"
+        },
+        "timestep_scope": {
+          "type": "string",
+          "default": "current"
+        },
+        "scenario_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Scenario"
+        }
+      },
+      "required": [
+        "node_id",
+        "node_key",
+        "node_type",
+        "entity_type",
+        "entity_id",
+        "scenario_id"
+      ]
+    },
+    "DependencyEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "edge_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "from_node_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "DependencyNode"
+        },
+        "to_node_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "DependencyNode"
+        },
+        "edge_type": {
+          "type": "string",
+          "enum": [
+            "reads",
+            "writes",
+            "modifies",
+            "triggers",
+            "constrains",
+            "aggregates"
+          ]
+        },
+        "expression": {
+          "type": "string"
+        },
+        "lag": {
+          "type": "integer",
+          "default": 0
+        },
+        "priority": {
+          "type": "integer",
+          "default": 0
+        },
+        "scenario_id": {
+          "type": "string",
+          "format": "uuid",
+          "x-ref": "Scenario"
+        }
+      },
+      "required": [
+        "edge_id",
+        "from_node_id",
+        "to_node_id",
+        "edge_type",
+        "scenario_id"
+      ]
+    },
+    "EventEffect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_entity_type",
+        "target_entity_id",
+        "target_field_path",
+        "operation"
+      ],
+      "properties": {
+        "target_entity_type": {
+          "type": "string"
+        },
+        "target_entity_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "target_field_path": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "value": {},
+        "primitive_instance_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "AccountingLeg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accounting_leg_id",
+        "transaction_id",
+        "posting_type",
+        "effect_type",
+        "entity_type",
+        "entity_id",
+        "amount",
+        "currency",
+        "statement_section",
+        "cash_flow_class"
+      ],
+      "properties": {
+        "accounting_leg_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "transaction_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "posting_type": {
+          "type": "string",
+          "enum": [
+            "debit",
+            "credit"
+          ]
+        },
+        "effect_type": {
+          "type": "string",
+          "enum": [
+            "asset",
+            "liability",
+            "income",
+            "expense",
+            "equity",
+            "gain",
+            "loss",
+            "tax",
+            "cash"
+          ]
+        },
+        "entity_type": {
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "amount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "statement_section": {
+          "type": "string",
+          "enum": [
+            "operating",
+            "investing",
+            "financing",
+            "assets",
+            "liabilities",
+            "equity",
+            "income",
+            "expense"
+          ]
+        },
+        "cash_flow_class": {
+          "type": "string",
+          "enum": [
+            "operating",
+            "investing",
+            "financing",
+            "non_cash"
+          ]
+        },
+        "memo": {
+          "type": "string"
+        }
+      }
+    },
+    "TaxBracket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lower_bound",
+        "rate"
+      ],
+      "properties": {
+        "lower_bound": {
+          "type": "number"
+        },
+        "upper_bound": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "rate": {
+          "type": "number"
+        }
+      }
+    },
+    "GenericRule": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "EventDependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node_id"
+      ],
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "edge_type": {
+          "type": "string",
+          "enum": [
+            "reads",
+            "writes",
+            "modifies",
+            "triggers",
+            "constrains",
+            "aggregates"
+          ]
+        },
+        "lag": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "ModelInstance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Person",
+        "Household",
+        "Account",
+        "Asset",
+        "Liability",
+        "Income",
+        "Expense",
+        "Transaction",
+        "Event",
+        "Scenario",
+        "Assumption",
+        "Investment",
+        "Insurance",
+        "TaxRule",
+        "PrimitiveInstance",
+        "DependencyNode",
+        "DependencyEdge",
+        "EventEffect",
+        "AccountingLeg"
+      ],
+      "properties": {
+        "Person": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Person"
+          }
+        },
+        "Household": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Household"
+          }
+        },
+        "Account": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Account"
+          }
+        },
+        "Asset": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Asset"
+          }
+        },
+        "Liability": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Liability"
+          }
+        },
+        "Income": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Income"
+          }
+        },
+        "Expense": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Expense"
+          }
+        },
+        "Transaction": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Transaction"
+          }
+        },
+        "Event": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Event"
+          }
+        },
+        "Scenario": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Scenario"
+          }
+        },
+        "Assumption": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Assumption"
+          }
+        },
+        "Investment": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Investment"
+          }
+        },
+        "Insurance": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Insurance"
+          }
+        },
+        "TaxRule": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TaxRule"
+          }
+        },
+        "PrimitiveInstance": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PrimitiveInstance"
+          }
+        },
+        "DependencyNode": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DependencyNode"
+          }
+        },
+        "DependencyEdge": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DependencyEdge"
+          }
+        },
+        "EventEffect": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EventEffect"
+          }
+        },
+        "AccountingLeg": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AccountingLeg"
+          }
+        }
+      }
+    }
+  },
+  "x-source-specification": "personal_finance_canonical_schema_v1.0.json",
+  "x-semantic-invariants": {
+    "schema_level": [
+      "All required fields are present.",
+      "All UUID references resolve to the correct object type.",
+      "All enum values belong to their declared enumeration.",
+      "All monetary values use declared currency.",
+      "Date intervals are valid.",
+      "Cardinality constraints hold.",
+      "Derived fields are not directly user-authored as authoritative inputs."
+    ],
+    "domain_level": [
+      "A Person belongs to zero or one Household at any timestep unless household-sharing semantics explicitly allow otherwise.",
+      "A Household contains at least one Person.",
+      "An Account has exactly one owner.",
+      "An Asset and Liability owner must be a Person or Household.",
+      "Account closing cannot precede opening.",
+      "Income and Expense end dates cannot precede start dates.",
+      "Liability balance cannot become negative unless the specific liability model explicitly permits a credit balance.",
+      "Investment quantity and price cannot be negative under the standard long-only model.",
+      "Coinsurance must be within [0,1].",
+      "TaxRule effective intervals cannot overlap for the same unique rule key unless explicit precedence exists."
+    ],
+    "accounting_level": [
+      "Every Transaction has >= 2 AccountingLegs.",
+      "For each currency, total debit amount equals total credit amount per Transaction.",
+      "Consolidated Balance Sheet equation holds at every timestep.",
+      "Consolidated cash-flow roll-forward holds at every timestep.",
+      "No transaction can simultaneously increase and decrease the same atomic balance in an ambiguous way without separate legs.",
+      "Internal account transfers must net to zero at household consolidation."
+    ],
+    "dependency_level": [
+      "No unresolved node references.",
+      "No unintended cycles in a single-timestep dependency graph.",
+      "All stateful recurrences identify prior-state inputs.",
+      "No conflicting equal-priority writes.",
+      "All event effects reference valid targets.",
+      "Topological evaluation order is valid after lag expansion."
+    ],
+    "simulation_level": [
+      "Every timestep produces a valid state or a classified hard failure.",
+      "All validation failures are recorded with object/node/field context.",
+      "Stochastic runs record seed and run ID.",
+      "Simulation outputs reference the exact scenario and specification version used."
+    ],
+    "severity": {
+      "error": "Simulation/model is invalid and cannot be considered authoritative.",
+      "warning": "Model may run, but user should be alerted to ambiguity or unusual assumptions.",
+      "info": "Non-blocking diagnostic."
+    }
+  },
+  "x-accounting-invariants": [
+    "Assets - Liabilities = NetWorth",
+    "BeginningCash + NetCashFlow = EndingCash",
+    "BeginningBalance + Inflows - Outflows + Returns = EndingBalance",
+    "BeginningDebt + NewDebt - PrincipalPayments = EndingDebt",
+    "BeginningInvestmentValue + Purchases - Sales + Returns + Income = EndingInvestmentValue, subject to explicit classification conventions",
+    "Every posted transaction is balanced per currency",
+    "Consolidated internal transfers do not change household net worth or consolidated cash"
+  ],
+  "x-dependency-graph-rules": [
+    "Edges are directed.",
+    "Each edge is scenario-scoped.",
+    "Within a timestep, non-stateful read/derive dependencies must be acyclic.",
+    "Cycles are permitted only when at least one node represents carried state from a prior timestep.",
+    "A stateful recurrence must declare an explicit lag >= 1 or equivalent prior-state reference.",
+    "Evaluation order is topological after expanding event precedence and lagged state boundaries.",
+    "Conflicting writes to the same target require explicit priority; equal-priority conflicting writes are invalid.",
+    "Derived nodes cannot be direct write targets of user-authored transactions.",
+    "Event-triggered modifications are evaluated before downstream derived calculations."
+  ],
+  "x-simulation-evaluation-phases": [
+    "load_inputs",
+    "sample_random_state",
+    "activate_events",
+    "apply_event_modifications",
+    "resolve_dependencies",
+    "calculate_flows",
+    "post_transactions",
+    "update_state",
+    "calculate_derived_outputs",
+    "validate_invariants",
+    "persist_result"
+  ]
+}
