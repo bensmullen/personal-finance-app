@@ -1,6 +1,6 @@
 # Personal Finance App — Executable Financial Semantics Specification
 
-**Version:** 0.1.1-draft  
+**Version:** 0.1.2-draft  
 **Status:** Draft implementation contract  
 **Namespace:** `pfm`  
 **Depends on:** `personal_finance_canonical_schema_v1.0.json`, `personal_finance_model.schema.json`, `personal_finance_simulation_interfaces_v1.0.ts`
@@ -11,50 +11,34 @@ This specification defines executable behavior for the personal-finance simulati
 
 The canonical schema remains authoritative for domain vocabulary, objects, enum membership, and canonical primitive identities. This document is authoritative for runtime semantics where the canonical schema previously described behavior only informally.
 
-A conforming engine MUST produce the same observable result when given the same:
-
-- model inputs;
-- scenario and assumptions;
-- initial state;
-- specification version;
-- engine version;
-- stochastic realization/seed.
-
-The engine MUST NOT rely on incidental implementation ordering, floating-point map iteration, or hidden mutable state to determine financial results.
+A conforming engine MUST produce the same observable result when given the same model inputs, scenario and assumptions, initial state, specification version, engine version, and stochastic realization/seed.
 
 ## 2. Foundational semantic model
 
-The system distinguishes five different kinds of information:
+The system distinguishes:
 
 1. **State** — a point-in-time condition that persists between timesteps.
 2. **Flow** — an economic quantity accumulated or recognized over a period.
-3. **Effect** — an attempted change to state, a recognition, a settlement, or another executable consequence.
-4. **Transaction** — a realized accounting event that posts one or more balanced accounting legs.
-5. **Event** — a discrete occurrence that changes future behavior or state.
+3. **Effect** — an attempted state change, recognition, settlement, valuation, event, or other executable consequence.
+4. **Recognition fact** — an accounting/tax statement that a flow or event belongs to a period.
+5. **Obligation/right** — an outstanding amount created by recognition but not yet settled.
+6. **Settlement** — satisfaction of an outstanding obligation/right by transfer of cash or another instrument.
+7. **Transaction** — a realized accounting event that posts one or more balanced accounting legs.
+8. **Event** — a discrete occurrence that changes future behavior or state.
+
+The fundamental economic pipeline is:
+
+`Economic occurrence → Flow/value → Recognition (if applicable) → Obligation/right (if unsettled) → Settlement (if applicable) → Accounting posting → State update`
+
+These stages MUST remain distinguishable even when several happen at the same instant.
 
 A primitive evaluation does not directly mutate authoritative state. It produces values and/or effects. The transition engine validates and applies those effects.
-
-The authoritative timestep transition is:
-
-`S_{k+1} = Commit( S_k, E_k, R_k, D_k, F_k, T_k )`
-
-where:
-
-- `S_k` = beginning-of-period authoritative state;
-- `E_k` = event activations/effects during the period;
-- `R_k` = stochastic realization values for the period;
-- `D_k` = dependency resolutions;
-- `F_k` = generated economic flows and recognized facts;
-- `T_k` = transactions accepted for posting;
-- `S_{k+1}` = committed end-of-period state.
-
-The state transition is atomic at the timestep boundary.
 
 ## 3. Temporal semantics
 
 ### 3.1 Instants, dates, and periods
 
-An **instant** is a point in time and is represented internally as an instant with timezone/offset information.
+An **instant** is a point in time represented internally with timezone/offset context.
 
 A **calendar date** is a civil date in the applicable jurisdiction/calendar.
 
@@ -62,97 +46,76 @@ A **simulation period** is a half-open interval:
 
 `P_k = [t_k, t_{k+1})`
 
-The start belongs to the period. The end does not.
+All internally represented temporal intervals MUST be half-open.
 
-All internally represented temporal intervals MUST be half-open. Object-level date fields that historically imply an inclusive final calendar date are converted into a half-open interval at the calendar boundary.
+For date-only objects whose user-facing semantics are naturally inclusive, the engine maps the inclusive final calendar date to the beginning of the next calendar date internally.
 
 Example:
 
 `start_date = 2026-01-01`, `end_date = 2026-01-31`
 
-means active calendar dates January 1 through January 31 inclusive, represented internally as:
+means active dates January 1–31 inclusive and is represented internally as:
 
-`[2026-01-01 00:00, 2026-02-01 00:00)` in the relevant timezone.
+`[2026-01-01T00:00, 2026-02-01T00:00)`.
 
-This rule applies uniformly to employment, expenses, insurance coverage, primitive duration, and similar calendar-date behavior.
+### 3.2 State boundaries
 
-### 3.2 Simulation timestep
+`S_begin` is the complete committed state before any activity in the period is processed.
 
-A scenario declares a timestep of daily, monthly, quarterly, or annual.
+`S_end` is the complete committed state after all applicable activity, postings, state transitions, and closing valuations are complete.
 
-Calendar-based timesteps are used:
+A calculation MUST identify whether it consumes `opening_state`, `intraperiod_value`, `closing_state`, or `prior_state`.
 
-- monthly = calendar month;
-- quarterly = calendar quarter;
-- annual = calendar year.
+The engine MUST NOT expose partially updated authoritative state as an implicit dependency.
 
-A simulation period is never assumed to equal a fixed number of days unless the specific financial rule explicitly declares a fixed-day convention.
+### 3.3 Economic, recognition, and settlement timing
 
-### 3.3 State boundaries
+An economic occurrence has up to four distinct times:
 
-`S_begin` is the complete committed state immediately before processing any activity in the period.
+- **occurrence time** — the economic fact occurs;
+- **effective time** — a resulting rule/behavior becomes active;
+- **recognition time** — the amount is assigned to accounting/tax statements;
+- **settlement time** — cash or another instrument changes hands.
 
-`S_end` is the complete committed state after all applicable activity, postings, state transitions, and required closing valuations are complete.
+These MAY be identical, but they MUST be independently representable.
 
-A calculation MUST identify whether it consumes:
+### 3.4 Intraperiod evaluation
 
-- `opening_state` = `S_begin`;
-- `intraperiod_value` = a value resolved earlier in the current period;
-- `closing_state` = `S_end`;
-- `prior_state` = an explicitly lagged state such as `S_{k-1}`.
+There is no universal ordering such as "tax before contribution" or "investment before expense." The engine uses semantic barriers plus dependency topology.
 
-The engine MUST NOT expose partially updated mutable state as an implicit dependency.
+Global barriers are:
 
-### 3.4 Economic time versus accounting time
-
-A modeled quantity may have up to four distinct times:
-
-- **occurrence/effective time** — when an economic fact becomes true;
-- **accrual time** — when value becomes attributable to a period;
-- **recognition time** — when the fact is recorded for statement/accounting purposes;
-- **settlement time** — when cash or another financial instrument changes hands.
-
-They MAY be equal, but the engine MUST NOT assume that they are equal.
-
-Transactions MUST retain the applicable times/provenance even when the current canonical persistence model later stores them in a normalized representation.
-
-### 3.5 Same-time ordering
-
-There is no universal "tax before contribution" or "investment before expense" economic ordering. Instead, the engine uses **semantic barriers plus dependency ordering**.
-
-The global barriers are:
-
-1. establish period/timeline context;
-2. sample/resolve external stochastic inputs;
-3. activate events at their effective times;
-4. apply event modifications that change the effective model;
-5. construct/validate the dependency graph;
-6. evaluate nodes whose prerequisites are satisfied;
-7. generate economic flows and recognition facts;
-8. generate settlement/transaction proposals;
-9. post transactions and commit state deltas;
+1. establish period context;
+2. resolve external inputs and stochastic realization;
+3. activate events and determine effective modifications;
+4. construct and validate the dependency graph;
+5. evaluate eligible dependency nodes and primitive compositions;
+6. generate flows and recognition facts;
+7. generate obligation/right and settlement proposals;
+8. translate accepted effects into accounting transactions;
+9. post transactions and apply owned state transitions;
 10. perform closing valuation and derived-output calculation;
-11. validate invariants.
+11. validate invariants and commit the period.
 
-Within barriers 6–8, **dependency topology, temporal basis, and explicit priority** determine order.
+Within barriers 5–8, declared dependency topology, temporal basis, and explicit priority determine order.
 
-A calculation MUST declare its inputs rather than relying on the global phase list to imply them.
+An implementation MUST NOT impose an economic ordering merely because two calculations are in the same barrier.
 
-### 3.6 Stable ordering
+### 3.5 Stable ordering
 
-When multiple eligible operations are otherwise independent, stable ordering is:
+When eligible operations are otherwise independent, stable ordering is:
 
 1. explicit dependency priority, descending;
-2. semantic barrier/phase;
-3. stable object/node identifier ascending;
+2. semantic barrier;
+3. stable node identifier ascending;
 4. primitive instance identifier ascending;
 5. generated occurrence sequence ascending.
 
-Stable ordering is for deterministic evaluation only. It MUST NOT change economic meaning when dependencies are correctly declared.
+Stable ordering is deterministic bookkeeping only and MUST NOT substitute for an omitted economic dependency.
 
-### 3.7 Partial periods
+### 3.6 Partial-period temporal modes
 
-Every primitive that depends on elapsed time or accrued amount MUST declare a temporal measurement mode:
+Every primitive depending on elapsed time or accrued amount MUST declare a temporal measurement mode:
 
 - `instantaneous`;
 - `occurrence_based`;
@@ -162,1108 +125,917 @@ Every primitive that depends on elapsed time or accrued amount MUST declare a te
 - `boundary_state`;
 - `explicit_timestamp_schedule`.
 
-Where elapsed-time prorating is required, the primitive MUST declare its day-count basis. Supported bases include actual/actual, actual/365, actual/360, 30/360, and calendar-month fraction.
+When elapsed-time proration is required, the primitive MUST declare its day-count basis. Supported bases include actual/actual, actual/365, actual/360, 30/360, and calendar-month fraction.
 
-The default generic annualized-rate convention is **actual/actual** only when explicitly selected by the model. The engine MUST NOT silently choose a basis for a financial product.
+The engine MUST NOT silently infer a basis.
 
-### 3.8 Frequency conversion
+### 3.7 Frequency conversion
 
-Amounts and rates are distinct.
+An amount per occurrence is not an annualized rate and MUST NOT be rescaled merely because the simulation timestep differs.
 
-An amount specified as `$1,000 per occurrence` remains `$1,000` per occurrence regardless of simulation timestep.
+Rates MUST declare their basis: per-period, nominal annual, effective annual, continuous, or another explicit basis.
 
-Rates MUST declare their basis:
+For effective annual rate `r` over year fraction `f`:
 
-- per-period;
-- nominal annual;
-- effective annual;
-- continuous;
-- other explicit basis.
+`r_f=(1+r)^f-1`
 
-For effective annual rate `r` over fraction `f` of a year:
+For nominal annual rate `r_nom` with `m` contractual compounding periods:
 
-`r_f = (1+r)^f - 1`
-
-For nominal annual rate `r_nom` with `m` contractual compounding periods per year:
-
-`r_p = r_nom / m`
+`r_p=r_nom/m`
 
 No rate conversion may be inferred from a field name alone.
 
-## 4. Economic flow, recognition, settlement, and transaction semantics
+## 4. Economic flow, recognition, obligation, settlement, and transaction semantics
 
-### 4.1 Flow
+### 4.1 Economic flow
 
-A flow is an economic magnitude assigned to a period. Examples include salary earned, interest incurred, investment return, and consumption.
-
-A flow does not necessarily change cash.
+A flow is an economic magnitude attributable to a period. A flow does not inherently imply cash movement.
 
 ### 4.2 Recognition fact
 
-A recognition fact assigns a flow to an accounting or tax period. It may create an asset, liability, income, expense, gain/loss, or other accounting effect.
+A recognition fact assigns a flow to an accounting and/or tax period. Recognition may create or modify an asset, liability, income, expense, gain/loss, equity, or memo fact.
 
-Recognition MUST NOT be inferred solely from transaction type.
+Recognition is not inferred solely from transaction type.
 
-### 4.3 Settlement
+### 4.3 Obligation/right
 
-Settlement is the exchange of cash or another financial instrument to satisfy a recognized obligation/right.
+If a recognized amount has not been settled, the system MUST represent the resulting receivable, payable, accrued balance, deferred item, or other obligation/right explicitly.
 
-Settlement MUST reference the economic/recognition fact it settles.
+An obligation/right has:
 
-A settlement transaction MUST NOT recognize the underlying income/expense a second time merely because cash moved.
+- unique identity;
+- originating recognition fact;
+- original amount;
+- remaining outstanding amount;
+- creation/recognition time;
+- optional due date;
+- optional settlement constraints;
+- settlement history.
 
-### 4.4 Accrual obligation
+### 4.4 Settlement
 
-When an accrued amount is not immediately settled, the system MUST represent the resulting obligation/right explicitly.
+Settlement satisfies an outstanding obligation/right and changes cash or another financial instrument.
 
-For example, accrued but unpaid tax is:
+A settlement proposal MUST reference the obligation/right it settles.
 
-`Tax expense -> Tax payable`
+A settlement MUST reduce the outstanding balance of the referenced obligation/right by the amount settled, subject to explicit fees, penalties, or write-offs.
+
+A settlement MUST NOT re-recognize the underlying income/expense/gain/loss merely because cash moved.
+
+### 4.5 Accrual and capitalization
+
+Accrued interest, tax, wages, or expenses MAY remain outstanding after recognition.
+
+Capitalization into principal or another balance is a separate explicit state transition. Accrual MUST NOT implicitly capitalize into principal.
+
+Example:
+
+`Interest expense recognition → Interest payable +$100`
 
 and later:
 
-`Tax payable -> Cash`
+`Interest payable settlement → Cash -$100, Interest payable -$100`
 
-The later settlement MUST consume the payable rather than creating a second tax expense.
+Capitalized-interest behavior instead explicitly performs:
 
-Similarly, accrued interest MAY be represented as an interest payable/accrued liability rather than silently increasing debt principal. Capitalization into principal is permitted only when explicitly modeled.
+`Interest expense recognition → Loan principal +$100`
 
-### 4.5 Effects versus transactions
+when the contract permits capitalization.
 
-A primitive may emit:
+### 4.6 Effects versus transactions
 
-- value output;
-- state delta proposal;
-- flow proposal;
-- recognition fact;
-- settlement proposal;
-- event activation;
-- dependency invalidation;
-- constraint/diagnostic.
+Primitives may emit values, state-delta proposals, flows, recognition facts, obligation/right proposals, settlement proposals, event activations, dependency invalidations, constraints, and diagnostics.
 
 Only the accounting/transaction subsystem may create authoritative posted accounting legs.
 
-## 5. Primitive execution contract
+## 5. Account, position, and asset hierarchy
 
-Every primitive instance is evaluated conceptually as:
+### 5.1 Account as container
 
-`evaluate(context, inputs, parameters, priorPrimitiveState, randomContext) -> PrimitiveEvaluation`
+An `Account` is a financial container and bookkeeping boundary. It is not automatically an additional economic asset beyond its contents.
 
-A primitive evaluation contains:
+An account MUST conceptually distinguish at minimum:
 
-- `outputs`;
-- `stateUpdates` for state owned by the primitive;
-- `effects`;
-- `diagnostics`.
+- `cash_balance` — cash held by the account;
+- `positions` — investment/other economic positions held in the account;
+- `total_value` — derived aggregate value, if needed.
 
-A primitive MUST declare:
+`total_value` is:
 
-1. identity;
-2. input bindings;
-3. parameter definitions;
-4. units/domains;
-5. owned state;
-6. initialization;
-7. evaluation equation;
-8. state transition;
-9. temporal basis;
-10. accounting effects;
-11. tax facts, if any;
-12. event interactions;
-13. dependency requirements;
-14. constraints;
-15. failure conditions;
-16. composition type signature.
+`cash_balance + Σ(position.market_value) + other explicitly owned in-account economic values`
+
+and MUST NOT itself be aggregated again as an asset when its contents are aggregated separately.
+
+### 5.2 Investment position
+
+An `Investment` is an economic position held inside an `Account`. Its market value is independently measurable:
+
+`market_value = quantity × price`
+
+unless an explicit valuation rule defines otherwise.
+
+A position may reference an `Asset` for instrument/entity metadata, but the same economic value MUST NOT simultaneously be counted as both a standalone asset and an in-account position.
+
+### 5.3 Consolidated asset aggregation
+
+The canonical household asset aggregation MUST use exactly one representation of each economic resource.
+
+Conceptually:
+
+`TotalAssets = standalone_asset_values + Σ(account.cash_balance) + Σ(position.market_value) + other explicitly non-overlapping asset classes`
+
+`Account.total_value` is a reporting convenience and is excluded from the consolidation formula when its contents are separately included.
+
+The engine MUST detect duplicate economic-resource identities or overlapping aggregation paths as validation errors.
+
+### 5.4 Account transfers
+
+A pure transfer between owned accounts moves cash or positions without changing consolidated household assets or net worth.
 
 ## 6. Typed primitive composition
-
-Primitive composition is a **typed semantic pipeline**, not unrestricted mathematical function composition.
 
 Each primitive has a conceptual signature:
 
 `Primitive<InputType, OutputType, StateType, EffectType>`
 
-and a declared operating domain:
+and an operating domain such as value, rate, index, schedule, flow, state, activation predicate, or transaction proposal.
 
-- scalar value;
-- rate;
-- index;
-- schedule;
-- flow;
-- state;
-- activation predicate;
-- transaction proposal;
-- other explicitly named domain.
+Composition `A -> B` is valid only if output type, units, temporal domain, currency, state ownership, dependency direction, and effect contract are compatible.
 
-A composition `A -> B` is valid only when:
-
-1. `A.output_type` is accepted by `B.input_type`;
-2. units are compatible or an explicit conversion exists;
-3. temporal domains are compatible or an explicit temporal adapter exists;
-4. currency domains are compatible or an explicit FX transformation exists;
-5. state ownership is unambiguous;
-6. dependency direction is acyclic after lag expansion;
-7. effect types are compatible with downstream consumers.
-
-Temporal operators such as `one_time`, `recurring`, `finite_duration`, and `perpetual` operate primarily on **activation/schedule domains**. Functional operators operate on values. Financial-mechanics operators operate on flows/state. Event operators operate on activation and modification domains.
-
-The engine MUST reject incompatible compositions during model validation.
-
-### 6.1 Typed adapters
-
-Where composition requires conversion, it MUST use an explicit adapter. Examples include:
-
-- annual rate -> monthly effective rate;
-- calendar schedule -> timestep aggregate;
-- price series -> market value via quantity;
-- nominal salary -> recognized gross income;
-- recognized expense -> cash settlement.
-
-There is no implicit coercion between economically different concepts.
-
-## 7. Primitive semantics P01–P34
-
-### P01 — static
-
-Represents a configured value that is not intrinsically time-varying.
-
-`X_k = c`
-
-State: none.
-
-An event modification creates a new effective parameter from its effective time onward; it does not rewrite completed history.
-
-### P02 — one_time
-
-For occurrence instant `τ` and output `V`:
-
-`X(P_k) = V` iff `τ ∈ P_k` and the primitive has not already executed.
-
-Execution status is committed only after the emitted effect is successfully committed. A failed/rolled-back timestep MUST NOT consume the one-time execution.
-
-No retroactive execution occurs when a simulation starts after `τ` unless explicit catch-up semantics are configured.
-
-### P03 — recurring
-
-For recurrence set `C` and per-occurrence amount/value `A`:
-
-`X(P_k) = Σ_{τ∈C∩P_k} A`
-
-Each occurrence receives a stable occurrence identity.
-
-The primitive does not assume that one occurrence equals one timestep. Multiple occurrences in a timestep remain separately identifiable before aggregation.
-
-### P04 — finite_duration
-
-All internal duration intervals are half-open:
-
-`X_t = f(t)` for `start <= t < end`.
-
-For date-only end dates, the effective end instant is the beginning of the following calendar date, giving intuitive inclusive calendar-date behavior.
-
-The wrapper suppresses evaluation outside its active interval without changing the wrapped primitive's internal math.
-
-### P05 — perpetual
-
-`X_t=f(t)` for all `t >= start` until an explicit terminating condition, entity inactivity, or scenario boundary.
-
-There is no implicit finite horizon other than the simulation itself.
-
-### P06 — constant
-
-A functional value generator:
-
-`X_t=c`
-
-`constant` is an operator over a declared temporal domain; `static` is a configured non-temporal input/fact. They are therefore distinct by **type and purpose**, not by numerical output.
-
-### P07 — linear
-
-`X(t)=X0+slope*n(t)`
-
-`n(t)` MUST be explicitly declared as elapsed periods or elapsed fractional time.
-
-### P08 — geometric_growth
-
-Growth operates recursively over an explicitly declared rate basis.
-
-For per-period rate `g_k`:
-
-`X_{k+1}=X_k(1+g_k)`
-
-For effective annual rate `g` over elapsed fraction `f`:
-
-`X(t+f)=X(t)(1+g)^f`
-
-The primitive MUST distinguish growth of a **stock** from growth of a **per-occurrence flow amount**. A salary growing 5% annually and paying monthly is modeled as an annual level transition plus a monthly recurring schedule, not as six percent-plus monthly compounding by accident.
-
-### P09 — geometric_decline
-
-`X_{k+1}=X_k(1-d_k)`
-
-For standard decline, `0 <= d_k <= 1`. Nonlinear decline requires an explicit function rather than overloading the standard equation.
-
-### P10 — stepwise
-
-Given breakpoints `(τ_i,L_i)`, the active level is the most recent breakpoint at or before the evaluation instant.
-
-Breakpoints at the same instant require explicit priority or are invalid.
-
-Step transitions are instantaneous unless explicitly combined with a ramp/proration operator.
-
-### P11 — piecewise
-
-Exactly one segment should apply at a given evaluation point unless explicit priority resolves overlap.
-
-If no segment matches, the primitive uses a declared default or raises a validation error.
-
-### P12 — periodic
-
-For period `p`, phase `φ`, and indexed value sequence `V`:
-
-`X_k = V[(k-φ) mod p]`
-
-`p` and `φ` are measured in the primitive's declared temporal units.
-
-### P13 — inflation_linked
-
-Inflation linking is defined through an explicit price index by default.
-
-For base amount `X_base` at base index `I_base`:
-
-`X_t = X_base * I_t/I_base`
-
-The base date/index MUST be explicit.
-
-When inflation is supplied as period rates `π_k`, the index evolves as:
-
-`I_{k+1}=I_k(1+π_k)`
-
-A time-varying base series MUST declare whether each observation is already nominal or is expressed in base-period purchasing power. The engine MUST reject an ambiguous basis.
-
-### P14 — index_linked
-
-For quantity `X_base` referenced to index `I_base`:
-
-`X_t=X_base*(I_t/I_base)`
-
-`I_base != 0`.
-
-The primitive links to the supplied index and does not independently compound.
-
-### P15 — balance_dependent
-
-`X_k=f(B_k)` where `B_k` is an explicitly bound balance.
-
-Default basis for same-period activity is `opening_state`.
-
-If ending balance or an intraperiod state is required, that dependency MUST identify the earlier effect/order or declare a lag. Same-period circular dependencies are invalid unless a mathematically solved rule explicitly replaces the cycle.
-
-### P16 — income_dependent
-
-`X_k=f(I_k)` where `I_k` is an explicitly bound income node.
-
-Current-period income is available only after its upstream dependencies have resolved. A dependency on an after-tax quantity MUST explicitly name the after-tax node rather than assuming that generic income is synonymous with disposable income.
-
-### P17 — age_dependent
-
-`X_k=f(age(t))`
-
-Age evaluation convention MUST be one of:
-
-- exact elapsed age;
-- completed calendar years;
-- period-start age;
-- period-end age;
-- event-instant age.
-
-The chosen convention is part of the primitive configuration.
-
-### P18 — account_dependent
-
-`X_k=f(A_k)` where `A_k` is a specific account state or balance component.
-
-For policies that determine activity within the same period, `A_k` defaults to opening state. Closing-state use requires explicit declaration.
-
-### P19 — market_dependent
-
-Consumes an explicitly bound market variable/process with declared observation timestamp, units, currency, and missing-data policy.
-
-Market observation generation precedes dependent valuation calculations, but the dependency graph determines exact consumer order.
-
-### P20 — tax_dependent
-
-`T_k=TaxRule(B_k)`
-
-The taxable base MUST be fully resolved before the tax rule executes.
-
-Tax calculation may consume:
-
-- recognized income;
-- deductions;
-- credits;
-- taxable investment realizations;
-- contribution facts;
-- withdrawal facts;
-- other explicitly modeled tax inputs.
-
-Tax treatment is determined by the TaxRule, not by transaction labels alone.
-
-### P21 — dependency_driven
-
-`X_k=f(X_{1,k},...,X_{n,k})`
-
-All dependencies are explicit. The engine MUST reject unresolved nodes and same-period algebraic cycles that are not solved by an explicit rule.
-
-### P22 — amortization
-
-Amortization separates four concepts:
-
-`contract_rate -> interest_amount`
-
-`payment_rule -> scheduled_payment`
-
-`scheduled_payment + other payments -> principal_reduction`
-
-`principal_reduction -> ending_balance`
-
-For beginning balance `B_k` and periodic rate `r_k`:
-
-`Interest_k = accrual(B_k, r_k, temporal_basis)`
-
-For fixed-payment fully amortizing loans with remaining payment count `n_k` and periodic rate `r_k != 0`:
-
-`PMT_k=B_k*r_k*(1+r_k)^{n_k}/((1+r_k)^{n_k}-1)`
-
-If `r_k=0`:
-
-`PMT_k=B_k/n_k`
-
-Principal reduction from contractual payment:
-
-`Principal_k=max(0,PMT_k-Interest_k)`
-
-Additional principal payments are applied separately according to prepayment rules.
-
-Ending balance:
-
-`B_{k+1}=B_k-NewPrincipalPaid_k+NewDraws_k+CapitalizedInterest_k`
-
-where `CapitalizedInterest_k` is zero unless explicitly permitted by the contract.
-
-The primitive MUST separately represent:
-
-- rate determination;
-- interest accrual basis;
-- payment determination;
-- reset/recast policy;
-- fees;
-- extra principal;
-- maturity/final payment;
-- negative amortization, if allowed.
-
-For variable-rate debt, the rate process and payment process are independent declared rules. A rate reset does not automatically imply a payment reset.
-
-### P23 — compounding
-
-Compounding is a balance-update operator, not a cash-flow timing assumption.
-
-For a return rate `r_k` applied over a declared exposure interval:
-
-`V_after_return=V_before_return*(1+r_k)`
-
-Contributions and withdrawals are applied at explicitly declared timestamps or timing conventions.
-
-For a contribution `C` at the beginning of the period:
-
-`V_end=(V_begin+C)*(1+r)`
-
-For a contribution at the end:
-
-`V_end=V_begin*(1+r)+C`
-
-For continuous or multiple intraperiod cash flows, the cash-flow timestamps MUST be available to the valuation rule.
-
-The primitive MUST NOT silently combine return, contribution, and withdrawal effects into an indistinguishable net change.
-
-### P24 — accrual
-
-Accrual produces an economic/recognition amount for a period without requiring immediate settlement.
-
-Generic form:
-
-`F_k = accrual(base_k, rate_k, temporal_basis_k)`
-
-and, where an explicit accrued balance exists:
-
-`Accrued_{k+1}=Accrued_k+F_k-Settled_k`
-
-Accrual does not itself settle cash.
-
-### P25 — depreciation
-
-Economic/book depreciation reduces carrying value according to a declared method.
-
-Straight-line:
-
-`Dep_k=min(RemainingDepreciableBasis, (Cost-Salvage)/RemainingUsefulPeriods)`
-
-Declining balance:
-
-`Dep_k=min(V_k-Salvage, V_k*d_k)`
-
-The primitive MUST distinguish economic depreciation from tax depreciation. Tax depreciation is a tax-rule effect, not an automatic consequence of economic depreciation.
-
-### P26 — mark_to_market
-
-For a position with quantity `Q_t` and price `P_t`:
-
-`MarketValue_t=Q_t*P_t`
-
-unless an explicit valuation function exists.
-
-The valuation change is recognized as unrealized gain/loss or another declared valuation effect according to the accounting convention. It does not produce cash.
-
-If the same economic position is represented by an `Investment` and linked `Asset`, they MUST NOT both contribute independently to consolidated asset totals. See Section 10.
-
-### P27 — event_trigger
-
-An event trigger converts an event predicate into activation of another behavior.
-
-Activation is edge-triggered by default. A condition that remains true does not repeatedly fire unless repeating behavior is explicitly declared.
-
-### P28 — conditional
-
-`X_k = Y_k` when `C_k=true`, otherwise `Z_k`.
-
-The condition MUST be dependency-visible.
-
-Only the selected branch is evaluated when branches have stateful side effects or stochastic draws, unless explicit eager evaluation is requested.
-
-### P29 — event_modification
-
-For effective modification time `τ`:
-
-`Y_t=X_t` for `t<τ`
-
-`Y_t=M(X_t,eventState_t)` for `t>=τ`
-
-The modification MUST identify its target, precedence, duration, reversibility, and whether it changes a parameter, schedule, activation predicate, or formula.
-
-Event modifications are model transformations, not unrestricted direct mutation.
-
-### P30 — event_termination
-
-For termination effective time `τ`:
-
-`Y_t=X_t` for `t<τ`
-
-`Y_t=0` for `t>=τ`
-
-Termination is idempotent. Surviving obligations after termination must be modeled explicitly rather than assumed to disappear.
-
-### P31 — probabilistic
-
-`X_k~D(θ_k)`
-
-Each stochastic variable has a stable identity. Random draws are derived conceptually from:
-
-`RandomDraw = H(seed, scenarioId, realizationId, processId, timestep, drawIndex)`
-
-where `H` is a deterministic keyed random-stream mechanism.
-
-Adding an unrelated stochastic process MUST NOT alter existing process draws.
-
-### P32 — scenario_dependent
-
-`X_k=f_s(k)` for active scenario `s`.
-
-Scenario inheritance resolves from base to child. Child configuration overrides inherited values explicitly.
-
-Scenario selection is not itself a random event.
-
-### P33 — correlated_random_process
-
-The canonical implementation uses a **Gaussian copula / correlated latent-normal construction** unless a different joint model is explicitly declared.
-
-For `n` variables:
-
-1. validate correlation matrix `Σ` as symmetric positive semidefinite;
-2. generate `Z ~ N(0,Σ)`;
-3. transform `U_i=Φ(Z_i)`;
-4. transform each `U_i` through the inverse CDF of marginal distribution `D_i`.
-
-This produces marginals `D_i` with the specified latent Gaussian dependence structure.
-
-A correlation matrix that is not mathematically admissible is a hard validation error unless an explicit numerical-repair policy is configured. If repaired, the repair method and final matrix MUST be recorded.
-
-A correlated process has one stable group identity and one realization per timestep. Member variables reference the same group/process state rather than independently resampling correlation.
-
-### P34 — path_dependent
-
-`X_k=f(H_{0:k-1},S_k)`
-
-The primitive may consume explicitly retained history but MUST NOT read future values or incompletely evaluated same-period values.
-
-The history window and sufficient state required to reproduce it MUST be explicit.
-
-## 8. Dependency-resolution semantics
-
-### 8.1 Graph
-
-The dependency graph is a typed directed graph over inputs, state, flows, events, rules, derived values, and simulation outputs.
-
-Edges identify:
-
-- reads;
-- writes;
-- modifies;
-- triggers;
-- constrains;
-- aggregates.
-
-### 8.2 Evaluation order
-
-The graph, not a global financial-category order, is authoritative for calculation ordering.
-
-The engine first creates semantic barriers and then performs a topological sort within each barrier.
-
-A dependency may be:
-
-- current-period;
-- prior-state;
-- lagged;
-- event-driven;
-- stochastic;
-- closing-state.
-
-### 8.3 Cycles
-
-After expanding lagged/state-mediated edges, any remaining zero-lag algebraic cycle is invalid unless an explicit analytical solver/rule declares a unique solution.
-
-Valid example:
-
-`DebtBalance_k -> Interest_k -> Payment_k -> DebtBalance_{k+1}`
-
-Invalid example:
-
-`Tax_k -> DisposableIncome_k -> Tax_k`
-
-unless the tax calculation is defined as a solved function whose root/solution is unambiguously specified.
-
-### 8.4 Stateful feedback
-
-State recurrence is represented across timestep boundaries.
-
-The preferred representation is:
-
-`S_k -> Flow_k -> S_{k+1}`
-
-rather than creating same-period writes back into `S_k`.
-
-### 8.5 Conflicting writes
-
-Writes MUST identify their operation class:
-
-- additive;
-- replacing;
-- constrained additive;
-- mergeable;
-- mutually exclusive.
-
-Additive effects MAY be combined without priority when their algebra is commutative and their target semantics are additive.
-
-Replacing/conflicting effects require explicit priority or merge semantics.
-
-Equal-priority incompatible writes are hard errors.
-
-## 9. Event semantics
-
-Events have distinct times:
-
-- occurrence time;
-- effect effective time;
-- optional recognition time;
-- optional settlement time.
-
-For example, a promotion can occur June 15, change salary effective June 15, be reflected in June 30 payroll, and be settled on June 30.
-
-Event processing is:
-
-`eligible -> activated -> effects_applied -> completed`
-
-A generated event MUST NOT recursively execute indefinitely in the same activation pass. Newly generated events are placed into a deterministic event queue and evaluated according to their effective time and precedence.
-
-An event cannot alter completed prior periods.
-
-## 10. Account, investment, and asset representation
-
-### 10.1 Container versus economic asset
-
-An `Account` is a **financial container**. Its `current_balance` represents the account's cash/subledger balance, not the market value of securities held inside the account.
-
-An `Investment` represents an economic position held inside an account. Its market value contributes to household assets.
-
-Therefore:
-
-`AccountEconomicValue = AccountCashBalance + Σ InvestmentMarketValue`
-
-The Account container itself is not added as another asset on top of its contents.
-
-### 10.2 Standalone assets
-
-A standalone `Asset` represents an economic resource that is not merely the container representation of an Investment position.
+Conversions between economically different concepts require explicit typed adapters.
 
 Examples:
 
-- home;
-- vehicle;
-- business interest;
-- personal property.
+- annual effective rate → monthly effective rate;
+- schedule → period occurrence set;
+- quantity + price → market value;
+- recognized obligation → settlement proposal.
 
-A standalone Asset contributes its carrying/market value to total assets.
+The engine MUST reject incompatible compositions during model validation.
 
-### 10.3 Investment-linked Asset
+## 7. Primitive semantics P01–P34
 
-If an `Investment.asset_id` points to an `Asset`, the linked Asset is treated as an underlying/reference representation of the same economic position unless the model explicitly declares separate economic ownership.
+The canonical primitive identities remain unchanged. The following rules are normative refinements.
 
-The same economic value MUST NOT be counted once through `Investment.market_value` and again through `Asset.current_value`.
+### P01 — static
 
-### 10.4 Asset aggregation invariant
+A configured non-temporal input/fact:
 
-At a timestep:
+`X=c`
 
-`TotalAssets = Σ(AccountCashBalances) + Σ(InvestmentMarketValues) + Σ(StandaloneAssetValues)`
+Events may create a new effective value from a declared boundary without rewriting historical values.
 
-where each economic position belongs to exactly one aggregation bucket.
+### P02 — one_time
 
-The engine MUST validate that an economic position is not double-counted.
+A one-time occurrence emits once for an occurrence instant `τ` falling in the current period and only if the primitive has not previously committed execution.
 
-## 11. Accounting semantics
+Execution status is committed only with the successful atomic timestep commit. Rollback leaves it unexecuted.
 
-### 11.1 Accounting equation
+### P03 — recurring
 
-At every committed state:
+For recurrence set `C`:
 
-`Assets - Liabilities = NetWorth`
+`X(P_k)=Σ_{τ∈C∩P_k}A_τ`
 
-Equity/net-worth is residual, but it must be reproducible from posted accounting facts and state.
+Each occurrence has a stable identity before period aggregation.
 
-### 11.2 Normal balance effects
+### P04 — finite_duration
 
-For standard double-entry behavior:
+All internal intervals are half-open:
 
-| Effect | Debit effect | Credit effect |
-|---|---|---|
-| Asset | increase | decrease |
-| Liability | decrease | increase |
-| Equity | decrease | increase |
-| Income | decrease* | increase* |
-| Expense | increase* | decrease* |
-| Gain | decrease* | increase* |
-| Loss | increase* | decrease* |
-| Tax expense | increase* | decrease* |
+`X_t=f(t)` for `start <= t < end`.
 
-`*` denotes statement/equity effects rather than a requirement that every income/expense leg itself be a standalone ledger account in the implementation.
+Inclusive calendar-date user inputs are converted at the calendar boundary.
 
-The accounting engine MUST translate these effects explicitly; it MUST NOT infer semantics merely from a human-readable transaction label.
+### P05 — perpetual
 
-### 11.3 Transaction balance
+`X_t=f(t)` for `t >= start` until explicit termination, entity inactivity, or simulation boundary.
 
-For each transaction and currency:
+### P06 — constant
 
-`Σ Debits = Σ Credits`
+A functional generator:
 
-All posting legs in a transaction are committed atomically.
+`X_t=c`
 
-### 11.4 Recognition versus settlement templates
+`static` is a configured non-temporal fact; `constant` is a function over an explicit temporal domain. They are distinct by type and purpose even when numerically identical.
 
-#### Salary earned and recognized, unpaid
+### P07 — linear
 
-`Debit WageReceivable / UnpaidCompensation`
+`X(t)=X0+slope*n(t)` where `n(t)` is explicitly declared.
 
-`Credit Income`
+### P08 — geometric_growth
 
-#### Salary paid
+For per-period growth:
 
-`Debit Cash`
+`X_{k+1}=X_k(1+g_k)`
 
-`Credit WageReceivable / UnpaidCompensation`
+For effective annual growth over fraction `f`:
 
-#### Ordinary expense incurred, unpaid
+`X(t+f)=X(t)(1+g)^f`
 
-`Debit Expense`
+The primitive MUST identify whether it grows a stock, a recurring occurrence amount, or another series quantity.
 
-`Credit Payable`
+### P09 — geometric_decline
 
-#### Ordinary expense paid
+`X_{k+1}=X_k(1-d_k)` for standard decay. Nonlinear decay requires an explicit function.
 
-`Debit Payable`
+### P10 — stepwise
 
-`Credit Cash`
+The active level is the most recent breakpoint at or before the evaluation instant. Same-instant breakpoints require priority or are invalid.
 
-If an expense is both incurred and paid at the same instant, the payable may be omitted and the expense paid directly from cash.
+### P11 — piecewise
 
-#### Tax recognized, unpaid
+Exactly one segment SHOULD apply. Overlap requires explicit priority. No-match requires an explicit default or validation failure.
 
-`Debit TaxExpense`
+### P12 — periodic
 
-`Credit TaxPayable`
+`X_k=V[(k-φ) mod p]`
 
-#### Tax paid later
+`p` and `φ` use declared temporal units.
 
-`Debit TaxPayable`
+### P13 — inflation_linked
 
-`Credit Cash`
+Default inflation linkage uses an explicit price index:
 
-#### Mortgage payment with interest and principal
+`X_t=X_base*(I_t/I_base)`
 
-`Debit Liability` — principal reduction
+The base date/index MUST be explicit.
 
-`Debit InterestExpense` — interest
+When the index is generated from period inflation rates:
 
-`Credit Cash` — total payment
+`I_{k+1}=I_k(1+π_k)`
 
-If interest was already accrued to a separate payable, settlement uses that payable instead of recognizing interest expense again.
+A time-varying base must declare whether observations are nominal or expressed in base-period purchasing power. Ambiguous bases are invalid.
 
-### 11.5 Cash-flow classification
+### P14 — index_linked
 
-Cash Flow Statement classification belongs to the cash-settlement leg, not merely to the economic recognition effect.
+`X_t=X_base*(I_t/I_base)` with `I_base != 0`.
 
-Internal transfers between consolidated household accounts are marked `non_cash` for consolidated reporting even though individual account balances change.
+The primitive does not independently compound beyond the supplied index.
 
-### 11.6 Investment valuation
+### P15 — balance_dependent
 
-Unrealized market-value changes:
+`X_k=f(B_k)` where `B_k` is explicitly bound. Default same-period basis is `opening_state`.
 
-- change asset/equity or gain/loss presentation according to the declared accounting convention;
-- do not create cash flow;
-- do not create a realized sale transaction.
+Intraperiod/closing-state dependencies require explicit ordering or lag.
 
-A sale creates settlement cash flow and realizes the gain/loss according to basis.
+### P16 — income_dependent
 
-### 11.7 Statement source of truth
+`X_k=f(I_k)` using an explicitly bound income node. After-tax/disposable quantities MUST be represented by explicit downstream nodes rather than inferred from generic income.
 
-Financial statements MUST be generated from the **posted accounting ledger/transaction facts plus authoritative state**, not independently from display-oriented state snapshots.
+### P17 — age_dependent
 
-State snapshots are used to produce point-in-time balances. Posted accounting facts are the authoritative source for period income, expense, gain/loss, tax, and cash-flow classifications.
+`X_k=f(age(t))` using an explicitly configured age convention.
 
-This prevents statement totals from drifting away from transaction history.
+### P18 — account_dependent
 
-## 12. Financial statement timing and derived metrics
+`X_k=f(A_k)` using an explicitly bound account state. Default same-period basis is `opening_state` unless intraperiod dependency is explicitly declared.
 
-### 12.1 Balance Sheet
+### P19 — market_dependent
 
-The Balance Sheet is point-in-time.
+Consumes a declared market observation/process. Observation timing, valuation convention, unit, currency, and missing-data policy MUST be explicit.
 
-For a period ending at `t_{k+1}`:
+### P20 — tax_dependent
 
-`BS_{k+1}=StateSnapshot(t_{k+1})`
+`T_k=TaxRule(B_k)` after all prerequisite taxable inputs are resolved. The exact effective rule identity MUST be recorded.
 
-and:
+### P21 — dependency_driven
 
-`NetWorth_{k+1}=TotalAssets_{k+1}-TotalLiabilities_{k+1}`
+`X_k=f(X_{1,k},...,X_{n,k})` from explicit graph bindings only. Unresolved nodes or invalid cycles are errors.
 
-### 12.2 Income Statement
+### P22 — amortization
 
-The Income Statement covers recognized flows during the period:
+Amortization is decomposed into five distinct contracts:
 
-`NetIncome_k = RecognizedIncome_k - RecognizedExpenses_k + Gains_k - Losses_k - TaxExpense_k`
+1. **rate determination**;
+2. **interest accrual**;
+3. **payment determination**;
+4. **payment allocation**;
+5. **balance transition**.
 
-Cash settlement timing does not change the period in which an already-recognized accrual belongs.
+For fixed-rate fully amortizing debt with beginning balance `B_k`, periodic rate `r_k`, and remaining payment count `n_k`:
 
-### 12.3 Cash Flow Statement
+`Payment_k = B_k*r_k*(1+r_k)^n_k / ((1+r_k)^n_k-1)` for `r_k != 0`.
 
-The Cash Flow Statement covers actual cash movements during the period:
+`Payment_k = B_k/n_k` when `r_k=0`.
 
-`NetCashFlow_k = OperatingCF_k + InvestingCF_k + FinancingCF_k`
+Interest:
 
-and:
+`Interest_k = Accrual(B_k,r_k,Δt)`
 
-`EndingCash_k = BeginningCash_k + NetCashFlow_k`
+For a simple periodic convention this may be `B_k*r_k`.
 
-Consolidated internal transfers net to zero.
+Scheduled principal:
 
-### 12.4 Disposable income
+`ScheduledPrincipal_k=max(0,Payment_k-Interest_k)`
 
-Disposable income is defined as a **period flow metric**:
+Actual principal reduction is:
 
-`DisposableIncome_k = RecognizedHouseholdIncome_k - RecognizedHouseholdTaxes_k - RecognizedHouseholdConsumptionExpenses_k`
+`PrincipalReduction_k=min(B_k, ScheduledPrincipal_k + ExtraPrincipal_k)`
 
-Transfers, investment purchases, principal repayment, and internal account movements are not consumption expenses.
+subject to explicit payment/contract constraints.
 
-If the model wants after-tax cash available for investment, that is a distinct derived metric and MUST NOT be conflated with disposable income.
+Ending principal balance:
 
-### 12.5 Savings
+`B_{k+1}=B_k-PrincipalReduction_k+CapitalizedInterest_k+NewDraws_k`
 
-Default savings is:
+where `CapitalizedInterest_k` is normally zero and MUST be explicitly enabled when nonzero.
 
-`Savings_k = DisposableIncome_k - DefinedConsumption_k`
+A rate reset MUST be modeled by the rate determination contract. A payment reset is a separate contract and MUST NOT be inferred from a rate reset.
 
-The consumption definition is scenario-configurable. The metric MUST identify its included expense classes.
+Variable-rate products MUST declare:
 
-### 12.6 Savings rate
+- reset schedule;
+- rate index/formula;
+- spread;
+- caps/floors where applicable;
+- payment-reset policy;
+- remaining-term policy;
+- negative-amortization/capitalization policy;
+- final-payment policy.
 
-`SavingsRate_k = Savings_k / GrossIncome_k` when `GrossIncome_k > 0`.
+### P23 — compounding
 
-The denominator and numerator are both period flows from the same statement period.
+Compounding applies returns/interest to a stock of value. Contributions and withdrawals are separate flows.
 
-### 12.7 Point-in-time versus period metrics
+For a period with explicitly defined effective return `r_k`:
 
-Metrics MUST declare their temporal type:
+`V_end = V_base*(1+r_k) + Contribution_effect + Withdrawal_effect`
 
-- `point_in_time` — e.g. net worth, liquidity balance, debt balance;
-- `period_flow` — e.g. income, expenses, savings;
-- `rolling_period` — e.g. trailing-12-month spending;
-- `rate` — e.g. savings rate;
-- `distribution` — e.g. Monte Carlo percentile/probability.
+The instance MUST declare cash-flow timing:
 
-A period flow must not be silently substituted for an ending balance or vice versa.
+- beginning-of-period;
+- end-of-period;
+- explicit timestamp;
+- continuous/weighted timing.
 
-## 13. State transitions and atomicity
+Beginning-of-period contribution example:
 
-Each timestep is evaluated against an immutable beginning-state snapshot and produces a working state.
+`V_end=(V_begin+C)*(1+r)`
+
+End-of-period contribution example:
+
+`V_end=V_begin*(1+r)+C`
+
+### P24 — accrual
+
+Accrual calculates an economic amount attributable to a period but does not inherently settle it.
+
+A rate-based accrual has the generic form:
+
+`flow=AccrualFactor(base,rate,Δt)`
+
+The resulting recognition and outstanding obligation/right MUST be explicit.
+
+### P25 — depreciation
+
+Depreciation reduces carrying value according to an explicit method. Economic, tax, and statement depreciation MUST remain separately representable when needed.
+
+### P26 — mark_to_market
+
+`Value_t = Quantity_t × Price_t` or an explicit valuation function.
+
+Unrealized valuation changes affect economic/accounting state according to the selected accounting policy but do not themselves create cash settlement.
+
+### P27 — event_trigger
+
+Activation occurs when an event/predicate becomes effective according to its event policy. Edge-triggered activation is the default.
+
+### P28 — conditional
+
+`X_k=Y_k` if condition true; otherwise `Z_k`. Conditions MUST be dependency-visible and free of untracked mutable state.
+
+### P29 — event_modification
+
+A modification has an effective time, target, precedence, duration/reversibility, and provenance.
+
+`Y_t=X_t` before effective time and `Y_t=M(X_t,eventState_t)` after it.
+
+### P30 — event_termination
+
+`Y_t=X_t` before termination and `Y_t=0` at/after termination. Termination is idempotent.
+
+### P31 — probabilistic
+
+`X_k~D(θ_k)` using a named random-process identity and isolated deterministic stream. Invalid domain samples require explicit truncation/transformation or are errors.
+
+### P32 — scenario_dependent
+
+`X_k=f_s(k)` with explicit scenario inheritance/override semantics.
+
+### P33 — correlated_random_process
+
+Default joint construction uses a **Gaussian copula**:
+
+1. validate correlation matrix `Σ` as symmetric positive semidefinite;
+2. generate a correlated standard-normal vector `Z` with correlation `Σ`;
+3. transform `U_i=Φ(Z_i)`;
+4. transform each `U_i` through the inverse marginal CDF `F_i^{-1}`.
+
+The resulting vector has the declared marginals and the copula-induced dependence structure. The model MUST distinguish the desired rank/copu​la dependence from linear correlation of transformed non-normal marginals.
+
+Correlation groups share one explicit process realization per timestep. Independent groups use independent deterministic random streams.
+
+### P34 — path_dependent
+
+`X_k=f(H_k)` where history `H_k` contains only declared prior/current information available at evaluation time. Future values are forbidden.
+
+The primitive SHOULD retain sufficient state rather than full raw history where equivalent.
+
+## 8. Event timing and lifecycle
+
+Events have separate occurrence and effect semantics:
+
+`scheduled/eligible → occurred → effect-effective → recognition (if any) → settlement (if any) → completed`
+
+An event may have an occurrence time different from the effective time of its effects.
+
+Example:
+
+`promotion occurs June 15 → salary policy effective June 15 → first payroll settlement June 30`
+
+Event-generated modifications are applied at their effective time, not automatically at the occurrence timestamp.
+
+Events MUST be non-retroactive unless a model explicitly declares a historical restatement feature; such a feature is outside the default simulation semantics.
+
+## 9. Dependency semantics
+
+The dependency graph is the primary mechanism determining evaluation order inside a period.
+
+A dependency edge identifies both direction and temporal basis.
 
 Conceptually:
 
-```text
-S_begin
-  ↓
-Event activation/modification
-  ↓
-Dependency resolution
-  ↓
-Primitive evaluation
-  ↓
-Economic effects
-  ↓
-Recognition / settlement proposals
-  ↓
-Accounting translation
-  ↓
-Transaction validation
-  ↓
-Atomic commit
-  ↓
-Closing valuation
-  ↓
-S_end
-```
+`source@scope → target@scope`
 
-If any hard validation error occurs before commit, the working state and generated transaction batch are discarded and the prior committed state remains authoritative.
+where scope can be current-period, opening-state, intraperiod phase, prior-period, or lagged.
 
-A one-time primitive becomes consumed only after the transaction/effect it owns is successfully committed.
+Lagged/state-mediated cycles are valid only when the cycle crosses an explicit prior-state boundary. Zero-lag algebraic cycles are invalid unless the model explicitly supplies a solved mathematical operator with a unique valid solution.
 
-## 14. Precision and numerical semantics
+Conflicting writes require explicit operation type and priority. Additive effects may merge when the target semantics permit them; competing replacements require priority; equal-priority incompatible writes are errors.
 
-Persisted monetary values use decimal/fixed-scale representation. The canonical domain uses four decimal places.
+## 10. State transition and ownership
 
-Intermediate calculations SHOULD retain additional precision and MUST NOT round merely because a number crossed a primitive boundary.
+Each authoritative state variable has exactly one owner. Multiple primitives may propose effects, but only the owner transition commits the resulting value.
 
-Rounding occurs at explicit accounting/settlement/tax boundaries.
+For any state variable `x`:
 
-Default monetary rounding is half-up to four decimal places unless a governing rule explicitly specifies another mode.
+`x_{k+1}=Transition_x(x_k,accepted_effects_k)`
 
-Rates are fractions: `0.05 = 5%`.
+A state transition is atomic with the timestep.
 
-Binary floating-point MUST NOT be the authoritative persisted representation of monetary amounts.
+Derived fields are recomputed, never directly authored as authoritative inputs.
 
-## 15. Stochastic reproducibility
+## 11. Statement and accounting semantics
 
-The stochastic realization is identified by:
+### 11.1 Ledger authority
 
-`(seed, scenario_id, realization_id, process_id, timestep, draw_index)`
+Posted accounting facts are authoritative for accounting-derived statements. State snapshots are authoritative for point-in-time economic balances. Statement generation reconciles the two rather than treating them as independent sources of truth.
 
-Process streams are independent by stable process identity.
+### 11.2 Account effects
 
-Correlation groups share the same correlated-process realization rather than drawing independently and attempting to "correct" correlation afterward.
+Every posted accounting leg changes an explicit economic/accounting quantity. For financial statement purposes, the engine MUST classify each leg into the affected balance and/or statement fact rather than infer statement impact from transaction type alone.
 
-All stochastic run metadata MUST persist the seed, process identities, specification version, engine version, scenario ID, and realization ID.
+### 11.3 Debit/credit semantics
 
-## 16. Failure semantics
+For standard double-entry treatment:
+
+- debit increases assets/expenses and decreases liabilities/equity/income;
+- credit increases liabilities/equity/income and decreases assets/expenses.
+
+Exceptions require an explicit specialized accounting rule.
+
+For every transaction and currency:
+
+`Σ debit amounts = Σ credit amounts`
+
+### 11.4 Compensation with non-cash allocation
+
+Recognized compensation MAY settle through multiple channels.
+
+Example:
+
+`Gross compensation = $10,000`
+
+`Cash settlement = $8,000`
+
+`Retirement-account contribution = $2,000`
+
+The accounting representation may be:
+
+`Dr Cash $8,000`
+
+`Dr Retirement Asset $2,000`
+
+`Cr Compensation Income $10,000`
+
+Consolidated operating cash flow includes the $8,000 cash settlement, not the $10,000 recognized income.
+
+### 11.5 Tax recognition versus payment
+
+Tax recognized but unpaid:
+
+`Dr Tax Expense`
+
+`Cr Tax Payable`
+
+Tax settlement later:
+
+`Dr Tax Payable`
+
+`Cr Cash`
+
+The settlement does not create a second tax expense.
+
+### 11.6 Investment purchase
+
+A security purchase transfers cash into an investment position:
+
+`Dr Investment Asset`
+
+`Cr Cash`
+
+It does not itself create income or gain/loss.
+
+### 11.7 Investment sale and realization
+
+A sale MUST separately model:
+
+- quantity sold;
+- gross proceeds;
+- carrying value removed;
+- realized gain/loss;
+- transaction costs/fees where applicable;
+- cash settlement;
+- tax facts where applicable.
+
+For a position with carrying value $100,000 sold for $110,000:
+
+`Dr Cash $110,000`
+
+`Cr Investment Asset $100,000`
+
+`Cr Realized Gain $10,000`
+
+The Cash Flow Statement records $110,000 investing inflow. The income/statement layer records $10,000 gain. The investment asset decreases by $100,000.
+
+### 11.8 Unrealized investment return
+
+If a $100,000 position is revalued to $110,000 without sale:
+
+- asset value increases $10,000;
+- unrealized gain/equity effect increases $10,000 according to the selected accounting policy;
+- cash flow = $0;
+- no realized-gain settlement occurs.
+
+### 11.9 Mortgage payment
+
+For a payment of $1,798.65 consisting of $1,500 interest and $298.65 principal:
+
+`Dr Interest Expense $1,500.00`
+
+`Dr Mortgage Liability $298.65`
+
+`Cr Cash $1,798.65`
+
+Liability reduction is $298.65; expense is $1,500; cash decreases $1,798.65.
+
+### 11.10 Statements and timing
+
+**Balance Sheet:** point-in-time statement at `S_end`. It contains ending economic balances and liabilities.
+
+`NetWorth = TotalAssets - TotalLiabilities`
+
+**Income Statement:** period statement containing amounts recognized during `P_k`, including income, expense, gain/loss, and tax according to the configured accounting convention.
+
+**Cash Flow Statement:** period statement containing actual cash settlements during `P_k`, classified as operating, investing, or financing. Non-cash effects do not themselves create cash flow.
+
+Cash roll-forward:
+
+`EndingCash = BeginningCash + OperatingCF + InvestingCF + FinancingCF + ExplicitFXOrOtherCashEffects`
+
+Internal household transfers between consolidated accounts are excluded from consolidated net cash flow.
+
+### 11.11 Statement reconciliation law
+
+The following relationships MUST hold after each committed period:
+
+`EndingCash - BeginningCash = NetCashFlow`
+
+`EndingNetWorth - BeginningNetWorth = RecognizedNetIncome + OwnerEquityChanges + NonCashValuationAdjustments - ExplicitExcludedItems`
+
+The exact reconciliation mapping for non-cash gains, owner contributions/distributions, and other equity items MUST be explicit in the statement policy. The engine MUST NOT invent a balancing plug.
+
+## 12. Derived metric timing
+
+Each derived metric MUST declare its temporal class:
+
+- `point_in_time` — evaluated from a state boundary;
+- `period_flow` — aggregated over a period;
+- `rolling_period` — aggregated over a declared lookback interval;
+- `rate` — derived from period quantities;
+- `distribution` — derived across stochastic realizations.
+
+Examples:
+
+`net_worth` = point_in_time at `S_end`.
+
+`gross_income` = period_flow over recognized income in `P_k`.
+
+`disposable_income` = period_flow:
+
+`recognized_income - recognized_taxes - recognized_expenses`
+
+`savings_rate` = rate using a declared numerator/denominator convention, typically:
+
+`Savings / GrossIncome`
+
+A metric MUST specify whether transfers are excluded and whether employer/non-cash compensation is included.
+
+## 13. Stochastic semantics
+
+A stochastic realization is conceptually:
+
+`ω = RandomStream(seed, scenarioId, realizationId)`
+
+Random streams are isolated by named process identity. Draws MUST be stable under insertion/removal of unrelated processes.
+
+For P33 Gaussian-copula processes, both the copula specification and marginal distributions are part of the immutable run configuration.
+
+## 14. Precision and money
+
+Authoritative monetary values MUST use decimal/fixed-precision representation. Binary floating point MUST NOT be authoritative for persisted posted monetary amounts.
+
+Intermediate calculations MAY use higher precision. Rounding occurs only at explicit boundaries, with declared scale, rounding mode, and application point.
+
+Default domain monetary scale remains four decimal places; jurisdiction/product rules may override.
+
+## 15. Failure and validation semantics
 
 Hard errors include:
 
-- unresolved required dependency;
-- invalid temporal interval;
-- unresolvable zero-lag cycle;
-- incompatible primitive composition;
-- conflicting equal-priority writes;
-- invalid rate/parameter domain;
-- negative liability balance when prohibited;
-- invalid correlation matrix;
-- duplicate one-time execution;
-- currency mismatch without explicit conversion;
+- unresolved dependency;
+- zero-lag cycle without declared solved operator;
+- invalid primitive composition;
+- invalid unit/currency conversion;
+- duplicate economic-resource aggregation;
+- invalid obligation settlement reference;
+- settlement exceeding outstanding obligation without explicit overpayment policy;
 - unbalanced transaction;
-- unauthorized derived-field mutation;
-- economic-position double counting.
+- negative prohibited liability balance;
+- invalid stochastic distribution/correlation structure;
+- invalid temporal interval;
+- unauthorized derived-field write;
+- duplicate one-time execution.
 
-Warnings include:
+Warnings include suspicious assumptions, unusual but valid values, explicit partial-period prorations, and allowed zero-liquidity conditions.
 
-- unusually large but valid values;
-- explicit numerical covariance repair;
-- optional assumptions missing where defaults are allowed;
-- low liquidity where configuration permits it.
+The engine MUST never silently clamp a materially invalid financial result.
 
-The engine MUST NOT silently clamp material invalidity.
+## 16. Simulation transaction/period atomicity
 
-## 17. Golden-test requirements
+Each simulation period is atomic at the authoritative state boundary.
 
-The following tests are required before the first vertical slice is considered semantically sound.
+If any hard validation failure occurs before commit, none of the period's state transitions, posted transactions, obligation changes, or primitive execution-state changes become committed.
 
-### Time
+A transaction itself is atomic: all accounting legs post together or none post.
 
-1. Month-end boundary: an event at `Feb 1 00:00` belongs to February, not January.
-2. Inclusive date object: January 1–January 31 remains active through January 31.
-3. Mid-month employment start with explicitly selected proration basis.
-4. Annual growth transition inside monthly simulation.
+## 17. Golden scenarios
 
-### Dependencies
+These scenarios are normative tests of the semantic contracts.
 
-5. Salary -> taxable income -> tax -> disposable income -> contribution.
-6. Delayed/lagged dependency crossing a timestep boundary.
-7. Deliberate zero-lag cycle fails.
-8. Equal-priority conflicting writes fail.
+### Golden 1 — Salary, tax, pre-tax retirement contribution, and expenses
 
-### Accrual/settlement
+**Initial state**
 
-9. Tax recognized in December and paid in April: December tax expense; April cash settlement; no duplicated expense.
-10. Accrued interest followed by later payment without duplicate recognition.
-11. Capitalized interest behaves differently when explicitly enabled.
+- Checking: `$0`
+- Retirement account: `$0`
 
-### Accounting
+**Monthly activity**
 
-12. Salary transaction balances.
-13. Ordinary expense balances.
-14. Mortgage payment separates principal and interest.
-15. Internal transfer leaves consolidated net worth and consolidated cash unchanged.
-16. Unrealized investment gain increases net worth without cash flow.
-17. Investment sale creates cash flow and realized gain/loss.
-18. Balance Sheet, Income Statement, and Cash Flow Statement reconcile.
+- Gross salary: `$10,000`
+- Pre-tax retirement contribution: `$2,000`
+- Tax expense: `$2,000`
+- Living expenses: `$4,000`
+- All cash settlements occur during the month.
 
-### Container/position aggregation
+**Expected accounting/economic results**
 
-19. Brokerage account with cash plus securities does not double count account value.
-20. Investment linked to an Asset is counted exactly once.
-21. Standalone home value is counted separately from financial-account contents.
+Compensation:
 
-### Debt
+`Dr Checking $8,000`
 
-22. Fixed-rate amortization reaches zero within configured tolerance.
-23. Zero-rate amortization works.
-24. Variable-rate reset changes interest without automatically changing payment unless payment policy says so.
-25. Negative amortization/capitalized interest is allowed only when explicitly configured.
+`Dr Retirement Asset $2,000`
 
-### Stochastic behavior
+`Cr Compensation Income $10,000`
 
-26. Fixed seed reproduces identical path.
-27. Adding an unrelated random variable does not alter an existing process path.
-28. Correlated process reproduces identical joint draws.
-29. Invalid correlation matrix fails before simulation.
+Tax:
 
-Every golden test MUST specify initial state, exact model inputs, expected transactions/effects, expected state, expected statement outputs, and declared tolerances.
+`Dr Tax Expense $2,000`
 
-## 18. Canonical semantic laws
+`Cr Cash $2,000`
 
-### Law 1 — Ownership conservation
+Expenses:
 
-A pure internal transfer does not change consolidated household net worth.
+`Dr Expense $4,000`
 
-### Law 2 — State continuity
+`Cr Cash $4,000`
 
-Absent an explicit committed transition, state persists.
+Ending state:
 
-### Law 3 — Event non-retroactivity
+- Checking = `$2,000`
+- Retirement = `$2,000`
+- Total assets = `$4,000`
+- Liabilities = `$0`
+- Net worth = `$4,000`
 
-Events cannot alter completed historical periods.
+Income statement:
 
-### Law 4 — Dependency visibility
+- Income = `$10,000`
+- Tax = `$2,000`
+- Expenses = `$4,000`
+- Net income = `$4,000`
 
-Every current-period derived value has discoverable upstream dependencies.
+Cash flow:
 
-### Law 5 — No hidden same-period feedback
+- Net operating cash flow = `$4,000` if the retirement contribution is treated as non-cash compensation allocation as above.
+- Ending cash = `$2,000` when the $2,000 retirement contribution is excluded from cash because it settled directly into the retirement account and the $2,000 tax and $4,000 expenses are cash outflows.
 
-Same-period feedback is invalid unless solved by an explicit analytical rule.
+The test MUST also assert that recognized compensation may exceed cash settlement and that statements remain reconciled.
 
-### Law 6 — Recognition is not settlement
+### Golden 2 — Brokerage account, purchase, valuation, and anti-double-counting
 
-A recognized economic fact does not imply cash movement.
+Initial state:
 
-### Law 7 — Settlement is not new recognition
+- Checking cash = `$100,000`
+- Brokerage cash = `$0`
+- Stock position = `0`
 
-Settling a previously recognized fact does not duplicate its income/expense.
+Transfer `$100,000` to brokerage, then buy `1,000` shares at `$100`.
 
-### Law 8 — Accounting closure
+After purchase:
 
-Every posted transaction is balanced and every committed state satisfies declared accounting invariants.
+- Checking cash = `$0`
+- Brokerage cash = `$0`
+- Position market value = `$100,000`
+- Household total assets = `$100,000`
+- Household net worth = `$100,000`
 
-### Law 9 — Single economic representation
+The brokerage account's aggregate total value is `$100,000`, but that aggregate MUST NOT be added again when the underlying position is already included.
 
-One economic position contributes to consolidated asset/liability totals exactly once.
+Then price rises to `$110` without sale:
 
-### Law 10 — Deterministic reproducibility
+- Position value = `$110,000`
+- Unrealized gain = `$10,000`
+- Cash flow = `$0`
+- Household net worth = `$110,000`
 
-Fixed inputs and realization produce identical results.
+The test MUST fail validation if the implementation counts brokerage `total_value` plus the same position separately.
 
-### Law 11 — State ownership
+### Golden 3 — Accrued tax followed by later settlement
 
-Only the authoritative owner can commit a state field.
+Initial state:
 
-### Law 12 — No silent invalidity
+- Checking = `$10,000`
+- Tax payable = `$0`
 
-Invalid states/calculations produce explicit validation failures.
+January recognition:
 
-## 19. Open decisions deferred beyond this revision
+`Dr Tax Expense $1,000`
 
-These remain intentionally outside the foundational semantic contract:
+`Cr Tax Payable $1,000`
 
-- complete US and non-US tax-rule libraries;
-- full financial-product taxonomy;
-- all business-day calendars by jurisdiction;
-- multi-currency FX market models beyond the explicit conversion boundary;
-- Monte Carlo confidence-interval/reporting methodology;
-- complete insurance claim-cost models;
-- persistence format for primitive internal state snapshots;
-- expression-language syntax and sandboxing;
-- performance/parallel execution architecture;
-- UI/product semantics.
+After January:
 
-Those should be implemented incrementally once the deterministic kernel and golden tests expose concrete requirements.
+- Checking = `$10,000`
+- Tax payable = `$1,000`
+- Net worth = `$9,000`
 
-## 20. Implementation mapping
+April settlement:
 
-Implementation types should add execution concepts to the existing TypeScript contracts, including:
+`Dr Tax Payable $1,000`
 
-- `TemporalContext`
-- `EvaluationContext`
-- `PrimitiveSignature`
-- `PrimitiveEvaluation`
-- `PrimitiveState`
-- `StateDelta`
-- `FlowProposal`
-- `RecognitionFact`
-- `SettlementProposal`
-- `TransactionProposal`
-- `AccountingPosting`
-- `DependencyEvaluationPlan`
-- `RandomProcessContext`
-- `EventActivation`
-- `Diagnostic`
+`Cr Checking $1,000`
 
-These are runtime contracts and need not become additional persisted canonical domain objects.
+After April:
 
-## 21. Readiness criterion
+- Checking = `$9,000`
+- Tax payable = `$0`
+- Net worth = `$9,000`
 
-This semantic layer is ready to support the first deterministic vertical slice when the implementation can demonstrate, with golden tests:
+April must contain `$0` additional tax expense from this settlement.
 
-- deterministic period construction;
-- dependency-driven evaluation rather than rigid financial-category sequencing;
-- explicit recognition versus settlement;
-- single-count asset aggregation;
-- balanced accounting transactions;
-- consistent three-statement outputs;
-- debt mechanics with explicit rate/payment policies;
-- reproducible stochastic primitives;
-- complete invariant validation.
+### Golden 4 — Mortgage amortization and variable-rate reset
 
-At that point implementation should proceed feature-by-feature, using test failures and invariant failures to identify the next semantic refinement rather than attempting to pre-specify the entire financial universe.
+Fixed-rate case:
+
+- Principal = `$300,000`
+- Annual rate = `6%`
+- Term = `30 years`
+- Monthly compounding/payment
+
+Expected first-month values:
+
+- Monthly rate = `0.06/12 = 0.005`
+- Payment ≈ `$1,798.65`
+- Interest = `$1,500.00`
+- Principal = `$298.65`
+- Ending balance ≈ `$299,701.35`
+
+Expected payment transaction:
+
+`Dr Interest Expense $1,500.00`
+
+`Dr Mortgage Liability $298.65`
+
+`Cr Cash $1,798.65`
+
+Variable-rate subtest:
+
+After 12 months, set rate from `6%` to `7%` through the rate-reset contract.
+
+The test MUST verify that the rate reset does not itself determine a new payment unless the payment-reset policy explicitly says so.
+
+If payment is recast over the remaining 348 months, the new payment is approximately `$1,991.63` and first post-reset interest is approximately `$1,728.51` using the resulting balance and monthly rate. If payment remains fixed, principal reduction is instead approximately `$70.14`. The model MUST produce exactly the result dictated by its declared payment-reset policy.
+
+### Golden 5 — Investment sale and realized gain
+
+Initial position:
+
+- Carrying value = `$100,000`
+- Market value = `$110,000`
+
+Prior to sale:
+
+- unrealized gain = `$10,000`
+- cash flow = `$0`
+
+Sell for `$110,000`.
+
+Expected accounting:
+
+`Dr Cash $110,000`
+
+`Cr Investment Asset $100,000`
+
+`Cr Realized Gain $10,000`
+
+Expected results:
+
+- Investment asset decreases `$100,000`
+- Cash increases `$110,000`
+- Realized gain = `$10,000`
+- Investing cash flow = `+$110,000`
+- Net worth increase caused by the sale transaction itself = `$10,000` relative to the pre-sale carrying state including the prior unrealized gain.
+
+The test MUST distinguish proceeds from gain and MUST NOT report `$10,000` as the investing cash flow of the sale.
+
+## 18. Additional semantic regression tests
+
+The engine SHOULD also retain tests for:
+
+- half-open boundary behavior;
+- annual growth applied to monthly salary without accidental monthly compounding;
+- explicit contribution timing in compounding;
+- event occurrence/effect/payroll settlement timing;
+- zero-lag dependency cycle rejection;
+- correlated-process reproducibility under Gaussian copula;
+- duplicate asset aggregation rejection;
+- settlement overpayment rejection;
+- one-time rollback behavior;
+- non-cash compensation reconciliation.
+
+## 19. Implementation boundary
+
+Implementation may choose different internal structures, algorithms, caching, persistence, parallelization, or APIs provided observable semantic behavior remains equivalent.
+
+The semantic kernel should expose implementation contracts such as:
+
+- `TemporalContext`;
+- `EvaluationContext`;
+- `PrimitiveEvaluation`;
+- `StateDelta`;
+- `FlowProposal`;
+- `RecognitionFact`;
+- `Obligation`;
+- `SettlementProposal`;
+- `TransactionProposal`;
+- `RandomProcessContext`;
+- `DependencyEvaluationPlan`;
+- `StatementPolicy`;
+- `EvaluationDiagnostic`.
+
+These are implementation concepts and need not become canonical persisted domain objects.
+
+## 20. Remaining v0.2 decisions
+
+The foundational semantic contract is now sufficiently constrained for deterministic-kernel implementation. The following may remain follow-up work:
+
+- exact jurisdiction-specific calendars and business-day rules;
+- full tax-rule catalog and filing/settlement mechanics;
+- multi-currency/FX implementation details;
+- comprehensive insurance mechanics;
+- Monte Carlo tail-statistic conventions;
+- expression-language grammar and sandboxing;
+- performance/parallelization details;
+- full chart of accounts taxonomy beyond the semantic classes defined here.
