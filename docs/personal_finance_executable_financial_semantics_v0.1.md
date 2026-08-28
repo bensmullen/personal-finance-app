@@ -1,6 +1,6 @@
 # Personal Finance App — Executable Financial Semantics Specification
 
-**Version:** 0.1.2-draft  
+**Version:** 0.1.3-draft  
 **Status:** Draft implementation contract  
 **Namespace:** `pfm`  
 **Depends on:** `personal_finance_canonical_schema_v1.0.json`, `personal_finance_model.schema.json`, `personal_finance_simulation_interfaces_v1.0.ts`
@@ -275,8 +275,6 @@ The engine MUST reject incompatible compositions during model validation.
 
 ## 7. Primitive semantics P01–P34
 
-The canonical primitive identities remain unchanged. The following rules are normative refinements.
-
 ### P01 — static
 
 A configured non-temporal input/fact:
@@ -301,11 +299,11 @@ Each occurrence has a stable identity before period aggregation.
 
 ### P04 — finite_duration
 
-All internal intervals are half-open:
+All internal duration intervals are half-open:
 
 `X_t=f(t)` for `start <= t < end`.
 
-Inclusive calendar-date user inputs are converted at the calendar boundary.
+For date-only end dates, the effective end instant is the beginning of the following calendar date.
 
 ### P05 — perpetual
 
@@ -532,7 +530,7 @@ Default joint construction uses a **Gaussian copula**:
 3. transform `U_i=Φ(Z_i)`;
 4. transform each `U_i` through the inverse marginal CDF `F_i^{-1}`.
 
-The resulting vector has the declared marginals and the copula-induced dependence structure. The model MUST distinguish the desired rank/copu​la dependence from linear correlation of transformed non-normal marginals.
+The model MUST distinguish the desired copula/rank dependence from linear correlation of transformed non-normal marginals.
 
 Correlation groups share one explicit process realization per timestep. Independent groups use independent deterministic random streams.
 
@@ -556,7 +554,7 @@ Example:
 
 Event-generated modifications are applied at their effective time, not automatically at the occurrence timestamp.
 
-Events MUST be non-retroactive unless a model explicitly declares a historical restatement feature; such a feature is outside the default simulation semantics.
+Events MUST be non-retroactive unless a model explicitly declares a historical restatement feature; such a feature is outside default simulation semantics.
 
 ## 9. Dependency semantics
 
@@ -572,7 +570,7 @@ where scope can be current-period, opening-state, intraperiod phase, prior-perio
 
 Lagged/state-mediated cycles are valid only when the cycle crosses an explicit prior-state boundary. Zero-lag algebraic cycles are invalid unless the model explicitly supplies a solved mathematical operator with a unique valid solution.
 
-Conflicting writes require explicit operation type and priority. Additive effects may merge when the target semantics permit them; competing replacements require priority; equal-priority incompatible writes are errors.
+Conflicting writes require explicit operation type and priority. Additive effects may merge when target semantics permit; competing replacements require priority; equal-priority incompatible writes are errors.
 
 ## 10. State transition and ownership
 
@@ -858,10 +856,12 @@ Income statement:
 
 Cash flow:
 
-- Net operating cash flow = `$4,000` if the retirement contribution is treated as non-cash compensation allocation as above.
-- Ending cash = `$2,000` when the $2,000 retirement contribution is excluded from cash because it settled directly into the retirement account and the $2,000 tax and $4,000 expenses are cash outflows.
+- Net operating cash flow = **`$2,000`**
+- Ending cash = `$2,000`
 
-The test MUST also assert that recognized compensation may exceed cash settlement and that statements remain reconciled.
+The $2,000 retirement contribution is a direct non-cash allocation of recognized compensation in this scenario. Therefore it does not enter checking and is not itself a cash outflow in the consolidated Cash Flow Statement.
+
+The test MUST assert that recognized compensation may exceed cash settlement and that statements remain reconciled.
 
 ### Golden 2 — Brokerage account, purchase, valuation, and anti-double-counting
 
@@ -986,7 +986,7 @@ Expected results:
 - Cash increases `$110,000`
 - Realized gain = `$10,000`
 - Investing cash flow = `+$110,000`
-- Net worth increase caused by the sale transaction itself = `$10,000` relative to the pre-sale carrying state including the prior unrealized gain.
+- Net worth change from the sale transaction itself = `$0` relative to the immediately pre-sale state, because the position was already marked to its `$110,000` fair value.
 
 The test MUST distinguish proceeds from gain and MUST NOT report `$10,000` as the investing cash flow of the sale.
 
