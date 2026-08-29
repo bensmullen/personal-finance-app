@@ -1,38 +1,38 @@
 # Semantic Kernel v0.1
 
-This milestone establishes the first executable runtime boundary for the financial semantics specification. The implementation is deliberately small: it provides exact cent-based monetary values, half-open calendar periods, deterministic dependency ordering, balanced accounting transactions, state snapshots, derived statements, and a reusable golden-runner boundary.
+This milestone establishes the first executable runtime boundary for the financial semantics specification. The implementation is deliberately small: it provides exact cent-based monetary values, half-open calendar periods, deterministic dependency ordering, balanced accounting transactions, cloned state transitions, typed statement derivation, and a reusable golden-runner boundary.
 
 ## Lifecycle
 
-A run is evaluated against a cloned opening state for a half-open `Period`. Scenario logic emits effects and proposed transactions, then the runner derives consolidated assets/liabilities and statement totals. The committed result is returned as a new state; the opening state is not mutated.
+A run clones the opening state, builds a zero-lag dependency DAG, evaluates events in deterministic topological order, validates each event's period/date and balanced transaction, applies the transaction to the cloned state, and derives closing statements. If execution fails, the opening state remains unchanged because all mutations occur on the clone.
 
-The intended production lifecycle remains the specification's semantic-barrier sequence: establish period context → resolve inputs → activate events → build/validate dependencies → evaluate primitives → generate flows/recognition → generate obligations/settlements → translate to transactions → post/apply state → closing valuation/outputs → validate/commit.
+The intended production lifecycle remains the specification's semantic-barrier sequence: establish period context → resolve inputs → activate events → build/validate dependencies → evaluate primitives → generate flows/recognition → generate obligations/settlements → translate to transactions → post/apply state → closing valuation/outputs → validate/commit. v0.1 supplies the executable boundary for the dependency/effect/transaction/state portion; richer primitive evaluation and obligation identity remain subsequent work.
 
 ## State ownership
 
-`SimulationState` owns account cash, investment positions, and liabilities. Derived statement values are computed rather than persisted as authoritative state. `GoldenRunner` clones the opening state before executing a scenario, providing the atomic-run boundary needed for future effect validation and rollback.
+`SimulationState` owns account cash, investment positions, and liabilities. Derived statement values are computed from the resulting state and typed accounting legs rather than persisted as authoritative state. Event definitions cannot directly mutate the runner's state.
 
 ## Temporal model
 
-`Period` is `[start,end)`. `month()` constructs calendar-month boundaries in UTC. `inPeriod()` therefore excludes the end boundary, matching the executable semantics specification. Date-only inclusive user semantics must be converted to the following date boundary before reaching this layer.
+`Period` is `[start,end)`. `month()` constructs calendar-month boundaries in UTC and `SemanticRunner` rejects events at or after the period end. This explicitly tests the half-open execution boundary.
 
 ## Dependencies
 
-`DependencyGraph` uses deterministic Kahn topological sorting with lexicographic tie-breaking. Zero-lag cycles fail explicitly. Lagged/state-mediated edges are accepted as non-current-period edges and are expected to be expanded by the higher-level dependency planner before evaluation.
+`DependencyGraph` uses deterministic Kahn topological sorting with lexicographic tie-breaking. Zero-lag cycles fail explicitly. Nonzero-lag edges are accepted without adding a same-period dependency and remain the responsibility of the higher-level planner to expand into prior-state dependencies.
 
 ## Accounting
 
-`posting()` and `assertBalanced()` require debit total to equal credit total. Transactions are represented as explicit legs, and the runner derives cash flow from cash legs rather than treating recognition as cash automatically.
+`posting()` and `assertBalanced()` require debit total to equal credit total. Transactions are explicit typed legs. Cash flow is derived from cash legs, while income, expense, and gain totals are derived from their accounting side rather than free-form effect descriptions.
 
-The current prototype intentionally leaves richer recognition/obligation/settlement orchestration to the next kernel increment. The golden scenarios exercise the semantic distinctions numerically and provide the regression boundary for that work.
+The v0.1 scenarios include explicit recognition, settlement, internal transfer, purchase, mark-to-market, and sale transactions. The full recognition → obligation/right → settlement identity and duplicate-recognition controls are intentionally reserved for the next kernel increment.
 
 ## Monetary arithmetic
 
-Posted monetary amounts use `bigint` cents. This avoids binary floating-point representation for ledger amounts. Mortgage formula evaluation uses floating-point only for the mathematical amortization formula and rounds the resulting payment to cents at the posting boundary; a production rate engine should replace this with a decimal/rational implementation.
+Posted monetary amounts use `bigint` cents. This avoids binary floating-point representation for ledger amounts. Mortgage payment calculation currently uses floating-point only for the amortization formula and rounds the result to cents; the next financial-math increment should replace rate arithmetic with decimal/rational operations throughout.
 
 ## Golden harness
 
-Golden scenarios live in `test/golden.test.ts`. Each scenario supplies an opening state and deterministic execution callback and asserts state, effects, transaction balance, statements, and key numerical invariants. The harness is intentionally reusable and should grow toward fixture-driven expectations as additional primitive contracts are implemented.
+Golden scenarios live in `test/golden.test.ts`. They now construct typed events and transactions and execute them through `SemanticRunner`; they do not directly mutate the runner's authoritative state. The suite covers salary/tax/retirement/expenses, internal transfer/purchase/mark-to-market, tax accrual/settlement, mortgage fixed-payment/reset mechanics, investment mark-to-market/sale, deterministic dependency ordering, and the half-open/atomic state boundary.
 
 Run locally with:
 
