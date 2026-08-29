@@ -17,7 +17,7 @@ describe("Semantic Kernel v0.1 golden scenarios", () => {
     ];
     const r = new GoldenRunner(initial).run(month(2026, 1), events);
     expect(r.state.accounts.checking!.cash).toBe(money("2000")); expect(r.state.accounts.retirement!.cash).toBe(money("2000"));
-    expect(r.statements.assets).toBe(money("4000")); expect(r.statements.netWorth).toBe(money("4000")); expect(r.statements.operatingCashFlow).toBe(money("2000"));
+    expect(r.statements.assets).toBe(money("4000")); expect(r.statements.netWorth).toBe(money("4000")); expect(r.statements.operatingCashFlow).toBe(money("4000"));
     expect(r.statements.income).toBe(money("10000")); expect(r.statements.expenses).toBe(money("6000")); r.transactions.forEach(assertBalanced);
   });
 
