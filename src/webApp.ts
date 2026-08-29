@@ -51,6 +51,7 @@ const render = (): void => {
       ["Net worth", result.statements.netWorth, "Assets minus liabilities"],
       ["Income", result.statements.income, "Recognized compensation"],
       ["Expenses", result.statements.expenses, "Tax + living expenses"],
+      ["Net income", result.statements.netIncome, "Income minus recognized expenses"],
       ["Operating cash flow", result.statements.operatingCashFlow, "External operating cash movement"],
       ["Total assets", result.statements.assets, "Checking + retirement cash"],
     ];
