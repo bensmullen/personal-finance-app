@@ -15,7 +15,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
       - name: Generate lockfile on feature branch push
         if: github.event_name == 'push' && github.ref_name == 'feat/semantic-kernel-v0.1' && !hashFiles('package-lock.json')
         run: |
@@ -25,5 +24,6 @@ jobs:
           git add package-lock.json
           git commit -m "build: add npm lockfile"
           git push origin HEAD:${GITHUB_REF_NAME}
+      - run: npm ci
       - run: npm run typecheck
       - run: npm test
