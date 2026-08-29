@@ -39,6 +39,7 @@ describe("Vertical Slice 1", () => {
     expect(dollars(result.statements.liabilities)).toBe("$0.00");
     expect(dollars(result.statements.income)).toBe("$10000.00");
     expect(dollars(result.statements.expenses)).toBe("$6000.00");
+    expect(dollars(result.statements.netIncome)).toBe("$4000.00");
     expect(dollars(result.statements.operatingCashFlow)).toBe("$4000.00");
     expect(dollars(result.statements.netWorth)).toBe("$4000.00");
     expect(result.transactions).toHaveLength(5);
