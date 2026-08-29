@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Node dependencies and logs
+node_modules/
+npm-debug.log*
+
+# Build and test output
+dist/
+coverage/
+.vitest/
+*.tsbuildinfo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
