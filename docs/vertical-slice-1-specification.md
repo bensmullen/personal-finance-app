@@ -1,6 +1,6 @@
 # Personal Finance App — Vertical Slice 1 Formal Specification
 
-**Version:** 1.0.0-draft  
+**Version:** 1.0.1-draft
 **Status:** Reviewable implementation contract  
 **Namespace:** `pfm`  
 **Slice:** Employment Compensation → Tax Obligation → Retirement Transfer → Spending  
@@ -520,6 +520,19 @@ The engine MUST reject:
 - duplicate consumption of the same obligation amount;
 - settlement whose currency differs from the obligation currency;
 - settlement dated before recognition unless an explicit prepayment/advance semantic exists, which this slice does not implement.
+
+Tax settlement additionally requires an explicit `FundingPolicy` identifying
+the ordered household cash-account sources that may fund it. Funding resolution
+precedes accepted settlement and is pure. Insufficient liquidity leaves tax
+recognition, the tax liability, and the obligation intact and produces a
+`ConstraintOutcome` plus `LiquidityShortfall` warning; it does not post a tax
+settlement transaction or recognize tax expense again.
+
+If partial funding is disabled, insufficient liquidity accepts zero. If partial
+funding is enabled, the accepted settlement equals available permitted
+liquidity and the obligation carries the remainder. An explicitly requested
+`$500` payment that is fully funded is `fully_satisfied` even when it leaves a
+`$2,000` obligation `partially_settled`.
 
 ### 8.4 Partial settlement
 
