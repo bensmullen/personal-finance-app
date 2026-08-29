@@ -1,5 +1,5 @@
 export type Money = bigint;
-export const money = (dollars: string): Money => { const raw = dollars.trim(); const sign = raw.startsWith("-") ? -1n : 1n; const unsigned = raw.replace(/^[+-]/, ""); const [whole, frac = ""] = unsigned.split("."); if (!/^\d+$/.test(whole) || !/^\d{0,2}$/.test(frac)) throw new Error(`Invalid money: ${dollars}`); return sign * (BigInt(whole) * 100n + BigInt(frac.padEnd(2, "0"))); };
+export const money = (dollars: string): Money => { const raw = dollars.trim(); const sign = raw.startsWith("-") ? -1n : 1n; const unsigned = raw.replace(/^[+-]/, ""); const parts = unsigned.split("."); const whole = parts[0] ?? ""; const frac = parts[1] ?? ""; if (!/^\d+$/.test(whole) || !/^\d{0,2}$/.test(frac)) throw new Error(`Invalid money: ${dollars}`); return sign * (BigInt(whole) * 100n + BigInt(frac.padEnd(2, "0"))); };
 export const dollars = (v: Money): string => { const a = v < 0n ? -v : v; return `${v < 0n ? "-" : ""}$${a / 100n}.${(a % 100n).toString().padStart(2, "0")}`; };
 export interface Period { start: string; end: string; }
 export const month = (year: number, month1: number): Period => ({ start: new Date(Date.UTC(year, month1 - 1, 1)).toISOString(), end: new Date(Date.UTC(year, month1, 1)).toISOString() });
@@ -29,9 +29,9 @@ export interface KernelEvent { id: string; date: string; dependsOn?: string[]; l
 function applyTransaction(state: SimulationState, t: Transaction) {
   assertBalanced(t);
   for (const leg of t.legs) { const sign = leg.posting === "debit" ? 1n : -1n;
-    if (leg.type === "cash") { if (!leg.accountId || !state.accounts[leg.accountId]) throw new Error(`Unknown cash account in ${t.id}`); state.accounts[leg.accountId].cash += sign * leg.amount; }
-    else if (leg.type === "liability") { if (!leg.entityId || !state.liabilities[leg.entityId]) throw new Error(`Unknown liability in ${t.id}`); state.liabilities[leg.entityId].balance += sign * leg.amount; if (state.liabilities[leg.entityId].balance < 0n) throw new Error(`Negative liability balance in ${t.id}`); }
-    else if (leg.type === "asset" && leg.entityId) { const p = state.positions[leg.entityId]; if (!p) throw new Error(`Unknown position in ${t.id}`); p.carryingCents += sign * leg.amount; if (leg.quantity !== undefined) p.quantity += sign * leg.quantity; if (p.quantity < 0n || p.carryingCents < 0n) throw new Error(`Negative position balance in ${t.id}`); }
+    if (leg.type === "cash") { if (!leg.accountId) throw new Error(`Missing cash account in ${t.id}`); const account = state.accounts[leg.accountId]; if (!account) throw new Error(`Unknown cash account in ${t.id}`); account.cash += sign * leg.amount; }
+    else if (leg.type === "liability") { if (!leg.entityId) throw new Error(`Missing liability in ${t.id}`); const liability = state.liabilities[leg.entityId]; if (!liability) throw new Error(`Unknown liability in ${t.id}`); liability.balance += sign * leg.amount; if (liability.balance < 0n) throw new Error(`Negative liability balance in ${t.id}`); }
+    else if (leg.type === "asset" && leg.entityId) { const position = state.positions[leg.entityId]; if (!position) throw new Error(`Unknown position in ${t.id}`); position.carryingCents += sign * leg.amount; if (leg.quantity !== undefined) position.quantity += sign * leg.quantity; if (position.quantity < 0n || position.carryingCents < 0n) throw new Error(`Negative position balance in ${t.id}`); }
   }
 }
 export class SemanticRunner {
@@ -41,7 +41,7 @@ export class SemanticRunner {
     const graph = new DependencyGraph();
     for (const e of events) { graph.addNode(e.id); for (const dep of e.dependsOn ?? []) graph.addEdge(dep, e.id, e.lag ?? 0); }
     const byId = new Map(events.map(e => [e.id, e]));
-    for (const id of graph.topologicalOrder()) { const e = byId.get(id)!; if (!inPeriod(e.date, period)) throw new Error(`Event ${e.id} is outside period`); if (e.transaction.date !== e.date) throw new Error(`Transaction date mismatch for ${e.id}`); assertBalanced(e.transaction); effects.push(e.effect); transactions.push(e.transaction); applyTransaction(state, e.transaction); }
+    for (const id of graph.topologicalOrder()) { const e = byId.get(id); if (!e) throw new Error(`Unknown dependency node ${id}`); if (!inPeriod(e.date, period)) throw new Error(`Event ${e.id} is outside period`); if (e.transaction.date !== e.date) throw new Error(`Transaction date mismatch for ${e.id}`); assertBalanced(e.transaction); effects.push(e.effect); transactions.push(e.transaction); applyTransaction(state, e.transaction); }
     return { state, effects, transactions, statements: deriveStatements(state, transactions), diagnostics: [] };
   }
 }
