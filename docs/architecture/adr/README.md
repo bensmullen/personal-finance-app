@@ -5,9 +5,14 @@ Personal Finance App. ADRs explain implementation choices; they do not redefine
 the financial semantics governed by the canonical and executable
 specifications.
 
-No decision record is accepted as part of the architecture/governance baseline.
-ADRs will be introduced incrementally when implementation requires a durable
-decision.
+Accepted foundation decisions:
+
+- [ADR-004: Exact decimal financial arithmetic and units](ADR-004-exact-decimal-financial-arithmetic-and-units.md)
+- [ADR-005: Half-open temporal intervals](ADR-005-half-open-temporal-intervals.md)
+- [ADR-008: Identity and idempotency model](ADR-008-identity-and-idempotency-model.md)
+
+Additional ADRs will be introduced incrementally when implementation requires
+a durable decision.
 
 ## Naming and lifecycle
 

@@ -1,4 +1,4 @@
-import { canonicalOpeningState, dollars, money, month, runVerticalSlicePeriod, type VerticalSliceInput } from "./verticalSlice1.js";
+import { Money, Rate, RateBasis, canonicalOpeningState, dollars, domainId, money, month, runVerticalSlicePeriod, type VerticalSliceInput } from "./verticalSlice1.js";
 
 const byId = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -12,7 +12,7 @@ const summary = byId<HTMLDivElement>("summary");
 const timeline = byId<HTMLOListElement>("timeline");
 const transactions = byId<HTMLTableSectionElement>("transactions");
 
-const currency = (value: bigint): string => dollars(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+const currency = (value: Money): string => dollars(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
 const numberValue = (name: string): string => {
   const input = form.elements.namedItem(name);
@@ -23,17 +23,14 @@ const numberValue = (name: string): string => {
 const render = (): void => {
   errorBox.hidden = true;
   try {
-    const taxPercent = Number(numberValue("taxRate"));
-    if (!Number.isFinite(taxPercent)) throw new Error("Tax rate must be a number");
-
     const input: VerticalSliceInput = {
-      householdId: "demo-household",
-      ownerId: "demo-person",
-      checkingAccountId: "demo-checking",
-      retirementAccountId: "demo-retirement",
-      taxLiabilityId: "demo-tax-payable",
+      householdId: domainId("household", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+      ownerId: domainId("person", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+      checkingAccountId: domainId("account", "cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+      retirementAccountId: domainId("account", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+      taxLiabilityId: domainId("liability", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
       monthlyGrossCompensation: money(numberValue("grossCompensation")),
-      taxRateBasisPoints: Math.round(taxPercent * 100),
+      taxRate: Rate.fromPercentage(numberValue("taxRate"), RateBasis.Proportion),
       retirementContribution: money(numberValue("retirementContribution")),
       monthlyLivingExpense: money(numberValue("livingExpenses")),
     };
@@ -44,7 +41,7 @@ const render = (): void => {
       openingState: canonicalOpeningState(input),
     });
 
-    const cards: Array<[string, bigint, string]> = [
+    const cards: Array<[string, Money, string]> = [
       ["Checking", result.outputs.checkingCash, "Spendable cash after this month"],
       ["Retirement", result.outputs.retirementCash, "Still part of household assets"],
       ["Tax payable", result.outputs.taxPayable, "Outstanding recognized tax obligation"],
@@ -73,12 +70,12 @@ const render = (): void => {
     timeline.innerHTML = timelineItems.map(([label, amount, kind]) => `
       <li>
         <div><strong>${label}</strong><span>${kind}</span></div>
-        <b>${currency(amount as bigint)}</b>
+        <b>${currency(amount as Money)}</b>
       </li>
     `).join("");
 
     transactions.innerHTML = result.transactions.map((tx) => {
-      const amount = tx.legs.find((leg) => leg.posting === "debit")?.amount ?? 0n;
+      const amount = tx.legs.find((leg) => leg.posting === "debit")!.amount;
       return `<tr><td>${tx.type.replaceAll("_", " ")}</td><td>${currency(amount)}</td><td>${tx.cashFlowClass.replaceAll("_", " ")}</td></tr>`;
     }).join("");
   } catch (error) {
