@@ -1,0 +1,83 @@
+{
+  "manifest_version": "1.0.0",
+  "canonical_schema_version": "1.0.0",
+  "model_format_version": "0.1.0-draft",
+  "executable_semantics_version": "0.1.3-draft",
+  "engine_contract_version": "0.1.0",
+  "specifications": [
+    {
+      "id": "system-software-architecture",
+      "path": "docs/architecture/system-software-architecture.md",
+      "version": "1.1.0-draft",
+      "authority": "governance",
+      "version_source": "markdown-version-header"
+    },
+    {
+      "id": "canonical-financial-schema",
+      "path": "docs/personal_finance_canonical_schema_v1.0.json",
+      "version": "1.0.0",
+      "authority": "level-1",
+      "version_source": "json-specification-version"
+    },
+    {
+      "id": "executable-financial-semantics",
+      "path": "docs/personal_finance_executable_financial_semantics_v0.1.md",
+      "version": "0.1.3-draft",
+      "authority": "level-2",
+      "version_source": "markdown-version-header"
+    },
+    {
+      "id": "vertical-slice-1",
+      "path": "docs/vertical-slice-1-specification.md",
+      "version": "1.0.0-draft",
+      "authority": "level-3",
+      "version_source": "markdown-version-header"
+    }
+  ],
+  "generated_artifact_versions": {
+    "docs/personal_finance_model.schema.json": "0.1.0-draft",
+    "docs/personal_finance_simulation_interfaces_v1.0.ts": "1.0.0",
+    "docs/personal_finance_postgresql_v1.0.sql": "1.0.0"
+  },
+  "generated_artifacts": [
+    {
+      "path": "docs/personal_finance_model.schema.json",
+      "version": "0.1.0-draft",
+      "source": "docs/personal_finance_canonical_schema_v1.0.json",
+      "source_version": "1.0.0",
+      "authority": "derived-reference",
+      "status": "reference-unreconciled",
+      "metadata_location": "manifest",
+      "known_debt": [
+        "missing-embedded-source-version",
+        "schema-mappings-not-reconciled"
+      ]
+    },
+    {
+      "path": "docs/personal_finance_simulation_interfaces_v1.0.ts",
+      "version": "1.0.0",
+      "source": "docs/personal_finance_canonical_schema_v1.0.json",
+      "source_version": "1.0.0",
+      "authority": "derived-reference",
+      "status": "reference-unreconciled",
+      "metadata_location": "header",
+      "known_debt": [
+        "binary-floating-point-money",
+        "binary-floating-point-rate",
+        "schema-mappings-not-reconciled"
+      ]
+    },
+    {
+      "path": "docs/personal_finance_postgresql_v1.0.sql",
+      "version": "1.0.0",
+      "source": "docs/personal_finance_canonical_schema_v1.0.json",
+      "source_version": "1.0.0",
+      "authority": "derived-reference",
+      "status": "reference-unreconciled",
+      "metadata_location": "header",
+      "known_debt": [
+        "schema-mappings-not-reconciled"
+      ]
+    }
+  ]
+}
