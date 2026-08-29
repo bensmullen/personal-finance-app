@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Interactive first-pass personal finance model" />
+  <title>Personal Finance App — Vertical Slice 1</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Personal Finance App · Vertical Slice 1</p>
+        <h1>See where one month of money goes.</h1>
+        <p class="lede">Change the assumptions and the same semantic engine recalculates recognition, obligations, transfers, cash, and statements.</p>
+      </div>
+      <div class="status">Prototype · January 2026</div>
+    </header>
+
+    <section class="workspace">
+      <aside class="panel inputs">
+        <div class="section-heading">
+          <p class="eyebrow">Scenario</p>
+          <h2>Your month</h2>
+        </div>
+        <form id="scenario-form">
+          <label>Gross monthly compensation
+            <span class="field"><span>$</span><input name="grossCompensation" type="number" min="0" step="0.01" value="10000" /></span>
+          </label>
+          <label>Tax rate
+            <span class="field"><input name="taxRate" type="number" min="0" max="100" step="0.01" value="20" /><span>%</span></span>
+          </label>
+          <label>Retirement contribution
+            <span class="field"><span>$</span><input name="retirementContribution" type="number" min="0" step="0.01" value="2000" /></span>
+          </label>
+          <label>Monthly living expenses
+            <span class="field"><span>$</span><input name="livingExpenses" type="number" min="0" step="0.01" value="4000" /></span>
+          </label>
+        </form>
+        <div id="error" class="error" hidden></div>
+        <p class="note">Tax is recognized and settled in the same month. Retirement is an internal household transfer, not an expense.</p>
+      </aside>
+
+      <section class="results">
+        <div class="section-heading">
+          <p class="eyebrow">Results</p>
+          <h2>Household position</h2>
+        </div>
+        <div id="summary" class="metrics"></div>
+      </section>
+    </section>
+
+    <section class="detail-grid">
+      <article class="panel">
+        <div class="section-heading">
+          <p class="eyebrow">Explanation</p>
+          <h2>What happened</h2>
+        </div>
+        <ol id="timeline" class="timeline"></ol>
+      </article>
+
+      <article class="panel">
+        <div class="section-heading">
+          <p class="eyebrow">Accounting trail</p>
+          <h2>Generated transactions</h2>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Transaction</th><th>Amount</th><th>Cash flow</th></tr></thead>
+            <tbody id="transactions"></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <footer>First-pass validation UI · calculations are deterministic and derived from domain inputs.</footer>
+  </main>
+  <script type="module" src="./assets/webApp.js"></script>
+</body>
+</html>
