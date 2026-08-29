@@ -1,4 +1,4 @@
-import { Rate, RateBasis, canonicalOpeningState, dollars, domainId, money, month, runVerticalSlicePeriod, type VerticalSliceInput } from "./verticalSlice1.js";
+import { Percentage, RoundingPolicy, canonicalOpeningState, domainId, formatMoney, money, runVerticalSlicePeriod, utcMonth, type Money, type VerticalSliceInput } from "./verticalSlice1.js";
 
 export interface DemoRow {
   label: string;
@@ -12,6 +12,9 @@ export interface DemoViewModel {
   transactions: Array<{ type: string; amount: string; cashFlow: string }>;
 }
 
+const displayMoney = (value: Money): string =>
+  formatMoney(value, RoundingPolicy.currency(value.currency.minorUnitScale, "half_up"));
+
 export const buildVerticalSliceDemo = (): DemoViewModel => {
   const input: VerticalSliceInput = {
     householdId: domainId("household", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
@@ -20,13 +23,13 @@ export const buildVerticalSliceDemo = (): DemoViewModel => {
     retirementAccountId: domainId("account", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
     taxLiabilityId: domainId("liability", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
     monthlyGrossCompensation: money("10000"),
-    taxRate: Rate.fromPercentage("20", RateBasis.Proportion),
+    taxRate: Percentage.parse("20").toRatio(),
     retirementContribution: money("2000"),
     monthlyLivingExpense: money("4000"),
   };
 
   const result = runVerticalSlicePeriod({
-    period: month(2026, 1),
+    period: utcMonth(2026, 1),
     input,
     openingState: canonicalOpeningState(input),
   });
@@ -34,19 +37,19 @@ export const buildVerticalSliceDemo = (): DemoViewModel => {
   return {
     title: "January household cash flow",
     rows: [
-      { label: "Gross compensation", value: dollars(result.outputs.grossCompensation) },
-      { label: "Tax expense", value: dollars(result.outputs.taxExpense) },
-      { label: "Retirement transfer", value: dollars(result.outputs.retirementContribution), detail: "Internal household transfer" },
-      { label: "Living expenses", value: dollars(result.outputs.livingExpenses) },
-      { label: "Checking", value: dollars(result.outputs.checkingCash) },
-      { label: "Retirement", value: dollars(result.outputs.retirementCash) },
-      { label: "Tax payable", value: dollars(result.outputs.taxPayable) },
-      { label: "Operating cash flow", value: dollars(result.statements.operatingCashFlow) },
-      { label: "Net worth", value: dollars(result.statements.netWorth) },
+      { label: "Gross compensation", value: displayMoney(result.outputs.grossCompensation) },
+      { label: "Tax expense", value: displayMoney(result.outputs.taxExpense) },
+      { label: "Retirement transfer", value: displayMoney(result.outputs.retirementContribution), detail: "Internal household transfer" },
+      { label: "Living expenses", value: displayMoney(result.outputs.livingExpenses) },
+      { label: "Checking", value: displayMoney(result.outputs.checkingCash) },
+      { label: "Retirement", value: displayMoney(result.outputs.retirementCash) },
+      { label: "Tax payable", value: displayMoney(result.outputs.taxPayable) },
+      { label: "Operating cash flow", value: displayMoney(result.statements.operatingCashFlow) },
+      { label: "Net worth", value: displayMoney(result.statements.netWorth) },
     ],
     transactions: result.transactions.map((transaction) => ({
       type: transaction.type,
-      amount: dollars(transaction.legs.find((leg) => leg.posting === "debit")!.amount),
+      amount: displayMoney(transaction.legs.find((leg) => leg.posting === "debit")!.amount),
       cashFlow: transaction.cashFlowClass,
     })),
   };

@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   canonicalOpeningState,
-  dollars,
   domainId,
+  formatMoney,
   instant,
   money,
-  month,
-  Rate,
-  RateBasis,
+  Percentage,
+  RoundingPolicy,
   runVerticalSlicePeriod,
+  utcMonth,
+  type Money,
   type VerticalSliceInput,
 } from "../src/verticalSlice1.js";
+
+const dollars = (value: Money): string =>
+  formatMoney(value, RoundingPolicy.currency(value.currency.minorUnitScale, "half_up"));
 
 const input: VerticalSliceInput = {
   householdId: domainId("household", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
@@ -19,7 +23,7 @@ const input: VerticalSliceInput = {
   retirementAccountId: domainId("account", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
   taxLiabilityId: domainId("liability", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
   monthlyGrossCompensation: money("10000"),
-  taxRate: Rate.fromPercentage("20", RateBasis.Proportion),
+  taxRate: Percentage.parse("20").toRatio(),
   retirementContribution: money("2000"),
   monthlyLivingExpense: money("4000"),
 };
@@ -27,7 +31,7 @@ const input: VerticalSliceInput = {
 describe("Vertical Slice 1", () => {
   it("derives the canonical $10k/$2k/$2k/$4k scenario from domain inputs", () => {
     const result = runVerticalSlicePeriod({
-      period: month(2026, 1),
+      period: utcMonth(2026, 1),
       input,
       openingState: canonicalOpeningState(input),
     });
@@ -57,7 +61,7 @@ describe("Vertical Slice 1", () => {
 
   it("keeps the retirement transfer out of consolidated operating cash flow", () => {
     const result = runVerticalSlicePeriod({
-      period: month(2026, 1),
+      period: utcMonth(2026, 1),
       input,
       openingState: canonicalOpeningState(input),
     });
@@ -69,7 +73,7 @@ describe("Vertical Slice 1", () => {
 
   it("supports a later-period tax settlement without recognizing tax expense again", () => {
     const january = runVerticalSlicePeriod({
-      period: month(2026, 1),
+      period: utcMonth(2026, 1),
       input: { ...input, settleCurrentTax: false },
       openingState: canonicalOpeningState(input),
     });
@@ -78,7 +82,7 @@ describe("Vertical Slice 1", () => {
     expect(dollars(january.outputs.checkingCash)).toBe("$4000.00");
 
     const february = runVerticalSlicePeriod({
-      period: month(2026, 2),
+      period: utcMonth(2026, 2),
       input: {
         ...input,
         monthlyGrossCompensation: money("0"),
@@ -103,13 +107,13 @@ describe("Vertical Slice 1", () => {
 
   it("supports partial settlement and carries the remainder", () => {
     const january = runVerticalSlicePeriod({
-      period: month(2026, 1),
+      period: utcMonth(2026, 1),
       input: { ...input, settleCurrentTax: false },
       openingState: canonicalOpeningState(input),
     });
 
     const february = runVerticalSlicePeriod({
-      period: month(2026, 2),
+      period: utcMonth(2026, 2),
       input: { ...input, monthlyGrossCompensation: money("0"), retirementContribution: money("0"), monthlyLivingExpense: money("0"), settleCurrentTax: false },
       openingState: january.state,
       taxSettlements: [{
@@ -126,14 +130,14 @@ describe("Vertical Slice 1", () => {
 
   it("rejects over-settlement without mutating the opening state", () => {
     const january = runVerticalSlicePeriod({
-      period: month(2026, 1),
+      period: utcMonth(2026, 1),
       input: { ...input, settleCurrentTax: false },
       openingState: canonicalOpeningState(input),
     });
     const opening = JSON.stringify(january.state);
 
     expect(() => runVerticalSlicePeriod({
-      period: month(2026, 2),
+      period: utcMonth(2026, 2),
       input: { ...input, monthlyGrossCompensation: money("0"), retirementContribution: money("0"), monthlyLivingExpense: money("0"), settleCurrentTax: false },
       openingState: january.state,
       taxSettlements: [{
@@ -149,13 +153,13 @@ describe("Vertical Slice 1", () => {
 
   it("excludes a settlement exactly at period.end", () => {
     const january = runVerticalSlicePeriod({
-      period: month(2026, 1),
+      period: utcMonth(2026, 1),
       input: { ...input, settleCurrentTax: false },
       openingState: canonicalOpeningState(input),
     });
 
     const february = runVerticalSlicePeriod({
-      period: month(2026, 2),
+      period: utcMonth(2026, 2),
       input: { ...input, monthlyGrossCompensation: money("0"), retirementContribution: money("0"), monthlyLivingExpense: money("0"), settleCurrentTax: false },
       openingState: january.state,
       taxSettlements: [{
@@ -172,7 +176,7 @@ describe("Vertical Slice 1", () => {
 
   it("is deterministic for identical inputs", () => {
     const request = {
-      period: month(2026, 1),
+      period: utcMonth(2026, 1),
       input,
       openingState: canonicalOpeningState(input),
     };
@@ -181,9 +185,17 @@ describe("Vertical Slice 1", () => {
 
   it("requires explicit currency precision at posted input boundaries", () => {
     expect(() => runVerticalSlicePeriod({
-      period: month(2026, 1),
+      period: utcMonth(2026, 1),
       input: { ...input, monthlyGrossCompensation: money("10000.001") },
       openingState: canonicalOpeningState(input),
     })).toThrow(/currency settlement precision/);
+  });
+
+  it.each(["-1", "101"])("rejects an out-of-range tax percentage of %s", (value) => {
+    expect(() => runVerticalSlicePeriod({
+      period: utcMonth(2026, 1),
+      input: { ...input, taxRate: Percentage.parse(value).toRatio() },
+      openingState: canonicalOpeningState(input),
+    })).toThrow(/Tax ratio must be from 0 to 1/);
   });
 });

@@ -1,4 +1,4 @@
-import { Money, Rate, RateBasis, canonicalOpeningState, dollars, domainId, money, month, runVerticalSlicePeriod, type VerticalSliceInput } from "./verticalSlice1.js";
+import { Money, Percentage, RoundingPolicy, canonicalOpeningState, domainId, formatMoney, money, runVerticalSlicePeriod, utcMonth, type VerticalSliceInput } from "./verticalSlice1.js";
 
 const byId = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -12,7 +12,9 @@ const summary = byId<HTMLDivElement>("summary");
 const timeline = byId<HTMLOListElement>("timeline");
 const transactions = byId<HTMLTableSectionElement>("transactions");
 
-const currency = (value: Money): string => dollars(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+const currency = (value: Money): string =>
+  formatMoney(value, RoundingPolicy.currency(value.currency.minorUnitScale, "half_up"))
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
 const numberValue = (name: string): string => {
   const input = form.elements.namedItem(name);
@@ -30,13 +32,13 @@ const render = (): void => {
       retirementAccountId: domainId("account", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
       taxLiabilityId: domainId("liability", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
       monthlyGrossCompensation: money(numberValue("grossCompensation")),
-      taxRate: Rate.fromPercentage(numberValue("taxRate"), RateBasis.Proportion),
+      taxRate: Percentage.parse(numberValue("taxRate")).toRatio(),
       retirementContribution: money(numberValue("retirementContribution")),
       monthlyLivingExpense: money(numberValue("livingExpenses")),
     };
 
     const result = runVerticalSlicePeriod({
-      period: month(2026, 1),
+      period: utcMonth(2026, 1),
       input,
       openingState: canonicalOpeningState(input),
     });

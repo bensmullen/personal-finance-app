@@ -9,13 +9,12 @@ import {
   RoundingPolicy,
   USD,
   decimal,
-  settlementRounding,
   sumMoney,
 } from "./values.js";
 
-export { instant, month, period, type Period } from "./time.js";
+export { instant, period, utcMonth, type Period } from "./time.js";
 export { domainId, type DomainId } from "./identity.js";
-export { Money, Rate, RateBasis, formatMoney as dollars, money } from "./values.js";
+export { Money, Rate, RateBasis, RoundingPolicy, formatMoney, money, rateConvention } from "./values.js";
 
 export type AccountId = DomainId<"account">;
 export type PositionId = DomainId<"position">;
@@ -80,7 +79,7 @@ const clone = (state: SimulationState): SimulationState => ({
 export const assertBalanced = (transaction: Transaction): void => {
   const currency = transaction.legs[0]?.amount.currency ?? USD;
   for (const leg of transaction.legs) {
-    if (!leg.amount.amount.equals(leg.amount.amount.round(settlementRounding(leg.amount.currency)))) {
+    if (!leg.amount.amount.fitsScale(leg.amount.currency.minorUnitScale)) {
       throw new Error(`Posted amount in ${transaction.id} exceeds ${leg.amount.currency.code} settlement precision`);
     }
   }
@@ -236,11 +235,18 @@ function deriveStatements(state: SimulationState, transactions: Transaction[]): 
 const divisionPrecision = new RoundingPolicy(30, "half_even");
 
 const monthlyNominalRate = (annualRate: Rate): DecimalAmount => {
-  if (annualRate.basis !== RateBasis.NominalAnnual) throw new Error("Mortgage rate must use the nominal annual basis");
-  return annualRate.value.dividedBy(decimal("12"), divisionPrecision);
+  if (annualRate.convention.basis !== RateBasis.NominalAnnual || annualRate.convention.compoundingPeriodsPerYear !== 12) {
+    throw new Error("Monthly mortgage rate requires nominal annual convention with 12 contractual compounding periods");
+  }
+  return annualRate.value.dividedBy(decimal(annualRate.convention.compoundingPeriodsPerYear.toString()), divisionPrecision);
 };
 
-export function fixedMortgagePayment(principal: Money, annualRate: Rate, remainingPayments: number): Money {
+export function fixedMortgagePayment(
+  principal: Money,
+  annualRate: Rate,
+  remainingPayments: number,
+  postingRounding: RoundingPolicy,
+): Money {
   if (!Number.isSafeInteger(remainingPayments) || remainingPayments <= 0 || principal.isNegative()) {
     throw new Error("Invalid mortgage terms");
   }
@@ -251,11 +257,11 @@ export function fixedMortgagePayment(principal: Money, annualRate: Rate, remaini
         const factor = decimal("1").plus(periodicRate).pow(remainingPayments);
         return principal.amount.times(periodicRate).times(factor).dividedBy(factor.minus(decimal("1")), divisionPrecision);
       })();
-  return new Money(unrounded.round(settlementRounding(principal.currency)), principal.currency);
+  return new Money(unrounded.round(postingRounding), principal.currency);
 }
 
-export function mortgageInterest(principal: Money, annualRate: Rate): Money {
-  const interest = principal.amount.times(monthlyNominalRate(annualRate)).round(settlementRounding(principal.currency));
+export function mortgageInterest(principal: Money, annualRate: Rate, accrualRounding: RoundingPolicy): Money {
+  const interest = principal.amount.times(monthlyNominalRate(annualRate)).round(accrualRounding);
   return new Money(interest, principal.currency);
 }
 

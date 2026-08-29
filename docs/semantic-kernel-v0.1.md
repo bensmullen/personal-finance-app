@@ -14,7 +14,7 @@ The intended production lifecycle remains the specification's semantic-barrier s
 
 ## Temporal model
 
-`Period` is `[start,end)`. `month()` constructs calendar-month boundaries in UTC and `SemanticRunner` rejects events at or after the period end. This explicitly tests the half-open execution boundary.
+`Period` is `[start,end)`. `utcMonth()` constructs boundaries only for fixtures and explicitly UTC schedules; it is not a household calendar-month API. `SemanticRunner` rejects events at or after the period end. This explicitly tests the half-open execution boundary.
 
 ## Dependencies
 

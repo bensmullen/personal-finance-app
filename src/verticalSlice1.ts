@@ -3,17 +3,16 @@ import type { DomainId } from "./identity.js";
 import {
   type Currency,
   Money,
-  Rate,
-  RateBasis,
+  Ratio,
+  RoundingPolicy,
   USD,
   decimal,
-  settlementRounding,
   sumMoney,
 } from "./values.js";
 
-export { instant, month, period, type Period } from "./time.js";
+export { instant, period, utcMonth, type Period } from "./time.js";
 export { domainId, type DomainId } from "./identity.js";
-export { Money, Rate, RateBasis, formatMoney as dollars, money } from "./values.js";
+export { Money, Percentage, Ratio, RoundingPolicy, formatMoney, money } from "./values.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -91,7 +90,7 @@ export interface VerticalSliceInput {
   retirementAccountId: AccountId;
   taxLiabilityId: LiabilityId;
   monthlyGrossCompensation: Money;
-  taxRate: Rate;
+  taxRate: Ratio;
   retirementContribution: Money;
   monthlyLivingExpense: Money;
   settleCurrentTax?: boolean;
@@ -151,18 +150,21 @@ const cloneState = (state: SliceState): SliceState => ({
   postedTransactionIds: [...state.postedTransactionIds],
 });
 
-export const calculateTax = (base: Money, taxRate: Rate): Money => {
-  if (taxRate.basis !== RateBasis.Proportion || taxRate.value.compare(decimal("1")) > 0) {
-    throw new Error("Tax rate must be a proportion from 0 to 1");
+export const verticalSlicePostingRounding = (currency: Currency): RoundingPolicy =>
+  RoundingPolicy.currency(currency.minorUnitScale, "half_up");
+
+export const calculateTax = (base: Money, taxRate: Ratio, postingRounding: RoundingPolicy): Money => {
+  if (taxRate.value.isNegative() || taxRate.value.compare(decimal("1")) > 0) {
+    throw new Error("Tax ratio must be from 0 to 1");
   }
   if (base.isNegative()) throw new Error("Tax base cannot be negative");
-  return new Money(base.amount.times(taxRate.value).round(settlementRounding(base.currency)), base.currency);
+  return new Money(base.amount.times(taxRate.value).round(postingRounding), base.currency);
 };
 
 export const assertBalanced = (transaction: AccountingTransaction): void => {
   const currency = transaction.legs[0]?.amount.currency ?? USD;
   for (const leg of transaction.legs) {
-    if (!leg.amount.amount.equals(leg.amount.amount.round(settlementRounding(leg.amount.currency)))) {
+    if (!leg.amount.amount.fitsScale(leg.amount.currency.minorUnitScale)) {
       throw new Error(`Posted amount in ${transaction.id} exceeds ${leg.amount.currency.code} settlement precision`);
     }
   }
@@ -183,11 +185,11 @@ const validateState = (state: SliceState, input: VerticalSliceInput): void => {
   for (const amount of [input.monthlyGrossCompensation, input.retirementContribution, input.monthlyLivingExpense]) {
     if (amount.isNegative()) throw new Error("Domain amounts cannot be negative");
     if (!amount.currency.equals(currency)) throw new Error("Input money must use the model currency");
-    if (!amount.amount.equals(amount.amount.round(settlementRounding(currency)))) {
+    if (!amount.amount.fitsScale(currency.minorUnitScale)) {
       throw new Error("Vertical Slice 1 posted inputs must use currency settlement precision");
     }
   }
-  calculateTax(Money.zero(currency), input.taxRate);
+  calculateTax(Money.zero(currency), input.taxRate, verticalSlicePostingRounding(currency));
 };
 
 const post = (state: SliceState, transaction: AccountingTransaction): void => {
@@ -265,6 +267,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
   const state = cloneState(request.openingState);
   const input = request.input;
   const currency = input.currency ?? USD;
+  const postingRounding = verticalSlicePostingRounding(currency);
   validateState(state, input);
 
   const compensationAt = subtractMilliseconds(request.period.end, 5);
@@ -307,7 +310,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
       ],
     });
 
-    taxAmount = calculateTax(input.monthlyGrossCompensation, input.taxRate);
+    taxAmount = calculateTax(input.monthlyGrossCompensation, input.taxRate, postingRounding);
     if (taxAmount.isPositive()) {
       const taxRecognition: RecognitionFact = {
         id: `recognition:tax:${request.period.start}`,

@@ -1,6 +1,6 @@
 # Personal Finance App — Executable Financial Semantics Specification
 
-**Version:** 0.1.3-draft  
+**Version:** 0.1.4-draft
 **Status:** Draft implementation contract  
 **Namespace:** `pfm`  
 **Depends on:** `personal_finance_canonical_schema_v1.0.json`, `personal_finance_model.schema.json`, `personal_finance_simulation_interfaces_v1.0.ts`
@@ -125,7 +125,9 @@ Every primitive depending on elapsed time or accrued amount MUST declare a tempo
 - `boundary_state`;
 - `explicit_timestamp_schedule`.
 
-When elapsed-time proration is required, the primitive MUST declare its day-count basis. Supported bases include actual/actual, actual/365, actual/360, 30/360, and calendar-month fraction.
+When elapsed-time proration is required, the primitive MUST declare its complete day-count convention. Supported conventions are Actual/Actual ISDA, Actual/365 Fixed, Actual/360, and 30E/360. Labels such as `actual/actual` and `30/360` are incomplete and MUST NOT be used without their named variant.
+
+Calendar-month fraction is not a generic day-count convention. A primitive that uses it MUST declare its schedule, calendar, timezone, and stub-period behavior explicitly.
 
 The engine MUST NOT silently infer a basis.
 
@@ -133,7 +135,7 @@ The engine MUST NOT silently infer a basis.
 
 An amount per occurrence is not an annualized rate and MUST NOT be rescaled merely because the simulation timestep differs.
 
-Rates MUST declare their basis: per-period, nominal annual, effective annual, continuous, or another explicit basis.
+Rates MUST declare their basis: periodic, nominal annual, effective annual, continuous, or another explicit basis. A periodic rate MUST identify its contractual period. A nominal annual rate MUST carry its positive integer contractual compounding frequency `m`.
 
 For effective annual rate `r` over year fraction `f`:
 
