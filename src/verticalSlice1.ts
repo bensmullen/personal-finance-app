@@ -121,6 +121,7 @@ export interface Statements {
   netWorth: Money;
   income: Money;
   expenses: Money;
+  netIncome: Money;
   operatingCashFlow: Money;
 }
 
@@ -419,6 +420,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
   const liabilities = sum(Object.values(state.liabilities).map((liability) => liability.balance));
   const income = sum(transactions.flatMap((tx) => tx.legs.filter((leg) => leg.type === "income" && leg.posting === "credit").map((leg) => leg.amount)));
   const expenses = sum(transactions.flatMap((tx) => tx.legs.filter((leg) => leg.type === "expense" && leg.posting === "debit").map((leg) => leg.amount)));
+  const netIncome = income - expenses;
   const operatingCashFlow = sum(
     transactions
       .filter((tx) => tx.cashFlowClass === "operating")
@@ -442,7 +444,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     recognitions,
     transactions,
     dependencyOrder,
-    statements: { assets, liabilities, netWorth: assets - liabilities, income, expenses, operatingCashFlow },
+    statements: { assets, liabilities, netWorth: assets - liabilities, income, expenses, netIncome, operatingCashFlow },
     outputs: {
       grossCompensation: input.monthlyGrossCompensation,
       taxExpense: taxAmount,
