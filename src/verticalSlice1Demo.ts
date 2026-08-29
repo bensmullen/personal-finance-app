@@ -1,4 +1,4 @@
-import { dollars, money, month, runVerticalSlicePeriod, type VerticalSliceInput } from "./verticalSlice1.js";
+import { Rate, RateBasis, canonicalOpeningState, dollars, domainId, money, month, runVerticalSlicePeriod, type VerticalSliceInput } from "./verticalSlice1.js";
 
 export interface DemoRow {
   label: string;
@@ -14,13 +14,13 @@ export interface DemoViewModel {
 
 export const buildVerticalSliceDemo = (): DemoViewModel => {
   const input: VerticalSliceInput = {
-    householdId: "demo-household",
-    ownerId: "demo-person",
-    checkingAccountId: "demo-checking",
-    retirementAccountId: "demo-retirement",
-    taxLiabilityId: "demo-tax-payable",
+    householdId: domainId("household", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    ownerId: domainId("person", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+    checkingAccountId: domainId("account", "cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+    retirementAccountId: domainId("account", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+    taxLiabilityId: domainId("liability", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
     monthlyGrossCompensation: money("10000"),
-    taxRateBasisPoints: 2000,
+    taxRate: Rate.fromPercentage("20", RateBasis.Proportion),
     retirementContribution: money("2000"),
     monthlyLivingExpense: money("4000"),
   };
@@ -28,15 +28,7 @@ export const buildVerticalSliceDemo = (): DemoViewModel => {
   const result = runVerticalSlicePeriod({
     period: month(2026, 1),
     input,
-    openingState: {
-      accounts: {
-        [input.checkingAccountId]: { id: input.checkingAccountId, ownerId: input.ownerId, kind: "checking", cash: 0n },
-        [input.retirementAccountId]: { id: input.retirementAccountId, ownerId: input.ownerId, kind: "retirement", cash: 0n },
-      },
-      liabilities: { [input.taxLiabilityId]: { id: input.taxLiabilityId, balance: 0n } },
-      obligations: {},
-      postedTransactionIds: [],
-    },
+    openingState: canonicalOpeningState(input),
   });
 
   return {
@@ -54,7 +46,7 @@ export const buildVerticalSliceDemo = (): DemoViewModel => {
     ],
     transactions: result.transactions.map((transaction) => ({
       type: transaction.type,
-      amount: dollars(transaction.legs.find((leg) => leg.posting === "debit")?.amount ?? 0n),
+      amount: dollars(transaction.legs.find((leg) => leg.posting === "debit")!.amount),
       cashFlow: transaction.cashFlowClass,
     })),
   };

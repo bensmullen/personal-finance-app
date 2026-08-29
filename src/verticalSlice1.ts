@@ -1,47 +1,44 @@
-export type Money = bigint;
+import { type Instant, type Period, inPeriod, subtractMilliseconds } from "./time.js";
+import type { DomainId } from "./identity.js";
+import {
+  type Currency,
+  Money,
+  Rate,
+  RateBasis,
+  USD,
+  decimal,
+  settlementRounding,
+  sumMoney,
+} from "./values.js";
 
-export const money = (value: string): Money => {
-  const raw = value.trim();
-  const sign = raw.startsWith("-") ? -1n : 1n;
-  const unsigned = raw.replace(/^[+-]/, "");
-  const [whole = "", fraction = ""] = unsigned.split(".");
-  if (!/^\d+$/.test(whole) || !/^\d{0,2}$/.test(fraction)) throw new Error(`Invalid money: ${value}`);
-  return sign * (BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0")));
-};
+export { instant, month, period, type Period } from "./time.js";
+export { domainId, type DomainId } from "./identity.js";
+export { Money, Rate, RateBasis, formatMoney as dollars, money } from "./values.js";
 
-export const dollars = (value: Money): string => {
-  const absolute = value < 0n ? -value : value;
-  return `${value < 0n ? "-" : ""}$${absolute / 100n}.${(absolute % 100n).toString().padStart(2, "0")}`;
-};
-
-export interface Period { start: string; end: string; }
-
-export const month = (year: number, month1: number): Period => ({
-  start: new Date(Date.UTC(year, month1 - 1, 1)).toISOString(),
-  end: new Date(Date.UTC(year, month1, 1)).toISOString(),
-});
-
-export const inPeriod = (instant: string, period: Period): boolean => instant >= period.start && instant < period.end;
+export type HouseholdId = DomainId<"household">;
+export type PersonId = DomainId<"person">;
+export type AccountId = DomainId<"account">;
+export type LiabilityId = DomainId<"liability">;
 
 export interface AccountState {
-  id: string;
-  ownerId: string;
+  id: AccountId;
+  ownerId: PersonId;
   kind: "checking" | "retirement";
   cash: Money;
 }
 
-export interface LiabilityState { id: string; balance: Money; }
+export interface LiabilityState { id: LiabilityId; balance: Money; }
 
 export interface Obligation {
   id: string;
   type: "tax_payable";
   originatingRecognitionId: string;
-  ownerId: string;
-  liabilityId: string;
+  ownerId: PersonId;
+  liabilityId: LiabilityId;
   originalAmount: Money;
   outstandingAmount: Money;
-  currency: string;
-  recognizedAt: string;
+  currency: Currency;
+  recognizedAt: Instant;
   settlementIds: string[];
   status: "outstanding" | "partially_settled" | "settled";
 }
@@ -57,8 +54,8 @@ export interface RecognitionFact {
   id: string;
   kind: "compensation" | "tax_expense" | "living_expense";
   amount: Money;
-  currency: string;
-  recognizedAt: string;
+  currency: Currency;
+  recognizedAt: Instant;
 }
 
 export interface SemanticEffect {
@@ -66,7 +63,7 @@ export interface SemanticEffect {
   kind: "flow" | "recognition" | "obligation" | "settlement";
   category: "compensation" | "tax" | "retirement_transfer" | "living_expense";
   amount: Money;
-  occurredAt: string;
+  occurredAt: Instant;
   recognitionId?: string;
   obligationId?: string;
 }
@@ -75,37 +72,37 @@ export interface AccountingLeg {
   posting: "debit" | "credit";
   type: "cash" | "income" | "expense" | "liability";
   amount: Money;
-  accountId?: string;
-  entityId?: string;
+  accountId?: AccountId;
+  entityId?: LiabilityId;
 }
 
 export interface AccountingTransaction {
   id: string;
-  date: string;
+  date: Instant;
   type: "income" | "tax_accrual" | "tax_settlement" | "internal_transfer" | "expense";
   cashFlowClass: "operating" | "non_cash";
   legs: AccountingLeg[];
 }
 
 export interface VerticalSliceInput {
-  householdId: string;
-  ownerId: string;
-  checkingAccountId: string;
-  retirementAccountId: string;
-  taxLiabilityId: string;
+  householdId: HouseholdId;
+  ownerId: PersonId;
+  checkingAccountId: AccountId;
+  retirementAccountId: AccountId;
+  taxLiabilityId: LiabilityId;
   monthlyGrossCompensation: Money;
-  taxRateBasisPoints: number;
+  taxRate: Rate;
   retirementContribution: Money;
   monthlyLivingExpense: Money;
   settleCurrentTax?: boolean;
-  currency?: string;
+  currency?: Currency;
 }
 
 export interface TaxSettlementRequest {
   settlementId: string;
   obligationId: string;
   amount: Money;
-  date: string;
+  date: Instant;
 }
 
 export interface VerticalSlicePeriodInput {
@@ -144,24 +141,34 @@ export interface VerticalSliceResult {
   };
 }
 
-const sum = (values: Money[]): Money => values.reduce((a, b) => a + b, 0n);
-const clone = <T>(value: T): T => structuredClone(value);
+const cloneState = (state: SliceState): SliceState => ({
+  accounts: Object.fromEntries(Object.entries(state.accounts).map(([key, value]) => [key, { ...value }])),
+  liabilities: Object.fromEntries(Object.entries(state.liabilities).map(([key, value]) => [key, { ...value }])),
+  obligations: Object.fromEntries(Object.entries(state.obligations).map(([key, value]) => [key, {
+    ...value,
+    settlementIds: [...value.settlementIds],
+  }])),
+  postedTransactionIds: [...state.postedTransactionIds],
+});
 
-const atEndMinus = (period: Period, milliseconds: number): string =>
-  new Date(new Date(period.end).getTime() - milliseconds).toISOString();
-
-export const calculateTax = (base: Money, rateBasisPoints: number): Money => {
-  if (!Number.isInteger(rateBasisPoints) || rateBasisPoints < 0 || rateBasisPoints > 10000) {
-    throw new Error("Tax rate basis points must be an integer from 0 to 10000");
+export const calculateTax = (base: Money, taxRate: Rate): Money => {
+  if (taxRate.basis !== RateBasis.Proportion || taxRate.value.compare(decimal("1")) > 0) {
+    throw new Error("Tax rate must be a proportion from 0 to 1");
   }
-  if (base < 0n) throw new Error("Tax base cannot be negative");
-  return (base * BigInt(rateBasisPoints) + 5000n) / 10000n;
+  if (base.isNegative()) throw new Error("Tax base cannot be negative");
+  return new Money(base.amount.times(taxRate.value).round(settlementRounding(base.currency)), base.currency);
 };
 
 export const assertBalanced = (transaction: AccountingTransaction): void => {
-  const debits = sum(transaction.legs.filter((leg) => leg.posting === "debit").map((leg) => leg.amount));
-  const credits = sum(transaction.legs.filter((leg) => leg.posting === "credit").map((leg) => leg.amount));
-  if (debits !== credits) throw new Error(`Unbalanced transaction ${transaction.id}: ${debits} != ${credits}`);
+  const currency = transaction.legs[0]?.amount.currency ?? USD;
+  for (const leg of transaction.legs) {
+    if (!leg.amount.amount.equals(leg.amount.amount.round(settlementRounding(leg.amount.currency)))) {
+      throw new Error(`Posted amount in ${transaction.id} exceeds ${leg.amount.currency.code} settlement precision`);
+    }
+  }
+  const debits = sumMoney(transaction.legs.filter((leg) => leg.posting === "debit").map((leg) => leg.amount), currency);
+  const credits = sumMoney(transaction.legs.filter((leg) => leg.posting === "credit").map((leg) => leg.amount), currency);
+  if (!debits.equals(credits)) throw new Error(`Unbalanced transaction ${transaction.id}: ${debits.amount} != ${credits.amount}`);
 };
 
 const validateState = (state: SliceState, input: VerticalSliceInput): void => {
@@ -172,10 +179,15 @@ const validateState = (state: SliceState, input: VerticalSliceInput): void => {
   if (checking.ownerId !== input.ownerId || retirement.ownerId !== input.ownerId) {
     throw new Error("Retirement transfer requires common household ownership");
   }
-  if ([input.monthlyGrossCompensation, input.retirementContribution, input.monthlyLivingExpense].some((amount) => amount < 0n)) {
-    throw new Error("Domain amounts cannot be negative");
+  const currency = input.currency ?? USD;
+  for (const amount of [input.monthlyGrossCompensation, input.retirementContribution, input.monthlyLivingExpense]) {
+    if (amount.isNegative()) throw new Error("Domain amounts cannot be negative");
+    if (!amount.currency.equals(currency)) throw new Error("Input money must use the model currency");
+    if (!amount.amount.equals(amount.amount.round(settlementRounding(currency)))) {
+      throw new Error("Vertical Slice 1 posted inputs must use currency settlement precision");
+    }
   }
-  calculateTax(0n, input.taxRateBasisPoints);
+  calculateTax(Money.zero(currency), input.taxRate);
 };
 
 const post = (state: SliceState, transaction: AccountingTransaction): void => {
@@ -187,14 +199,14 @@ const post = (state: SliceState, transaction: AccountingTransaction): void => {
       if (!leg.accountId) throw new Error(`Missing cash account in ${transaction.id}`);
       const account = state.accounts[leg.accountId];
       if (!account) throw new Error(`Unknown account ${leg.accountId}`);
-      account.cash += leg.posting === "debit" ? leg.amount : -leg.amount;
-      if (account.cash < 0n) throw new Error(`Insufficient cash in ${account.id}`);
+      account.cash = leg.posting === "debit" ? account.cash.plus(leg.amount) : account.cash.minus(leg.amount);
+      if (account.cash.isNegative()) throw new Error(`Insufficient cash in ${account.id}`);
     } else if (leg.type === "liability") {
       if (!leg.entityId) throw new Error(`Missing liability in ${transaction.id}`);
       const liability = state.liabilities[leg.entityId];
       if (!liability) throw new Error(`Unknown liability ${leg.entityId}`);
-      liability.balance += leg.posting === "credit" ? leg.amount : -leg.amount;
-      if (liability.balance < 0n) throw new Error(`Negative liability balance in ${liability.id}`);
+      liability.balance = leg.posting === "credit" ? liability.balance.plus(leg.amount) : liability.balance.minus(leg.amount);
+      if (liability.balance.isNegative()) throw new Error(`Negative liability balance in ${liability.id}`);
     }
   }
   state.postedTransactionIds.push(transaction.id);
@@ -211,7 +223,7 @@ const createTaxObligation = (state: SliceState, recognition: RecognitionFact, in
     liabilityId: input.taxLiabilityId,
     originalAmount: recognition.amount,
     outstandingAmount: recognition.amount,
-    currency: input.currency ?? "USD",
+    currency: input.currency ?? USD,
     recognizedAt: recognition.recognizedAt,
     settlementIds: [],
     status: "outstanding",
@@ -223,14 +235,14 @@ const createTaxObligation = (state: SliceState, recognition: RecognitionFact, in
 const applySettlementLifecycle = (state: SliceState, settlement: TaxSettlementRequest): Obligation => {
   const obligation = state.obligations[settlement.obligationId];
   if (!obligation) throw new Error(`Missing obligation ${settlement.obligationId}`);
-  if (settlement.amount <= 0n) throw new Error("Settlement must be positive");
-  if (settlement.amount > obligation.outstandingAmount) throw new Error("Settlement exceeds outstanding obligation");
+  if (!settlement.amount.isPositive()) throw new Error("Settlement must be positive");
+  if (settlement.amount.compare(obligation.outstandingAmount) > 0) throw new Error("Settlement exceeds outstanding obligation");
   if (obligation.settlementIds.includes(settlement.settlementId)) throw new Error(`Duplicate settlement ${settlement.settlementId}`);
   if (settlement.date < obligation.recognizedAt) throw new Error("Settlement cannot precede recognition");
 
-  obligation.outstandingAmount -= settlement.amount;
+  obligation.outstandingAmount = obligation.outstandingAmount.minus(settlement.amount);
   obligation.settlementIds.push(settlement.settlementId);
-  obligation.status = obligation.outstandingAmount === 0n ? "settled" : "partially_settled";
+  obligation.status = obligation.outstandingAmount.isZero() ? "settled" : "partially_settled";
   return obligation;
 };
 
@@ -250,24 +262,24 @@ const taxSettlementTransaction = (
 
 export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): VerticalSliceResult {
   if (request.period.start >= request.period.end) throw new Error("Period must be a non-empty half-open interval");
-  const state = clone(request.openingState);
+  const state = cloneState(request.openingState);
   const input = request.input;
-  const currency = input.currency ?? "USD";
+  const currency = input.currency ?? USD;
   validateState(state, input);
 
-  const compensationAt = atEndMinus(request.period, 5);
-  const taxRecognitionAt = atEndMinus(request.period, 4);
-  const taxSettlementAt = atEndMinus(request.period, 3);
-  const retirementAt = atEndMinus(request.period, 2);
-  const livingExpenseAt = atEndMinus(request.period, 1);
+  const compensationAt = subtractMilliseconds(request.period.end, 5);
+  const taxRecognitionAt = subtractMilliseconds(request.period.end, 4);
+  const taxSettlementAt = subtractMilliseconds(request.period.end, 3);
+  const retirementAt = subtractMilliseconds(request.period.end, 2);
+  const livingExpenseAt = subtractMilliseconds(request.period.end, 1);
 
   const effects: SemanticEffect[] = [];
   const recognitions: RecognitionFact[] = [];
   const transactions: AccountingTransaction[] = [];
-  let taxAmount = 0n;
+  let taxAmount = Money.zero(currency);
   let currentTaxObligation: Obligation | undefined;
 
-  if (input.monthlyGrossCompensation > 0n) {
+  if (input.monthlyGrossCompensation.isPositive()) {
     const compensationRecognition: RecognitionFact = {
       id: `recognition:compensation:${request.period.start}`,
       kind: "compensation",
@@ -295,8 +307,8 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
       ],
     });
 
-    taxAmount = calculateTax(input.monthlyGrossCompensation, input.taxRateBasisPoints);
-    if (taxAmount > 0n) {
+    taxAmount = calculateTax(input.monthlyGrossCompensation, input.taxRate);
+    if (taxAmount.isPositive()) {
       const taxRecognition: RecognitionFact = {
         id: `recognition:tax:${request.period.start}`,
         kind: "tax_expense",
@@ -347,7 +359,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     }
   }
 
-  if (input.retirementContribution > 0n) {
+  if (input.retirementContribution.isPositive()) {
     effects.push({
       id: `effect:retirement:${request.period.start}`,
       kind: "flow",
@@ -367,7 +379,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     });
   }
 
-  if (input.monthlyLivingExpense > 0n) {
+  if (input.monthlyLivingExpense.isPositive()) {
     const livingRecognition: RecognitionFact = {
       id: `recognition:living:${request.period.start}`,
       kind: "living_expense",
@@ -410,21 +422,28 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     transactions.push(taxSettlementTransaction(settlement, input));
   }
 
-  transactions.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  transactions.sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id));
   for (const transaction of transactions) {
     if (!inPeriod(transaction.date, request.period)) throw new Error(`Transaction ${transaction.id} is outside period`);
     post(state, transaction);
   }
 
-  const assets = sum(Object.values(state.accounts).map((account) => account.cash));
-  const liabilities = sum(Object.values(state.liabilities).map((liability) => liability.balance));
-  const income = sum(transactions.flatMap((tx) => tx.legs.filter((leg) => leg.type === "income" && leg.posting === "credit").map((leg) => leg.amount)));
-  const expenses = sum(transactions.flatMap((tx) => tx.legs.filter((leg) => leg.type === "expense" && leg.posting === "debit").map((leg) => leg.amount)));
-  const netIncome = income - expenses;
-  const operatingCashFlow = sum(
+  const assets = sumMoney(Object.values(state.accounts).map((account) => account.cash), currency);
+  const liabilities = sumMoney(Object.values(state.liabilities).map((liability) => liability.balance), currency);
+  const income = sumMoney(transactions.flatMap((transaction) => transaction.legs
+    .filter((leg) => leg.type === "income" && leg.posting === "credit")
+    .map((leg) => leg.amount)), currency);
+  const expenses = sumMoney(transactions.flatMap((transaction) => transaction.legs
+    .filter((leg) => leg.type === "expense" && leg.posting === "debit")
+    .map((leg) => leg.amount)), currency);
+  const netIncome = income.minus(expenses);
+  const operatingCashFlow = sumMoney(
     transactions
-      .filter((tx) => tx.cashFlowClass === "operating")
-      .flatMap((tx) => tx.legs.filter((leg) => leg.type === "cash").map((leg) => leg.posting === "debit" ? leg.amount : -leg.amount)),
+      .filter((transaction) => transaction.cashFlowClass === "operating")
+      .flatMap((transaction) => transaction.legs
+        .filter((leg) => leg.type === "cash")
+        .map((leg) => leg.posting === "debit" ? leg.amount : leg.amount.negated())),
+    currency,
   );
 
   const dependencyOrder = [
@@ -444,7 +463,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     recognitions,
     transactions,
     dependencyOrder,
-    statements: { assets, liabilities, netWorth: assets - liabilities, income, expenses, netIncome, operatingCashFlow },
+    statements: { assets, liabilities, netWorth: assets.minus(liabilities), income, expenses, netIncome, operatingCashFlow },
     outputs: {
       grossCompensation: input.monthlyGrossCompensation,
       taxExpense: taxAmount,
@@ -458,12 +477,15 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
   };
 }
 
-export const canonicalOpeningState = (input: VerticalSliceInput): SliceState => ({
-  accounts: {
-    [input.checkingAccountId]: { id: input.checkingAccountId, ownerId: input.ownerId, kind: "checking", cash: 0n },
-    [input.retirementAccountId]: { id: input.retirementAccountId, ownerId: input.ownerId, kind: "retirement", cash: 0n },
-  },
-  liabilities: { [input.taxLiabilityId]: { id: input.taxLiabilityId, balance: 0n } },
-  obligations: {},
-  postedTransactionIds: [],
-});
+export const canonicalOpeningState = (input: VerticalSliceInput): SliceState => {
+  const currency = input.currency ?? USD;
+  return {
+    accounts: {
+      [input.checkingAccountId]: { id: input.checkingAccountId, ownerId: input.ownerId, kind: "checking", cash: Money.zero(currency) },
+      [input.retirementAccountId]: { id: input.retirementAccountId, ownerId: input.ownerId, kind: "retirement", cash: Money.zero(currency) },
+    },
+    liabilities: { [input.taxLiabilityId]: { id: input.taxLiabilityId, balance: Money.zero(currency) } },
+    obligations: {},
+    postedTransactionIds: [],
+  };
+};
