@@ -5,9 +5,7 @@ export const money = (value: string): Money => {
   const sign = raw.startsWith("-") ? -1n : 1n;
   const unsigned = raw.replace(/^[+-]/, "");
   const [whole = "", fraction = ""] = unsigned.split(".");
-  if (!/^\d+$/.test(whole) || !/^\d{0,2}$/.test(fraction)) {
-    throw new Error(`Invalid money: ${value}`);
-  }
+  if (!/^\d+$/.test(whole) || !/^\d{0,2}$/.test(fraction)) throw new Error(`Invalid money: ${value}`);
   return sign * (BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0")));
 };
 
@@ -23,19 +21,7 @@ export const month = (year: number, month1: number): Period => ({
   end: new Date(Date.UTC(year, month1, 1)).toISOString(),
 });
 
-export const inPeriod = (instant: string, period: Period): boolean =>
-  instant >= period.start && instant < period.end;
-
-export type TransactionType =
-  | "income"
-  | "tax_accrual"
-  | "tax_settlement"
-  | "internal_transfer"
-  | "expense";
-
-export type CashFlowClass = "operating" | "non_cash";
-export type Posting = "debit" | "credit";
-export type SemanticKind = "flow" | "recognition" | "obligation" | "settlement";
+export const inPeriod = (instant: string, period: Period): boolean => instant >= period.start && instant < period.end;
 
 export interface AccountState {
   id: string;
@@ -44,10 +30,7 @@ export interface AccountState {
   cash: Money;
 }
 
-export interface LiabilityState {
-  id: string;
-  balance: Money;
-}
+export interface LiabilityState { id: string; balance: Money; }
 
 export interface Obligation {
   id: string;
@@ -59,7 +42,6 @@ export interface Obligation {
   outstandingAmount: Money;
   currency: string;
   recognizedAt: string;
-  dueAt?: string;
   settlementIds: string[];
   status: "outstanding" | "partially_settled" | "settled";
 }
@@ -81,7 +63,7 @@ export interface RecognitionFact {
 
 export interface SemanticEffect {
   id: string;
-  kind: SemanticKind;
+  kind: "flow" | "recognition" | "obligation" | "settlement";
   category: "compensation" | "tax" | "retirement_transfer" | "living_expense";
   amount: Money;
   occurredAt: string;
@@ -90,7 +72,7 @@ export interface SemanticEffect {
 }
 
 export interface AccountingLeg {
-  posting: Posting;
+  posting: "debit" | "credit";
   type: "cash" | "income" | "expense" | "liability";
   amount: Money;
   accountId?: string;
@@ -100,8 +82,8 @@ export interface AccountingLeg {
 export interface AccountingTransaction {
   id: string;
   date: string;
-  type: TransactionType;
-  cashFlowClass: CashFlowClass;
+  type: "income" | "tax_accrual" | "tax_settlement" | "internal_transfer" | "expense";
+  cashFlowClass: "operating" | "non_cash";
   legs: AccountingLeg[];
 }
 
@@ -112,17 +94,25 @@ export interface VerticalSliceInput {
   retirementAccountId: string;
   taxLiabilityId: string;
   monthlyGrossCompensation: Money;
-  taxRate: number;
+  taxRateBasisPoints: number;
   retirementContribution: Money;
   monthlyLivingExpense: Money;
+  settleCurrentTax?: boolean;
   currency?: string;
+}
+
+export interface TaxSettlementRequest {
+  settlementId: string;
+  obligationId: string;
+  amount: Money;
+  date: string;
 }
 
 export interface VerticalSlicePeriodInput {
   period: Period;
   input: VerticalSliceInput;
   openingState: SliceState;
-  taxSettlement?: { obligationId: string; amount: Money; date: string };
+  taxSettlements?: TaxSettlementRequest[];
 }
 
 export interface Statements {
@@ -139,6 +129,7 @@ export interface VerticalSliceResult {
   effects: SemanticEffect[];
   recognitions: RecognitionFact[];
   transactions: AccountingTransaction[];
+  dependencyOrder: string[];
   statements: Statements;
   outputs: {
     grossCompensation: Money;
@@ -152,42 +143,43 @@ export interface VerticalSliceResult {
   };
 }
 
-const clone = <T>(value: T): T => structuredClone(value);
 const sum = (values: Money[]): Money => values.reduce((a, b) => a + b, 0n);
+const clone = <T>(value: T): T => structuredClone(value);
+
+const atEndMinus = (period: Period, milliseconds: number): string =>
+  new Date(new Date(period.end).getTime() - milliseconds).toISOString();
+
+export const calculateTax = (base: Money, rateBasisPoints: number): Money => {
+  if (!Number.isInteger(rateBasisPoints) || rateBasisPoints < 0 || rateBasisPoints > 10000) {
+    throw new Error("Tax rate basis points must be an integer from 0 to 10000");
+  }
+  if (base < 0n) throw new Error("Tax base cannot be negative");
+  return (base * BigInt(rateBasisPoints) + 5000n) / 10000n;
+};
 
 export const assertBalanced = (transaction: AccountingTransaction): void => {
-  const debits = sum(transaction.legs.filter((l) => l.posting === "debit").map((l) => l.amount));
-  const credits = sum(transaction.legs.filter((l) => l.posting === "credit").map((l) => l.amount));
+  const debits = sum(transaction.legs.filter((leg) => leg.posting === "debit").map((leg) => leg.amount));
+  const credits = sum(transaction.legs.filter((leg) => leg.posting === "credit").map((leg) => leg.amount));
   if (debits !== credits) throw new Error(`Unbalanced transaction ${transaction.id}: ${debits} != ${credits}`);
 };
 
-const roundRateToCents = (base: Money, rate: number): Money => {
-  if (!Number.isFinite(rate) || rate < 0) throw new Error("Invalid tax rate");
-  const cents = Number(base) * rate;
-  if (!Number.isSafeInteger(Math.abs(cents))) throw new Error("Tax calculation exceeds safe integer boundary");
-  const rounded = Math.round(cents);
-  return BigInt(rounded);
-};
-
-const validateInitialState = (state: SliceState, input: VerticalSliceInput): void => {
+const validateState = (state: SliceState, input: VerticalSliceInput): void => {
   const checking = state.accounts[input.checkingAccountId];
   const retirement = state.accounts[input.retirementAccountId];
-  const liability = state.liabilities[input.taxLiabilityId];
   if (!checking || !retirement) throw new Error("Required cash accounts are missing");
-  if (!liability) throw new Error("Required tax liability is missing");
+  if (!state.liabilities[input.taxLiabilityId]) throw new Error("Required tax liability is missing");
   if (checking.ownerId !== input.ownerId || retirement.ownerId !== input.ownerId) {
     throw new Error("Retirement transfer requires common household ownership");
   }
-  if (input.monthlyGrossCompensation < 0n || input.retirementContribution < 0n || input.monthlyLivingExpense < 0n) {
+  if ([input.monthlyGrossCompensation, input.retirementContribution, input.monthlyLivingExpense].some((amount) => amount < 0n)) {
     throw new Error("Domain amounts cannot be negative");
   }
-}
+  calculateTax(0n, input.taxRateBasisPoints);
+};
 
 const post = (state: SliceState, transaction: AccountingTransaction): void => {
   assertBalanced(transaction);
-  if (state.postedTransactionIds.includes(transaction.id)) {
-    throw new Error(`Duplicate transaction ${transaction.id}`);
-  }
+  if (state.postedTransactionIds.includes(transaction.id)) throw new Error(`Duplicate transaction ${transaction.id}`);
 
   for (const leg of transaction.legs) {
     if (leg.type === "cash") {
@@ -196,8 +188,7 @@ const post = (state: SliceState, transaction: AccountingTransaction): void => {
       if (!account) throw new Error(`Unknown account ${leg.accountId}`);
       account.cash += leg.posting === "debit" ? leg.amount : -leg.amount;
       if (account.cash < 0n) throw new Error(`Insufficient cash in ${account.id}`);
-    }
-    if (leg.type === "liability") {
+    } else if (leg.type === "liability") {
       if (!leg.entityId) throw new Error(`Missing liability in ${transaction.id}`);
       const liability = state.liabilities[leg.entityId];
       if (!liability) throw new Error(`Unknown liability ${leg.entityId}`);
@@ -205,15 +196,10 @@ const post = (state: SliceState, transaction: AccountingTransaction): void => {
       if (liability.balance < 0n) throw new Error(`Negative liability balance in ${liability.id}`);
     }
   }
-
   state.postedTransactionIds.push(transaction.id);
 };
 
-const createTaxObligation = (
-  state: SliceState,
-  recognition: RecognitionFact,
-  input: VerticalSliceInput,
-): Obligation => {
+const createTaxObligation = (state: SliceState, recognition: RecognitionFact, input: VerticalSliceInput): Obligation => {
   const id = `obligation:${recognition.id}`;
   if (state.obligations[id]) throw new Error(`Duplicate recognition ${recognition.id}`);
   const obligation: Obligation = {
@@ -233,137 +219,199 @@ const createTaxObligation = (
   return obligation;
 };
 
-const settleObligation = (state: SliceState, settlement: NonNullable<VerticalSlicePeriodInput["taxSettlement"]>): void => {
+const applySettlementLifecycle = (state: SliceState, settlement: TaxSettlementRequest): Obligation => {
   const obligation = state.obligations[settlement.obligationId];
   if (!obligation) throw new Error(`Missing obligation ${settlement.obligationId}`);
   if (settlement.amount <= 0n) throw new Error("Settlement must be positive");
   if (settlement.amount > obligation.outstandingAmount) throw new Error("Settlement exceeds outstanding obligation");
-  if (obligation.settlementIds.includes(settlement.obligationId + ":" + settlement.date)) {
-    throw new Error("Duplicate settlement");
-  }
-  const settlementId = settlement.obligationId + ":" + settlement.date;
+  if (obligation.settlementIds.includes(settlement.settlementId)) throw new Error(`Duplicate settlement ${settlement.settlementId}`);
   if (settlement.date < obligation.recognizedAt) throw new Error("Settlement cannot precede recognition");
+
   obligation.outstandingAmount -= settlement.amount;
-  obligation.settlementIds.push(settlementId);
+  obligation.settlementIds.push(settlement.settlementId);
   obligation.status = obligation.outstandingAmount === 0n ? "settled" : "partially_settled";
+  return obligation;
 };
 
-export function runVerticalSlicePeriod(input: VerticalSlicePeriodInput): VerticalSliceResult {
-  const state = clone(input.openingState);
-  const domain = input.input;
-  const currency = domain.currency ?? "USD";
-  validateInitialState(state, domain);
+const taxSettlementTransaction = (
+  settlement: TaxSettlementRequest,
+  input: VerticalSliceInput,
+): AccountingTransaction => ({
+  id: `tx:tax-settlement:${settlement.settlementId}`,
+  date: settlement.date,
+  type: "tax_settlement",
+  cashFlowClass: "operating",
+  legs: [
+    { posting: "debit", type: "liability", amount: settlement.amount, entityId: input.taxLiabilityId },
+    { posting: "credit", type: "cash", amount: settlement.amount, accountId: input.checkingAccountId },
+  ],
+});
 
-  const occurrence = `${input.period.start}:salary`;
-  const compensationAmount = domain.monthlyGrossCompensation;
-  const taxAmount = roundRateToCents(compensationAmount, domain.taxRate);
-  const recognitionTime = new Date(new Date(input.period.end).getTime() - 1).toISOString();
-  if (!inPeriod(recognitionTime, input.period)) throw new Error("Recognition timestamp is outside period");
+export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): VerticalSliceResult {
+  if (request.period.start >= request.period.end) throw new Error("Period must be a non-empty half-open interval");
+  const state = clone(request.openingState);
+  const input = request.input;
+  const currency = input.currency ?? "USD";
+  validateState(state, input);
+
+  const compensationAt = atEndMinus(request.period, 5);
+  const taxRecognitionAt = atEndMinus(request.period, 4);
+  const taxSettlementAt = atEndMinus(request.period, 3);
+  const retirementAt = atEndMinus(request.period, 2);
+  const livingExpenseAt = atEndMinus(request.period, 1);
 
   const effects: SemanticEffect[] = [];
   const recognitions: RecognitionFact[] = [];
   const transactions: AccountingTransaction[] = [];
+  let taxAmount = 0n;
+  let currentTaxObligation: Obligation | undefined;
 
-  const compensationRecognition: RecognitionFact = {
-    id: `recognition:compensation:${input.period.start}`,
-    kind: "compensation",
-    amount: compensationAmount,
-    currency,
-    recognizedAt: recognitionTime,
-  };
-  recognitions.push(compensationRecognition);
-  effects.push({ id: occurrence, kind: "recognition", category: "compensation", amount: compensationAmount, occurredAt: recognitionTime, recognitionId: compensationRecognition.id });
-  transactions.push({
-    id: `tx:compensation:${input.period.start}`,
-    date: recognitionTime,
-    type: "income",
-    cashFlowClass: "operating",
-    legs: [
-      { posting: "debit", type: "cash", amount: compensationAmount, accountId: domain.checkingAccountId },
-      { posting: "credit", type: "income", amount: compensationAmount },
-    ],
-  });
-
-  const taxRecognition: RecognitionFact = {
-    id: `recognition:tax:${input.period.start}`,
-    kind: "tax_expense",
-    amount: taxAmount,
-    currency,
-    recognizedAt: recognitionTime,
-  };
-  recognitions.push(taxRecognition);
-  const obligation = createTaxObligation(state, taxRecognition, domain);
-  effects.push({ id: `tax:${input.period.start}`, kind: "obligation", category: "tax", amount: taxAmount, occurredAt: recognitionTime, recognitionId: taxRecognition.id, obligationId: obligation.id });
-  transactions.push({
-    id: `tx:tax-accrual:${input.period.start}`,
-    date: recognitionTime,
-    type: "tax_accrual",
-    cashFlowClass: "non_cash",
-    legs: [
-      { posting: "debit", type: "expense", amount: taxAmount },
-      { posting: "credit", type: "liability", amount: taxAmount, entityId: domain.taxLiabilityId },
-    ],
-  });
-
-  const retirementTransfer: AccountingTransaction = {
-    id: `tx:retirement:${input.period.start}`,
-    date: new Date(new Date(input.period.end).getTime() - 2).toISOString(),
-    type: "internal_transfer",
-    cashFlowClass: "non_cash",
-    legs: [
-      { posting: "debit", type: "cash", amount: domain.retirementContribution, accountId: domain.retirementAccountId },
-      { posting: "credit", type: "cash", amount: domain.retirementContribution, accountId: domain.checkingAccountId },
-    ],
-  };
-  effects.push({ id: `retirement:${input.period.start}`, kind: "flow", category: "retirement_transfer", amount: domain.retirementContribution, occurredAt: retirementTransfer.date });
-  transactions.push(retirementTransfer);
-
-  const livingRecognition: RecognitionFact = {
-    id: `recognition:living:${input.period.start}`,
-    kind: "living_expense",
-    amount: domain.monthlyLivingExpense,
-    currency,
-    recognizedAt: recognitionTime,
-  };
-  recognitions.push(livingRecognition);
-  effects.push({ id: `living:${input.period.start}`, kind: "recognition", category: "living_expense", amount: domain.monthlyLivingExpense, occurredAt: recognitionTime, recognitionId: livingRecognition.id });
-  transactions.push({
-    id: `tx:living:${input.period.start}`,
-    date: recognitionTime,
-    type: "expense",
-    cashFlowClass: "operating",
-    legs: [
-      { posting: "debit", type: "expense", amount: domain.monthlyLivingExpense },
-      { posting: "credit", type: "cash", amount: domain.monthlyLivingExpense, accountId: domain.checkingAccountId },
-    ],
-  });
-
-  if (input.taxSettlement) {
-    const settlement = input.taxSettlement;
-    if (!inPeriod(settlement.date, input.period)) throw new Error("Settlement is outside period");
-    if (settlement.obligationId !== obligation.id && !state.obligations[settlement.obligationId]) {
-      throw new Error(`Missing obligation ${settlement.obligationId}`);
-    }
-    const settlementTarget = state.obligations[settlement.obligationId];
-    if (!settlementTarget) throw new Error(`Missing obligation ${settlement.obligationId}`);
-    const settlementId = settlement.obligationId + ":" + settlement.date;
-    settleObligation(state, settlement);
-    effects.push({ id: settlementId, kind: "settlement", category: "tax", amount: settlement.amount, occurredAt: settlement.date, obligationId: settlement.obligationId });
+  if (input.monthlyGrossCompensation > 0n) {
+    const compensationRecognition: RecognitionFact = {
+      id: `recognition:compensation:${request.period.start}`,
+      kind: "compensation",
+      amount: input.monthlyGrossCompensation,
+      currency,
+      recognizedAt: compensationAt,
+    };
+    recognitions.push(compensationRecognition);
+    effects.push({
+      id: `effect:compensation:${request.period.start}`,
+      kind: "recognition",
+      category: "compensation",
+      amount: input.monthlyGrossCompensation,
+      occurredAt: compensationAt,
+      recognitionId: compensationRecognition.id,
+    });
     transactions.push({
-      id: `tx:tax-settlement:${settlementId}`,
-      date: settlement.date,
-      type: "tax_settlement",
+      id: `tx:compensation:${request.period.start}`,
+      date: compensationAt,
+      type: "income",
       cashFlowClass: "operating",
       legs: [
-        { posting: "debit", type: "liability", amount: settlement.amount, entityId: domain.taxLiabilityId },
-        { posting: "credit", type: "cash", amount: settlement.amount, accountId: domain.checkingAccountId },
+        { posting: "debit", type: "cash", amount: input.monthlyGrossCompensation, accountId: input.checkingAccountId },
+        { posting: "credit", type: "income", amount: input.monthlyGrossCompensation },
+      ],
+    });
+
+    taxAmount = calculateTax(input.monthlyGrossCompensation, input.taxRateBasisPoints);
+    if (taxAmount > 0n) {
+      const taxRecognition: RecognitionFact = {
+        id: `recognition:tax:${request.period.start}`,
+        kind: "tax_expense",
+        amount: taxAmount,
+        currency,
+        recognizedAt: taxRecognitionAt,
+      };
+      recognitions.push(taxRecognition);
+      currentTaxObligation = createTaxObligation(state, taxRecognition, input);
+      effects.push({
+        id: `effect:tax-obligation:${request.period.start}`,
+        kind: "obligation",
+        category: "tax",
+        amount: taxAmount,
+        occurredAt: taxRecognitionAt,
+        recognitionId: taxRecognition.id,
+        obligationId: currentTaxObligation.id,
+      });
+      transactions.push({
+        id: `tx:tax-accrual:${request.period.start}`,
+        date: taxRecognitionAt,
+        type: "tax_accrual",
+        cashFlowClass: "non_cash",
+        legs: [
+          { posting: "debit", type: "expense", amount: taxAmount },
+          { posting: "credit", type: "liability", amount: taxAmount, entityId: input.taxLiabilityId },
+        ],
+      });
+
+      if (input.settleCurrentTax !== false) {
+        const settlement: TaxSettlementRequest = {
+          settlementId: `settlement:tax:${request.period.start}`,
+          obligationId: currentTaxObligation.id,
+          amount: taxAmount,
+          date: taxSettlementAt,
+        };
+        applySettlementLifecycle(state, settlement);
+        effects.push({
+          id: `effect:${settlement.settlementId}`,
+          kind: "settlement",
+          category: "tax",
+          amount: settlement.amount,
+          occurredAt: settlement.date,
+          obligationId: settlement.obligationId,
+        });
+        transactions.push(taxSettlementTransaction(settlement, input));
+      }
+    }
+  }
+
+  if (input.retirementContribution > 0n) {
+    effects.push({
+      id: `effect:retirement:${request.period.start}`,
+      kind: "flow",
+      category: "retirement_transfer",
+      amount: input.retirementContribution,
+      occurredAt: retirementAt,
+    });
+    transactions.push({
+      id: `tx:retirement:${request.period.start}`,
+      date: retirementAt,
+      type: "internal_transfer",
+      cashFlowClass: "non_cash",
+      legs: [
+        { posting: "debit", type: "cash", amount: input.retirementContribution, accountId: input.retirementAccountId },
+        { posting: "credit", type: "cash", amount: input.retirementContribution, accountId: input.checkingAccountId },
       ],
     });
   }
 
+  if (input.monthlyLivingExpense > 0n) {
+    const livingRecognition: RecognitionFact = {
+      id: `recognition:living:${request.period.start}`,
+      kind: "living_expense",
+      amount: input.monthlyLivingExpense,
+      currency,
+      recognizedAt: livingExpenseAt,
+    };
+    recognitions.push(livingRecognition);
+    effects.push({
+      id: `effect:living:${request.period.start}`,
+      kind: "recognition",
+      category: "living_expense",
+      amount: input.monthlyLivingExpense,
+      occurredAt: livingExpenseAt,
+      recognitionId: livingRecognition.id,
+    });
+    transactions.push({
+      id: `tx:living:${request.period.start}`,
+      date: livingExpenseAt,
+      type: "expense",
+      cashFlowClass: "operating",
+      legs: [
+        { posting: "debit", type: "expense", amount: input.monthlyLivingExpense },
+        { posting: "credit", type: "cash", amount: input.monthlyLivingExpense, accountId: input.checkingAccountId },
+      ],
+    });
+  }
+
+  for (const settlement of request.taxSettlements ?? []) {
+    if (!inPeriod(settlement.date, request.period)) continue;
+    applySettlementLifecycle(state, settlement);
+    effects.push({
+      id: `effect:${settlement.settlementId}`,
+      kind: "settlement",
+      category: "tax",
+      amount: settlement.amount,
+      occurredAt: settlement.date,
+      obligationId: settlement.obligationId,
+    });
+    transactions.push(taxSettlementTransaction(settlement, input));
+  }
+
+  transactions.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
   for (const transaction of transactions) {
-    assertBalanced(transaction);
-    if (!inPeriod(transaction.date, input.period)) throw new Error(`Transaction ${transaction.id} is outside period`);
+    if (!inPeriod(transaction.date, request.period)) throw new Error(`Transaction ${transaction.id} is outside period`);
     post(state, transaction);
   }
 
@@ -377,20 +425,32 @@ export function runVerticalSlicePeriod(input: VerticalSlicePeriodInput): Vertica
       .flatMap((tx) => tx.legs.filter((leg) => leg.type === "cash").map((leg) => leg.posting === "debit" ? leg.amount : -leg.amount)),
   );
 
+  const dependencyOrder = [
+    "compensation",
+    "tax_calculation",
+    "tax_recognition",
+    "tax_obligation",
+    "tax_settlement",
+    "retirement_contribution",
+    "available_cash",
+    "living_expense",
+  ];
+
   return {
     state,
     effects,
     recognitions,
     transactions,
+    dependencyOrder,
     statements: { assets, liabilities, netWorth: assets - liabilities, income, expenses, operatingCashFlow },
     outputs: {
-      grossCompensation: compensationAmount,
+      grossCompensation: input.monthlyGrossCompensation,
       taxExpense: taxAmount,
-      taxPayable: state.liabilities[domain.taxLiabilityId]!.balance,
-      retirementContribution: domain.retirementContribution,
-      livingExpenses: domain.monthlyLivingExpense,
-      checkingCash: state.accounts[domain.checkingAccountId]!.cash,
-      retirementCash: state.accounts[domain.retirementAccountId]!.cash,
+      taxPayable: state.liabilities[input.taxLiabilityId]!.balance,
+      retirementContribution: input.retirementContribution,
+      livingExpenses: input.monthlyLivingExpense,
+      checkingCash: state.accounts[input.checkingAccountId]!.cash,
+      retirementCash: state.accounts[input.retirementAccountId]!.cash,
       consolidatedCash: assets,
     },
   };
@@ -401,9 +461,7 @@ export const canonicalOpeningState = (input: VerticalSliceInput): SliceState => 
     [input.checkingAccountId]: { id: input.checkingAccountId, ownerId: input.ownerId, kind: "checking", cash: 0n },
     [input.retirementAccountId]: { id: input.retirementAccountId, ownerId: input.ownerId, kind: "retirement", cash: 0n },
   },
-  liabilities: {
-    [input.taxLiabilityId]: { id: input.taxLiabilityId, balance: 0n },
-  },
+  liabilities: { [input.taxLiabilityId]: { id: input.taxLiabilityId, balance: 0n } },
   obligations: {},
   postedTransactionIds: [],
 });
