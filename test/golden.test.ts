@@ -16,7 +16,7 @@ describe("Semantic Kernel v0.1 golden scenarios", () => {
       event("living", "2026-01-31T12:03:00.000Z", { id: "living-recognition", kind: "recognition", amount: money("4000"), description: "living expense" }, posting("living", "2026-01-31T12:03:00.000Z", "living", "operating", [leg("debit", "expense", "4000"), leg("credit", "cash", "4000", "checking")]), ["salary"]),
     ];
     const r = new GoldenRunner(initial).run(month(2026, 1), events);
-    expect(r.state.accounts.checking.cash).toBe(money("2000")); expect(r.state.accounts.retirement.cash).toBe(money("2000"));
+    expect(r.state.accounts.checking!.cash).toBe(money("2000")); expect(r.state.accounts.retirement!.cash).toBe(money("2000"));
     expect(r.statements.assets).toBe(money("4000")); expect(r.statements.netWorth).toBe(money("4000")); expect(r.statements.operatingCashFlow).toBe(money("2000"));
     expect(r.statements.income).toBe(money("10000")); expect(r.statements.expenses).toBe(money("6000")); r.transactions.forEach(assertBalanced);
   });
@@ -30,17 +30,17 @@ describe("Semantic Kernel v0.1 golden scenarios", () => {
       event("mark", "2026-01-31T12:00:00.000Z", { id: "mark", kind: "valuation", amount: money("10000"), description: "investment mark-to-market" }, posting("mark", "2026-01-31T12:00:00.000Z", "mark_to_market", "non_cash", [leg("debit", "asset", "10000", undefined, "stock"), leg("credit", "gain", "10000", undefined, "stock")]), ["purchase"]),
     ];
     const r = new GoldenRunner(initial).run(month(2026, 1), events);
-    expect(r.state.accounts.checking.cash).toBe(money("0")); expect(r.state.accounts.brokerage.cash).toBe(money("0"));
-    expect(r.state.positions.stock.quantity).toBe(1000n); expect(r.state.positions.stock.carryingCents).toBe(money("110000"));
+    expect(r.state.accounts.checking!.cash).toBe(money("0")); expect(r.state.accounts.brokerage!.cash).toBe(money("0"));
+    expect(r.state.positions.stock!.quantity).toBe(1000n); expect(r.state.positions.stock!.carryingCents).toBe(money("110000"));
     expect(r.statements.assets).toBe(money("110000")); expect(r.statements.investingCashFlow).toBe(money("-100000")); expect(r.statements.gains).toBe(money("10000"));
   });
 
   it("S3 accrual creates a payable, and later settlement consumes it without new expense", () => {
     const initial = base({ checking: acct("checking", "checking", "10000") }, { tax: { id: "tax", balance: money("0"), rate: 0 } });
     const jan = new GoldenRunner(initial).run(month(2026, 1), [event("tax-accrual", "2026-01-31T12:00:00.000Z", { id: "tax-recognition", kind: "recognition", amount: money("1000"), description: "tax expense" }, posting("tax-accrual", "2026-01-31T12:00:00.000Z", "tax_accrual", "operating", [leg("debit", "expense", "1000"), leg("credit", "liability", "1000", undefined, "tax")]))]);
-    expect(jan.state.liabilities.tax.balance).toBe(money("1000")); expect(jan.state.accounts.checking.cash).toBe(money("10000")); expect(jan.statements.expenses).toBe(money("1000"));
+    expect(jan.state.liabilities.tax!.balance).toBe(money("1000")); expect(jan.state.accounts.checking!.cash).toBe(money("10000")); expect(jan.statements.expenses).toBe(money("1000"));
     const apr = new GoldenRunner(jan.state).run(month(2026, 4), [event("tax-settlement", "2026-04-15T12:00:00.000Z", { id: "tax-settlement", kind: "settlement", amount: money("1000"), description: "settle tax payable" }, posting("tax-settlement", "2026-04-15T12:00:00.000Z", "tax_settlement", "operating", [leg("debit", "liability", "1000", undefined, "tax"), leg("credit", "cash", "1000", "checking")]))]);
-    expect(apr.statements.expenses).toBe(money("0")); expect(apr.state.accounts.checking.cash).toBe(money("9000")); expect(apr.state.liabilities.tax.balance).toBe(money("0"));
+    expect(apr.statements.expenses).toBe(money("0")); expect(apr.state.accounts.checking!.cash).toBe(money("9000")); expect(apr.state.liabilities.tax!.balance).toBe(money("0"));
   });
 
   it("S4 uses one fixed payment for 12 months and separately tests reset/recast", () => {
@@ -61,7 +61,7 @@ describe("Semantic Kernel v0.1 golden scenarios", () => {
       event("sale", "2026-01-31T12:00:00.000Z", { id: "sale", kind: "settlement", amount: money("110000"), description: "investment sale" }, posting("sale", "2026-01-31T12:00:00.000Z", "investment_sale", "investing", [leg("debit", "cash", "110000", "checking"), leg("credit", "asset", "110000", undefined, "investment", 1000n)]), ["mark"]),
     ];
     const r = new GoldenRunner(initial).run(month(2026, 1), events);
-    expect(r.state.accounts.checking.cash).toBe(money("110000")); expect(r.state.positions.investment.quantity).toBe(0n); expect(r.state.positions.investment.carryingCents).toBe(money("0"));
+    expect(r.state.accounts.checking!.cash).toBe(money("110000")); expect(r.state.positions.investment!.quantity).toBe(0n); expect(r.state.positions.investment!.carryingCents).toBe(money("0"));
     expect(r.statements.investingCashFlow).toBe(money("110000")); expect(r.statements.gains).toBe(money("10000")); expect(r.statements.netWorth).toBe(money("110000"));
   });
 });
