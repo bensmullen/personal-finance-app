@@ -34,7 +34,7 @@ export class RoundingPolicy {
     Object.freeze(this);
   }
 
-  static currency(scale = 2, mode: RoundingMode = "half_up"): RoundingPolicy {
+  static currency(scale: number, mode: RoundingMode): RoundingPolicy {
     return new RoundingPolicy(scale, mode);
   }
 }
@@ -136,6 +136,10 @@ export class DecimalAmount {
   isZero(): boolean { return this.#coefficient === 0n; }
   isNegative(): boolean { return this.#coefficient < 0n; }
   isPositive(): boolean { return this.#coefficient > 0n; }
+  fitsScale(scale: number): boolean {
+    if (!Number.isSafeInteger(scale) || scale < 0) throw new Error("Scale must be a non-negative integer");
+    return this.#scale <= scale;
+  }
 
   toString(): string {
     const negative = this.#coefficient < 0n;
@@ -158,23 +162,31 @@ export class DecimalAmount {
 
 export const decimal = (value: string): DecimalAmount => DecimalAmount.parse(value);
 
-const CURRENCY_PATTERN = /^[A-Z]{3}$/;
+const CURRENCY_MINOR_UNITS = Object.freeze({
+  EUR: 2,
+  GBP: 2,
+  JPY: 0,
+  KWD: 3,
+  USD: 2,
+} as const);
+
+export type SupportedCurrencyCode = keyof typeof CURRENCY_MINOR_UNITS;
 
 export class Currency {
-  private constructor(readonly code: string, readonly minorUnitScale: number) { Object.freeze(this); }
+  private constructor(readonly code: SupportedCurrencyCode, readonly minorUnitScale: number) { Object.freeze(this); }
 
-  static of(code: string, minorUnitScale = 2): Currency {
-    if (!CURRENCY_PATTERN.test(code)) throw new Error(`Invalid ISO 4217 currency code: ${code}`);
-    if (!Number.isSafeInteger(minorUnitScale) || minorUnitScale < 0) throw new Error("Currency scale must be a non-negative integer");
-    return new Currency(code, minorUnitScale);
+  static of(code: string): Currency {
+    const minorUnitScale = CURRENCY_MINOR_UNITS[code as SupportedCurrencyCode];
+    if (minorUnitScale === undefined) throw new Error(`Unsupported currency code: ${code}`);
+    return new Currency(code as SupportedCurrencyCode, minorUnitScale);
   }
 
-  equals(other: Currency): boolean { return this.code === other.code && this.minorUnitScale === other.minorUnitScale; }
+  equals(other: Currency): boolean { return this.code === other.code; }
   toString(): string { return this.code; }
   toJSON(): string { return this.code; }
 }
 
-export const USD = Currency.of("USD", 2);
+export const USD = Currency.of("USD");
 
 export class Money {
   constructor(readonly amount: DecimalAmount, readonly currency: Currency) { Object.freeze(this); }
@@ -208,28 +220,69 @@ export const sumMoney = (values: readonly Money[], currency: Currency = USD): Mo
   values.reduce((total, value) => total.plus(value), Money.zero(currency));
 
 export enum RateBasis {
-  Proportion = "proportion",
   EffectiveAnnual = "effective_annual",
   NominalAnnual = "nominal_annual",
   Periodic = "periodic",
   Continuous = "continuous",
 }
 
+export class Ratio {
+  constructor(readonly value: DecimalAmount) { Object.freeze(this); }
+  static parse(value: string): Ratio { return new Ratio(decimal(value)); }
+  toJSON(): string { return this.value.toString(); }
+}
+
+export class Percentage {
+  constructor(readonly value: DecimalAmount) { Object.freeze(this); }
+  static parse(value: string): Percentage { return new Percentage(decimal(value)); }
+  toRatio(): Ratio { return new Ratio(this.value.times(decimal("0.01"))); }
+  toJSON(): { value: string; unit: "percent" } { return { value: this.value.toString(), unit: "percent" }; }
+}
+
+export type RatePeriodUnit = "day" | "calendar_month" | "year";
+
+export interface RatePeriod {
+  readonly count: DecimalAmount;
+  readonly unit: RatePeriodUnit;
+}
+
+export type RateConvention =
+  | { readonly basis: RateBasis.EffectiveAnnual }
+  | { readonly basis: RateBasis.NominalAnnual; readonly compoundingPeriodsPerYear: number }
+  | { readonly basis: RateBasis.Periodic; readonly period: RatePeriod }
+  | { readonly basis: RateBasis.Continuous };
+
+export const ratePeriod = (count: string, unit: RatePeriodUnit): RatePeriod => {
+  const amount = decimal(count);
+  if (!amount.isPositive()) throw new Error("Rate period count must be positive");
+  return Object.freeze({ count: amount, unit });
+};
+
+export const rateConvention = Object.freeze({
+  effectiveAnnual: (): RateConvention => Object.freeze({ basis: RateBasis.EffectiveAnnual }),
+  nominalAnnual: (compoundingPeriodsPerYear: number): RateConvention => {
+    if (!Number.isSafeInteger(compoundingPeriodsPerYear) || compoundingPeriodsPerYear <= 0) {
+      throw new Error("Nominal annual rate requires a positive integer compounding frequency");
+    }
+    return Object.freeze({ basis: RateBasis.NominalAnnual, compoundingPeriodsPerYear });
+  },
+  periodic: (period: RatePeriod): RateConvention => Object.freeze({ basis: RateBasis.Periodic, period }),
+  continuous: (): RateConvention => Object.freeze({ basis: RateBasis.Continuous }),
+});
+
 export class Rate {
-  constructor(readonly value: DecimalAmount, readonly basis: RateBasis) {
-    if (value.isNegative()) throw new Error("Rate cannot be negative");
-    Object.freeze(this);
+  constructor(readonly value: DecimalAmount, readonly convention: RateConvention) { Object.freeze(this); }
+
+  static fromDecimal(value: string, convention: RateConvention): Rate { return new Rate(decimal(value), convention); }
+  static fromPercentage(value: string | Percentage, convention: RateConvention): Rate {
+    const percentage = typeof value === "string" ? Percentage.parse(value) : value;
+    return new Rate(percentage.toRatio().value, convention);
+  }
+  static fromBasisPoints(value: string, convention: RateConvention): Rate {
+    return new Rate(decimal(value).times(decimal("0.0001")), convention);
   }
 
-  static fromDecimal(value: string, basis: RateBasis): Rate { return new Rate(decimal(value), basis); }
-  static fromPercentage(value: string, basis: RateBasis): Rate {
-    return new Rate(decimal(value).dividedBy(decimal("100"), new RoundingPolicy(20, "half_even")), basis);
-  }
-  static fromBasisPoints(value: string, basis: RateBasis): Rate {
-    return new Rate(decimal(value).dividedBy(decimal("10000"), new RoundingPolicy(20, "half_even")), basis);
-  }
-
-  toJSON(): { value: string; basis: RateBasis } { return { value: this.value.toString(), basis: this.basis }; }
+  toJSON(): { value: string; convention: RateConvention } { return { value: this.value.toString(), convention: this.convention }; }
 }
 
 const UNIT_PATTERN = /^[a-z][a-z0-9_-]*$/;
@@ -266,10 +319,8 @@ export class Quantity {
 
 export const quantity = (value: string, unit: Unit): Quantity => Quantity.parse(value, unit);
 
-export const settlementRounding = (currency: Currency): RoundingPolicy => RoundingPolicy.currency(currency.minorUnitScale, "half_up");
-
-export const formatMoney = (value: Money): string => {
-  const formatted = value.amount.toFixed(settlementRounding(value.currency));
+export const formatMoney = (value: Money, displayPolicy: RoundingPolicy): string => {
+  const formatted = value.amount.toFixed(displayPolicy);
   const sign = formatted.startsWith("-") ? "-" : "";
   const unsigned = formatted.replace(/^-/, "");
   return value.currency.code === "USD" ? `${sign}$${unsigned}` : `${sign}${value.currency.code} ${unsigned}`;
