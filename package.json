@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:web": "rm -rf dist && tsc -p tsconfig.web.json && mkdir -p dist && cp web/index.html web/styles.css dist/ && touch dist/.nojekyll"
   },
   "devDependencies": {
     "typescript": "^5.9.2",
