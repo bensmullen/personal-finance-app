@@ -1,0 +1,29 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate lockfile on feature branch push
+        if: github.event_name == 'push' && github.ref_name == 'feat/semantic-kernel-v0.1' && !hashFiles('package-lock.json')
+        run: |
+          npm install --package-lock-only
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "build: add npm lockfile"
+          git push origin HEAD:${GITHUB_REF_NAME}
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
