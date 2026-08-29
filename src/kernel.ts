@@ -28,10 +28,11 @@ export class DependencyGraph {
 export interface KernelEvent { id: string; date: string; dependsOn?: string[]; lag?: number; effect: Effect; transaction: Transaction; }
 function applyTransaction(state: SimulationState, t: Transaction) {
   assertBalanced(t);
-  for (const leg of t.legs) { const sign = leg.posting === "debit" ? 1n : -1n;
-    if (leg.type === "cash") { if (!leg.accountId) throw new Error(`Missing cash account in ${t.id}`); const account = state.accounts[leg.accountId]; if (!account) throw new Error(`Unknown cash account in ${t.id}`); account.cash += sign * leg.amount; }
-    else if (leg.type === "liability") { if (!leg.entityId) throw new Error(`Missing liability in ${t.id}`); const liability = state.liabilities[leg.entityId]; if (!liability) throw new Error(`Unknown liability in ${t.id}`); liability.balance += sign * leg.amount; if (liability.balance < 0n) throw new Error(`Negative liability balance in ${t.id}`); }
-    else if (leg.type === "asset" && leg.entityId) { const position = state.positions[leg.entityId]; if (!position) throw new Error(`Unknown position in ${t.id}`); position.carryingCents += sign * leg.amount; if (leg.quantity !== undefined) position.quantity += sign * leg.quantity; if (position.quantity < 0n || position.carryingCents < 0n) throw new Error(`Negative position balance in ${t.id}`); }
+  for (const leg of t.legs) {
+    const accountSign = leg.posting === "debit" ? 1n : -1n;
+    if (leg.type === "cash") { if (!leg.accountId) throw new Error(`Missing cash account in ${t.id}`); const account = state.accounts[leg.accountId]; if (!account) throw new Error(`Unknown cash account in ${t.id}`); account.cash += accountSign * leg.amount; }
+    else if (leg.type === "liability") { if (!leg.entityId) throw new Error(`Missing liability in ${t.id}`); const liability = state.liabilities[leg.entityId]; if (!liability) throw new Error(`Unknown liability in ${t.id}`); liability.balance -= accountSign * leg.amount; if (liability.balance < 0n) throw new Error(`Negative liability balance in ${t.id}`); }
+    else if (leg.type === "asset" && leg.entityId) { const position = state.positions[leg.entityId]; if (!position) throw new Error(`Unknown position in ${t.id}`); position.carryingCents += accountSign * leg.amount; if (leg.quantity !== undefined) position.quantity += accountSign * leg.quantity; if (position.quantity < 0n || position.carryingCents < 0n) throw new Error(`Negative position balance in ${t.id}`); }
   }
 }
 export class SemanticRunner {
