@@ -20,7 +20,7 @@ export const buildVerticalSliceDemo = (): DemoViewModel => {
     retirementAccountId: "demo-retirement",
     taxLiabilityId: "demo-tax-payable",
     monthlyGrossCompensation: money("10000"),
-    taxRate: 0.20,
+    taxRateBasisPoints: 2000,
     retirementContribution: money("2000"),
     monthlyLivingExpense: money("4000"),
   };
