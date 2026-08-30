@@ -46,13 +46,18 @@ export interface ModelMigration {
   readonly migrate: (source: PortableModelDocument) => PortableModelDocument;
 }
 
-const migrationFailure = (code: string, message: string, relatedIds: readonly string[] = []): never =>
+const migrationFailure = (
+  code: string,
+  message: string,
+  fieldPath: "model_format_version" | "financial_specification_version" = "model_format_version",
+  relatedIds: readonly string[] = [],
+): never =>
   failValidation({
     severity: "error",
     code,
     message,
     entityType: "portable_model",
-    fieldPath: "model_format_version",
+    fieldPath,
     ...(relatedIds.length === 0 ? {} : { relatedIds }),
   });
 
@@ -160,7 +165,7 @@ export const migratePortableModel = (
   }
   const chain = migrations.chain(sourceVersion, targetVersion);
   if (chain === undefined) {
-    return migrationFailure(issueCodes.modelMigrationUnavailable, `No complete migration chain from ${sourceVersion} to ${targetVersion}`, [sourceVersion, targetVersion]);
+    return migrationFailure(issueCodes.modelMigrationUnavailable, `No complete migration chain from ${sourceVersion} to ${targetVersion}`, "model_format_version", [sourceVersion, targetVersion]);
   }
   let current = source;
   let currentVersion = sourceVersion;
@@ -173,7 +178,7 @@ export const migratePortableModel = (
       migrationFailure(issueCodes.modelVersionMismatch, `Migration ${migration.migrationId} did not produce ${migration.targetVersion}`);
     }
     if (migrated.financial_specification_version !== current.financial_specification_version) {
-      migrationFailure(issueCodes.unsupportedFinancialSpecification, `Model-format migration ${migration.migrationId} must not change financial_specification_version`);
+      migrationFailure(issueCodes.unsupportedFinancialSpecification, `Model-format migration ${migration.migrationId} must not change financial_specification_version`, "financial_specification_version");
     }
     current = migrated;
     currentVersion = migration.targetVersion;
@@ -198,16 +203,18 @@ export const deserializePortableModelEnvelope = (
     migrationFailure(
       compatibility.issues[0]?.code ?? issueCodes.unsupportedModelFormat,
       compatibility.issues[0]?.message ?? `Model format ${serialized.model_format_version} is not directly supported`,
+      "model_format_version",
     );
   }
   if (serialized.financial_specification_version.trim().length === 0) {
-    migrationFailure(issueCodes.modelVersionMismatch, "Portable model financial specification version cannot be empty");
+    migrationFailure(issueCodes.modelVersionMismatch, "Portable model financial specification version cannot be empty", "financial_specification_version");
   }
   const financialCompatibility = classifyFinancialSpecificationVersion(serialized.financial_specification_version);
   if (financialCompatibility.classification !== "supported_directly") {
     migrationFailure(
       financialCompatibility.issues[0]?.code ?? issueCodes.unsupportedFinancialSpecification,
       financialCompatibility.issues[0]?.message ?? `Financial specification ${serialized.financial_specification_version} is not directly supported`,
+      "financial_specification_version",
     );
   }
   return Object.freeze({

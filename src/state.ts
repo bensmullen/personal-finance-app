@@ -8,7 +8,7 @@ import {
 } from "./accounting.js";
 import { failValidation, issueCodes } from "./diagnostics.js";
 import type { DomainId, GeneratedOccurrenceKey, IdempotencyKey } from "./identity.js";
-import type { RecognitionId, SettlementId, Obligation } from "./semantics.js";
+import { normalizeClaimLifecycle, type RecognitionId, type SettlementId, type Obligation } from "./semantics.js";
 import type { Currency, Money, Quantity, Rate } from "./values.js";
 
 export type AccountKind = "checking" | "savings" | "cash" | "brokerage" | "retirement" | "other";
@@ -76,7 +76,13 @@ export const createAuthoritativeState = (draft: AuthoritativeStateDraft = {}): A
     accounts: Object.fromEntries(Object.entries(draft.accounts ?? {}).map(([key, value]) => [key, { ...value }])),
     positions: Object.fromEntries(Object.entries(draft.positions ?? {}).map(([key, value]) => [key, { ...value }])),
     liabilities: Object.fromEntries(Object.entries(draft.liabilities ?? {}).map(([key, value]) => [key, { ...value }])),
-    obligations: { ...(draft.obligations ?? {}) },
+    obligations: Object.fromEntries(Object.entries(draft.obligations ?? {}).map(([key, value]) => {
+      const normalized = normalizeClaimLifecycle(value);
+      if (normalized.kind !== "obligation") {
+        failValidation({ severity: "error", code: issueCodes.claimInvariantInvalid, message: `Authoritative obligation ${normalized.id} must have kind obligation`, entityType: "claim", entityId: normalized.id, fieldPath: `obligations.${key}.kind` });
+      }
+      return [key, normalized as Obligation];
+    })),
     identities: createAuthoritativeIdentityRegistry(draft.identities),
   };
   reconcileClaimIdentityHistory(state);

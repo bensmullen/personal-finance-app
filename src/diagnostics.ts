@@ -41,6 +41,7 @@ export const issueCodes = Object.freeze({
   duplicateSettlement: "DUPLICATE_SETTLEMENT",
   duplicateGeneratedOccurrence: "DUPLICATE_GENERATED_OCCURRENCE",
   duplicateExternalIdempotencyKey: "DUPLICATE_EXTERNAL_IDEMPOTENCY_KEY",
+  claimInvariantInvalid: "CLAIM_INVARIANT_INVALID",
   settlementClaimNotFound: "SETTLEMENT_CLAIM_NOT_FOUND",
   settlementAmountInvalid: "SETTLEMENT_AMOUNT_INVALID",
   settlementExceedsOutstanding: "SETTLEMENT_EXCEEDS_OUTSTANDING",

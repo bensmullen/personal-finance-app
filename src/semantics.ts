@@ -98,16 +98,37 @@ export interface ClaimDraft extends Omit<ClaimBase, "outstandingAmount" | "settl
   readonly traceRefs?: readonly CalculationTraceRef[];
 }
 
-const validateClaimAmounts = (draft: ClaimDraft, outstandingAmount: Money): void => {
-  if (!draft.originalAmount.isPositive()) {
-    failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "Claim original amount must be positive", entityType: "claim", entityId: draft.id, fieldPath: "originalAmount" });
+export const assertClaimInvariant = (claim: ObligationOrRight): void => {
+  const structural = claim as { readonly id?: string; readonly kind?: unknown };
+  if (structural.kind !== "obligation" && structural.kind !== "right") {
+    failValidation({ severity: "error", code: issueCodes.claimInvariantInvalid, message: "Claim kind must be obligation or right", entityType: "claim", ...(structural.id === undefined ? {} : { entityId: structural.id }), fieldPath: "kind" });
   }
-  if (!draft.originalAmount.currency.equals(outstandingAmount.currency)) {
-    failValidation({ severity: "error", code: issueCodes.settlementCurrencyMismatch, message: "Claim original and outstanding amounts must use the same currency", entityType: "claim", entityId: draft.id, fieldPath: "outstandingAmount" });
+  if (typeof claim.category !== "string" || claim.category.trim().length === 0) {
+    failValidation({ severity: "error", code: issueCodes.claimInvariantInvalid, message: "Claim category cannot be empty", entityType: "claim", entityId: claim.id, fieldPath: "category" });
   }
-  if (outstandingAmount.isNegative() || outstandingAmount.compare(draft.originalAmount) > 0) {
-    failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "Claim outstanding amount must be from zero through the original amount", entityType: "claim", entityId: draft.id, fieldPath: "outstandingAmount" });
+  if (!claim.originalAmount.isPositive()) {
+    failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "Claim original amount must be positive", entityType: "claim", entityId: claim.id, fieldPath: "originalAmount" });
   }
+  if (!claim.originalAmount.currency.equals(claim.outstandingAmount.currency)) {
+    failValidation({ severity: "error", code: issueCodes.settlementCurrencyMismatch, message: "Claim original and outstanding amounts must use the same currency", entityType: "claim", entityId: claim.id, fieldPath: "outstandingAmount" });
+  }
+  if (claim.outstandingAmount.isNegative() || claim.outstandingAmount.compare(claim.originalAmount) > 0) {
+    failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "Claim outstanding amount must be from zero through the original amount", entityType: "claim", entityId: claim.id, fieldPath: "outstandingAmount" });
+  }
+  if (new Set(claim.settlementIds).size !== claim.settlementIds.length) {
+    failValidation({ severity: "error", code: issueCodes.duplicateSettlement, message: `Claim ${claim.id} contains a duplicate settlement identity`, entityType: "claim", entityId: claim.id, fieldPath: "settlementIds" });
+  }
+};
+
+export const normalizeClaimLifecycle = (claim: ObligationOrRight): ObligationOrRight => {
+  assertClaimInvariant(claim);
+  const { settlementIds, traceRefs: suppliedTraceRefs, ...rest } = claim;
+  const traceRefs = freezeTraceRefs(suppliedTraceRefs);
+  return Object.freeze({
+    ...rest,
+    settlementIds: Object.freeze([...settlementIds]),
+    ...(traceRefs === undefined ? {} : { traceRefs }),
+  }) as ObligationOrRight;
 };
 
 export const createClaim = (
@@ -125,12 +146,10 @@ export const createClaim = (
       relatedIds: [draft.originatingRecognitionId],
     });
   }
-  if (draft.category.trim().length === 0) throw new Error("Claim category cannot be empty");
   const outstandingAmount = draft.outstandingAmount ?? draft.originalAmount;
-  validateClaimAmounts(draft, outstandingAmount);
   const settlementIds = Object.freeze([...(draft.settlementIds ?? [])]);
   const traceRefs = freezeTraceRefs(draft.traceRefs);
-  return Object.freeze({
+  return normalizeClaimLifecycle({
     id: draft.id,
     kind: draft.kind,
     category: draft.category,
@@ -143,7 +162,7 @@ export const createClaim = (
     ...(draft.dueAt === undefined ? {} : { dueAt: draft.dueAt }),
     settlementIds,
     ...(traceRefs === undefined ? {} : { traceRefs }),
-  }) as ObligationOrRight;
+  } as ObligationOrRight);
 };
 
 export const createObligation = (

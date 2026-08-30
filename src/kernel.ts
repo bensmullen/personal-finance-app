@@ -22,7 +22,7 @@ import {
   type LiabilityState,
   type PositionState,
 } from "./state.js";
-import { assertObservedFactWithinDataCutoff, createInputFingerprint, createRunMetadata, type RunContext, type RunMetadata } from "./run.js";
+import { assertObservedFactWithinDataCutoff, assertRunContext, createInputFingerprint, createRunMetadata, type RunContext, type RunMetadata } from "./run.js";
 import { isObservedFact } from "./provenance.js";
 import {
   type DecimalAmount,
@@ -145,6 +145,7 @@ export class SemanticRunner {
   constructor(private readonly initial: SimulationState) {}
 
   run(targetPeriod: Period, events: readonly KernelEvent[], runContext: RunContext): RunResult {
+    assertRunContext(runContext);
     if (targetPeriod.start !== runContext.simulationStart || targetPeriod.end !== runContext.simulationEnd) {
       failValidation({ severity: "error", code: issueCodes.invalidRunContext, message: "Kernel period must match the run context horizon", entityType: "run_context", fieldPath: "simulationStart" });
     }
@@ -153,7 +154,9 @@ export class SemanticRunner {
     const inputFingerprint = createInputFingerprint({
       runContext,
       openingState: state,
-      scenario: [...events].sort((left, right) => left.id.localeCompare(right.id)),
+      scenario: [...events]
+        .map((event) => ({ ...event, ...(event.dependsOn === undefined ? {} : { dependsOn: [...event.dependsOn].sort() }) }))
+        .sort((left, right) => left.id.localeCompare(right.id)),
     });
     const runMetadata = createRunMetadata(runContext, inputFingerprint);
     const effects: SemanticEffect[] = [];

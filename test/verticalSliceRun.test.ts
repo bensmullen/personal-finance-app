@@ -213,6 +213,25 @@ describe("Vertical Slice 1 run/state integration", () => {
     expect(JSON.stringify(opening)).toBe(before);
     const eurContext = createRunContext({ ...context(1), baseCurrency: Currency.of("EUR") });
     expect(validationCode(() => runVerticalSlicePeriod({ period: utcMonth(2026, 1), input, openingState: canonicalOpeningState(input), runContext: eurContext }))).toBe(issueCodes.runBaseCurrencyMismatch);
+    const validContext = context(1);
+    const invalidCutoff = { ...validContext, dataCutoff: instant("2026-01-02T00:00:00.000Z") };
+    const invalidVersions = { ...validContext, versions: { ...validContext.versions, engineVersion: "999.0.0" } };
+    expect(validationCode(() => runVerticalSlicePeriod({ period: utcMonth(2026, 1), input, openingState: canonicalOpeningState(input), runContext: invalidCutoff }))).toBe(issueCodes.invalidRunContext);
+    expect(validationCode(() => runVerticalSlicePeriod({ period: utcMonth(2026, 1), input, openingState: canonicalOpeningState(input), runContext: invalidVersions }))).toBe(issueCodes.modelVersionMismatch);
+  });
+
+  it("rejects a replaced structurally forged claim without changing opening state", () => {
+    const january = runVerticalSlicePeriod({ period: utcMonth(2026, 1), input: { ...input, settleCurrentTax: false }, openingState: canonicalOpeningState(input), runContext: context(1) });
+    const obligationId = "obligation:recognition:tax:2026-01-01T00:00:00.000Z";
+    january.state.obligations[obligationId] = { ...january.state.obligations[obligationId]!, outstandingAmount: money("-1") };
+    const before = JSON.stringify(january.state);
+    expect(validationCode(() => runVerticalSlicePeriod({
+      period: utcMonth(2026, 2),
+      input: { ...input, monthlyGrossCompensation: money("0"), retirementContribution: money("0"), monthlyLivingExpense: money("0"), settleCurrentTax: false },
+      openingState: january.state,
+      runContext: context(2),
+    }))).toBe(issueCodes.settlementAmountInvalid);
+    expect(JSON.stringify(january.state)).toBe(before);
   });
 
   it("includes static positions in assets and net worth while consolidatedCash remains cash-only", () => {

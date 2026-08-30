@@ -38,6 +38,16 @@ const validationCode = (operation: () => unknown): string => {
   throw new Error("Expected ValidationError");
 };
 
+const capturedIssue = (operation: () => unknown) => {
+  try {
+    operation();
+  } catch (error) {
+    if (error instanceof ValidationError) return error.issues[0]!;
+    throw error;
+  }
+  throw new Error("Expected ValidationError");
+};
+
 describe("portable model format compatibility", () => {
   it("classifies current, explicitly migratable, ambiguous legacy, and unknown formats", () => {
     expect(classifyModelFormatVersion(CURRENT_MODEL_FORMAT_VERSION).classification).toBe("supported_directly");
@@ -94,12 +104,12 @@ describe("portable model format compatibility", () => {
       targetVersion: CURRENT_MODEL_FORMAT_VERSION,
       migrate: (source) => ({ ...source, model_format_version: CURRENT_MODEL_FORMAT_VERSION, financial_specification_version: "99.0.0-future" }),
     }]);
-    expect(validationCode(() => migratePortableModel(
+    expect(capturedIssue(() => migratePortableModel(
       { model_format_version: "semantic-source", financial_specification_version: CURRENT_RUN_VERSIONS.financialSpecificationVersion },
       "semantic-source",
       CURRENT_MODEL_FORMAT_VERSION,
       semanticRewrite,
-    ))).toBe(issueCodes.unsupportedFinancialSpecification);
+    ))).toEqual(expect.objectContaining({ code: issueCodes.unsupportedFinancialSpecification, fieldPath: "financial_specification_version" }));
   });
 
   it("round-trips the current envelope without losing distinct version metadata", () => {
@@ -130,5 +140,20 @@ describe("portable model format compatibility", () => {
     } as const;
     expect(validationCode(() => deserializePortableModelEnvelope(serialized))).toBe(issueCodes.unsupportedFinancialSpecification);
     expect(validationCode(() => deserializePortableModelEnvelope({ ...serialized, financial_specification_version: "0.1.6-draft" }))).toBe(issueCodes.unsupportedFinancialSpecification);
+  });
+
+  it("reports compatibility failures against the responsible version field", () => {
+    const base = {
+      model_format_version: CURRENT_MODEL_FORMAT_VERSION,
+      financial_specification_version: CURRENT_RUN_VERSIONS.financialSpecificationVersion,
+      model_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      objects: {},
+    } as const;
+    const financial = capturedIssue(() => deserializePortableModelEnvelope({ ...base, financial_specification_version: "99.0.0-future" }));
+    expect(financial).toEqual(expect.objectContaining({ code: issueCodes.unsupportedFinancialSpecification, fieldPath: "financial_specification_version" }));
+    const emptyFinancial = capturedIssue(() => deserializePortableModelEnvelope({ ...base, financial_specification_version: "" }));
+    expect(emptyFinancial.fieldPath).toBe("financial_specification_version");
+    const format = capturedIssue(() => deserializePortableModelEnvelope({ ...base, model_format_version: "99.0.0-future" }));
+    expect(format).toEqual(expect.objectContaining({ code: issueCodes.unsupportedModelFormat, fieldPath: "model_format_version" }));
   });
 });

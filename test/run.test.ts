@@ -68,6 +68,17 @@ describe("run context and deterministic reproduction metadata", () => {
     expect(validationCode(() => context({ versions: { ...CURRENT_RUN_VERSIONS, modelFormatVersion: CURRENT_RUN_VERSIONS.financialSpecificationVersion } }))).toBe(issueCodes.modelVersionMismatch);
   });
 
+  it("revalidates structurally cloned contexts at public utility boundaries", () => {
+    const valid = context();
+    const invalidCutoff = { ...valid, dataCutoff: START };
+    const invalidVersions = { ...valid, versions: { ...valid.versions, engineVersion: "999.0.0" } };
+    const fingerprint = createInputFingerprint({ runContext: valid, openingState: {} });
+    expect(validationCode(() => createInputFingerprint({ runContext: invalidCutoff, openingState: {} }))).toBe(issueCodes.invalidRunContext);
+    expect(validationCode(() => createRunMetadata(invalidCutoff, fingerprint))).toBe(issueCodes.invalidRunContext);
+    expect(validationCode(() => createRunMetadata(invalidVersions, fingerprint))).toBe(issueCodes.modelVersionMismatch);
+    expect(validationCode(() => assertObservedFactWithinDataCutoff(createFactProvenance({ factKind: "model_generated", sourceType: "model", sourceId: "model:boundary", effectiveAt: START }), invalidCutoff))).toBe(issueCodes.invalidRunContext);
+  });
+
   it("canonicalizes object property order while preserving meaningful array order and exact money", () => {
     expect(canonicalSerialize({ z: money("1.20"), a: { b: 2, a: 1 } }))
       .toBe(canonicalSerialize({ a: { a: 1, b: 2 }, z: money("1.2") }));
@@ -148,6 +159,17 @@ describe("run completion semantics", () => {
     const warning = validationIssue({ severity: "warning", code: issueCodes.liquidityShortfall, message: "also stressed" });
     expect(invalidModelRunResult([error, warning]).issues).toEqual([error, warning]);
     expect(validationCode(() => invalidModelRunResult([warning]))).toBe(issueCodes.invalidRunCompletionResult);
+  });
+
+  it("rejects structurally forged run metadata in completion factories", () => {
+    const valid = metadata();
+    const invalidCutoff = { ...valid, dataCutoff: START };
+    const invalidVersions = { ...valid, engineVersion: "999.0.0" };
+    const reason = validationIssue({ severity: "error", code: "HARD_PERIOD_FAILURE", message: "period failed" });
+    expect(validationCode(() => completedRunResult({ metadata: invalidCutoff, requestedHorizon: horizon, reachedThrough: END, periods: [] }))).toBe(issueCodes.invalidRunContext);
+    expect(validationCode(() => completedRunResult({ metadata: invalidVersions, requestedHorizon: horizon, reachedThrough: END, periods: [] }))).toBe(issueCodes.modelVersionMismatch);
+    expect(validationCode(() => incompleteRunResult({ metadata: invalidCutoff, requestedHorizon: horizon, stoppedAt: START, reason, periods: [] }))).toBe(issueCodes.invalidRunContext);
+    expect(validationCode(() => incompleteRunResult({ metadata: invalidVersions, requestedHorizon: horizon, stoppedAt: START, reason, periods: [] }))).toBe(issueCodes.modelVersionMismatch);
   });
 });
 

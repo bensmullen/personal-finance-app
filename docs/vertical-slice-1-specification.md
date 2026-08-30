@@ -111,12 +111,19 @@ Opening authoritative state is normalized before execution: record keys equal
 contained IDs, positions reference present accounts, prohibited negative
 balances are rejected, and claim recognition/settlement history is unioned into
 the global replay registries while contradictory claim history is rejected.
+Contained obligations are semantic lifecycle records, not merely structurally
+typed objects: their amounts, currency, kind, category, and within-claim
+settlement identity uniqueness are revalidated and lifecycle arrays are copied
+into state ownership.
 
 Every execution supplies a `RunContext` with run/scenario identities, `asOf`,
 `dataCutoff`, the single-period simulation horizon, base currency, and supported
 runtime versions. Successful results report `completed` and expose deterministic
 run metadata including the input fingerprint. General multi-period execution is
 not part of this slice.
+Run-context validity is asserted again at execution and metadata/result
+consumption boundaries because serializable value contracts may be reconstructed
+or spread-cloned after initial factory creation.
 
 ## 4. Domain objects in scope
 

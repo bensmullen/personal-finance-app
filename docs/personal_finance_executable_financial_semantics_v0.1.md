@@ -79,6 +79,10 @@ liability, quantity, or carrying-value balances invalidate opening state before
 execution. Claim lifecycle history is reconciled into global identity authority:
 every originating recognition and historical settlement remains replay-protected.
 Two claims MUST NOT assert the same originating recognition or settlement ID.
+Every contained claim MUST also satisfy its semantic lifecycle invariants,
+including kind/category validity, positive original amount, currency agreement,
+bounded non-negative outstanding amount, and unique settlement IDs within the
+claim. Structural TypeScript compatibility alone is not authoritative validity.
 
 Committed opening state is immutable to a run. Execution occurs on private
 working/candidate state. Only a validated accepted transition becomes closing
@@ -89,6 +93,9 @@ state; a hard failure exposes no candidate mutation as committed state.
 Every run MUST identify `runId`, `scenarioId`, `asOf`, `dataCutoff`,
 `simulationStart`, `simulationEnd`, and base currency. `simulationStart` MUST
 precede `simulationEnd`, and `dataCutoff` MUST NOT be later than `asOf`.
+These invariants, supported runtime versions, and canonical base currency MUST
+be revalidated wherever a structurally reconstructable `RunContext` or
+`RunMetadata` is consumed; construction-time validation alone is insufficient.
 
 For observed external facts, `observedAt` is the information-availability time
 and MUST be no later than `dataCutoff`. `effectiveAt` is distinct economic-effect

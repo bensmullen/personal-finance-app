@@ -17,7 +17,7 @@ import {
   serializeAuthoritativeIdentityRegistry,
 } from "../src/state.js";
 import { instant } from "../src/time.js";
-import { Quantity, SHARE, money } from "../src/values.js";
+import { Currency, Quantity, SHARE, money } from "../src/values.js";
 
 const ACCOUNT = domainId("account", "10000000-0000-4000-8000-000000000001");
 const POSITION = domainId("position", "10000000-0000-4000-8000-000000000002");
@@ -214,5 +214,30 @@ describe("authoritative identity registry", () => {
     expect(validationCode(() => createAuthoritativeState({ obligations: { [first.id]: first, [secondSameRecognition.id]: secondSameRecognition } }))).toBe(issueCodes.duplicateRecognition);
     const secondSameSettlement = claim("obligation:third", recognitionId("recognition:other"));
     expect(validationCode(() => createAuthoritativeState({ obligations: { [first.id]: first, [secondSameSettlement.id]: secondSameSettlement } }))).toBe(issueCodes.duplicateSettlement);
+  });
+
+  it("revalidates spread-cloned claim lifecycle records and owns their settlement arrays", () => {
+    const valid = createObligation({
+      id: claimId("obligation:validated"),
+      category: "tax",
+      originatingRecognitionId: recognitionId("recognition:validated"),
+      economicOwnerId: ACCOUNT,
+      originalAmount: money("5"),
+      outstandingAmount: money("4"),
+      recognizedAt: AT,
+    });
+    expect(createAuthoritativeState({ obligations: { [valid.id]: valid } }).obligations[valid.id]).toEqual(valid);
+    expect(validationCode(() => createAuthoritativeState({ obligations: { [valid.id]: { ...valid, outstandingAmount: money("-1") } } }))).toBe(issueCodes.settlementAmountInvalid);
+    expect(validationCode(() => createAuthoritativeState({ obligations: { [valid.id]: { ...valid, outstandingAmount: money("6") } } }))).toBe(issueCodes.settlementAmountInvalid);
+    expect(validationCode(() => createAuthoritativeState({ obligations: { [valid.id]: { ...valid, outstandingAmount: money("4", Currency.of("EUR")) } } }))).toBe(issueCodes.settlementCurrencyMismatch);
+    expect(validationCode(() => createAuthoritativeState({ obligations: { [valid.id]: { ...valid, category: " " } } }))).toBe(issueCodes.claimInvariantInvalid);
+    const duplicate = settlementId("settlement:duplicate-within-claim");
+    expect(validationCode(() => createAuthoritativeState({ obligations: { [valid.id]: { ...valid, settlementIds: [duplicate, duplicate] } } }))).toBe(issueCodes.duplicateSettlement);
+
+    const callerOwned = [settlementId("settlement:caller-owned")];
+    const normalized = createAuthoritativeState({ obligations: { [valid.id]: { ...valid, settlementIds: callerOwned } } });
+    callerOwned.push(settlementId("settlement:later-mutation"));
+    expect(normalized.obligations[valid.id]?.settlementIds).toEqual(["settlement:caller-owned"]);
+    expect(Object.isFrozen(normalized.obligations[valid.id]?.settlementIds)).toBe(true);
   });
 });

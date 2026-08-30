@@ -34,34 +34,57 @@ const invalidRunContext = (message: string, fieldPath: string): never => failVal
   fieldPath,
 });
 
-export const createRunContext = (draft: RunContextDraft): RunContext => {
-  if (draft.simulationStart >= draft.simulationEnd) {
-    invalidRunContext("Run simulationStart must precede simulationEnd", "simulationStart");
-  }
-  if (draft.dataCutoff > draft.asOf) {
-    invalidRunContext("Run dataCutoff must not be later than asOf", "dataCutoff");
-  }
-  if (draft.versions !== undefined) {
-    for (const key of Object.keys(CURRENT_RUN_VERSIONS) as (keyof RunVersionMetadata)[]) {
-      if (draft.versions[key] !== CURRENT_RUN_VERSIONS[key]) {
-        failValidation({
-          severity: "error",
-          code: issueCodes.modelVersionMismatch,
-          message: `Run ${key} ${draft.versions[key]} is not supported by this engine; expected ${CURRENT_RUN_VERSIONS[key]}`,
-          entityType: "run_context",
-          fieldPath: `versions.${key}`,
-        });
-      }
+const assertCurrentVersions = (
+  versions: RunVersionMetadata,
+  entityType: "run_context" | "run_metadata",
+  fieldPrefix = "",
+): void => {
+  for (const key of Object.keys(CURRENT_RUN_VERSIONS) as (keyof RunVersionMetadata)[]) {
+    if (versions?.[key] !== CURRENT_RUN_VERSIONS[key]) {
+      failValidation({
+        severity: "error",
+        code: issueCodes.modelVersionMismatch,
+        message: `Run ${key} ${String(versions?.[key])} is not supported by this engine; expected ${CURRENT_RUN_VERSIONS[key]}`,
+        entityType,
+        fieldPath: `${fieldPrefix}${key}`,
+      });
     }
   }
+};
+
+export const assertRunContext = (context: RunContext): void => {
+  if (context.simulationStart >= context.simulationEnd) {
+    invalidRunContext("Run simulationStart must precede simulationEnd", "simulationStart");
+  }
+  if (context.dataCutoff > context.asOf) {
+    invalidRunContext("Run dataCutoff must not be later than asOf", "dataCutoff");
+  }
+  if (!(context.baseCurrency instanceof Currency)) {
+    invalidRunContext("Run baseCurrency must be a canonical supported runtime currency", "baseCurrency");
+  }
+  try {
+    const canonical = Currency.of(context.baseCurrency.code);
+    if (!canonical.equals(context.baseCurrency) || canonical.minorUnitScale !== context.baseCurrency.minorUnitScale) {
+      invalidRunContext("Run baseCurrency must be a canonical supported runtime currency", "baseCurrency");
+    }
+  } catch {
+    invalidRunContext("Run baseCurrency must be a canonical supported runtime currency", "baseCurrency");
+  }
+  assertCurrentVersions(context.versions, "run_context", "versions.");
+};
+
+export const createRunContext = (draft: RunContextDraft): RunContext => {
   const versions = Object.freeze({ ...(draft.versions ?? CURRENT_RUN_VERSIONS) });
-  return Object.freeze({ ...draft, versions });
+  const context = { ...draft, versions } as RunContext;
+  assertRunContext(context);
+  return Object.freeze(context);
 };
 
 export const assertObservedFactWithinDataCutoff = (
   provenance: FactProvenance,
   context: RunContext,
 ): void => {
+  assertRunContext(context);
   if (isObservedFact(provenance) && provenance.observedAt > context.dataCutoff) {
     failValidation({
       severity: "error",
@@ -134,6 +157,7 @@ export interface RunFingerprintInput {
 
 /** Deterministic reproduction/change fingerprint, not an authentication or tamper-resistance primitive. */
 export const createInputFingerprint = (input: RunFingerprintInput): InputFingerprint => {
+  assertRunContext(input.runContext);
   const { runId: _runId, ...economicRunContext } = input.runContext;
   const canonical = canonicalSerialize({
     runContext: economicRunContext,
@@ -157,8 +181,22 @@ export interface RunMetadata extends RunVersionMetadata {
   readonly inputFingerprint: InputFingerprint;
 }
 
-export const createRunMetadata = (context: RunContext, inputFingerprint: InputFingerprint): RunMetadata =>
-  Object.freeze({
+export const assertRunMetadata = (metadata: RunMetadata): void => {
+  if (metadata.simulationStart >= metadata.simulationEnd) {
+    invalidRunContext("Run metadata simulationStart must precede simulationEnd", "simulationStart");
+  }
+  if (metadata.dataCutoff > metadata.asOf) {
+    invalidRunContext("Run metadata dataCutoff must not be later than asOf", "dataCutoff");
+  }
+  try { Currency.of(metadata.baseCurrency); } catch {
+    invalidRunContext("Run metadata baseCurrency must identify a supported currency", "baseCurrency");
+  }
+  assertCurrentVersions(metadata, "run_metadata");
+};
+
+export const createRunMetadata = (context: RunContext, inputFingerprint: InputFingerprint): RunMetadata => {
+  assertRunContext(context);
+  const metadata: RunMetadata = {
     runId: context.runId,
     scenarioId: context.scenarioId,
     asOf: context.asOf,
@@ -168,7 +206,10 @@ export const createRunMetadata = (context: RunContext, inputFingerprint: InputFi
     baseCurrency: context.baseCurrency.code,
     inputFingerprint,
     ...context.versions,
-  });
+  };
+  assertRunMetadata(metadata);
+  return Object.freeze(metadata);
+};
 
 interface RunResultBase<TPeriodResult> {
   readonly periods: readonly TPeriodResult[];
@@ -209,6 +250,7 @@ const invalidCompletion = (message: string): never => failValidation({
 });
 
 export const completedRunResult = <TPeriodResult>(draft: Omit<CompletedRunResult<TPeriodResult>, "status">): CompletedRunResult<TPeriodResult> => {
+  assertRunMetadata(draft.metadata);
   if (draft.requestedHorizon.start !== draft.metadata.simulationStart || draft.requestedHorizon.end !== draft.metadata.simulationEnd) {
     invalidCompletion("Completed result horizon must match run metadata");
   }
@@ -219,6 +261,7 @@ export const completedRunResult = <TPeriodResult>(draft: Omit<CompletedRunResult
 };
 
 export const incompleteRunResult = <TPeriodResult>(draft: Omit<IncompleteRunResult<TPeriodResult>, "status">): IncompleteRunResult<TPeriodResult> => {
+  assertRunMetadata(draft.metadata);
   if (draft.requestedHorizon.start !== draft.metadata.simulationStart || draft.requestedHorizon.end !== draft.metadata.simulationEnd) {
     invalidCompletion("Incomplete result horizon must match run metadata");
   }

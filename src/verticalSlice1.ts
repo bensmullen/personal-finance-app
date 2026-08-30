@@ -46,6 +46,7 @@ import {
 } from "./state.js";
 import {
   assertObservedFactWithinDataCutoff,
+  assertRunContext,
   createInputFingerprint,
   createRunMetadata,
   type RunContext,
@@ -205,6 +206,7 @@ const primitiveInstanceIds = Object.freeze({
 });
 
 export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): VerticalSliceResult {
+  assertRunContext(request.runContext);
   if (request.period.start !== request.runContext.simulationStart || request.period.end !== request.runContext.simulationEnd) {
     failValidation({ severity: "error", code: issueCodes.invalidRunContext, message: "Vertical Slice period must match the run context horizon", entityType: "run_context", fieldPath: "simulationStart" });
   }
