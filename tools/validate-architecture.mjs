@@ -109,9 +109,12 @@ export function validateSources(sourceFiles) {
     }
 
     for (const declaration of importDeclarations(sourceFile)) {
-      if (!isRuntimeImport(declaration)) continue;
       const specifier = declaration.moduleSpecifier.text;
       const target = resolveImport(file, specifier, files);
+      if (owner && target && facadeFiles.has(target)) {
+        errors.push(`engine implementation imports compatibility facade: ${file} -> ${target}`);
+      }
+      if (!isRuntimeImport(declaration)) continue;
       if (target) graph.get(file).add(target);
       if (owner && (target === "src/webApp.ts" || target?.includes("/web/"))) {
         errors.push(`engine-to-UI import: ${file} -> ${target}`);
@@ -169,6 +172,24 @@ function runSelfTests() {
       expected: "lower-module-to-simulation import",
     },
     {
+      name: "run-facade-bypass",
+      files: new Map([
+        ["src/state/bad.ts", 'import { createRunContext } from "../run.js";'],
+        ["src/run.ts", 'export * from "./simulation/run.js";'],
+        ["src/simulation/run.ts", "export const createRunContext = () => {};"],
+      ]),
+      expected: "engine implementation imports compatibility facade",
+    },
+    {
+      name: "kernel-facade-bypass",
+      files: new Map([
+        ["src/rules/bad.ts", 'import { SemanticRunner } from "../kernel.js";'],
+        ["src/kernel.ts", 'export { SemanticRunner } from "./simulation/kernel.js";'],
+        ["src/simulation/kernel.ts", "export class SemanticRunner {}"],
+      ]),
+      expected: "engine implementation imports compatibility facade",
+    },
+    {
       name: "runtime-cycle",
       files: new Map([["src/values/a.ts", 'import "./b.js";'], ["src/values/b.ts", 'import "./a.js";']]),
       expected: "runtime import cycle",
@@ -193,6 +214,6 @@ if (path.resolve(process.argv[1] ?? "") === scriptPath) {
     console.error(`Architecture validation failed:\n${errors.map((error) => `- ${error}`).join("\n")}`);
     process.exitCode = 1;
   } else {
-    console.log("Architecture validation passed: engine/UI direction, lower-layer isolation, facade shape, browser isolation, and runtime acyclicity are enforced (type-only imports are excluded from runtime cycles). Self-tests passed.");
+    console.log("Architecture validation passed: engine/UI direction, internal facade isolation, lower-layer isolation, facade shape, browser isolation, and runtime acyclicity are enforced (type-only imports are excluded from runtime cycles). Self-tests passed.");
   }
 }

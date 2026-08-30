@@ -1,6 +1,9 @@
 import { failValidation, issueCodes } from "../diagnostics/index.js";
-import type { AcceptedFundingResolution, FundingAllocation } from "../funding/index.js";
-import { assertAcceptedFundingResolution } from "../funding/index.js";
+import {
+  assertAcceptedFundingResolution,
+  type AcceptedFundingResolution,
+  type FundingAllocation,
+} from "../funding/resolution.js";
 import { freezeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
 import { createFactProvenance, type FactProvenance } from "../model/provenance.js";
 import type { Instant } from "../time/index.js";

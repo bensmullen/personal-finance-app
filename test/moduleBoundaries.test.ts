@@ -8,6 +8,8 @@ import * as legacyVerticalSlice from "../src/verticalSlice1.js";
 import { type AccountingTransaction } from "../src/accounting/index.js";
 import { DependencyGraph } from "../src/dependencies/index.js";
 import * as funding from "../src/funding/index.js";
+import * as fundingPolicy from "../src/funding/policy.js";
+import * as fundingResolution from "../src/funding/resolution.js";
 import * as semanticProposal from "../src/semantics/settlementProposal.js";
 import * as settlement from "../src/semantics/settlement.js";
 import { fixedMortgagePayment } from "../src/rules/index.js";
@@ -22,7 +24,9 @@ describe("engine module boundaries", () => {
   it("keeps compatibility paths on the canonical runtime authorities", () => {
     expect(legacySemantics.createSettlementProposal).toBe(semanticProposal.createSettlementProposal);
     expect(legacySemantics.createSettlement).toBe(settlement.createSettlement);
-    expect(legacyFunding.resolveFunding).toBe(funding.resolveFunding);
+    expect(legacyFunding.createFundingPolicy).toBe(fundingPolicy.createFundingPolicy);
+    expect(legacyFunding.resolveFunding).toBe(fundingResolution.resolveFunding);
+    expect(funding.resolveFunding).toBe(fundingResolution.resolveFunding);
     expect(legacyState.createAuthoritativeState).toBe(state.createAuthoritativeState);
     expect(legacyRun.createRunContext).toBe(run.createRunContext);
   });

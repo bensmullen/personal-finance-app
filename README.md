@@ -28,7 +28,9 @@ and `src/time.ts` are thin compatibility facades. They re-export the canonical
 module implementations and hold no independent financial logic or runtime
 authority. Internal implementation files import leaf modules directly where a
 barrel could create a cycle. The existing browser entry remains a consumer of
-the Vertical Slice public facade.
+the Vertical Slice public facade. Root compatibility facades are external and
+legacy surfaces; engine implementation modules may not use them as dependency
+shortcuts.
 
 The `primitives` directory establishes ownership only. The P01–P34 executable
 registry remains Roadmap PR 6 work, and generalized multi-period simulation

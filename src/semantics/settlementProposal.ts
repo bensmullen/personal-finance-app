@@ -1,5 +1,5 @@
 import { failValidation, issueCodes } from "../diagnostics/index.js";
-import type { FundingPolicyId } from "../funding/index.js";
+import type { FundingPolicyId } from "../funding/policy.js";
 import { freezeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
 import { createFactProvenance, type FactProvenance } from "../model/provenance.js";
 import type { Instant } from "../time/index.js";

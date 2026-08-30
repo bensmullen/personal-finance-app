@@ -33,6 +33,8 @@ accounting, state, valuation, statements, lineage, simulation, and diagnostics.
 Root compatibility files re-export canonical implementations and must not gain
 substantive logic or independent runtime authority. Internal modules should
 import direct leaf files where barrel imports would create cycles.
+Root compatibility facades are external/legacy surfaces and must never be used
+by engine implementation files as internal dependency shortcuts.
 
 Lower engine modules must not import `simulation/`. Engine modules must not
 import `webApp.ts`, browser application code, or DOM/browser APIs. Runtime
