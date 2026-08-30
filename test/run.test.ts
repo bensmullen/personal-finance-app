@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ValidationError, issueCodes, validationIssue } from "../src/diagnostics.js";
-import { idempotencyKey } from "../src/identity.js";
+import { ValidationError, issueCodes, validationIssue } from "../src/diagnostics/index.js";
+import { idempotencyKey } from "../src/identity/index.js";
 import {
   assertObservedFactWithinDataCutoff,
   canonicalSerialize,
@@ -12,16 +12,16 @@ import {
   invalidModelRunResult,
   runId,
   scenarioId,
-} from "../src/run.js";
+} from "../src/simulation/run.js";
 import {
   createFactProvenance,
   isModelGeneratedFact,
   isObservedFact,
   type FactProvenance,
-} from "../src/provenance.js";
-import { instant, period } from "../src/time.js";
-import { money, USD } from "../src/values.js";
-import { CURRENT_RUN_VERSIONS } from "../src/version.js";
+} from "../src/model/provenance.js";
+import { instant, period } from "../src/time/index.js";
+import { money, USD } from "../src/values/index.js";
+import { CURRENT_RUN_VERSIONS } from "../src/model/version.js";
 
 const START = instant("2026-01-01T00:00:00.000Z");
 const END = instant("2026-02-01T00:00:00.000Z");

@@ -10,8 +10,8 @@ import {
   type LiabilityLegDraft,
   type PositionId,
   type LiabilityId,
-} from "../src/accounting.js";
-import { ValidationError, issueCodes } from "../src/diagnostics.js";
+} from "../src/accounting/index.js";
+import { ValidationError, issueCodes } from "../src/diagnostics/index.js";
 import {
   createFundingPolicy,
   fundingPolicyId,
@@ -19,10 +19,10 @@ import {
   resolveFunding,
   type ConstraintOutcomeStatus,
   type FundingResolution,
-} from "../src/funding.js";
-import { domainId, generatedOccurrenceKey } from "../src/identity.js";
-import { createFactProvenance } from "../src/provenance.js";
-import { calculationTraceId, calculationTraceRef } from "../src/lineage.js";
+} from "../src/funding/index.js";
+import { domainId, generatedOccurrenceKey } from "../src/identity/index.js";
+import { createFactProvenance } from "../src/model/provenance.js";
+import { calculationTraceId, calculationTraceRef } from "../src/lineage/index.js";
 import {
   applySettlement,
   claimId,
@@ -36,9 +36,9 @@ import {
   semanticEffectId,
   settlementId,
   settlementProposalId,
-} from "../src/semantics.js";
-import { instant } from "../src/time.js";
-import { Currency, money } from "../src/values.js";
+} from "../src/semantics/index.js";
+import { instant } from "../src/time/index.js";
+import { Currency, money } from "../src/values/index.js";
 
 const OWNER = domainId("person", "11111111-1111-4111-8111-111111111111");
 const CASH_A = domainId("account", "22222222-2222-4222-8222-222222222222");

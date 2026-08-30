@@ -5,7 +5,7 @@
   "executable_semantics_version": "0.1.7-draft",
   "engine_contract_version": "0.1.0",
   "result_schema_version": "0.1.0",
-  "runtime_versions_path": "src/version.ts",
+  "runtime_versions_path": "src/model/version.ts",
   "specifications": [
     {
       "id": "system-software-architecture",

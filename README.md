@@ -17,9 +17,23 @@ compensation, tax rate, retirement contribution, and living expenses. Tax is
 recognized and settled in the same month; retirement is an internal household
 transfer rather than an expense.
 
-`src/verticalSlice1.ts` is the current slice implementation. `src/kernel.ts`
-and its golden scenarios are a transitional semantic-kernel prototype whose
-duplicate core concepts will be reconciled in later architecture milestones.
+The engine remains one npm package, but its implementation now has explicit
+internal boundaries under `src/`: `values`, `time`, `identity`, `model`,
+`rules`, `primitives`, `dependencies`, `semantics`, `funding`, `accounting`,
+`state`, `valuation`, `statements`, `lineage`, and `simulation` (plus the
+foundational `diagnostics` module).
+
+Root files such as `src/kernel.ts`, `src/verticalSlice1.ts`, `src/values.ts`,
+and `src/time.ts` are thin compatibility facades. They re-export the canonical
+module implementations and hold no independent financial logic or runtime
+authority. Internal implementation files import leaf modules directly where a
+barrel could create a cycle. The existing browser entry remains a consumer of
+the Vertical Slice public facade.
+
+The `primitives` directory establishes ownership only. The P01–P34 executable
+registry remains Roadmap PR 6 work, and generalized multi-period simulation
+remains Roadmap PR 7 work. This repository intentionally does not use npm
+workspaces or `packages/*` yet.
 
 ## Requirements and setup
 
@@ -31,6 +45,7 @@ Install and verify from a clean checkout:
 ```sh
 npm ci
 npm run spec:validate
+npm run architecture:validate
 npm run typecheck
 npm test
 npm run build:web
@@ -63,7 +78,8 @@ to agent-assisted changes.
 
 The compatibility baseline is recorded in
 [`docs/spec-manifest.json`](docs/spec-manifest.json) and checked by
-`npm run spec:validate`.
+`npm run spec:validate`. Module direction, facade shape, browser isolation, and
+runtime import acyclicity are checked by `npm run architecture:validate`.
 
 ## Generated artifacts
 
