@@ -26,6 +26,9 @@ objects
 `model_format_version` governs the envelope/object serialization contract.
 `financial_specification_version` identifies the financial semantics under
 which the model was authored. Neither substitutes for the other.
+Model-format compatibility is not financial-semantics compatibility. A current
+serialization shape does not authorize reinterpretation under current financial
+semantics: direct execution requires both versions to be explicitly supported.
 
 Compatibility is explicitly classified as `supported_directly`, `migratable`,
 `read_only_legacy`, or `unsupported`. A migratable classification requires a
@@ -33,6 +36,11 @@ registered deterministic migration chain whose every step identifies migration
 ID, source version, target version, and transformation. Missing gaps are not
 inferred or skipped. Unknown/newer versions are unsupported rather than loaded
 as current.
+
+A format migration changes only serialization unless its separately reviewed
+contract explicitly declares a financial-semantics migration. It MUST preserve
+`financial_specification_version` by default and MUST NOT silently imply that
+financial meaning was migrated.
 
 The former `0.1.0-draft` envelope is read-only legacy. Its
 `specification_version` field did not unambiguously say whether the value was a

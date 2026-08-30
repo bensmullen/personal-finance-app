@@ -11,9 +11,10 @@ import {
   type CashFlowClass,
 } from "./accounting.js";
 import { failValidation, issueCodes, type ValidationIssue } from "./diagnostics.js";
-import type { SemanticEffect } from "./semantics.js";
+import { createSemanticEffect, type SemanticEffect } from "./semantics.js";
 import {
   applyAccountingTransactionAtomically,
+  assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
   registerAuthoritativeIdentity,
   type AccountState,
@@ -30,7 +31,6 @@ import {
   Rate,
   RateBasis,
   RoundingPolicy,
-  USD,
   decimal,
   sumMoney,
 } from "./values.js";
@@ -148,13 +148,14 @@ export class SemanticRunner {
     if (targetPeriod.start !== runContext.simulationStart || targetPeriod.end !== runContext.simulationEnd) {
       failValidation({ severity: "error", code: issueCodes.invalidRunContext, message: "Kernel period must match the run context horizon", entityType: "run_context", fieldPath: "simulationStart" });
     }
+    const state = cloneAuthoritativeState(this.initial);
+    assertAuthoritativeStateCurrency(state, runContext.baseCurrency);
     const inputFingerprint = createInputFingerprint({
       runContext,
-      openingState: cloneAuthoritativeState(this.initial),
+      openingState: state,
       scenario: [...events].sort((left, right) => left.id.localeCompare(right.id)),
     });
     const runMetadata = createRunMetadata(runContext, inputFingerprint);
-    const state = cloneAuthoritativeState(this.initial);
     const effects: SemanticEffect[] = [];
     const transactions: AccountingTransaction[] = [];
     const graph = new DependencyGraph();
@@ -168,26 +169,32 @@ export class SemanticRunner {
       if (!event) throw new Error(`Unknown dependency node ${id}`);
       if (!inPeriod(event.date, targetPeriod)) throw new Error(`Event ${event.id} is outside period`);
       if (event.transaction.date !== event.date) throw new Error(`Transaction date mismatch for ${event.id}`);
-      if (event.effect.provenance !== undefined) {
-        assertObservedFactWithinDataCutoff(event.effect.provenance, runContext);
-        if (isObservedFact(event.effect.provenance)) {
-          registerAuthoritativeIdentity(state.identities, "externalIdempotencyKeys", event.effect.provenance.idempotencyKey);
+      const effect = createSemanticEffect(event.effect);
+      if (effect.provenance !== undefined) {
+        assertObservedFactWithinDataCutoff(effect.provenance, runContext);
+        if (isObservedFact(effect.provenance)) {
+          registerAuthoritativeIdentity(state.identities, "externalIdempotencyKeys", effect.provenance.idempotencyKey);
         }
       }
-      if (event.effect.sourceOccurrenceKey !== undefined) {
-        registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", event.effect.sourceOccurrenceKey);
+      if (effect.sourceOccurrenceKey !== undefined) {
+        registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", effect.sourceOccurrenceKey);
       }
-      if (event.effect.recognitionId !== undefined) {
-        registerAuthoritativeIdentity(state.identities, "recognitionIds", event.effect.recognitionId);
+      if (effect.recognitionId !== undefined) {
+        registerAuthoritativeIdentity(state.identities, "recognitionIds", effect.recognitionId);
       }
-      if (event.effect.settlementId !== undefined) {
-        registerAuthoritativeIdentity(state.identities, "settlementIds", event.effect.settlementId);
+      if (effect.settlementId !== undefined) {
+        registerAuthoritativeIdentity(state.identities, "settlementIds", effect.settlementId);
       }
-      effects.push(event.effect);
+      for (const leg of event.transaction.legs) {
+        if (!leg.amount.currency.equals(runContext.baseCurrency)) {
+          failValidation({ severity: "error", code: issueCodes.runBaseCurrencyMismatch, message: `Transaction ${event.transaction.id} leg uses ${leg.amount.currency.code} but run base currency is ${runContext.baseCurrency.code}`, entityType: "accounting_transaction", entityId: event.transaction.id, fieldPath: "legs.amount" });
+        }
+      }
+      effects.push(effect);
       transactions.push(event.transaction);
       applyAccountingTransactionAtomically(state, event.transaction);
     }
-    return Object.freeze({ status: "completed", runMetadata, requestedHorizon: targetPeriod, reachedThrough: targetPeriod.end, state, effects: Object.freeze(effects), transactions: Object.freeze(transactions), statements: deriveStatements(state, transactions), diagnostics: Object.freeze([]) });
+    return Object.freeze({ status: "completed", runMetadata, requestedHorizon: targetPeriod, reachedThrough: targetPeriod.end, state, effects: Object.freeze(effects), transactions: Object.freeze(transactions), statements: deriveStatements(state, transactions, runContext.baseCurrency), diagnostics: Object.freeze([]) });
   }
 }
 
@@ -196,10 +203,9 @@ export class GoldenRunner {
   run(targetPeriod: Period, events: readonly KernelEvent[], runContext: RunContext): RunResult { return new SemanticRunner(this.initial).run(targetPeriod, events, runContext); }
 }
 
-function deriveStatements(state: SimulationState, transactions: readonly AccountingTransaction[]): Statements {
+function deriveStatements(state: SimulationState, transactions: readonly AccountingTransaction[], currency: import("./values.js").Currency): Statements {
   const accountValues = Object.values(state.accounts).map((account) => account.cash);
   const positionValues = Object.values(state.positions).map((position) => position.price.times(position.quantity.amount));
-  const currency = accountValues[0]?.currency ?? positionValues[0]?.currency ?? USD;
   const assets = sumMoney([...accountValues, ...positionValues], currency);
   const liabilities = sumMoney(Object.values(state.liabilities).map((liability) => liability.balance), currency);
   const total = (type: AccountingLeg["type"], side: AccountingLeg["posting"]): Money =>

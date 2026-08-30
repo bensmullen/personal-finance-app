@@ -9,7 +9,7 @@ import {
 import { failValidation, issueCodes } from "./diagnostics.js";
 import type { DomainId, GeneratedOccurrenceKey, IdempotencyKey } from "./identity.js";
 import type { RecognitionId, SettlementId, Obligation } from "./semantics.js";
-import type { Money, Quantity, Rate } from "./values.js";
+import type { Currency, Money, Quantity, Rate } from "./values.js";
 
 export type AccountKind = "checking" | "savings" | "cash" | "brokerage" | "retirement" | "other";
 
@@ -71,13 +71,18 @@ export const createAuthoritativeIdentityRegistry = (
   externalIdempotencyKeys: Object.freeze(stableUnique(draft.externalIdempotencyKeys)),
 });
 
-export const createAuthoritativeState = (draft: AuthoritativeStateDraft = {}): AuthoritativeState => ({
-  accounts: Object.fromEntries(Object.entries(draft.accounts ?? {}).map(([key, value]) => [key, { ...value }])),
-  positions: Object.fromEntries(Object.entries(draft.positions ?? {}).map(([key, value]) => [key, { ...value }])),
-  liabilities: Object.fromEntries(Object.entries(draft.liabilities ?? {}).map(([key, value]) => [key, { ...value }])),
-  obligations: { ...(draft.obligations ?? {}) },
-  identities: createAuthoritativeIdentityRegistry(draft.identities),
-});
+export const createAuthoritativeState = (draft: AuthoritativeStateDraft = {}): AuthoritativeState => {
+  const state: AuthoritativeState = {
+    accounts: Object.fromEntries(Object.entries(draft.accounts ?? {}).map(([key, value]) => [key, { ...value }])),
+    positions: Object.fromEntries(Object.entries(draft.positions ?? {}).map(([key, value]) => [key, { ...value }])),
+    liabilities: Object.fromEntries(Object.entries(draft.liabilities ?? {}).map(([key, value]) => [key, { ...value }])),
+    obligations: { ...(draft.obligations ?? {}) },
+    identities: createAuthoritativeIdentityRegistry(draft.identities),
+  };
+  reconcileClaimIdentityHistory(state);
+  validateAuthoritativeState(state);
+  return state;
+};
 
 export const cloneAuthoritativeState = (state: AuthoritativeState): AuthoritativeState =>
   createAuthoritativeState(state);
@@ -136,6 +141,36 @@ const stateTargetMissing = (transaction: AccountingTransaction, targetType: stri
   });
 
 export const validateAuthoritativeState = (state: AuthoritativeState, transactionId?: string): void => {
+  const validateRecordIdentity = (collection: string, entityType: string, key: string, id: string): void => {
+    if (key !== id) {
+      failValidation({
+        severity: "error",
+        code: issueCodes.stateEntityIdentityMismatch,
+        message: `${entityType} record key ${key} does not match contained id ${id}`,
+        entityType,
+        entityId: id,
+        fieldPath: `${collection}.${key}.id`,
+        relatedIds: [key, id],
+      });
+    }
+  };
+  for (const [key, account] of Object.entries(state.accounts)) validateRecordIdentity("accounts", "account", key, account.id);
+  for (const [key, position] of Object.entries(state.positions)) {
+    validateRecordIdentity("positions", "position", key, position.id);
+    if (state.accounts[position.accountId] === undefined) {
+      failValidation({
+        severity: "error",
+        code: issueCodes.stateTargetNotFound,
+        message: `Position ${position.id} references missing account ${position.accountId}`,
+        entityType: "position",
+        entityId: position.id,
+        fieldPath: `positions.${key}.accountId`,
+        relatedIds: [position.accountId],
+      });
+    }
+  }
+  for (const [key, liability] of Object.entries(state.liabilities)) validateRecordIdentity("liabilities", "liability", key, liability.id);
+  for (const [key, obligation] of Object.entries(state.obligations)) validateRecordIdentity("obligations", "obligation", key, obligation.id);
   for (const account of Object.values(state.accounts)) {
     if (account.cash.isNegative()) {
       failValidation({
@@ -171,6 +206,55 @@ export const validateAuthoritativeState = (state: AuthoritativeState, transactio
         ...(transactionId === undefined ? {} : { relatedIds: [transactionId] }),
       });
     }
+  }
+};
+
+const reconcileClaimIdentityHistory = (state: AuthoritativeState): void => {
+  const recognitionClaims = new Map<string, string>();
+  const settlementClaims = new Map<string, string>();
+  const recognitionIds = new Set<string>(state.identities.recognitionIds);
+  const settlementIds = new Set<string>(state.identities.settlementIds);
+  for (const claim of Object.values(state.obligations)) {
+    const priorRecognitionClaim = recognitionClaims.get(claim.originatingRecognitionId);
+    if (priorRecognitionClaim !== undefined && priorRecognitionClaim !== claim.id) {
+      failValidation({ severity: "error", code: issueCodes.duplicateRecognition, message: `Recognition ${claim.originatingRecognitionId} is claimed by multiple claims`, entityType: "claim", entityId: claim.id, fieldPath: "originatingRecognitionId", relatedIds: [priorRecognitionClaim, claim.originatingRecognitionId] });
+    }
+    recognitionClaims.set(claim.originatingRecognitionId, claim.id);
+    recognitionIds.add(claim.originatingRecognitionId);
+    for (const settlementId of claim.settlementIds) {
+      const priorSettlementClaim = settlementClaims.get(settlementId);
+      if (priorSettlementClaim !== undefined && priorSettlementClaim !== claim.id) {
+        failValidation({ severity: "error", code: issueCodes.duplicateSettlement, message: `Settlement ${settlementId} is claimed by multiple claims`, entityType: "claim", entityId: claim.id, fieldPath: "settlementIds", relatedIds: [priorSettlementClaim, settlementId] });
+      }
+      settlementClaims.set(settlementId, claim.id);
+      settlementIds.add(settlementId);
+    }
+  }
+  Object.assign(state.identities, {
+    recognitionIds: Object.freeze([...recognitionIds].sort()),
+    settlementIds: Object.freeze([...settlementIds].sort()),
+  });
+};
+
+export const assertAuthoritativeStateCurrency = (state: AuthoritativeState, currency: Currency): void => {
+  const assertCurrency = (amount: Money, fieldPath: string, entityType: string, entityId: string): void => {
+    if (!amount.currency.equals(currency)) {
+      failValidation({
+        severity: "error",
+        code: issueCodes.runBaseCurrencyMismatch,
+        message: `${fieldPath} uses ${amount.currency.code} but run base currency is ${currency.code}`,
+        entityType,
+        entityId,
+        fieldPath,
+        relatedIds: [amount.currency.code, currency.code],
+      });
+    }
+  };
+  for (const [key, account] of Object.entries(state.accounts)) assertCurrency(account.cash, `accounts.${key}.cash`, "account", account.id);
+  for (const [key, liability] of Object.entries(state.liabilities)) assertCurrency(liability.balance, `liabilities.${key}.balance`, "liability", liability.id);
+  for (const [key, position] of Object.entries(state.positions)) {
+    assertCurrency(position.price, `positions.${key}.price`, "position", position.id);
+    assertCurrency(position.carryingValue, `positions.${key}.carryingValue`, "position", position.id);
   }
 };
 

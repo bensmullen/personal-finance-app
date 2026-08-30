@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DependencyGraph, GoldenRunner as KernelGoldenRunner, Rate, RoundingPolicy, assertBalanced, createAuthoritativeState, createRunContext, domainId, fixedMortgagePayment, instant, mortgageInterest, mortgagePrincipal, money, posting, rateConvention, runId, scenarioId, semanticEffectId, utcMonth, type AccountId, type KernelEvent, type LiabilityId, type Period, type PositionId, type RunContext, type SimulationState } from "../src/kernel.js";
-import { Quantity, SHARE } from "../src/values.js";
+import { Currency, Quantity, SHARE } from "../src/values.js";
 import { ValidationError, issueCodes } from "../src/diagnostics.js";
 
 const base = (accounts: SimulationState["accounts"] = {}, liabilities: SimulationState["liabilities"] = {}): SimulationState => createAuthoritativeState({ accounts, positions: {}, liabilities });
@@ -96,6 +96,27 @@ describe("Semantic Kernel v0.1 golden scenarios", () => {
 });
 
 describe("Kernel invariants", () => {
+  it("rejects invalid or non-base-currency opening state even for a no-op run", () => {
+    const target = utcMonth(2026, 1);
+    const negative = base({ [CHECKING]: acct(CHECKING, "checking", "0") });
+    negative.accounts[CHECKING]!.cash = money("-1");
+    expect(() => new GoldenRunner(negative).run(target, [])).toThrowError(ValidationError);
+    try {
+      new GoldenRunner(negative).run(target, []);
+    } catch (error) {
+      expect((error as ValidationError).issues[0]?.code).toBe(issueCodes.negativeCashInvariant);
+    }
+    const usd = base({ [CHECKING]: acct(CHECKING, "checking", "1") });
+    const eurContext = createRunContext({ ...kernelRunContext(target), baseCurrency: Currency.of("EUR") });
+    try {
+      new GoldenRunner(usd).run(target, [], eurContext);
+      throw new Error("Expected base currency failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ValidationError);
+      expect((error as ValidationError).issues[0]?.code).toBe(issueCodes.runBaseCurrencyMismatch);
+    }
+  });
+
   it("sorts a DAG deterministically and rejects zero-lag cycles", () => {
     const g = new DependencyGraph(); g.addEdge("salary", "tax"); g.addEdge("tax", "disposable"); g.addEdge("salary", "contribution"); expect(g.topologicalOrder()).toEqual(["salary", "contribution", "tax", "disposable"]);
     const bad = new DependencyGraph(); bad.addEdge("a", "b"); bad.addEdge("b", "a"); expect(() => bad.topologicalOrder()).toThrow(/cycle/);

@@ -8,7 +8,7 @@ import {
 } from "../src/accounting.js";
 import { ValidationError, issueCodes } from "../src/diagnostics.js";
 import { domainId, generatedOccurrenceKey, idempotencyKey } from "../src/identity.js";
-import { recognitionId, settlementId } from "../src/semantics.js";
+import { claimId, createObligation, recognitionId, settlementId } from "../src/semantics.js";
 import {
   applyAccountingTransactionAtomically,
   cloneAuthoritativeState,
@@ -22,6 +22,7 @@ import { Quantity, SHARE, money } from "../src/values.js";
 const ACCOUNT = domainId("account", "10000000-0000-4000-8000-000000000001");
 const POSITION = domainId("position", "10000000-0000-4000-8000-000000000002");
 const LIABILITY = domainId("liability", "10000000-0000-4000-8000-000000000003");
+const OTHER_ACCOUNT = domainId("account", "20000000-0000-4000-8000-000000000001");
 const SCENARIO = domainId("scenario", "10000000-0000-4000-8000-000000000004");
 const PRIMITIVE = domainId("primitive-instance", "10000000-0000-4000-8000-000000000005");
 const AT = instant("2026-01-15T00:00:00.000Z");
@@ -131,6 +132,12 @@ describe("authoritative state and atomic posting", () => {
     expect(validationCode(() => applyAccountingTransactionAtomically(rolled, tx))).toBe(issueCodes.duplicateTransaction);
     expect(JSON.stringify(rolled)).toBe(before);
   });
+
+  it("rejects malformed opening balances, record identities, and orphan positions at creation", () => {
+    expect(validationCode(() => createAuthoritativeState({ accounts: { [ACCOUNT]: { id: ACCOUNT, kind: "checking", cash: money("-1") } } }))).toBe(issueCodes.negativeCashInvariant);
+    expect(validationCode(() => createAuthoritativeState({ accounts: { [ACCOUNT]: { id: OTHER_ACCOUNT, kind: "checking", cash: money("0") } } }))).toBe(issueCodes.stateEntityIdentityMismatch);
+    expect(validationCode(() => createAuthoritativeState({ positions: { [POSITION]: { id: POSITION, accountId: ACCOUNT, quantity: Quantity.parse("1", SHARE), price: money("1"), carryingValue: money("1") } } }))).toBe(issueCodes.stateTargetNotFound);
+  });
 });
 
 describe("authoritative identity registry", () => {
@@ -168,5 +175,44 @@ describe("authoritative identity registry", () => {
       generatedOccurrenceKeys: [],
       externalIdempotencyKeys: [],
     }));
+  });
+
+  it("reconciles claim lifecycle history into global recognition and settlement authority", () => {
+    const recognition = recognitionId("recognition:historic");
+    const settlement = settlementId("settlement:historic");
+    const obligation = createObligation({
+      id: claimId("obligation:historic"),
+      category: "tax",
+      originatingRecognitionId: recognition,
+      economicOwnerId: ACCOUNT,
+      originalAmount: money("5"),
+      outstandingAmount: money("4"),
+      recognizedAt: AT,
+      settlementIds: [settlement],
+    });
+    const normalized = createAuthoritativeState({ obligations: { [obligation.id]: obligation } });
+    expect(normalized.identities.recognitionIds).toContain(recognition);
+    expect(normalized.identities.settlementIds).toContain(settlement);
+    expect(validationCode(() => registerAuthoritativeIdentity(normalized.identities, "recognitionIds", recognition))).toBe(issueCodes.duplicateRecognition);
+    expect(validationCode(() => registerAuthoritativeIdentity(normalized.identities, "settlementIds", settlement))).toBe(issueCodes.duplicateSettlement);
+  });
+
+  it("rejects contradictory recognition and settlement history across claims", () => {
+    const recognition = recognitionId("recognition:shared");
+    const settlement = settlementId("settlement:shared");
+    const claim = (id: string, originatingRecognitionId: ReturnType<typeof recognitionId>) => createObligation({
+      id: claimId(id),
+      category: "tax",
+      originatingRecognitionId,
+      economicOwnerId: ACCOUNT,
+      originalAmount: money("5"),
+      recognizedAt: AT,
+      settlementIds: [settlement],
+    });
+    const first = claim("obligation:first", recognition);
+    const secondSameRecognition = claim("obligation:second", recognition);
+    expect(validationCode(() => createAuthoritativeState({ obligations: { [first.id]: first, [secondSameRecognition.id]: secondSameRecognition } }))).toBe(issueCodes.duplicateRecognition);
+    const secondSameSettlement = claim("obligation:third", recognitionId("recognition:other"));
+    expect(validationCode(() => createAuthoritativeState({ obligations: { [first.id]: first, [secondSameSettlement.id]: secondSameSettlement } }))).toBe(issueCodes.duplicateSettlement);
   });
 });

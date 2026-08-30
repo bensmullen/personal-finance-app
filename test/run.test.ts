@@ -131,6 +131,24 @@ describe("run completion semantics", () => {
     expect(validationCode(() => incompleteRunResult({ metadata: metadata(), requestedHorizon: horizon, stoppedAt: END, reachedThrough: END, reason, periods: [] }))).toBe(issueCodes.invalidRunCompletionResult);
     expect(validationCode(() => invalidModelRunResult([validationIssue({ severity: "warning", code: issueCodes.liquidityShortfall, message: "modeled stress" })]))).toBe(issueCodes.invalidRunCompletionResult);
   });
+
+  it("requires coherent incomplete horizons, progress, and a hard-stop error", () => {
+    const reason = validationIssue({ severity: "error", code: "HARD_PERIOD_FAILURE", message: "period failed" });
+    const stoppedAt = instant("2026-01-15T00:00:00.000Z");
+    expect(validationCode(() => incompleteRunResult({ metadata: metadata(), requestedHorizon: period(START, instant("2026-03-01T00:00:00.000Z")), stoppedAt, reason, periods: [] }))).toBe(issueCodes.invalidRunCompletionResult);
+    expect(validationCode(() => incompleteRunResult({ metadata: metadata(), requestedHorizon: horizon, stoppedAt, reachedThrough: instant("2026-01-16T00:00:00.000Z"), reason, periods: [] }))).toBe(issueCodes.invalidRunCompletionResult);
+    expect(validationCode(() => incompleteRunResult({ metadata: metadata(), requestedHorizon: horizon, stoppedAt, reachedThrough: instant("2025-12-31T23:59:59.999Z"), reason, periods: [] }))).toBe(issueCodes.invalidRunCompletionResult);
+    expect(validationCode(() => incompleteRunResult({ metadata: metadata(), requestedHorizon: horizon, stoppedAt: END, reachedThrough: END, reason, periods: [] }))).toBe(issueCodes.invalidRunCompletionResult);
+    expect(validationCode(() => incompleteRunResult({ metadata: metadata(), requestedHorizon: horizon, stoppedAt, reason: validationIssue({ severity: "warning", code: issueCodes.liquidityShortfall, message: "modeled stress" }), periods: [] }))).toBe(issueCodes.invalidRunCompletionResult);
+    expect(incompleteRunResult({ metadata: metadata(), requestedHorizon: horizon, stoppedAt, reachedThrough: START, reason, periods: [] }).reason).toEqual(reason);
+  });
+
+  it("allows mixed invalid-model diagnostics only when at least one error exists", () => {
+    const error = validationIssue({ severity: "error", code: "INVALID_INPUT", message: "bad model" });
+    const warning = validationIssue({ severity: "warning", code: issueCodes.liquidityShortfall, message: "also stressed" });
+    expect(invalidModelRunResult([error, warning]).issues).toEqual([error, warning]);
+    expect(validationCode(() => invalidModelRunResult([warning]))).toBe(issueCodes.invalidRunCompletionResult);
+  });
 });
 
 describe("fact provenance and actual/forecast boundary", () => {
@@ -164,10 +182,12 @@ describe("fact provenance and actual/forecast boundary", () => {
     expect(validationCode(() => createFactProvenance({ factKind: "observed", sourceType: "user", sourceId: "bad", observedAt: AS_OF, effectiveAt: AS_OF, originalExternalId: "x", idempotencyKey: idempotencyKey("bad", "x") } as never))).toBe(issueCodes.invalidProvenance);
   });
 
-  it("rejects observed history beyond dataCutoff without reclassifying model facts", () => {
-    const lateObserved = createFactProvenance({ ...observed(), effectiveAt: START });
+  it("uses observation availability, not economic timing, for dataCutoff", () => {
+    const lateObserved = createFactProvenance({ ...observed(), observedAt: START, effectiveAt: AS_OF } as FactProvenance);
     expect(validationCode(() => assertObservedFactWithinDataCutoff(lateObserved, context()))).toBe(issueCodes.observedFactAfterDataCutoff);
-    const modeled = createFactProvenance({ factKind: "model_generated", sourceType: "model", sourceId: "model:1", effectiveAt: instant("2025-01-01T00:00:00.000Z") });
+    const knownFutureEffective = createFactProvenance({ ...observed(), observedAt: AS_OF, effectiveAt: START } as FactProvenance);
+    expect(() => assertObservedFactWithinDataCutoff(knownFutureEffective, context())).not.toThrow();
+    const modeled = createFactProvenance({ factKind: "model_generated", sourceType: "model", sourceId: "model:1", effectiveAt: instant("2027-01-01T00:00:00.000Z") });
     expect(() => assertObservedFactWithinDataCutoff(modeled, context())).not.toThrow();
     expect(modeled.factKind).toBe("model_generated");
   });

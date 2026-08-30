@@ -36,6 +36,7 @@ import {
 } from "./semantics.js";
 import {
   applyAccountingTransactionAtomically,
+  assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
   createAuthoritativeState,
   registerAuthoritativeIdentity,
@@ -207,9 +208,16 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
   if (request.period.start !== request.runContext.simulationStart || request.period.end !== request.runContext.simulationEnd) {
     failValidation({ severity: "error", code: issueCodes.invalidRunContext, message: "Vertical Slice period must match the run context horizon", entityType: "run_context", fieldPath: "simulationStart" });
   }
+  const state = cloneAuthoritativeState(request.openingState);
+  const input = request.input;
+  const currency = input.currency ?? USD;
+  if (!currency.equals(request.runContext.baseCurrency)) {
+    failValidation({ severity: "error", code: issueCodes.runBaseCurrencyMismatch, message: `Vertical Slice currency ${currency.code} does not match run base currency ${request.runContext.baseCurrency.code}`, entityType: "run_context", fieldPath: "baseCurrency", relatedIds: [currency.code, request.runContext.baseCurrency.code] });
+  }
+  assertAuthoritativeStateCurrency(state, request.runContext.baseCurrency);
   const inputFingerprint = createInputFingerprint({
     runContext: request.runContext,
-    openingState: cloneAuthoritativeState(request.openingState),
+    openingState: state,
     scenario: {
       input: request.input,
       taxSettlements: [...(request.taxSettlements ?? [])]
@@ -219,9 +227,6 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     },
   });
   const runMetadata = createRunMetadata(request.runContext, inputFingerprint);
-  const state = cloneAuthoritativeState(request.openingState);
-  const input = request.input;
-  const currency = input.currency ?? USD;
   const postingRounding = verticalSlicePostingRounding(currency);
   validateState(state, input);
 
@@ -273,7 +278,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     policy: FundingPolicy,
     suppliedProvenance?: FactProvenance,
   ): void => {
-    const provenance = suppliedProvenance ?? settlementRequest.provenance ?? createFactProvenance({
+    const provenance = createFactProvenance(suppliedProvenance ?? settlementRequest.provenance ?? {
       factKind: "authoritative_input",
       sourceType: "user",
       sourceId: settlementRequest.settlementId,
@@ -449,7 +454,9 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
   transactions.sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id));
   for (const tx of transactions) if (!inPeriod(tx.date, request.period)) throw new Error(`Transaction ${tx.id} is outside period`);
 
-  const assets = sumMoney(Object.values(state.accounts).map((account) => account.cash), currency);
+  const consolidatedCash = sumMoney(Object.values(state.accounts).map((account) => account.cash), currency);
+  const positionAssets = sumMoney(Object.values(state.positions).map((position) => position.price.times(position.quantity.amount)), currency);
+  const assets = consolidatedCash.plus(positionAssets);
   const liabilities = sumMoney(Object.values(state.liabilities).map((liability) => liability.balance), currency);
   const income = sumMoney(transactions.flatMap((tx) => tx.legs.filter((leg) => leg.type === "income" && leg.posting === "credit").map((leg) => leg.amount)), currency);
   const expenses = sumMoney(transactions.flatMap((tx) => tx.legs.filter((leg) => (leg.type === "expense" || leg.type === "tax") && leg.posting === "debit").map((leg) => leg.amount)), currency);
@@ -480,7 +487,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
       livingExpenses: input.monthlyLivingExpense,
       checkingCash: state.accounts[input.checkingAccountId]!.cash,
       retirementCash: state.accounts[input.retirementAccountId]!.cash,
-      consolidatedCash: assets,
+      consolidatedCash,
     }),
   });
 }

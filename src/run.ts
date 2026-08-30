@@ -1,4 +1,4 @@
-import { failValidation, issueCodes, type ValidationIssue } from "./diagnostics.js";
+import { failValidation, issueCodes, validationIssue, type ValidationIssue } from "./diagnostics.js";
 import { domainId, type DomainId } from "./identity.js";
 import { isObservedFact, type FactProvenance } from "./provenance.js";
 import type { Instant, Period } from "./time.js";
@@ -62,13 +62,13 @@ export const assertObservedFactWithinDataCutoff = (
   provenance: FactProvenance,
   context: RunContext,
 ): void => {
-  if (isObservedFact(provenance) && provenance.effectiveAt > context.dataCutoff) {
+  if (isObservedFact(provenance) && provenance.observedAt > context.dataCutoff) {
     failValidation({
       severity: "error",
       code: issueCodes.observedFactAfterDataCutoff,
-      message: `Observed fact effective at ${provenance.effectiveAt} exceeds run data cutoff ${context.dataCutoff}`,
+      message: `Observed fact observed at ${provenance.observedAt} exceeds run data cutoff ${context.dataCutoff}`,
       entityType: "provenance",
-      fieldPath: "effectiveAt",
+      fieldPath: "observedAt",
       relatedIds: [provenance.sourceId, context.runId],
     });
   }
@@ -219,18 +219,24 @@ export const completedRunResult = <TPeriodResult>(draft: Omit<CompletedRunResult
 };
 
 export const incompleteRunResult = <TPeriodResult>(draft: Omit<IncompleteRunResult<TPeriodResult>, "status">): IncompleteRunResult<TPeriodResult> => {
+  if (draft.requestedHorizon.start !== draft.metadata.simulationStart || draft.requestedHorizon.end !== draft.metadata.simulationEnd) {
+    invalidCompletion("Incomplete result horizon must match run metadata");
+  }
   if (draft.stoppedAt < draft.requestedHorizon.start || draft.stoppedAt > draft.requestedHorizon.end) {
     invalidCompletion("Incomplete result stoppedAt must fall within the requested horizon");
   }
-  if (draft.reachedThrough === draft.requestedHorizon.end) {
-    invalidCompletion("Incomplete result cannot report the requested horizon as reached");
+  if (draft.reachedThrough !== undefined && (draft.reachedThrough < draft.requestedHorizon.start || draft.reachedThrough >= draft.requestedHorizon.end || draft.reachedThrough > draft.stoppedAt)) {
+    invalidCompletion("Incomplete result reachedThrough must be within the horizon, before its end, and no later than stoppedAt");
   }
-  return Object.freeze({ ...draft, status: "incomplete", periods: Object.freeze([...draft.periods]) });
+  if (draft.reason.severity !== "error") {
+    invalidCompletion("Incomplete result requires an error-severity hard-stop reason");
+  }
+  return Object.freeze({ ...draft, reason: validationIssue(draft.reason), status: "incomplete", periods: Object.freeze([...draft.periods]) });
 };
 
 export const invalidModelRunResult = (issues: readonly ValidationIssue[]): InvalidModelRunResult => {
-  if (issues.length === 0 || issues.some((issue) => issue.severity !== "error")) {
+  if (!issues.some((issue) => issue.severity === "error")) {
     invalidCompletion("invalid_model requires one or more error diagnostics");
   }
-  return Object.freeze({ status: "invalid_model", periods: Object.freeze([]), issues: Object.freeze([...issues]) });
+  return Object.freeze({ status: "invalid_model", periods: Object.freeze([]), issues: Object.freeze(issues.map(validationIssue)) });
 };

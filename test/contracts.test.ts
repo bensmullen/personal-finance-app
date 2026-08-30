@@ -20,7 +20,8 @@ import {
   type ConstraintOutcomeStatus,
   type FundingResolution,
 } from "../src/funding.js";
-import { domainId } from "../src/identity.js";
+import { domainId, generatedOccurrenceKey } from "../src/identity.js";
+import { createFactProvenance } from "../src/provenance.js";
 import { calculationTraceId, calculationTraceRef } from "../src/lineage.js";
 import {
   applySettlement,
@@ -28,9 +29,11 @@ import {
   claimStatus,
   createObligation,
   createRecognitionFact,
+  createSemanticEffect,
   createSettlement,
   createSettlementProposal,
   recognitionId,
+  semanticEffectId,
   settlementId,
   settlementProposalId,
 } from "../src/semantics.js";
@@ -187,6 +190,37 @@ describe("shared accounting authority", () => {
       ],
     });
     expect(summarizeCashFlowClass(mixed)).toBe("mixed");
+  });
+});
+
+describe("semantic provenance authority", () => {
+  const occurrence = generatedOccurrenceKey({
+    scenarioId: domainId("scenario", "55555555-5555-4555-8555-555555555555"),
+    primitiveInstanceId: domainId("primitive-instance", "66666666-6666-4666-8666-666666666666"),
+    scheduledAt: RECOGNIZED_AT,
+    semanticEffectType: "recognition",
+    economicTargetId: OWNER,
+  });
+  const otherOccurrence = generatedOccurrenceKey({
+    scenarioId: domainId("scenario", "55555555-5555-4555-8555-555555555555"),
+    primitiveInstanceId: domainId("primitive-instance", "77777777-7777-4777-8777-777777777777"),
+    scheduledAt: RECOGNIZED_AT,
+    semanticEffectType: "recognition",
+    economicTargetId: OWNER,
+  });
+  const provenance = createFactProvenance({ factKind: "model_generated", sourceType: "model", sourceId: "primitive:test", effectiveAt: RECOGNIZED_AT, generatedOccurrenceKey: occurrence });
+
+  it("normalizes matching generated occurrence identity through semantic factories", () => {
+    const fact = createRecognitionFact({ id: recognitionId("recognition:provenance"), category: "test", amount: money("1"), recognizedAt: RECOGNIZED_AT, sourceOccurrenceKey: occurrence, provenance });
+    const effect = createSemanticEffect({ id: semanticEffectId("effect:provenance"), kind: "recognition", category: "test", sourceOccurrenceKey: occurrence, provenance });
+    expect(fact.sourceOccurrenceKey).toBe(occurrence);
+    expect(effect.sourceOccurrenceKey).toBe(occurrence);
+    expect(effect.provenance).toEqual(provenance);
+  });
+
+  it("rejects malformed supplied provenance and contradictory occurrence keys", () => {
+    expect(validationCode(() => createRecognitionFact({ id: recognitionId("recognition:bad-provenance"), category: "test", amount: money("1"), recognizedAt: RECOGNIZED_AT, provenance: { factKind: "authoritative_input", sourceType: "model", sourceId: "bad", effectiveAt: RECOGNIZED_AT } as never }))).toBe(issueCodes.invalidProvenance);
+    expect(validationCode(() => createRecognitionFact({ id: recognitionId("recognition:bad-occurrence"), category: "test", amount: money("1"), recognizedAt: RECOGNIZED_AT, sourceOccurrenceKey: otherOccurrence, provenance }))).toBe(issueCodes.invalidProvenance);
   });
 });
 

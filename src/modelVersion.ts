@@ -129,6 +129,26 @@ export const classifyModelFormatVersion = (
   });
 };
 
+export const classifyFinancialSpecificationVersion = (sourceVersion: string): ModelCompatibilityResult => {
+  const targetVersion = CURRENT_RUN_VERSIONS.financialSpecificationVersion;
+  if (sourceVersion === targetVersion) {
+    return Object.freeze({ classification: "supported_directly", sourceVersion, targetVersion, issues: Object.freeze([]) });
+  }
+  return Object.freeze({
+    classification: "unsupported",
+    sourceVersion,
+    targetVersion,
+    issues: Object.freeze([validationIssue({
+      severity: "error",
+      code: issueCodes.unsupportedFinancialSpecification,
+      message: `Unsupported financial specification ${sourceVersion}; current specification is ${targetVersion}`,
+      entityType: "portable_model",
+      fieldPath: "financial_specification_version",
+      relatedIds: [sourceVersion, targetVersion],
+    })]),
+  });
+};
+
 export const migratePortableModel = (
   source: PortableModelDocument,
   sourceVersion: string,
@@ -151,6 +171,9 @@ export const migratePortableModel = (
     const migrated = migration.migrate(current);
     if (migrated.model_format_version !== migration.targetVersion) {
       migrationFailure(issueCodes.modelVersionMismatch, `Migration ${migration.migrationId} did not produce ${migration.targetVersion}`);
+    }
+    if (migrated.financial_specification_version !== current.financial_specification_version) {
+      migrationFailure(issueCodes.unsupportedFinancialSpecification, `Model-format migration ${migration.migrationId} must not change financial_specification_version`);
     }
     current = migrated;
     currentVersion = migration.targetVersion;
@@ -179,6 +202,13 @@ export const deserializePortableModelEnvelope = (
   }
   if (serialized.financial_specification_version.trim().length === 0) {
     migrationFailure(issueCodes.modelVersionMismatch, "Portable model financial specification version cannot be empty");
+  }
+  const financialCompatibility = classifyFinancialSpecificationVersion(serialized.financial_specification_version);
+  if (financialCompatibility.classification !== "supported_directly") {
+    migrationFailure(
+      financialCompatibility.issues[0]?.code ?? issueCodes.unsupportedFinancialSpecification,
+      financialCompatibility.issues[0]?.message ?? `Financial specification ${serialized.financial_specification_version} is not directly supported`,
+    );
   }
   return Object.freeze({
     modelFormatVersion: serialized.model_format_version,

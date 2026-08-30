@@ -3,7 +3,7 @@ import type { Instant } from "./time.js";
 import { failValidation, issueCodes } from "./diagnostics.js";
 import { freezeTraceRefs, type CalculationTraceRef } from "./lineage.js";
 import type { Money } from "./values.js";
-import type { FactProvenance } from "./provenance.js";
+import { createFactProvenance, normalizeOccurrenceProvenance, type FactProvenance } from "./provenance.js";
 import {
   assertAcceptedFundingResolution,
   type AcceptedFundingResolution,
@@ -59,13 +59,13 @@ export const createRecognitionFact = (
   }
   if (draft.category.trim().length === 0) throw new Error("Recognition category cannot be empty");
   const traceRefs = freezeTraceRefs(draft.traceRefs);
+  const occurrence = normalizeOccurrenceProvenance(draft.provenance, draft.sourceOccurrenceKey);
   return Object.freeze({
     id: draft.id,
     category: draft.category,
     amount: draft.amount,
     recognizedAt: draft.recognizedAt,
-    ...(draft.sourceOccurrenceKey === undefined ? {} : { sourceOccurrenceKey: draft.sourceOccurrenceKey }),
-    ...(draft.provenance === undefined ? {} : { provenance: draft.provenance }),
+    ...occurrence,
     ...(traceRefs === undefined ? {} : { traceRefs }),
   });
 };
@@ -219,7 +219,7 @@ export const createSettlementProposal = (
     requestedAmount: draft.requestedAmount,
     requestedAt: draft.requestedAt,
     ...(draft.fundingPolicyId === undefined ? {} : { fundingPolicyId: draft.fundingPolicyId }),
-    ...(draft.provenance === undefined ? {} : { provenance: draft.provenance }),
+    ...(draft.provenance === undefined ? {} : { provenance: createFactProvenance(draft.provenance) }),
     ...(traceRefs === undefined ? {} : { traceRefs }),
   }) as SettlementProposal;
   authoritativeSettlementProposals.add(proposal);
@@ -293,7 +293,7 @@ export const createSettlement = (
     amount,
     settledAt: draft.settledAt,
     fundingAllocations: Object.freeze(fundingAllocations.map((allocation) => Object.freeze({ ...allocation }))),
-    ...(draft.provenance === undefined ? {} : { provenance: draft.provenance }),
+    ...(draft.provenance === undefined ? {} : { provenance: createFactProvenance(draft.provenance) }),
     ...(traceRefs === undefined ? {} : { traceRefs }),
   }) as Settlement;
   authoritativeSettlements.add(settlement);
@@ -339,5 +339,7 @@ export interface SemanticEffect {
 
 export const createSemanticEffect = (draft: SemanticEffect): SemanticEffect => {
   const traceRefs = freezeTraceRefs(draft.traceRefs);
-  return Object.freeze({ ...draft, ...(traceRefs === undefined ? {} : { traceRefs }) });
+  const occurrence = normalizeOccurrenceProvenance(draft.provenance, draft.sourceOccurrenceKey);
+  const { provenance: _provenance, sourceOccurrenceKey: _sourceOccurrenceKey, ...rest } = draft;
+  return Object.freeze({ ...rest, ...occurrence, ...(traceRefs === undefined ? {} : { traceRefs }) });
 };

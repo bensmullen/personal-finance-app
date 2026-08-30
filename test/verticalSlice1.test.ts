@@ -22,7 +22,6 @@ import {
 } from "../src/verticalSlice1.js";
 import { issueCodes } from "../src/diagnostics.js";
 import { claimId, createObligation, recognitionId, settlementId } from "../src/semantics.js";
-import { registerAuthoritativeIdentity } from "../src/state.js";
 
 const dollars = (value: Money): string =>
   formatMoney(value, RoundingPolicy.currency(value.currency.minorUnitScale, "half_up"));
@@ -482,7 +481,6 @@ describe("Vertical Slice 1", () => {
       settlementIds: [settlementId("settlement:historic")],
     });
     opening.obligations[other.id] = other;
-    registerAuthoritativeIdentity(opening.identities, "settlementIds", settlementId("settlement:historic"));
     expect(() => runVerticalSlicePeriod({
       period: utcMonth(2026, 2),
       input: { ...input, monthlyGrossCompensation: money("0"), retirementContribution: money("0"), monthlyLivingExpense: money("0"), settleCurrentTax: false, taxFundingPolicy: syntheticFundingPolicy(false) },

@@ -107,6 +107,10 @@ accounts, positions, liabilities, obligations, and persistent identity
 registries. Its result keeps authoritative closing state, emitted semantic and
 accounting history, derived statements/outputs, and diagnostics as distinct
 contracts.
+Opening authoritative state is normalized before execution: record keys equal
+contained IDs, positions reference present accounts, prohibited negative
+balances are rejected, and claim recognition/settlement history is unioned into
+the global replay registries while contradictory claim history is rejected.
 
 Every execution supplies a `RunContext` with run/scenario identities, `asOf`,
 `dataCutoff`, the single-period simulation horizon, base currency, and supported
@@ -983,8 +987,18 @@ global duplicate registry.
 ### I14 — Run boundary and provenance
 
 `dataCutoff ≤ asOf`, the simulation interval is non-empty, and observed input
-after `dataCutoff` is rejected. Model-generated facts remain distinguishable
+whose information-availability time `observedAt` is after `dataCutoff` is
+rejected. Economic `effectiveAt` remains a separate domain timing boundary and
+does not establish availability. Model-generated facts remain distinguishable
 from observed and user-entered facts after result construction/serialization.
+
+### I15 — Base-currency and shared-state derivation
+
+The run base currency MUST equal the Vertical Slice input currency and every
+aggregated state/transaction Money currency; no FX conversion is implicit.
+`consolidatedCash` sums account cash only. Statement assets additionally include
+existing positions at static market value (`price × quantity`), so positions in
+authoritative state cannot disappear from assets or net worth.
 
 ## 16. Canonical end-to-end scenario
 
@@ -1252,7 +1266,8 @@ its input fingerprint from context (excluding `runId`), opening authoritative
 state, domain inputs, ordered economic actions, and explicit funding policy.
 Generated recognitions/effects retain model provenance and deterministic
 occurrence keys. Externally observed settlement facts retain source and
-idempotency identity and are admitted only within `dataCutoff`.
+idempotency identity and are admitted only when `observedAt ≤ dataCutoff`;
+`effectiveAt` independently governs their economic timing.
 
 ## 19. Golden-test contract
 

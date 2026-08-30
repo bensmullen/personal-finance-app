@@ -5,6 +5,7 @@ import {
   CURRENT_MODEL_FORMAT_VERSION,
   LEGACY_AMBIGUOUS_MODEL_FORMAT_VERSION,
   ModelMigrationRegistry,
+  classifyFinancialSpecificationVersion,
   classifyModelFormatVersion,
   deserializePortableModelEnvelope,
   detectSerializedModelFormatVersion,
@@ -63,6 +64,7 @@ describe("portable model format compatibility", () => {
     const second = migratePortableModel(source, MIGRATABLE_VERSION, CURRENT_MODEL_FORMAT_VERSION, registry);
     expect(first).toEqual(second);
     expect(first.model_format_version).toBe(CURRENT_MODEL_FORMAT_VERSION);
+    expect(first.financial_specification_version).toBe(CURRENT_RUN_VERSIONS.financialSpecificationVersion);
     expect(validationCode(() => migratePortableModel({ ...source, model_format_version: "0.1.4-missing" }, "0.1.4-missing", CURRENT_MODEL_FORMAT_VERSION, registry)))
       .toBe(issueCodes.modelMigrationUnavailable);
   });
@@ -86,6 +88,18 @@ describe("portable model format compatibility", () => {
       CURRENT_MODEL_FORMAT_VERSION,
       broken,
     ))).toBe(issueCodes.modelVersionMismatch);
+    const semanticRewrite = new ModelMigrationRegistry([{
+      migrationId: "semantic-rewrite",
+      sourceVersion: "semantic-source",
+      targetVersion: CURRENT_MODEL_FORMAT_VERSION,
+      migrate: (source) => ({ ...source, model_format_version: CURRENT_MODEL_FORMAT_VERSION, financial_specification_version: "99.0.0-future" }),
+    }]);
+    expect(validationCode(() => migratePortableModel(
+      { model_format_version: "semantic-source", financial_specification_version: CURRENT_RUN_VERSIONS.financialSpecificationVersion },
+      "semantic-source",
+      CURRENT_MODEL_FORMAT_VERSION,
+      semanticRewrite,
+    ))).toBe(issueCodes.unsupportedFinancialSpecification);
   });
 
   it("round-trips the current envelope without losing distinct version metadata", () => {
@@ -103,5 +117,18 @@ describe("portable model format compatibility", () => {
     }));
     expect(deserializePortableModelEnvelope(JSON.parse(JSON.stringify(serialized)))).toEqual(envelope);
     expect(serialized.model_format_version).not.toBe(serialized.financial_specification_version);
+  });
+
+  it("requires independent support for the financial specification", () => {
+    expect(classifyFinancialSpecificationVersion(CURRENT_RUN_VERSIONS.financialSpecificationVersion).classification).toBe("supported_directly");
+    expect(classifyFinancialSpecificationVersion("99.0.0-future").classification).toBe("unsupported");
+    const serialized = {
+      model_format_version: CURRENT_MODEL_FORMAT_VERSION,
+      financial_specification_version: "99.0.0-future",
+      model_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      objects: {},
+    } as const;
+    expect(validationCode(() => deserializePortableModelEnvelope(serialized))).toBe(issueCodes.unsupportedFinancialSpecification);
+    expect(validationCode(() => deserializePortableModelEnvelope({ ...serialized, financial_specification_version: "0.1.6-draft" }))).toBe(issueCodes.unsupportedFinancialSpecification);
   });
 });

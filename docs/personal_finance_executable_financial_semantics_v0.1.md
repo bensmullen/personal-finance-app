@@ -73,6 +73,12 @@ obligation/right lifecycle state plus persistent identity registries for posted
 transactions, recognitions, settlements, generated occurrences, and external
 idempotency keys. Kernel and vertical-slice execution MUST use this same state
 authority rather than maintain independently authoritative state shapes.
+Record keys MUST equal their contained canonical entity IDs, every position MUST
+reference an account in the same state, and prohibited negative cash,
+liability, quantity, or carrying-value balances invalidate opening state before
+execution. Claim lifecycle history is reconciled into global identity authority:
+every originating recognition and historical settlement remains replay-protected.
+Two claims MUST NOT assert the same originating recognition or settlement ID.
 
 Committed opening state is immutable to a run. Execution occurs on private
 working/candidate state. Only a validated accepted transition becomes closing
@@ -84,10 +90,13 @@ Every run MUST identify `runId`, `scenarioId`, `asOf`, `dataCutoff`,
 `simulationStart`, `simulationEnd`, and base currency. `simulationStart` MUST
 precede `simulationEnd`, and `dataCutoff` MUST NOT be later than `asOf`.
 
-Observed facts with an effective instant later than `dataCutoff` MUST NOT enter
-the run as historical facts. Provenance classification is authoritative:
-timestamps alone MUST NOT reclassify model-generated forecast facts as
-observed history.
+For observed external facts, `observedAt` is the information-availability time
+and MUST be no later than `dataCutoff`. `effectiveAt` is distinct economic-effect
+timing and is governed by the applicable domain/event rules; it does not decide
+whether information was available at the cutoff. `importedAt` remains ingestion
+and audit metadata for this milestone. Provenance classification is
+authoritative: timestamps alone MUST NOT reclassify model-generated forecast
+facts as observed history.
 
 ### 3.3 Economic, recognition, and settlement timing
 
@@ -905,10 +914,12 @@ wall-clock time, and derived results.
 
 Run completion is exactly one of `completed`, `incomplete`, or `invalid_model`.
 `completed` reaches the requested horizon. `incomplete` preserves explicit stop
-information and MAY expose prior committed period results but MUST NOT claim the
-horizon was reached. `invalid_model` is reserved for structural/semantic input
-invalidity before meaningful execution. Liquidity shortfall and other valid
-modeled stress do not automatically imply either failure status.
+information, requires an error-severity hard-stop condition before the requested
+horizon, and MAY expose prior committed period results but MUST NOT claim the
+horizon was reached. Warning-level liquidity shortfall and other valid modeled
+stress do not automatically imply either failure status. `invalid_model` is
+reserved for structural/semantic input invalidity before meaningful execution
+and may retain warnings or information alongside at least one error.
 
 ### 16.2 Provenance versus calculation lineage
 
@@ -926,6 +937,13 @@ root envelope distinguishes `model_format_version`,
 classified as `supported_directly`, `migratable`, `read_only_legacy`, or
 `unsupported`. Migrations MUST be explicit deterministic source-to-target
 steps, and migration chains MUST NOT infer or skip unsupported gaps.
+
+Model-format compatibility and financial-semantics compatibility are
+independent. A current serialization shape does not authorize interpretation
+under current financial semantics unless the identified
+`financial_specification_version` is also explicitly supported. A model-format
+migration MUST NOT claim to migrate financial meaning unless a separately
+reviewed semantic migration contract explicitly does so.
 
 The former `0.1.0-draft` root used `specification_version` without
 unambiguously identifying whether that value represented financial semantics or

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ValidationError, issueCodes } from "../src/diagnostics.js";
 import { idempotencyKey } from "../src/identity.js";
 import { createFactProvenance } from "../src/provenance.js";
+import { Currency, Quantity, SHARE } from "../src/values.js";
 import {
   Percentage,
   canonicalOpeningState,
@@ -202,5 +203,47 @@ describe("Vertical Slice 1 run/state integration", () => {
       runContext: createRunContext({ ...runContext, runId: runId("44444444-4444-4444-8444-444444444444") }),
       taxSettlements: [{ settlementId: "settlement:reimport", obligationId: "missing-on-purpose", amount: money("1"), date: effectiveAt, provenance }],
     }))).toBe(issueCodes.duplicateExternalIdempotencyKey);
+  });
+
+  it("rejects invalid opening state and run/base-currency disagreement without mutating the caller", () => {
+    const opening = canonicalOpeningState(input);
+    opening.accounts[CHECKING]!.cash = money("-1");
+    const before = JSON.stringify(opening);
+    expect(validationCode(() => runVerticalSlicePeriod({ period: utcMonth(2026, 1), input, openingState: opening, runContext: context(1) }))).toBe(issueCodes.negativeCashInvariant);
+    expect(JSON.stringify(opening)).toBe(before);
+    const eurContext = createRunContext({ ...context(1), baseCurrency: Currency.of("EUR") });
+    expect(validationCode(() => runVerticalSlicePeriod({ period: utcMonth(2026, 1), input, openingState: canonicalOpeningState(input), runContext: eurContext }))).toBe(issueCodes.runBaseCurrencyMismatch);
+  });
+
+  it("includes static positions in assets and net worth while consolidatedCash remains cash-only", () => {
+    const zeroFlow = { ...input, monthlyGrossCompensation: money("0"), retirementContribution: money("0"), monthlyLivingExpense: money("0"), settleCurrentTax: false };
+    const opening = canonicalOpeningState(zeroFlow);
+    opening.accounts[CHECKING]!.cash = money("10");
+    const positionId = domainId("position", "ffffffff-ffff-4fff-8fff-ffffffffffff");
+    opening.positions[positionId] = { id: positionId, accountId: input.retirementAccountId, quantity: Quantity.parse("2", SHARE), price: money("5"), carryingValue: money("10") };
+    const result = runVerticalSlicePeriod({ period: utcMonth(2026, 1), input: zeroFlow, openingState: opening, runContext: context(1) });
+    expect(result.outputs.consolidatedCash.equals(money("10"))).toBe(true);
+    expect(result.statements.assets.equals(money("20"))).toBe(true);
+    expect(result.statements.netWorth.equals(money("20"))).toBe(true);
+    expect(result.runMetadata.baseCurrency).toBe(result.statements.assets.currency.code);
+  });
+
+  it("validates structurally supplied settlement provenance through the runtime path", () => {
+    const january = runVerticalSlicePeriod({ period: utcMonth(2026, 1), input: { ...input, settleCurrentTax: false }, openingState: canonicalOpeningState(input), runContext: context(1) });
+    const openingBefore = JSON.stringify(january.state);
+    expect(validationCode(() => runVerticalSlicePeriod({
+      period: utcMonth(2026, 2),
+      input: { ...input, monthlyGrossCompensation: money("0"), retirementContribution: money("0"), monthlyLivingExpense: money("0"), settleCurrentTax: false },
+      openingState: january.state,
+      runContext: context(2),
+      taxSettlements: [{
+        settlementId: "settlement:invalid-provenance",
+        obligationId: "obligation:recognition:tax:2026-01-01T00:00:00.000Z",
+        amount: money("1"),
+        date: instant("2026-02-15T00:00:00.000Z"),
+        provenance: { factKind: "authoritative_input", sourceType: "model", sourceId: "bad", effectiveAt: instant("2026-02-15T00:00:00.000Z") } as never,
+      }],
+    }))).toBe(issueCodes.invalidProvenance);
+    expect(JSON.stringify(january.state)).toBe(openingBefore);
   });
 });
