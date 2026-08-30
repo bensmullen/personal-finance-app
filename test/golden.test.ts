@@ -1,9 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { DependencyGraph, GoldenRunner, Rate, RoundingPolicy, assertBalanced, domainId, fixedMortgagePayment, instant, mortgageInterest, mortgagePrincipal, money, posting, rateConvention, semanticEffectId, utcMonth, type AccountId, type KernelEvent, type LiabilityId, type PositionId, type SimulationState } from "../src/kernel.js";
+import { DependencyGraph, GoldenRunner as KernelGoldenRunner, Rate, RoundingPolicy, assertBalanced, createAuthoritativeState, createRunContext, domainId, fixedMortgagePayment, instant, mortgageInterest, mortgagePrincipal, money, posting, rateConvention, runId, scenarioId, semanticEffectId, utcMonth, type AccountId, type KernelEvent, type LiabilityId, type Period, type PositionId, type RunContext, type SimulationState } from "../src/kernel.js";
 import { Quantity, SHARE } from "../src/values.js";
 import { ValidationError, issueCodes } from "../src/diagnostics.js";
 
-const base = (accounts: SimulationState["accounts"] = {}, liabilities: SimulationState["liabilities"] = {}): SimulationState => ({ accounts, positions: {}, liabilities });
+const base = (accounts: SimulationState["accounts"] = {}, liabilities: SimulationState["liabilities"] = {}): SimulationState => createAuthoritativeState({ accounts, positions: {}, liabilities });
+const kernelRunContext = (target: Period): RunContext => createRunContext({
+  runId: runId("77777777-7777-4777-8777-777777777777"),
+  scenarioId: scenarioId("88888888-8888-4888-8888-888888888888"),
+  asOf: target.start,
+  dataCutoff: target.start,
+  simulationStart: target.start,
+  simulationEnd: target.end,
+  baseCurrency: money("0").currency,
+});
+class GoldenRunner extends KernelGoldenRunner {
+  override run(targetPeriod: Period, events: readonly KernelEvent[], runContext: RunContext = kernelRunContext(targetPeriod)) {
+    return super.run(targetPeriod, events, runContext);
+  }
+}
 const acct = (id: AccountId, kind: "checking" | "brokerage" | "retirement", cash: string) => ({ id, kind, cash: money(cash) });
 const leg = (postingSide: "debit" | "credit", type: "asset" | "liability" | "income" | "expense" | "gain" | "cash", amount: string, accountId?: AccountId, entityId?: PositionId | LiabilityId, quantity?: string) => ({ posting: postingSide, type, amount: money(amount), ...(accountId ? { accountId } : {}), ...(entityId ? { entityId } : {}), ...(quantity !== undefined ? { quantity: Quantity.parse(quantity, SHARE) } : {}) });
 const event = (id: string, date: string, effect: Omit<KernelEvent["effect"], "id" | "category"> & { id: string; category?: string }, transaction: KernelEvent["transaction"], dependsOn?: string[]): KernelEvent => ({ id, date: instant(date), effect: { ...effect, id: semanticEffectId(effect.id), category: effect.category ?? effect.description ?? effect.kind }, transaction, ...(dependsOn ? { dependsOn } : {}) });

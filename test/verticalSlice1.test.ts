@@ -3,6 +3,7 @@ import {
   canonicalOpeningState,
   claimStatus,
   createFundingPolicy,
+  createRunContext,
   domainId,
   formatMoney,
   fundingPolicyId,
@@ -10,16 +11,42 @@ import {
   money,
   Percentage,
   RoundingPolicy,
-  runVerticalSlicePeriod,
+  runId,
+  runVerticalSlicePeriod as executeVerticalSlicePeriod,
+  scenarioId,
   utcMonth,
   type Money,
+  type RunContext,
+  type VerticalSlicePeriodInput,
   type VerticalSliceInput,
 } from "../src/verticalSlice1.js";
 import { issueCodes } from "../src/diagnostics.js";
 import { claimId, createObligation, recognitionId, settlementId } from "../src/semantics.js";
+import { registerAuthoritativeIdentity } from "../src/state.js";
 
 const dollars = (value: Money): string =>
   formatMoney(value, RoundingPolicy.currency(value.currency.minorUnitScale, "half_up"));
+
+const testRunContext = (request: Pick<VerticalSlicePeriodInput, "period" | "input">): RunContext =>
+  createRunContext({
+    runId: runId("55555555-5555-4555-8555-555555555555"),
+    scenarioId: scenarioId("66666666-6666-4666-8666-666666666666"),
+    asOf: request.period.start,
+    dataCutoff: request.period.start,
+    simulationStart: request.period.start,
+    simulationEnd: request.period.end,
+    baseCurrency: request.input.currency ?? request.input.monthlyGrossCompensation.currency,
+  });
+
+const runVerticalSlicePeriod = (
+  request: Omit<VerticalSlicePeriodInput, "runContext"> & { readonly runContext?: RunContext },
+) => {
+  const { runContext, ...periodRequest } = request;
+  return executeVerticalSlicePeriod({
+    ...periodRequest,
+    runContext: runContext ?? testRunContext(request),
+  });
+};
 
 const input: VerticalSliceInput = {
   householdId: domainId("household", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
@@ -222,6 +249,7 @@ describe("Vertical Slice 1", () => {
       taxSettlements: [{ settlementId: "settlement:synthetic:all-or-nothing", obligationId: "obligation:tax:synthetic", amount: money("2000"), date: instant("2026-02-15T00:00:00.000Z"), fundingPolicy: policy }],
     });
 
+    expect(result.status).toBe("completed");
     expect(result.constraintOutcomes[0]?.status).toBe("unfunded");
     expect(result.constraintOutcomes[0]?.acceptedAmount.isZero()).toBe(true);
     expect(result.liquidityShortfalls[0]?.shortfallAmount.equals(money("1500"))).toBe(true);
@@ -454,6 +482,7 @@ describe("Vertical Slice 1", () => {
       settlementIds: [settlementId("settlement:historic")],
     });
     opening.obligations[other.id] = other;
+    registerAuthoritativeIdentity(opening.identities, "settlementIds", settlementId("settlement:historic"));
     expect(() => runVerticalSlicePeriod({
       period: utcMonth(2026, 2),
       input: { ...input, monthlyGrossCompensation: money("0"), retirementContribution: money("0"), monthlyLivingExpense: money("0"), settleCurrentTax: false, taxFundingPolicy: syntheticFundingPolicy(false) },

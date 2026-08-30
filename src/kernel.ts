@@ -2,7 +2,6 @@ import { type Instant, type Period, inPeriod, instant } from "./time.js";
 import type { DomainId } from "./identity.js";
 import {
   accountingTransactionId,
-  assertBalanced,
   cashFlowAmount,
   createAccountingLeg,
   createAccountingTransaction,
@@ -13,6 +12,17 @@ import {
 } from "./accounting.js";
 import { failValidation, issueCodes, type ValidationIssue } from "./diagnostics.js";
 import type { SemanticEffect } from "./semantics.js";
+import {
+  applyAccountingTransactionAtomically,
+  cloneAuthoritativeState,
+  registerAuthoritativeIdentity,
+  type AccountState,
+  type AuthoritativeState,
+  type LiabilityState,
+  type PositionState,
+} from "./state.js";
+import { assertObservedFactWithinDataCutoff, createInputFingerprint, createRunMetadata, type RunContext, type RunMetadata } from "./run.js";
+import { isObservedFact } from "./provenance.js";
 import {
   type DecimalAmount,
   Money,
@@ -33,25 +43,15 @@ export { semanticEffectId } from "./semantics.js";
 export type { AccountingLeg, AccountingTransaction } from "./accounting.js";
 export type { SemanticEffect } from "./semantics.js";
 export type { ValidationIssue } from "./diagnostics.js";
+export type { AccountState, PositionState, LiabilityState, AuthoritativeState } from "./state.js";
+export { createAuthoritativeState } from "./state.js";
+export { createRunContext, runId, scenarioId } from "./run.js";
+export type { RunContext, RunMetadata } from "./run.js";
 
 export type AccountId = DomainId<"account">;
 export type PositionId = DomainId<"position">;
 export type LiabilityId = DomainId<"liability">;
-export type AccountKind = "checking" | "brokerage" | "retirement";
-export interface AccountState { readonly id: AccountId; readonly kind: AccountKind; cash: Money; }
-export interface PositionState {
-  readonly id: PositionId;
-  readonly accountId: AccountId;
-  quantity: Quantity;
-  readonly price: Money;
-  carryingValue: Money;
-}
-export interface LiabilityState { readonly id: LiabilityId; balance: Money; readonly rate: Rate; }
-export interface SimulationState {
-  accounts: Record<string, AccountState>;
-  positions: Record<string, PositionState>;
-  liabilities: Record<string, LiabilityState>;
-}
+export type SimulationState = AuthoritativeState;
 
 export interface Statements {
   readonly assets: Money;
@@ -66,18 +66,16 @@ export interface Statements {
 }
 
 export interface RunResult {
+  readonly status: "completed";
+  readonly runMetadata: RunMetadata;
+  readonly requestedHorizon: Period;
+  readonly reachedThrough: Instant;
   readonly state: SimulationState;
   readonly effects: readonly SemanticEffect[];
   readonly transactions: readonly AccountingTransaction[];
   readonly statements: Statements;
   readonly diagnostics: readonly ValidationIssue[];
 }
-
-const clone = (state: SimulationState): SimulationState => ({
-  accounts: Object.fromEntries(Object.entries(state.accounts).map(([key, value]) => [key, { ...value }])),
-  positions: Object.fromEntries(Object.entries(state.positions).map(([key, value]) => [key, { ...value }])),
-  liabilities: Object.fromEntries(Object.entries(state.liabilities).map(([key, value]) => [key, { ...value }])),
-});
 
 interface PostingLegDraft {
   readonly posting: "debit" | "credit";
@@ -143,40 +141,22 @@ export interface KernelEvent {
   readonly transaction: AccountingTransaction;
 }
 
-function applyTransaction(state: SimulationState, transaction: AccountingTransaction): void {
-  assertBalanced(transaction);
-  for (const leg of transaction.legs) {
-    const signedAmount = leg.posting === "debit" ? leg.amount : leg.amount.negated();
-    if (leg.type === "cash") {
-      const account = state.accounts[leg.accountId];
-      if (!account) throw new Error(`Unknown cash account in ${transaction.id}`);
-      account.cash = account.cash.plus(signedAmount);
-      if (account.cash.isNegative()) {
-        failValidation({ severity: "error", code: issueCodes.negativeCashInvariant, message: `Accepted transaction ${transaction.id} creates prohibited negative cash in ${account.id}`, entityType: "account", entityId: account.id, relatedIds: [transaction.id] });
-      }
-    } else if (leg.type === "liability") {
-      const liability = state.liabilities[leg.entityId];
-      if (!liability) throw new Error(`Unknown liability in ${transaction.id}`);
-      liability.balance = liability.balance.minus(signedAmount);
-      if (liability.balance.isNegative()) throw new Error(`Negative liability balance in ${transaction.id}`);
-    } else if (leg.type === "asset") {
-      const position = state.positions[leg.entityId];
-      if (!position) throw new Error(`Unknown position in ${transaction.id}`);
-      position.carryingValue = position.carryingValue.plus(signedAmount);
-      if (leg.quantity) position.quantity = leg.posting === "debit" ? position.quantity.plus(leg.quantity) : position.quantity.minus(leg.quantity);
-      if (position.quantity.isNegative() || position.carryingValue.isNegative()) throw new Error(`Negative position balance in ${transaction.id}`);
-    }
-  }
-}
-
 export class SemanticRunner {
   constructor(private readonly initial: SimulationState) {}
 
-  run(targetPeriod: Period, events: readonly KernelEvent[]): RunResult {
-    const state = clone(this.initial);
+  run(targetPeriod: Period, events: readonly KernelEvent[], runContext: RunContext): RunResult {
+    if (targetPeriod.start !== runContext.simulationStart || targetPeriod.end !== runContext.simulationEnd) {
+      failValidation({ severity: "error", code: issueCodes.invalidRunContext, message: "Kernel period must match the run context horizon", entityType: "run_context", fieldPath: "simulationStart" });
+    }
+    const inputFingerprint = createInputFingerprint({
+      runContext,
+      openingState: cloneAuthoritativeState(this.initial),
+      scenario: [...events].sort((left, right) => left.id.localeCompare(right.id)),
+    });
+    const runMetadata = createRunMetadata(runContext, inputFingerprint);
+    const state = cloneAuthoritativeState(this.initial);
     const effects: SemanticEffect[] = [];
     const transactions: AccountingTransaction[] = [];
-    const postedIds = new Set<string>();
     const graph = new DependencyGraph();
     for (const event of events) {
       graph.addNode(event.id);
@@ -188,21 +168,32 @@ export class SemanticRunner {
       if (!event) throw new Error(`Unknown dependency node ${id}`);
       if (!inPeriod(event.date, targetPeriod)) throw new Error(`Event ${event.id} is outside period`);
       if (event.transaction.date !== event.date) throw new Error(`Transaction date mismatch for ${event.id}`);
-      if (postedIds.has(event.transaction.id)) {
-        failValidation({ severity: "error", code: issueCodes.duplicateTransaction, message: `Duplicate transaction ${event.transaction.id}`, entityType: "accounting_transaction", entityId: event.transaction.id });
+      if (event.effect.provenance !== undefined) {
+        assertObservedFactWithinDataCutoff(event.effect.provenance, runContext);
+        if (isObservedFact(event.effect.provenance)) {
+          registerAuthoritativeIdentity(state.identities, "externalIdempotencyKeys", event.effect.provenance.idempotencyKey);
+        }
       }
-      postedIds.add(event.transaction.id);
+      if (event.effect.sourceOccurrenceKey !== undefined) {
+        registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", event.effect.sourceOccurrenceKey);
+      }
+      if (event.effect.recognitionId !== undefined) {
+        registerAuthoritativeIdentity(state.identities, "recognitionIds", event.effect.recognitionId);
+      }
+      if (event.effect.settlementId !== undefined) {
+        registerAuthoritativeIdentity(state.identities, "settlementIds", event.effect.settlementId);
+      }
       effects.push(event.effect);
       transactions.push(event.transaction);
-      applyTransaction(state, event.transaction);
+      applyAccountingTransactionAtomically(state, event.transaction);
     }
-    return Object.freeze({ state, effects: Object.freeze(effects), transactions: Object.freeze(transactions), statements: deriveStatements(state, transactions), diagnostics: Object.freeze([]) });
+    return Object.freeze({ status: "completed", runMetadata, requestedHorizon: targetPeriod, reachedThrough: targetPeriod.end, state, effects: Object.freeze(effects), transactions: Object.freeze(transactions), statements: deriveStatements(state, transactions), diagnostics: Object.freeze([]) });
   }
 }
 
 export class GoldenRunner {
   constructor(private readonly initial: SimulationState) {}
-  run(targetPeriod: Period, events: readonly KernelEvent[]): RunResult { return new SemanticRunner(this.initial).run(targetPeriod, events); }
+  run(targetPeriod: Period, events: readonly KernelEvent[], runContext: RunContext): RunResult { return new SemanticRunner(this.initial).run(targetPeriod, events, runContext); }
 }
 
 function deriveStatements(state: SimulationState, transactions: readonly AccountingTransaction[]): Statements {

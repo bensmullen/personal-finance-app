@@ -3,6 +3,7 @@ import type { Instant } from "./time.js";
 import { failValidation, issueCodes } from "./diagnostics.js";
 import { freezeTraceRefs, type CalculationTraceRef } from "./lineage.js";
 import type { Money } from "./values.js";
+import type { FactProvenance } from "./provenance.js";
 import {
   assertAcceptedFundingResolution,
   type AcceptedFundingResolution,
@@ -35,6 +36,7 @@ export interface RecognitionFact {
   readonly amount: Money;
   readonly recognizedAt: Instant;
   readonly sourceOccurrenceKey?: GeneratedOccurrenceKey;
+  readonly provenance?: FactProvenance;
   readonly traceRefs?: readonly CalculationTraceRef[];
 }
 
@@ -63,6 +65,7 @@ export const createRecognitionFact = (
     amount: draft.amount,
     recognizedAt: draft.recognizedAt,
     ...(draft.sourceOccurrenceKey === undefined ? {} : { sourceOccurrenceKey: draft.sourceOccurrenceKey }),
+    ...(draft.provenance === undefined ? {} : { provenance: draft.provenance }),
     ...(traceRefs === undefined ? {} : { traceRefs }),
   });
 };
@@ -164,6 +167,7 @@ interface SettlementProposalData {
   readonly requestedAmount: Money;
   readonly requestedAt: Instant;
   readonly fundingPolicyId?: import("./funding.js").FundingPolicyId;
+  readonly provenance?: FactProvenance;
   readonly traceRefs?: readonly CalculationTraceRef[];
 }
 
@@ -215,6 +219,7 @@ export const createSettlementProposal = (
     requestedAmount: draft.requestedAmount,
     requestedAt: draft.requestedAt,
     ...(draft.fundingPolicyId === undefined ? {} : { fundingPolicyId: draft.fundingPolicyId }),
+    ...(draft.provenance === undefined ? {} : { provenance: draft.provenance }),
     ...(traceRefs === undefined ? {} : { traceRefs }),
   }) as SettlementProposal;
   authoritativeSettlementProposals.add(proposal);
@@ -228,6 +233,7 @@ interface SettlementData {
   readonly amount: Money;
   readonly settledAt: Instant;
   readonly fundingAllocations: readonly FundingAllocation[];
+  readonly provenance?: FactProvenance;
   readonly traceRefs?: readonly CalculationTraceRef[];
 }
 
@@ -237,6 +243,7 @@ const authoritativeSettlements = new WeakSet<object>();
 export interface SettlementDraft {
   readonly id: SettlementId;
   readonly settledAt: Instant;
+  readonly provenance?: FactProvenance;
   readonly traceRefs?: readonly CalculationTraceRef[];
 }
 
@@ -286,6 +293,7 @@ export const createSettlement = (
     amount,
     settledAt: draft.settledAt,
     fundingAllocations: Object.freeze(fundingAllocations.map((allocation) => Object.freeze({ ...allocation }))),
+    ...(draft.provenance === undefined ? {} : { provenance: draft.provenance }),
     ...(traceRefs === undefined ? {} : { traceRefs }),
   }) as Settlement;
   authoritativeSettlements.add(settlement);
@@ -320,10 +328,12 @@ export interface SemanticEffect {
   readonly category: string;
   readonly amount?: Money;
   readonly occurredAt?: Instant;
+  readonly sourceOccurrenceKey?: GeneratedOccurrenceKey;
   readonly recognitionId?: RecognitionId;
   readonly claimId?: ClaimId;
   readonly settlementId?: SettlementId;
   readonly description?: string;
+  readonly provenance?: FactProvenance;
   readonly traceRefs?: readonly CalculationTraceRef[];
 }
 
