@@ -1,6 +1,6 @@
 # Personal Finance App — Executable Financial Semantics Specification
 
-**Version:** 0.1.5-draft
+**Version:** 0.1.6-draft
 **Status:** Draft implementation contract  
 **Namespace:** `pfm`  
 **Depends on:** `personal_finance_canonical_schema_v1.0.json`, `personal_finance_model.schema.json`, `personal_finance_simulation_interfaces_v1.0.ts`
@@ -201,6 +201,9 @@ supported source is an explicitly identified household cash account.
 Funding resolution is pure. It evaluates a proposal, claim, policy, and
 available balances without mutating claim or account state and without creating
 accounting history, transfers, borrowing, overdraft, or asset sales.
+`availableBalances` MUST represent permitted liquidity as of the funding
+evaluation time. The evaluation MUST NOT precede the proposal, and a future
+cash movement MUST NOT fund an earlier proposal.
 
 `ConstraintOutcome` has exactly these statuses:
 
@@ -235,6 +238,11 @@ is modeled financial stress and a nonblocking warning, not a hard validation or
 accounting failure.
 
 Only a positive amount accepted by funding/constraints creates a `Settlement`.
+The accepted funding result is authoritative for the settlement amount and
+funding allocations; settlement identity, time, and trace metadata supplied by
+a caller cannot override those economic values. Unfunded, deferred,
+contract-default, rejected, and zero-amount outcomes cannot authorize a
+settlement. A settlement cannot precede its proposal or funding evaluation.
 Only accepted settlements flow into accounting. If an already-accepted posted
 transaction creates prohibited negative cash, the accounting/state boundary
 MUST fail a hard invariant. Accounting MUST NOT interpret that failure as a

@@ -28,7 +28,9 @@ recognition
 Funding resolution is pure: it does not mutate claims or balances and cannot
 create accounting history. Insufficient liquidity is a modeled constraint
 outcome rather than an accounting failure by itself. Only a positive accepted
-settlement reaches accounting.
+funding result authorizes settlement construction, and that result—not a caller
+draft—is authoritative for settlement amount and allocations. Only a positive
+accepted settlement reaches accounting.
 
 Only accounting-module factories create authoritative accounting legs and
 transactions. Accounting validates balance independently by currency and

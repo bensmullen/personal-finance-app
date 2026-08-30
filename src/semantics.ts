@@ -2,8 +2,12 @@ import type { DomainId, GeneratedOccurrenceKey } from "./identity.js";
 import type { Instant } from "./time.js";
 import { failValidation, issueCodes } from "./diagnostics.js";
 import { freezeTraceRefs, type CalculationTraceRef } from "./lineage.js";
-import { sumMoney, type Money } from "./values.js";
-import type { FundingAllocation } from "./funding.js";
+import type { Money } from "./values.js";
+import {
+  assertAcceptedFundingResolution,
+  type AcceptedFundingResolution,
+  type FundingAllocation,
+} from "./funding.js";
 
 declare const semanticIdentityBrand: unique symbol;
 type SemanticIdentity<Kind extends string> = string & { readonly [semanticIdentityBrand]: Kind };
@@ -154,7 +158,7 @@ export const claimStatus = (claim: ObligationOrRight): ClaimStatus => {
   return claim.outstandingAmount.equals(claim.originalAmount) ? "outstanding" : "partially_settled";
 };
 
-export interface SettlementProposal {
+interface SettlementProposalData {
   readonly id: SettlementProposalId;
   readonly claimId: ClaimId;
   readonly requestedAmount: Money;
@@ -163,8 +167,16 @@ export interface SettlementProposal {
   readonly traceRefs?: readonly CalculationTraceRef[];
 }
 
+const settlementProposalAuthority: unique symbol = Symbol("SettlementProposalAuthority");
+
+export interface SettlementProposalDraft extends SettlementProposalData {}
+
+export type SettlementProposal = Readonly<SettlementProposalData> & {
+  readonly [settlementProposalAuthority]: true;
+};
+
 export const createSettlementProposal = (
-  draft: SettlementProposal,
+  draft: SettlementProposalDraft,
   claim: ObligationOrRight,
 ): SettlementProposal => {
   if (draft.claimId !== claim.id) {
@@ -190,10 +202,11 @@ export const createSettlementProposal = (
     requestedAt: draft.requestedAt,
     ...(draft.fundingPolicyId === undefined ? {} : { fundingPolicyId: draft.fundingPolicyId }),
     ...(traceRefs === undefined ? {} : { traceRefs }),
+    [settlementProposalAuthority]: true,
   });
 };
 
-export interface Settlement {
+interface SettlementData {
   readonly id: SettlementId;
   readonly proposalId: SettlementProposalId;
   readonly claimId: ClaimId;
@@ -203,54 +216,69 @@ export interface Settlement {
   readonly traceRefs?: readonly CalculationTraceRef[];
 }
 
+const settlementAuthority: unique symbol = Symbol("SettlementAuthority");
+
+export interface SettlementDraft {
+  readonly id: SettlementId;
+  readonly settledAt: Instant;
+  readonly traceRefs?: readonly CalculationTraceRef[];
+}
+
+export type Settlement = Readonly<SettlementData> & {
+  readonly [settlementAuthority]: true;
+};
+
 export const createSettlement = (
-  draft: Settlement,
-  proposal: SettlementProposal,
+  draft: SettlementDraft,
+  acceptedFunding: AcceptedFundingResolution,
   claim: ObligationOrRight,
   existingSettlementIds: Iterable<string> = [],
 ): Settlement => {
+  assertAcceptedFundingResolution(acceptedFunding);
+  const proposal = acceptedFunding.proposal;
+  const amount = acceptedFunding.acceptedAmount;
+  const fundingAllocations = acceptedFunding.fundingAllocations;
   if (new Set(existingSettlementIds).has(draft.id) || claim.settlementIds.includes(draft.id)) {
     failValidation({ severity: "error", code: issueCodes.duplicateSettlement, message: `Duplicate settlement ${draft.id}`, entityType: "settlement", entityId: draft.id });
   }
-  if (draft.proposalId !== proposal.id || draft.claimId !== proposal.claimId || draft.claimId !== claim.id) {
-    failValidation({ severity: "error", code: issueCodes.settlementClaimNotFound, message: "Settlement, proposal, and claim identities must match", entityType: "settlement", entityId: draft.id });
+  if (proposal.claimId !== claim.id) {
+    failValidation({ severity: "error", code: issueCodes.settlementClaimNotFound, message: "Funding proposal and claim identities must match", entityType: "settlement", entityId: draft.id });
   }
-  if (!draft.amount.isPositive()) {
+  if (!amount.isPositive()) {
     failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "Settlement amount must be positive", entityType: "settlement", entityId: draft.id, fieldPath: "amount" });
   }
-  if (!draft.amount.currency.equals(claim.outstandingAmount.currency)) {
+  if (!amount.currency.equals(claim.outstandingAmount.currency)) {
     failValidation({ severity: "error", code: issueCodes.settlementCurrencyMismatch, message: "Settlement currency must match claim currency", entityType: "settlement", entityId: draft.id, fieldPath: "amount" });
   }
-  if (draft.amount.compare(proposal.requestedAmount) > 0 || draft.amount.compare(claim.outstandingAmount) > 0) {
+  if (amount.compare(proposal.requestedAmount) > 0 || amount.compare(claim.outstandingAmount) > 0) {
     failValidation({ severity: "error", code: issueCodes.settlementExceedsOutstanding, message: "Settlement exceeds its proposal or outstanding claim amount", entityType: "settlement", entityId: draft.id, fieldPath: "amount" });
   }
   if (draft.settledAt < claim.recognizedAt) {
     failValidation({ severity: "error", code: issueCodes.settlementBeforeRecognition, message: "Settlement cannot precede recognition", entityType: "settlement", entityId: draft.id, fieldPath: "settledAt" });
   }
-  for (const allocation of draft.fundingAllocations) {
-    if (!allocation.amount.isPositive()) {
-      failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "Settlement funding allocations must be positive", entityType: "settlement", entityId: draft.id, fieldPath: "fundingAllocations.amount" });
-    }
-    if (!allocation.amount.currency.equals(draft.amount.currency)) {
-      failValidation({ severity: "error", code: issueCodes.settlementCurrencyMismatch, message: "Settlement funding allocation currency must match settlement currency", entityType: "settlement", entityId: draft.id, fieldPath: "fundingAllocations.amount" });
-    }
+  if (draft.settledAt < proposal.requestedAt) {
+    failValidation({ severity: "error", code: issueCodes.settlementBeforeProposal, message: "Settlement cannot precede its proposal", entityType: "settlement", entityId: draft.id, fieldPath: "settledAt" });
   }
-  if (!sumMoney(draft.fundingAllocations.map((allocation) => allocation.amount), draft.amount.currency).equals(draft.amount)) {
-    failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "Settlement funding allocations must equal the accepted settlement amount", entityType: "settlement", entityId: draft.id, fieldPath: "fundingAllocations" });
+  if (draft.settledAt < acceptedFunding.outcome.evaluatedAt) {
+    failValidation({ severity: "error", code: issueCodes.settlementBeforeFunding, message: "Settlement cannot precede its funding evaluation", entityType: "settlement", entityId: draft.id, fieldPath: "settledAt" });
   }
   const traceRefs = freezeTraceRefs(draft.traceRefs);
   return Object.freeze({
     id: draft.id,
-    proposalId: draft.proposalId,
-    claimId: draft.claimId,
-    amount: draft.amount,
+    proposalId: proposal.id,
+    claimId: proposal.claimId,
+    amount,
     settledAt: draft.settledAt,
-    fundingAllocations: Object.freeze(draft.fundingAllocations.map((allocation) => Object.freeze({ ...allocation }))),
+    fundingAllocations: Object.freeze(fundingAllocations.map((allocation) => Object.freeze({ ...allocation }))),
     ...(traceRefs === undefined ? {} : { traceRefs }),
+    [settlementAuthority]: true,
   });
 };
 
 export const applySettlement = (claim: ObligationOrRight, settlement: Settlement): ObligationOrRight => {
+  if (!(settlementAuthority in settlement) || settlement[settlementAuthority] !== true) {
+    failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "Only a factory-created settlement may be applied", entityType: "settlement" });
+  }
   if (settlement.claimId !== claim.id) {
     failValidation({ severity: "error", code: issueCodes.settlementClaimNotFound, message: `Settlement ${settlement.id} does not apply to claim ${claim.id}`, entityType: "settlement", entityId: settlement.id });
   }

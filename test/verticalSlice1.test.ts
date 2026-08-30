@@ -16,7 +16,7 @@ import {
   type VerticalSliceInput,
 } from "../src/verticalSlice1.js";
 import { issueCodes } from "../src/diagnostics.js";
-import { claimId, createObligation, recognitionId } from "../src/semantics.js";
+import { claimId, createObligation, recognitionId, settlementId } from "../src/semantics.js";
 
 const dollars = (value: Money): string =>
   formatMoney(value, RoundingPolicy.currency(value.currency.minorUnitScale, "half_up"));
@@ -186,7 +186,7 @@ describe("Vertical Slice 1", () => {
     expect(february.transactions).toHaveLength(0);
   });
 
-  const fundedTaxOpeningState = () => {
+  const fundedTaxOpeningState = (checking = "500", claimAmount = "2000", retirement = "0") => {
     const state = canonicalOpeningState(input);
     const recognizedAt = instant("2026-01-31T12:00:00.000Z");
     const recognition = recognitionId("recognition:tax:synthetic");
@@ -196,11 +196,12 @@ describe("Vertical Slice 1", () => {
       originatingRecognitionId: recognition,
       economicOwnerId: input.ownerId,
       balanceEntityId: input.taxLiabilityId,
-      originalAmount: money("2000"),
+      originalAmount: money(claimAmount),
       recognizedAt,
     });
-    state.accounts[input.checkingAccountId]!.cash = money("500");
-    state.liabilities[input.taxLiabilityId]!.balance = money("2000");
+    state.accounts[input.checkingAccountId]!.cash = money(checking);
+    state.accounts[input.retirementAccountId]!.cash = money(retirement);
+    state.liabilities[input.taxLiabilityId]!.balance = money(claimAmount);
     state.obligations[obligation.id] = obligation;
     return state;
   };
@@ -250,6 +251,184 @@ describe("Vertical Slice 1", () => {
     expect(claimStatus(result.state.obligations["obligation:tax:synthetic"]!)).toBe("partially_settled");
     expect(result.statements.expenses.isZero()).toBe(true);
     expect(result.outputs.checkingCash.isNegative()).toBe(false);
+  });
+
+  it("does not let later salary fund an earlier settlement proposal", () => {
+    const result = runVerticalSlicePeriod({
+      period: utcMonth(2026, 2),
+      input: {
+        ...input,
+        monthlyGrossCompensation: money("1500"),
+        taxRate: Percentage.parse("0").toRatio(),
+        retirementContribution: money("0"),
+        monthlyLivingExpense: money("0"),
+        settleCurrentTax: false,
+        taxFundingPolicy: syntheticFundingPolicy(false),
+      },
+      openingState: fundedTaxOpeningState(),
+      taxSettlements: [{
+        settlementId: "settlement:before-salary",
+        obligationId: "obligation:tax:synthetic",
+        amount: money("2000"),
+        date: instant("2026-02-05T00:00:00.000Z"),
+      }],
+    });
+
+    expect(result.constraintOutcomes[0]?.status).toBe("unfunded");
+    expect(result.liquidityShortfalls[0]?.shortfallAmount.equals(money("1500"))).toBe(true);
+    expect(result.settlements).toHaveLength(0);
+    expect(result.transactions.map((transaction) => transaction.type)).toEqual(["income"]);
+    expect(result.state.obligations["obligation:tax:synthetic"]?.outstandingAmount.equals(money("2000"))).toBe(true);
+    expect(result.outputs.checkingCash.equals(money("2000"))).toBe(true);
+    expect(result.diagnostics.some((issue) => issue.code === issueCodes.negativeCashInvariant)).toBe(false);
+  });
+
+  it("allows the same settlement after salary has actually arrived", () => {
+    const result = runVerticalSlicePeriod({
+      period: utcMonth(2026, 2),
+      input: {
+        ...input,
+        monthlyGrossCompensation: money("1500"),
+        taxRate: Percentage.parse("0").toRatio(),
+        retirementContribution: money("0"),
+        monthlyLivingExpense: money("0"),
+        settleCurrentTax: false,
+        taxFundingPolicy: syntheticFundingPolicy(false),
+      },
+      openingState: fundedTaxOpeningState(),
+      taxSettlements: [{
+        settlementId: "settlement:after-salary",
+        obligationId: "obligation:tax:synthetic",
+        amount: money("2000"),
+        date: instant("2026-02-28T23:59:59.996Z"),
+      }],
+    });
+
+    expect(result.constraintOutcomes[0]?.status).toBe("fully_satisfied");
+    expect(result.settlements[0]?.amount.equals(money("2000"))).toBe(true);
+    expect(result.outputs.checkingCash.isZero()).toBe(true);
+  });
+
+  it("does not let a later expense affect earlier funding", () => {
+    const result = runVerticalSlicePeriod({
+      period: utcMonth(2026, 2),
+      input: {
+        ...input,
+        monthlyGrossCompensation: money("0"),
+        retirementContribution: money("0"),
+        monthlyLivingExpense: money("500"),
+        settleCurrentTax: false,
+        taxFundingPolicy: syntheticFundingPolicy(false),
+      },
+      openingState: fundedTaxOpeningState("1500", "1000"),
+      taxSettlements: [{
+        settlementId: "settlement:before-expense",
+        obligationId: "obligation:tax:synthetic",
+        amount: money("1000"),
+        date: instant("2026-02-15T00:00:00.000Z"),
+      }],
+    });
+
+    expect(result.constraintOutcomes[0]?.status).toBe("fully_satisfied");
+    expect(result.outputs.checkingCash.isZero()).toBe(true);
+  });
+
+  it("lets an earlier expense reduce later funding", () => {
+    const result = runVerticalSlicePeriod({
+      period: utcMonth(2026, 2),
+      input: {
+        ...input,
+        monthlyGrossCompensation: money("0"),
+        retirementContribution: money("0"),
+        monthlyLivingExpense: money("1000"),
+        settleCurrentTax: false,
+        taxFundingPolicy: syntheticFundingPolicy(false),
+      },
+      openingState: fundedTaxOpeningState("1500", "1000"),
+      taxSettlements: [{
+        settlementId: "settlement:after-expense",
+        obligationId: "obligation:tax:synthetic",
+        amount: money("1000"),
+        date: instant("2026-02-28T23:59:59.999Z"),
+      }],
+    });
+
+    expect(result.constraintOutcomes[0]?.status).toBe("unfunded");
+    expect(result.liquidityShortfalls[0]?.shortfallAmount.equals(money("500"))).toBe(true);
+    expect(result.settlements).toHaveLength(0);
+    expect(result.outputs.checkingCash.equals(money("500"))).toBe(true);
+  });
+
+  it("produces identical economics when settlement request input order is reversed", () => {
+    const earlier = {
+      settlementId: "settlement:a",
+      obligationId: "obligation:tax:synthetic",
+      amount: money("500"),
+      date: instant("2026-02-05T00:00:00.000Z"),
+    };
+    const later = {
+      settlementId: "settlement:b",
+      obligationId: "obligation:tax:synthetic",
+      amount: money("1000"),
+      date: instant("2026-02-15T00:00:00.000Z"),
+    };
+    const baseRequest = {
+      period: utcMonth(2026, 2),
+      input: {
+        ...input,
+        monthlyGrossCompensation: money("0"),
+        retirementContribution: money("0"),
+        monthlyLivingExpense: money("0"),
+        settleCurrentTax: false,
+        taxFundingPolicy: syntheticFundingPolicy(false),
+      },
+      openingState: fundedTaxOpeningState("1000", "1500"),
+    };
+    const chronological = runVerticalSlicePeriod({ ...baseRequest, taxSettlements: [earlier, later] });
+    const reversed = runVerticalSlicePeriod({ ...baseRequest, taxSettlements: [later, earlier] });
+
+    expect(reversed).toEqual(chronological);
+    expect(chronological.constraintOutcomes.map((outcome) => outcome.status)).toEqual(["fully_satisfied", "unfunded"]);
+  });
+
+  it("uses an explicit non-checking funding source as authoritative policy", () => {
+    const retirementPolicy = createFundingPolicy({
+      id: fundingPolicyId("funding:tax:retirement-only"),
+      orderedSources: [{ kind: "cash_account", accountId: input.retirementAccountId }],
+      allowPartial: false,
+      insufficientFundsBehavior: "unfunded",
+    });
+    const result = runVerticalSlicePeriod({
+      period: utcMonth(2026, 2),
+      input: { ...input, monthlyGrossCompensation: money("0"), retirementContribution: money("0"), monthlyLivingExpense: money("0"), settleCurrentTax: false, taxFundingPolicy: retirementPolicy },
+      openingState: fundedTaxOpeningState("0", "2000", "2000"),
+      taxSettlements: [{ settlementId: "settlement:retirement-funded", obligationId: "obligation:tax:synthetic", amount: money("2000"), date: instant("2026-02-15T00:00:00.000Z") }],
+    });
+
+    expect(result.constraintOutcomes[0]?.status).toBe("fully_satisfied");
+    expect(result.outputs.checkingCash.isZero()).toBe(true);
+    expect(result.outputs.retirementCash.isZero()).toBe(true);
+  });
+
+  it("detects a settlement identity already present on another available claim", () => {
+    const opening = fundedTaxOpeningState("2000");
+    const other = createObligation({
+      id: claimId("obligation:tax:other"),
+      category: "tax_payable",
+      originatingRecognitionId: recognitionId("recognition:tax:other"),
+      economicOwnerId: input.ownerId,
+      balanceEntityId: input.taxLiabilityId,
+      originalAmount: money("1"),
+      recognizedAt: instant("2026-01-31T12:00:00.000Z"),
+      settlementIds: [settlementId("settlement:historic")],
+    });
+    opening.obligations[other.id] = other;
+    expect(() => runVerticalSlicePeriod({
+      period: utcMonth(2026, 2),
+      input: { ...input, monthlyGrossCompensation: money("0"), retirementContribution: money("0"), monthlyLivingExpense: money("0"), settleCurrentTax: false, taxFundingPolicy: syntheticFundingPolicy(false) },
+      openingState: opening,
+      taxSettlements: [{ settlementId: "settlement:historic", obligationId: "obligation:tax:synthetic", amount: money("2000"), date: instant("2026-02-15T00:00:00.000Z") }],
+    })).toThrow(/Duplicate settlement/);
   });
 
   it("is deterministic for identical inputs", () => {

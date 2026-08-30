@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   accountingTransactionId,
   cashFlowClasses,
@@ -6,9 +6,20 @@ import {
   createAccountingTransaction,
   summarizeCashFlowClass,
   type AccountingLegDraft,
+  type AssetLegDraft,
+  type LiabilityLegDraft,
+  type PositionId,
+  type LiabilityId,
 } from "../src/accounting.js";
 import { ValidationError, issueCodes } from "../src/diagnostics.js";
-import { createFundingPolicy, fundingPolicyId, resolveFunding } from "../src/funding.js";
+import {
+  createFundingPolicy,
+  fundingPolicyId,
+  isAcceptedFundingResolution,
+  resolveFunding,
+  type ConstraintOutcomeStatus,
+  type FundingResolution,
+} from "../src/funding.js";
 import { domainId } from "../src/identity.js";
 import { calculationTraceId, calculationTraceRef } from "../src/lineage.js";
 import {
@@ -74,7 +85,31 @@ const proposal = (amount = "2000") => {
   }, claim) };
 };
 
+const cashPolicy = (
+  allowPartial: boolean,
+  sources = [CASH_A, CASH_B],
+  insufficientFundsBehavior: "unfunded" | "deferred" | "contract_default" = "unfunded",
+) => createFundingPolicy({
+  id: fundingPolicyId(`funding:${allowPartial}:${insufficientFundsBehavior}:${sources.join(":")}`),
+  orderedSources: sources.map((accountId) => ({ kind: "cash_account" as const, accountId })),
+  allowPartial,
+  insufficientFundsBehavior,
+});
+
+const acceptedFunding = (candidate: ReturnType<typeof proposal>, amount: string) => {
+  const funding = resolveFunding(candidate.proposal, candidate.claim, cashPolicy(false, [CASH_A]), {
+    [CASH_A]: money(amount),
+  });
+  if (!isAcceptedFundingResolution(funding)) throw new Error("Expected accepted funding");
+  return funding;
+};
+
 describe("shared accounting authority", () => {
+  it("uses narrow semantic identities for cash, asset, and liability targets", () => {
+    expectTypeOf<Extract<AccountingLegDraft, { type: "cash" }>["accountId"]>().toEqualTypeOf<typeof CASH_A>();
+    expectTypeOf<AssetLegDraft["entityId"]>().toEqualTypeOf<PositionId>();
+    expectTypeOf<LiabilityLegDraft["entityId"]>().toEqualTypeOf<LiabilityId>();
+  });
   it("creates frozen balanced transactions and derives cash-flow class from cash legs", () => {
     const transaction = createAccountingTransaction({
       id: accountingTransactionId("tx:salary"),
@@ -166,19 +201,15 @@ describe("shared recognition, claim, and settlement lifecycle", () => {
   it("applies full and explicitly requested partial settlements immutably", () => {
     const full = proposal();
     const settled = createSettlement({
-      id: settlementId("settlement:full"), proposalId: full.proposal.id, claimId: full.claim.id,
-      amount: money("2000"), settledAt: REQUESTED_AT,
-      fundingAllocations: [{ kind: "cash_account", accountId: CASH_A, amount: money("2000") }],
-    }, full.proposal, full.claim);
+      id: settlementId("settlement:full"), settledAt: REQUESTED_AT,
+    }, acceptedFunding(full, "2000"), full.claim);
     expect(claimStatus(applySettlement(full.claim, settled))).toBe("settled");
     expect(claimStatus(full.claim)).toBe("outstanding");
 
     const partial = proposal("500");
     const partialSettlement = createSettlement({
-      id: settlementId("settlement:partial"), proposalId: partial.proposal.id, claimId: partial.claim.id,
-      amount: money("500"), settledAt: REQUESTED_AT,
-      fundingAllocations: [{ kind: "cash_account", accountId: CASH_A, amount: money("500") }],
-    }, partial.proposal, partial.claim);
+      id: settlementId("settlement:partial"), settledAt: REQUESTED_AT,
+    }, acceptedFunding(partial, "500"), partial.claim);
     expect(claimStatus(applySettlement(partial.claim, partialSettlement))).toBe("partially_settled");
   });
 
@@ -195,22 +226,95 @@ describe("shared recognition, claim, and settlement lifecycle", () => {
 
     const partial = proposal("500");
     const draft = {
-      id: settlementId("settlement:duplicate"), proposalId: partial.proposal.id, claimId: partial.claim.id,
-      amount: money("500"), settledAt: REQUESTED_AT,
-      fundingAllocations: [{ kind: "cash_account" as const, accountId: CASH_A, amount: money("500") }],
+      id: settlementId("settlement:duplicate"), settledAt: REQUESTED_AT,
     };
-    createSettlement(draft, partial.proposal, partial.claim);
-    expect(validationCode(() => createSettlement(draft, partial.proposal, partial.claim, [draft.id]))).toBe(issueCodes.duplicateSettlement);
+    const funding = acceptedFunding(partial, "500");
+    createSettlement(draft, funding, partial.claim);
+    expect(validationCode(() => createSettlement(draft, funding, partial.claim, [draft.id]))).toBe(issueCodes.duplicateSettlement);
+  });
+
+  it("derives settlement economics only from accepted funding authority", () => {
+    const candidate = proposal("500");
+    const funding = acceptedFunding(candidate, "500");
+    const callerDraft = {
+      id: settlementId("settlement:derived"),
+      settledAt: REQUESTED_AT,
+      amount: money("1"),
+      fundingAllocations: [{ kind: "cash_account" as const, accountId: CASH_B, amount: money("1") }],
+    };
+    const settlement = createSettlement(callerDraft, funding, candidate.claim);
+    expect(settlement.amount.equals(money("500"))).toBe(true);
+    expect(settlement.fundingAllocations).toEqual(funding.fundingAllocations);
+    expect(settlement.proposalId).toBe(candidate.proposal.id);
+    expect(settlement.claimId).toBe(candidate.claim.id);
+  });
+
+  it("cannot construct a settlement from unfunded, deferred, default, or zero funding", () => {
+    for (const behavior of ["unfunded", "deferred", "contract_default"] as const) {
+      const candidate = proposal();
+      const funding = resolveFunding(candidate.proposal, candidate.claim, cashPolicy(false, [CASH_A], behavior), {
+        [CASH_A]: money("0"),
+      });
+      expect(funding.outcome.status).toBe(behavior);
+      expect(funding.acceptedAmount.isZero()).toBe(true);
+      expect(isAcceptedFundingResolution(funding)).toBe(false);
+      expect(validationCode(() => createSettlement({
+        id: settlementId(`settlement:${behavior}`),
+        settledAt: REQUESTED_AT,
+      }, funding as never, candidate.claim))).toBe(issueCodes.settlementAmountInvalid);
+    }
+  });
+
+  it("uses the exact partial acceptance and enforces proposal, funding, and claim bounds", () => {
+    const candidate = proposal();
+    const funding = resolveFunding(candidate.proposal, candidate.claim, cashPolicy(true, [CASH_A]), {
+      [CASH_A]: money("500"),
+    });
+    if (!isAcceptedFundingResolution(funding)) throw new Error("Expected partial acceptance");
+    const settlement = createSettlement({ id: settlementId("settlement:exact-partial"), settledAt: REQUESTED_AT }, funding, candidate.claim);
+    expect(settlement.amount.equals(money("500"))).toBe(true);
+    expect(claimStatus(applySettlement(candidate.claim, settlement))).toBe("partially_settled");
+
+    const reducedClaim = applySettlement(candidate.claim, settlement);
+    expect(validationCode(() => createSettlement({
+      id: settlementId("settlement:stale-funding"),
+      settledAt: REQUESTED_AT,
+    }, acceptedFunding(candidate, "2000"), reducedClaim))).toBe(issueCodes.settlementExceedsOutstanding);
+  });
+
+  it("rejects funding before proposal time and settlements before proposal or evaluation time", () => {
+    const candidate = proposal("500");
+    expect(validationCode(() => resolveFunding(
+      candidate.proposal,
+      candidate.claim,
+      cashPolicy(false, [CASH_A]),
+      { [CASH_A]: money("500") },
+      instant("2026-02-14T12:00:00.000Z"),
+    ))).toBe(issueCodes.fundingBeforeProposal);
+
+    const atRequest = acceptedFunding(candidate, "500");
+    expect(validationCode(() => createSettlement({
+      id: settlementId("settlement:before-proposal"),
+      settledAt: instant("2026-02-14T12:00:00.000Z"),
+    }, atRequest, candidate.claim))).toBe(issueCodes.settlementBeforeProposal);
+
+    const evaluatedLater = resolveFunding(
+      candidate.proposal,
+      candidate.claim,
+      cashPolicy(false, [CASH_A]),
+      { [CASH_A]: money("500") },
+      instant("2026-02-16T12:00:00.000Z"),
+    );
+    if (!isAcceptedFundingResolution(evaluatedLater)) throw new Error("Expected accepted funding");
+    expect(validationCode(() => createSettlement({
+      id: settlementId("settlement:before-funding"),
+      settledAt: REQUESTED_AT,
+    }, evaluatedLater, candidate.claim))).toBe(issueCodes.settlementBeforeFunding);
   });
 });
 
 describe("pure explicit cash-account funding", () => {
-  const policy = (allowPartial: boolean, sources = [CASH_A, CASH_B]) => createFundingPolicy({
-    id: fundingPolicyId(`funding:${allowPartial}:${sources.join(":")}`),
-    orderedSources: sources.map((accountId) => ({ kind: "cash_account" as const, accountId })),
-    allowPartial,
-    insufficientFundsBehavior: "unfunded",
-  });
+  const policy = (allowPartial: boolean, sources = [CASH_A, CASH_B]) => cashPolicy(allowPartial, sources);
 
   it("fully funds one or several explicitly ordered sources", () => {
     const full = proposal();
@@ -253,5 +357,23 @@ describe("pure explicit cash-account funding", () => {
     expect(JSON.stringify(full.claim)).toBe(beforeClaim);
     expect(validationCode(() => resolveFunding(full.proposal, full.claim, policy(false, [CASH_A]), { [CASH_A]: money("2000", Currency.of("EUR")) }))).toBe(issueCodes.fundingCurrencyMismatch);
     expect(validationCode(() => resolveFunding(full.proposal, full.claim, policy(false, [CASH_A]), {}))).toBe(issueCodes.fundingSourceNotFound);
+  });
+
+  it("exposes exact shared statuses while the generic cash resolver excludes rejected", () => {
+    expectTypeOf<ConstraintOutcomeStatus>().toEqualTypeOf<
+      "fully_satisfied" | "partially_satisfied" | "deferred" | "unfunded" | "rejected" | "contract_default"
+    >();
+    expectTypeOf<FundingResolution["outcome"]["status"]>().toEqualTypeOf<
+      "fully_satisfied" | "partially_satisfied" | "deferred" | "unfunded" | "contract_default"
+    >();
+  });
+
+  it.each(["deferred", "contract_default"] as const)("returns exact %s status for an unfunded policy", (behavior) => {
+    const candidate = proposal();
+    const result = resolveFunding(candidate.proposal, candidate.claim, cashPolicy(false, [CASH_A], behavior), {
+      [CASH_A]: money("0"),
+    });
+    expect(result.outcome.status).toBe(behavior);
+    expect(result.acceptedAmount.isZero()).toBe(true);
   });
 });

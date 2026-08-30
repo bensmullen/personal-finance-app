@@ -5,7 +5,9 @@ import { freezeTraceRefs, type CalculationTraceRef } from "./lineage.js";
 import { Money, Quantity, sumMoney } from "./values.js";
 
 export type AccountId = DomainId<"account">;
-export type AccountingTargetId = DomainId<string>;
+export type PositionId = DomainId<"position">;
+export type LiabilityId = DomainId<"liability">;
+export type StatementTargetId = DomainId<string>;
 export type PostingSign = "debit" | "credit";
 export type AccountingEffectType = "cash" | "asset" | "liability" | "income" | "expense" | "equity" | "gain" | "loss" | "tax";
 export type CashFlowClass = "operating" | "investing" | "financing" | "non_cash";
@@ -38,18 +40,18 @@ export interface CashLegDraft extends AccountingLegBase {
 
 export interface AssetLegDraft extends AccountingLegBase {
   readonly type: "asset";
-  readonly entityId: AccountingTargetId;
+  readonly entityId: PositionId;
   readonly quantity?: Quantity;
 }
 
 export interface LiabilityLegDraft extends AccountingLegBase {
   readonly type: "liability";
-  readonly entityId: AccountingTargetId;
+  readonly entityId: LiabilityId;
 }
 
 export interface StatementLegDraft extends AccountingLegBase {
   readonly type: "income" | "expense" | "equity" | "gain" | "loss" | "tax";
-  readonly entityId?: AccountingTargetId;
+  readonly entityId?: StatementTargetId;
 }
 
 export type AccountingLegDraft = CashLegDraft | AssetLegDraft | LiabilityLegDraft | StatementLegDraft;

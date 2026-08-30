@@ -10,6 +10,7 @@ import {
 } from "./accounting.js";
 import { failValidation, issueCodes, type ValidationIssue } from "./diagnostics.js";
 import {
+  isAcceptedFundingResolution,
   resolveFunding,
   type ConstraintOutcome,
   type FundingPolicy,
@@ -168,9 +169,6 @@ const validateState = (state: SliceState, input: VerticalSliceInput): void => {
     if (!amount.currency.equals(currency)) throw new Error("Input money must use the model currency");
     if (!amount.amount.fitsScale(currency.minorUnitScale)) throw new Error("Vertical Slice 1 posted inputs must use currency settlement precision");
   }
-  if (!input.taxFundingPolicy.orderedSources.some((source) => source.accountId === input.checkingAccountId)) {
-    failValidation({ severity: "error", code: issueCodes.fundingPolicyInvalid, message: "Vertical Slice 1 tax policy must explicitly identify the configured checking account when it is intended as a source", entityType: "funding_policy", entityId: input.taxFundingPolicy.id });
-  }
   calculateTax(Money.zero(currency), input.taxRate, verticalSlicePostingRounding(currency));
 };
 
@@ -204,13 +202,11 @@ const post = (state: SliceState, tx: AccountingTransaction): void => {
 const projectedBalancesFrom = (state: SliceState): Record<string, Money> =>
   Object.fromEntries(Object.entries(state.accounts).map(([id, account]) => [id, account.cash]));
 
-const applyProjectedCash = (balances: Record<string, Money>, tx: AccountingTransaction): void => {
-  for (const leg of tx.legs) {
-    if (leg.type !== "cash") continue;
-    const balance = balances[leg.accountId];
-    if (balance !== undefined) balances[leg.accountId] = leg.posting === "debit" ? balance.plus(leg.amount) : balance.minus(leg.amount);
-  }
-};
+interface PeriodAction {
+  readonly at: Instant;
+  readonly stableKey: string;
+  readonly execute: () => void;
+}
 
 export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): VerticalSliceResult {
   const state = cloneState(request.openingState);
@@ -232,10 +228,13 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
   const liquidityShortfalls: LiquidityShortfall[] = [];
   const transactions: AccountingTransaction[] = [];
   const diagnostics: ValidationIssue[] = [];
-  const projectedBalances = projectedBalancesFrom(state);
+  const actions: PeriodAction[] = [];
   let taxAmount = Money.zero(currency);
 
-  const addTransaction = (tx: AccountingTransaction): void => { transactions.push(tx); applyProjectedCash(projectedBalances, tx); };
+  const addTransaction = (tx: AccountingTransaction): void => {
+    transactions.push(tx);
+    post(state, tx);
+  };
   const knownRecognitionIds = (): string[] => [
     ...recognitions.map((recognition) => recognition.id),
     ...Object.values(state.obligations).map((obligation) => obligation.originatingRecognitionId),
@@ -255,19 +254,18 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
       fundingPolicyId: policy.id,
     }, claim);
     settlementProposals.push(proposal);
-    const funding = resolveFunding(proposal, claim, policy, projectedBalances, settlementRequest.date);
+    const funding = resolveFunding(proposal, claim, policy, projectedBalancesFrom(state), settlementRequest.date);
     constraintOutcomes.push(funding.outcome);
     diagnostics.push(...funding.issues);
     if (funding.liquidityShortfall !== undefined) liquidityShortfalls.push(funding.liquidityShortfall);
-    if (!funding.acceptedAmount.isPositive()) return;
+    if (!isAcceptedFundingResolution(funding)) return;
     const acceptedSettlement = createSettlement({
       id: settlementId(settlementRequest.settlementId),
-      proposalId: proposal.id,
-      claimId: claim.id,
-      amount: funding.acceptedAmount,
       settledAt: settlementRequest.date,
-      fundingAllocations: funding.fundingAllocations,
-    }, proposal, claim, settlements.map((settlement) => settlement.id));
+    }, funding, claim, [
+      ...Object.values(state.obligations).flatMap((existingClaim) => existingClaim.settlementIds),
+      ...settlements.map((settlement) => settlement.id),
+    ]);
     settlements.push(acceptedSettlement);
     const updated = applySettlement(claim, acceptedSettlement) as Obligation;
     state.obligations[updated.id] = updated;
@@ -278,16 +276,27 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     ]));
   };
 
-  if (input.monthlyGrossCompensation.isPositive()) {
-    const compensationRecognition = createRecognitionFact({ id: recognitionId(`recognition:compensation:${request.period.start}`), category: "compensation", amount: input.monthlyGrossCompensation, recognizedAt: compensationAt }, knownRecognitionIds());
-    recognitions.push(compensationRecognition);
-    effects.push(createSemanticEffect({ id: semanticEffectId(`effect:compensation:${request.period.start}`), kind: "recognition", category: "compensation", amount: input.monthlyGrossCompensation, occurredAt: compensationAt, recognitionId: compensationRecognition.id }));
-    addTransaction(transaction(`tx:compensation:${request.period.start}`, compensationAt, "income", [
-      { posting: "debit", type: "cash", amount: input.monthlyGrossCompensation, accountId: input.checkingAccountId, cashFlowClass: "operating" },
-      { posting: "credit", type: "income", amount: input.monthlyGrossCompensation },
-    ]));
-    taxAmount = calculateTax(input.monthlyGrossCompensation, input.taxRate, postingRounding);
-    if (taxAmount.isPositive()) {
+  actions.push({
+    at: compensationAt,
+    stableKey: "10:compensation",
+    execute: () => {
+      if (!input.monthlyGrossCompensation.isPositive()) return;
+      const compensationRecognition = createRecognitionFact({ id: recognitionId(`recognition:compensation:${request.period.start}`), category: "compensation", amount: input.monthlyGrossCompensation, recognizedAt: compensationAt }, knownRecognitionIds());
+      recognitions.push(compensationRecognition);
+      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:compensation:${request.period.start}`), kind: "recognition", category: "compensation", amount: input.monthlyGrossCompensation, occurredAt: compensationAt, recognitionId: compensationRecognition.id }));
+      addTransaction(transaction(`tx:compensation:${request.period.start}`, compensationAt, "income", [
+        { posting: "debit", type: "cash", amount: input.monthlyGrossCompensation, accountId: input.checkingAccountId, cashFlowClass: "operating" },
+        { posting: "credit", type: "income", amount: input.monthlyGrossCompensation },
+      ]));
+      taxAmount = calculateTax(input.monthlyGrossCompensation, input.taxRate, postingRounding);
+    },
+  });
+
+  actions.push({
+    at: taxRecognitionAt,
+    stableKey: "20:tax-recognition",
+    execute: () => {
+      if (!taxAmount.isPositive()) return;
       const taxRecognition = createRecognitionFact({ id: recognitionId(`recognition:tax:${request.period.start}`), category: "tax_expense", amount: taxAmount, recognizedAt: taxRecognitionAt }, knownRecognitionIds());
       recognitions.push(taxRecognition);
       const obligation = createObligation({
@@ -305,39 +314,66 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
         { posting: "debit", type: "tax", amount: taxAmount },
         { posting: "credit", type: "liability", amount: taxAmount, entityId: input.taxLiabilityId },
       ]));
-      if (input.settleCurrentTax !== false) {
-        processTaxSettlement({ settlementId: `settlement:tax:${request.period.start}`, obligationId: obligation.id, amount: taxAmount, date: taxSettlementAt }, input.taxFundingPolicy);
-      }
-    }
-  }
+    },
+  });
 
-  if (input.retirementContribution.isPositive()) {
-    effects.push(createSemanticEffect({ id: semanticEffectId(`effect:retirement:${request.period.start}`), kind: "flow", category: "retirement_transfer", amount: input.retirementContribution, occurredAt: retirementAt }));
-    addTransaction(transaction(`tx:retirement:${request.period.start}`, retirementAt, "internal_transfer", [
-      { posting: "debit", type: "cash", amount: input.retirementContribution, accountId: input.retirementAccountId, cashFlowClass: "non_cash" },
-      { posting: "credit", type: "cash", amount: input.retirementContribution, accountId: input.checkingAccountId, cashFlowClass: "non_cash" },
-    ]));
-  }
+  actions.push({
+    at: taxSettlementAt,
+    stableKey: "30:current-tax-settlement",
+    execute: () => {
+      if (!taxAmount.isPositive() || input.settleCurrentTax === false) return;
+      processTaxSettlement({
+        settlementId: `settlement:tax:${request.period.start}`,
+        obligationId: `obligation:recognition:tax:${request.period.start}`,
+        amount: taxAmount,
+        date: taxSettlementAt,
+      }, input.taxFundingPolicy);
+    },
+  });
 
-  if (input.monthlyLivingExpense.isPositive()) {
-    const livingRecognition = createRecognitionFact({ id: recognitionId(`recognition:living:${request.period.start}`), category: "living_expense", amount: input.monthlyLivingExpense, recognizedAt: livingExpenseAt }, knownRecognitionIds());
-    recognitions.push(livingRecognition);
-    effects.push(createSemanticEffect({ id: semanticEffectId(`effect:living:${request.period.start}`), kind: "recognition", category: "living_expense", amount: input.monthlyLivingExpense, occurredAt: livingExpenseAt, recognitionId: livingRecognition.id }));
-    addTransaction(transaction(`tx:living:${request.period.start}`, livingExpenseAt, "expense", [
-      { posting: "debit", type: "expense", amount: input.monthlyLivingExpense },
-      { posting: "credit", type: "cash", amount: input.monthlyLivingExpense, accountId: input.checkingAccountId, cashFlowClass: "operating" },
-    ]));
-  }
+  actions.push({
+    at: retirementAt,
+    stableKey: "40:retirement",
+    execute: () => {
+      if (!input.retirementContribution.isPositive()) return;
+      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:retirement:${request.period.start}`), kind: "flow", category: "retirement_transfer", amount: input.retirementContribution, occurredAt: retirementAt }));
+      addTransaction(transaction(`tx:retirement:${request.period.start}`, retirementAt, "internal_transfer", [
+        { posting: "debit", type: "cash", amount: input.retirementContribution, accountId: input.retirementAccountId, cashFlowClass: "non_cash" },
+        { posting: "credit", type: "cash", amount: input.retirementContribution, accountId: input.checkingAccountId, cashFlowClass: "non_cash" },
+      ]));
+    },
+  });
+
+  actions.push({
+    at: livingExpenseAt,
+    stableKey: "50:living-expense",
+    execute: () => {
+      if (!input.monthlyLivingExpense.isPositive()) return;
+      const livingRecognition = createRecognitionFact({ id: recognitionId(`recognition:living:${request.period.start}`), category: "living_expense", amount: input.monthlyLivingExpense, recognizedAt: livingExpenseAt }, knownRecognitionIds());
+      recognitions.push(livingRecognition);
+      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:living:${request.period.start}`), kind: "recognition", category: "living_expense", amount: input.monthlyLivingExpense, occurredAt: livingExpenseAt, recognitionId: livingRecognition.id }));
+      addTransaction(transaction(`tx:living:${request.period.start}`, livingExpenseAt, "expense", [
+        { posting: "debit", type: "expense", amount: input.monthlyLivingExpense },
+        { posting: "credit", type: "cash", amount: input.monthlyLivingExpense, accountId: input.checkingAccountId, cashFlowClass: "operating" },
+      ]));
+    },
+  });
 
   for (const settlementRequest of request.taxSettlements ?? []) {
-    if (inPeriod(settlementRequest.date, request.period)) processTaxSettlement(settlementRequest, settlementRequest.fundingPolicy ?? input.taxFundingPolicy);
+    if (!inPeriod(settlementRequest.date, request.period)) continue;
+    actions.push({
+      at: settlementRequest.date,
+      stableKey: `60:external-tax-settlement:${settlementRequest.settlementId}:${settlementRequest.proposalId ?? ""}`,
+      execute: () => processTaxSettlement(settlementRequest, settlementRequest.fundingPolicy ?? input.taxFundingPolicy),
+    });
   }
 
+  actions
+    .sort((left, right) => left.at.localeCompare(right.at) || left.stableKey.localeCompare(right.stableKey))
+    .forEach((action) => action.execute());
+
   transactions.sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id));
-  for (const tx of transactions) {
-    if (!inPeriod(tx.date, request.period)) throw new Error(`Transaction ${tx.id} is outside period`);
-    post(state, tx);
-  }
+  for (const tx of transactions) if (!inPeriod(tx.date, request.period)) throw new Error(`Transaction ${tx.id} is outside period`);
 
   const assets = sumMoney(Object.values(state.accounts).map((account) => account.cash), currency);
   const liabilities = sumMoney(Object.values(state.liabilities).map((liability) => liability.balance), currency);

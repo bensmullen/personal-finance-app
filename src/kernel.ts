@@ -101,8 +101,8 @@ export const posting = (
   type,
   legs: legs.map((leg) => {
     if (leg.type === "cash") return createAccountingLeg({ posting: leg.posting, type: "cash", amount: leg.amount, accountId: leg.accountId!, cashFlowClass: leg.cashFlowClass ?? cashFlowClass });
-    if (leg.type === "asset") return createAccountingLeg({ posting: leg.posting, type: "asset", amount: leg.amount, entityId: leg.entityId!, ...(leg.quantity === undefined ? {} : { quantity: leg.quantity }) });
-    if (leg.type === "liability") return createAccountingLeg({ posting: leg.posting, type: "liability", amount: leg.amount, entityId: leg.entityId! });
+    if (leg.type === "asset") return createAccountingLeg({ posting: leg.posting, type: "asset", amount: leg.amount, entityId: leg.entityId as PositionId, ...(leg.quantity === undefined ? {} : { quantity: leg.quantity }) });
+    if (leg.type === "liability") return createAccountingLeg({ posting: leg.posting, type: "liability", amount: leg.amount, entityId: leg.entityId as LiabilityId });
     return createAccountingLeg({ posting: leg.posting, type: leg.type, amount: leg.amount, ...(leg.entityId === undefined ? {} : { entityId: leg.entityId }) });
   }),
 });
