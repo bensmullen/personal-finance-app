@@ -32,10 +32,15 @@ the Vertical Slice public facade. Root compatibility facades are external and
 legacy surfaces; engine implementation modules may not use them as dependency
 shortcuts.
 
-The `primitives` directory establishes ownership only. The P01–P34 executable
-registry remains Roadmap PR 6 work, and generalized multi-period simulation
-remains Roadmap PR 7 work. This repository intentionally does not use npm
-workspaces or `packages/*` yet.
+The `primitives` module now contains one immutable runtime catalog for all
+canonical P01–P34 identities and common typed evaluation contracts. P01, P02,
+P03, P04, P05, P06, P08, P13, and P20 are executable; the other 25 identities
+are deliberately registered-only and fail explicitly if evaluation is
+requested. Primitive evaluation returns values, occurrences/effects, explicit
+next primitive state, diagnostics, and lineage references without posting
+accounting or mutating authoritative financial state. Generalized multi-period
+orchestration and primitive-state commit remain Roadmap PR 7 work. This
+repository intentionally does not use npm workspaces or `packages/*` yet.
 
 ## Requirements and setup
 

@@ -72,4 +72,11 @@ export const issueCodes = Object.freeze({
   unsupportedFinancialSpecification: "UNSUPPORTED_FINANCIAL_SPECIFICATION",
   modelMigrationUnavailable: "MODEL_MIGRATION_UNAVAILABLE",
   modelVersionMismatch: "MODEL_VERSION_MISMATCH",
+  primitiveUnknown: "PRIMITIVE_UNKNOWN",
+  primitiveNotImplemented: "PRIMITIVE_NOT_IMPLEMENTED",
+  primitiveInputInvalid: "PRIMITIVE_INPUT_INVALID",
+  primitiveParametersInvalid: "PRIMITIVE_PARAMETERS_INVALID",
+  primitiveStateInvalid: "PRIMITIVE_STATE_INVALID",
+  primitiveTemporalConfigurationInvalid: "PRIMITIVE_TEMPORAL_CONFIGURATION_INVALID",
+  primitiveCompositionIncompatible: "PRIMITIVE_COMPOSITION_INCOMPATIBLE",
 } as const);

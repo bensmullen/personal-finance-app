@@ -162,6 +162,31 @@ export class DecimalAmount {
 
 export const decimal = (value: string): DecimalAmount => DecimalAmount.parse(value);
 
+/** Deterministic decimal nth root with an explicit output precision. */
+export const decimalNthRoot = (
+  value: DecimalAmount,
+  degree: number,
+  policy: RoundingPolicy,
+): DecimalAmount => {
+  if (!Number.isSafeInteger(degree) || degree <= 0) throw new Error("Root degree must be a positive integer");
+  if (value.isNegative()) throw new Error("Decimal nth root currently requires a non-negative value");
+  if (value.isZero() || degree === 1) return value.round(policy);
+
+  const one = decimal("1");
+  const two = decimal("2");
+  const workingPolicy = new RoundingPolicy(policy.scale + 8, "half_even");
+  let low = DecimalAmount.zero();
+  let high = value.compare(one) > 0 ? value : one;
+  const iterations = Math.max(128, (policy.scale + 8) * 4);
+
+  for (let index = 0; index < iterations; index += 1) {
+    const midpoint = low.plus(high).dividedBy(two, workingPolicy);
+    if (midpoint.pow(degree).compare(value) <= 0) low = midpoint;
+    else high = midpoint;
+  }
+  return low.round(policy);
+};
+
 const CURRENCY_MINOR_UNITS = Object.freeze({
   EUR: 2,
   GBP: 2,

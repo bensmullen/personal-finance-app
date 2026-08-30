@@ -72,6 +72,46 @@ export const utcMonth = (year: number, month1: number): Period => {
 
 export const inPeriod = (value: Instant, target: Period): boolean => value >= target.start && value < target.end;
 
+export type InvalidUtcMonthlyDayPolicy = "skip";
+
+/**
+ * Enumerates a UTC monthly schedule anchored to an exact instant. Months that
+ * do not contain the anchor day are skipped explicitly.
+ */
+export const utcMonthlyOccurrences = (
+  anchor: Instant,
+  target: Period,
+  invalidDayPolicy: InvalidUtcMonthlyDayPolicy,
+): readonly Instant[] => {
+  if (invalidDayPolicy !== "skip") throw new Error("Unsupported invalid UTC monthly day policy");
+  const anchorDate = new Date(anchor);
+  const startDate = new Date(target.start);
+  const endDate = new Date(target.end);
+  const anchorMonth = anchorDate.getUTCFullYear() * 12 + anchorDate.getUTCMonth();
+  const startMonth = startDate.getUTCFullYear() * 12 + startDate.getUTCMonth();
+  const endMonth = endDate.getUTCFullYear() * 12 + endDate.getUTCMonth();
+  const firstMonth = Math.max(anchorMonth, startMonth - 1);
+  const occurrences: Instant[] = [];
+
+  for (let monthIndex = firstMonth; monthIndex <= endMonth; monthIndex += 1) {
+    const year = Math.floor(monthIndex / 12);
+    const month = monthIndex - year * 12;
+    const candidateDate = new Date(Date.UTC(
+      year,
+      month,
+      anchorDate.getUTCDate(),
+      anchorDate.getUTCHours(),
+      anchorDate.getUTCMinutes(),
+      anchorDate.getUTCSeconds(),
+      anchorDate.getUTCMilliseconds(),
+    ));
+    if (candidateDate.getUTCFullYear() !== year || candidateDate.getUTCMonth() !== month) continue;
+    const candidate = instant(candidateDate.toISOString());
+    if (candidate >= anchor && inPeriod(candidate, target)) occurrences.push(candidate);
+  }
+  return Object.freeze(occurrences);
+};
+
 export const subtractMilliseconds = (value: Instant, milliseconds: number): Instant => {
   if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) throw new Error("Milliseconds must be a non-negative integer");
   return instant(new Date(new Date(value).getTime() - milliseconds).toISOString());

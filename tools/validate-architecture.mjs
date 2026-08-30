@@ -122,6 +122,9 @@ export function validateSources(sourceFiles) {
       if (owner && lowerModules.has(owner) && target?.startsWith("src/simulation/")) {
         errors.push(`lower-module-to-simulation import: ${file} -> ${target}`);
       }
+      if (owner === "primitives" && (target?.startsWith("src/accounting/") || target?.startsWith("src/state/"))) {
+        errors.push(`primitive-authority-boundary import: ${file} -> ${target}`);
+      }
     }
 
     if (owner) {
@@ -194,6 +197,22 @@ function runSelfTests() {
       files: new Map([["src/values/a.ts", 'import "./b.js";'], ["src/values/b.ts", 'import "./a.js";']]),
       expected: "runtime import cycle",
     },
+    {
+      name: "primitive-to-accounting",
+      files: new Map([
+        ["src/primitives/bad.ts", 'import "../accounting/index.js";'],
+        ["src/accounting/index.ts", "export {};"],
+      ]),
+      expected: "primitive-authority-boundary import",
+    },
+    {
+      name: "primitive-to-state",
+      files: new Map([
+        ["src/primitives/bad.ts", 'import "../state/index.js";'],
+        ["src/state/index.ts", "export {};"],
+      ]),
+      expected: "primitive-authority-boundary import",
+    },
   ];
   for (const testCase of cases) {
     const errors = validateSources(testCase.files);
@@ -214,6 +233,6 @@ if (path.resolve(process.argv[1] ?? "") === scriptPath) {
     console.error(`Architecture validation failed:\n${errors.map((error) => `- ${error}`).join("\n")}`);
     process.exitCode = 1;
   } else {
-    console.log("Architecture validation passed: engine/UI direction, internal facade isolation, lower-layer isolation, facade shape, browser isolation, and runtime acyclicity are enforced (type-only imports are excluded from runtime cycles). Self-tests passed.");
+    console.log("Architecture validation passed: engine/UI direction, internal facade isolation, lower-layer isolation, primitive accounting/state authority, facade shape, browser isolation, and runtime acyclicity are enforced (type-only imports are excluded from runtime cycles). Self-tests passed.");
   }
 }
