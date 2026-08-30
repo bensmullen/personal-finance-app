@@ -11,6 +11,9 @@ coverage/
 .vitest/
 *.tsbuildinfo
 
+# Local Codex execution logs
+.codex/logs/
+
 # Local environment and secrets
 .env
 .env.*

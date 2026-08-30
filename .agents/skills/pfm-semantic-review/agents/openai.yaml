@@ -1,0 +1,5 @@
+interface:
+  display_name: "PFM Semantic Review"
+  short_description: "Audit financial semantics and invariants"
+policy:
+  allow_implicit_invocation: false

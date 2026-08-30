@@ -1,0 +1,5 @@
+interface:
+  display_name: "PFM Verify"
+  short_description: "Run the quiet final verification gate"
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,5 @@
+interface:
+  display_name: "PFM Spec Scope"
+  short_description: "Find only the governing spec sections"
+policy:
+  allow_implicit_invocation: false
