@@ -1,9 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { DependencyGraph, GoldenRunner, Rate, RoundingPolicy, assertBalanced, domainId, fixedMortgagePayment, instant, mortgageInterest, mortgagePrincipal, money, posting, rateConvention, semanticEffectId, utcMonth, type AccountId, type KernelEvent, type LiabilityId, type PositionId, type SimulationState } from "../src/kernel.js";
-import { Quantity, SHARE } from "../src/values.js";
+import { DependencyGraph, GoldenRunner as KernelGoldenRunner, Rate, RoundingPolicy, assertBalanced, createAuthoritativeState, createRunContext, domainId, fixedMortgagePayment, instant, mortgageInterest, mortgagePrincipal, money, posting, rateConvention, runId, scenarioId, semanticEffectId, utcMonth, type AccountId, type KernelEvent, type LiabilityId, type Period, type PositionId, type RunContext, type SimulationState } from "../src/kernel.js";
+import { Currency, Quantity, SHARE } from "../src/values.js";
 import { ValidationError, issueCodes } from "../src/diagnostics.js";
+import { claimId, createObligation, recognitionId } from "../src/semantics.js";
 
-const base = (accounts: SimulationState["accounts"] = {}, liabilities: SimulationState["liabilities"] = {}): SimulationState => ({ accounts, positions: {}, liabilities });
+const base = (accounts: SimulationState["accounts"] = {}, liabilities: SimulationState["liabilities"] = {}): SimulationState => createAuthoritativeState({ accounts, positions: {}, liabilities });
+const kernelRunContext = (target: Period): RunContext => createRunContext({
+  runId: runId("77777777-7777-4777-8777-777777777777"),
+  scenarioId: scenarioId("88888888-8888-4888-8888-888888888888"),
+  asOf: target.start,
+  dataCutoff: target.start,
+  simulationStart: target.start,
+  simulationEnd: target.end,
+  baseCurrency: money("0").currency,
+});
+class GoldenRunner extends KernelGoldenRunner {
+  override run(targetPeriod: Period, events: readonly KernelEvent[], runContext: RunContext = kernelRunContext(targetPeriod)) {
+    return super.run(targetPeriod, events, runContext);
+  }
+}
 const acct = (id: AccountId, kind: "checking" | "brokerage" | "retirement", cash: string) => ({ id, kind, cash: money(cash) });
 const leg = (postingSide: "debit" | "credit", type: "asset" | "liability" | "income" | "expense" | "gain" | "cash", amount: string, accountId?: AccountId, entityId?: PositionId | LiabilityId, quantity?: string) => ({ posting: postingSide, type, amount: money(amount), ...(accountId ? { accountId } : {}), ...(entityId ? { entityId } : {}), ...(quantity !== undefined ? { quantity: Quantity.parse(quantity, SHARE) } : {}) });
 const event = (id: string, date: string, effect: Omit<KernelEvent["effect"], "id" | "category"> & { id: string; category?: string }, transaction: KernelEvent["transaction"], dependsOn?: string[]): KernelEvent => ({ id, date: instant(date), effect: { ...effect, id: semanticEffectId(effect.id), category: effect.category ?? effect.description ?? effect.kind }, transaction, ...(dependsOn ? { dependsOn } : {}) });
@@ -82,6 +97,66 @@ describe("Semantic Kernel v0.1 golden scenarios", () => {
 });
 
 describe("Kernel invariants", () => {
+  it("rejects invalid or non-base-currency opening state even for a no-op run", () => {
+    const target = utcMonth(2026, 1);
+    const negative = base({ [CHECKING]: acct(CHECKING, "checking", "0") });
+    negative.accounts[CHECKING]!.cash = money("-1");
+    expect(() => new GoldenRunner(negative).run(target, [])).toThrowError(ValidationError);
+    try {
+      new GoldenRunner(negative).run(target, []);
+    } catch (error) {
+      expect((error as ValidationError).issues[0]?.code).toBe(issueCodes.negativeCashInvariant);
+    }
+    const usd = base({ [CHECKING]: acct(CHECKING, "checking", "1") });
+    const eurContext = createRunContext({ ...kernelRunContext(target), baseCurrency: Currency.of("EUR") });
+    try {
+      new GoldenRunner(usd).run(target, [], eurContext);
+      throw new Error("Expected base currency failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ValidationError);
+      expect((error as ValidationError).issues[0]?.code).toBe(issueCodes.runBaseCurrencyMismatch);
+    }
+  });
+
+  it("revalidates spread-cloned run context and claim lifecycle at execution", () => {
+    const target = utcMonth(2026, 1);
+    const validContext = kernelRunContext(target);
+    const invalidCutoff = { ...validContext, dataCutoff: instant("2026-01-02T00:00:00.000Z") };
+    const invalidVersions = { ...validContext, versions: { ...validContext.versions, engineVersion: "999.0.0" } };
+    const opening = base({ [CHECKING]: acct(CHECKING, "checking", "0") });
+    try { new GoldenRunner(opening).run(target, [], invalidCutoff); throw new Error("Expected invalid cutoff failure"); } catch (error) { expect((error as ValidationError).issues?.[0]?.code).toBe(issueCodes.invalidRunContext); }
+    try { new GoldenRunner(opening).run(target, [], invalidVersions); throw new Error("Expected invalid version failure"); } catch (error) { expect((error as ValidationError).issues?.[0]?.code).toBe(issueCodes.modelVersionMismatch); }
+
+    const obligation = createObligation({ id: claimId("obligation:forged-kernel"), category: "tax", originatingRecognitionId: recognitionId("recognition:forged-kernel"), economicOwnerId: CHECKING, originalAmount: money("5"), recognizedAt: target.start });
+    opening.obligations[obligation.id] = { ...obligation, outstandingAmount: money("-1") };
+    const before = JSON.stringify(opening);
+    try {
+      new GoldenRunner(opening).run(target, [], validContext);
+      throw new Error("Expected forged claim failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ValidationError);
+      expect((error as ValidationError).issues[0]?.code).toBe(issueCodes.settlementAmountInvalid);
+    }
+    expect(JSON.stringify(opening)).toBe(before);
+  });
+
+  it("canonicalizes unordered dependency identities only for kernel fingerprinting", () => {
+    const target = utcMonth(2026, 1);
+    const makeEvents = (dependencies: readonly string[]) => [
+      event("dependency-a", "2026-01-10T00:00:00.000Z", { id: "effect:a", kind: "recognition", description: "a" }, posting("tx:a", "2026-01-10T00:00:00.000Z", "income", "operating", [leg("debit", "cash", "1", CHECKING), leg("credit", "income", "1")])),
+      event("dependency-b", "2026-01-11T00:00:00.000Z", { id: "effect:b", kind: "recognition", description: "b" }, posting("tx:b", "2026-01-11T00:00:00.000Z", "income", "operating", [leg("debit", "cash", "1", CHECKING), leg("credit", "income", "1")])),
+      event("dependent", "2026-01-12T00:00:00.000Z", { id: "effect:dependent", kind: "recognition", description: "dependent" }, posting("tx:dependent", "2026-01-12T00:00:00.000Z", "income", "operating", [leg("debit", "cash", "1", CHECKING), leg("credit", "income", "1")]), [...dependencies]),
+    ];
+    const opening = base({ [CHECKING]: acct(CHECKING, "checking", "0") });
+    const left = new GoldenRunner(opening).run(target, makeEvents(["dependency-a", "dependency-b"]));
+    const right = new GoldenRunner(opening).run(target, makeEvents(["dependency-b", "dependency-a"]));
+    const different = new GoldenRunner(opening).run(target, makeEvents(["dependency-a"]));
+    expect(right.runMetadata.inputFingerprint).toBe(left.runMetadata.inputFingerprint);
+    expect(right.state).toEqual(left.state);
+    expect(right.statements).toEqual(left.statements);
+    expect(different.runMetadata.inputFingerprint).not.toBe(left.runMetadata.inputFingerprint);
+  });
+
   it("sorts a DAG deterministically and rejects zero-lag cycles", () => {
     const g = new DependencyGraph(); g.addEdge("salary", "tax"); g.addEdge("tax", "disposable"); g.addEdge("salary", "contribution"); expect(g.topologicalOrder()).toEqual(["salary", "contribution", "tax", "disposable"]);
     const bad = new DependencyGraph(); bad.addEdge("a", "b"); bad.addEdge("b", "a"); expect(() => bad.topologicalOrder()).toThrow(/cycle/);

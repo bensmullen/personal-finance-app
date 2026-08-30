@@ -5,13 +5,21 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "specification_version",
+    "model_format_version",
+    "financial_specification_version",
     "model_id",
     "objects"
   ],
   "properties": {
-    "specification_version": {
-      "type": "string"
+    "model_format_version": {
+      "type": "string",
+      "const": "0.2.0-draft",
+      "description": "Version of this portable model envelope and object serialization contract."
+    },
+    "financial_specification_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Financial semantics/specification version under which the model was authored."
     },
     "model_id": {
       "type": "string",
@@ -20,6 +28,19 @@
     "objects": {
       "$ref": "#/$defs/ModelInstance"
     }
+  },
+  "x-model-compatibility": {
+    "current": "0.2.0-draft",
+    "classifications": [
+      "supported_directly",
+      "migratable",
+      "read_only_legacy",
+      "unsupported"
+    ],
+    "legacy": {
+      "0.1.0-draft": "read_only_legacy"
+    },
+    "migration_policy": "Explicit deterministic source-to-target migration chains only; no silent reinterpretation."
   },
   "$defs": {
     "Person": {

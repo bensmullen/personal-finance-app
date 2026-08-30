@@ -1,4 +1,4 @@
-import { Money, Percentage, RoundingPolicy, canonicalOpeningState, createFundingPolicy, domainId, formatMoney, fundingPolicyId, money, runVerticalSlicePeriod, summarizeCashFlowClass, utcMonth, type VerticalSliceInput } from "./verticalSlice1.js";
+import { Money, Percentage, RoundingPolicy, canonicalOpeningState, createFundingPolicy, createRunContext, domainId, formatMoney, fundingPolicyId, money, runId, runVerticalSlicePeriod, scenarioId, summarizeCashFlowClass, utcMonth, type VerticalSliceInput } from "./verticalSlice1.js";
 
 const byId = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -44,10 +44,20 @@ const render = (): void => {
       }),
     };
 
+    const period = utcMonth(2026, 1);
     const result = runVerticalSlicePeriod({
-      period: utcMonth(2026, 1),
+      period,
       input,
       openingState: canonicalOpeningState(input),
+      runContext: createRunContext({
+        runId: runId("33333333-3333-4333-8333-333333333333"),
+        scenarioId: scenarioId("44444444-4444-4444-8444-444444444444"),
+        asOf: period.start,
+        dataCutoff: period.start,
+        simulationStart: period.start,
+        simulationEnd: period.end,
+        baseCurrency: input.monthlyGrossCompensation.currency,
+      }),
     });
 
     const cards: Array<[string, Money, string]> = [

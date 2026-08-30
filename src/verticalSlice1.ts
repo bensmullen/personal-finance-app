@@ -1,5 +1,5 @@
 import { type Instant, type Period, inPeriod, subtractMilliseconds } from "./time.js";
-import type { DomainId } from "./identity.js";
+import { domainId, generatedOccurrenceKey, type DomainId, type GeneratedOccurrenceKey } from "./identity.js";
 import {
   accountingTransactionId,
   cashFlowAmount,
@@ -35,6 +35,30 @@ import {
   type SettlementProposal,
 } from "./semantics.js";
 import {
+  applyAccountingTransactionAtomically,
+  assertAuthoritativeStateCurrency,
+  cloneAuthoritativeState,
+  createAuthoritativeState,
+  registerAuthoritativeIdentity,
+  type AccountState,
+  type AuthoritativeState,
+  type LiabilityState,
+} from "./state.js";
+import {
+  assertObservedFactWithinDataCutoff,
+  assertRunContext,
+  createInputFingerprint,
+  createRunMetadata,
+  type RunContext,
+  type RunMetadata,
+} from "./run.js";
+import {
+  createFactProvenance,
+  isObservedFact,
+  type FactProvenance,
+  type ModelGeneratedFactProvenance,
+} from "./provenance.js";
+import {
   type Currency,
   Money,
   Ratio,
@@ -54,27 +78,17 @@ export type { ValidationIssue } from "./diagnostics.js";
 export type { FundingPolicy, ConstraintOutcome, LiquidityShortfall } from "./funding.js";
 export type { RecognitionFact, Obligation, SettlementProposal, Settlement, SemanticEffect } from "./semantics.js";
 export type { AccountingTransaction } from "./accounting.js";
+export { createRunContext, runId, scenarioId } from "./run.js";
+export type { RunContext, RunMetadata } from "./run.js";
+export type { FactProvenance } from "./provenance.js";
+export type { AccountState, LiabilityState, AuthoritativeState } from "./state.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
 export type AccountId = DomainId<"account">;
 export type LiabilityId = DomainId<"liability">;
 
-export interface AccountState {
-  readonly id: AccountId;
-  readonly ownerId: PersonId;
-  readonly kind: "checking" | "retirement";
-  cash: Money;
-}
-
-export interface LiabilityState { readonly id: LiabilityId; balance: Money; }
-
-export interface SliceState {
-  accounts: Record<string, AccountState>;
-  liabilities: Record<string, LiabilityState>;
-  obligations: Record<string, Obligation>;
-  postedTransactionIds: string[];
-}
+export type SliceState = AuthoritativeState;
 
 export interface VerticalSliceInput {
   readonly householdId: HouseholdId;
@@ -98,12 +112,14 @@ export interface TaxSettlementRequest {
   readonly amount: Money;
   readonly date: Instant;
   readonly fundingPolicy?: FundingPolicy;
+  readonly provenance?: FactProvenance;
 }
 
 export interface VerticalSlicePeriodInput {
   readonly period: Period;
   readonly input: VerticalSliceInput;
   readonly openingState: SliceState;
+  readonly runContext: RunContext;
   readonly taxSettlements?: readonly TaxSettlementRequest[];
 }
 
@@ -118,6 +134,10 @@ export interface Statements {
 }
 
 export interface VerticalSliceResult {
+  readonly status: "completed";
+  readonly runMetadata: RunMetadata;
+  readonly requestedHorizon: Period;
+  readonly reachedThrough: Instant;
   readonly state: SliceState;
   readonly effects: readonly SemanticEffect[];
   readonly recognitions: readonly RecognitionFact[];
@@ -140,13 +160,6 @@ export interface VerticalSliceResult {
     readonly consolidatedCash: Money;
   };
 }
-
-const cloneState = (state: SliceState): SliceState => ({
-  accounts: Object.fromEntries(Object.entries(state.accounts).map(([key, value]) => [key, { ...value }])),
-  liabilities: Object.fromEntries(Object.entries(state.liabilities).map(([key, value]) => [key, { ...value }])),
-  obligations: { ...state.obligations },
-  postedTransactionIds: [...state.postedTransactionIds],
-});
 
 export const verticalSlicePostingRounding = (currency: Currency): RoundingPolicy =>
   RoundingPolicy.currency(currency.minorUnitScale, "half_up");
@@ -175,30 +188,6 @@ const validateState = (state: SliceState, input: VerticalSliceInput): void => {
 const transaction = (id: string, date: Instant, type: string, legs: readonly AccountingLegDraft[]): AccountingTransaction =>
   createAccountingTransaction({ id: accountingTransactionId(id), date, type, legs: legs.map(createAccountingLeg) });
 
-const post = (state: SliceState, tx: AccountingTransaction): void => {
-  if (state.postedTransactionIds.includes(tx.id)) {
-    failValidation({ severity: "error", code: issueCodes.duplicateTransaction, message: `Duplicate transaction ${tx.id}`, entityType: "accounting_transaction", entityId: tx.id });
-  }
-  for (const leg of tx.legs) {
-    if (leg.type === "cash") {
-      const account = state.accounts[leg.accountId];
-      if (!account) throw new Error(`Unknown account ${leg.accountId}`);
-      account.cash = leg.posting === "debit" ? account.cash.plus(leg.amount) : account.cash.minus(leg.amount);
-      if (account.cash.isNegative()) {
-        failValidation({ severity: "error", code: issueCodes.negativeCashInvariant, message: `Accepted transaction ${tx.id} creates prohibited negative cash in ${account.id}`, entityType: "account", entityId: account.id, relatedIds: [tx.id] });
-      }
-    } else if (leg.type === "liability") {
-      const liability = state.liabilities[leg.entityId];
-      if (!liability) throw new Error(`Unknown liability ${leg.entityId}`);
-      liability.balance = leg.posting === "credit" ? liability.balance.plus(leg.amount) : liability.balance.minus(leg.amount);
-      if (liability.balance.isNegative()) {
-        failValidation({ severity: "error", code: issueCodes.settlementExceedsOutstanding, message: `Accepted transaction ${tx.id} creates a negative liability balance`, entityType: "liability", entityId: liability.id, relatedIds: [tx.id] });
-      }
-    }
-  }
-  state.postedTransactionIds.push(tx.id);
-};
-
 const projectedBalancesFrom = (state: SliceState): Record<string, Money> =>
   Object.fromEntries(Object.entries(state.accounts).map(([id, account]) => [id, account.cash]));
 
@@ -208,10 +197,38 @@ interface PeriodAction {
   readonly execute: () => void;
 }
 
+const primitiveInstanceIds = Object.freeze({
+  compensation: domainId("primitive-instance", "10000000-0000-4000-8000-000000000001"),
+  taxRecognition: domainId("primitive-instance", "10000000-0000-4000-8000-000000000002"),
+  taxSettlement: domainId("primitive-instance", "10000000-0000-4000-8000-000000000003"),
+  retirement: domainId("primitive-instance", "10000000-0000-4000-8000-000000000004"),
+  livingExpense: domainId("primitive-instance", "10000000-0000-4000-8000-000000000005"),
+});
+
 export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): VerticalSliceResult {
-  const state = cloneState(request.openingState);
+  assertRunContext(request.runContext);
+  if (request.period.start !== request.runContext.simulationStart || request.period.end !== request.runContext.simulationEnd) {
+    failValidation({ severity: "error", code: issueCodes.invalidRunContext, message: "Vertical Slice period must match the run context horizon", entityType: "run_context", fieldPath: "simulationStart" });
+  }
+  const state = cloneAuthoritativeState(request.openingState);
   const input = request.input;
   const currency = input.currency ?? USD;
+  if (!currency.equals(request.runContext.baseCurrency)) {
+    failValidation({ severity: "error", code: issueCodes.runBaseCurrencyMismatch, message: `Vertical Slice currency ${currency.code} does not match run base currency ${request.runContext.baseCurrency.code}`, entityType: "run_context", fieldPath: "baseCurrency", relatedIds: [currency.code, request.runContext.baseCurrency.code] });
+  }
+  assertAuthoritativeStateCurrency(state, request.runContext.baseCurrency);
+  const inputFingerprint = createInputFingerprint({
+    runContext: request.runContext,
+    openingState: state,
+    scenario: {
+      input: request.input,
+      taxSettlements: [...(request.taxSettlements ?? [])]
+        .sort((left, right) => left.date.localeCompare(right.date)
+          || left.settlementId.localeCompare(right.settlementId)
+          || (left.proposalId ?? "").localeCompare(right.proposalId ?? "")),
+    },
+  });
+  const runMetadata = createRunMetadata(request.runContext, inputFingerprint);
   const postingRounding = verticalSlicePostingRounding(currency);
   validateState(state, input);
 
@@ -233,14 +250,46 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
 
   const addTransaction = (tx: AccountingTransaction): void => {
     transactions.push(tx);
-    post(state, tx);
+    applyAccountingTransactionAtomically(state, tx);
   };
-  const knownRecognitionIds = (): string[] => [
-    ...recognitions.map((recognition) => recognition.id),
-    ...Object.values(state.obligations).map((obligation) => obligation.originatingRecognitionId),
-  ];
+  const generatedProvenance = (
+    primitiveInstanceId: DomainId<"primitive-instance">,
+    at: Instant,
+    semanticEffectType: string,
+    economicTargetId: DomainId<string>,
+  ): ModelGeneratedFactProvenance & { readonly generatedOccurrenceKey: GeneratedOccurrenceKey } => {
+    const occurrenceKey = generatedOccurrenceKey({
+      scenarioId: request.runContext.scenarioId,
+      primitiveInstanceId,
+      scheduledAt: at,
+      semanticEffectType,
+      economicTargetId,
+    });
+    registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", occurrenceKey);
+    return createFactProvenance({
+      factKind: "model_generated",
+      sourceType: "model",
+      sourceId: primitiveInstanceId,
+      effectiveAt: at,
+      generatedOccurrenceKey: occurrenceKey,
+    }) as ModelGeneratedFactProvenance & { readonly generatedOccurrenceKey: GeneratedOccurrenceKey };
+  };
 
-  const processTaxSettlement = (settlementRequest: TaxSettlementRequest, policy: FundingPolicy): void => {
+  const processTaxSettlement = (
+    settlementRequest: TaxSettlementRequest,
+    policy: FundingPolicy,
+    suppliedProvenance?: FactProvenance,
+  ): void => {
+    const provenance = createFactProvenance(suppliedProvenance ?? settlementRequest.provenance ?? {
+      factKind: "authoritative_input",
+      sourceType: "user",
+      sourceId: settlementRequest.settlementId,
+      effectiveAt: settlementRequest.date,
+    });
+    assertObservedFactWithinDataCutoff(provenance, request.runContext);
+    if (isObservedFact(provenance)) {
+      registerAuthoritativeIdentity(state.identities, "externalIdempotencyKeys", provenance.idempotencyKey);
+    }
     const obligation = state.obligations[settlementRequest.obligationId];
     if (!obligation) {
       failValidation({ severity: "error", code: issueCodes.settlementClaimNotFound, message: `Missing obligation ${settlementRequest.obligationId}`, entityType: "claim", entityId: settlementRequest.obligationId });
@@ -276,6 +325,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
       requestedAmount: settlementRequest.amount,
       requestedAt: settlementRequest.date,
       fundingPolicyId: policy.id,
+      provenance,
     }, claim);
     settlementProposals.push(proposal);
     const funding = resolveFunding(proposal, claim, policy, projectedBalancesFrom(state), settlementRequest.date);
@@ -286,14 +336,13 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     const acceptedSettlement = createSettlement({
       id: settlementId(settlementRequest.settlementId),
       settledAt: settlementRequest.date,
-    }, funding, claim, [
-      ...Object.values(state.obligations).flatMap((existingClaim) => existingClaim.settlementIds),
-      ...settlements.map((settlement) => settlement.id),
-    ]);
+      provenance,
+    }, funding, claim, state.identities.settlementIds);
+    registerAuthoritativeIdentity(state.identities, "settlementIds", acceptedSettlement.id);
     settlements.push(acceptedSettlement);
     const updated = applySettlement(claim, acceptedSettlement) as Obligation;
     state.obligations[updated.id] = updated;
-    effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${acceptedSettlement.id}`), kind: "settlement", category: "tax", amount: acceptedSettlement.amount, occurredAt: acceptedSettlement.settledAt, claimId: acceptedSettlement.claimId, settlementId: acceptedSettlement.id }));
+    effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${acceptedSettlement.id}`), kind: "settlement", category: "tax", amount: acceptedSettlement.amount, occurredAt: acceptedSettlement.settledAt, claimId: acceptedSettlement.claimId, settlementId: acceptedSettlement.id, provenance }));
     addTransaction(transaction(`tx:tax-settlement:${acceptedSettlement.id}`, acceptedSettlement.settledAt, "tax_settlement", [
       { posting: "debit", type: "liability", amount: acceptedSettlement.amount, entityId: liabilityTarget },
       ...acceptedSettlement.fundingAllocations.map((allocation): AccountingLegDraft => ({ posting: "credit", type: "cash", amount: allocation.amount, accountId: allocation.accountId, cashFlowClass: "operating" })),
@@ -305,9 +354,11 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     stableKey: "10:compensation",
     execute: () => {
       if (!input.monthlyGrossCompensation.isPositive()) return;
-      const compensationRecognition = createRecognitionFact({ id: recognitionId(`recognition:compensation:${request.period.start}`), category: "compensation", amount: input.monthlyGrossCompensation, recognizedAt: compensationAt }, knownRecognitionIds());
+      const provenance = generatedProvenance(primitiveInstanceIds.compensation, compensationAt, "recognition", input.ownerId);
+      const compensationRecognition = createRecognitionFact({ id: recognitionId(`recognition:compensation:${request.period.start}`), category: "compensation", amount: input.monthlyGrossCompensation, recognizedAt: compensationAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, provenance }, state.identities.recognitionIds);
+      registerAuthoritativeIdentity(state.identities, "recognitionIds", compensationRecognition.id);
       recognitions.push(compensationRecognition);
-      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:compensation:${request.period.start}`), kind: "recognition", category: "compensation", amount: input.monthlyGrossCompensation, occurredAt: compensationAt, recognitionId: compensationRecognition.id }));
+      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:compensation:${request.period.start}`), kind: "recognition", category: "compensation", amount: input.monthlyGrossCompensation, occurredAt: compensationAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, recognitionId: compensationRecognition.id, provenance }));
       addTransaction(transaction(`tx:compensation:${request.period.start}`, compensationAt, "income", [
         { posting: "debit", type: "cash", amount: input.monthlyGrossCompensation, accountId: input.checkingAccountId, cashFlowClass: "operating" },
         { posting: "credit", type: "income", amount: input.monthlyGrossCompensation },
@@ -321,7 +372,9 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     stableKey: "20:tax-recognition",
     execute: () => {
       if (!taxAmount.isPositive()) return;
-      const taxRecognition = createRecognitionFact({ id: recognitionId(`recognition:tax:${request.period.start}`), category: "tax_expense", amount: taxAmount, recognizedAt: taxRecognitionAt }, knownRecognitionIds());
+      const provenance = generatedProvenance(primitiveInstanceIds.taxRecognition, taxRecognitionAt, "recognition", input.taxLiabilityId);
+      const taxRecognition = createRecognitionFact({ id: recognitionId(`recognition:tax:${request.period.start}`), category: "tax_expense", amount: taxAmount, recognizedAt: taxRecognitionAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, provenance }, state.identities.recognitionIds);
+      registerAuthoritativeIdentity(state.identities, "recognitionIds", taxRecognition.id);
       recognitions.push(taxRecognition);
       const obligation = createObligation({
         id: claimId(`obligation:${taxRecognition.id}`),
@@ -333,7 +386,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
         recognizedAt: taxRecognition.recognizedAt,
       }, Object.values(state.obligations));
       state.obligations[obligation.id] = obligation;
-      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:tax-obligation:${request.period.start}`), kind: "claim", category: "tax", amount: taxAmount, occurredAt: taxRecognitionAt, recognitionId: taxRecognition.id, claimId: obligation.id }));
+      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:tax-obligation:${request.period.start}`), kind: "claim", category: "tax", amount: taxAmount, occurredAt: taxRecognitionAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, recognitionId: taxRecognition.id, claimId: obligation.id, provenance }));
       addTransaction(transaction(`tx:tax-accrual:${request.period.start}`, taxRecognitionAt, "tax_accrual", [
         { posting: "debit", type: "tax", amount: taxAmount },
         { posting: "credit", type: "liability", amount: taxAmount, entityId: input.taxLiabilityId },
@@ -346,12 +399,13 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     stableKey: "30:current-tax-settlement",
     execute: () => {
       if (!taxAmount.isPositive() || input.settleCurrentTax === false) return;
+      const provenance = generatedProvenance(primitiveInstanceIds.taxSettlement, taxSettlementAt, "settlement", input.taxLiabilityId);
       processTaxSettlement({
         settlementId: `settlement:tax:${request.period.start}`,
         obligationId: `obligation:recognition:tax:${request.period.start}`,
         amount: taxAmount,
         date: taxSettlementAt,
-      }, input.taxFundingPolicy);
+      }, input.taxFundingPolicy, provenance);
     },
   });
 
@@ -360,7 +414,8 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     stableKey: "40:retirement",
     execute: () => {
       if (!input.retirementContribution.isPositive()) return;
-      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:retirement:${request.period.start}`), kind: "flow", category: "retirement_transfer", amount: input.retirementContribution, occurredAt: retirementAt }));
+      const provenance = generatedProvenance(primitiveInstanceIds.retirement, retirementAt, "flow", input.retirementAccountId);
+      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:retirement:${request.period.start}`), kind: "flow", category: "retirement_transfer", amount: input.retirementContribution, occurredAt: retirementAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, provenance }));
       addTransaction(transaction(`tx:retirement:${request.period.start}`, retirementAt, "internal_transfer", [
         { posting: "debit", type: "cash", amount: input.retirementContribution, accountId: input.retirementAccountId, cashFlowClass: "non_cash" },
         { posting: "credit", type: "cash", amount: input.retirementContribution, accountId: input.checkingAccountId, cashFlowClass: "non_cash" },
@@ -373,9 +428,11 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     stableKey: "50:living-expense",
     execute: () => {
       if (!input.monthlyLivingExpense.isPositive()) return;
-      const livingRecognition = createRecognitionFact({ id: recognitionId(`recognition:living:${request.period.start}`), category: "living_expense", amount: input.monthlyLivingExpense, recognizedAt: livingExpenseAt }, knownRecognitionIds());
+      const provenance = generatedProvenance(primitiveInstanceIds.livingExpense, livingExpenseAt, "recognition", input.ownerId);
+      const livingRecognition = createRecognitionFact({ id: recognitionId(`recognition:living:${request.period.start}`), category: "living_expense", amount: input.monthlyLivingExpense, recognizedAt: livingExpenseAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, provenance }, state.identities.recognitionIds);
+      registerAuthoritativeIdentity(state.identities, "recognitionIds", livingRecognition.id);
       recognitions.push(livingRecognition);
-      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:living:${request.period.start}`), kind: "recognition", category: "living_expense", amount: input.monthlyLivingExpense, occurredAt: livingExpenseAt, recognitionId: livingRecognition.id }));
+      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:living:${request.period.start}`), kind: "recognition", category: "living_expense", amount: input.monthlyLivingExpense, occurredAt: livingExpenseAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, recognitionId: livingRecognition.id, provenance }));
       addTransaction(transaction(`tx:living:${request.period.start}`, livingExpenseAt, "expense", [
         { posting: "debit", type: "expense", amount: input.monthlyLivingExpense },
         { posting: "credit", type: "cash", amount: input.monthlyLivingExpense, accountId: input.checkingAccountId, cashFlowClass: "operating" },
@@ -399,7 +456,9 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
   transactions.sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id));
   for (const tx of transactions) if (!inPeriod(tx.date, request.period)) throw new Error(`Transaction ${tx.id} is outside period`);
 
-  const assets = sumMoney(Object.values(state.accounts).map((account) => account.cash), currency);
+  const consolidatedCash = sumMoney(Object.values(state.accounts).map((account) => account.cash), currency);
+  const positionAssets = sumMoney(Object.values(state.positions).map((position) => position.price.times(position.quantity.amount)), currency);
+  const assets = consolidatedCash.plus(positionAssets);
   const liabilities = sumMoney(Object.values(state.liabilities).map((liability) => liability.balance), currency);
   const income = sumMoney(transactions.flatMap((tx) => tx.legs.filter((leg) => leg.type === "income" && leg.posting === "credit").map((leg) => leg.amount)), currency);
   const expenses = sumMoney(transactions.flatMap((tx) => tx.legs.filter((leg) => (leg.type === "expense" || leg.type === "tax") && leg.posting === "debit").map((leg) => leg.amount)), currency);
@@ -407,6 +466,10 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
   const dependencyOrder = Object.freeze(["compensation", "tax_calculation", "tax_recognition", "tax_obligation", "tax_settlement", "retirement_contribution", "available_cash", "living_expense"]);
 
   return Object.freeze({
+    status: "completed",
+    runMetadata,
+    requestedHorizon: request.period,
+    reachedThrough: request.period.end,
     state,
     effects: Object.freeze(effects),
     recognitions: Object.freeze(recognitions),
@@ -426,20 +489,20 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
       livingExpenses: input.monthlyLivingExpense,
       checkingCash: state.accounts[input.checkingAccountId]!.cash,
       retirementCash: state.accounts[input.retirementAccountId]!.cash,
-      consolidatedCash: assets,
+      consolidatedCash,
     }),
   });
 }
 
 export const canonicalOpeningState = (input: VerticalSliceInput): SliceState => {
   const currency = input.currency ?? USD;
-  return {
+  return createAuthoritativeState({
     accounts: {
       [input.checkingAccountId]: { id: input.checkingAccountId, ownerId: input.ownerId, kind: "checking", cash: Money.zero(currency) },
       [input.retirementAccountId]: { id: input.retirementAccountId, ownerId: input.ownerId, kind: "retirement", cash: Money.zero(currency) },
     },
+    positions: {},
     liabilities: { [input.taxLiabilityId]: { id: input.taxLiabilityId, balance: Money.zero(currency) } },
     obligations: {},
-    postedTransactionIds: [],
-  };
+  });
 };

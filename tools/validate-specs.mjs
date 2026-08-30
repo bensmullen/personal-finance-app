@@ -82,6 +82,7 @@ export async function validateRepository(root = defaultRoot) {
     "model_format_version",
     "executable_semantics_version",
     "engine_contract_version",
+    "result_schema_version",
   ];
   for (const key of requiredVersions) {
     if (typeof manifest[key] !== "string" || manifest[key].length === 0) {
@@ -173,6 +174,26 @@ export async function validateRepository(root = defaultRoot) {
     addError(`engine_contract_version must match package.json version (${packageJson?.version ?? "missing"})`);
   }
 
+  const runtimeVersionsPath = manifest.runtime_versions_path;
+  if (typeof runtimeVersionsPath !== "string" || runtimeVersionsPath.length === 0) {
+    addError("manifest.runtime_versions_path must be a non-empty string");
+  } else {
+    const runtimeVersions = await readArtifact(runtimeVersionsPath, "runtime version authority");
+    if (runtimeVersions !== undefined) {
+      const runtimeValue = (key) => runtimeVersions.match(new RegExp(`${key}:\\s*"([^"]+)"`))?.[1];
+      const expectedRuntimeVersions = {
+        engineVersion: manifest.engine_contract_version,
+        resultSchemaVersion: manifest.result_schema_version,
+        financialSpecificationVersion: manifest.executable_semantics_version,
+        modelFormatVersion: manifest.model_format_version,
+      };
+      for (const [key, expected] of Object.entries(expectedRuntimeVersions)) {
+        const actual = runtimeValue(key);
+        if (actual !== expected) addError(`runtime ${key} must match manifest (${expected}); found ${actual ?? "missing"}`);
+      }
+    }
+  }
+
   const generatedByPath = new Map();
   for (const artifact of generatedArtifacts) {
     if (!isRecord(artifact) || typeof artifact.path !== "string") continue;
@@ -226,6 +247,32 @@ export async function validateRepository(root = defaultRoot) {
   if (modelSchema?.version !== manifest.model_format_version) {
     addError("model_format_version must match the model JSON Schema artifact version");
   }
+  const modelSchemaDocument = await parseJson("docs/personal_finance_model.schema.json", "portable model schema");
+  if (isRecord(modelSchemaDocument)) {
+    const required = Array.isArray(modelSchemaDocument.required) ? modelSchemaDocument.required : [];
+    for (const field of ["model_format_version", "financial_specification_version", "model_id", "objects"]) {
+      if (!required.includes(field)) addError(`portable model schema must require ${field}`);
+    }
+    if (required.includes("specification_version") || isRecord(modelSchemaDocument.properties) && "specification_version" in modelSchemaDocument.properties) {
+      addError("portable model schema must not conflate model format and financial specification as specification_version");
+    }
+    const properties = isRecord(modelSchemaDocument.properties) ? modelSchemaDocument.properties : {};
+    const modelVersionProperty = isRecord(properties.model_format_version) ? properties.model_format_version : {};
+    if (modelVersionProperty.const !== manifest.model_format_version) {
+      addError("portable model schema model_format_version const must match manifest");
+    }
+    const compatibility = isRecord(modelSchemaDocument["x-model-compatibility"])
+      ? modelSchemaDocument["x-model-compatibility"]
+      : {};
+    if (compatibility.current !== manifest.model_format_version) {
+      addError("portable model compatibility current version must match manifest");
+    }
+    const classifications = Array.isArray(compatibility.classifications) ? [...compatibility.classifications].sort() : [];
+    const expectedClassifications = ["migratable", "read_only_legacy", "supported_directly", "unsupported"];
+    if (!sameStrings(classifications, expectedClassifications)) {
+      addError("portable model compatibility must declare the four architecture classifications");
+    }
+  }
 
   const canonicalPath = specificationsById.get("canonical-financial-schema")?.path;
   const interfacePath = "docs/personal_finance_simulation_interfaces_v1.0.ts";
@@ -267,6 +314,6 @@ if (isMain) {
     for (const error of errors) console.error(`- ${error}`);
     process.exitCode = 1;
   } else {
-    console.log("Specification validation passed: versions, artifacts, P01-P34 identities, and declared debt are consistent.");
+    console.log("Specification validation passed: runtime/model/result versions, portable envelope compatibility, artifacts, P01-P34 identities, and declared debt are consistent.");
   }
 }

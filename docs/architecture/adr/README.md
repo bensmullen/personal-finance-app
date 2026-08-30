@@ -10,6 +10,7 @@ Accepted foundation decisions:
 - [ADR-004: Exact decimal financial arithmetic and units](ADR-004-exact-decimal-financial-arithmetic-and-units.md)
 - [ADR-005: Half-open temporal intervals](ADR-005-half-open-temporal-intervals.md)
 - [ADR-008: Identity and idempotency model](ADR-008-identity-and-idempotency-model.md)
+- [ADR-011: Portable model versioning and compatibility](ADR-011-portable-model-versioning-and-compatibility.md)
 - [ADR-020: Explicit financial value conventions](ADR-020-explicit-financial-value-conventions.md)
 - [ADR-021: Semantic settlement, funding, and accounting authority boundary](ADR-021-semantic-settlement-funding-and-accounting-authority-boundary.md)
 

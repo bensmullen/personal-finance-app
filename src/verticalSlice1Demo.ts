@@ -1,4 +1,4 @@
-import { Percentage, RoundingPolicy, canonicalOpeningState, createFundingPolicy, domainId, formatMoney, fundingPolicyId, money, runVerticalSlicePeriod, summarizeCashFlowClass, utcMonth, type Money, type VerticalSliceInput } from "./verticalSlice1.js";
+import { Percentage, RoundingPolicy, canonicalOpeningState, createFundingPolicy, createRunContext, domainId, formatMoney, fundingPolicyId, money, runId, runVerticalSlicePeriod, scenarioId, summarizeCashFlowClass, utcMonth, type Money, type VerticalSliceInput } from "./verticalSlice1.js";
 
 export interface DemoRow {
   label: string;
@@ -35,10 +35,20 @@ export const buildVerticalSliceDemo = (): DemoViewModel => {
     }),
   };
 
+  const period = utcMonth(2026, 1);
   const result = runVerticalSlicePeriod({
-    period: utcMonth(2026, 1),
+    period,
     input,
     openingState: canonicalOpeningState(input),
+    runContext: createRunContext({
+      runId: runId("11111111-1111-4111-8111-111111111111"),
+      scenarioId: scenarioId("22222222-2222-4222-8222-222222222222"),
+      asOf: period.start,
+      dataCutoff: period.start,
+      simulationStart: period.start,
+      simulationEnd: period.end,
+      baseCurrency: input.monthlyGrossCompensation.currency,
+    }),
   });
 
   return {
