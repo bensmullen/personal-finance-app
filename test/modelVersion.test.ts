@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ValidationError, issueCodes } from "../src/diagnostics.js";
-import { domainId } from "../src/identity.js";
+import { ValidationError, issueCodes } from "../src/diagnostics/index.js";
+import { domainId } from "../src/identity/index.js";
 import {
   CURRENT_MODEL_FORMAT_VERSION,
   LEGACY_AMBIGUOUS_MODEL_FORMAT_VERSION,
@@ -14,8 +14,8 @@ import {
   type ModelMigration,
   type PortableModelDocument,
   type PortableModelEnvelope,
-} from "../src/modelVersion.js";
-import { CURRENT_RUN_VERSIONS } from "../src/version.js";
+} from "../src/model/modelVersion.js";
+import { CURRENT_RUN_VERSIONS } from "../src/model/version.js";
 
 const MIGRATABLE_VERSION = "0.1.5-separated-draft";
 

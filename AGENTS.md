@@ -25,7 +25,21 @@ Never silently change financial meaning to make code easier to implement.
 
 Dependencies point inward:
 
-UI → Application → Engine → Domain/Values/Time/Identity
+UI → Application/Slice → Simulation → Engine domain modules → Values/Time/Identity
+
+The single-package engine owns explicit modules under `src/` for values, time,
+identity, model metadata, rules, primitives, dependencies, semantics, funding,
+accounting, state, valuation, statements, lineage, simulation, and diagnostics.
+Root compatibility files re-export canonical implementations and must not gain
+substantive logic or independent runtime authority. Internal modules should
+import direct leaf files where barrel imports would create cycles.
+Root compatibility facades are external/legacy surfaces and must never be used
+by engine implementation files as internal dependency shortcuts.
+
+Lower engine modules must not import `simulation/`. Engine modules must not
+import `webApp.ts`, browser application code, or DOM/browser APIs. Runtime
+imports must remain acyclic; type-only imports are excluded from the runtime
+cycle check but should still be kept simple.
 
 Financial engine code must not depend on UI, database, auth, hosting, or
 external-service libraries.
@@ -132,6 +146,7 @@ Before completing a change, run:
 ```text
 npm ci
 npm run spec:validate
+npm run architecture:validate
 npm run typecheck
 npm test
 npm run build:web

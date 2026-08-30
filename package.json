@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "spec:validate": "node tools/validate-specs.mjs",
+    "architecture:validate": "node tools/validate-architecture.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build:web": "rm -rf dist && tsc -p tsconfig.web.json && mkdir -p dist && cp web/index.html web/styles.css dist/ && touch dist/.nojekyll"

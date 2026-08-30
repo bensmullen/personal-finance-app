@@ -26,6 +26,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run spec:validate
+      - run: npm run architecture:validate
       - run: npm run typecheck
       - run: npm test
       - run: npm run build:web

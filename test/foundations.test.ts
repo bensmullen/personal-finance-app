@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { domainId, generatedOccurrenceKey, idempotencyKey, uuid } from "../src/identity.js";
+import { domainId, generatedOccurrenceKey, idempotencyKey, uuid } from "../src/identity/index.js";
 import {
   DayCountConvention,
   civilDate,
@@ -8,7 +8,7 @@ import {
   instant,
   utcMonth,
   yearFraction,
-} from "../src/time.js";
+} from "../src/time/index.js";
 import {
   Currency,
   Percentage,
@@ -24,7 +24,7 @@ import {
   rateConvention,
   ratePeriod,
   type RoundingMode,
-} from "../src/values.js";
+} from "../src/values/index.js";
 
 describe("canonical exact values", () => {
   it("preserves exact arbitrary-scale decimal vectors without binary floating point", () => {

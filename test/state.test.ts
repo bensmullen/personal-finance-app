@@ -5,19 +5,20 @@ import {
   accountingTransactionId,
   createAccountingLeg,
   createAccountingTransaction,
-} from "../src/accounting.js";
-import { ValidationError, issueCodes } from "../src/diagnostics.js";
-import { domainId, generatedOccurrenceKey, idempotencyKey } from "../src/identity.js";
-import { claimId, createObligation, recognitionId, settlementId } from "../src/semantics.js";
+} from "../src/accounting/index.js";
+import { ValidationError, issueCodes } from "../src/diagnostics/index.js";
+import { domainId, generatedOccurrenceKey, idempotencyKey } from "../src/identity/index.js";
+import { createObligation } from "../src/semantics/claim.js";
+import { claimId, recognitionId, settlementId } from "../src/semantics/identity.js";
 import {
   applyAccountingTransactionAtomically,
   cloneAuthoritativeState,
   createAuthoritativeState,
   registerAuthoritativeIdentity,
   serializeAuthoritativeIdentityRegistry,
-} from "../src/state.js";
-import { instant } from "../src/time.js";
-import { Currency, Quantity, SHARE, money } from "../src/values.js";
+} from "../src/state/index.js";
+import { instant } from "../src/time/index.js";
+import { Currency, Quantity, SHARE, money } from "../src/values/index.js";
 
 const ACCOUNT = domainId("account", "10000000-0000-4000-8000-000000000001");
 const POSITION = domainId("position", "10000000-0000-4000-8000-000000000002");
