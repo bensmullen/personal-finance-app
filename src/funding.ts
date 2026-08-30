@@ -1,7 +1,13 @@
 import type { DomainId } from "./identity.js";
 import type { Instant } from "./time.js";
 import { failValidation, issueCodes, validationIssue, type ValidationIssue } from "./diagnostics.js";
-import type { ClaimId, ObligationOrRight, SettlementProposal, SettlementProposalId } from "./semantics.js";
+import {
+  assertAuthoritativeSettlementProposal,
+  type ClaimId,
+  type ObligationOrRight,
+  type SettlementProposal,
+  type SettlementProposalId,
+} from "./semantics.js";
 import { Money } from "./values.js";
 
 declare const fundingPolicyIdBrand: unique symbol;
@@ -93,7 +99,8 @@ interface FundingResolutionBase<Status extends ConstraintOutcomeStatus> {
   readonly issues: readonly ValidationIssue[];
 }
 
-const acceptedFundingAuthority: unique symbol = Symbol("AcceptedFundingAuthority");
+declare const acceptedFundingAuthority: unique symbol;
+const authoritativeAcceptedFunding = new WeakSet<object>();
 
 export type AcceptedFundingResolution = Readonly<
   FundingResolutionBase<AcceptedConstraintOutcomeStatus> & {
@@ -111,7 +118,7 @@ export type FundingResolution = AcceptedFundingResolution | UnacceptedFundingRes
 export const isAcceptedFundingResolution = (
   resolution: FundingResolution,
 ): resolution is AcceptedFundingResolution =>
-  acceptedFundingAuthority in resolution && resolution[acceptedFundingAuthority] === true;
+  authoritativeAcceptedFunding.has(resolution);
 
 export function assertAcceptedFundingResolution(
   resolution: unknown,
@@ -119,12 +126,11 @@ export function assertAcceptedFundingResolution(
   if (
     typeof resolution !== "object"
     || resolution === null
-    || !(acceptedFundingAuthority in resolution)
-    || resolution[acceptedFundingAuthority] !== true
+    || !authoritativeAcceptedFunding.has(resolution)
   ) {
     failValidation({
       severity: "error",
-      code: issueCodes.settlementAmountInvalid,
+      code: issueCodes.fundingNotAuthoritative,
       message: "A settlement requires positive accepted funding produced by resolveFunding",
       entityType: "funding_resolution",
     });
@@ -196,6 +202,7 @@ export const resolveFunding = (
   availableBalances: Readonly<Record<string, Money>>,
   evaluatedAt: Instant = proposal.requestedAt,
 ): FundingResolution => {
+  assertAuthoritativeSettlementProposal(proposal);
   if (evaluatedAt < proposal.requestedAt) {
     failValidation({
       severity: "error",
@@ -265,11 +272,12 @@ export const resolveFunding = (
     issues: Object.freeze(issues),
   };
   if (status === "fully_satisfied" || status === "partially_satisfied") {
-    return Object.freeze({
+    const accepted = Object.freeze({
       ...resolution,
       outcome: outcome as ConstraintOutcome & { readonly status: AcceptedConstraintOutcomeStatus },
-      [acceptedFundingAuthority]: true as const,
-    });
+    }) as AcceptedFundingResolution;
+    authoritativeAcceptedFunding.add(accepted);
+    return accepted;
   }
   return Object.freeze({
     ...resolution,

@@ -249,6 +249,51 @@ describe("shared recognition, claim, and settlement lifecycle", () => {
     expect(settlement.claimId).toBe(candidate.claim.id);
   });
 
+  it("rejects a spread-cloned authoritative proposal", () => {
+    const candidate = proposal("500");
+    const clonedProposal = { ...candidate.proposal };
+    const beforeClaim = JSON.stringify(candidate.claim);
+    expect(validationCode(() => resolveFunding(
+      clonedProposal,
+      candidate.claim,
+      cashPolicy(false, [CASH_A]),
+      { [CASH_A]: money("500") },
+    ))).toBe(issueCodes.settlementProposalNotAuthoritative);
+    expect(JSON.stringify(candidate.claim)).toBe(beforeClaim);
+  });
+
+  it("rejects a coherently altered spread clone of accepted funding", () => {
+    const candidate = proposal();
+    const funding = resolveFunding(candidate.proposal, candidate.claim, cashPolicy(true, [CASH_A]), {
+      [CASH_A]: money("500"),
+    });
+    if (!isAcceptedFundingResolution(funding)) throw new Error("Expected accepted funding");
+    const alteredAmount = money("2000");
+    const clonedFunding = {
+      ...funding,
+      acceptedAmount: alteredAmount,
+      outcome: Object.freeze({ ...funding.outcome, status: "fully_satisfied" as const, acceptedAmount: alteredAmount }),
+      fundingAllocations: Object.freeze([{ kind: "cash_account" as const, accountId: CASH_A, amount: alteredAmount }]),
+    };
+    expect(validationCode(() => createSettlement({
+      id: settlementId("settlement:cloned-funding"),
+      settledAt: REQUESTED_AT,
+    }, clonedFunding, candidate.claim))).toBe(issueCodes.fundingNotAuthoritative);
+  });
+
+  it("rejects a spread-cloned settlement while the exact settlement still applies", () => {
+    const candidate = proposal("500");
+    const settlement = createSettlement({
+      id: settlementId("settlement:clone-test"),
+      settledAt: REQUESTED_AT,
+    }, acceptedFunding(candidate, "500"), candidate.claim);
+    const clonedSettlement = { ...settlement, amount: money("100") };
+    const beforeClaim = JSON.stringify(candidate.claim);
+    expect(validationCode(() => applySettlement(candidate.claim, clonedSettlement))).toBe(issueCodes.settlementNotAuthoritative);
+    expect(JSON.stringify(candidate.claim)).toBe(beforeClaim);
+    expect(claimStatus(applySettlement(candidate.claim, settlement))).toBe("partially_settled");
+  });
+
   it("cannot construct a settlement from unfunded, deferred, default, or zero funding", () => {
     for (const behavior of ["unfunded", "deferred", "contract_default"] as const) {
       const candidate = proposal();
@@ -261,7 +306,7 @@ describe("shared recognition, claim, and settlement lifecycle", () => {
       expect(validationCode(() => createSettlement({
         id: settlementId(`settlement:${behavior}`),
         settledAt: REQUESTED_AT,
-      }, funding as never, candidate.claim))).toBe(issueCodes.settlementAmountInvalid);
+      }, funding as never, candidate.claim))).toBe(issueCodes.fundingNotAuthoritative);
     }
   });
 

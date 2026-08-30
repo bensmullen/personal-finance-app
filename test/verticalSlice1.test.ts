@@ -410,6 +410,37 @@ describe("Vertical Slice 1", () => {
     expect(result.outputs.retirementCash.isZero()).toBe(true);
   });
 
+  it("settles the liability linked by the claim rather than the configured default liability", () => {
+    const liabilityA = domainId("liability", "ffffffff-ffff-4fff-8fff-ffffffffffff");
+    const opening = canonicalOpeningState(input);
+    opening.accounts[input.checkingAccountId]!.cash = money("500");
+    opening.liabilities[liabilityA] = { id: liabilityA, balance: money("500") };
+    opening.liabilities[input.taxLiabilityId]!.balance = money("500");
+    const linkedClaim = createObligation({
+      id: claimId("obligation:tax:liability-a"),
+      category: "tax_payable",
+      originatingRecognitionId: recognitionId("recognition:tax:liability-a"),
+      economicOwnerId: input.ownerId,
+      balanceEntityId: liabilityA,
+      originalAmount: money("500"),
+      recognizedAt: instant("2026-01-31T12:00:00.000Z"),
+    });
+    opening.obligations[linkedClaim.id] = linkedClaim;
+
+    const result = runVerticalSlicePeriod({
+      period: utcMonth(2026, 2),
+      input: { ...input, monthlyGrossCompensation: money("0"), retirementContribution: money("0"), monthlyLivingExpense: money("0"), settleCurrentTax: false, taxFundingPolicy: syntheticFundingPolicy(false) },
+      openingState: opening,
+      taxSettlements: [{ settlementId: "settlement:liability-a", obligationId: linkedClaim.id, amount: money("500"), date: instant("2026-02-15T00:00:00.000Z") }],
+    });
+
+    expect(result.state.liabilities[liabilityA]?.balance.isZero()).toBe(true);
+    expect(result.state.liabilities[input.taxLiabilityId]?.balance.equals(money("500"))).toBe(true);
+    expect(claimStatus(result.state.obligations[linkedClaim.id]!)).toBe("settled");
+    expect(result.outputs.checkingCash.isZero()).toBe(true);
+    expect(result.transactions[0]?.legs).toContainEqual(expect.objectContaining({ type: "liability", entityId: liabilityA }));
+  });
+
   it("detects a settlement identity already present on another available claim", () => {
     const opening = fundedTaxOpeningState("2000");
     const other = createObligation({

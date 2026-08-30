@@ -167,13 +167,27 @@ interface SettlementProposalData {
   readonly traceRefs?: readonly CalculationTraceRef[];
 }
 
-const settlementProposalAuthority: unique symbol = Symbol("SettlementProposalAuthority");
+declare const settlementProposalAuthority: unique symbol;
+const authoritativeSettlementProposals = new WeakSet<object>();
 
 export interface SettlementProposalDraft extends SettlementProposalData {}
 
 export type SettlementProposal = Readonly<SettlementProposalData> & {
   readonly [settlementProposalAuthority]: true;
 };
+
+export function assertAuthoritativeSettlementProposal(
+  proposal: unknown,
+): asserts proposal is SettlementProposal {
+  if (typeof proposal !== "object" || proposal === null || !authoritativeSettlementProposals.has(proposal)) {
+    failValidation({
+      severity: "error",
+      code: issueCodes.settlementProposalNotAuthoritative,
+      message: "Funding requires the exact settlement proposal created by createSettlementProposal",
+      entityType: "settlement_proposal",
+    });
+  }
+}
 
 export const createSettlementProposal = (
   draft: SettlementProposalDraft,
@@ -195,15 +209,16 @@ export const createSettlementProposal = (
     failValidation({ severity: "error", code: issueCodes.settlementBeforeRecognition, message: "Settlement proposal cannot precede recognition", entityType: "settlement_proposal", entityId: draft.id, fieldPath: "requestedAt" });
   }
   const traceRefs = freezeTraceRefs(draft.traceRefs);
-  return Object.freeze({
+  const proposal = Object.freeze({
     id: draft.id,
     claimId: draft.claimId,
     requestedAmount: draft.requestedAmount,
     requestedAt: draft.requestedAt,
     ...(draft.fundingPolicyId === undefined ? {} : { fundingPolicyId: draft.fundingPolicyId }),
     ...(traceRefs === undefined ? {} : { traceRefs }),
-    [settlementProposalAuthority]: true,
-  });
+  }) as SettlementProposal;
+  authoritativeSettlementProposals.add(proposal);
+  return proposal;
 };
 
 interface SettlementData {
@@ -216,7 +231,8 @@ interface SettlementData {
   readonly traceRefs?: readonly CalculationTraceRef[];
 }
 
-const settlementAuthority: unique symbol = Symbol("SettlementAuthority");
+declare const settlementAuthority: unique symbol;
+const authoritativeSettlements = new WeakSet<object>();
 
 export interface SettlementDraft {
   readonly id: SettlementId;
@@ -263,7 +279,7 @@ export const createSettlement = (
     failValidation({ severity: "error", code: issueCodes.settlementBeforeFunding, message: "Settlement cannot precede its funding evaluation", entityType: "settlement", entityId: draft.id, fieldPath: "settledAt" });
   }
   const traceRefs = freezeTraceRefs(draft.traceRefs);
-  return Object.freeze({
+  const settlement = Object.freeze({
     id: draft.id,
     proposalId: proposal.id,
     claimId: proposal.claimId,
@@ -271,13 +287,14 @@ export const createSettlement = (
     settledAt: draft.settledAt,
     fundingAllocations: Object.freeze(fundingAllocations.map((allocation) => Object.freeze({ ...allocation }))),
     ...(traceRefs === undefined ? {} : { traceRefs }),
-    [settlementAuthority]: true,
-  });
+  }) as Settlement;
+  authoritativeSettlements.add(settlement);
+  return settlement;
 };
 
 export const applySettlement = (claim: ObligationOrRight, settlement: Settlement): ObligationOrRight => {
-  if (!(settlementAuthority in settlement) || settlement[settlementAuthority] !== true) {
-    failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "Only a factory-created settlement may be applied", entityType: "settlement" });
+  if (!authoritativeSettlements.has(settlement)) {
+    failValidation({ severity: "error", code: issueCodes.settlementNotAuthoritative, message: "Only the exact settlement created by createSettlement may be applied", entityType: "settlement" });
   }
   if (settlement.claimId !== claim.id) {
     failValidation({ severity: "error", code: issueCodes.settlementClaimNotFound, message: `Settlement ${settlement.id} does not apply to claim ${claim.id}`, entityType: "settlement", entityId: settlement.id });

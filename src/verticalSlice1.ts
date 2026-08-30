@@ -246,6 +246,30 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
       failValidation({ severity: "error", code: issueCodes.settlementClaimNotFound, message: `Missing obligation ${settlementRequest.obligationId}`, entityType: "claim", entityId: settlementRequest.obligationId });
     }
     const claim = obligation as Obligation;
+    const balanceEntityId = claim.balanceEntityId;
+    if (balanceEntityId === undefined) {
+      failValidation({
+        severity: "error",
+        code: issueCodes.settlementLiabilityTargetInvalid,
+        message: `Tax claim ${claim.id} must identify an available liability target`,
+        entityType: "claim",
+        entityId: claim.id,
+        fieldPath: "balanceEntityId",
+      });
+    }
+    const linkedLiability = state.liabilities[balanceEntityId];
+    if (linkedLiability === undefined || linkedLiability.id !== balanceEntityId) {
+      failValidation({
+        severity: "error",
+        code: issueCodes.settlementLiabilityTargetInvalid,
+        message: `Tax claim ${claim.id} must identify an available liability target`,
+        entityType: "claim",
+        entityId: claim.id,
+        fieldPath: "balanceEntityId",
+        relatedIds: [balanceEntityId],
+      });
+    }
+    const liabilityTarget = linkedLiability.id;
     const proposal = createSettlementProposal({
       id: settlementProposalId(settlementRequest.proposalId ?? `proposal:${settlementRequest.settlementId}`),
       claimId: claim.id,
@@ -271,7 +295,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     state.obligations[updated.id] = updated;
     effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${acceptedSettlement.id}`), kind: "settlement", category: "tax", amount: acceptedSettlement.amount, occurredAt: acceptedSettlement.settledAt, claimId: acceptedSettlement.claimId, settlementId: acceptedSettlement.id }));
     addTransaction(transaction(`tx:tax-settlement:${acceptedSettlement.id}`, acceptedSettlement.settledAt, "tax_settlement", [
-      { posting: "debit", type: "liability", amount: acceptedSettlement.amount, entityId: input.taxLiabilityId },
+      { posting: "debit", type: "liability", amount: acceptedSettlement.amount, entityId: liabilityTarget },
       ...acceptedSettlement.fundingAllocations.map((allocation): AccountingLegDraft => ({ posting: "credit", type: "cash", amount: allocation.amount, accountId: allocation.accountId, cashFlowClass: "operating" })),
     ]));
   };

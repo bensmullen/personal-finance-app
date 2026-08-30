@@ -27,9 +27,9 @@ export class ValidationError extends Error {
   }
 }
 
-export const failValidation = (issue: ValidationIssue | readonly ValidationIssue[]): never => {
+export function failValidation(issue: ValidationIssue | readonly ValidationIssue[]): never {
   throw new ValidationError(issue);
-};
+}
 
 export const issueCodes = Object.freeze({
   accountingUnbalanced: "ACCOUNTING_UNBALANCED",
@@ -46,6 +46,10 @@ export const issueCodes = Object.freeze({
   settlementBeforeRecognition: "SETTLEMENT_BEFORE_RECOGNITION",
   settlementBeforeProposal: "SETTLEMENT_BEFORE_PROPOSAL",
   settlementBeforeFunding: "SETTLEMENT_BEFORE_FUNDING",
+  settlementProposalNotAuthoritative: "SETTLEMENT_PROPOSAL_NOT_AUTHORITATIVE",
+  fundingNotAuthoritative: "FUNDING_NOT_AUTHORITATIVE",
+  settlementNotAuthoritative: "SETTLEMENT_NOT_AUTHORITATIVE",
+  settlementLiabilityTargetInvalid: "SETTLEMENT_LIABILITY_TARGET_INVALID",
   fundingBeforeProposal: "FUNDING_BEFORE_PROPOSAL",
   fundingPolicyInvalid: "FUNDING_POLICY_INVALID",
   fundingSourceNotFound: "FUNDING_SOURCE_NOT_FOUND",
