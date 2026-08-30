@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { DependencyGraph, GoldenRunner, Rate, RoundingPolicy, assertBalanced, domainId, fixedMortgagePayment, instant, mortgageInterest, mortgagePrincipal, money, posting, rateConvention, utcMonth, type AccountId, type KernelEvent, type LiabilityId, type PositionId, type SimulationState } from "../src/kernel.js";
+import { DependencyGraph, GoldenRunner, Rate, RoundingPolicy, assertBalanced, domainId, fixedMortgagePayment, instant, mortgageInterest, mortgagePrincipal, money, posting, rateConvention, semanticEffectId, utcMonth, type AccountId, type KernelEvent, type LiabilityId, type PositionId, type SimulationState } from "../src/kernel.js";
 import { Quantity, SHARE } from "../src/values.js";
+import { ValidationError, issueCodes } from "../src/diagnostics.js";
 
 const base = (accounts: SimulationState["accounts"] = {}, liabilities: SimulationState["liabilities"] = {}): SimulationState => ({ accounts, positions: {}, liabilities });
 const acct = (id: AccountId, kind: "checking" | "brokerage" | "retirement", cash: string) => ({ id, kind, cash: money(cash) });
 const leg = (postingSide: "debit" | "credit", type: "asset" | "liability" | "income" | "expense" | "gain" | "cash", amount: string, accountId?: AccountId, entityId?: PositionId | LiabilityId, quantity?: string) => ({ posting: postingSide, type, amount: money(amount), ...(accountId ? { accountId } : {}), ...(entityId ? { entityId } : {}), ...(quantity !== undefined ? { quantity: Quantity.parse(quantity, SHARE) } : {}) });
-const event = (id: string, date: string, effect: KernelEvent["effect"], transaction: KernelEvent["transaction"], dependsOn?: string[]): KernelEvent => ({ id, date: instant(date), effect, transaction, ...(dependsOn ? { dependsOn } : {}) });
+const event = (id: string, date: string, effect: Omit<KernelEvent["effect"], "id" | "category"> & { id: string; category?: string }, transaction: KernelEvent["transaction"], dependsOn?: string[]): KernelEvent => ({ id, date: instant(date), effect: { ...effect, id: semanticEffectId(effect.id), category: effect.category ?? effect.description ?? effect.kind }, transaction, ...(dependsOn ? { dependsOn } : {}) });
 const expectMoney = (actual: ReturnType<typeof money>, expected: string): void => expect(actual.equals(money(expected))).toBe(true);
 
 const CHECKING = domainId("account", "00000000-0000-4000-8000-000000000001");
@@ -21,7 +22,7 @@ describe("Semantic Kernel v0.1 golden scenarios", () => {
     const initial = base({ [CHECKING]: acct(CHECKING, "checking", "0"), [RETIREMENT]: acct(RETIREMENT, "retirement", "0") });
     const events: KernelEvent[] = [
       event("salary", "2026-01-31T12:00:00.000Z", { id: "salary-recognition", kind: "recognition", amount: money("10000"), description: "gross compensation" }, posting("salary", "2026-01-31T12:00:00.000Z", "salary", "operating", [leg("debit", "cash", "10000", CHECKING), leg("credit", "income", "10000")])),
-      event("retirement", "2026-01-31T12:01:00.000Z", { id: "retirement-flow", kind: "flow", amount: money("2000"), description: "retirement contribution" }, posting("retirement", "2026-01-31T12:01:00.000Z", "retirement_transfer", "operating", [leg("debit", "cash", "2000", RETIREMENT), leg("credit", "cash", "2000", CHECKING)]), ["salary"]),
+      event("retirement", "2026-01-31T12:01:00.000Z", { id: "retirement-flow", kind: "flow", amount: money("2000"), description: "retirement contribution" }, posting("retirement", "2026-01-31T12:01:00.000Z", "retirement_transfer", "non_cash", [leg("debit", "cash", "2000", RETIREMENT), leg("credit", "cash", "2000", CHECKING)]), ["salary"]),
       event("tax", "2026-01-31T12:02:00.000Z", { id: "tax-recognition", kind: "recognition", amount: money("2000"), description: "tax expense" }, posting("tax", "2026-01-31T12:02:00.000Z", "tax", "operating", [leg("debit", "expense", "2000"), leg("credit", "cash", "2000", CHECKING)]), ["salary"]),
       event("living", "2026-01-31T12:03:00.000Z", { id: "living-recognition", kind: "recognition", amount: money("4000"), description: "living expense" }, posting("living", "2026-01-31T12:03:00.000Z", "living", "operating", [leg("debit", "expense", "4000"), leg("credit", "cash", "4000", CHECKING)]), ["salary"]),
     ];
@@ -89,5 +90,26 @@ describe("Kernel invariants", () => {
     const initial = base({ [CHECKING]: acct(CHECKING, "checking", "1000") }); const before = JSON.stringify(initial);
     const bad = [event("late", "2026-02-01T00:00:00.000Z", { id: "late", kind: "flow", description: "outside" }, posting("late", "2026-02-01T00:00:00.000Z", "late", "operating", [leg("debit", "cash", "1", CHECKING), leg("credit", "income", "1")]))];
     expect(() => new GoldenRunner(initial).run(utcMonth(2026, 1), bad)).toThrow(/outside period/); expect(JSON.stringify(initial)).toBe(before);
+  });
+  it("reports prohibited negative cash and duplicate transactions as structured hard failures", () => {
+    const initial = base({ [CHECKING]: acct(CHECKING, "checking", "0") });
+    const negative = event("negative", "2026-01-15T00:00:00.000Z", { id: "negative", kind: "settlement", description: "accepted outflow" }, posting("negative", "2026-01-15T00:00:00.000Z", "expense", "operating", [leg("debit", "expense", "1"), leg("credit", "cash", "1", CHECKING)]));
+    try {
+      new GoldenRunner(initial).run(utcMonth(2026, 1), [negative]);
+      throw new Error("Expected negative cash failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ValidationError);
+      expect((error as ValidationError).issues[0]?.code).toBe(issueCodes.negativeCashInvariant);
+    }
+
+    const first = event("one", "2026-01-15T00:00:00.000Z", { id: "one", kind: "recognition", description: "one" }, posting("duplicate", "2026-01-15T00:00:00.000Z", "income", "operating", [leg("debit", "cash", "1", CHECKING), leg("credit", "income", "1")]));
+    const second = event("two", "2026-01-16T00:00:00.000Z", { id: "two", kind: "recognition", description: "two" }, posting("duplicate", "2026-01-16T00:00:00.000Z", "income", "operating", [leg("debit", "cash", "1", CHECKING), leg("credit", "income", "1")]));
+    try {
+      new GoldenRunner(initial).run(utcMonth(2026, 1), [first, second]);
+      throw new Error("Expected duplicate transaction failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ValidationError);
+      expect((error as ValidationError).issues[0]?.code).toBe(issueCodes.duplicateTransaction);
+    }
   });
 });

@@ -1,6 +1,6 @@
 # Personal Finance App — Executable Financial Semantics Specification
 
-**Version:** 0.1.4-draft
+**Version:** 0.1.6-draft
 **Status:** Draft implementation contract  
 **Namespace:** `pfm`  
 **Depends on:** `personal_finance_canonical_schema_v1.0.json`, `personal_finance_model.schema.json`, `personal_finance_simulation_interfaces_v1.0.ts`
@@ -183,6 +183,70 @@ A settlement proposal MUST reference the obligation/right it settles.
 A settlement MUST reduce the outstanding balance of the referenced obligation/right by the amount settled, subject to explicit fees, penalties, or write-offs.
 
 A settlement MUST NOT re-recognize the underlying income/expense/gain/loss merely because cash moved.
+
+### 4.4.1 Settlement proposals, funding, and constraint outcomes
+
+A `SettlementProposal` is a valid proposed economic settlement referencing one
+identified obligation/right. It is not authoritative accounting history. Its
+requested amount MUST be positive, use the claim currency, not exceed the
+outstanding claim amount, and not precede recognition unless a separate
+prepayment semantic explicitly permits that behavior.
+
+Every funding attempt MUST use an explicit `FundingPolicy`. A policy identifies
+ordered permitted sources, whether partial funding is allowed, and the explicit
+behavior when permitted liquidity is insufficient. No source may be inferred
+from account type, household contents, or an undeclared fallback. The initial
+supported source is an explicitly identified household cash account.
+
+Funding resolution is pure. It evaluates a proposal, claim, policy, and
+available balances without mutating claim or account state and without creating
+accounting history, transfers, borrowing, overdraft, or asset sales.
+`availableBalances` MUST represent permitted liquidity as of the funding
+evaluation time. The evaluation MUST NOT precede the proposal, and a future
+cash movement MUST NOT fund an earlier proposal.
+
+`ConstraintOutcome` has exactly these statuses:
+
+- `fully_satisfied` — accepted amount equals the proposal's requested amount;
+- `partially_satisfied` — explicit partial-funding policy accepts more than zero
+  but less than the requested amount;
+- `deferred` — the valid settlement is intentionally postponed and no
+  settlement occurs now;
+- `unfunded` — the valid settlement is attempted now, but permitted sources
+  provide insufficient liquidity and zero is accepted;
+- `rejected` — an explicit non-liquidity policy/rule refuses an otherwise valid
+  proposal;
+- `contract_default` — an explicit product/contract rule defines the
+  non-settlement as default.
+
+Generic low cash MUST NOT infer `contract_default` or `rejected`. When partial
+funding is forbidden and available liquidity is insufficient, the accepted
+amount is zero; the engine MUST NOT partially consume a source and label the
+proposal `unfunded`.
+
+Funding outcome and claim lifecycle status are distinct. A fully funded `$500`
+proposal against a `$2,000` claim has funding status `fully_satisfied` while the
+updated claim status is `partially_settled`. A `$2,000` proposal accepting only
+`$500` under an explicit partial-funding policy has funding status
+`partially_satisfied` and also leaves the claim `partially_settled`.
+
+Insufficient permitted liquidity produces an immutable `LiquidityShortfall`
+identifying proposal, claim, funding policy, requested amount, fundable amount,
+shortfall amount, and evaluation time. Requested amount MUST equal funded plus
+shortfall amount, and shortfall MUST be positive. A normal liquidity shortfall
+is modeled financial stress and a nonblocking warning, not a hard validation or
+accounting failure.
+
+Only a positive amount accepted by funding/constraints creates a `Settlement`.
+The accepted funding result is authoritative for the settlement amount and
+funding allocations; settlement identity, time, and trace metadata supplied by
+a caller cannot override those economic values. Unfunded, deferred,
+contract-default, rejected, and zero-amount outcomes cannot authorize a
+settlement. A settlement cannot precede its proposal or funding evaluation.
+Only accepted settlements flow into accounting. If an already-accepted posted
+transaction creates prohibited negative cash, the accounting/state boundary
+MUST fail a hard invariant. Accounting MUST NOT interpret that failure as a
+request to invent funding.
 
 ### 4.5 Accrual and capitalization
 

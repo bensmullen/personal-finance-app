@@ -1,4 +1,4 @@
-import { Percentage, RoundingPolicy, canonicalOpeningState, domainId, formatMoney, money, runVerticalSlicePeriod, utcMonth, type Money, type VerticalSliceInput } from "./verticalSlice1.js";
+import { Percentage, RoundingPolicy, canonicalOpeningState, createFundingPolicy, domainId, formatMoney, fundingPolicyId, money, runVerticalSlicePeriod, summarizeCashFlowClass, utcMonth, type Money, type VerticalSliceInput } from "./verticalSlice1.js";
 
 export interface DemoRow {
   label: string;
@@ -16,16 +16,23 @@ const displayMoney = (value: Money): string =>
   formatMoney(value, RoundingPolicy.currency(value.currency.minorUnitScale, "half_up"));
 
 export const buildVerticalSliceDemo = (): DemoViewModel => {
+  const checkingAccountId = domainId("account", "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
   const input: VerticalSliceInput = {
     householdId: domainId("household", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
     ownerId: domainId("person", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
-    checkingAccountId: domainId("account", "cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+    checkingAccountId,
     retirementAccountId: domainId("account", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
     taxLiabilityId: domainId("liability", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
     monthlyGrossCompensation: money("10000"),
     taxRate: Percentage.parse("20").toRatio(),
     retirementContribution: money("2000"),
     monthlyLivingExpense: money("4000"),
+    taxFundingPolicy: createFundingPolicy({
+      id: fundingPolicyId("funding:tax:checking"),
+      orderedSources: [{ kind: "cash_account", accountId: checkingAccountId }],
+      allowPartial: false,
+      insufficientFundsBehavior: "unfunded",
+    }),
   };
 
   const result = runVerticalSlicePeriod({
@@ -50,7 +57,7 @@ export const buildVerticalSliceDemo = (): DemoViewModel => {
     transactions: result.transactions.map((transaction) => ({
       type: transaction.type,
       amount: displayMoney(transaction.legs.find((leg) => leg.posting === "debit")!.amount),
-      cashFlow: transaction.cashFlowClass,
+      cashFlow: summarizeCashFlowClass(transaction),
     })),
   };
 };

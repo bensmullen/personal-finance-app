@@ -1,6 +1,6 @@
 # Personal Finance App — Vertical Slice 1 Formal Specification
 
-**Version:** 1.0.0-draft  
+**Version:** 1.0.2-draft
 **Status:** Reviewable implementation contract  
 **Namespace:** `pfm`  
 **Slice:** Employment Compensation → Tax Obligation → Retirement Transfer → Spending  
@@ -521,6 +521,30 @@ The engine MUST reject:
 - settlement whose currency differs from the obligation currency;
 - settlement dated before recognition unless an explicit prepayment/advance semantic exists, which this slice does not implement.
 
+Tax settlement additionally requires an explicit `FundingPolicy` identifying
+the ordered household cash-account sources that may fund it. Funding resolution
+precedes accepted settlement and is pure. Insufficient liquidity leaves tax
+recognition, the tax liability, and the obligation intact and produces a
+`ConstraintOutcome` plus `LiquidityShortfall` warning; it does not post a tax
+settlement transaction or recognize tax expense again.
+
+Permitted balances are evaluated as of the proposal's evaluation timestamp.
+Generated and externally requested actions execute in chronological order with
+a deterministic stable tie-break, independent of request-array order. Future
+income or other cash movements cannot fund an earlier proposal; earlier cash
+expenses reduce liquidity available to a later proposal.
+
+An accepted funding result is the sole authority for settlement amount and
+allocations. Caller-provided settlement identity, timestamp, and trace metadata
+cannot substitute different economics, and a settlement cannot precede its
+proposal or funding evaluation.
+
+If partial funding is disabled, insufficient liquidity accepts zero. If partial
+funding is enabled, the accepted settlement equals available permitted
+liquidity and the obligation carries the remainder. An explicitly requested
+`$500` payment that is fully funded is `fully_satisfied` even when it leaves a
+`$2,000` obligation `partially_settled`.
+
 ### 8.4 Partial settlement
 
 For obligation `$2,000`, settlement `$500`:
@@ -537,7 +561,7 @@ For obligation `$2,000`, settlement `$2,000`:
 
 ### 8.6 Duplicate settlement
 
-The same settlement identity MUST be idempotently rejected rather than posted twice. A second distinct settlement is allowed only if outstanding amount remains sufficient.
+The same settlement identity MUST be idempotently rejected rather than posted twice. A second distinct settlement is allowed only if outstanding amount remains sufficient. This slice checks every settlement identity reachable from available claim state plus the current run; a repository-wide persisted settlement registry remains deferred to PR 4.
 
 ### 8.7 Recognition duplication
 
@@ -813,6 +837,10 @@ A representative sequence is:
 ```
 
 Exact timestamps are deterministic fixture data; semantic correctness does not depend on these particular minutes.
+
+All same-period generated and externally supplied actions are interleaved by
+effective timestamp before evaluation. Equal timestamps use a deterministic
+semantic key, so reversing an input request array cannot change economics.
 
 ### 13.3 Period-end exclusion
 
