@@ -4,13 +4,13 @@ This milestone establishes the first executable runtime boundary for the financi
 
 ## Lifecycle
 
-A run clones the opening state, builds a zero-lag dependency DAG, evaluates events in deterministic topological order, validates each event's period/date and balanced transaction, applies the transaction to the cloned state, and derives closing statements. If execution fails, the opening state remains unchanged because all mutations occur on the clone.
+A run consumes explicit run/as-of/data-cutoff context, clones the opening state, builds a zero-lag dependency DAG, evaluates events in deterministic topological order, validates each event's period/date and balanced transaction, applies each transaction atomically to candidate state, and derives closing statements. If execution fails, the opening state remains unchanged because all mutations occur on the clone. Successful results carry the requested/reached horizon, versions, and deterministic input fingerprint.
 
 The intended production lifecycle remains the specification's semantic-barrier sequence: establish period context → resolve inputs → activate events → build/validate dependencies → evaluate primitives → generate flows/recognition → generate obligations/settlements → translate to transactions → post/apply state → closing valuation/outputs → validate/commit. v0.1 supplies the executable boundary for the dependency/effect/transaction/state portion; richer primitive evaluation and obligation identity remain subsequent work.
 
 ## State ownership
 
-`SimulationState` owns account cash, investment positions, and liabilities. Derived statement values are computed from the resulting state and typed accounting legs rather than persisted as authoritative state. Event definitions cannot directly mutate the runner's state.
+`SimulationState` is a compatibility alias of the shared `AuthoritativeState` used by the kernel and vertical slice. It owns account cash, investment positions, liabilities, obligations, and persistent identity registries. Derived statement values are computed from the resulting state and typed accounting legs rather than persisted as authoritative state. Event definitions cannot directly mutate the runner's state.
 
 ## Temporal model
 
@@ -37,7 +37,8 @@ Golden scenarios live in `test/golden.test.ts`. They now construct typed events 
 Run locally with:
 
 ```text
-npm install
+npm ci
+npm run spec:validate
 npm test
 npm run typecheck
 ```

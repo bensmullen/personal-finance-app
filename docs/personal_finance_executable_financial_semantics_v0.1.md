@@ -1,6 +1,6 @@
 # Personal Finance App — Executable Financial Semantics Specification
 
-**Version:** 0.1.6-draft
+**Version:** 0.1.7-draft
 **Status:** Draft implementation contract  
 **Namespace:** `pfm`  
 **Depends on:** `personal_finance_canonical_schema_v1.0.json`, `personal_finance_model.schema.json`, `personal_finance_simulation_interfaces_v1.0.ts`
@@ -67,6 +67,27 @@ means active dates January 1–31 inclusive and is represented internally as:
 A calculation MUST identify whether it consumes `opening_state`, `intraperiod_value`, `closing_state`, or `prior_state`.
 
 The engine MUST NOT expose partially updated authoritative state as an implicit dependency.
+
+The authoritative state contract contains account, position, liability, and
+obligation/right lifecycle state plus persistent identity registries for posted
+transactions, recognitions, settlements, generated occurrences, and external
+idempotency keys. Kernel and vertical-slice execution MUST use this same state
+authority rather than maintain independently authoritative state shapes.
+
+Committed opening state is immutable to a run. Execution occurs on private
+working/candidate state. Only a validated accepted transition becomes closing
+state; a hard failure exposes no candidate mutation as committed state.
+
+### 3.2.1 Run temporal context and fact boundary
+
+Every run MUST identify `runId`, `scenarioId`, `asOf`, `dataCutoff`,
+`simulationStart`, `simulationEnd`, and base currency. `simulationStart` MUST
+precede `simulationEnd`, and `dataCutoff` MUST NOT be later than `asOf`.
+
+Observed facts with an effective instant later than `dataCutoff` MUST NOT enter
+the run as historical facts. Provenance classification is authoritative:
+timestamps alone MUST NOT reclassify model-generated forecast facts as
+observed history.
 
 ### 3.3 Economic, recognition, and settlement timing
 
@@ -863,6 +884,53 @@ Each simulation period is atomic at the authoritative state boundary.
 If any hard validation failure occurs before commit, none of the period's state transitions, posted transactions, obligation changes, or primitive execution-state changes become committed.
 
 A transaction itself is atomic: all accounting legs post together or none post.
+
+Transaction posting MUST validate the transaction, apply every leg to isolated
+candidate state, validate the resulting state invariants, and only then commit
+the candidate. Invariant acceptance MUST depend on the final economic effect,
+not transient leg order. A rejected transaction MUST NOT record its transaction
+identity or any balance/quantity change.
+
+### 16.1 Run metadata, determinism, and completion
+
+Every authoritative successful run result MUST record engine version, result
+schema version, financial-specification version, model-format version, run and
+scenario identities, `asOf`, `dataCutoff`, the requested horizon, base currency,
+and a deterministic input fingerprint.
+
+The fingerprint is a deterministic reproduction/change identifier, not a
+security primitive. It MUST use canonical exact financial serialization, sorted
+object keys, semantically meaningful array order, and MUST exclude `runId`,
+wall-clock time, and derived results.
+
+Run completion is exactly one of `completed`, `incomplete`, or `invalid_model`.
+`completed` reaches the requested horizon. `incomplete` preserves explicit stop
+information and MAY expose prior committed period results but MUST NOT claim the
+horizon was reached. `invalid_model` is reserved for structural/semantic input
+invalidity before meaningful execution. Liquidity shortfall and other valid
+modeled stress do not automatically imply either failure status.
+
+### 16.2 Provenance versus calculation lineage
+
+Authoritative/input facts MUST retain typed source provenance sufficient to
+distinguish observed external facts, authoritative user input, and
+model-generated forecast facts. External facts retain source identity and an
+idempotency key when available. Provenance identifies where a fact came from;
+calculation lineage separately identifies how a derived result was calculated.
+
+### 16.3 Portable model versions and compatibility
+
+The existing personal model JSON Schema remains the portable-model basis. Its
+root envelope distinguishes `model_format_version`,
+`financial_specification_version`, `model_id`, and `objects`. Compatibility is
+classified as `supported_directly`, `migratable`, `read_only_legacy`, or
+`unsupported`. Migrations MUST be explicit deterministic source-to-target
+steps, and migration chains MUST NOT infer or skip unsupported gaps.
+
+The former `0.1.0-draft` root used `specification_version` without
+unambiguously identifying whether that value represented financial semantics or
+the model serialization format. It is therefore read-only legacy in this
+contract; no migration may guess the missing meaning.
 
 ## 17. Golden scenarios
 

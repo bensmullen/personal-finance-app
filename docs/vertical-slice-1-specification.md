@@ -1,6 +1,6 @@
 # Personal Finance App — Vertical Slice 1 Formal Specification
 
-**Version:** 1.0.2-draft
+**Version:** 1.0.3-draft
 **Status:** Reviewable implementation contract  
 **Namespace:** `pfm`  
 **Slice:** Employment Compensation → Tax Obligation → Retirement Transfer → Spending  
@@ -101,6 +101,18 @@ The engine MUST maintain the following distinction:
 | Statement/metric | Derived reporting result | No; recomputed |
 
 A scenario MUST never provide a closing account balance, liability balance, statement amount, or transaction as a substitute for the domain facts that cause it.
+
+Vertical Slice 1 consumes the repository-wide `AuthoritativeState` contract:
+accounts, positions, liabilities, obligations, and persistent identity
+registries. Its result keeps authoritative closing state, emitted semantic and
+accounting history, derived statements/outputs, and diagnostics as distinct
+contracts.
+
+Every execution supplies a `RunContext` with run/scenario identities, `asOf`,
+`dataCutoff`, the single-period simulation horizon, base currency, and supported
+runtime versions. Successful results report `completed` and expose deterministic
+run metadata including the input fingerprint. General multi-period execution is
+not part of this slice.
 
 ## 4. Domain objects in scope
 
@@ -561,7 +573,7 @@ For obligation `$2,000`, settlement `$2,000`:
 
 ### 8.6 Duplicate settlement
 
-The same settlement identity MUST be idempotently rejected rather than posted twice. A second distinct settlement is allowed only if outstanding amount remains sufficient. This slice checks every settlement identity reachable from available claim state plus the current run; a repository-wide persisted settlement registry remains deferred to PR 4.
+The same settlement identity MUST be idempotently rejected rather than posted twice. A second distinct settlement is allowed only if outstanding amount remains sufficient. The shared authoritative identity registry is the global duplicate authority across claims and state rollover; `claim.settlementIds` separately preserves the lifecycle relationship.
 
 ### 8.7 Recognition duplication
 
@@ -661,6 +673,12 @@ Every generated transaction MUST carry enough typed references to identify:
 Free-form `description` may be present for human readability but MUST NOT determine semantic behavior.
 
 ## 10. State-transition equations
+
+Every accounting transaction is applied to isolated candidate state. All legs
+are evaluated, final account/liability/position invariants are validated, and
+only then are both the complete balance transition and transaction identity
+committed. Temporary leg order cannot decide acceptance. Rejection commits no
+leg and no identity.
 
 Let:
 
@@ -955,6 +973,19 @@ A recognition fact with an already-committed identity cannot create a second equ
 
 Derived balances, statements, and metrics cannot be direct user-authored closing-state inputs.
 
+### I13 — Persistent identity authority
+
+Posted transaction, recognition, settlement, and generated occurrence
+identities survive state rollover. Replaying any committed identity is rejected.
+Claim settlement references remain lifecycle relationships rather than the
+global duplicate registry.
+
+### I14 — Run boundary and provenance
+
+`dataCutoff ≤ asOf`, the simulation interval is non-empty, and observed input
+after `dataCutoff` is rejected. Model-generated facts remain distinguishable
+from observed and user-entered facts after result construction/serialization.
+
 ## 16. Canonical end-to-end scenario
 
 ### 16.1 Opening state
@@ -1206,9 +1237,22 @@ Transaction generation is downstream of semantic facts. It must not be reverse-e
 
 Apply only validated transactions/effects to a clone of opening state. Commit the resulting state only after all period validation succeeds.
 
+Transaction posting additionally uses a per-transaction candidate and commits
+all legs together only after final state invariants succeed.
+
 ### 18.7 Statements and time series
 
 Statements and time-series values are recomputed from authoritative state, semantic facts, obligation lifecycle, and posted transactions. They are never directly authored by the scenario fixture.
+
+### 18.8 Run and provenance contracts
+
+The single-period runner accepts canonical `RunContext`, records current engine,
+financial-specification, model-format, and result-schema versions, and computes
+its input fingerprint from context (excluding `runId`), opening authoritative
+state, domain inputs, ordered economic actions, and explicit funding policy.
+Generated recognitions/effects retain model provenance and deterministic
+occurrence keys. Externally observed settlement facts retain source and
+idempotency identity and are admitted only within `dataCutoff`.
 
 ## 19. Golden-test contract
 
@@ -1267,6 +1311,10 @@ The test should invoke the complete semantic pipeline and then assert:
 | Dependency | deterministic order, zero-lag cycle rejection |
 | Atomicity | failed sequence leaves opening state unchanged |
 | Determinism | repeated identical run produces identical result |
+| Identity registry | transaction/recognition/settlement/occurrence replay across rollover |
+| Run context | temporal invariants, versions, run/scenario identity, fingerprint |
+| Provenance | observed/user/model distinction, cutoff rejection, external idempotency |
+| Completion | completed horizon and modeled-stress distinction |
 | Golden | canonical end-to-end scenario |
 
 ## 21. Known ambiguities resolved by this specification
@@ -1305,6 +1353,9 @@ The implementation MUST preserve:
 - typed accounting legs;
 - double-entry balance;
 - derived-output discipline.
+- persistent identity registries;
+- explicit run/version/fingerprint metadata;
+- actual/user/model provenance distinction.
 
 It MUST NOT:
 
@@ -1333,6 +1384,8 @@ Vertical Slice 1 is complete only when all of the following hold:
 12. Same inputs reproduce the same result.
 13. CI passes `npm ci`, `npm run typecheck`, and `npm test`.
 14. No production shortcut violates the formal semantic layering.
+15. Run metadata exposes explicit temporal/version context and a deterministic fingerprint.
+16. Committed identities prevent replay across state rollover.
 
 ## 24. Canonical numerical reconciliation
 
