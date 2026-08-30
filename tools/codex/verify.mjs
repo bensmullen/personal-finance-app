@@ -9,13 +9,40 @@ const git = process.platform === "win32" ? "git.exe" : "git";
 const quietVitest = path.join(root, "tools", "codex", "quiet-vitest.mjs");
 const maxFailureOutput = 8 * 1024;
 
+const runGit = (args) => spawnSync(git, args, {
+  cwd: root,
+  encoding: "utf8",
+  env: process.env,
+});
+
+const resolveBranchMergeBase = () => {
+  const candidates = [process.env.CODEX_VERIFY_BASE, "origin/main", "main"].filter(Boolean);
+  for (const candidate of candidates) {
+    const exists = runGit(["rev-parse", "--verify", "--quiet", `${candidate}^{commit}`]);
+    if (exists.status !== 0) continue;
+    const mergeBase = runGit(["merge-base", candidate, "HEAD"]);
+    const value = mergeBase.status === 0 ? mergeBase.stdout.trim() : "";
+    if (value) return { candidate, mergeBase: value };
+  }
+  return undefined;
+};
+
+const branchBase = resolveBranchMergeBase();
 const gates = [
   { label: "spec", command: npm, args: ["run", "spec:validate"] },
   { label: "architecture", command: npm, args: ["run", "architecture:validate"] },
   { label: "typecheck", command: npm, args: ["run", "typecheck"] },
   { label: "tests", command: process.execPath, args: [quietVitest], compactOutput: true },
   { label: "web-build", command: npm, args: ["run", "build:web"] },
-  { label: "diff-check", command: git, args: ["diff", "--check", "HEAD"] },
+  { label: "working-tree-diff", command: git, args: ["diff", "--check"] },
+  { label: "staged-diff", command: git, args: ["diff", "--cached", "--check"] },
+  ...(branchBase
+    ? [{
+      label: `branch-diff (${branchBase.candidate})`,
+      command: git,
+      args: ["diff", "--check", `${branchBase.mergeBase}...HEAD`],
+    }]
+    : []),
 ];
 
 const clip = (value) => {
@@ -49,4 +76,7 @@ for (const gate of gates) {
   }
 }
 
+if (!branchBase) {
+  console.log("SKIP branch-diff — no main/base ref available; working and staged diffs were checked");
+}
 console.log("\nVERIFIED");

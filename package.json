@@ -8,6 +8,7 @@
     "architecture:validate": "node tools/validate-architecture.mjs",
     "test": "vitest run",
     "codex:test": "node tools/codex/quiet-vitest.mjs",
+    "codex:tooling-test": "node tools/codex/tooling-self-test.mjs",
     "codex:verify": "node tools/codex/verify.mjs",
     "typecheck": "tsc --noEmit",
     "build:web": "rm -rf dist && tsc -p tsconfig.web.json && mkdir -p dist && cp web/index.html web/styles.css dist/ && touch dist/.nojekyll"
