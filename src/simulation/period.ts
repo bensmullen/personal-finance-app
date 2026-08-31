@@ -52,7 +52,8 @@ export const createPrimitiveRuntimeStateStore = (
   Object.entries(entries).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => {
     if (entry.primitiveId !== "P02"
       || (entry.state.executed !== true && entry.state.executed !== false)
-      || (entry.state.executed && entry.state.occurrenceId === undefined)) {
+      || (entry.state.executed && entry.state.occurrenceId === undefined)
+      || (!entry.state.executed && entry.state.occurrenceId !== undefined)) {
       failValidation({
         severity: "error",
         code: issueCodes.primitiveRuntimeStateInvalid,
@@ -145,6 +146,14 @@ const invalidWork = (message: string, entityId?: string): never => failValidatio
   ...(entityId === undefined ? {} : { entityId }),
 });
 
+const barrierRank = (work: PeriodWork): number => {
+  switch (work.kind) {
+    case "primitive": return 0;
+    case "semantic": return 1;
+    case "diagnostic": return 2;
+  }
+};
+
 const orderWork = (work: readonly PeriodWork[]): readonly PeriodWork[] => {
   const graph = new DependencyGraph();
   const byId = new Map<string, PeriodWork>();
@@ -157,11 +166,26 @@ const orderWork = (work: readonly PeriodWork[]): readonly PeriodWork[] => {
   for (const item of work) {
     for (const dependency of item.dependsOn ?? []) {
       if (!byId.has(dependency)) invalidWork(`Unknown dependency ${dependency} for ${item.id}`, item.id);
+      if (barrierRank(byId.get(dependency)!) > barrierRank(item)) {
+        invalidWork(`Dependency ${dependency} cannot invert the semantic barrier for ${item.id}`, item.id);
+      }
       graph.addEdge(dependency, item.id, item.lag ?? 0);
     }
   }
   try {
-    return graph.topologicalOrder().map((id) => byId.get(id)!);
+    graph.topologicalOrder();
+    return [0, 1, 2].flatMap((rank) => {
+      const barrierWork = [...byId.values()].filter((item) => barrierRank(item) === rank);
+      const barrierGraph = new DependencyGraph();
+      for (const item of barrierWork) barrierGraph.addNode(item.id);
+      for (const item of barrierWork) {
+        for (const dependency of item.dependsOn ?? []) {
+          const dependencyWork = byId.get(dependency)!;
+          if (barrierRank(dependencyWork) === rank) barrierGraph.addEdge(dependency, item.id, item.lag ?? 0);
+        }
+      }
+      return barrierGraph.topologicalOrder().map((id) => byId.get(id)!);
+    });
   } catch (error) {
     if (error instanceof Error && error.message === "Invalid zero-lag dependency cycle") {
       invalidWork("Period work contains an invalid zero-lag dependency cycle");
@@ -256,6 +280,7 @@ export const runPeriod = (input: RunPeriodInput): CommittedPeriodResult => {
   if (input.period.start < input.runContext.simulationStart || input.period.end > input.runContext.simulationEnd || input.period.start >= input.period.end) {
     invalidWork("Period must be a non-empty interval within the run horizon");
   }
+  assertPeriodWorkPlan(input.work, input.period, input.runContext);
   const openingState = cloneAuthoritativeState(input.openingState);
   const candidateState = cloneAuthoritativeState(input.openingState);
   assertAuthoritativeStateCurrency(candidateState, input.runContext.baseCurrency);

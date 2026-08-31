@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { type AccountId } from "../src/accounting/index.js";
-import { issueCodes, validationIssue } from "../src/diagnostics/index.js";
+import { ValidationError, issueCodes, validationIssue } from "../src/diagnostics/index.js";
+import { createFundingPolicy, fundingPolicyId, resolveFunding } from "../src/funding/index.js";
 import { domainId, generatedOccurrenceKey, uuid } from "../src/identity/index.js";
-import { semanticEffectId } from "../src/semantics/identity.js";
+import {
+  claimId,
+  createObligation,
+  createSettlementProposal,
+  recognitionId,
+  semanticEffectId,
+  settlementProposalId,
+} from "../src/semantics/index.js";
 import {
   createAuthoritativeState,
   type AuthoritativeState,
@@ -24,6 +32,7 @@ import { money, USD } from "../src/values/index.js";
 const CASH = domainId("account", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") as AccountId;
 const SCENARIO = scenarioId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
 const PRIMITIVE = domainId("primitive-instance", "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+const RECURRING_PRIMITIVE = domainId("primitive-instance", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
 const TARGET = uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
 const horizonStart = utcMonth(2026, 1).start;
 const horizonEnd = utcMonth(2026, 12).end;
@@ -41,6 +50,16 @@ const context = (start = horizonStart, end = horizonEnd) => createRunContext({
 const openingState = (cash = "0"): AuthoritativeState => createAuthoritativeState({
   accounts: { [CASH]: { id: CASH, kind: "checking", cash: money(cash) } },
 });
+
+const validationCode = (operation: () => unknown): string => {
+  try {
+    operation();
+  } catch (error) {
+    if (error instanceof ValidationError) return error.issues[0]!.code;
+    throw error;
+  }
+  throw new Error("Expected ValidationError");
+};
 
 const monthPlans = (work: (target: Period, index: number) => TimelinePeriodPlan["work"]): TimelinePeriodPlan[] =>
   Array.from({ length: 12 }, (_, index) => {
@@ -99,6 +118,48 @@ const p02Work = (target: Period, occurrenceAt: Instant): PrimitivePeriodWork => 
   },
 });
 
+const p03Work = (target: Period, occurrenceAt: Instant): PrimitivePeriodWork => ({
+  kind: "primitive",
+  id: "primitive:recurring",
+  request: {
+    primitiveId: "P03",
+    input: { amount: money("25") },
+    parameters: { schedule: { kind: "explicit_instants", instants: [occurrenceAt] } },
+    context: {
+      evaluationInstant: target.start,
+      scenarioId: SCENARIO,
+      primitiveInstanceId: RECURRING_PRIMITIVE,
+      economicTargetId: TARGET,
+      semanticEffectType: "recognition",
+    },
+  },
+});
+
+const realLiquidityShortfall = (at: Instant) => {
+  const claim = createObligation({
+    id: claimId("obligation:timeline:liquidity"),
+    category: "synthetic_payable",
+    originatingRecognitionId: recognitionId("recognition:timeline:liquidity"),
+    economicOwnerId: CASH,
+    originalAmount: money("100"),
+    recognizedAt: at,
+  });
+  const policy = createFundingPolicy({
+    id: fundingPolicyId("funding:timeline:checking"),
+    orderedSources: [{ kind: "cash_account", accountId: CASH }],
+    allowPartial: false,
+    insufficientFundsBehavior: "unfunded",
+  });
+  const proposal = createSettlementProposal({
+    id: settlementProposalId("proposal:timeline:liquidity"),
+    claimId: claim.id,
+    requestedAmount: money("100"),
+    requestedAt: at,
+    fundingPolicyId: policy.id,
+  }, claim);
+  return resolveFunding(proposal, claim, policy, { [CASH]: money("0") }, at);
+};
+
 describe("multi-period simulation", () => {
   it("commits 12 consecutive periods under one deterministic run envelope", () => {
     const periods = monthPlans((target, index) => [incomeWork(`income:${index}`, target.start)]);
@@ -121,8 +182,13 @@ describe("multi-period simulation", () => {
     expect(first.periods[11]!.closingState.accounts[CASH]!.cash.equals(money("1200"))).toBe(true);
   });
 
-  it("keeps liquidity shortfall warning nonblocking for all 12 periods", () => {
-    const warning = validationIssue({ severity: "warning", code: issueCodes.liquidityShortfall, message: "Synthetic permitted liquidity is insufficient" });
+  it("keeps a real resolver liquidity shortfall nonblocking for all 12 periods", () => {
+    const funding = realLiquidityShortfall(utcMonth(2026, 5).start);
+    expect(funding.outcome.status).toBe("unfunded");
+    expect(funding.acceptedAmount.isZero()).toBe(true);
+    expect(funding.fundingAllocations).toEqual([]);
+    expect(funding.liquidityShortfall?.shortfallAmount.equals(money("100"))).toBe(true);
+    const warning = funding.issues[0]!;
     const periods = monthPlans((target, index) => [
       ...(index === 4 ? [{ kind: "diagnostic" as const, id: "liquidity:shortfall", diagnostics: [warning] }] : []),
       incomeWork(`income:${index}`, target.start, "10"),
@@ -136,6 +202,25 @@ describe("multi-period simulation", () => {
     expect(result.periods.every((item) => !item.closingState.accounts[CASH]!.cash.isNegative())).toBe(true);
     expect(Object.keys(result.periods[11]!.closingState.liabilities)).toEqual([]);
     expect(Object.keys(result.periods[11]!.closingState.positions)).toEqual([]);
+  });
+
+  it("validates direct runPeriod primitive scenario and evaluation boundaries", () => {
+    const target = utcMonth(2026, 1);
+    const occurrenceAt = instant("2026-01-15T00:00:00.000Z");
+    const mismatchedScenario = p02Work(target, occurrenceAt);
+    const outsideEvaluation = p02Work(target, occurrenceAt);
+    expect(validationCode(() => runPeriod({
+      period: target,
+      runContext: context(target.start, target.end),
+      openingState: openingState(),
+      work: [{ ...mismatchedScenario, request: { ...mismatchedScenario.request, context: { ...mismatchedScenario.request.context, scenarioId: scenarioId("ffffffff-ffff-4fff-8fff-ffffffffffff") } } }],
+    }))).toBe(issueCodes.timelineWorkInvalid);
+    expect(validationCode(() => runPeriod({
+      period: target,
+      runContext: context(target.start, target.end),
+      openingState: openingState(),
+      work: [{ ...outsideEvaluation, request: { ...outsideEvaluation.request, context: { ...outsideEvaluation.request.context, evaluationInstant: target.end } } }],
+    }))).toBe(issueCodes.timelineWorkInvalid);
   });
 
   it("rolls back a hard middle-period failure and returns only prior commits", () => {
@@ -188,6 +273,18 @@ describe("multi-period simulation", () => {
     if (result.status === "invalid_model") expect(result.issues[0]?.code).toBe(issueCodes.primitiveRuntimeStateInvalid);
   });
 
+  it("rejects a non-executed P02 state carrying an occurrence identity", () => {
+    const occurrenceAt = instant("2026-01-15T00:00:00.000Z");
+    const occurrenceId = generatedOccurrenceKey({ scenarioId: SCENARIO, primitiveInstanceId: PRIMITIVE, scheduledAt: occurrenceAt, semanticEffectType: "recognition", economicTargetId: TARGET });
+    expect(validationCode(() => runPeriod({
+      period: utcMonth(2026, 1),
+      runContext: context(utcMonth(2026, 1).start, utcMonth(2026, 1).end),
+      openingState: openingState(),
+      primitiveState: { [PRIMITIVE]: { primitiveId: "P02", state: { executed: false, occurrenceId } } },
+      work: [],
+    }))).toBe(issueCodes.primitiveRuntimeStateInvalid);
+  });
+
   it("commits P02 state only with a successful period and suppresses later execution", () => {
     const occurrenceAt = instant("2026-01-15T00:00:00.000Z");
     const periods = monthPlans((target) => [p02Work(target, occurrenceAt)]);
@@ -221,6 +318,28 @@ describe("multi-period simulation", () => {
     const occurrence = (retried.primitiveOutputs[0]!.effects[0] as { readonly occurrenceId: string }).occurrenceId;
     expect(occurrence).toBe(expected);
     expect(retried.primitiveState[PRIMITIVE]?.state.executed).toBe(true);
+    expect(retried.closingState.identities.generatedOccurrenceKeys).toEqual([expected]);
+  });
+
+  it("rolls back P03 occurrences and replays their deterministic identities", () => {
+    const target = utcMonth(2026, 1);
+    const occurrenceAt = instant("2026-01-20T00:00:00.000Z");
+    const opening = openingState();
+    const failed = runTimeline({
+      runContext: context(target.start, target.end),
+      openingState: opening,
+      periods: [{ period: target, work: [
+        p03Work(target, occurrenceAt),
+        { kind: "diagnostic", id: "z:hard-stop", diagnostics: [validationIssue({ severity: "error", code: "SYNTHETIC_HARD_STOP", message: "later operation failed" })] },
+      ] }],
+    });
+    expect(failed.status).toBe("incomplete");
+    expect(opening.identities.generatedOccurrenceKeys).toEqual([]);
+
+    const retried = runPeriod({ period: target, runContext: context(target.start, target.end), openingState: opening, work: [p03Work(target, occurrenceAt)] });
+    const occurrences = retried.primitiveOutputs[0]!.effects as readonly { readonly occurrenceId: string }[];
+    const expected = generatedOccurrenceKey({ scenarioId: SCENARIO, primitiveInstanceId: RECURRING_PRIMITIVE, scheduledAt: occurrenceAt, semanticEffectType: "recognition", economicTargetId: TARGET });
+    expect(occurrences.map((item) => item.occurrenceId)).toEqual([expected]);
     expect(retried.closingState.identities.generatedOccurrenceKeys).toEqual([expected]);
   });
 
@@ -264,5 +383,33 @@ describe("multi-period simulation", () => {
     const second = runTimeline({ runContext, openingState: openingState(), periods: [{ period: target, work: [right, left] }] });
     expect(first).toEqual(second);
     if (first.status === "completed") expect(first.periods[0]!.transactions.map((item) => item.id)).toEqual(["transaction:a-income", "transaction:b-income"]);
+  });
+
+  it("includes the execution plan in fingerprints even when a scenario is supplied", () => {
+    const target = utcMonth(2026, 1);
+    const runContext = context(target.start, target.end);
+    const scenario = { id: "synthetic-scenario" };
+    const baseline = runTimeline({ runContext, openingState: openingState(), scenario, periods: [{ period: target, work: [incomeWork("income", target.start, "10")] }] });
+    const changed = runTimeline({ runContext, openingState: openingState(), scenario, periods: [{ period: target, work: [incomeWork("income", target.start, "20")] }] });
+    expect(baseline.status).toBe("completed");
+    expect(changed.status).toBe("completed");
+    if (baseline.status === "completed" && changed.status === "completed") {
+      expect(changed.metadata.inputFingerprint).not.toBe(baseline.metadata.inputFingerprint);
+    }
+  });
+
+  it("uses primitive barriers before independent semantic work and fingerprints equivalent caller order identically", () => {
+    const target = utcMonth(2026, 1);
+    const runContext = context(target.start, target.end);
+    const primitive = { ...p02Work(target, instant("2026-01-15T00:00:00.000Z")), id: "z-primitive" };
+    const semantic = incomeWork("a-semantic", target.start, "10");
+    const scenario = { id: "synthetic-scenario" };
+    const first = runTimeline({ runContext, openingState: openingState(), scenario, periods: [{ period: target, work: [semantic, primitive] }] });
+    const second = runTimeline({ runContext, openingState: openingState(), scenario, periods: [{ period: target, work: [primitive, semantic] }] });
+    expect(first).toEqual(second);
+    if (first.status === "completed") {
+      expect(first.periods[0]!.primitiveOutputs.map((item) => item.workId)).toEqual(["z-primitive"]);
+      expect(first.periods[0]!.transactions.map((item) => item.id)).toEqual(["transaction:a-semantic"]);
+    }
   });
 });

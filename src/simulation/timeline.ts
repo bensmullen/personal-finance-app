@@ -98,8 +98,9 @@ export const runTimeline = (input: RunTimelineInput): TimelineRunResult => {
     const inputFingerprint = createInputFingerprint({
       runContext: input.runContext,
       openingState,
+      executionPlan: fingerprintWork(input.periods),
       model: input.model,
-      scenario: input.scenario ?? fingerprintWork(input.periods),
+      scenario: input.scenario,
       assumptions: input.assumptions,
       policyInputs: input.policyInputs,
     });
