@@ -79,4 +79,7 @@ export const issueCodes = Object.freeze({
   primitiveStateInvalid: "PRIMITIVE_STATE_INVALID",
   primitiveTemporalConfigurationInvalid: "PRIMITIVE_TEMPORAL_CONFIGURATION_INVALID",
   primitiveCompositionIncompatible: "PRIMITIVE_COMPOSITION_INCOMPATIBLE",
+  timelinePeriodPlanInvalid: "TIMELINE_PERIOD_PLAN_INVALID",
+  timelineWorkInvalid: "TIMELINE_WORK_INVALID",
+  primitiveRuntimeStateInvalid: "PRIMITIVE_RUNTIME_STATE_INVALID",
 } as const);
