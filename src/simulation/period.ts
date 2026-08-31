@@ -159,6 +159,9 @@ const orderWork = (work: readonly PeriodWork[]): readonly PeriodWork[] => {
   const byId = new Map<string, PeriodWork>();
   for (const item of work) {
     if (item.id.length === 0) invalidWork("Period work requires a stable non-empty id");
+    if (item.lag !== undefined && (!Number.isSafeInteger(item.lag) || item.lag < 0)) {
+      invalidWork(`Period work ${item.id} lag must be a non-negative safe integer`, item.id);
+    }
     if (byId.has(item.id)) invalidWork(`Duplicate period work id ${item.id}`, item.id);
     byId.set(item.id, item);
     graph.addNode(item.id);
