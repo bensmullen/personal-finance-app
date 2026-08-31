@@ -4,7 +4,7 @@ import { domainId, generatedOccurrenceKey, type GeneratedOccurrenceKey } from ".
 import { createAuthoritativeState } from "../src/state/index.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
-import { Money, Rate, USD, money, rateConvention } from "../src/values/index.js";
+import { Money, Rate, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
 import { runVerticalSlice2, type VerticalSlice2Input } from "../src/verticalSlice2.js";
 
 const ids = {
@@ -71,6 +71,7 @@ const input = (salaryGrowth = "0", inflation = "0"): VerticalSlice2Input => ({
     inflationRate: Rate.fromDecimal(inflation, rateConvention.effectiveAnnual()),
     inflationBaseAt: anchor,
     fundingPolicy: funding,
+    settlementPriority: 10,
     primitiveIds: { indexGrowth: primitive(3), inflationLink: primitive(4), recurrence: primitive(5) },
   }, {
     id: ids.club,
@@ -83,6 +84,7 @@ const input = (salaryGrowth = "0", inflation = "0"): VerticalSlice2Input => ({
     inflationRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
     inflationBaseAt: anchor,
     fundingPolicy: funding,
+    settlementPriority: 20,
     activationEventId: ids.clubStart,
     terminationEventId: ids.clubStop,
     primitiveIds: { indexGrowth: primitive(6), inflationLink: primitive(7), recurrence: primitive(8), activation: primitive(9), termination: primitive(10) },
@@ -135,6 +137,30 @@ describe("Vertical Slice 2 growing household cash flow", () => {
     const forward = runVerticalSlice2({ runContext: context(6), openingState: opening(), input: bounded, months: 6 });
     const reversed = runVerticalSlice2({ runContext: context(6, "30000000-0000-4000-8000-000000000004"), openingState: opening(), input: { ...bounded, events: [...bounded.events].reverse() }, months: 6 });
     expect(forward.periods.map((period) => period.endingCash)).toEqual(reversed.periods.map((period) => period.endingCash));
+  });
+
+  it("uses occurrence chronology, future starts, and explicit same-instant settlement policy", () => {
+    const base = input();
+    const laterSalary = { ...base.incomes[0]!, recurrence: { kind: "utc_monthly" as const, anchor: instant("2026-01-20T00:00:00.000Z"), invalidDayPolicy: "skip" as const }, growthBaseAt: instant("2026-01-20T00:00:00.000Z") };
+    const earlyRent = { ...base.expenses[0]!, recurrence: { kind: "utc_monthly" as const, anchor: instant("2026-01-05T00:00:00.000Z"), invalidDayPolicy: "skip" as const }, inflationBaseAt: instant("2026-01-05T00:00:00.000Z") };
+    const chronological = runVerticalSlice2({ runContext: context(1), openingState: opening(), input: { ...base, incomes: [laterSalary], expenses: [earlyRent] }, months: 1 });
+    expect(chronological.periods[0]!.expenseCashSettlement.equals(money("0"))).toBe(true);
+    expect(chronological.periods[0]!.endingCash.equals(money("1000"))).toBe(true);
+
+    const future = { ...base.incomes[0]!, start: instant("2026-04-15T00:00:00.000Z"), end: instant("2026-05-15T00:00:00.000Z") };
+    const futureRun = runVerticalSlice2({ runContext: context(5), openingState: opening(), input: { ...base, incomes: [future], expenses: [] }, months: 5 });
+    expect(futureRun.periods.map((period) => period.recurringIncomeRecognized.amount.toString())).toEqual(["0", "0", "0", "1000", "0"]);
+
+    const ambiguous = { ...base, expenses: base.expenses.map(({ settlementPriority: _settlementPriority, ...expense }) => expense) };
+    expect(() => runVerticalSlice2({ runContext: context(1), openingState: opening(), input: ambiguous, months: 1 })).toThrow();
+  });
+
+  it("accepts only monthly periodic rates while retaining exact effective-annual growth", () => {
+    const base = input();
+    const monthly = { ...base.incomes[0]!, growthRate: Rate.fromDecimal("0.01", rateConvention.periodic(ratePeriod("1", "calendar_month"))) };
+    expect(runVerticalSlice2({ runContext: context(2), openingState: opening(), input: { ...base, incomes: [monthly], expenses: [] }, months: 2 }).periods[1]!.recurringIncomeRecognized.equals(money("1010"))).toBe(true);
+    const annual = { ...base.incomes[0]!, growthRate: Rate.fromDecimal("0.01", rateConvention.periodic(ratePeriod("1", "year"))) };
+    expect(() => runVerticalSlice2({ runContext: context(1), openingState: opening(), input: { ...base, incomes: [annual], expenses: [] }, months: 1 })).toThrow();
   });
 
   it("rolls back tentative event state and financial mutations on a later hard failure", () => {

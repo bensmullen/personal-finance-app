@@ -109,7 +109,7 @@ describe("scheduled event primitives", () => {
   });
 
   it("P29 applies and reverts a compatible typed replacement", () => {
-    const parameters = { targetId: economicTargetId, effectiveAt, precedence: 10, endAt: instant("2026-01-20T00:00:00.000Z") };
+    const parameters = { targetId: economicTargetId, effectiveAt, precedence: 10, endAt: instant("2026-01-20T00:00:00.000Z"), provenance: { factKind: "authoritative_input" as const, sourceType: "user" as const, sourceId: "event-rule", effectiveAt } };
     const input = { base: money("100"), replacement: money("125"), eventId };
     const before = evaluatePrimitive({ primitiveId: "P29", input, parameters, priorState: initialEventModificationPrimitiveState(), context: context({ evaluationInstant: instant("2026-01-14T00:00:00.000Z") }) });
     expect((before.output.value as ReturnType<typeof money>).equals(money("100"))).toBe(true);
@@ -118,6 +118,7 @@ describe("scheduled event primitives", () => {
     const reverted = evaluatePrimitive({ primitiveId: "P29", input, parameters, priorState: applied.nextState, context: context({ evaluationInstant: parameters.endAt }) });
     expect((reverted.output.value as ReturnType<typeof money>).equals(money("100"))).toBe(true);
     expect(reverted.nextState).toMatchObject({ applied: true, reverted: true });
+    expect([...applied.effects, ...reverted.effects].every((effect) => effect.provenance?.sourceId === "event-rule")).toBe(true);
   });
 
   it("P30 returns compatible zero at and after termination", () => {

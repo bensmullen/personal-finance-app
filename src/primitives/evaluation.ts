@@ -5,6 +5,7 @@ import {
   type GeneratedOccurrenceKey,
 } from "../identity/index.js";
 import { freezeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
+import { createFactProvenance, type FactProvenance } from "../model/provenance.js";
 import { calculateProportionalTax } from "../rules/index.js";
 import {
   inPeriod,
@@ -177,6 +178,8 @@ export interface PrimitiveEventOccurrence {
   readonly eventId: DomainId<"event">;
   readonly targetId: string;
   readonly kind: "activation" | "modification" | "reversion" | "termination";
+  /** P29 effects retain the authoritative source that caused the replacement. */
+  readonly provenance?: FactProvenance;
   readonly traceRefs?: readonly CalculationTraceRef[];
 }
 
@@ -215,7 +218,7 @@ export type ImplementedPrimitiveEvaluationRequest =
   | { readonly primitiveId: "P13"; readonly input: { readonly baseValue: PrimitiveFlowValue; readonly baseIndex: DecimalAmount; readonly currentIndex: DecimalAmount }; readonly parameters: { readonly baseDate: CivilDate; readonly indexIdentity: string; readonly divisionRounding: RoundingPolicy }; readonly priorState: null; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P20"; readonly input: { readonly taxableBase: Money; readonly resolvedRule: ResolvedProportionalTaxRule }; readonly priorState: null; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P27"; readonly input: { readonly eventId: DomainId<"event"> }; readonly parameters: { readonly effectiveAt: Instant; readonly targetId: string }; readonly priorState: EventTriggerPrimitiveState; readonly context: PrimitiveEvaluationContext }
-  | { readonly primitiveId: "P29"; readonly input: { readonly base: PrimitiveFlowValue; readonly replacement: PrimitiveFlowValue; readonly eventId: DomainId<"event"> }; readonly parameters: { readonly targetId: string; readonly effectiveAt: Instant; readonly precedence: number; readonly endAt?: Instant }; readonly priorState: EventModificationPrimitiveState; readonly context: PrimitiveEvaluationContext }
+  | { readonly primitiveId: "P29"; readonly input: { readonly base: PrimitiveFlowValue; readonly replacement: PrimitiveFlowValue; readonly eventId: DomainId<"event"> }; readonly parameters: { readonly targetId: string; readonly effectiveAt: Instant; readonly precedence: number; readonly endAt?: Instant; readonly provenance: FactProvenance }; readonly priorState: EventModificationPrimitiveState; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P30"; readonly input: { readonly base: PrimitiveFlowValue; readonly eventId: DomainId<"event"> }; readonly parameters: { readonly targetId: string; readonly terminationAt: Instant }; readonly priorState: EventTerminationPrimitiveState; readonly context: PrimitiveEvaluationContext };
 
 export type PrimitiveEvaluationRequest =
@@ -377,6 +380,7 @@ const eventOccurrence = (
   eventId: request.input.eventId,
   targetId: request.parameters.targetId,
   kind,
+  ...(request.primitiveId === "P29" ? { provenance: createFactProvenance(request.parameters.provenance) } : {}),
   ...(request.context.traceRefs === undefined ? {} : { traceRefs: freezeTraceRefs(request.context.traceRefs)! }),
 });
 
@@ -416,6 +420,7 @@ const eventModificationEvaluation = (request: Extract<ImplementedPrimitiveEvalua
   assertEventTarget(request);
   assertPrimitiveFlowValuesCompatible(request.input.base, request.input.replacement);
   const { priorState: prior, parameters } = request;
+  const provenance = createFactProvenance(parameters.provenance);
   if (!Number.isSafeInteger(parameters.precedence)) invalid(issueCodes.primitiveParametersInvalid, "P29 precedence must be a safe integer", "P29", "parameters.precedence");
   if (parameters.endAt !== undefined && parameters.endAt <= parameters.effectiveAt) invalid(issueCodes.primitiveTemporalConfigurationInvalid, "P29 end must follow its effective instant", "P29", "parameters.endAt");
   if ((prior.applied !== true && prior.applied !== false) || (prior.reverted !== true && prior.reverted !== false)
@@ -456,6 +461,7 @@ const eventModificationEvaluation = (request: Extract<ImplementedPrimitiveEvalua
     targetId: parameters.targetId,
     precedence: parameters.precedence,
     effectiveAt: parameters.effectiveAt,
+    provenance,
     ...(parameters.endAt === undefined ? {} : { endAt: parameters.endAt }),
   }), nextState, effects, request.context.traceRefs);
 };
