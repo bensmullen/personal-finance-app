@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -19,6 +20,74 @@ const sameStrings = (left, right) =>
 
 const markdownVersion = (content) =>
   content.match(/^\*\*Version:\*\*\s*([^\s]+)\s*$/m)?.[1];
+
+const unwrapExpression = (expression) => {
+  let current = expression;
+  while (ts.isAsExpression(current) || ts.isSatisfiesExpression(current) || ts.isParenthesizedExpression(current)) {
+    current = current.expression;
+  }
+  if (ts.isCallExpression(current) && current.arguments.length === 1) return unwrapExpression(current.arguments[0]);
+  return current;
+};
+
+const objectProperty = (object, name) => object.properties.find((property) =>
+  ts.isPropertyAssignment(property)
+  && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
+  && property.name.text === name);
+
+const parsedCatalogEntries = (content) => {
+  const source = ts.createSourceFile("src/primitives/catalog.ts", content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let initializer;
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === "primitiveCatalogEntries") {
+        initializer = declaration.initializer;
+      }
+    }
+  }
+  if (!initializer) return { entries: [], errors: ["runtime primitive catalog must export primitiveCatalogEntries"] };
+  const array = unwrapExpression(initializer);
+  if (!ts.isArrayLiteralExpression(array)) {
+    return { entries: [], errors: ["runtime primitiveCatalogEntries must be an array literal"] };
+  }
+  const entries = [];
+  const errors = [];
+  for (const [index, element] of array.elements.entries()) {
+    const object = unwrapExpression(element);
+    if (!ts.isObjectLiteralExpression(object)) {
+      errors.push(`runtime primitive catalog entry ${index + 1} must be an object literal`);
+      continue;
+    }
+    const stringField = (name) => {
+      const property = objectProperty(object, name);
+      const value = property && unwrapExpression(property.initializer);
+      if (!value || !ts.isStringLiteral(value)) {
+        errors.push(`runtime primitive catalog entry ${index + 1}.${name} must be a string literal`);
+        return undefined;
+      }
+      return value.text;
+    };
+    const booleanField = (name) => {
+      const property = objectProperty(object, name);
+      const value = property && unwrapExpression(property.initializer);
+      if (value?.kind !== ts.SyntaxKind.TrueKeyword && value?.kind !== ts.SyntaxKind.FalseKeyword) {
+        errors.push(`runtime primitive catalog entry ${index + 1}.${name} must be a boolean literal`);
+        return undefined;
+      }
+      return value.kind === ts.SyntaxKind.TrueKeyword;
+    };
+    entries.push({
+      id: stringField("id"),
+      name: stringField("name"),
+      class: stringField("class"),
+      stateful: booleanField("stateful"),
+      randomness: stringField("randomness"),
+      implementationStatus: stringField("implementationStatus"),
+    });
+  }
+  return { entries, errors };
+};
 
 export async function validateRepository(root = defaultRoot) {
   const errors = [];
@@ -287,6 +356,60 @@ export async function validateRepository(root = defaultRoot) {
       addError(`canonical primitive identities must be exactly P01-P34; found ${ids.join(", ") || "none"}`);
     }
   }
+
+  const runtimeCatalogContent = await readArtifact("src/primitives/catalog.ts", "runtime primitive catalog");
+  if (canonicalContent !== undefined && runtimeCatalogContent !== undefined && typeof canonicalPath === "string") {
+    const canonicalDocument = await parseJson(canonicalPath, "canonical primitive specification");
+    const canonicalRegistry = isRecord(canonicalDocument) && isRecord(canonicalDocument.primitive_registry)
+      ? canonicalDocument.primitive_registry
+      : undefined;
+    const runtime = parsedCatalogEntries(runtimeCatalogContent);
+    errors.push(...runtime.errors);
+    const runtimeById = new Map();
+    for (const entry of runtime.entries) {
+      if (typeof entry.id !== "string") continue;
+      if (runtimeById.has(entry.id)) addError(`duplicate runtime primitive identity: ${entry.id}`);
+      runtimeById.set(entry.id, entry);
+    }
+    const runtimeIds = [...runtimeById.keys()].sort();
+    if (!sameStrings(runtimeIds, expectedPrimitiveIds)) {
+      addError(`runtime primitive identities must be exactly P01-P34; found ${runtimeIds.join(", ") || "none"}`);
+    }
+    if (!canonicalRegistry) {
+      addError("canonical primitive specification must contain primitive_registry");
+    } else {
+      for (const id of expectedPrimitiveIds) {
+        const canonical = canonicalRegistry[id];
+        const runtimeEntry = runtimeById.get(id);
+        if (!isRecord(canonical) || !runtimeEntry) continue;
+        const expectedFields = {
+          name: canonical.name,
+          class: canonical.class,
+          stateful: isRecord(canonical.semantics) ? canonical.semantics.stateful : undefined,
+          randomness: isRecord(canonical.semantics) ? canonical.semantics.randomness : undefined,
+        };
+        for (const [field, expected] of Object.entries(expectedFields)) {
+          if (runtimeEntry[field] !== expected) {
+            addError(`runtime primitive ${id}.${field} mismatch: canonical=${expected}, runtime=${runtimeEntry[field]}`);
+          }
+        }
+      }
+    }
+    const implemented = runtime.entries
+      .filter((entry) => entry.implementationStatus === "implemented")
+      .map((entry) => entry.id)
+      .filter((id) => typeof id === "string")
+      .sort();
+    const expectedImplemented = ["P01", "P02", "P03", "P04", "P05", "P06", "P08", "P13", "P20"];
+    if (!sameStrings(implemented, expectedImplemented)) {
+      addError(`runtime implemented primitive identities must be ${expectedImplemented.join(", ")}; found ${implemented.join(", ") || "none"}`);
+    }
+    for (const entry of runtime.entries) {
+      if (entry.implementationStatus !== "implemented" && entry.implementationStatus !== "registered_only") {
+        addError(`runtime primitive ${entry.id ?? "unknown"} has invalid implementationStatus: ${entry.implementationStatus}`);
+      }
+    }
+  }
   if (interfaceContent !== undefined) {
     const ids = primitiveIds(interfaceContent);
     if (!sameStrings(ids, expectedPrimitiveIds)) {
@@ -314,6 +437,6 @@ if (isMain) {
     for (const error of errors) console.error(`- ${error}`);
     process.exitCode = 1;
   } else {
-    console.log("Specification validation passed: runtime/model/result versions, portable envelope compatibility, artifacts, P01-P34 identities, and declared debt are consistent.");
+    console.log("Specification validation passed: runtime/model/result versions, portable envelope compatibility, artifacts, canonical/runtime P01-P34 catalog metadata, and declared debt are consistent.");
   }
 }
