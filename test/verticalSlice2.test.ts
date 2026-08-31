@@ -147,12 +147,22 @@ describe("Vertical Slice 2 growing household cash flow", () => {
     expect(chronological.periods[0]!.expenseCashSettlement.equals(money("0"))).toBe(true);
     expect(chronological.periods[0]!.endingCash.equals(money("1000"))).toBe(true);
 
+    const earlySalary = { ...laterSalary, recurrence: { kind: "utc_monthly" as const, anchor: instant("2026-01-05T00:00:00.000Z"), invalidDayPolicy: "skip" as const }, growthBaseAt: instant("2026-01-05T00:00:00.000Z") };
+    const lateRent = { ...earlyRent, recurrence: { kind: "utc_monthly" as const, anchor: instant("2026-01-20T00:00:00.000Z"), invalidDayPolicy: "skip" as const }, inflationBaseAt: instant("2026-01-20T00:00:00.000Z") };
+    expect(runVerticalSlice2({ runContext: context(1), openingState: opening(), input: { ...base, incomes: [earlySalary], expenses: [lateRent] }, months: 1 }).periods[0]!.expenseCashSettlement.equals(money("100"))).toBe(true);
+
     const future = { ...base.incomes[0]!, start: instant("2026-04-15T00:00:00.000Z"), end: instant("2026-05-15T00:00:00.000Z") };
     const futureRun = runVerticalSlice2({ runContext: context(5), openingState: opening(), input: { ...base, incomes: [future], expenses: [] }, months: 5 });
     expect(futureRun.periods.map((period) => period.recurringIncomeRecognized.amount.toString())).toEqual(["0", "0", "0", "1000", "0"]);
 
-    const ambiguous = { ...base, expenses: base.expenses.map(({ settlementPriority: _settlementPriority, ...expense }) => expense) };
-    expect(() => runVerticalSlice2({ runContext: context(1), openingState: opening(), input: ambiguous, months: 1 })).toThrow();
+    const aprilAnchor = instant("2026-04-15T00:00:00.000Z");
+    const delayedIncome = { ...base.incomes[0]!, start: instant("2026-03-01T00:00:00.000Z"), recurrence: { kind: "utc_monthly" as const, anchor: aprilAnchor, invalidDayPolicy: "skip" as const }, growthBaseAt: aprilAnchor };
+    const delayedExpense = { ...base.expenses[0]!, start: instant("2026-03-01T00:00:00.000Z"), recurrence: { kind: "utc_monthly" as const, anchor: aprilAnchor, invalidDayPolicy: "skip" as const }, inflationBaseAt: aprilAnchor };
+    const delayed = runVerticalSlice2({ runContext: context(4), openingState: opening(), input: { ...base, incomes: [delayedIncome], expenses: [delayedExpense] }, months: 4 });
+    expect(delayed.periods.map((period) => [period.recurringIncomeRecognized.amount.toString(), period.recurringExpenseRecognized.amount.toString()])).toEqual([["0", "0"], ["0", "0"], ["0", "0"], ["1000", "100"]]);
+
+    const ambiguous = { ...base, expenses: base.expenses.map(({ settlementPriority: _settlementPriority, ...expense }) => expense), events: base.events.map((event) => event.id === ids.clubStart ? { ...event, effectiveAt: anchor } : event) };
+    expect(runVerticalSlice2({ runContext: context(1), openingState: opening(), input: ambiguous, months: 1 }).status).toBe("incomplete");
   });
 
   it("accepts only monthly periodic rates while retaining exact effective-annual growth", () => {
@@ -161,6 +171,9 @@ describe("Vertical Slice 2 growing household cash flow", () => {
     expect(runVerticalSlice2({ runContext: context(2), openingState: opening(), input: { ...base, incomes: [monthly], expenses: [] }, months: 2 }).periods[1]!.recurringIncomeRecognized.equals(money("1010"))).toBe(true);
     const annual = { ...base.incomes[0]!, growthRate: Rate.fromDecimal("0.01", rateConvention.periodic(ratePeriod("1", "year"))) };
     expect(() => runVerticalSlice2({ runContext: context(1), openingState: opening(), input: { ...base, incomes: [annual], expenses: [] }, months: 1 })).toThrow();
+    const biMonthly = { ...base.incomes[0]!, growthRate: Rate.fromDecimal("0.01", rateConvention.periodic(ratePeriod("2", "calendar_month"))) };
+    expect(() => runVerticalSlice2({ runContext: context(1), openingState: opening(), input: { ...base, incomes: [biMonthly], expenses: [] }, months: 1 })).toThrow();
+    expect(() => runVerticalSlice2({ runContext: context(1), openingState: opening(), input: { ...base, events: base.events.map((event) => event.id === ids.clubStop ? { ...event, effectiveAt: instant("2025-12-15T00:00:00.000Z") } : event) }, months: 1 })).toThrow(/unsupported/);
   });
 
   it("rolls back tentative event state and financial mutations on a later hard failure", () => {
@@ -175,16 +188,24 @@ describe("Vertical Slice 2 growing household cash flow", () => {
   });
 
   it("completes a deterministic 360-month golden horizon without duplicate occurrences", () => {
-    const first = runVerticalSlice2({ runContext: context(360), openingState: opening(), input: input(), months: 360 });
-    const second = runVerticalSlice2({ runContext: context(360, "30000000-0000-4000-8000-000000000003"), openingState: opening(), input: input(), months: 360 });
+    const first = runVerticalSlice2({ runContext: context(360), openingState: opening(), input: input("0.05", "0.02"), months: 360 });
+    const second = runVerticalSlice2({ runContext: context(360, "30000000-0000-4000-8000-000000000003"), openingState: opening(), input: input("0.05", "0.02"), months: 360 });
     expect(first.status).toBe("completed");
     expect(first.periods).toHaveLength(360);
     expect(first.periods[0]!.endingCash.equals(money("900"))).toBe(true);
-    expect(first.periods[11]!.endingCash.equals(money("10650"))).toBe(true);
-    expect(first.periods[359]!.endingCash.equals(money("323850"))).toBe(true);
+    expect(first.periods[11]!.endingCash.amount.toString()).toBe("10911.61");
+    expect(first.periods[359]!.endingCash.amount.toString()).toBe("766099.52");
+    expect([0, 12, 59, 119, 359].map((index) => ({ income: first.periods[index]!.recurringIncomeRecognized.amount.toString(), expense: first.periods[index]!.recurringExpenseRecognized.amount.toString(), cash: first.periods[index]!.endingCash.amount.toString() }))).toEqual([
+      { income: "1000", expense: "100", cash: "900" },
+      { income: "1050", expense: "102", cash: "11859.61" },
+      { income: "1271.1", expense: "110.23", cash: "61361.83" },
+      { income: "1622.29", expense: "121.7", cash: "140953.41" },
+      { income: "4304.41", expense: "180.84", cash: "766099.52" },
+    ]);
     expect(first.state.liabilities[ids.payable]!.balance.equals(money("0"))).toBe(true);
     const occurrenceIds = first.periods.flatMap((period) => [...period.incomeOccurrences, ...period.expenseOccurrences].map((item) => item.occurrenceId));
     expect(new Set(occurrenceIds).size).toBe(occurrenceIds.length);
+    expect(first.periods.every((period) => !period.endingCash.isNegative())).toBe(true);
     expect(first.periods.map((item) => ({ income: item.recurringIncomeRecognized, expense: item.recurringExpenseRecognized, cash: item.endingCash })))
       .toEqual(second.periods.map((item) => ({ income: item.recurringIncomeRecognized, expense: item.recurringExpenseRecognized, cash: item.endingCash })));
     expect(first.displayInputs).toMatchObject({ generatedForecastFactKind: "model_generated" });

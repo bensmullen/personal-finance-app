@@ -245,7 +245,7 @@ const validateInput = (request: VerticalSlice2RunInput, periods: readonly Period
   if (new Set(ids).size !== ids.length) invalidInput("Stable identities must be unique", "input", issueCodes.duplicateStableIdentity);
   const events = new Map(input.events.map((event) => [event.id, event]));
   for (const event of input.events) {
-    if (event.effectiveAt < runContext.simulationStart) invalidInput("Events effective before the simulation start require an initialized runtime state", `events.${event.id}.effectiveAt`, issueCodes.verticalSlice2EventReferenceInvalid);
+    if (event.effectiveAt < runContext.simulationStart) invalidInput("Past-effective VS2 events are unsupported in this milestone", `events.${event.id}.effectiveAt`, issueCodes.verticalSlice2EventReferenceInvalid);
   }
   const streams = [...input.incomes, ...input.expenses];
   for (const stream of streams) {
@@ -280,17 +280,6 @@ const validateInput = (request: VerticalSlice2RunInput, periods: readonly Period
     try { utcMonthDifference(expense.inflationBaseAt, expense.recurrence.anchor); } catch { invalidInput(`Expense ${expense.id} inflation base must align with its monthly recurrence`, `expenses.${expense.id}.inflationBaseAt`); }
     for (const source of expense.fundingPolicy.orderedSources) {
       if (openingState.accounts[source.accountId] === undefined) invalidInput(`Expense ${expense.id} funding source is missing`, `expenses.${expense.id}.fundingPolicy.orderedSources`);
-    }
-  }
-  // Equal monthly anchors can produce a same-instant settlement race.  A
-  // model must state an integer priority rather than receiving array order.
-  const expenseAnchorGroups = new Map<Instant, RecurringExpenseStream[]>();
-  for (const expense of input.expenses) expenseAnchorGroups.set(expense.recurrence.anchor, [...(expenseAnchorGroups.get(expense.recurrence.anchor) ?? []), expense]);
-  for (const [anchor, group] of expenseAnchorGroups) {
-    if (group.length < 2) continue;
-    const priorities = group.map((expense) => expense.settlementPriority);
-    if (priorities.some((priority) => priority === undefined) || new Set(priorities).size !== priorities.length) {
-      invalidInput(`Expenses sharing ${anchor} require distinct settlement priorities`, "expenses", issueCodes.verticalSlice2InputInvalid);
     }
   }
 }
@@ -448,6 +437,108 @@ export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlic
         transactions.push(value);
       };
 
+      type CashFlowAction = { readonly scheduledAt: Instant; readonly kind: "income" | "expense"; readonly priority: number; readonly id: string; readonly execute: () => void };
+      const actions: CashFlowAction[] = [];
+
+      const addIncomeActions = (stream: RecurringIncomeStream): void => {
+        // Schedule and temporal eligibility deliberately precede growth: an
+        // inactive future schedule must never request a backwards month index.
+        const scheduleTraces = traces(`income:${stream.id}:schedule`);
+        const scheduled = evaluatePrimitive({ primitiveId: "P03", input: { amount: stream.baseMonthlyAmount }, parameters: { schedule: stream.recurrence }, priorState: null, context: { ...primitiveContext(request, stream.id, stream.primitiveIds.recurrence, subtractMilliseconds(targetPeriod.end, 1), "income-recognition", scheduleTraces), period: targetPeriod } });
+        for (const candidate of scheduled.output.occurrences) {
+          const temporal = evaluatePrimitive({ primitiveId: "P04", input: { value: candidate.value }, parameters: { start: stream.start, end: stream.end ?? request.runContext.simulationEnd }, priorState: null, context: primitiveContext(request, stream.id, stream.primitiveIds.recurrence, candidate.scheduledAt, "income-eligibility", scheduleTraces) });
+          const eventEligibility = eventRuntimeAllows(stream, eventOutputs, candidate.scheduledAt);
+          if (!temporal.output.active || !eventEligibility.allowed) continue;
+          const month = utcCalendarMonthDifference(stream.growthBaseAt, candidate.scheduledAt);
+          const baseTraces = traces(`income:${stream.id}:base`, `income:${stream.id}:salary-growth-assumption`, `income:${stream.id}:growth:${month}`);
+          const growth = evaluatePrimitive({ primitiveId: "P08", input: { initial: stream.baseMonthlyAmount, rate: stream.growthRate }, parameters: { category: "recurring_occurrence_amount", timeBasis: growthTimeBasis(stream.growthRate, month) }, priorState: null, context: primitiveContext(request, stream.id, stream.primitiveIds.growth, candidate.scheduledAt, "income-growth", baseTraces) });
+          const recurrenceTraces = [...baseTraces, ...traces(`income:${stream.id}:recurrence`)];
+          const recurrence = evaluatePrimitive({ primitiveId: "P03", input: { amount: growth.output.value }, parameters: { schedule: stream.recurrence }, priorState: null, context: { ...primitiveContext(request, stream.id, stream.primitiveIds.recurrence, candidate.scheduledAt, "income-recognition", recurrenceTraces), period: targetPeriod } });
+          const occurrence = recurrence.output.occurrences.find((value) => value.scheduledAt === candidate.scheduledAt)!;
+          const amount = postedMoney(occurrence.value, request.input.baseCurrency);
+          if (!amount.isPositive()) continue;
+          const traceRefs = freezeTraceRefs([...recurrenceTraces, ...eventEligibility.traceRefs])!;
+          const provenance = generatedProvenance(stream.primitiveIds.recurrence, occurrence.scheduledAt, occurrence.occurrenceId);
+          actions.push({ scheduledAt: occurrence.scheduledAt, kind: "income", priority: 0, id: `${stream.id}:${occurrence.occurrenceId}`, execute: () => {
+            registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", occurrence.occurrenceId);
+            const recognition = createRecognitionFact({ id: recognitionId(`recognition:income:${stream.id}:${occurrence.scheduledAt}`), category: "recurring_income", amount, recognizedAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, provenance, traceRefs }, state.identities.recognitionIds);
+            registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
+            recognitions.push(recognition);
+            effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "recurring_income", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, provenance, traceRefs }));
+            applyTransaction(transaction(`tx:${recognition.id}`, occurrence.scheduledAt, "income", [{ posting: "debit", type: "cash", amount, accountId: stream.depositAccountId, cashFlowClass: "operating" }, { posting: "credit", type: "income", amount }], traceRefs));
+            recognizedIncome = recognizedIncome.plus(amount);
+            incomeOccurrences.push(Object.freeze({ streamId: stream.id, occurrenceId: occurrence.occurrenceId, scheduledAt: occurrence.scheduledAt, amount, provenance, traceRefs }));
+            periodTraces.push(...traceRefs);
+          }});
+        }
+      };
+
+      const addExpenseActions = (stream: RecurringExpenseStream): void => {
+        const scheduleTraces = traces(`expense:${stream.id}:schedule`);
+        const scheduled = evaluatePrimitive({ primitiveId: "P03", input: { amount: stream.baseMonthlyAmount }, parameters: { schedule: stream.recurrence }, priorState: null, context: { ...primitiveContext(request, stream.id, stream.primitiveIds.recurrence, subtractMilliseconds(targetPeriod.end, 1), "expense-recognition", scheduleTraces), period: targetPeriod } });
+        for (const candidate of scheduled.output.occurrences) {
+          const temporal = evaluatePrimitive({ primitiveId: "P04", input: { value: candidate.value }, parameters: { start: stream.start, end: stream.end ?? request.runContext.simulationEnd }, priorState: null, context: primitiveContext(request, stream.id, stream.primitiveIds.recurrence, candidate.scheduledAt, "expense-eligibility", scheduleTraces) });
+          const eventEligibility = eventRuntimeAllows(stream, eventOutputs, candidate.scheduledAt);
+          if (!temporal.output.active || !eventEligibility.allowed) continue;
+          const month = utcCalendarMonthDifference(stream.inflationBaseAt, candidate.scheduledAt);
+          const indexTraces = traces(`expense:${stream.id}:base`, `expense:${stream.id}:inflation-assumption`, `expense:${stream.id}:inflation-index:${month}`);
+          const baseIndex = decimal("100");
+          const indexGrowth = evaluatePrimitive({ primitiveId: "P08", input: { initial: baseIndex, rate: stream.inflationRate }, parameters: { category: "series_quantity", timeBasis: growthTimeBasis(stream.inflationRate, month) }, priorState: null, context: primitiveContext(request, stream.id, stream.primitiveIds.indexGrowth, candidate.scheduledAt, "inflation-index", indexTraces) });
+          const linkedTraces = [...indexTraces, ...traces(`expense:${stream.id}:inflation-linked`)];
+          const linked = evaluatePrimitive({ primitiveId: "P13", input: { baseValue: stream.baseMonthlyAmount, baseIndex, currentIndex: indexGrowth.output.value as DecimalAmount }, parameters: { baseDate: civilDate(stream.inflationBaseAt.slice(0, 10)), indexIdentity: `synthetic-inflation:${stream.id}`, divisionRounding: new RoundingPolicy(18, "half_even") }, priorState: null, context: primitiveContext(request, stream.id, stream.primitiveIds.inflationLink, candidate.scheduledAt, "inflation-linked-expense", linkedTraces) });
+          const recurrenceTraces = [...linkedTraces, ...traces(`expense:${stream.id}:recurrence`)];
+          const recurrence = evaluatePrimitive({ primitiveId: "P03", input: { amount: linked.output.value }, parameters: { schedule: stream.recurrence }, priorState: null, context: { ...primitiveContext(request, stream.id, stream.primitiveIds.recurrence, candidate.scheduledAt, "expense-recognition", recurrenceTraces), period: targetPeriod } });
+          const occurrence = recurrence.output.occurrences.find((value) => value.scheduledAt === candidate.scheduledAt)!;
+          const amount = postedMoney(occurrence.value, request.input.baseCurrency);
+          if (!amount.isPositive()) continue;
+          const traceRefs = freezeTraceRefs([...recurrenceTraces, ...eventEligibility.traceRefs])!;
+          const provenance = generatedProvenance(stream.primitiveIds.recurrence, occurrence.scheduledAt, occurrence.occurrenceId);
+          actions.push({ scheduledAt: occurrence.scheduledAt, kind: "expense", priority: stream.settlementPriority ?? Number.MAX_SAFE_INTEGER, id: `${stream.id}:${occurrence.occurrenceId}`, execute: () => {
+            registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", occurrence.occurrenceId);
+            const recognition = createRecognitionFact({ id: recognitionId(`recognition:expense:${stream.id}:${occurrence.scheduledAt}`), category: "recurring_expense", amount, recognizedAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, provenance, traceRefs }, state.identities.recognitionIds);
+            registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
+            recognitions.push(recognition);
+            const obligation = createObligation({ id: claimId(`obligation:${recognition.id}`), category: "expense_payable", originatingRecognitionId: recognition.id, economicOwnerId: stream.ownerId, balanceEntityId: stream.payableLiabilityId, originalAmount: amount, recognizedAt: occurrence.scheduledAt, traceRefs }, Object.values(state.obligations));
+            state.obligations[obligation.id] = obligation;
+            effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "recurring_expense", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, provenance, traceRefs }));
+            effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${obligation.id}`), kind: "claim", category: "recurring_expense", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, claimId: obligation.id, provenance, traceRefs }));
+            applyTransaction(transaction(`tx:recognition:${recognition.id}`, occurrence.scheduledAt, "expense_recognition", [{ posting: "debit", type: "expense", amount }, { posting: "credit", type: "liability", amount, entityId: stream.payableLiabilityId }], traceRefs));
+            const proposal = createSettlementProposal({ id: settlementProposalId(`proposal:${obligation.id}`), claimId: obligation.id, requestedAmount: amount, requestedAt: occurrence.scheduledAt, fundingPolicyId: stream.fundingPolicy.id, provenance, traceRefs }, obligation);
+            proposals.push(proposal);
+            const funding = resolveFunding(proposal, obligation, stream.fundingPolicy, Object.fromEntries(Object.entries(state.accounts).map(([id, account]) => [id, account.cash])), occurrence.scheduledAt);
+            outcomes.push(funding.outcome); diagnostics.push(...funding.issues);
+            if (funding.liquidityShortfall !== undefined) shortfalls.push(funding.liquidityShortfall);
+            if (isAcceptedFundingResolution(funding)) {
+              const accepted = createSettlement({ id: settlementId(`settlement:${obligation.id}`), settledAt: occurrence.scheduledAt, provenance, traceRefs }, funding, obligation, state.identities.settlementIds);
+              registerAuthoritativeIdentity(state.identities, "settlementIds", accepted.id); settlements.push(accepted);
+              state.obligations[obligation.id] = applySettlement(obligation, accepted) as Obligation;
+              effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${accepted.id}`), kind: "settlement", category: "recurring_expense", amount: accepted.amount, occurredAt: accepted.settledAt, claimId: accepted.claimId, settlementId: accepted.id, provenance, traceRefs }));
+              applyTransaction(transaction(`tx:${accepted.id}`, accepted.settledAt, "expense_settlement", [{ posting: "debit", type: "liability", amount: accepted.amount, entityId: stream.payableLiabilityId }, ...accepted.fundingAllocations.map((allocation): AccountingLegDraft => ({ posting: "credit", type: "cash", amount: allocation.amount, accountId: allocation.accountId, cashFlowClass: "operating" }))], traceRefs));
+              expenseSettlement = expenseSettlement.plus(accepted.amount);
+            }
+            recognizedExpense = recognizedExpense.plus(amount);
+            expenseOccurrences.push(Object.freeze({ streamId: stream.id, occurrenceId: occurrence.occurrenceId, scheduledAt: occurrence.scheduledAt, amount, provenance, traceRefs }));
+            periodTraces.push(...traceRefs);
+          }});
+        }
+      };
+
+      for (const stream of request.input.incomes) addIncomeActions(stream);
+      for (const stream of request.input.expenses) addExpenseActions(stream);
+      const expenseActionsAt = new Map<Instant, CashFlowAction[]>();
+      for (const action of actions.filter((value) => value.kind === "expense")) expenseActionsAt.set(action.scheduledAt, [...(expenseActionsAt.get(action.scheduledAt) ?? []), action]);
+      for (const sameInstant of expenseActionsAt.values()) {
+        if (sameInstant.length > 1 && (sameInstant.some((action) => action.priority === Number.MAX_SAFE_INTEGER) || new Set(sameInstant.map((action) => action.priority)).size !== sameInstant.length)) {
+          invalidInput("Same-instant expense actions require distinct settlement priorities", "expenses");
+        }
+      }
+      actions.sort((left, right) => left.scheduledAt.localeCompare(right.scheduledAt)
+        || (left.kind === "income" ? 0 : 1) - (right.kind === "income" ? 0 : 1)
+        || (left.kind === "expense" && right.kind === "expense" ? left.priority - right.priority : 0)
+        || left.id.localeCompare(right.id));
+      for (const action of actions) action.execute();
+
+      /*
       for (const stream of [...request.input.incomes].sort((a, b) => a.id.localeCompare(b.id))) {
         // P04 owns future-start exclusion; do not ask a month-offset helper to
         // reinterpret a not-yet-eligible stream.
@@ -553,6 +644,7 @@ export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlic
         }
       }
 
+      */
       const periodResult: VerticalSlice2PeriodResult = Object.freeze({
         period: Object.freeze({ ...targetPeriod }),
         recurringIncomeRecognized: recognizedIncome,
