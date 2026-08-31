@@ -54,7 +54,7 @@ const invalid = (
   ...(fieldPath === undefined ? {} : { fieldPath }),
 });
 
-const evaluation = <Id extends "P01" | "P02" | "P03" | "P04" | "P05" | "P06" | "P08" | "P13" | "P20", Output, State, Effect>(
+const evaluation = <Id extends "P01" | "P02" | "P03" | "P04" | "P05" | "P06" | "P08" | "P13" | "P20" | "P27" | "P29" | "P30", Output, State, Effect>(
   primitiveId: Id,
   output: Output,
   nextState: State,
@@ -146,6 +146,40 @@ export interface OneTimePrimitiveState {
 
 export const initialOneTimePrimitiveState = (): OneTimePrimitiveState => Object.freeze({ executed: false });
 
+export interface EventTriggerPrimitiveState {
+  readonly activated: boolean;
+  readonly occurrenceId?: GeneratedOccurrenceKey;
+  readonly executed?: never;
+}
+
+export interface EventModificationPrimitiveState {
+  readonly applied: boolean;
+  readonly reverted: boolean;
+  readonly applicationOccurrenceId?: GeneratedOccurrenceKey;
+  readonly reversionOccurrenceId?: GeneratedOccurrenceKey;
+  readonly occurrenceId?: never;
+  readonly executed?: never;
+}
+
+export interface EventTerminationPrimitiveState {
+  readonly terminated: boolean;
+  readonly occurrenceId?: GeneratedOccurrenceKey;
+  readonly executed?: never;
+}
+
+export const initialEventTriggerPrimitiveState = (): EventTriggerPrimitiveState => Object.freeze({ activated: false });
+export const initialEventModificationPrimitiveState = (): EventModificationPrimitiveState => Object.freeze({ applied: false, reverted: false });
+export const initialEventTerminationPrimitiveState = (): EventTerminationPrimitiveState => Object.freeze({ terminated: false });
+
+export interface PrimitiveEventOccurrence {
+  readonly occurrenceId: GeneratedOccurrenceKey;
+  readonly scheduledAt: Instant;
+  readonly eventId: DomainId<"event">;
+  readonly targetId: string;
+  readonly kind: "activation" | "modification" | "reversion" | "termination";
+  readonly traceRefs?: readonly CalculationTraceRef[];
+}
+
 export type RecurrenceSchedule =
   | { readonly kind: "explicit_instants"; readonly instants: readonly Instant[] }
   | {
@@ -179,7 +213,10 @@ export type ImplementedPrimitiveEvaluationRequest =
   | { readonly primitiveId: "P06"; readonly input: { readonly value: PrimitiveValue }; readonly priorState: null; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P08"; readonly input: { readonly initial: PrimitiveFlowValue; readonly rate: Rate }; readonly parameters: { readonly category: GrowthCategory; readonly timeBasis: GrowthTimeBasis }; readonly priorState: null; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P13"; readonly input: { readonly baseValue: PrimitiveFlowValue; readonly baseIndex: DecimalAmount; readonly currentIndex: DecimalAmount }; readonly parameters: { readonly baseDate: CivilDate; readonly indexIdentity: string; readonly divisionRounding: RoundingPolicy }; readonly priorState: null; readonly context: PrimitiveEvaluationContext }
-  | { readonly primitiveId: "P20"; readonly input: { readonly taxableBase: Money; readonly resolvedRule: ResolvedProportionalTaxRule }; readonly priorState: null; readonly context: PrimitiveEvaluationContext };
+  | { readonly primitiveId: "P20"; readonly input: { readonly taxableBase: Money; readonly resolvedRule: ResolvedProportionalTaxRule }; readonly priorState: null; readonly context: PrimitiveEvaluationContext }
+  | { readonly primitiveId: "P27"; readonly input: { readonly eventId: DomainId<"event"> }; readonly parameters: { readonly effectiveAt: Instant; readonly targetId: string }; readonly priorState: EventTriggerPrimitiveState; readonly context: PrimitiveEvaluationContext }
+  | { readonly primitiveId: "P29"; readonly input: { readonly base: PrimitiveFlowValue; readonly replacement: PrimitiveFlowValue; readonly eventId: DomainId<"event"> }; readonly parameters: { readonly targetId: string; readonly effectiveAt: Instant; readonly precedence: number; readonly endAt?: Instant }; readonly priorState: EventModificationPrimitiveState; readonly context: PrimitiveEvaluationContext }
+  | { readonly primitiveId: "P30"; readonly input: { readonly base: PrimitiveFlowValue; readonly eventId: DomainId<"event"> }; readonly parameters: { readonly targetId: string; readonly terminationAt: Instant }; readonly priorState: EventTerminationPrimitiveState; readonly context: PrimitiveEvaluationContext };
 
 export type PrimitiveEvaluationRequest =
   | ImplementedPrimitiveEvaluationRequest
@@ -324,6 +361,137 @@ const taxDependentEvaluation = (request: Extract<ImplementedPrimitiveEvaluationR
   return evaluation("P20", Object.freeze({ tax, ruleId: resolvedRule.id }), null, frozenEmpty, request.context.traceRefs);
 };
 
+const eventOccurrence = (
+  request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P27" | "P29" | "P30" }>,
+  scheduledAt: Instant,
+  kind: PrimitiveEventOccurrence["kind"],
+): PrimitiveEventOccurrence => Object.freeze({
+  occurrenceId: generatedOccurrenceKey({
+    scenarioId: request.context.scenarioId,
+    primitiveInstanceId: request.context.primitiveInstanceId,
+    scheduledAt,
+    semanticEffectType: `${request.context.semanticEffectType}:${kind}`,
+    economicTargetId: request.context.economicTargetId,
+  }),
+  scheduledAt,
+  eventId: request.input.eventId,
+  targetId: request.parameters.targetId,
+  kind,
+  ...(request.context.traceRefs === undefined ? {} : { traceRefs: freezeTraceRefs(request.context.traceRefs)! }),
+});
+
+const assertEventTarget = (
+  request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P27" | "P29" | "P30" }>,
+): void => {
+  if (request.parameters.targetId.trim().length === 0) invalid(issueCodes.primitiveParametersInvalid, `${request.primitiveId} requires a target identity`, request.primitiveId, "parameters.targetId");
+  if (request.parameters.targetId !== request.context.economicTargetId) invalid(issueCodes.primitiveParametersInvalid, `${request.primitiveId} target must match the evaluation context`, request.primitiveId, "parameters.targetId");
+};
+
+const eventTriggerEvaluation = (request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P27" }>) => {
+  assertEventTarget(request);
+  const prior = request.priorState;
+  if ((prior.activated !== true && prior.activated !== false)
+    || (prior.activated && prior.occurrenceId === undefined)
+    || (!prior.activated && prior.occurrenceId !== undefined)) {
+    invalid(issueCodes.primitiveStateInvalid, "P27 state is inconsistent", "P27", "priorState");
+  }
+  const activatesNow = !prior.activated
+    && request.context.evaluationInstant >= request.parameters.effectiveAt
+    && inPeriod(request.parameters.effectiveAt, request.context.period);
+  const activation = activatesNow ? eventOccurrence(request, request.parameters.effectiveAt, "activation") : undefined;
+  const nextState: EventTriggerPrimitiveState = activation === undefined
+    ? Object.freeze({ ...prior })
+    : Object.freeze({ activated: true, occurrenceId: activation.occurrenceId });
+  return evaluation("P27", Object.freeze({
+    eventId: request.input.eventId,
+    targetId: request.parameters.targetId,
+    effectiveAt: request.parameters.effectiveAt,
+    active: nextState.activated,
+    activatedNow: activation !== undefined,
+    ...(activation === undefined ? {} : { occurrenceId: activation.occurrenceId }),
+  }), nextState, activation === undefined ? frozenEmpty : [activation], request.context.traceRefs);
+};
+
+const eventModificationEvaluation = (request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P29" }>) => {
+  assertEventTarget(request);
+  assertPrimitiveFlowValuesCompatible(request.input.base, request.input.replacement);
+  const { priorState: prior, parameters } = request;
+  if (!Number.isSafeInteger(parameters.precedence)) invalid(issueCodes.primitiveParametersInvalid, "P29 precedence must be a safe integer", "P29", "parameters.precedence");
+  if (parameters.endAt !== undefined && parameters.endAt <= parameters.effectiveAt) invalid(issueCodes.primitiveTemporalConfigurationInvalid, "P29 end must follow its effective instant", "P29", "parameters.endAt");
+  if ((prior.applied !== true && prior.applied !== false) || (prior.reverted !== true && prior.reverted !== false)
+    || (prior.reverted && !prior.applied)
+    || (prior.applied !== (prior.applicationOccurrenceId !== undefined))
+    || (prior.reverted !== (prior.reversionOccurrenceId !== undefined))) {
+    invalid(issueCodes.primitiveStateInvalid, "P29 state is inconsistent", "P29", "priorState");
+  }
+  const effects: PrimitiveEventOccurrence[] = [];
+  let applied = prior.applied;
+  let reverted = prior.reverted;
+  let applicationOccurrenceId = prior.applicationOccurrenceId;
+  let reversionOccurrenceId = prior.reversionOccurrenceId;
+  if (!applied && request.context.evaluationInstant >= parameters.effectiveAt && inPeriod(parameters.effectiveAt, request.context.period)) {
+    const effect = eventOccurrence(request, parameters.effectiveAt, "modification");
+    effects.push(effect);
+    applied = true;
+    applicationOccurrenceId = effect.occurrenceId;
+  }
+  if (parameters.endAt !== undefined && applied && !reverted
+    && request.context.evaluationInstant >= parameters.endAt && inPeriod(parameters.endAt, request.context.period)) {
+    const effect = eventOccurrence(request, parameters.endAt, "reversion");
+    effects.push(effect);
+    reverted = true;
+    reversionOccurrenceId = effect.occurrenceId;
+  }
+  const modified = request.context.evaluationInstant >= parameters.effectiveAt
+    && (parameters.endAt === undefined || request.context.evaluationInstant < parameters.endAt);
+  const nextState: EventModificationPrimitiveState = Object.freeze({
+    applied,
+    reverted,
+    ...(applicationOccurrenceId === undefined ? {} : { applicationOccurrenceId }),
+    ...(reversionOccurrenceId === undefined ? {} : { reversionOccurrenceId }),
+  });
+  return evaluation("P29", Object.freeze({
+    value: modified ? request.input.replacement : request.input.base,
+    modified,
+    targetId: parameters.targetId,
+    precedence: parameters.precedence,
+    effectiveAt: parameters.effectiveAt,
+    ...(parameters.endAt === undefined ? {} : { endAt: parameters.endAt }),
+  }), nextState, effects, request.context.traceRefs);
+};
+
+const zeroFlowValue = <T extends PrimitiveFlowValue>(value: T): T => {
+  if (value instanceof Money) return Money.zero(value.currency) as T;
+  if (value instanceof Quantity) return new Quantity(DecimalAmount.zero(), value.unit) as T;
+  if (value instanceof DecimalAmount) return DecimalAmount.zero() as T;
+  return invalid(issueCodes.primitiveInputInvalid, "P30 cannot construct a compatible zero", "P30", "input.base");
+};
+
+const eventTerminationEvaluation = (request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P30" }>) => {
+  assertEventTarget(request);
+  const prior = request.priorState;
+  if ((prior.terminated !== true && prior.terminated !== false)
+    || (prior.terminated && prior.occurrenceId === undefined)
+    || (!prior.terminated && prior.occurrenceId !== undefined)) {
+    invalid(issueCodes.primitiveStateInvalid, "P30 state is inconsistent", "P30", "priorState");
+  }
+  const terminatesNow = !prior.terminated
+    && request.context.evaluationInstant >= request.parameters.terminationAt
+    && inPeriod(request.parameters.terminationAt, request.context.period);
+  const termination = terminatesNow ? eventOccurrence(request, request.parameters.terminationAt, "termination") : undefined;
+  const nextState: EventTerminationPrimitiveState = termination === undefined
+    ? Object.freeze({ ...prior })
+    : Object.freeze({ terminated: true, occurrenceId: termination.occurrenceId });
+  const inactive = nextState.terminated || request.context.evaluationInstant >= request.parameters.terminationAt;
+  return evaluation("P30", Object.freeze({
+    active: !inactive,
+    value: inactive ? zeroFlowValue(request.input.base) : request.input.base,
+    targetId: request.parameters.targetId,
+    terminationAt: request.parameters.terminationAt,
+    terminatedNow: termination !== undefined,
+  }), nextState, termination === undefined ? frozenEmpty : [termination], request.context.traceRefs);
+};
+
 export function evaluatePrimitive<T extends PrimitiveValue>(request: {
   readonly primitiveId: "P01"; readonly input: { readonly value: T }; readonly priorState: null; readonly context: PrimitiveEvaluationContext;
 }): PrimitiveEvaluation<"P01", T, null>;
@@ -360,9 +528,12 @@ export function evaluatePrimitive<T extends PrimitiveFlowValue>(request: {
   readonly baseIndex: DecimalAmount; readonly currentIndex: DecimalAmount;
 }>, null>;
 export function evaluatePrimitive(request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P20" }>): ReturnType<typeof taxDependentEvaluation>;
+export function evaluatePrimitive(request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P27" }>): ReturnType<typeof eventTriggerEvaluation>;
+export function evaluatePrimitive(request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P29" }>): ReturnType<typeof eventModificationEvaluation>;
+export function evaluatePrimitive(request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P30" }>): ReturnType<typeof eventTerminationEvaluation>;
 export function evaluatePrimitive(request: { readonly primitiveId: RegisteredOnlyPrimitiveId }): never;
 export function evaluatePrimitive(request: PrimitiveEvaluationRequest): PrimitiveEvaluation<
-  "P01" | "P02" | "P03" | "P04" | "P05" | "P06" | "P08" | "P13" | "P20",
+  "P01" | "P02" | "P03" | "P04" | "P05" | "P06" | "P08" | "P13" | "P20" | "P27" | "P29" | "P30",
   unknown,
   unknown,
   unknown
@@ -378,6 +549,9 @@ export function evaluatePrimitive(request: PrimitiveEvaluationRequest): Primitiv
     case "P08": return geometricGrowthEvaluation(request);
     case "P13": return inflationLinkedEvaluation(request);
     case "P20": return taxDependentEvaluation(request);
+    case "P27": return eventTriggerEvaluation(request);
+    case "P29": return eventModificationEvaluation(request);
+    case "P30": return eventTerminationEvaluation(request);
     default: return invalid(
       issueCodes.primitiveNotImplemented,
       `Primitive ${request.primitiveId} is registered but not implemented`,

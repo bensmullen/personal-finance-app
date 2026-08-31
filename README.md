@@ -34,12 +34,12 @@ shortcuts.
 
 The `primitives` module now contains one immutable runtime catalog for all
 canonical P01–P34 identities and common typed evaluation contracts. P01, P02,
-P03, P04, P05, P06, P08, P13, and P20 are executable; the other 25 identities
+P03, P04, P05, P06, P08, P13, P20, P27, P29, and P30 are executable; the other 22 identities
 are deliberately registered-only and fail explicitly if evaluation is
 requested. Primitive evaluation returns values, occurrences/effects, explicit
 next primitive state, diagnostics, and lineage references without posting
 accounting or mutating authoritative financial state. Generalized multi-period
-orchestration and primitive-state commit remain Roadmap PR 7 work. This
+orchestration and primitive-state commit are provided by the simulation runtime. This
 repository intentionally does not use npm workspaces or `packages/*` yet.
 
 ## Requirements and setup

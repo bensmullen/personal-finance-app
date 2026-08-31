@@ -82,4 +82,7 @@ export const issueCodes = Object.freeze({
   timelinePeriodPlanInvalid: "TIMELINE_PERIOD_PLAN_INVALID",
   timelineWorkInvalid: "TIMELINE_WORK_INVALID",
   primitiveRuntimeStateInvalid: "PRIMITIVE_RUNTIME_STATE_INVALID",
+  verticalSlice2InputInvalid: "VERTICAL_SLICE_2_INPUT_INVALID",
+  verticalSlice2EventReferenceInvalid: "VERTICAL_SLICE_2_EVENT_REFERENCE_INVALID",
+  duplicateStableIdentity: "DUPLICATE_STABLE_IDENTITY",
 } as const);

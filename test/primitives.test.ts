@@ -7,6 +7,9 @@ import {
   evaluatePrimitive,
   getPrimitiveDefinition,
   initialOneTimePrimitiveState,
+  initialEventModificationPrimitiveState,
+  initialEventTerminationPrimitiveState,
+  initialEventTriggerPrimitiveState,
   isPrimitiveId,
   listPrimitiveDefinitions,
   parsePrimitiveId,
@@ -60,10 +63,10 @@ describe("primitive runtime catalog", () => {
     expect(listPrimitiveDefinitions().map((entry) => entry.id)).toEqual(expected);
   });
 
-  it("marks exactly the nine PR 6 primitives implemented", () => {
+  it("marks exactly the PR 8 primitive set implemented", () => {
     expect(listPrimitiveDefinitions().filter((entry) => entry.implementationStatus === "implemented").map((entry) => entry.id))
-      .toEqual(["P01", "P02", "P03", "P04", "P05", "P06", "P08", "P13", "P20"]);
-    expect(listPrimitiveDefinitions().filter((entry) => entry.implementationStatus === "registered_only")).toHaveLength(25);
+      .toEqual(["P01", "P02", "P03", "P04", "P05", "P06", "P08", "P13", "P20", "P27", "P29", "P30"]);
+    expect(listPrimitiveDefinitions().filter((entry) => entry.implementationStatus === "registered_only")).toHaveLength(22);
   });
 
   it("preserves representative canonical names, classes, state, and randomness", () => {
@@ -88,6 +91,45 @@ describe("primitive runtime catalog", () => {
   it("distinguishes registered-only evaluation from unknown identity", () => {
     expect(diagnosticCode(() => evaluatePrimitive({ primitiveId: "P07" }))).toBe(issueCodes.primitiveNotImplemented);
     expect(diagnosticCode(() => getPrimitiveDefinition("P99"))).toBe(issueCodes.primitiveUnknown);
+  });
+});
+
+describe("scheduled event primitives", () => {
+  const eventId = domainId("event", "44444444-4444-4444-8444-444444444444");
+  const effectiveAt = instant("2026-01-15T00:00:00.000Z");
+
+  it("P27 edge-triggers once with deterministic retry identity", () => {
+    const initial = initialEventTriggerPrimitiveState();
+    const request = (priorState: ReturnType<typeof initialEventTriggerPrimitiveState>, evaluationInstant: ReturnType<typeof instant>) => evaluatePrimitive({ primitiveId: "P27", input: { eventId }, parameters: { effectiveAt, targetId: economicTargetId }, priorState, context: context({ evaluationInstant }) });
+    expect(request(initial, instant("2026-01-14T23:59:59.999Z")).output).toMatchObject({ active: false, activatedNow: false });
+    const first = request(initial, effectiveAt);
+    expect(first.output).toMatchObject({ active: true, activatedNow: true });
+    expect(request(initial, effectiveAt).effects).toEqual(first.effects);
+    expect(request(first.nextState, instant("2026-01-20T00:00:00.000Z")).effects).toEqual([]);
+  });
+
+  it("P29 applies and reverts a compatible typed replacement", () => {
+    const parameters = { targetId: economicTargetId, effectiveAt, precedence: 10, endAt: instant("2026-01-20T00:00:00.000Z") };
+    const input = { base: money("100"), replacement: money("125"), eventId };
+    const before = evaluatePrimitive({ primitiveId: "P29", input, parameters, priorState: initialEventModificationPrimitiveState(), context: context({ evaluationInstant: instant("2026-01-14T00:00:00.000Z") }) });
+    expect((before.output.value as ReturnType<typeof money>).equals(money("100"))).toBe(true);
+    const applied = evaluatePrimitive({ primitiveId: "P29", input, parameters, priorState: before.nextState, context: context({ evaluationInstant: effectiveAt }) });
+    expect((applied.output.value as ReturnType<typeof money>).equals(money("125"))).toBe(true);
+    const reverted = evaluatePrimitive({ primitiveId: "P29", input, parameters, priorState: applied.nextState, context: context({ evaluationInstant: parameters.endAt }) });
+    expect((reverted.output.value as ReturnType<typeof money>).equals(money("100"))).toBe(true);
+    expect(reverted.nextState).toMatchObject({ applied: true, reverted: true });
+  });
+
+  it("P30 returns compatible zero at and after termination", () => {
+    const parameters = { targetId: economicTargetId, terminationAt: effectiveAt };
+    const input = { base: money("50"), eventId };
+    const before = evaluatePrimitive({ primitiveId: "P30", input, parameters, priorState: initialEventTerminationPrimitiveState(), context: context({ evaluationInstant: instant("2026-01-14T00:00:00.000Z") }) });
+    expect(before.output.active).toBe(true);
+    const stopped = evaluatePrimitive({ primitiveId: "P30", input, parameters, priorState: before.nextState, context: context({ evaluationInstant: effectiveAt }) });
+    expect(stopped.output.active).toBe(false);
+    expect((stopped.output.value as ReturnType<typeof money>).equals(money("0"))).toBe(true);
+    const later = evaluatePrimitive({ primitiveId: "P30", input, parameters, priorState: stopped.nextState, context: context({ evaluationInstant: instant("2026-01-25T00:00:00.000Z") }) });
+    expect(later.effects).toEqual([]);
   });
 });
 
