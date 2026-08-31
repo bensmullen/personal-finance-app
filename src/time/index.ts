@@ -70,6 +70,42 @@ export const utcMonth = (year: number, month1: number): Period => {
   return period(start, end);
 };
 
+/** Builds contiguous UTC calendar-month periods for deterministic projections. */
+export const utcMonthlyPeriods = (start: Instant, months: number): readonly Period[] => {
+  if (!Number.isSafeInteger(months) || months <= 0) throw new Error("UTC monthly horizon must be a positive safe integer");
+  const value = new Date(start);
+  if (value.getUTCDate() !== 1 || value.getUTCHours() !== 0 || value.getUTCMinutes() !== 0
+    || value.getUTCSeconds() !== 0 || value.getUTCMilliseconds() !== 0) {
+    throw new Error("UTC monthly horizon must start at a month boundary");
+  }
+  return Object.freeze(Array.from({ length: months }, (_, index) => {
+    const periodStart = instant(new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + index, 1)).toISOString());
+    const periodEnd = instant(new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + index + 1, 1)).toISOString());
+    return period(periodStart, periodEnd);
+  }));
+};
+
+/** Whole UTC calendar months between two instants; both must share day/time components. */
+export const utcMonthDifference = (from: Instant, to: Instant): number => {
+  const left = new Date(from);
+  const right = new Date(to);
+  if (right < left || left.getUTCDate() !== right.getUTCDate()
+    || left.getUTCHours() !== right.getUTCHours() || left.getUTCMinutes() !== right.getUTCMinutes()
+    || left.getUTCSeconds() !== right.getUTCSeconds() || left.getUTCMilliseconds() !== right.getUTCMilliseconds()) {
+    throw new Error("UTC month difference requires ordered instants with matching day/time components");
+  }
+  return (right.getUTCFullYear() - left.getUTCFullYear()) * 12 + right.getUTCMonth() - left.getUTCMonth();
+};
+
+/** Whole UTC calendar-month index difference, intentionally ignoring day/time within each month. */
+export const utcCalendarMonthDifference = (from: Instant, to: Instant): number => {
+  const left = new Date(from);
+  const right = new Date(to);
+  const difference = (right.getUTCFullYear() - left.getUTCFullYear()) * 12 + right.getUTCMonth() - left.getUTCMonth();
+  if (difference < 0) throw new Error("UTC calendar month difference requires ordered months");
+  return difference;
+};
+
 export const inPeriod = (value: Instant, target: Period): boolean => value >= target.start && value < target.end;
 
 export type InvalidUtcMonthlyDayPolicy = "skip";

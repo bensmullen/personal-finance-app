@@ -8,13 +8,20 @@ import {
   type ValidationIssue,
 } from "../diagnostics/index.js";
 import type { GeneratedOccurrenceKey } from "../identity/index.js";
+import type { CalculationTraceRef } from "../lineage/index.js";
 import { isObservedFact } from "../model/provenance.js";
 import {
   evaluatePrimitive,
+  initialEventModificationPrimitiveState,
+  initialEventTerminationPrimitiveState,
+  initialEventTriggerPrimitiveState,
   initialOneTimePrimitiveState,
   primitiveEvaluationContext,
   type ImplementedPrimitiveEvaluationRequest,
   type OneTimePrimitiveState,
+  type EventModificationPrimitiveState,
+  type EventTerminationPrimitiveState,
+  type EventTriggerPrimitiveState,
   type PrimitiveEvaluationContext,
 } from "../primitives/index.js";
 import { createSemanticEffect, type SemanticEffect } from "../semantics/effect.js";
@@ -39,10 +46,11 @@ type BindPrimitiveRuntime<T> = T extends ImplementedPrimitiveEvaluationRequest
 
 export type PeriodPrimitiveRequest = BindPrimitiveRuntime<ImplementedPrimitiveEvaluationRequest>;
 
-export interface PrimitiveRuntimeStateEntry {
-  readonly primitiveId: "P02";
-  readonly state: OneTimePrimitiveState;
-}
+export type PrimitiveRuntimeStateEntry =
+  | { readonly primitiveId: "P02"; readonly state: OneTimePrimitiveState }
+  | { readonly primitiveId: "P27"; readonly state: EventTriggerPrimitiveState }
+  | { readonly primitiveId: "P29"; readonly state: EventModificationPrimitiveState }
+  | { readonly primitiveId: "P30"; readonly state: EventTerminationPrimitiveState };
 
 export type PrimitiveRuntimeStateStore = Readonly<Record<string, PrimitiveRuntimeStateEntry>>;
 
@@ -50,10 +58,22 @@ export const createPrimitiveRuntimeStateStore = (
   entries: PrimitiveRuntimeStateStore = {},
 ): PrimitiveRuntimeStateStore => Object.freeze(Object.fromEntries(
   Object.entries(entries).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => {
-    if (entry.primitiveId !== "P02"
-      || (entry.state.executed !== true && entry.state.executed !== false)
-      || (entry.state.executed && entry.state.occurrenceId === undefined)
-      || (!entry.state.executed && entry.state.occurrenceId !== undefined)) {
+    const valid = (() => {
+      switch (entry.primitiveId) {
+        case "P02": return (entry.state.executed === true || entry.state.executed === false)
+          && entry.state.executed === (entry.state.occurrenceId !== undefined);
+        case "P27": return (entry.state.activated === true || entry.state.activated === false)
+          && entry.state.activated === (entry.state.occurrenceId !== undefined);
+        case "P29": return (entry.state.applied === true || entry.state.applied === false)
+          && (entry.state.reverted === true || entry.state.reverted === false)
+          && (!entry.state.reverted || entry.state.applied)
+          && entry.state.applied === (entry.state.applicationOccurrenceId !== undefined)
+          && entry.state.reverted === (entry.state.reversionOccurrenceId !== undefined);
+        case "P30": return (entry.state.terminated === true || entry.state.terminated === false)
+          && entry.state.terminated === (entry.state.occurrenceId !== undefined);
+      }
+    })();
+    if (!valid) {
       failValidation({
         severity: "error",
         code: issueCodes.primitiveRuntimeStateInvalid,
@@ -62,7 +82,7 @@ export const createPrimitiveRuntimeStateStore = (
         entityId: key,
       });
     }
-    return [key, Object.freeze({ primitiveId: entry.primitiveId, state: Object.freeze({ ...entry.state }) })];
+    return [key, Object.freeze({ primitiveId: entry.primitiveId, state: Object.freeze({ ...entry.state }) }) as PrimitiveRuntimeStateEntry];
   }),
 ));
 
@@ -71,15 +91,17 @@ export const assertPrimitiveRuntimeStateConsistent = (
   financialState: AuthoritativeState,
 ): void => {
   for (const [key, entry] of Object.entries(store)) {
-    const occurrenceId = entry.state.occurrenceId;
-    if (entry.state.executed && (occurrenceId === undefined || !financialState.identities.generatedOccurrenceKeys.includes(occurrenceId))) {
+    const occurrenceIds = entry.primitiveId === "P29"
+      ? [entry.state.applicationOccurrenceId, entry.state.reversionOccurrenceId].filter((value): value is GeneratedOccurrenceKey => value !== undefined)
+      : [entry.state.occurrenceId].filter((value): value is GeneratedOccurrenceKey => value !== undefined);
+    if (occurrenceIds.some((occurrenceId) => !financialState.identities.generatedOccurrenceKeys.includes(occurrenceId))) {
       failValidation({
         severity: "error",
         code: issueCodes.primitiveRuntimeStateInvalid,
         message: `Committed primitive ${key} is missing its authoritative generated occurrence identity`,
         entityType: "primitive_runtime_state",
         entityId: key,
-        fieldPath: "state.occurrenceId",
+        fieldPath: "state",
       });
     }
   }
@@ -116,6 +138,7 @@ export interface PrimitivePeriodOutput {
   readonly primitiveId: PeriodPrimitiveRequest["primitiveId"];
   readonly output: unknown;
   readonly effects: readonly unknown[];
+  readonly traceRefs?: readonly CalculationTraceRef[];
 }
 
 export interface CommittedPeriodResult {
@@ -252,6 +275,7 @@ const evaluatePeriodPrimitive = (
     readonly nextState: unknown;
     readonly effects: readonly unknown[];
     readonly diagnostics: readonly ValidationIssue[];
+    readonly traceRefs?: readonly CalculationTraceRef[];
   };
   readonly nextStateEntry?: PrimitiveRuntimeStateEntry;
 } => {
@@ -274,6 +298,27 @@ const evaluatePeriodPrimitive = (
     case "P08": return { result: evaluatePrimitive({ ...request, context, priorState: null }) };
     case "P13": return { result: evaluatePrimitive({ ...request, context, priorState: null }) };
     case "P20": return { result: evaluatePrimitive({ ...request, context, priorState: null }) };
+    case "P27": {
+      const key = context.primitiveInstanceId;
+      const prior = state[key];
+      if (prior !== undefined && prior.primitiveId !== "P27") return failValidation({ severity: "error", code: issueCodes.primitiveRuntimeStateInvalid, message: `Primitive state kind mismatch for ${key}`, entityType: "primitive_runtime_state", entityId: key });
+      const result = evaluatePrimitive({ ...request, context, priorState: prior?.state ?? initialEventTriggerPrimitiveState() });
+      return { result, nextStateEntry: { primitiveId: "P27", state: result.nextState } };
+    }
+    case "P29": {
+      const key = context.primitiveInstanceId;
+      const prior = state[key];
+      if (prior !== undefined && prior.primitiveId !== "P29") return failValidation({ severity: "error", code: issueCodes.primitiveRuntimeStateInvalid, message: `Primitive state kind mismatch for ${key}`, entityType: "primitive_runtime_state", entityId: key });
+      const result = evaluatePrimitive({ ...request, context, priorState: prior?.state ?? initialEventModificationPrimitiveState() });
+      return { result, nextStateEntry: { primitiveId: "P29", state: result.nextState } };
+    }
+    case "P30": {
+      const key = context.primitiveInstanceId;
+      const prior = state[key];
+      if (prior !== undefined && prior.primitiveId !== "P30") return failValidation({ severity: "error", code: issueCodes.primitiveRuntimeStateInvalid, message: `Primitive state kind mismatch for ${key}`, entityType: "primitive_runtime_state", entityId: key });
+      const result = evaluatePrimitive({ ...request, context, priorState: prior?.state ?? initialEventTerminationPrimitiveState() });
+      return { result, nextStateEntry: { primitiveId: "P30", state: result.nextState } };
+    }
   }
 };
 
@@ -324,6 +369,7 @@ export const runPeriod = (input: RunPeriodInput): CommittedPeriodResult => {
         primitiveId: item.request.primitiveId,
         output: result.output,
         effects: Object.freeze([...result.effects]),
+        ...(result.traceRefs === undefined ? {} : { traceRefs: result.traceRefs }),
       }));
       continue;
     }

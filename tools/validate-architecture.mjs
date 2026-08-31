@@ -16,7 +16,7 @@ const facadeFiles = new Set([
   "src/accounting.ts", "src/diagnostics.ts", "src/funding.ts", "src/identity.ts",
   "src/kernel.ts", "src/lineage.ts", "src/modelVersion.ts", "src/provenance.ts",
   "src/run.ts", "src/semantics.ts", "src/state.ts", "src/time.ts", "src/values.ts",
-  "src/version.ts", "src/verticalSlice1.ts",
+  "src/version.ts", "src/verticalSlice1.ts", "src/verticalSlice2.ts",
 ]);
 const unambiguousBrowserGlobals = new Set([
   "window", "HTMLElement", "HTMLInputElement", "localStorage", "navigator",
