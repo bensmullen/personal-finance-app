@@ -49,6 +49,7 @@ const input = (salaryGrowth = "0", inflation = "0"): VerticalSlice2Input => ({
   cashAccountId: ids.cash,
   expensePayableLiabilityId: ids.payable,
   baseCurrency: USD,
+  sameInstantCashFlowOrder: "income_before_expense",
   incomes: [{
     id: ids.salary,
     ownerId: ids.person,
@@ -163,6 +164,49 @@ describe("Vertical Slice 2 growing household cash flow", () => {
 
     const ambiguous = { ...base, expenses: base.expenses.map(({ settlementPriority: _settlementPriority, ...expense }) => expense), events: base.events.map((event) => event.id === ids.clubStart ? { ...event, effectiveAt: anchor } : event) };
     expect(runVerticalSlice2({ runContext: context(1), openingState: opening(), input: ambiguous, months: 1 }).status).toBe("incomplete");
+  });
+
+  it("uses explicit mixed ordering and actual expense chronology/priority", () => {
+    const base = input();
+
+    const incomeFirst = runVerticalSlice2({ runContext: context(1), openingState: opening(), input: { ...base, expenses: [base.expenses[0]!] }, months: 1 });
+    expect(incomeFirst.periods[0]!.expenseCashSettlement.equals(money("100"))).toBe(true);
+    expect(incomeFirst.periods[0]!.endingCash.equals(money("900"))).toBe(true);
+
+    const expenseFirst = runVerticalSlice2({ runContext: context(1), openingState: opening(), input: { ...base, sameInstantCashFlowOrder: "expense_before_income", expenses: [base.expenses[0]!] }, months: 1 });
+    expect(expenseFirst.periods[0]!.expenseCashSettlement.equals(money("0"))).toBe(true);
+    expect(expenseFirst.periods[0]!.outstandingExpenseObligations.equals(money("100"))).toBe(true);
+    expect(expenseFirst.periods[0]!.endingCash.equals(money("1000"))).toBe(true);
+
+    const missingMixedOrder = runVerticalSlice2({ runContext: context(1), openingState: opening(), input: { ...base, sameInstantCashFlowOrder: undefined, expenses: [base.expenses[0]!] }, months: 1 });
+    expect(missingMixedOrder.status).toBe("incomplete");
+
+    const clubSource = base.expenses[1]!;
+    const plainClub = {
+      ...clubSource,
+      baseMonthlyAmount: money("100"),
+      activationEventId: undefined,
+      terminationEventId: undefined,
+      primitiveIds: { indexGrowth: clubSource.primitiveIds.indexGrowth, inflationLink: clubSource.primitiveIds.inflationLink, recurrence: clubSource.primitiveIds.recurrence },
+    };
+    const jan5 = instant("2026-01-05T00:00:00.000Z");
+    const jan20 = instant("2026-01-20T00:00:00.000Z");
+    const earlyClub = { ...plainClub, recurrence: { kind: "utc_monthly" as const, anchor: jan5, invalidDayPolicy: "skip" as const }, inflationBaseAt: jan5 };
+    const lateRent = { ...base.expenses[0]!, recurrence: { kind: "utc_monthly" as const, anchor: jan20, invalidDayPolicy: "skip" as const }, inflationBaseAt: jan20 };
+    const chronological = runVerticalSlice2({ runContext: context(1), openingState: opening("100"), input: { ...base, sameInstantCashFlowOrder: undefined, incomes: [], expenses: [lateRent, earlyClub], events: [] }, months: 1 });
+    const chronologicalReversed = runVerticalSlice2({ runContext: context(1, "30000000-0000-4000-8000-000000000005"), openingState: opening("100"), input: { ...base, sameInstantCashFlowOrder: undefined, incomes: [], expenses: [earlyClub, lateRent], events: [] }, months: 1 });
+    expect(chronological.periods[0]!.settlements).toHaveLength(1);
+    expect(chronological.periods[0]!.settlements[0]!.id).toContain(ids.club);
+    expect(chronological.periods[0]!.outstandingExpenseObligations.equals(money("100"))).toBe(true);
+    expect(chronologicalReversed.periods[0]!.settlements.map((item) => item.id)).toEqual(chronological.periods[0]!.settlements.map((item) => item.id));
+
+    const sameInstantClub = { ...plainClub, settlementPriority: 5 };
+    const sameInstantRent = { ...base.expenses[0]!, settlementPriority: 10 };
+    const prioritized = runVerticalSlice2({ runContext: context(1), openingState: opening("100"), input: { ...base, sameInstantCashFlowOrder: undefined, incomes: [], expenses: [sameInstantRent, sameInstantClub], events: [] }, months: 1 });
+    const prioritizedReversed = runVerticalSlice2({ runContext: context(1, "30000000-0000-4000-8000-000000000006"), openingState: opening("100"), input: { ...base, sameInstantCashFlowOrder: undefined, incomes: [], expenses: [sameInstantClub, sameInstantRent], events: [] }, months: 1 });
+    expect(prioritized.periods[0]!.settlements).toHaveLength(1);
+    expect(prioritized.periods[0]!.settlements[0]!.id).toContain(ids.club);
+    expect(prioritizedReversed.periods[0]!.settlements.map((item) => item.id)).toEqual(prioritized.periods[0]!.settlements.map((item) => item.id));
   });
 
   it("accepts only monthly periodic rates while retaining exact effective-annual growth", () => {
