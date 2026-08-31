@@ -9,28 +9,24 @@ import {
   type LiabilityId,
   type PositionId,
 } from "../accounting/index.js";
-import { DependencyGraph } from "../dependencies/index.js";
 import { failValidation, issueCodes, type ValidationIssue } from "../diagnostics/index.js";
-import { isObservedFact } from "../model/provenance.js";
-import { createSemanticEffect, type SemanticEffect } from "../semantics/effect.js";
+import { type SemanticEffect } from "../semantics/effect.js";
 import {
-  applyAccountingTransactionAtomically,
   assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
-  registerAuthoritativeIdentity,
   type AuthoritativeState,
 } from "../state/index.js";
-import { deriveStatements, type Statements } from "../statements/index.js";
-import { type Instant, type Period, inPeriod, instant } from "../time/index.js";
+import { type Statements } from "../statements/index.js";
+import { type Instant, type Period, instant } from "../time/index.js";
 import { Money, Quantity } from "../values/index.js";
 import {
-  assertObservedFactWithinDataCutoff,
   assertRunContext,
   createInputFingerprint,
   createRunMetadata,
   type RunContext,
   type RunMetadata,
 } from "./run.js";
+import { runPeriod, type SemanticPeriodWork } from "./period.js";
 
 export type SimulationState = AuthoritativeState;
 
@@ -101,46 +97,26 @@ export class SemanticRunner {
         .sort((left, right) => left.id.localeCompare(right.id)),
     });
     const runMetadata = createRunMetadata(runContext, inputFingerprint);
-    const effects: SemanticEffect[] = [];
-    const transactions: AccountingTransaction[] = [];
-    const graph = new DependencyGraph();
-    for (const event of events) {
-      graph.addNode(event.id);
-      for (const dependency of event.dependsOn ?? []) graph.addEdge(dependency, event.id, event.lag ?? 0);
-    }
-    const byId = new Map(events.map((event) => [event.id, event]));
-    for (const id of graph.topologicalOrder()) {
-      const event = byId.get(id);
-      if (!event) throw new Error(`Unknown dependency node ${id}`);
-      if (!inPeriod(event.date, targetPeriod)) throw new Error(`Event ${event.id} is outside period`);
-      if (event.transaction.date !== event.date) throw new Error(`Transaction date mismatch for ${event.id}`);
-      const effect = createSemanticEffect(event.effect);
-      if (effect.provenance !== undefined) {
-        assertObservedFactWithinDataCutoff(effect.provenance, runContext);
-        if (isObservedFact(effect.provenance)) registerAuthoritativeIdentity(state.identities, "externalIdempotencyKeys", effect.provenance.idempotencyKey);
-      }
-      if (effect.sourceOccurrenceKey !== undefined) registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", effect.sourceOccurrenceKey);
-      if (effect.recognitionId !== undefined) registerAuthoritativeIdentity(state.identities, "recognitionIds", effect.recognitionId);
-      if (effect.settlementId !== undefined) registerAuthoritativeIdentity(state.identities, "settlementIds", effect.settlementId);
-      for (const leg of event.transaction.legs) {
-        if (!leg.amount.currency.equals(runContext.baseCurrency)) {
-          failValidation({ severity: "error", code: issueCodes.runBaseCurrencyMismatch, message: `Transaction ${event.transaction.id} leg uses ${leg.amount.currency.code} but run base currency is ${runContext.baseCurrency.code}`, entityType: "accounting_transaction", entityId: event.transaction.id, fieldPath: "legs.amount" });
-        }
-      }
-      effects.push(effect);
-      transactions.push(event.transaction);
-      applyAccountingTransactionAtomically(state, event.transaction);
-    }
+    const work: SemanticPeriodWork[] = events.map((event) => ({
+      kind: "semantic",
+      id: event.id,
+      at: event.date,
+      ...(event.dependsOn === undefined ? {} : { dependsOn: event.dependsOn }),
+      ...(event.lag === undefined ? {} : { lag: event.lag }),
+      effect: event.effect,
+      transaction: event.transaction,
+    }));
+    const committed = runPeriod({ period: targetPeriod, runContext, openingState: state, work });
     return Object.freeze({
       status: "completed",
       runMetadata,
       requestedHorizon: targetPeriod,
       reachedThrough: targetPeriod.end,
-      state,
-      effects: Object.freeze(effects),
-      transactions: Object.freeze(transactions),
-      statements: deriveStatements(state, transactions, runContext.baseCurrency),
-      diagnostics: Object.freeze([]),
+      state: committed.closingState,
+      effects: committed.effects,
+      transactions: committed.transactions,
+      statements: committed.statements,
+      diagnostics: committed.diagnostics,
     });
   }
 }
