@@ -543,6 +543,9 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
         if (expenses.length > 1 && (expenses.some((action) => action.priority === Number.MAX_SAFE_INTEGER) || new Set(expenses.map((action) => action.priority)).size !== expenses.length)) {
           invalidInput("Same-instant expense actions require distinct settlement priorities", "expenses");
         }
+        if (sameInstant.some((action) => action.kind === "income") && expenses.length > 0 && request.input.sameInstantCashFlowOrder === undefined) {
+          invalidInput("Same-instant income and expense actions require an explicit cash-flow order", "input.sameInstantCashFlowOrder");
+        }
       }
       const kindRank = (kind: CashFlowAction["kind"]): number => request.input.sameInstantCashFlowOrder === "expense_before_income"
         ? (kind === "expense" ? 0 : 1)
