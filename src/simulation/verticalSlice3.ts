@@ -9,7 +9,7 @@ import { applyPositionValuationAtomically, assertAuthoritativeStateCurrency, clo
 import { deriveStatements, type Statements } from "../statements/index.js";
 import { subtractMilliseconds, utcMonthDifference, utcMonthlyOccurrences, utcMonthlyPeriods, type Instant, type Period } from "../time/index.js";
 import { accountValueFromState, positionMarketValue, totalPositionMarketValue } from "../valuation/index.js";
-import { Money, Quantity, RoundingPolicy, type Currency, type Rate } from "../values/index.js";
+import { Money, Quantity, RateBasis, RoundingPolicy, type Currency, type Rate } from "../values/index.js";
 import { createPrimitiveRuntimeStateStore, runPeriod, type PeriodWork, type PrimitiveRuntimeStateStore } from "./period.js";
 import { createInputFingerprint, createRunMetadata, type RunContext, type RunMetadata } from "./run.js";
 import { executeVerticalSlice2PeriodCandidate, type VerticalSlice2Input, type VerticalSlice2PeriodResult, type VerticalSlice2RunInput } from "./verticalSlice2.js";
@@ -48,11 +48,20 @@ const generated = (request: VerticalSlice3RunInput, primitiveInstanceId: Primiti
 const transaction = (id: string, date: Instant, type: string, legs: readonly AccountingLegDraft[], refs: readonly CalculationTraceRef[]): AccountingTransaction => createAccountingTransaction({ id: accountingTransactionId(id), date, type, legs: legs.map((leg) => createAccountingLeg({ ...leg, traceRefs: leg.traceRefs ?? refs })), traceRefs: refs });
 const targets = (item: OwnedCashTransfer | InvestmentPurchase | InvestmentFee): readonly string[] => "sourceAccountId" in item ? [`account:${item.sourceAccountId}`, `account:${item.destinationAccountId}`] : "sourceCashAccountId" in item ? [`account:${item.sourceCashAccountId}`, `position:${item.targetPositionId}`] : [`account:${item.cashAccountId}`];
 
+const canonicalInputForFingerprint = (input: VerticalSlice3Input): unknown => {
+  const schedule = (value: InvestmentSchedule): InvestmentSchedule => value.kind === "explicit_instants"
+    ? Object.freeze({ ...value, instants: Object.freeze([...value.instants].sort()) })
+    : value;
+  const byId = <T extends { readonly id: string; readonly eligibilitySchedule: InvestmentSchedule }>(values: readonly T[]): readonly T[] => Object.freeze([...values].sort((left, right) => left.id.localeCompare(right.id)).map((value) => Object.freeze({ ...value, eligibilitySchedule: schedule(value.eligibilitySchedule) })));
+  return Object.freeze({ ...input, transfers: byId(input.transfers), purchases: byId(input.purchases), fees: byId(input.fees ?? []), returns: Object.freeze([...input.returns].sort((left, right) => left.targetPositionId.localeCompare(right.targetPositionId))) });
+};
+
 const validate = (request: VerticalSlice3RunInput, periods: readonly Period[]): void => {
   const { input, openingState, runContext } = request;
   if (!input.baseCurrency.equals(runContext.baseCurrency)) invalid("Slice currency must match run context", "input.baseCurrency");
   if (input.valuationAccountingPolicy !== "economic_only") invalid("Only economic_only valuation accounting is supported", "input.valuationAccountingPolicy");
   assertAuthoritativeStateCurrency(openingState, input.baseCurrency);
+  if (periods[0]!.start !== runContext.simulationStart || periods[periods.length - 1]!.end !== runContext.simulationEnd) invalid("Monthly periods must exactly cover the requested run horizon", "months");
   const ids = [...input.transfers.flatMap((x) => [x.id, x.schedulePrimitiveId]), ...input.purchases.flatMap((x) => [x.id, x.schedulePrimitiveId]), ...(input.fees ?? []).flatMap((x) => [x.id, x.schedulePrimitiveId]), ...input.returns.flatMap((x) => [x.primitiveIds.compounding, x.primitiveIds.markToMarket])];
   if (new Set(ids).size !== ids.length) invalid("Operation and primitive identities must be unique", "input");
   const owned = (id: AccountId, path: string): void => { const account = openingState.accounts[id]; if (account === undefined || account.ownerId !== input.ownerId) invalid(`Account ${id} must exist and belong to the configured owner`, path); };
@@ -71,12 +80,17 @@ const validate = (request: VerticalSlice3RunInput, periods: readonly Period[]): 
     if (configuredReturns.has(item.targetPositionId)) invalid("Each position requires one return configuration", "input.returns"); configuredReturns.add(item.targetPositionId);
     const position = openingState.positions[item.targetPositionId]; if (position === undefined || position.accountId !== item.accountId) invalid("Return target position/account is invalid", "input.returns"); owned(item.accountId, "input.returns.accountId");
     if (item.timing !== "end_of_period_on_opening_quantity") invalid("Returns must precede period-end purchases", "input.returns.timing");
-    if (item.returnBasis.kind === "periodic" && (item.returnBasis.period.unit !== "calendar_month" || item.returnBasis.period.count.toString() !== "1")) invalid("Monthly periodic return requires one calendar month", "input.returns.returnBasis");
-    if (item.returnBasis.kind === "effective_annual" && (item.returnBasis.yearFraction.numerator !== 1 || item.returnBasis.yearFraction.denominator !== 12)) invalid("Monthly effective annual return requires explicit 1/12", "input.returns.returnBasis");
-    if (item.returnBasis.kind === "nominal_annual" && (item.returnBasis.compoundingPeriods !== 1 || item.rate.convention.basis !== "nominal_annual" || item.rate.convention.compoundingPeriodsPerYear !== 12)) invalid("Monthly nominal annual return requires monthly contractual compounding", "input.returns.returnBasis");
+    if (item.returnBasis.kind === "periodic" && (item.rate.convention.basis !== RateBasis.Periodic || item.returnBasis.period.unit !== "calendar_month" || item.returnBasis.period.count.toString() !== "1" || item.rate.convention.period.unit !== item.returnBasis.period.unit || item.rate.convention.period.count.compare(item.returnBasis.period.count) !== 0)) invalid("Monthly periodic return must match a one-calendar-month periodic Rate", "input.returns.returnBasis");
+    if (item.returnBasis.kind === "effective_annual" && (item.rate.convention.basis !== RateBasis.EffectiveAnnual || item.returnBasis.yearFraction.numerator !== 1 || item.returnBasis.yearFraction.denominator !== 12)) invalid("Monthly effective annual return requires an effective annual Rate and explicit 1/12", "input.returns.returnBasis");
+    if (item.returnBasis.kind === "nominal_annual" && (item.rate.convention.basis !== RateBasis.NominalAnnual || item.returnBasis.compoundingPeriods !== 1 || item.rate.convention.compoundingPeriodsPerYear !== 12)) invalid("Monthly nominal annual return requires monthly contractual compounding", "input.returns.returnBasis");
   }
   for (const item of input.purchases) if (!configuredReturns.has(item.targetPositionId)) invalid("Purchased positions require return/valuation configuration", "input.purchases");
-  if (input.cashFlowInput !== undefined && (input.cashFlowInput.householdId !== input.householdId || input.cashFlowInput.ownerId !== input.ownerId || !input.cashFlowInput.baseCurrency.equals(input.baseCurrency))) invalid("VS2 configuration must match VS3 household, owner, and currency", "input.cashFlowInput");
+  if (input.cashFlowInput !== undefined) {
+    if (input.cashFlowInput.householdId !== input.householdId || input.cashFlowInput.ownerId !== input.ownerId || !input.cashFlowInput.baseCurrency.equals(input.baseCurrency)) invalid("VS2 configuration must match VS3 household, owner, and currency", "input.cashFlowInput");
+    const vs2Ids = new Set([input.cashFlowInput.cashAccountId, input.cashFlowInput.expensePayableLiabilityId, ...input.cashFlowInput.events.map((event) => event.id), ...input.cashFlowInput.incomes.flatMap((item) => [item.id, item.primitiveIds.growth, item.primitiveIds.recurrence, item.primitiveIds.activation, item.primitiveIds.termination]), ...input.cashFlowInput.expenses.flatMap((item) => [item.id, item.primitiveIds.indexGrowth, item.primitiveIds.inflationLink, item.primitiveIds.recurrence, item.primitiveIds.activation, item.primitiveIds.termination])].filter((id) => id !== undefined).map((id) => String(id)));
+    const vs3Ids = new Set<string>([...input.transfers.flatMap((item) => [item.id, item.schedulePrimitiveId]), ...input.purchases.flatMap((item) => [item.id, item.schedulePrimitiveId]), ...(input.fees ?? []).flatMap((item) => [item.id, item.schedulePrimitiveId]), ...input.returns.flatMap((item) => [item.primitiveIds.compounding, item.primitiveIds.markToMarket])]);
+    if ([...vs3Ids].some((id) => vs2Ids.has(id))) failValidation({ severity: "error", code: issueCodes.duplicateStableIdentity, message: "VS2 and VS3 stable identities must not collide", entityType: "vertical_slice_3", fieldPath: "input.cashFlowInput" });
+  }
   for (const period of periods) {
     const grouped = new Map<string, (typeof operations)[number][]>();
     for (const item of operations.filter((x) => selected(x.eligibilitySchedule, period).length === 1)) for (const target of targets(item)) grouped.set(target, [...(grouped.get(target) ?? []), item]);
@@ -100,7 +114,7 @@ const operations = (request: VerticalSlice3RunInput, period: Period, state: Auth
 
 export const runVerticalSlice3 = (request: VerticalSlice3RunInput): VerticalSlice3RunResult => {
   const months = request.months ?? utcMonthDifference(request.runContext.simulationStart, request.runContext.simulationEnd); const periods = utcMonthlyPeriods(request.runContext.simulationStart, months); validate(request, periods);
-  const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end }); const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({ runContext: request.runContext, openingState: request.openingState, model: { ...request.input, returns: request.input.returns.slice().sort((a, b) => a.targetPositionId.localeCompare(b.targetPositionId)) }, executionPlan: { months } }));
+  const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end }); const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({ runContext: request.runContext, openingState: request.openingState, model: canonicalInputForFingerprint(request.input), executionPlan: { months } }));
   let state = cloneAuthoritativeState(request.openingState); let primitiveState = createPrimitiveRuntimeStateStore(request.primitiveState); const committed: VerticalSlice3PeriodResult[] = []; const diagnostics: ValidationIssue[] = [];
   for (const period of periods) try {
     let candidateState = state; let candidatePrimitiveState = primitiveState; let cashFlowPeriod: VerticalSlice2PeriodResult | undefined;
