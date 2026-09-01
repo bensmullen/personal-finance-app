@@ -96,7 +96,7 @@ describe("Vertical Slice 3 semantic hardening", () => {
 
   it("canonicalizes all VS3 configuration arrays and explicit instants for the input fingerprint", () => {
     const transfers = [
-      { id: domainId("transfer", "54000000-0000-4000-8000-000000000021"), sourceAccountId: checking, destinationAccountId: savings, amount: money("10"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("21"), at("20")] }, executionTiming: "end_of_period" as const, order: 1, schedulePrimitiveId: primitive(30) },
+      { id: domainId("transfer", "54000000-0000-4000-8000-000000000021"), sourceAccountId: checking, destinationAccountId: savings, amount: money("10"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [instant("2026-02-20T00:00:00.000Z"), at("21")] }, executionTiming: "end_of_period" as const, order: 1, schedulePrimitiveId: primitive(30) },
       { id: domainId("transfer", "54000000-0000-4000-8000-000000000022"), sourceAccountId: brokerage, destinationAccountId: reserve, amount: money("10"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("22")] }, executionTiming: "end_of_period" as const, order: 1, schedulePrimitiveId: primitive(31) },
     ];
     const purchases = [
@@ -108,8 +108,8 @@ describe("Vertical Slice 3 semantic hardening", () => {
       { id: domainId("investment-fee", "54000000-0000-4000-8000-000000000026"), cashAccountId: brokerage, amount: money("1"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("26")] }, executionTiming: "end_of_period" as const, order: 3, schedulePrimitiveId: primitive(35) },
     ];
     const model = { ...base(), transfers, purchases, fees, returns: returns() };
-    const first = runVerticalSlice3({ runContext: context(), openingState: opening(), input: model });
-    const reversed = runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...model, transfers: [...transfers].reverse().map((item) => item.id === transfers[0]!.id ? { ...item, eligibilitySchedule: { ...item.eligibilitySchedule, instants: [...item.eligibilitySchedule.instants].reverse() } } : item), purchases: [...purchases].reverse(), fees: [...fees].reverse(), returns: [...model.returns].reverse() } });
+    const first = runVerticalSlice3({ runContext: context(2), openingState: opening(), input: model, months: 2 });
+    const reversed = runVerticalSlice3({ runContext: context(2), openingState: opening(), input: { ...model, transfers: [...transfers].reverse().map((item) => item.id === transfers[0]!.id ? { ...item, eligibilitySchedule: { ...item.eligibilitySchedule, instants: [...item.eligibilitySchedule.instants].reverse() } } : item), purchases: [...purchases].reverse(), fees: [...fees].reverse(), returns: [...model.returns].reverse() }, months: 2 });
     expect(first.status).toBe("completed");
     expect(reversed.status).toBe("completed");
     expect(first.runMetadata.inputFingerprint).toBe(reversed.runMetadata.inputFingerprint);
@@ -160,7 +160,8 @@ describe("Vertical Slice 3 semantic hardening", () => {
     expect(first.status).toBe("completed");
     const valuation = first.periods[0]!.effects.find((effect) => effect.kind === "valuation" && effect.sourceOccurrenceKey !== undefined)!;
     expect(valuation.provenance?.factKind).toBe("model_generated");
-    expect(valuation.sourceOccurrenceKey).toBe(valuation.provenance?.generatedOccurrenceKey);
+    if (valuation.provenance?.factKind !== "model_generated") throw new Error("Expected generated valuation provenance");
+    expect(valuation.sourceOccurrenceKey).toBe(valuation.provenance.generatedOccurrenceKey);
     expect(first.state.identities.generatedOccurrenceKeys).toContain(valuation.sourceOccurrenceKey);
     const replay = runVerticalSlice3({ runContext: context(), openingState: first.state, primitiveState: first.primitiveState, input: model });
     expect(replay.status).toBe("incomplete");
