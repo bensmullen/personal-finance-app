@@ -62,6 +62,14 @@ describe("P23 compounding", () => {
     const first = evaluatePrimitive({ primitiveId: "P23", input: { baseValue: money("100"), rate: monthly }, parameters: { returnBasis: { kind: "periodic", period: ratePeriod("1", "calendar_month") }, cashFlowTiming: "end_of_period", postingRounding: rounding }, priorState: initialCompoundingPrimitiveState(), context: context() });
     expect(() => evaluatePrimitive({ primitiveId: "P23", input: { baseValue: money("100"), rate: monthly }, parameters: { returnBasis: { kind: "periodic", period: ratePeriod("1", "calendar_month") }, cashFlowTiming: "end_of_period", postingRounding: rounding }, priorState: first.nextState, context: context() })).toThrow(/continue/);
   });
+
+  it("allows an exact total loss but rejects a return below negative one hundred percent", () => {
+    const totalLoss = Rate.fromDecimal("-1", rateConvention.periodic(ratePeriod("1", "calendar_month")));
+    const zero = evaluatePrimitive({ primitiveId: "P23", input: { baseValue: money("100"), rate: totalLoss }, parameters: { returnBasis: { kind: "periodic", period: ratePeriod("1", "calendar_month") }, cashFlowTiming: "end_of_period", postingRounding: rounding }, priorState: initialCompoundingPrimitiveState(), context: context() });
+    expect(zero.output.closingValue.equals(money("0"))).toBe(true);
+    const belowLoss = Rate.fromDecimal("-1.01", rateConvention.periodic(ratePeriod("1", "calendar_month")));
+    expect(() => evaluatePrimitive({ primitiveId: "P23", input: { baseValue: money("100"), rate: belowLoss }, parameters: { returnBasis: { kind: "periodic", period: ratePeriod("1", "calendar_month") }, cashFlowTiming: "end_of_period", postingRounding: rounding }, priorState: initialCompoundingPrimitiveState(), context: context() })).toThrow(/less than/);
+  });
 });
 
 describe("P26 mark_to_market", () => {
