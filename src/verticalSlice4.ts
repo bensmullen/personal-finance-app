@@ -1,1 +1,1 @@
-m«ëˆ§½©buªàºg§¶ÊÜþ÷«¶'•)bqî-±KæÚ±î¸„7[žé¢Šwâ•ê(º×â•èazZ]ŠÊek+aŠÉž²Æ x7]yÊy×œ¡×¬Šznµ¶ëy©­æ¤zw(uçl¶¸§‚)í¢{¦r«iË^®X§zÈ¢ž›­Šznµø¥y×Ÿjém~ŠìµØ§¢‹­¦ëhºÚnµø¥y×Ÿjém~ŠìµÚ.
+export * from "./simulation/verticalSlice4.js";
