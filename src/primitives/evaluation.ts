@@ -412,8 +412,8 @@ export const effectiveCompoundingPeriodReturn = (rate: Rate, basis: CompoundingR
       if (!Number.isSafeInteger(numerator) || numerator < 0 || !Number.isSafeInteger(denominator) || denominator <= 0) {
         return invalid(issueCodes.primitiveParametersInvalid, "P23 year fraction must use a non-negative integer numerator and positive integer denominator", "P23", "parameters.returnBasis.yearFraction");
       }
-      if (!decimal("1").plus(rate.value).isPositive()) {
-        return invalid(issueCodes.primitiveInputInvalid, "P23 effective annual rate must be greater than -100%", "P23", "input.rate");
+      if (decimal("1").plus(rate.value).isNegative()) {
+        return invalid(issueCodes.primitiveInputInvalid, "P23 effective annual rate must not be less than -100%", "P23", "input.rate");
       }
       const factor = decimalNthRoot(decimal("1").plus(rate.value).pow(numerator), denominator, basis.calculationRounding);
       return factor.minus(decimal("1"));
@@ -426,8 +426,8 @@ export const effectiveCompoundingPeriodReturn = (rate: Rate, basis: CompoundingR
         return invalid(issueCodes.primitiveParametersInvalid, "P23 nominal period count must be a positive integer", "P23", "parameters.returnBasis.compoundingPeriods");
       }
       const periodic = rate.value.dividedBy(decimal(rate.convention.compoundingPeriodsPerYear.toString()), basis.divisionRounding);
-      if (!decimal("1").plus(periodic).isPositive()) {
-        return invalid(issueCodes.primitiveInputInvalid, "P23 nominal periodic factor must be positive", "P23", "input.rate");
+      if (decimal("1").plus(periodic).isNegative()) {
+        return invalid(issueCodes.primitiveInputInvalid, "P23 nominal periodic factor must not be negative", "P23", "input.rate");
       }
       return decimal("1").plus(periodic).pow(basis.compoundingPeriods).minus(decimal("1"));
     }
@@ -457,8 +457,8 @@ const compoundingEvaluation = (request: Extract<ImplementedPrimitiveEvaluationRe
     invalid(issueCodes.primitiveStateInvalid, "P23 base value must continue from the prior closing value", "P23", "input.baseValue");
   }
   const effectivePeriodReturn = effectiveCompoundingPeriodReturn(request.input.rate, request.parameters.returnBasis);
-  if (!decimal("1").plus(effectivePeriodReturn).isPositive()) {
-    invalid(issueCodes.primitiveInputInvalid, "P23 effective return must be greater than -100%", "P23", "input.rate");
+  if (decimal("1").plus(effectivePeriodReturn).isNegative()) {
+    invalid(issueCodes.primitiveInputInvalid, "P23 effective return must not be less than -100%", "P23", "input.rate");
   }
   const beginningFlow = contribution.minus(withdrawal);
   const returnBase = request.parameters.cashFlowTiming === "beginning_of_period" ? baseValue.plus(beginningFlow) : baseValue;
