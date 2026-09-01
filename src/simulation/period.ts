@@ -15,6 +15,8 @@ import {
   initialEventModificationPrimitiveState,
   initialEventTerminationPrimitiveState,
   initialEventTriggerPrimitiveState,
+  initialCompoundingPrimitiveState,
+  initialMarkToMarketPrimitiveState,
   initialOneTimePrimitiveState,
   primitiveEvaluationContext,
   type ImplementedPrimitiveEvaluationRequest,
@@ -22,6 +24,8 @@ import {
   type EventModificationPrimitiveState,
   type EventTerminationPrimitiveState,
   type EventTriggerPrimitiveState,
+  type CompoundingPrimitiveState,
+  type MarkToMarketPrimitiveState,
   type PrimitiveEvaluationContext,
 } from "../primitives/index.js";
 import { createSemanticEffect, type SemanticEffect } from "../semantics/effect.js";
@@ -35,6 +39,7 @@ import {
 } from "../state/index.js";
 import { deriveStatements, type Statements } from "../statements/index.js";
 import { inPeriod, type Instant, type Period } from "../time/index.js";
+import { Money } from "../values/index.js";
 import type { RunContext } from "./run.js";
 import { assertObservedFactWithinDataCutoff, assertRunContext } from "./run.js";
 
@@ -48,6 +53,8 @@ export type PeriodPrimitiveRequest = BindPrimitiveRuntime<ImplementedPrimitiveEv
 
 export type PrimitiveRuntimeStateEntry =
   | { readonly primitiveId: "P02"; readonly state: OneTimePrimitiveState }
+  | { readonly primitiveId: "P23"; readonly state: CompoundingPrimitiveState }
+  | { readonly primitiveId: "P26"; readonly state: MarkToMarketPrimitiveState }
   | { readonly primitiveId: "P27"; readonly state: EventTriggerPrimitiveState }
   | { readonly primitiveId: "P29"; readonly state: EventModificationPrimitiveState }
   | { readonly primitiveId: "P30"; readonly state: EventTerminationPrimitiveState };
@@ -62,6 +69,12 @@ export const createPrimitiveRuntimeStateStore = (
       switch (entry.primitiveId) {
         case "P02": return (entry.state.executed === true || entry.state.executed === false)
           && entry.state.executed === (entry.state.occurrenceId !== undefined);
+        case "P23": return Number.isSafeInteger(entry.state.evaluations) && entry.state.evaluations >= 0
+          && (entry.state.evaluations === 0) === (entry.state.lastClosingValue === undefined)
+          && (entry.state.lastClosingValue === undefined || (entry.state.lastClosingValue instanceof Money && !entry.state.lastClosingValue.isNegative()));
+        case "P26": return Number.isSafeInteger(entry.state.evaluations) && entry.state.evaluations >= 0
+          && (entry.state.evaluations === 0) === (entry.state.lastMarketValue === undefined)
+          && (entry.state.lastMarketValue === undefined || (entry.state.lastMarketValue instanceof Money && !entry.state.lastMarketValue.isNegative()));
         case "P27": return (entry.state.activated === true || entry.state.activated === false)
           && entry.state.activated === (entry.state.occurrenceId !== undefined);
         case "P29": return (entry.state.applied === true || entry.state.applied === false)
@@ -91,6 +104,7 @@ export const assertPrimitiveRuntimeStateConsistent = (
   financialState: AuthoritativeState,
 ): void => {
   for (const [key, entry] of Object.entries(store)) {
+    if (entry.primitiveId === "P23" || entry.primitiveId === "P26") continue;
     const occurrenceIds = entry.primitiveId === "P29"
       ? [entry.state.applicationOccurrenceId, entry.state.reversionOccurrenceId].filter((value): value is GeneratedOccurrenceKey => value !== undefined)
       : [entry.state.occurrenceId].filter((value): value is GeneratedOccurrenceKey => value !== undefined);
@@ -298,6 +312,20 @@ const evaluatePeriodPrimitive = (
     case "P08": return { result: evaluatePrimitive({ ...request, context, priorState: null }) };
     case "P13": return { result: evaluatePrimitive({ ...request, context, priorState: null }) };
     case "P20": return { result: evaluatePrimitive({ ...request, context, priorState: null }) };
+    case "P23": {
+      const key = context.primitiveInstanceId;
+      const prior = state[key];
+      if (prior !== undefined && prior.primitiveId !== "P23") return failValidation({ severity: "error", code: issueCodes.primitiveRuntimeStateInvalid, message: `Primitive state kind mismatch for ${key}`, entityType: "primitive_runtime_state", entityId: key });
+      const result = evaluatePrimitive({ ...request, context, priorState: prior?.state ?? initialCompoundingPrimitiveState() });
+      return { result, nextStateEntry: { primitiveId: "P23", state: result.nextState } };
+    }
+    case "P26": {
+      const key = context.primitiveInstanceId;
+      const prior = state[key];
+      if (prior !== undefined && prior.primitiveId !== "P26") return failValidation({ severity: "error", code: issueCodes.primitiveRuntimeStateInvalid, message: `Primitive state kind mismatch for ${key}`, entityType: "primitive_runtime_state", entityId: key });
+      const result = evaluatePrimitive({ ...request, context, priorState: prior?.state ?? initialMarkToMarketPrimitiveState() });
+      return { result, nextStateEntry: { primitiveId: "P26", state: result.nextState } };
+    }
     case "P27": {
       const key = context.primitiveInstanceId;
       const prior = state[key];

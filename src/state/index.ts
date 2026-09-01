@@ -203,7 +203,7 @@ export const validateAuthoritativeState = (state: AuthoritativeState, transactio
     }
   }
   for (const position of Object.values(state.positions)) {
-    if (position.quantity.isNegative() || position.carryingValue.isNegative()) {
+    if (position.quantity.isNegative() || position.price.isNegative() || position.carryingValue.isNegative()) {
       failValidation({
         severity: "error",
         code: issueCodes.negativePositionInvariant,
@@ -271,6 +271,28 @@ const commitCandidate = (target: AuthoritativeState, candidate: AuthoritativeSta
   target.liabilities = candidate.liabilities;
   target.obligations = candidate.obligations;
   target.identities = candidate.identities;
+};
+
+/** Commits a non-cash position price observation through the same isolated-state boundary as postings. */
+export const applyPositionPriceAtomically = (
+  state: AuthoritativeState,
+  positionId: PositionId,
+  price: Money,
+): void => {
+  const candidate = cloneAuthoritativeState(state);
+  const position = candidate.positions[positionId];
+  if (position === undefined) {
+    failValidation({ severity: "error", code: issueCodes.stateTargetNotFound, message: `Unknown position ${positionId} in valuation`, entityType: "position", entityId: positionId });
+  }
+  if (price.isNegative()) {
+    failValidation({ severity: "error", code: issueCodes.negativePositionInvariant, message: `Valuation creates a negative price in ${positionId}`, entityType: "position", entityId: positionId, fieldPath: "price" });
+  }
+  if (!price.currency.equals(position.price.currency)) {
+    failValidation({ severity: "error", code: issueCodes.runBaseCurrencyMismatch, message: `Valuation currency ${price.currency.code} does not match position ${positionId}`, entityType: "position", entityId: positionId, fieldPath: "price" });
+  }
+  candidate.positions[positionId] = { ...position, price };
+  validateAuthoritativeState(candidate);
+  commitCandidate(state, candidate);
 };
 
 /** Applies a complete accounting transaction to isolated candidate state and commits only after all invariants pass. */

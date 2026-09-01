@@ -20,10 +20,13 @@ import {
   Quantity,
   RateBasis,
   RoundingPolicy,
+  type Currency,
   decimal,
   decimalNthRoot,
   type Rate,
   type Ratio,
+  type RatePeriod,
+  type Unit,
 } from "../values/index.js";
 import {
   requireImplementedPrimitive,
@@ -55,7 +58,7 @@ const invalid = (
   ...(fieldPath === undefined ? {} : { fieldPath }),
 });
 
-const evaluation = <Id extends "P01" | "P02" | "P03" | "P04" | "P05" | "P06" | "P08" | "P13" | "P20" | "P27" | "P29" | "P30", Output, State, Effect>(
+const evaluation = <Id extends "P01" | "P02" | "P03" | "P04" | "P05" | "P06" | "P08" | "P13" | "P20" | "P23" | "P26" | "P27" | "P29" | "P30", Output, State, Effect>(
   primitiveId: Id,
   output: Output,
   nextState: State,
@@ -172,6 +175,30 @@ export const initialEventTriggerPrimitiveState = (): EventTriggerPrimitiveState 
 export const initialEventModificationPrimitiveState = (): EventModificationPrimitiveState => Object.freeze({ applied: false, reverted: false });
 export const initialEventTerminationPrimitiveState = (): EventTerminationPrimitiveState => Object.freeze({ terminated: false });
 
+export interface CompoundingPrimitiveState {
+  readonly evaluations: number;
+  readonly lastClosingValue?: Money;
+  readonly executed?: never;
+  readonly occurrenceId?: never;
+}
+
+export interface MarkToMarketPrimitiveState {
+  readonly evaluations: number;
+  readonly lastMarketValue?: Money;
+  readonly executed?: never;
+  readonly occurrenceId?: never;
+}
+
+export const initialCompoundingPrimitiveState = (): CompoundingPrimitiveState => Object.freeze({ evaluations: 0 });
+export const initialMarkToMarketPrimitiveState = (): MarkToMarketPrimitiveState => Object.freeze({ evaluations: 0 });
+
+export type CompoundingReturnBasis =
+  | { readonly kind: "periodic"; readonly period: RatePeriod }
+  | { readonly kind: "effective_annual"; readonly yearFraction: { readonly numerator: number; readonly denominator: number }; readonly calculationRounding: RoundingPolicy }
+  | { readonly kind: "nominal_annual"; readonly compoundingPeriods: number; readonly divisionRounding: RoundingPolicy };
+
+export type CompoundingCashFlowTiming = "beginning_of_period" | "end_of_period";
+
 export interface PrimitiveEventOccurrence {
   readonly occurrenceId: GeneratedOccurrenceKey;
   readonly scheduledAt: Instant;
@@ -217,6 +244,8 @@ export type ImplementedPrimitiveEvaluationRequest =
   | { readonly primitiveId: "P08"; readonly input: { readonly initial: PrimitiveFlowValue; readonly rate: Rate }; readonly parameters: { readonly category: GrowthCategory; readonly timeBasis: GrowthTimeBasis }; readonly priorState: null; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P13"; readonly input: { readonly baseValue: PrimitiveFlowValue; readonly baseIndex: DecimalAmount; readonly currentIndex: DecimalAmount }; readonly parameters: { readonly baseDate: CivilDate; readonly indexIdentity: string; readonly divisionRounding: RoundingPolicy }; readonly priorState: null; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P20"; readonly input: { readonly taxableBase: Money; readonly resolvedRule: ResolvedProportionalTaxRule }; readonly priorState: null; readonly context: PrimitiveEvaluationContext }
+  | { readonly primitiveId: "P23"; readonly input: { readonly baseValue: Money; readonly rate: Rate; readonly contribution?: Money; readonly withdrawal?: Money }; readonly parameters: { readonly returnBasis: CompoundingReturnBasis; readonly cashFlowTiming: CompoundingCashFlowTiming; readonly postingRounding: RoundingPolicy }; readonly priorState: CompoundingPrimitiveState; readonly context: PrimitiveEvaluationContext }
+  | { readonly primitiveId: "P26"; readonly input: { readonly quantity: Quantity; readonly price: Money }; readonly parameters: { readonly expectedUnit: Unit; readonly expectedCurrency: Currency }; readonly priorState: MarkToMarketPrimitiveState; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P27"; readonly input: { readonly eventId: DomainId<"event"> }; readonly parameters: { readonly effectiveAt: Instant; readonly targetId: string }; readonly priorState: EventTriggerPrimitiveState; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P29"; readonly input: { readonly base: PrimitiveFlowValue; readonly replacement: PrimitiveFlowValue; readonly eventId: DomainId<"event"> }; readonly parameters: { readonly targetId: string; readonly effectiveAt: Instant; readonly precedence: number; readonly endAt?: Instant; readonly provenance: FactProvenance }; readonly priorState: EventModificationPrimitiveState; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P30"; readonly input: { readonly base: PrimitiveFlowValue; readonly eventId: DomainId<"event"> }; readonly parameters: { readonly targetId: string; readonly terminationAt: Instant }; readonly priorState: EventTerminationPrimitiveState; readonly context: PrimitiveEvaluationContext };
@@ -362,6 +391,92 @@ const taxDependentEvaluation = (request: Extract<ImplementedPrimitiveEvaluationR
     }
   })();
   return evaluation("P20", Object.freeze({ tax, ruleId: resolvedRule.id }), null, frozenEmpty, request.context.traceRefs);
+};
+
+const sameRatePeriod = (left: RatePeriod, right: RatePeriod): boolean =>
+  left.unit === right.unit && left.count.equals(right.count);
+
+/** Converts only the explicitly selected deterministic rate convention into an effective period return. */
+export const effectiveCompoundingPeriodReturn = (rate: Rate, basis: CompoundingReturnBasis): DecimalAmount => {
+  switch (basis.kind) {
+    case "periodic":
+      if (rate.convention.basis !== RateBasis.Periodic || !sameRatePeriod(rate.convention.period, basis.period)) {
+        return invalid(issueCodes.primitiveParametersInvalid, "P23 periodic return basis must exactly match the Rate period", "P23", "parameters.returnBasis");
+      }
+      return rate.value;
+    case "effective_annual": {
+      if (rate.convention.basis !== RateBasis.EffectiveAnnual) {
+        return invalid(issueCodes.primitiveParametersInvalid, "P23 effective-annual conversion requires an effective annual Rate", "P23", "input.rate.convention");
+      }
+      const { numerator, denominator } = basis.yearFraction;
+      if (!Number.isSafeInteger(numerator) || numerator < 0 || !Number.isSafeInteger(denominator) || denominator <= 0) {
+        return invalid(issueCodes.primitiveParametersInvalid, "P23 year fraction must use a non-negative integer numerator and positive integer denominator", "P23", "parameters.returnBasis.yearFraction");
+      }
+      if (!decimal("1").plus(rate.value).isPositive()) {
+        return invalid(issueCodes.primitiveInputInvalid, "P23 effective annual rate must be greater than -100%", "P23", "input.rate");
+      }
+      const factor = decimalNthRoot(decimal("1").plus(rate.value).pow(numerator), denominator, basis.calculationRounding);
+      return factor.minus(decimal("1"));
+    }
+    case "nominal_annual": {
+      if (rate.convention.basis !== RateBasis.NominalAnnual) {
+        return invalid(issueCodes.primitiveParametersInvalid, "P23 nominal conversion requires a nominal annual Rate", "P23", "input.rate.convention");
+      }
+      if (!Number.isSafeInteger(basis.compoundingPeriods) || basis.compoundingPeriods <= 0) {
+        return invalid(issueCodes.primitiveParametersInvalid, "P23 nominal period count must be a positive integer", "P23", "parameters.returnBasis.compoundingPeriods");
+      }
+      const periodic = rate.value.dividedBy(decimal(rate.convention.compoundingPeriodsPerYear.toString()), basis.divisionRounding);
+      if (!decimal("1").plus(periodic).isPositive()) {
+        return invalid(issueCodes.primitiveInputInvalid, "P23 nominal periodic factor must be positive", "P23", "input.rate");
+      }
+      return decimal("1").plus(periodic).pow(basis.compoundingPeriods).minus(decimal("1"));
+    }
+  }
+};
+
+const assertMoneyCurrency = (value: Money, expected: Money, fieldPath: string): void => {
+  if (!value.currency.equals(expected.currency)) invalid(issueCodes.primitiveInputInvalid, "P23 cash flows must use the base-value currency", "P23", fieldPath);
+  if (value.isNegative()) invalid(issueCodes.primitiveInputInvalid, "P23 cash flows cannot be negative magnitudes", "P23", fieldPath);
+};
+
+const compoundingEvaluation = (request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P23" }>) => {
+  const { baseValue } = request.input;
+  if (baseValue.isNegative()) invalid(issueCodes.primitiveInputInvalid, "P23 base value cannot be negative", "P23", "input.baseValue");
+  const contribution = request.input.contribution ?? Money.zero(baseValue.currency);
+  const withdrawal = request.input.withdrawal ?? Money.zero(baseValue.currency);
+  assertMoneyCurrency(contribution, baseValue, "input.contribution");
+  assertMoneyCurrency(withdrawal, baseValue, "input.withdrawal");
+  if (!Number.isSafeInteger(request.priorState.evaluations) || request.priorState.evaluations < 0
+    || (request.priorState.evaluations === 0) !== (request.priorState.lastClosingValue === undefined)
+    || (request.priorState.lastClosingValue !== undefined && (!(request.priorState.lastClosingValue instanceof Money) || request.priorState.lastClosingValue.isNegative()))) {
+    invalid(issueCodes.primitiveStateInvalid, "P23 state requires a non-negative evaluation count", "P23", "priorState.evaluations");
+  }
+  const effectivePeriodReturn = effectiveCompoundingPeriodReturn(request.input.rate, request.parameters.returnBasis);
+  if (!decimal("1").plus(effectivePeriodReturn).isPositive()) {
+    invalid(issueCodes.primitiveInputInvalid, "P23 effective return must be greater than -100%", "P23", "input.rate");
+  }
+  const beginningFlow = contribution.minus(withdrawal);
+  const returnBase = request.parameters.cashFlowTiming === "beginning_of_period" ? baseValue.plus(beginningFlow) : baseValue;
+  if (returnBase.isNegative()) invalid(issueCodes.primitiveInputInvalid, "P23 beginning-of-period withdrawal exceeds available value", "P23", "input.withdrawal");
+  const returnAmount = returnBase.times(effectivePeriodReturn).round(request.parameters.postingRounding);
+  const closingValue = (request.parameters.cashFlowTiming === "beginning_of_period"
+    ? returnBase.plus(returnAmount)
+    : baseValue.plus(returnAmount).plus(beginningFlow)).round(request.parameters.postingRounding);
+  if (closingValue.isNegative()) invalid(issueCodes.primitiveInputInvalid, "P23 withdrawal creates a negative closing value", "P23", "input.withdrawal");
+  const nextState: CompoundingPrimitiveState = Object.freeze({ evaluations: request.priorState.evaluations + 1, lastClosingValue: closingValue });
+  return evaluation("P23", Object.freeze({ baseValue, contribution, withdrawal, cashFlowTiming: request.parameters.cashFlowTiming, effectivePeriodReturn, returnAmount, closingValue }), nextState, frozenEmpty, request.context.traceRefs);
+};
+
+const markToMarketEvaluation = (request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P26" }>) => {
+  if (!request.input.quantity.unit.equals(request.parameters.expectedUnit)) invalid(issueCodes.primitiveInputInvalid, "P26 quantity unit does not match the declared unit", "P26", "input.quantity.unit");
+  if (!request.input.price.currency.equals(request.parameters.expectedCurrency)) invalid(issueCodes.primitiveInputInvalid, "P26 price currency does not match the declared currency", "P26", "input.price.currency");
+  if (request.input.quantity.isNegative() || request.input.price.isNegative()) invalid(issueCodes.primitiveInputInvalid, "P26 quantity and price cannot be negative", "P26", "input");
+  if (!Number.isSafeInteger(request.priorState.evaluations) || request.priorState.evaluations < 0
+    || (request.priorState.evaluations === 0) !== (request.priorState.lastMarketValue === undefined)
+    || (request.priorState.lastMarketValue !== undefined && (!(request.priorState.lastMarketValue instanceof Money) || request.priorState.lastMarketValue.isNegative()))) invalid(issueCodes.primitiveStateInvalid, "P26 state requires a consistent non-negative valuation history", "P26", "priorState");
+  const marketValue = request.input.price.times(request.input.quantity.amount);
+  const nextState: MarkToMarketPrimitiveState = Object.freeze({ evaluations: request.priorState.evaluations + 1, lastMarketValue: marketValue });
+  return evaluation("P26", Object.freeze({ quantity: request.input.quantity, price: request.input.price, marketValue }), nextState, frozenEmpty, request.context.traceRefs);
 };
 
 const eventOccurrence = (
@@ -534,12 +649,14 @@ export function evaluatePrimitive<T extends PrimitiveFlowValue>(request: {
   readonly baseIndex: DecimalAmount; readonly currentIndex: DecimalAmount;
 }>, null>;
 export function evaluatePrimitive(request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P20" }>): ReturnType<typeof taxDependentEvaluation>;
+export function evaluatePrimitive(request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P23" }>): ReturnType<typeof compoundingEvaluation>;
+export function evaluatePrimitive(request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P26" }>): ReturnType<typeof markToMarketEvaluation>;
 export function evaluatePrimitive(request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P27" }>): ReturnType<typeof eventTriggerEvaluation>;
 export function evaluatePrimitive(request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P29" }>): ReturnType<typeof eventModificationEvaluation>;
 export function evaluatePrimitive(request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P30" }>): ReturnType<typeof eventTerminationEvaluation>;
 export function evaluatePrimitive(request: { readonly primitiveId: RegisteredOnlyPrimitiveId }): never;
 export function evaluatePrimitive(request: PrimitiveEvaluationRequest): PrimitiveEvaluation<
-  "P01" | "P02" | "P03" | "P04" | "P05" | "P06" | "P08" | "P13" | "P20" | "P27" | "P29" | "P30",
+  "P01" | "P02" | "P03" | "P04" | "P05" | "P06" | "P08" | "P13" | "P20" | "P23" | "P26" | "P27" | "P29" | "P30",
   unknown,
   unknown,
   unknown
@@ -555,6 +672,8 @@ export function evaluatePrimitive(request: PrimitiveEvaluationRequest): Primitiv
     case "P08": return geometricGrowthEvaluation(request);
     case "P13": return inflationLinkedEvaluation(request);
     case "P20": return taxDependentEvaluation(request);
+    case "P23": return compoundingEvaluation(request);
+    case "P26": return markToMarketEvaluation(request);
     case "P27": return eventTriggerEvaluation(request);
     case "P29": return eventModificationEvaluation(request);
     case "P30": return eventTerminationEvaluation(request);
