@@ -273,24 +273,24 @@ const commitCandidate = (target: AuthoritativeState, candidate: AuthoritativeSta
   target.identities = candidate.identities;
 };
 
-/** Commits a non-cash position price observation through the same isolated-state boundary as postings. */
-export const applyPositionPriceAtomically = (
+/** Commits a non-cash valuation and its generated occurrence identity atomically. */
+export const applyPositionValuationAtomically = (
   state: AuthoritativeState,
-  positionId: PositionId,
-  price: Money,
+  input: { readonly positionId: PositionId; readonly price: Money; readonly generatedOccurrenceKey: GeneratedOccurrenceKey },
 ): void => {
   const candidate = cloneAuthoritativeState(state);
-  const position = candidate.positions[positionId];
+  const position = candidate.positions[input.positionId];
   if (position === undefined) {
-    failValidation({ severity: "error", code: issueCodes.stateTargetNotFound, message: `Unknown position ${positionId} in valuation`, entityType: "position", entityId: positionId });
+    failValidation({ severity: "error", code: issueCodes.stateTargetNotFound, message: `Unknown position ${input.positionId} in valuation`, entityType: "position", entityId: input.positionId });
   }
-  if (price.isNegative()) {
-    failValidation({ severity: "error", code: issueCodes.negativePositionInvariant, message: `Valuation creates a negative price in ${positionId}`, entityType: "position", entityId: positionId, fieldPath: "price" });
+  if (input.price.isNegative()) {
+    failValidation({ severity: "error", code: issueCodes.negativePositionInvariant, message: `Valuation creates a negative price in ${input.positionId}`, entityType: "position", entityId: input.positionId, fieldPath: "price" });
   }
-  if (!price.currency.equals(position.price.currency)) {
-    failValidation({ severity: "error", code: issueCodes.runBaseCurrencyMismatch, message: `Valuation currency ${price.currency.code} does not match position ${positionId}`, entityType: "position", entityId: positionId, fieldPath: "price" });
+  if (!input.price.currency.equals(position.price.currency)) {
+    failValidation({ severity: "error", code: issueCodes.runBaseCurrencyMismatch, message: `Valuation currency ${input.price.currency.code} does not match position ${input.positionId}`, entityType: "position", entityId: input.positionId, fieldPath: "price" });
   }
-  candidate.positions[positionId] = { ...position, price };
+  registerAuthoritativeIdentity(candidate.identities, "generatedOccurrenceKeys", input.generatedOccurrenceKey);
+  candidate.positions[input.positionId] = { ...position, price: input.price };
   validateAuthoritativeState(candidate);
   commitCandidate(state, candidate);
 };
