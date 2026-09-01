@@ -400,7 +400,7 @@ export async function validateRepository(root = defaultRoot) {
       .map((entry) => entry.id)
       .filter((id) => typeof id === "string")
       .sort();
-    const expectedImplemented = ["P01", "P02", "P03", "P04", "P05", "P06", "P08", "P13", "P20", "P27", "P29", "P30"];
+    const expectedImplemented = ["P01", "P02", "P03", "P04", "P05", "P06", "P08", "P13", "P20", "P23", "P26", "P27", "P29", "P30"];
     if (!sameStrings(implemented, expectedImplemented)) {
       addError(`runtime implemented primitive identities must be ${expectedImplemented.join(", ")}; found ${implemented.join(", ") || "none"}`);
     }

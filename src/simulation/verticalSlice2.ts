@@ -116,7 +116,7 @@ export interface RecurringExpenseStream extends MonthlyStreamBase<ExpenseId> {
   readonly paymentAccountId: AccountId;
   readonly payableLiabilityId: LiabilityId;
   readonly fundingPolicy: FundingPolicy;
-  /** Lower values settle first when expense occurrences share an instant. */
+  /** Required to break same-instant expense settlement competition deterministically. */
   readonly settlementPriority?: number;
   readonly inflationRate: Rate;
   readonly inflationBaseAt: Instant;
@@ -135,11 +135,11 @@ export interface VerticalSlice2Input {
   readonly cashAccountId: AccountId;
   readonly expensePayableLiabilityId: LiabilityId;
   readonly baseCurrency: Currency;
-  /** Explicitly resolves mixed income/expense occurrences at the same instant. */
-  readonly sameInstantCashFlowOrder?: "income_before_expense" | "expense_before_income";
   readonly incomes: readonly RecurringIncomeStream[];
   readonly expenses: readonly RecurringExpenseStream[];
   readonly events: readonly ScheduledCashFlowEvent[];
+  /** Required when income and expense compete at the same occurrence instant. */
+  readonly sameInstantCashFlowOrder?: "income_before_expense" | "expense_before_income";
 }
 
 export interface VerticalSlice2RunInput {
@@ -233,17 +233,19 @@ const allStableIds = (input: VerticalSlice2Input): readonly string[] => [
   ...input.expenses.flatMap((stream) => [stream.id, ...Object.values(stream.primitiveIds).filter((id): id is PrimitiveInstanceId => id !== undefined)]),
 ];
 
-const validateInput = (request: VerticalSlice2RunInput, periods: readonly Period[]): void => {
+const validateInput = (request: VerticalSlice2RunInput, periods: readonly Period[], allowPartialHorizon = false): void => {
   const { input, openingState, runContext } = request;
   assertRunContext(runContext);
   if (!input.baseCurrency.equals(runContext.baseCurrency)) invalidInput("Slice base currency must match the run context", "input.baseCurrency");
+  if (input.sameInstantCashFlowOrder !== undefined
+    && input.sameInstantCashFlowOrder !== "income_before_expense"
+    && input.sameInstantCashFlowOrder !== "expense_before_income") {
+    invalidInput("sameInstantCashFlowOrder is invalid", "input.sameInstantCashFlowOrder");
+  }
   assertAuthoritativeStateCurrency(openingState, input.baseCurrency);
   if (openingState.accounts[input.cashAccountId] === undefined) invalidInput("Required household cash account is missing", "input.cashAccountId");
   if (openingState.liabilities[input.expensePayableLiabilityId] === undefined) invalidInput("Required expense payable liability is missing", "input.expensePayableLiabilityId");
-  if (input.sameInstantCashFlowOrder !== undefined && input.sameInstantCashFlowOrder !== "income_before_expense" && input.sameInstantCashFlowOrder !== "expense_before_income") {
-    invalidInput("Same-instant cash-flow order is invalid", "input.sameInstantCashFlowOrder");
-  }
-  if (periods[0]!.start !== runContext.simulationStart || periods[periods.length - 1]!.end !== runContext.simulationEnd) {
+  if (!allowPartialHorizon && (periods[0]!.start !== runContext.simulationStart || periods[periods.length - 1]!.end !== runContext.simulationEnd)) {
     invalidInput("Monthly period plan must exactly cover the run horizon", "runContext.simulationEnd");
   }
   const ids = allStableIds(input);
@@ -391,11 +393,15 @@ const outstandingExpenses = (state: AuthoritativeState, currency: Currency): Mon
   currency,
 );
 
-/** Runs a deterministic monthly household cash-flow projection (360 months by default). */
-export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlice2RunResult => {
+interface VerticalSlice2InternalRunInput extends VerticalSlice2RunInput {
+  /** Internal slice composition hook; callers supply an already validated monthly period. */
+  readonly targetPeriods?: readonly Period[];
+}
+
+const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): VerticalSlice2RunResult => {
   const months = request.months ?? 360;
-  const periods = utcMonthlyPeriods(request.runContext.simulationStart, months);
-  validateInput(request, periods);
+  const periods = request.targetPeriods ?? utcMonthlyPeriods(request.runContext.simulationStart, months);
+  validateInput(request, periods, request.targetPeriods !== undefined);
   const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end });
   const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({
     runContext: request.runContext,
@@ -429,6 +435,7 @@ export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlic
       const incomeOccurrences: ProjectedCashFlowOccurrence[] = [];
       const expenseOccurrences: ProjectedCashFlowOccurrence[] = [];
       const eventOutputs = new Map(eventResult.primitiveOutputs.map((output) => [output.workId, output.output]));
+      // A trace for an evaluated no-op event is not causal lineage.
       const periodTraces: CalculationTraceRef[] = eventResult.primitiveOutputs
         .filter((output) => output.effects.length > 0)
         .flatMap((output) => [...(output.traceRefs ?? [])]);
@@ -445,6 +452,8 @@ export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlic
       const actions: CashFlowAction[] = [];
 
       const addIncomeActions = (stream: RecurringIncomeStream): void => {
+        // Schedule and temporal eligibility deliberately precede growth: an
+        // inactive future schedule must never request a backwards month index.
         const scheduleTraces = traces(`income:${stream.id}:schedule`);
         const scheduled = evaluatePrimitive({ primitiveId: "P03", input: { amount: stream.baseMonthlyAmount }, parameters: { schedule: stream.recurrence }, priorState: null, context: { ...primitiveContext(request, stream.id, stream.primitiveIds.recurrence, subtractMilliseconds(targetPeriod.end, 1), "income-recognition", scheduleTraces), period: targetPeriod } });
         for (const candidate of scheduled.output.occurrences) {
@@ -508,13 +517,11 @@ export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlic
             const proposal = createSettlementProposal({ id: settlementProposalId(`proposal:${obligation.id}`), claimId: obligation.id, requestedAmount: amount, requestedAt: occurrence.scheduledAt, fundingPolicyId: stream.fundingPolicy.id, provenance, traceRefs }, obligation);
             proposals.push(proposal);
             const funding = resolveFunding(proposal, obligation, stream.fundingPolicy, Object.fromEntries(Object.entries(state.accounts).map(([id, account]) => [id, account.cash])), occurrence.scheduledAt);
-            outcomes.push(funding.outcome);
-            diagnostics.push(...funding.issues);
+            outcomes.push(funding.outcome); diagnostics.push(...funding.issues);
             if (funding.liquidityShortfall !== undefined) shortfalls.push(funding.liquidityShortfall);
             if (isAcceptedFundingResolution(funding)) {
               const accepted = createSettlement({ id: settlementId(`settlement:${obligation.id}`), settledAt: occurrence.scheduledAt, provenance, traceRefs }, funding, obligation, state.identities.settlementIds);
-              registerAuthoritativeIdentity(state.identities, "settlementIds", accepted.id);
-              settlements.push(accepted);
+              registerAuthoritativeIdentity(state.identities, "settlementIds", accepted.id); settlements.push(accepted);
               state.obligations[obligation.id] = applySettlement(obligation, accepted) as Obligation;
               effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${accepted.id}`), kind: "settlement", category: "recurring_expense", amount: accepted.amount, occurredAt: accepted.settledAt, claimId: accepted.claimId, settlementId: accepted.id, provenance, traceRefs }));
               applyTransaction(transaction(`tx:${accepted.id}`, accepted.settledAt, "expense_settlement", [{ posting: "debit", type: "liability", amount: accepted.amount, entityId: stream.payableLiabilityId }, ...accepted.fundingAllocations.map((allocation): AccountingLegDraft => ({ posting: "credit", type: "cash", amount: allocation.amount, accountId: allocation.accountId, cashFlowClass: "operating" }))], traceRefs));
@@ -529,7 +536,6 @@ export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlic
 
       for (const stream of request.input.incomes) addIncomeActions(stream);
       for (const stream of request.input.expenses) addExpenseActions(stream);
-
       const actionsAt = new Map<Instant, CashFlowAction[]>();
       for (const action of actions) actionsAt.set(action.scheduledAt, [...(actionsAt.get(action.scheduledAt) ?? []), action]);
       for (const sameInstant of actionsAt.values()) {
@@ -541,7 +547,6 @@ export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlic
           invalidInput("Same-instant income and expense actions require an explicit cash-flow order", "input.sameInstantCashFlowOrder");
         }
       }
-
       const kindRank = (kind: CashFlowAction["kind"]): number => request.input.sameInstantCashFlowOrder === "expense_before_income"
         ? (kind === "expense" ? 0 : 1)
         : (kind === "income" ? 0 : 1);
@@ -604,5 +609,22 @@ export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlic
     displayInputs: Object.freeze({ asOf: request.runContext.asOf, dataCutoff: request.runContext.dataCutoff, generatedForecastFactKind: "model_generated" as const }),
   });
 };
+
+/** Executes one VS2 month on private candidate state for slice composition. */
+export const executeVerticalSlice2PeriodCandidate = (
+  request: VerticalSlice2RunInput,
+  period: Period,
+  openingState: AuthoritativeState,
+  primitiveState: PrimitiveRuntimeStateStore,
+): { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly period: VerticalSlice2PeriodResult } => {
+  const result = runVerticalSlice2Internal({ ...request, openingState, primitiveState, months: 1, targetPeriods: Object.freeze([period]) });
+  if (result.status !== "completed" || result.periods[0] === undefined) {
+    throw new ValidationError(result.diagnostics);
+  }
+  return Object.freeze({ state: result.state, primitiveState: result.primitiveState, period: result.periods[0] });
+};
+
+/** Runs a deterministic monthly household cash-flow projection (360 months by default). */
+export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlice2RunResult => runVerticalSlice2Internal(request);
 
 export const createVerticalSlice2PrimitiveId = (value: string): PrimitiveInstanceId => domainId("primitive-instance", value);

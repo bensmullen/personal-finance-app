@@ -203,7 +203,7 @@ export const validateAuthoritativeState = (state: AuthoritativeState, transactio
     }
   }
   for (const position of Object.values(state.positions)) {
-    if (position.quantity.isNegative() || position.carryingValue.isNegative()) {
+    if (position.quantity.isNegative() || position.price.isNegative() || position.carryingValue.isNegative()) {
       failValidation({
         severity: "error",
         code: issueCodes.negativePositionInvariant,
@@ -271,6 +271,28 @@ const commitCandidate = (target: AuthoritativeState, candidate: AuthoritativeSta
   target.liabilities = candidate.liabilities;
   target.obligations = candidate.obligations;
   target.identities = candidate.identities;
+};
+
+/** Commits a non-cash valuation and its generated occurrence identity atomically. */
+export const applyPositionValuationAtomically = (
+  state: AuthoritativeState,
+  input: { readonly positionId: PositionId; readonly price: Money; readonly generatedOccurrenceKey: GeneratedOccurrenceKey },
+): void => {
+  const candidate = cloneAuthoritativeState(state);
+  const position = candidate.positions[input.positionId];
+  if (position === undefined) {
+    failValidation({ severity: "error", code: issueCodes.stateTargetNotFound, message: `Unknown position ${input.positionId} in valuation`, entityType: "position", entityId: input.positionId });
+  }
+  if (input.price.isNegative()) {
+    failValidation({ severity: "error", code: issueCodes.negativePositionInvariant, message: `Valuation creates a negative price in ${input.positionId}`, entityType: "position", entityId: input.positionId, fieldPath: "price" });
+  }
+  if (!input.price.currency.equals(position.price.currency)) {
+    failValidation({ severity: "error", code: issueCodes.runBaseCurrencyMismatch, message: `Valuation currency ${input.price.currency.code} does not match position ${input.positionId}`, entityType: "position", entityId: input.positionId, fieldPath: "price" });
+  }
+  registerAuthoritativeIdentity(candidate.identities, "generatedOccurrenceKeys", input.generatedOccurrenceKey);
+  candidate.positions[input.positionId] = { ...position, price: input.price };
+  validateAuthoritativeState(candidate);
+  commitCandidate(state, candidate);
 };
 
 /** Applies a complete accounting transaction to isolated candidate state and commits only after all invariants pass. */
