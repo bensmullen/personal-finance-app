@@ -185,4 +185,63 @@ describe("Vertical Slice 3 savings and investments", () => {
     expect(invested.periods[23]!.portfolioValue.amount.toString()).toBe("2706.46359695042716");
     expect(invested.periods[23]!.statements.netWorth.compare(money("5206.46359695042716"))).toBe(0);
   });
+
+  it("rejects public VS3 horizons that do not exactly match the RunContext", () => {
+    expect(() => runVerticalSlice3({ runContext: context(24), openingState: opening(), input: baseInput(), months: 1 })).toThrow(/horizon/);
+    expect(() => runVerticalSlice3({ runContext: context(24), openingState: opening(), input: baseInput(), months: 25 })).toThrow(/horizon/);
+  });
+
+  it("validates nominal timing and cross-slice primitive identity before execution", () => {
+    const input = baseInput();
+    const monthlyNominal = Rate.fromDecimal("0.12", rateConvention.nominalAnnual(12));
+    expect(runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...input, returns: input.returns.map((item) => item.targetPositionId === ids.position ? { ...item, rate: monthlyNominal, returnBasis: { kind: "nominal_annual", compoundingPeriods: 1, divisionRounding: new RoundingPolicy(18, "half_even") } } : item) } }).periods[0]!.unrealizedGain.equals(money("0"))).toBe(true);
+    expect(() => runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...input, returns: input.returns.map((item) => item.targetPositionId === ids.position ? { ...item, rate: Rate.fromDecimal("0.12", rateConvention.nominalAnnual(4)), returnBasis: { kind: "nominal_annual", compoundingPeriods: 1, divisionRounding: new RoundingPolicy(18, "half_even") } } : item) } })).toThrow(/monthly contractual/);
+    const cashFlowInput: VerticalSlice2Input = { householdId: ids.household, ownerId: ids.owner, cashAccountId: ids.checking, expensePayableLiabilityId: ids.payable, baseCurrency: USD, incomes: [{ id: ids.salary, ownerId: ids.owner, depositAccountId: ids.checking, baseMonthlyAmount: money("1"), start, recurrence: { kind: "utc_monthly", anchor: at("05"), invalidDayPolicy: "skip" }, growthRate: monthlyRate("0"), growthBaseAt: at("05"), primitiveIds: { growth: primitive(20), recurrence: input.returns[0]!.primitiveIds.compounding } }], expenses: [], events: [] };
+    const withPayable = createAuthoritativeState({ ...opening(), liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } });
+    expect(() => runVerticalSlice3({ runContext: context(), openingState: withPayable, input: { ...input, cashFlowInput } })).toThrow(/identit/);
+  });
+
+  it("runs VS2 cash flow and end-of-period investment operations cumulatively", () => {
+    const withPayable = createAuthoritativeState({ ...opening("0"), accounts: { ...opening("0").accounts, [ids.savings]: { ...opening("0").accounts[ids.savings]!, cash: money("1200") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } });
+    const checkingFunding = createFundingPolicy({ id: fundingPolicyId("policy:checking-only"), orderedSources: [{ kind: "cash_account", accountId: ids.checking }], allowPartial: false, insufficientFundsBehavior: "unfunded" });
+    const savingsFunding = createFundingPolicy({ id: fundingPolicyId("policy:savings-only"), orderedSources: [{ kind: "cash_account", accountId: ids.savings }], allowPartial: false, insufficientFundsBehavior: "unfunded" });
+    const cashFlowInput: VerticalSlice2Input = { householdId: ids.household, ownerId: ids.owner, cashAccountId: ids.checking, expensePayableLiabilityId: ids.payable, baseCurrency: USD, incomes: [{ id: ids.salary, ownerId: ids.owner, depositAccountId: ids.checking, baseMonthlyAmount: money("300"), start, recurrence: { kind: "utc_monthly", anchor: at("05"), invalidDayPolicy: "skip" }, growthRate: monthlyRate("0"), growthBaseAt: at("05"), primitiveIds: { growth: primitive(20), recurrence: primitive(21) } }], expenses: [{ id: domainId("expense", "43000000-0000-4000-8000-000000000020"), ownerId: ids.owner, paymentAccountId: ids.checking, payableLiabilityId: ids.payable, baseMonthlyAmount: money("100"), start, recurrence: { kind: "utc_monthly", anchor: at("10"), invalidDayPolicy: "skip" }, inflationRate: monthlyRate("0"), inflationBaseAt: at("10"), fundingPolicy: checkingFunding, settlementPriority: 10, primitiveIds: { indexGrowth: primitive(22), inflationLink: primitive(23), recurrence: primitive(24) } }, { id: domainId("expense", "43000000-0000-4000-8000-000000000021"), ownerId: ids.owner, paymentAccountId: ids.savings, payableLiabilityId: ids.payable, baseMonthlyAmount: money("50"), start, recurrence: { kind: "utc_monthly", anchor: at("12"), invalidDayPolicy: "skip" }, inflationRate: monthlyRate("0"), inflationBaseAt: at("12"), fundingPolicy: savingsFunding, settlementPriority: 10, primitiveIds: { indexGrowth: primitive(25), inflationLink: primitive(26), recurrence: primitive(27) } }], events: [] };
+    const input = baseInput();
+    const result = runVerticalSlice3({ runContext: context(24), openingState: withPayable, months: 24, input: { ...input, cashFlowInput, transfers: [], fees: [], purchases: [{ ...input.purchases[0]!, amount: money("100"), eligibilitySchedule: { kind: "utc_monthly", anchor: at("20"), invalidDayPolicy: "skip" } }], returns: input.returns.map((item) => ({ ...item, rate: item.targetPositionId === ids.position ? monthlyRate("0.01") : monthlyRate("0") })) } });
+    expect(result.status).toBe("completed");
+    expect(result.state.accounts[ids.checking]!.cash.equals(money("2400"))).toBe(true);
+    expect(result.state.accounts[ids.savings]!.cash.equals(money("0"))).toBe(true);
+    expect(result.state.positions[ids.position]!.carryingValue.equals(money("2400"))).toBe(true);
+    expect(result.periods.every((period) => period.cashFlowPeriod?.recurringIncomeRecognized.equals(money("300")) && period.cashFlowPeriod.recurringExpenseRecognized.equals(money("150")) && period.cashFlowPeriod.expenseCashSettlement.equals(money("150")) && period.cashFlowPeriod.liquidityShortfalls.length === 0)).toBe(true);
+    expect(result.periods[0]!.unrealizedGain.equals(money("0"))).toBe(true);
+    expect(result.periods[1]!.unrealizedGain.isPositive()).toBe(true);
+    const gains = result.periods.reduce((total, period) => total.plus(period.unrealizedGain), money("0"));
+    expect(gains.round(RoundingPolicy.currency(2, "half_up")).equals(result.periods[23]!.portfolioValue.minus(result.state.positions[ids.position]!.carryingValue).minus(money("10")).round(RoundingPolicy.currency(2, "half_up")))).toBe(true);
+  });
+
+  it("rolls back VS2, P23/P26, valuation identity, and purchase together when the period purchase fails", () => {
+    const openingState = createAuthoritativeState({ ...opening("0"), liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } });
+    const input = baseInput();
+    const cashFlowInput: VerticalSlice2Input = { householdId: ids.household, ownerId: ids.owner, cashAccountId: ids.checking, expensePayableLiabilityId: ids.payable, baseCurrency: USD, incomes: [{ id: ids.salary, ownerId: ids.owner, depositAccountId: ids.checking, baseMonthlyAmount: money("200"), start, recurrence: { kind: "utc_monthly", anchor: at("05"), invalidDayPolicy: "skip" }, growthRate: monthlyRate("0"), growthBaseAt: at("05"), primitiveIds: { growth: primitive(30), recurrence: primitive(31) } }], expenses: [], events: [] };
+    const failed = runVerticalSlice3({ runContext: context(), openingState, input: { ...input, cashFlowInput, transfers: [], fees: [], purchases: [{ ...input.purchases[0]!, amount: money("300") }], returns: input.returns.map((item) => ({ ...item, rate: item.targetPositionId === ids.position ? monthlyRate("0.1") : monthlyRate("0") })) } });
+    expect(failed.status).toBe("incomplete");
+    expect(failed.periods).toHaveLength(0);
+    expect(failed.state).toEqual(openingState);
+    expect(failed.primitiveState).toEqual({});
+  });
+
+  it("retains a committed January while rolling back every February candidate mutation", () => {
+    const openingState = createAuthoritativeState({ ...opening("0"), liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } });
+    const input = baseInput();
+    const cashFlowInput: VerticalSlice2Input = { householdId: ids.household, ownerId: ids.owner, cashAccountId: ids.checking, expensePayableLiabilityId: ids.payable, baseCurrency: USD, incomes: [{ id: ids.salary, ownerId: ids.owner, depositAccountId: ids.checking, baseMonthlyAmount: money("200"), start, recurrence: { kind: "utc_monthly", anchor: at("05"), invalidDayPolicy: "skip" }, growthRate: monthlyRate("0"), growthBaseAt: at("05"), primitiveIds: { growth: primitive(32), recurrence: primitive(33) } }], expenses: [], events: [] };
+    const januaryPurchase = { ...input.purchases[0]!, id: domainId("investment-purchase", "43000000-0000-4000-8000-000000000030"), amount: money("100"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [instant("2026-01-20T00:00:00.000Z")] } };
+    const februaryPurchase = { ...input.purchases[0]!, id: domainId("investment-purchase", "43000000-0000-4000-8000-000000000031"), schedulePrimitiveId: primitive(34), amount: money("1000"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [instant("2026-02-20T00:00:00.000Z")] } };
+    const model: VerticalSlice3Input = { ...input, cashFlowInput, transfers: [], fees: [], purchases: [januaryPurchase, februaryPurchase], returns: input.returns.map((item) => ({ ...item, rate: item.targetPositionId === ids.position ? monthlyRate("0.01") : monthlyRate("0") })) };
+    const baseline = runVerticalSlice3({ runContext: context(), openingState, input: { ...model, purchases: [januaryPurchase] } });
+    const failed = runVerticalSlice3({ runContext: context(2), openingState, input: model, months: 2 });
+    expect(failed.status).toBe("incomplete");
+    expect(failed.periods).toHaveLength(1);
+    expect(failed.state).toEqual(baseline.state);
+    expect(failed.primitiveState).toEqual(baseline.primitiveState);
+  });
 });
