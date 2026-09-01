@@ -57,6 +57,11 @@ describe("P23 compounding", () => {
     expect(result.output.returnAmount.equals(money("20"))).toBe(true);
     expect(result.output.closingValue.equals(money("220"))).toBe(true);
   });
+
+  it("requires a continued base value after the first evaluation", () => {
+    const first = evaluatePrimitive({ primitiveId: "P23", input: { baseValue: money("100"), rate: monthly }, parameters: { returnBasis: { kind: "periodic", period: ratePeriod("1", "calendar_month") }, cashFlowTiming: "end_of_period", postingRounding: rounding }, priorState: initialCompoundingPrimitiveState(), context: context() });
+    expect(() => evaluatePrimitive({ primitiveId: "P23", input: { baseValue: money("100"), rate: monthly }, parameters: { returnBasis: { kind: "periodic", period: ratePeriod("1", "calendar_month") }, cashFlowTiming: "end_of_period", postingRounding: rounding }, priorState: first.nextState, context: context() })).toThrow(/continue/);
+  });
 });
 
 describe("P26 mark_to_market", () => {
@@ -82,5 +87,11 @@ describe("P26 mark_to_market", () => {
       priorState: initialMarkToMarketPrimitiveState(),
       context: context(),
     })).toThrow(/unit/);
+  });
+
+  it("permits changed authoritative quantity between valuation histories", () => {
+    const first = evaluatePrimitive({ primitiveId: "P26", input: { quantity: Quantity.parse("1", SHARE), price: money("10") }, parameters: { expectedUnit: SHARE, expectedCurrency: USD }, priorState: initialMarkToMarketPrimitiveState(), context: context() });
+    const second = evaluatePrimitive({ primitiveId: "P26", input: { quantity: Quantity.parse("2", SHARE), price: money("10") }, parameters: { expectedUnit: SHARE, expectedCurrency: USD }, priorState: first.nextState, context: context() });
+    expect(second.output.marketValue.equals(money("20"))).toBe(true);
   });
 });
