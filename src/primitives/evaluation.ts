@@ -451,6 +451,11 @@ const compoundingEvaluation = (request: Extract<ImplementedPrimitiveEvaluationRe
     || (request.priorState.lastClosingValue !== undefined && (!(request.priorState.lastClosingValue instanceof Money) || request.priorState.lastClosingValue.isNegative()))) {
     invalid(issueCodes.primitiveStateInvalid, "P23 state requires a non-negative evaluation count", "P23", "priorState.evaluations");
   }
+  if (request.priorState.evaluations > 0
+    && (request.priorState.lastClosingValue === undefined
+      || !baseValue.equals(request.priorState.lastClosingValue))) {
+    invalid(issueCodes.primitiveStateInvalid, "P23 base value must continue from the prior closing value", "P23", "input.baseValue");
+  }
   const effectivePeriodReturn = effectiveCompoundingPeriodReturn(request.input.rate, request.parameters.returnBasis);
   if (!decimal("1").plus(effectivePeriodReturn).isPositive()) {
     invalid(issueCodes.primitiveInputInvalid, "P23 effective return must be greater than -100%", "P23", "input.rate");
@@ -471,9 +476,11 @@ const markToMarketEvaluation = (request: Extract<ImplementedPrimitiveEvaluationR
   if (!request.input.quantity.unit.equals(request.parameters.expectedUnit)) invalid(issueCodes.primitiveInputInvalid, "P26 quantity unit does not match the declared unit", "P26", "input.quantity.unit");
   if (!request.input.price.currency.equals(request.parameters.expectedCurrency)) invalid(issueCodes.primitiveInputInvalid, "P26 price currency does not match the declared currency", "P26", "input.price.currency");
   if (request.input.quantity.isNegative() || request.input.price.isNegative()) invalid(issueCodes.primitiveInputInvalid, "P26 quantity and price cannot be negative", "P26", "input");
+  // P26 state is valuation history only. Position continuity belongs to
+  // AuthoritativeState, so a quantity change between valuations is valid.
   if (!Number.isSafeInteger(request.priorState.evaluations) || request.priorState.evaluations < 0
     || (request.priorState.evaluations === 0) !== (request.priorState.lastMarketValue === undefined)
-    || (request.priorState.lastMarketValue !== undefined && (!(request.priorState.lastMarketValue instanceof Money) || request.priorState.lastMarketValue.isNegative()))) invalid(issueCodes.primitiveStateInvalid, "P26 state requires a consistent non-negative valuation history", "P26", "priorState");
+    || (request.priorState.lastMarketValue !== undefined && (!(request.priorState.lastMarketValue instanceof Money) || request.priorState.lastMarketValue.isNegative() || !request.priorState.lastMarketValue.currency.equals(request.parameters.expectedCurrency)))) invalid(issueCodes.primitiveStateInvalid, "P26 state requires a consistent valuation history in the expected currency", "P26", "priorState");
   const marketValue = request.input.price.times(request.input.quantity.amount);
   const nextState: MarkToMarketPrimitiveState = Object.freeze({ evaluations: request.priorState.evaluations + 1, lastMarketValue: marketValue });
   return evaluation("P26", Object.freeze({ quantity: request.input.quantity, price: request.input.price, marketValue }), nextState, frozenEmpty, request.context.traceRefs);
