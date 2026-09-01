@@ -54,12 +54,13 @@ const baseInput = (): VerticalSlice3Input => ({
   householdId: ids.household,
   ownerId: ids.owner,
   baseCurrency: USD,
-  transfers: [{ id: domainId("transfer", "43000000-0000-4000-8000-000000000001"), sourceAccountId: ids.checking, destinationAccountId: ids.savings, amount: money("100"), schedule: { kind: "explicit_instants", instants: [at("05")] }, order: 10, schedulePrimitiveId: primitive(1) }],
-  purchases: [{ id: domainId("investment-purchase", "43000000-0000-4000-8000-000000000002"), sourceCashAccountId: ids.checking, destinationAccountId: ids.brokerage, targetPositionId: ids.position, amount: money("200"), quantityRounding, schedule: { kind: "explicit_instants", instants: [at("10")] }, order: 20, schedulePrimitiveId: primitive(2) }],
-  fees: [{ id: domainId("investment-fee", "43000000-0000-4000-8000-000000000003"), cashAccountId: ids.checking, amount: money("5"), schedule: { kind: "explicit_instants", instants: [at("20")] }, order: 30, schedulePrimitiveId: primitive(3) }],
+  valuationAccountingPolicy: "economic_only",
+  transfers: [{ id: domainId("transfer", "43000000-0000-4000-8000-000000000001"), sourceAccountId: ids.checking, destinationAccountId: ids.savings, amount: money("100"), eligibilitySchedule: { kind: "explicit_instants", instants: [at("05")] }, executionTiming: "end_of_period", order: 10, schedulePrimitiveId: primitive(1) }],
+  purchases: [{ id: domainId("investment-purchase", "43000000-0000-4000-8000-000000000002"), sourceCashAccountId: ids.checking, destinationAccountId: ids.brokerage, targetPositionId: ids.position, amount: money("200"), quantityRounding, eligibilitySchedule: { kind: "explicit_instants", instants: [at("10")] }, executionTiming: "end_of_period", order: 20, schedulePrimitiveId: primitive(2) }],
+  fees: [{ id: domainId("investment-fee", "43000000-0000-4000-8000-000000000003"), cashAccountId: ids.checking, amount: money("5"), eligibilitySchedule: { kind: "explicit_instants", instants: [at("20")] }, executionTiming: "end_of_period", order: 30, schedulePrimitiveId: primitive(3) }],
   returns: [
-    { targetPositionId: ids.position, accountId: ids.brokerage, rate: monthlyRate("0.1"), returnBasis, timing: "end_of_period_on_closing_quantity", priceRounding, primitiveIds: { compounding: primitive(4), markToMarket: primitive(5) } },
-    { targetPositionId: ids.position2, accountId: ids.brokerage, rate: monthlyRate("0"), returnBasis, timing: "end_of_period_on_closing_quantity", priceRounding, primitiveIds: { compounding: primitive(6), markToMarket: primitive(7) } },
+    { targetPositionId: ids.position, accountId: ids.brokerage, rate: monthlyRate("0.1"), returnBasis, timing: "end_of_period_on_opening_quantity", priceRounding, primitiveIds: { compounding: primitive(4), markToMarket: primitive(5) } },
+    { targetPositionId: ids.position2, accountId: ids.brokerage, rate: monthlyRate("0"), returnBasis, timing: "end_of_period_on_opening_quantity", priceRounding, primitiveIds: { compounding: primitive(6), markToMarket: primitive(7) } },
   ],
 });
 
@@ -69,18 +70,18 @@ describe("Vertical Slice 3 savings and investments", () => {
     expect(result.status).toBe("completed");
     expect(result.state.accounts[ids.checking]!.cash.equals(money("695"))).toBe(true);
     expect(result.state.accounts[ids.savings]!.cash.equals(money("200"))).toBe(true);
-    expect(result.state.positions[ids.position]!.quantity.equals(Quantity.parse("20", SHARE))).toBe(true);
+    expect(result.state.positions[ids.position]!.price.times(result.state.positions[ids.position]!.quantity.amount).round(RoundingPolicy.currency(2, "half_up")).equals(money("200"))).toBe(true);
     expect(result.state.positions[ids.position]!.carryingValue.equals(money("200"))).toBe(true);
     expect(result.state.positions[ids.position]!.price.equals(money("11"))).toBe(true);
     const period = result.periods[0]!;
     expect(period.contributionPrincipal.equals(money("200"))).toBe(true);
-    expect(period.unrealizedGain.equals(money("20"))).toBe(true);
+    expect(period.unrealizedGain.equals(money("0"))).toBe(true);
     expect(period.realizedGain.equals(money("0"))).toBe(true);
     expect(period.cashInvestmentIncome.equals(money("0"))).toBe(true);
-    expect(period.portfolioValue.equals(money("230"))).toBe(true);
-    expect(period.accountValues[ids.brokerage]!.equals(money("230"))).toBe(true);
-    expect(period.statements.assets.equals(money("1125"))).toBe(true);
-    expect(period.statements.netWorth.equals(money("1125"))).toBe(true);
+    expect(period.portfolioValue.round(RoundingPolicy.currency(2, "half_up")).equals(money("210"))).toBe(true);
+    expect(period.accountValues[ids.brokerage]!.round(RoundingPolicy.currency(2, "half_up")).equals(money("210"))).toBe(true);
+    expect(period.statements.assets.round(RoundingPolicy.currency(2, "half_up")).equals(money("1105"))).toBe(true);
+    expect(period.statements.netWorth.round(RoundingPolicy.currency(2, "half_up")).equals(money("1105"))).toBe(true);
     expect(period.statements.investingCashFlow.equals(money("-200"))).toBe(true);
     expect(period.effects.filter((effect) => effect.kind === "valuation")).toHaveLength(2);
     expect(period.traceRefs.some((ref) => ref.traceId.includes("valuation"))).toBe(true);
@@ -146,15 +147,15 @@ describe("Vertical Slice 3 savings and investments", () => {
     const recurring: VerticalSlice3Input = {
       ...input,
       transfers: [], fees: [],
-      purchases: [{ ...input.purchases[0]!, amount: money("100"), schedule: { kind: "utc_monthly", anchor: instant("2026-01-10T00:00:00.000Z"), invalidDayPolicy: "skip" } }],
+      purchases: [{ ...input.purchases[0]!, amount: money("100"), eligibilitySchedule: { kind: "utc_monthly", anchor: instant("2026-01-10T00:00:00.000Z"), invalidDayPolicy: "skip" } }],
       returns: input.returns.map((item) => ({ ...item, rate: item.targetPositionId === ids.position ? monthlyRate("0.01") : monthlyRate("0") })),
     };
     const result = runVerticalSlice3({ runContext: context(24), openingState: opening("3000"), input: recurring, months: 24 });
     expect(result.status).toBe("completed");
     expect(result.periods).toHaveLength(24);
-    expect(result.periods[0]!.portfolioValue.amount.toString()).toBe("111");
-    expect(result.periods[11]!.portfolioValue.amount.toString()).toBe("1291.29754708127165");
-    expect(result.periods[23]!.portfolioValue.amount.toString()).toBe("2733.36359695042834");
+    expect(result.periods[0]!.portfolioValue.amount.toString()).toBe("110.000000000001");
+    expect(result.periods[11]!.portfolioValue.amount.toString()).toBe("1278.59754708127644");
+    expect(result.periods[23]!.portfolioValue.amount.toString()).toBe("2706.46359695042716");
     expect(result.state.accounts[ids.checking]!.cash.equals(money("600"))).toBe(true);
     expect(result.periods.every((item) => item.realizedGain.isZero() && item.cashInvestmentIncome.isZero())).toBe(true);
   });
@@ -175,13 +176,13 @@ describe("Vertical Slice 3 savings and investments", () => {
     const input = baseInput();
     const investmentInput: VerticalSlice3Input = {
       ...input, transfers: [], fees: [],
-      purchases: [{ ...input.purchases[0]!, amount: money("100"), schedule: { kind: "utc_monthly", anchor: instant("2028-01-10T00:00:00.000Z"), invalidDayPolicy: "skip" } }],
+      purchases: [{ ...input.purchases[0]!, amount: money("100"), eligibilitySchedule: { kind: "utc_monthly", anchor: instant("2028-01-10T00:00:00.000Z"), invalidDayPolicy: "skip" } }],
       returns: input.returns.map((item) => ({ ...item, rate: item.targetPositionId === ids.position ? monthlyRate("0.01") : monthlyRate("0") })),
     };
     const invested = runVerticalSlice3({ runContext: contextFrom(investmentStart, 24, "42000000-0000-4000-8000-000000000005"), openingState: cashFlow.state, input: investmentInput, months: 24 });
     expect(invested.status).toBe("completed");
     expect(invested.state.accounts[ids.checking]!.cash.equals(money("2400"))).toBe(true);
-    expect(invested.periods[23]!.portfolioValue.amount.toString()).toBe("2733.36359695042834");
-    expect(invested.periods[23]!.statements.netWorth.compare(money("5233.36359695042834"))).toBe(0);
+    expect(invested.periods[23]!.portfolioValue.amount.toString()).toBe("2706.46359695042716");
+    expect(invested.periods[23]!.statements.netWorth.compare(money("5206.46359695042716"))).toBe(0);
   });
 });
