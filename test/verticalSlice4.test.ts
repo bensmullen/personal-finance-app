@@ -96,14 +96,16 @@ describe("Vertical Slice 4 liabilities", () => {
     expect(recovered.primitiveState[primitive(2)]?.state).toMatchObject({ evaluations: 2 });
   });
 
-  it("continues arrears processing after an unfunded final contractual occurrence", () => {
-    const matured = runVerticalSlice4({ runContext: context(1, "411"), openingState: opening("100", "0"), input: input(loan("100", "0", 1)) });
+  it("does not infer post-maturity servicing after an unfunded final contractual occurrence", () => {
+    const matured = runVerticalSlice4({ runContext: context(1, "411"), openingState: opening("100", "0"), input: input(loan("100", "0.12", 1)) });
     expect(matured.state.liabilities[ids.principal]!.balance.equals(money("100"))).toBe(true);
-    const continued = runVerticalSlice4({ runContext: contextAt(instant("2026-02-01T00:00:00.000Z"), 1, "412"), openingState: matured.state, primitiveState: matured.primitiveState, input: input(loan("100", "0", 1)) });
-    expect(continued.status).toBe("completed");
-    expect(continued.periods[0]!.liabilities).toHaveLength(1);
-    expect(continued.periods[0]!.liabilities[0]!.scheduledFundingStatus).toBe("unfunded");
+    expect(matured.state.liabilities[ids.interest]!.balance.equals(money("1"))).toBe(true);
+    const continued = runVerticalSlice4({ runContext: contextAt(instant("2026-02-01T00:00:00.000Z"), 1, "412"), openingState: matured.state, primitiveState: matured.primitiveState, input: input(loan("100", "0.12", 1)) });
+    expect(continued.status).toBe("incomplete");
+    expect(continued.diagnostics.some((issue) => issue.code === "LIABILITY_CONFIGURATION_UNSUPPORTED")).toBe(true);
+    expect(continued.periods).toHaveLength(0);
     expect(continued.state.liabilities[ids.principal]!.balance.equals(money("100"))).toBe(true);
+    expect(continued.state.liabilities[ids.interest]!.balance.equals(money("1"))).toBe(true);
     expect(continued.primitiveState[primitive(2)]?.state).toMatchObject({ evaluations: 1 });
   });
 
@@ -127,8 +129,28 @@ describe("Vertical Slice 4 liabilities", () => {
     expect(outcome.acceptedAmount.isZero()).toBe(true);
     expect(shortfall.fundedAmount.equals(money("1700"))).toBe(true);
     expect(shortfall.shortfallAmount.equals(money("98.65"))).toBe(true);
+    expect("proposalIds" in shortfall).toBe(true);
+    if ("proposalIds" in shortfall) { expect(shortfall.proposalIds).toHaveLength(2); expect(shortfall.claimIds).toHaveLength(2); }
     expect(result.state.accounts[ids.cash]!.cash.equals(money("1700"))).toBe(true);
     expect(result.state.liabilities[ids.principal]!.balance.equals(money("300000"))).toBe(true);
+  });
+
+  it("keeps future and historical extra instructions valid across chunked runs", () => {
+    const extra = { id: domainId("extra-principal-payment", "65000000-0000-4000-8000-000000000009"), scheduledAt: instant("2026-02-15T00:00:00.000Z"), amount: money("1"), fundingPolicy: policy(), primitiveInstanceId: primitive(30) };
+    const model = loan("100", "0", 2, [extra]); const january = runVerticalSlice4({ runContext: context(1, "461"), openingState: opening("100", "100"), input: input(model) });
+    expect(january.status).toBe("completed");
+    const february = runVerticalSlice4({ runContext: contextAt(instant("2026-02-01T00:00:00.000Z"), 1, "462"), openingState: january.state, primitiveState: january.primitiveState, input: input(model) });
+    expect(february.status).toBe("completed");
+  });
+
+  it("rejects missing primitive history when VS4 claims prove prior execution", () => {
+    const first = runVerticalSlice4({ runContext: context(1, "471"), openingState: opening("100", "0"), input: input(loan("100", "0", 2)) });
+    expect(() => runVerticalSlice4({ runContext: contextAt(instant("2026-02-01T00:00:00.000Z"), 1, "472"), openingState: first.state, input: input(loan("100", "0", 2)) })).toThrow(/requires compatible P22 runtime state/);
+  });
+
+  it("rejects an unrelated economic owner", () => {
+    const unrelated = domainId("person", "62000000-0000-4000-8000-000000000099");
+    expect(() => runVerticalSlice4({ runContext: context(1, "481"), openingState: opening("100", "100"), input: input({ ...loan("100", "0", 1), ownerId: unrelated }) })).toThrow(/economic-owner scope/);
   });
 
   it("processes every required same-instant payment before voluntary extra principal", () => {

@@ -207,7 +207,7 @@ export interface AccrualPrimitiveState {
 }
 
 export interface MonthlyAccrualContract {
-  readonly measurement: "one_contractual_occurrence";
+  readonly measurement: "occurrence_based";
   readonly contractualPeriod: "monthly";
   readonly rateBasis: "nominal_annual_12";
   readonly calendar: "utc";
@@ -441,6 +441,7 @@ const amortizationEvaluation = (request: Extract<ImplementedPrimitiveEvaluationR
   if (extraRequested.isNegative() || !extraRequested.currency.equals(openingPrincipal.currency)) invalid(issueCodes.primitiveInputInvalid, "P22 extra principal must be a non-negative amount in the loan currency", "P22", "input.extraPrincipal");
   if (!Number.isSafeInteger(totalPayments) || totalPayments <= 0) invalid(issueCodes.primitiveParametersInvalid, "P22 total payments must be a positive safe integer", "P22", "parameters.totalPayments");
   if (!Number.isSafeInteger(request.priorState.evaluations) || request.priorState.evaluations < 0) invalid(issueCodes.primitiveStateInvalid, "P22 state requires a non-negative evaluation count", "P22", "priorState.evaluations");
+  if (request.priorState.evaluations >= totalPayments) invalid(issueCodes.primitiveStateInvalid, "P22 cannot evaluate beyond its contractual payment count", "P22", "priorState.evaluations");
   let contractualPayment: Money;
   let expectedInterest: Money;
   try {
@@ -477,7 +478,7 @@ const accrualEvaluation = (request: Extract<ImplementedPrimitiveEvaluationReques
   const { balance, rate } = request.input;
   if (balance.isNegative()) invalid(issueCodes.primitiveInputInvalid, "P24 balance cannot be negative", "P24", "input.balance");
   const temporal = request.parameters.temporal;
-  if (temporal.measurement !== "one_contractual_occurrence" || temporal.contractualPeriod !== "monthly" || temporal.rateBasis !== "nominal_annual_12" || temporal.calendar !== "utc" || temporal.stubPeriodPolicy !== "reject" || temporal.dayCountConvention !== "none" || temporal.capitalization !== "none") invalid(issueCodes.primitiveParametersInvalid, "P24 supports exactly one non-prorated UTC contractual month with nominal annual rate / 12 and no capitalization", "P24", "parameters.temporal");
+  if (temporal.measurement !== "occurrence_based" || temporal.contractualPeriod !== "monthly" || temporal.rateBasis !== "nominal_annual_12" || temporal.calendar !== "utc" || temporal.stubPeriodPolicy !== "reject" || temporal.dayCountConvention !== "none" || temporal.capitalization !== "none") invalid(issueCodes.primitiveParametersInvalid, "P24 supports exactly one occurrence-based non-prorated UTC contractual month with nominal annual rate / 12 and no capitalization", "P24", "parameters.temporal");
   let expectedPeriod;
   try { expectedPeriod = utcMonthlyPeriods(request.context.period.start, 1)[0]!; }
   catch { return invalid(issueCodes.primitiveParametersInvalid, "P24 rejects stub or partial periods; period must begin at a UTC month boundary", "P24", "context.period"); }

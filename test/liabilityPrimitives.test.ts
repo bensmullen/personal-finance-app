@@ -38,11 +38,17 @@ describe("P22 amortization", () => {
     const unsupported = Rate.fromDecimal("0.06", rateConvention.effectiveAnnual());
     expect(() => evaluatePrimitive({ primitiveId: "P22", input: { openingPrincipal: money("100"), currentInterest: money("0.5") }, parameters: { originalPrincipal: money("100"), annualRate: unsupported, totalPayments: 12, postingRounding: rounding }, priorState: initialAmortizationPrimitiveState(), context: context() })).toThrow(/nominal-annual monthly/);
   });
+
+  it("rejects an evaluation after the contractual payment count", () => {
+    const finalState = { evaluations: 1, contractualPayment: money("100"), originalPrincipal: money("100"), totalPayments: 1 };
+    expect(() => evaluatePrimitive({ primitiveId: "P22", input: { openingPrincipal: money("100"), currentInterest: money("0") }, parameters: { originalPrincipal: money("100"), annualRate: annual("0"), totalPayments: 1, postingRounding: rounding }, priorState: finalState, context: context() })).toThrow(/cannot evaluate beyond/);
+    expect(() => evaluatePrimitive({ primitiveId: "P22", input: { openingPrincipal: money("100"), currentInterest: money("0") }, parameters: { originalPrincipal: money("100"), annualRate: annual("0"), totalPayments: 1, postingRounding: rounding }, priorState: { ...finalState, evaluations: 2 }, context: context() })).toThrow(/cannot evaluate beyond/);
+  });
 });
 
 describe("P24 accrual", () => {
   it("accrues exact monthly interest from opening principal without capitalization", () => {
-    const result = evaluatePrimitive({ primitiveId: "P24", input: { balance: money("300000"), rate: annual("0.06") }, parameters: { temporal: { measurement: "one_contractual_occurrence", contractualPeriod: "monthly", rateBasis: "nominal_annual_12", calendar: "utc", stubPeriodPolicy: "reject", dayCountConvention: "none", capitalization: "none" }, postingRounding: rounding }, priorState: initialAccrualPrimitiveState(), context: context() });
+    const result = evaluatePrimitive({ primitiveId: "P24", input: { balance: money("300000"), rate: annual("0.06") }, parameters: { temporal: { measurement: "occurrence_based", contractualPeriod: "monthly", rateBasis: "nominal_annual_12", calendar: "utc", stubPeriodPolicy: "reject", dayCountConvention: "none", capitalization: "none" }, postingRounding: rounding }, priorState: initialAccrualPrimitiveState(), context: context() });
     expect(result.output.accruedAmount.equals(money("1500"))).toBe(true);
     expect(result.output.capitalizedAmount.equals(money("0"))).toBe(true);
     expect(result.output.baseBalance.equals(money("300000"))).toBe(true);
@@ -50,12 +56,17 @@ describe("P24 accrual", () => {
   });
 
   it("returns zero accrual for zero balance", () => {
-    const result = evaluatePrimitive({ primitiveId: "P24", input: { balance: money("0"), rate: annual("0.06") }, parameters: { temporal: { measurement: "one_contractual_occurrence", contractualPeriod: "monthly", rateBasis: "nominal_annual_12", calendar: "utc", stubPeriodPolicy: "reject", dayCountConvention: "none", capitalization: "none" }, postingRounding: rounding }, priorState: initialAccrualPrimitiveState(), context: context() });
+    const result = evaluatePrimitive({ primitiveId: "P24", input: { balance: money("0"), rate: annual("0.06") }, parameters: { temporal: { measurement: "occurrence_based", contractualPeriod: "monthly", rateBasis: "nominal_annual_12", calendar: "utc", stubPeriodPolicy: "reject", dayCountConvention: "none", capitalization: "none" }, postingRounding: rounding }, priorState: initialAccrualPrimitiveState(), context: context() });
     expect(result.output.accruedAmount.equals(money("0"))).toBe(true);
   });
 
   it("rejects stub periods instead of inferring proration or day count", () => {
     const stubContext = { ...context(), period: period(instant("2026-01-01T00:00:00.000Z"), instant("2026-01-20T00:00:00.000Z")) };
-    expect(() => evaluatePrimitive({ primitiveId: "P24", input: { balance: money("300000"), rate: annual("0.06") }, parameters: { temporal: { measurement: "one_contractual_occurrence", contractualPeriod: "monthly", rateBasis: "nominal_annual_12", calendar: "utc", stubPeriodPolicy: "reject", dayCountConvention: "none", capitalization: "none" }, postingRounding: rounding }, priorState: initialAccrualPrimitiveState(), context: stubContext })).toThrow(/stub or partial periods/);
+    expect(() => evaluatePrimitive({ primitiveId: "P24", input: { balance: money("300000"), rate: annual("0.06") }, parameters: { temporal: { measurement: "occurrence_based", contractualPeriod: "monthly", rateBasis: "nominal_annual_12", calendar: "utc", stubPeriodPolicy: "reject", dayCountConvention: "none", capitalization: "none" }, postingRounding: rounding }, priorState: initialAccrualPrimitiveState(), context: stubContext })).toThrow(/stub or partial periods/);
+  });
+
+  it("rejects noncanonical temporal measurement modes", () => {
+    const temporal = { measurement: "period_based" as unknown as "occurrence_based", contractualPeriod: "monthly" as const, rateBasis: "nominal_annual_12" as const, calendar: "utc" as const, stubPeriodPolicy: "reject" as const, dayCountConvention: "none" as const, capitalization: "none" as const };
+    expect(() => evaluatePrimitive({ primitiveId: "P24", input: { balance: money("100"), rate: annual("0.06") }, parameters: { temporal, postingRounding: rounding }, priorState: initialAccrualPrimitiveState(), context: context() })).toThrow(/occurrence-based/);
   });
 });

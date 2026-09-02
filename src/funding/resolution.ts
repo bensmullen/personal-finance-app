@@ -58,14 +58,15 @@ export const fundingConstraintId = (value: string): FundingConstraintId => {
 };
 
 export interface AllOrNothingFundingItem {
-  readonly subjectId: string;
-  readonly amount: Money;
+  readonly proposal: SettlementProposal;
+  readonly claim: ObligationOrRight;
 }
 
 export interface AllOrNothingConstraintOutcome {
   readonly kind: "all_or_nothing_group";
   readonly constraintId: FundingConstraintId;
-  readonly subjectIds: readonly string[];
+  readonly proposalIds: readonly SettlementProposalId[];
+  readonly claimIds: readonly ClaimId[];
   readonly fundingPolicyId: FundingPolicyId;
   readonly status: "fully_satisfied" | "unfunded";
   readonly requestedAmount: Money;
@@ -76,7 +77,8 @@ export interface AllOrNothingConstraintOutcome {
 export interface AllOrNothingLiquidityShortfall {
   readonly kind: "all_or_nothing_group";
   readonly constraintId: FundingConstraintId;
-  readonly subjectIds: readonly string[];
+  readonly proposalIds: readonly SettlementProposalId[];
+  readonly claimIds: readonly ClaimId[];
   readonly fundingPolicyId: FundingPolicyId;
   readonly requestedAmount: Money;
   readonly fundedAmount: Money;
@@ -106,14 +108,20 @@ export const resolveAllOrNothingFunding = (
   if (policy.allowPartial || policy.insufficientFundsBehavior !== "unfunded") {
     failValidation({ severity: "error", code: issueCodes.fundingPolicyInvalid, message: "All-or-nothing funding requires partial funding disabled with unfunded behavior", entityType: "funding_policy", entityId: policy.id });
   }
-  if (items.length === 0 || items.some((item) => !item.amount.isPositive()) || new Set(items.map((item) => item.subjectId)).size !== items.length) {
-    failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "All-or-nothing funding requires unique positive funding items", entityType: "funding_constraint", entityId: constraintId });
+  if (items.length === 0 || new Set(items.map((item) => item.proposal.id)).size !== items.length) {
+    failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "All-or-nothing funding requires unique authoritative proposals", entityType: "funding_constraint", entityId: constraintId });
   }
-  const currency = items[0]!.amount.currency;
-  if (items.some((item) => !item.amount.currency.equals(currency))) {
+  for (const item of items) {
+    assertAuthoritativeSettlementProposal(item.proposal);
+    if (item.proposal.claimId !== item.claim.id || !item.proposal.requestedAmount.isPositive() || !item.proposal.requestedAmount.currency.equals(item.claim.outstandingAmount.currency) || item.proposal.requestedAmount.compare(item.claim.outstandingAmount) > 0 || (item.proposal.fundingPolicyId !== undefined && item.proposal.fundingPolicyId !== policy.id)) {
+      failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "All-or-nothing funding item must retain an authoritative proposal, matching claim, and policy", entityType: "funding_constraint", entityId: constraintId });
+    }
+  }
+  const currency = items[0]!.proposal.requestedAmount.currency;
+  if (items.some((item) => !item.proposal.requestedAmount.currency.equals(currency))) {
     failValidation({ severity: "error", code: issueCodes.fundingCurrencyMismatch, message: "All-or-nothing funding items must use one currency", entityType: "funding_constraint", entityId: constraintId });
   }
-  const requestedAmount = items.reduce((total, item) => total.plus(item.amount), Money.zero(currency));
+  const requestedAmount = items.reduce((total, item) => total.plus(item.proposal.requestedAmount), Money.zero(currency));
   let remaining = requestedAmount;
   const potentialAllocations: FundingAllocation[] = [];
   for (const source of policy.orderedSources) {
@@ -128,13 +136,14 @@ export const resolveAllOrNothingFunding = (
   }
   const fundedAmount = requestedAmount.minus(remaining);
   const funded = remaining.isZero();
-  const subjectIds = Object.freeze(items.map((item) => item.subjectId));
-  const outcome: AllOrNothingConstraintOutcome = Object.freeze({ kind: "all_or_nothing_group", constraintId, subjectIds, fundingPolicyId: policy.id, status: funded ? "fully_satisfied" : "unfunded", requestedAmount, acceptedAmount: funded ? requestedAmount : Money.zero(currency), evaluatedAt });
+  const proposalIds = Object.freeze(items.map((item) => item.proposal.id));
+  const claimIds = Object.freeze(items.map((item) => item.claim.id));
+  const outcome: AllOrNothingConstraintOutcome = Object.freeze({ kind: "all_or_nothing_group", constraintId, proposalIds, claimIds, fundingPolicyId: policy.id, status: funded ? "fully_satisfied" : "unfunded", requestedAmount, acceptedAmount: funded ? requestedAmount : Money.zero(currency), evaluatedAt });
   if (funded) return Object.freeze({ outcome, potentialAllocations: Object.freeze(potentialAllocations) });
   return Object.freeze({
     outcome,
     potentialAllocations: Object.freeze(potentialAllocations),
-    liquidityShortfall: Object.freeze({ kind: "all_or_nothing_group", constraintId, subjectIds, fundingPolicyId: policy.id, requestedAmount, fundedAmount, shortfallAmount: requestedAmount.minus(fundedAmount), evaluatedAt }),
+    liquidityShortfall: Object.freeze({ kind: "all_or_nothing_group", constraintId, proposalIds, claimIds, fundingPolicyId: policy.id, requestedAmount, fundedAmount, shortfallAmount: requestedAmount.minus(fundedAmount), evaluatedAt }),
   });
 };
 
