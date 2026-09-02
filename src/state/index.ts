@@ -8,7 +8,7 @@ import {
 } from "../accounting/index.js";
 import { failValidation, issueCodes } from "../diagnostics/index.js";
 import type { DomainId, GeneratedOccurrenceKey, IdempotencyKey } from "../identity/index.js";
-import { normalizeClaimLifecycle, type Obligation } from "../semantics/claim.js";
+import { normalizeClaimLifecycle, type ObligationOrRight } from "../semantics/claim.js";
 import type { RecognitionId, SettlementId } from "../semantics/identity.js";
 import type { Currency, Money, Quantity, Rate } from "../values/index.js";
 
@@ -47,7 +47,7 @@ export interface AuthoritativeState {
   accounts: Record<string, AccountState>;
   positions: Record<string, PositionState>;
   liabilities: Record<string, LiabilityState>;
-  obligations: Record<string, Obligation>;
+  obligations: Record<string, ObligationOrRight>;
   identities: AuthoritativeIdentityRegistry;
 }
 
@@ -55,7 +55,7 @@ export interface AuthoritativeStateDraft {
   readonly accounts?: Record<string, AccountState>;
   readonly positions?: Record<string, PositionState>;
   readonly liabilities?: Record<string, LiabilityState>;
-  readonly obligations?: Record<string, Obligation>;
+  readonly obligations?: Record<string, ObligationOrRight>;
   readonly identities?: Partial<AuthoritativeIdentityRegistry>;
 }
 
@@ -77,13 +77,7 @@ export const createAuthoritativeState = (draft: AuthoritativeStateDraft = {}): A
     accounts: Object.fromEntries(Object.entries(draft.accounts ?? {}).map(([key, value]) => [key, { ...value }])),
     positions: Object.fromEntries(Object.entries(draft.positions ?? {}).map(([key, value]) => [key, { ...value }])),
     liabilities: Object.fromEntries(Object.entries(draft.liabilities ?? {}).map(([key, value]) => [key, { ...value }])),
-    obligations: Object.fromEntries(Object.entries(draft.obligations ?? {}).map(([key, value]) => {
-      const normalized = normalizeClaimLifecycle(value);
-      if (normalized.kind !== "obligation") {
-        failValidation({ severity: "error", code: issueCodes.claimInvariantInvalid, message: `Authoritative obligation ${normalized.id} must have kind obligation`, entityType: "claim", entityId: normalized.id, fieldPath: `obligations.${key}.kind` });
-      }
-      return [key, normalized as Obligation];
-    })),
+    obligations: Object.fromEntries(Object.entries(draft.obligations ?? {}).map(([key, value]) => [key, normalizeClaimLifecycle(value)])),
     identities: createAuthoritativeIdentityRegistry(draft.identities),
   };
   reconcileClaimIdentityHistory(state);
@@ -177,7 +171,7 @@ export const validateAuthoritativeState = (state: AuthoritativeState, transactio
     }
   }
   for (const [key, liability] of Object.entries(state.liabilities)) validateRecordIdentity("liabilities", "liability", key, liability.id);
-  for (const [key, obligation] of Object.entries(state.obligations)) validateRecordIdentity("obligations", "obligation", key, obligation.id);
+  for (const [key, claim] of Object.entries(state.obligations)) validateRecordIdentity("obligations", "claim", key, claim.id);
   for (const account of Object.values(state.accounts)) {
     if (account.cash.isNegative()) {
       failValidation({

@@ -39,9 +39,11 @@ P03 currently supports explicit UTC instants and an anchored UTC-monthly
 schedule with an explicit `skip` policy for months lacking the anchor day. P08
 supports periodic integer growth and effective-annual growth over an explicit
 rational year fraction. P13 supports deterministic explicit price-index
-linkage. P20 supports the existing resolved proportional tax rule. P22 and P24
-support exact fixed-payment amortization and separate monthly interest accrual
-without authoritative state mutation or implicit capitalization. P23 and P26
+linkage. P20 supports the existing resolved proportional tax rule. P22 emits
+exact fixed-payment and principal-allocation proposals; funding, settlement,
+and accounting remain downstream authorities. P24 supports exactly one
+non-prorated UTC contractual month at nominal annual rate / 12, with no inferred
+day count, stub handling, settlement, or capitalization. P23 and P26
 support deterministic compounding and mark-to-market valuation. P27, P29,
 and P30 support deterministic scheduled activation, typed replacement with
 optional reversion, and typed termination.

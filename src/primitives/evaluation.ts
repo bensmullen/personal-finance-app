@@ -10,6 +10,7 @@ import { calculateProportionalTax, fixedMortgagePayment, mortgageInterest } from
 import {
   inPeriod,
   utcMonthlyOccurrences,
+  utcMonthlyPeriods,
   type CivilDate,
   type Instant,
   type InvalidUtcMonthlyDayPolicy,
@@ -205,6 +206,16 @@ export interface AccrualPrimitiveState {
   readonly occurrenceId?: never;
 }
 
+export interface MonthlyAccrualContract {
+  readonly measurement: "one_contractual_occurrence";
+  readonly contractualPeriod: "monthly";
+  readonly rateBasis: "nominal_annual_12";
+  readonly calendar: "utc";
+  readonly stubPeriodPolicy: "reject";
+  readonly dayCountConvention: "none";
+  readonly capitalization: "none";
+}
+
 export const initialAmortizationPrimitiveState = (): AmortizationPrimitiveState => Object.freeze({ evaluations: 0 });
 export const initialAccrualPrimitiveState = (): AccrualPrimitiveState => Object.freeze({ evaluations: 0 });
 export const initialCompoundingPrimitiveState = (): CompoundingPrimitiveState => Object.freeze({ evaluations: 0 });
@@ -264,7 +275,7 @@ export type ImplementedPrimitiveEvaluationRequest =
   | { readonly primitiveId: "P20"; readonly input: { readonly taxableBase: Money; readonly resolvedRule: ResolvedProportionalTaxRule }; readonly priorState: null; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P22"; readonly input: { readonly openingPrincipal: Money; readonly currentInterest: Money; readonly extraPrincipal?: Money }; readonly parameters: { readonly originalPrincipal: Money; readonly annualRate: Rate; readonly totalPayments: number; readonly postingRounding: RoundingPolicy }; readonly priorState: AmortizationPrimitiveState; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P23"; readonly input: { readonly baseValue: Money; readonly rate: Rate; readonly contribution?: Money; readonly withdrawal?: Money }; readonly parameters: { readonly returnBasis: CompoundingReturnBasis; readonly cashFlowTiming: CompoundingCashFlowTiming; readonly postingRounding: RoundingPolicy }; readonly priorState: CompoundingPrimitiveState; readonly context: PrimitiveEvaluationContext }
-  | { readonly primitiveId: "P24"; readonly input: { readonly balance: Money; readonly rate: Rate }; readonly parameters: { readonly basis: "nominal_annual_monthly"; readonly postingRounding: RoundingPolicy }; readonly priorState: AccrualPrimitiveState; readonly context: PrimitiveEvaluationContext }
+  | { readonly primitiveId: "P24"; readonly input: { readonly balance: Money; readonly rate: Rate }; readonly parameters: { readonly temporal: MonthlyAccrualContract; readonly postingRounding: RoundingPolicy }; readonly priorState: AccrualPrimitiveState; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P26"; readonly input: { readonly quantity: Quantity; readonly price: Money }; readonly parameters: { readonly expectedUnit: Unit; readonly expectedCurrency: Currency }; readonly priorState: MarkToMarketPrimitiveState; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P27"; readonly input: { readonly eventId: DomainId<"event"> }; readonly parameters: { readonly effectiveAt: Instant; readonly targetId: string }; readonly priorState: EventTriggerPrimitiveState; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P29"; readonly input: { readonly base: PrimitiveFlowValue; readonly replacement: PrimitiveFlowValue; readonly eventId: DomainId<"event"> }; readonly parameters: { readonly targetId: string; readonly effectiveAt: Instant; readonly precedence: number; readonly endAt?: Instant; readonly provenance: FactProvenance }; readonly priorState: EventModificationPrimitiveState; readonly context: PrimitiveEvaluationContext }
@@ -449,23 +460,28 @@ const amortizationEvaluation = (request: Extract<ImplementedPrimitiveEvaluationR
   const zero = Money.zero(openingPrincipal.currency);
   const payoffAmount = openingPrincipal.plus(currentInterest);
   const isFinalContractualPayment = request.priorState.evaluations + 1 === totalPayments;
-  const scheduledPayment = openingPrincipal.isZero()
+  const scheduledPaymentProposed = openingPrincipal.isZero()
     ? zero
     : isFinalContractualPayment || contractualPayment.compare(payoffAmount) > 0 ? payoffAmount : contractualPayment;
-  if (scheduledPayment.compare(currentInterest) < 0) invalid(issueCodes.primitiveInputInvalid, "P22 supported contract does not permit negative amortization", "P22", "input.currentInterest");
-  const scheduledPrincipal = scheduledPayment.minus(currentInterest).compare(openingPrincipal) > 0 ? openingPrincipal : scheduledPayment.minus(currentInterest);
-  const remainingAfterScheduled = openingPrincipal.minus(scheduledPrincipal);
-  const acceptedExtraPrincipal = extraRequested.compare(remainingAfterScheduled) > 0 ? remainingAfterScheduled : extraRequested;
-  const principalReduction = scheduledPrincipal.plus(acceptedExtraPrincipal);
-  const endingPrincipal = openingPrincipal.minus(principalReduction);
+  if (scheduledPaymentProposed.compare(currentInterest) < 0) invalid(issueCodes.primitiveInputInvalid, "P22 supported contract does not permit negative amortization", "P22", "input.currentInterest");
+  const scheduledPrincipalProposed = scheduledPaymentProposed.minus(currentInterest).compare(openingPrincipal) > 0 ? openingPrincipal : scheduledPaymentProposed.minus(currentInterest);
+  const remainingAfterScheduled = openingPrincipal.minus(scheduledPrincipalProposed);
+  const extraPrincipalProposed = extraRequested.compare(remainingAfterScheduled) > 0 ? remainingAfterScheduled : extraRequested;
+  const principalReductionProposed = scheduledPrincipalProposed.plus(extraPrincipalProposed);
+  const projectedPrincipalAfterProposedPayment = openingPrincipal.minus(principalReductionProposed);
   const nextState: AmortizationPrimitiveState = Object.freeze({ evaluations: request.priorState.evaluations + 1, contractualPayment, originalPrincipal, totalPayments });
-  return evaluation("P22", Object.freeze({ openingPrincipal, contractualPayment, scheduledPayment, currentInterest, scheduledPrincipal, extraPrincipalRequested: extraRequested, extraPrincipalAccepted: acceptedExtraPrincipal, principalReduction, endingPrincipal }), nextState, frozenEmpty, request.context.traceRefs);
+  return evaluation("P22", Object.freeze({ openingPrincipal, contractualPayment, scheduledPaymentProposed, currentInterest, scheduledPrincipalProposed, extraPrincipalRequested: extraRequested, extraPrincipalProposed, principalReductionProposed, projectedPrincipalAfterProposedPayment }), nextState, frozenEmpty, request.context.traceRefs);
 };
 
 const accrualEvaluation = (request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P24" }>) => {
   const { balance, rate } = request.input;
   if (balance.isNegative()) invalid(issueCodes.primitiveInputInvalid, "P24 balance cannot be negative", "P24", "input.balance");
-  if (request.parameters.basis !== "nominal_annual_monthly") invalid(issueCodes.primitiveParametersInvalid, "P24 supports only nominal-annual monthly accrual", "P24", "parameters.basis");
+  const temporal = request.parameters.temporal;
+  if (temporal.measurement !== "one_contractual_occurrence" || temporal.contractualPeriod !== "monthly" || temporal.rateBasis !== "nominal_annual_12" || temporal.calendar !== "utc" || temporal.stubPeriodPolicy !== "reject" || temporal.dayCountConvention !== "none" || temporal.capitalization !== "none") invalid(issueCodes.primitiveParametersInvalid, "P24 supports exactly one non-prorated UTC contractual month with nominal annual rate / 12 and no capitalization", "P24", "parameters.temporal");
+  let expectedPeriod;
+  try { expectedPeriod = utcMonthlyPeriods(request.context.period.start, 1)[0]!; }
+  catch { return invalid(issueCodes.primitiveParametersInvalid, "P24 rejects stub or partial periods; period must begin at a UTC month boundary", "P24", "context.period"); }
+  if (expectedPeriod.end !== request.context.period.end || !inPeriod(request.context.evaluationInstant, request.context.period)) invalid(issueCodes.primitiveParametersInvalid, "P24 rejects stub or partial periods and requires its occurrence inside one UTC calendar month", "P24", "context.period");
   if (!Number.isSafeInteger(request.priorState.evaluations) || request.priorState.evaluations < 0) invalid(issueCodes.primitiveStateInvalid, "P24 state requires a non-negative evaluation count", "P24", "priorState.evaluations");
   if (request.priorState.lastAccruedAmount !== undefined) assertStateMoney(request.priorState.lastAccruedAmount, balance.currency, "P24", "priorState.lastAccruedAmount");
   let accruedAmount: Money;

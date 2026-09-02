@@ -149,6 +149,7 @@ export type InputFingerprint = string & { readonly __inputFingerprint: "InputFin
 export interface RunFingerprintInput {
   readonly runContext: RunContext;
   readonly openingState: unknown;
+  readonly primitiveState?: unknown;
   readonly executionPlan?: unknown;
   readonly model?: unknown;
   readonly scenario?: unknown;
@@ -163,6 +164,7 @@ export const createInputFingerprint = (input: RunFingerprintInput): InputFingerp
   const canonical = canonicalSerialize({
     runContext: economicRunContext,
     openingState: input.openingState,
+    ...(input.primitiveState === undefined ? {} : { primitiveState: input.primitiveState }),
     ...(input.executionPlan === undefined ? {} : { executionPlan: input.executionPlan }),
     ...(input.model === undefined ? {} : { model: input.model }),
     ...(input.scenario === undefined ? {} : { scenario: input.scenario }),
