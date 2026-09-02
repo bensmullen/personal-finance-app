@@ -108,11 +108,26 @@ export const resolveAllOrNothingFunding = (
   if (policy.allowPartial || policy.insufficientFundsBehavior !== "unfunded") {
     failValidation({ severity: "error", code: issueCodes.fundingPolicyInvalid, message: "All-or-nothing funding requires partial funding disabled with unfunded behavior", entityType: "funding_policy", entityId: policy.id });
   }
-  if (items.length === 0 || new Set(items.map((item) => item.proposal.id)).size !== items.length) {
-    failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "All-or-nothing funding requires unique authoritative proposals", entityType: "funding_constraint", entityId: constraintId });
+  if (
+    items.length === 0
+    || new Set(items.map((item) => item.proposal.id)).size !== items.length
+    || new Set(items.map((item) => item.claim.id)).size !== items.length
+  ) {
+    failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "All-or-nothing funding requires unique authoritative proposals and claims", entityType: "funding_constraint", entityId: constraintId });
   }
   for (const item of items) {
     assertAuthoritativeSettlementProposal(item.proposal);
+    if (evaluatedAt < item.proposal.requestedAt) {
+      failValidation({
+        severity: "error",
+        code: issueCodes.fundingBeforeProposal,
+        message: `All-or-nothing funding for proposal ${item.proposal.id} cannot be evaluated before the proposal`,
+        entityType: "settlement_proposal",
+        entityId: item.proposal.id,
+        fieldPath: "evaluatedAt",
+        relatedIds: [constraintId],
+      });
+    }
     if (item.proposal.claimId !== item.claim.id || !item.proposal.requestedAmount.isPositive() || !item.proposal.requestedAmount.currency.equals(item.claim.outstandingAmount.currency) || item.proposal.requestedAmount.compare(item.claim.outstandingAmount) > 0 || (item.proposal.fundingPolicyId !== undefined && item.proposal.fundingPolicyId !== policy.id)) {
       failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "All-or-nothing funding item must retain an authoritative proposal, matching claim, and policy", entityType: "funding_constraint", entityId: constraintId });
     }
