@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { assertBalanced } from "../src/accounting/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { domainId } from "../src/identity/index.js";
-import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { createInputFingerprint, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { createAuthoritativeState } from "../src/state/index.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
 import { Rate, RoundingPolicy, USD, money, rateConvention, sumMoney } from "../src/values/index.js";
@@ -188,9 +188,10 @@ describe("Vertical Slice 4 liabilities", () => {
       [primitive(3)]: { primitiveId: "P24" as const, state: { ...(missed.primitiveState[primitive(3)]!.state as object), evaluations: 2 } },
     };
     const nextContext = contextAt(instant("2026-02-01T00:00:00.000Z"), 1, "452");
-    const one = runVerticalSlice4({ runContext: nextContext, openingState: missed.state, primitiveState: missed.primitiveState, input: input(loan("100", "0", 3)) });
-    const two = runVerticalSlice4({ runContext: { ...nextContext, runId: runId("64000000-0000-4000-8000-000000000453") }, openingState: missed.state, primitiveState: secondProgress, input: input(loan("100", "0", 3)) });
-    expect(one.runMetadata.inputFingerprint).not.toBe(two.runMetadata.inputFingerprint);
+    const model = input(loan("100", "0", 3));
+    const one = createInputFingerprint({ runContext: nextContext, openingState: missed.state, primitiveState: missed.primitiveState, model, executionPlan: { months: 1 } });
+    const two = createInputFingerprint({ runContext: { ...nextContext, runId: runId("64000000-0000-4000-8000-000000000453") }, openingState: missed.state, primitiveState: secondProgress, model, executionPlan: { months: 1 } });
+    expect(one).not.toBe(two);
   });
 
   it("rejects replay and preserves the last committed financial and primitive state", () => {
