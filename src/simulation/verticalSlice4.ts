@@ -73,6 +73,23 @@ const contractualOccurrencesBefore = (loan: FixedAmortizingLoan, before: Instant
   }
   return count;
 };
+const committedContractualPrefixInRun = (request: VerticalSlice4RunInput, loan: FixedAmortizingLoan, scheduledBeforeRun: number): number => {
+  const remainingContractual = Math.max(0, loan.totalPayments - scheduledBeforeRun);
+  if (remainingContractual === 0) return 0;
+  const months = utcMonthDifference(request.runContext.simulationStart, request.runContext.simulationEnd);
+  const periods = utcMonthlyPeriods(request.runContext.simulationStart, months);
+  const committedKeys = new Set(request.openingState.identities.generatedOccurrenceKeys);
+  let prefix = 0;
+  for (const period of periods) {
+    const occurrence = utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy)[0];
+    if (occurrence === undefined) continue;
+    if (prefix >= remainingContractual) break;
+    const key = generatedOccurrenceKey({ scenarioId: request.runContext.scenarioId, primitiveInstanceId: loan.primitiveIds.schedule, scheduledAt: occurrence, semanticEffectType: "liability-payment", economicTargetId: loan.principalLiabilityId });
+    if (!committedKeys.has(key)) break;
+    prefix += 1;
+  }
+  return prefix;
+};
 
 const validatePrimitiveResume = (request: VerticalSlice4RunInput, loan: FixedAmortizingLoan): void => {
   const principal = request.openingState.liabilities[loan.principalLiabilityId]!.balance;
@@ -90,8 +107,10 @@ const validatePrimitiveResume = (request: VerticalSlice4RunInput, loan: FixedAmo
   if (amortizationState === undefined) { if (accrualState !== undefined) invalid("P24 resume state requires matching P22 progress", `primitiveState.${loan.primitiveIds.accrual}`); return; }
   const state = amortizationState.state;
   if (state.evaluations > loan.totalPayments) invalid("P22 evaluation progress cannot exceed contractual payment count", `primitiveState.${loan.primitiveIds.amortization}.evaluations`);
+  if (state.evaluations === loan.totalPayments && principal.isPositive() && !principalDue.equals(principal)) invalid("Matured principal must be fully represented by outstanding required-principal claims", `primitiveState.${loan.primitiveIds.amortization}`);
   const debtStillActive = principal.isPositive() || historicalClaims;
-  if ((debtStillActive && state.evaluations !== scheduledBeforeRun) || (!debtStillActive && state.evaluations > scheduledBeforeRun)) invalid("P22 resume progress must reconcile exactly with prior contractual occurrences while debt remains active", `primitiveState.${loan.primitiveIds.amortization}.evaluations`);
+  const expectedProgress = scheduledBeforeRun + committedContractualPrefixInRun(request, loan, scheduledBeforeRun);
+  if ((debtStillActive && state.evaluations !== expectedProgress) || (!debtStillActive && state.evaluations > expectedProgress)) invalid("P22 resume progress must reconcile exactly with committed contractual occurrences while debt remains active", `primitiveState.${loan.primitiveIds.amortization}.evaluations`);
   if (state.evaluations > 0) {
     const expectedPayment = fixedMortgagePayment(loan.originalPrincipal, loan.annualRate, loan.totalPayments, loan.postingRounding);
     if (state.contractualPayment === undefined || state.originalPrincipal === undefined || state.totalPayments !== loan.totalPayments || !state.contractualPayment.equals(expectedPayment) || !state.originalPrincipal.equals(loan.originalPrincipal)) invalid("P22 resume state does not match the loan contract", `primitiveState.${loan.primitiveIds.amortization}`);
@@ -99,7 +118,6 @@ const validatePrimitiveResume = (request: VerticalSlice4RunInput, loan: FixedAmo
     if (compatibleAccrualState.state.evaluations < state.evaluations || (state.evaluations < loan.totalPayments && compatibleAccrualState.state.evaluations !== state.evaluations)) invalid("P22/P24 resume progress is economically inconsistent", `primitiveState.${loan.primitiveIds.accrual}.evaluations`);
     if (compatibleAccrualState.state.lastAccruedAmount !== undefined && !compatibleAccrualState.state.lastAccruedAmount.currency.equals(request.input.baseCurrency)) invalid("P24 resume state currency does not match the loan", `primitiveState.${loan.primitiveIds.accrual}.lastAccruedAmount`);
   }
-  if (state.evaluations === loan.totalPayments && principal.isPositive() && !principalDue.equals(principal)) invalid("Matured principal must be fully represented by outstanding required-principal claims", `primitiveState.${loan.primitiveIds.amortization}`);
 };
 
 const validate = (request: VerticalSlice4RunInput, periods: readonly Period[]): void => {
