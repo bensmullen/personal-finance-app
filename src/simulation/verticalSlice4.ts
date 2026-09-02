@@ -49,16 +49,28 @@ const canonicalInput = (input: VerticalSlice4Input): unknown => Object.freeze({ 
 const claimsFor = (state: AuthoritativeState, liabilityId: LiabilityId, category: string): readonly Obligation[] => Object.values(state.obligations).filter((claim): claim is Obligation => claim.kind === "obligation" && claim.balanceEntityId === liabilityId && claim.category === category && claim.outstandingAmount.isPositive()).sort((left, right) => left.recognizedAt.localeCompare(right.recognizedAt) || left.id.localeCompare(right.id));
 const claimTotal = (claims: readonly Obligation[], currency: Currency): Money => sumMoney(claims.map((claim) => claim.outstandingAmount), currency);
 const policiesShareSource = (left: FundingPolicy, right: FundingPolicy): boolean => left.orderedSources.some((source) => right.orderedSources.some((other) => other.accountId === source.accountId));
+const firstContractMonth = (loan: FixedAmortizingLoan): Instant => `${loan.paymentSchedule.anchor.slice(0, 8)}01T00:00:00.000Z` as Instant;
 /** Finite contract membership, independent of the caller's simulation window. */
 const isContractualOccurrence = (loan: FixedAmortizingLoan, scheduledAt: Instant): boolean => {
-  let month = loan.paymentSchedule.anchor.slice(0, 8) + "01T00:00:00.000Z"; let found = 0;
-  const limit = loan.totalPayments + Math.ceil(loan.totalPayments / 11) + 2;
-  for (let scanned = 0; scanned < limit && found < loan.totalPayments; scanned += 1) { const period = utcMonthlyPeriods(month as Instant, 1)[0]!; const occurrence = utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy)[0]; if (occurrence !== undefined) { if (occurrence === scheduledAt) return true; if (occurrence > scheduledAt) return false; found += 1; } month = period.end; }
+  let month = firstContractMonth(loan); let found = 0;
+  while (found < loan.totalPayments) {
+    const period = utcMonthlyPeriods(month, 1)[0]!;
+    if (period.start > scheduledAt) return false;
+    const occurrence = utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy)[0];
+    if (occurrence !== undefined) { if (occurrence === scheduledAt) return true; if (occurrence > scheduledAt) return false; found += 1; }
+    month = period.end;
+  }
   return false;
 };
 const contractualOccurrencesBefore = (loan: FixedAmortizingLoan, before: Instant): number => {
-  let month = loan.paymentSchedule.anchor.slice(0, 8) + "01T00:00:00.000Z"; let count = 0; const limit = loan.totalPayments + Math.ceil(loan.totalPayments / 11) + 2;
-  for (let scanned = 0; scanned < limit && count < loan.totalPayments; scanned += 1) { const period = utcMonthlyPeriods(month as Instant, 1)[0]!; const occurrence = utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy)[0]; if (occurrence !== undefined && occurrence < before) count += 1; if (period.start >= before) break; month = period.end; }
+  let month = firstContractMonth(loan); let count = 0;
+  while (count < loan.totalPayments) {
+    const period = utcMonthlyPeriods(month, 1)[0]!;
+    if (period.start >= before) break;
+    const occurrence = utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy)[0];
+    if (occurrence !== undefined) { if (occurrence >= before) break; count += 1; }
+    month = period.end;
+  }
   return count;
 };
 
@@ -78,7 +90,9 @@ const validatePrimitiveResume = (request: VerticalSlice4RunInput, loan: FixedAmo
   if (amortizationState === undefined) { if (accrualState !== undefined) invalid("P24 resume state requires matching P22 progress", `primitiveState.${loan.primitiveIds.accrual}`); return; }
   const state = amortizationState.state;
   if (state.evaluations > loan.totalPayments) invalid("P22 evaluation progress cannot exceed contractual payment count", `primitiveState.${loan.primitiveIds.amortization}.evaluations`);
-    if (state.evaluations > 0) {
+  const debtStillActive = principal.isPositive() || historicalClaims;
+  if ((debtStillActive && state.evaluations !== scheduledBeforeRun) || (!debtStillActive && state.evaluations > scheduledBeforeRun)) invalid("P22 resume progress must reconcile exactly with prior contractual occurrences while debt remains active", `primitiveState.${loan.primitiveIds.amortization}.evaluations`);
+  if (state.evaluations > 0) {
     const expectedPayment = fixedMortgagePayment(loan.originalPrincipal, loan.annualRate, loan.totalPayments, loan.postingRounding);
     if (state.contractualPayment === undefined || state.originalPrincipal === undefined || state.totalPayments !== loan.totalPayments || !state.contractualPayment.equals(expectedPayment) || !state.originalPrincipal.equals(loan.originalPrincipal)) invalid("P22 resume state does not match the loan contract", `primitiveState.${loan.primitiveIds.amortization}`);
     const compatibleAccrualState = accrualState ?? invalid("P22 resume state requires matching P24 progress", `primitiveState.${loan.primitiveIds.accrual}`);
