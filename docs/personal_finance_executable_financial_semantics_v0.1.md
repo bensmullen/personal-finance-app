@@ -1,6 +1,6 @@
 # Personal Finance App — Executable Financial Semantics Specification
 
-**Version:** 0.1.7-draft
+**Version:** 0.1.8-draft
 **Status:** Draft implementation contract  
 **Namespace:** `pfm`  
 **Depends on:** `personal_finance_canonical_schema_v1.0.json`, `personal_finance_model.schema.json`, `personal_finance_simulation_interfaces_v1.0.ts`
@@ -355,6 +355,23 @@ The engine MUST detect duplicate economic-resource identities or overlapping agg
 
 A pure transfer between owned accounts moves cash or positions without changing consolidated household assets or net worth.
 
+### 5.5 Initial effective-dated rule subsystem
+
+Each executable financial rule version MUST use the existing canonical `TaxRule` identity family and MUST declare its rule kind, explicit economic target, `effectiveFrom`, and optional `effectiveUntil`. Runtime effectiveness is the half-open interval `[effectiveFrom, effectiveUntil)`; an omitted end is open-ended. Empty or inverted finite intervals are invalid.
+
+A required policy binding MUST list explicit candidate rule-version identities. Candidate identities are unique, every identity resolves, and every candidate matches the required kind and target. At the evaluation instant exactly one candidate MUST be active. Zero active candidates and multiple active candidates are validation errors. Catalog or binding array order conveys no precedence; implementations MUST NOT select a first, last, or implicitly most-recent entry.
+
+Every application records the exact rule identity, kind, target, evaluation instant, decision/calculated value, and calculation trace references. Trace references MUST carry applied rule identities as machine-readable data, and influenced effects and transactions MUST propagate them. Rules are pure policy/calculation code: they neither mutate authoritative financial state nor directly post accounting transactions.
+
+The initial supported methods are deliberately narrow:
+
+- proportional income tax is `round(taxableBase × effectiveRate)` using nonnegative `Money`, a `Ratio` from zero through one, and explicit posting rounding;
+- an annual contribution-limit rule targets one account and one UTC civil year whose effective range is exactly `[Jan 1 00:00Z, next Jan 1 00:00Z)`. For nonnegative requested and prior-used amounts, `remaining=max(limit-used,0)`, `accepted=min(requested,remaining)`, and `excess=requested-accepted`;
+- a product eligibility rule explicitly allows or rejects a named operation for one account or liability. A valid deny rule is a modeled decision, not malformed input;
+- a fixed-fee rule targets one account and assesses a nonnegative `Money` amount. A zero fee is valid and produces a recorded application but no posting.
+
+Contribution-limit and product-eligibility rejections are policy outcomes separate from funding outcomes. They MUST NOT be classified as liquidity failures, defaults, or accounting invariant failures. Comprehensive tax law, shared cross-account contribution limits, and percentage/tiered fees are outside this version.
+
 ## 6. Typed primitive composition
 
 Each primitive has a conceptual signature:
@@ -498,7 +515,7 @@ Consumes a declared market observation/process. Observation timing, valuation co
 
 ### P20 — tax_dependent
 
-`T_k=TaxRule(B_k)` after all prerequisite taxable inputs are resolved. The exact effective rule identity MUST be recorded.
+`T_k=TaxRule(B_k)` after all prerequisite taxable inputs are resolved. P20 consumes the resolved proportional-income-tax rule, delegates to the authoritative proportional-tax implementation, and returns both the calculated tax and exact applied rule identity. Its trace references MUST carry that identity.
 
 ### P21 — dependency_driven
 

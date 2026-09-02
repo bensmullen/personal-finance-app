@@ -54,8 +54,16 @@ const input: VerticalSliceInput = {
   retirementAccountId: domainId("account", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
   taxLiabilityId: domainId("liability", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
   monthlyGrossCompensation: money("10000"),
-  taxRate: Percentage.parse("20").toRatio(),
+  ruleCatalog: [
+    { id: domainId("tax-rule", "10000000-0000-4000-8000-000000000011"), kind: "proportional_income_tax", target: { targetType: "person", targetId: domainId("person", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb") }, effectiveFrom: instant("2026-01-01T00:00:00.000Z"), effectiveRate: Percentage.parse("20").toRatio(), postingRounding: RoundingPolicy.currency(2, "half_up") },
+    { id: domainId("tax-rule", "10000000-0000-4000-8000-000000000012"), kind: "product_operation_eligibility", target: { targetType: "account", targetId: domainId("account", "dddddddd-dddd-4ddd-8ddd-dddddddddddd") }, effectiveFrom: instant("2026-01-01T00:00:00.000Z"), operation: "contribution", allowed: true },
+    { id: domainId("tax-rule", "10000000-0000-4000-8000-000000000013"), kind: "annual_contribution_limit", target: { targetType: "account", targetId: domainId("account", "dddddddd-dddd-4ddd-8ddd-dddddddddddd") }, effectiveFrom: instant("2026-01-01T00:00:00.000Z"), effectiveUntil: instant("2027-01-01T00:00:00.000Z"), calendarYear: 2026, calendar: "utc", annualLimit: money("24000") },
+  ],
+  incomeTaxRuleIds: [domainId("tax-rule", "10000000-0000-4000-8000-000000000011")],
   retirementContribution: money("2000"),
+  retirementEligibilityRuleIds: [domainId("tax-rule", "10000000-0000-4000-8000-000000000012")],
+  retirementContributionLimitRuleIds: [domainId("tax-rule", "10000000-0000-4000-8000-000000000013")],
+  retirementContributionUsage: { calendarYear: 2026, usedBeforePeriod: money("0") },
   monthlyLivingExpense: money("4000"),
   taxFundingPolicy: createFundingPolicy({
     id: fundingPolicyId("funding:tax:checking"),
@@ -286,7 +294,7 @@ describe("Vertical Slice 1", () => {
       input: {
         ...input,
         monthlyGrossCompensation: money("1500"),
-        taxRate: Percentage.parse("0").toRatio(),
+        ruleCatalog: input.ruleCatalog.map((rule) => rule.kind === "proportional_income_tax" ? { ...rule, effectiveRate: Percentage.parse("0").toRatio() } : rule),
         retirementContribution: money("0"),
         monthlyLivingExpense: money("0"),
         settleCurrentTax: false,
@@ -316,7 +324,7 @@ describe("Vertical Slice 1", () => {
       input: {
         ...input,
         monthlyGrossCompensation: money("1500"),
-        taxRate: Percentage.parse("0").toRatio(),
+        ruleCatalog: input.ruleCatalog.map((rule) => rule.kind === "proportional_income_tax" ? { ...rule, effectiveRate: Percentage.parse("0").toRatio() } : rule),
         retirementContribution: money("0"),
         monthlyLivingExpense: money("0"),
         settleCurrentTax: false,
@@ -506,11 +514,44 @@ describe("Vertical Slice 1", () => {
     })).toThrow(/currency settlement precision/);
   });
 
+  it("posts only the annual-limit accepted retirement contribution and exposes rule lineage", () => {
+    const limited: VerticalSliceInput = {
+      ...input,
+      retirementContributionUsage: { calendarYear: 2026, usedBeforePeriod: money("23500") },
+    };
+    const result = runVerticalSlicePeriod({ period: utcMonth(2026, 1), input: limited, openingState: canonicalOpeningState(limited) });
+    expect(result.outputs.retirementContribution.equals(money("500"))).toBe(true);
+    expect(result.outputs.retirementCash.equals(money("500"))).toBe(true);
+    expect(result.diagnostics.some((issue) => issue.code === issueCodes.contributionLimitApplied)).toBe(true);
+    const contribution = result.ruleApplications.find((application) => application.ruleKind === "annual_contribution_limit");
+    expect(contribution?.traceRefs[0]?.ruleIds).toEqual([contribution?.ruleId]);
+  });
+
+  it("treats product disallowance as a nonblocking no-transaction decision", () => {
+    const disallowed: VerticalSliceInput = {
+      ...input,
+      ruleCatalog: input.ruleCatalog.map((rule) => rule.kind === "product_operation_eligibility" ? { ...rule, allowed: false } : rule),
+    };
+    const result = runVerticalSlicePeriod({ period: utcMonth(2026, 1), input: disallowed, openingState: canonicalOpeningState(disallowed) });
+    expect(result.outputs.retirementContribution.isZero()).toBe(true);
+    expect(result.transactions.some((transaction) => transaction.type === "internal_transfer")).toBe(false);
+    expect(result.diagnostics.some((issue) => issue.code === issueCodes.productOperationNotAllowed)).toBe(true);
+  });
+
+  it("canonicalizes unordered rule catalogs and bindings in the input fingerprint", () => {
+    const period = utcMonth(2026, 1);
+    const first = runVerticalSlicePeriod({ period, input, openingState: canonicalOpeningState(input) });
+    const reordered: VerticalSliceInput = { ...input, ruleCatalog: [...input.ruleCatalog].reverse(), incomeTaxRuleIds: [...input.incomeTaxRuleIds].reverse(), retirementEligibilityRuleIds: [...input.retirementEligibilityRuleIds].reverse(), retirementContributionLimitRuleIds: [...input.retirementContributionLimitRuleIds].reverse() };
+    const second = runVerticalSlicePeriod({ period, input: reordered, openingState: canonicalOpeningState(reordered) });
+    expect(second.runMetadata.inputFingerprint).toBe(first.runMetadata.inputFingerprint);
+    expect(second.outputs).toEqual(first.outputs);
+  });
+
   it.each(["-1", "101"])("rejects an out-of-range tax percentage of %s", (value) => {
     expect(() => runVerticalSlicePeriod({
       period: utcMonth(2026, 1),
-      input: { ...input, taxRate: Percentage.parse(value).toRatio() },
+      input: { ...input, ruleCatalog: input.ruleCatalog.map((rule) => rule.kind === "proportional_income_tax" ? { ...rule, effectiveRate: Percentage.parse(value).toRatio() } : rule) },
       openingState: canonicalOpeningState(input),
-    })).toThrow(/Tax ratio must be from 0 to 1/);
+    })).toThrow(/tax rate must be between zero and one/);
   });
 });

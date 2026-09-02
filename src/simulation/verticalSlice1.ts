@@ -60,12 +60,23 @@ import {
 import {
   type Currency,
   Money,
-  Ratio,
   RoundingPolicy,
   USD,
   sumMoney,
 } from "../values/index.js";
-import { calculateProportionalTax } from "../rules/index.js";
+import { evaluatePrimitive } from "../primitives/index.js";
+import { freezeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
+import {
+  calculateProportionalTax,
+  evaluateAnnualContributionLimit,
+  evaluateProductOperationEligibility,
+  resolveEffectiveRule,
+  type ContributionLimitDecision,
+  type FinancialRuleId,
+  type ProductEligibilityDecision,
+  type RuleApplication,
+  type RuleCatalog,
+} from "../rules/index.js";
 import { deriveVerticalSliceStatements, type VerticalSliceStatements } from "../statements/index.js";
 
 export { instant, period, utcMonth, type Period } from "../time/index.js";
@@ -97,8 +108,12 @@ export interface VerticalSliceInput {
   readonly retirementAccountId: AccountId;
   readonly taxLiabilityId: LiabilityId;
   readonly monthlyGrossCompensation: Money;
-  readonly taxRate: Ratio;
+  readonly ruleCatalog: RuleCatalog;
+  readonly incomeTaxRuleIds: readonly FinancialRuleId[];
   readonly retirementContribution: Money;
+  readonly retirementEligibilityRuleIds: readonly FinancialRuleId[];
+  readonly retirementContributionLimitRuleIds: readonly FinancialRuleId[];
+  readonly retirementContributionUsage: { readonly calendarYear: number; readonly usedBeforePeriod: Money };
   readonly monthlyLivingExpense: Money;
   readonly taxFundingPolicy: FundingPolicy;
   readonly settleCurrentTax?: boolean;
@@ -146,11 +161,14 @@ export interface VerticalSliceResult {
     readonly taxExpense: Money;
     readonly taxPayable: Money;
     readonly retirementContribution: Money;
+    readonly retirementContributionUsageAfterPeriod: Money;
     readonly livingExpenses: Money;
     readonly checkingCash: Money;
     readonly retirementCash: Money;
     readonly consolidatedCash: Money;
   };
+  readonly ruleApplications: readonly RuleApplication<Money | ContributionLimitDecision | ProductEligibilityDecision>[];
+  readonly traceRefs: readonly CalculationTraceRef[];
 }
 
 export const verticalSlicePostingRounding = (currency: Currency): RoundingPolicy =>
@@ -165,16 +183,24 @@ const validateState = (state: SliceState, input: VerticalSliceInput): void => {
   if (!state.liabilities[input.taxLiabilityId]) throw new Error("Required tax liability is missing");
   if (checking.ownerId !== input.ownerId || retirement.ownerId !== input.ownerId) throw new Error("Retirement transfer requires common household ownership");
   const currency = input.currency ?? USD;
-  for (const amount of [input.monthlyGrossCompensation, input.retirementContribution, input.monthlyLivingExpense]) {
+  for (const amount of [input.monthlyGrossCompensation, input.retirementContribution, input.retirementContributionUsage.usedBeforePeriod, input.monthlyLivingExpense]) {
     if (amount.isNegative()) throw new Error("Domain amounts cannot be negative");
     if (!amount.currency.equals(currency)) throw new Error("Input money must use the model currency");
     if (!amount.amount.fitsScale(currency.minorUnitScale)) throw new Error("Vertical Slice 1 posted inputs must use currency settlement precision");
   }
-  calculateTax(Money.zero(currency), input.taxRate, verticalSlicePostingRounding(currency));
+  if (!Number.isSafeInteger(input.retirementContributionUsage.calendarYear)) throw new Error("Contribution usage requires an explicit calendar year");
 };
 
-const transaction = (id: string, date: Instant, type: string, legs: readonly AccountingLegDraft[]): AccountingTransaction =>
-  createAccountingTransaction({ id: accountingTransactionId(id), date, type, legs: legs.map(createAccountingLeg) });
+const transaction = (id: string, date: Instant, type: string, legs: readonly AccountingLegDraft[], traceRefs?: readonly CalculationTraceRef[]): AccountingTransaction =>
+  createAccountingTransaction({ id: accountingTransactionId(id), date, type, legs: legs.map((leg) => createAccountingLeg({ ...leg, ...(traceRefs === undefined ? {} : { traceRefs: leg.traceRefs ?? traceRefs }) })), ...(traceRefs === undefined ? {} : { traceRefs }) });
+
+const canonicalPolicyInput = (input: VerticalSliceInput): unknown => Object.freeze({
+  ...input,
+  ruleCatalog: Object.freeze([...input.ruleCatalog].sort((left, right) => left.id.localeCompare(right.id))),
+  incomeTaxRuleIds: Object.freeze([...input.incomeTaxRuleIds].sort()),
+  retirementEligibilityRuleIds: Object.freeze([...input.retirementEligibilityRuleIds].sort()),
+  retirementContributionLimitRuleIds: Object.freeze([...input.retirementContributionLimitRuleIds].sort()),
+});
 
 const projectedBalancesFrom = (state: SliceState): Record<string, Money> =>
   Object.fromEntries(Object.entries(state.accounts).map(([id, account]) => [id, account.cash]));
@@ -209,7 +235,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     runContext: request.runContext,
     openingState: state,
     scenario: {
-      input: request.input,
+      input: canonicalPolicyInput(request.input),
       taxSettlements: [...(request.taxSettlements ?? [])]
         .sort((left, right) => left.date.localeCompare(right.date)
           || left.settlementId.localeCompare(right.settlementId)
@@ -233,8 +259,11 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
   const liquidityShortfalls: LiquidityShortfall[] = [];
   const transactions: AccountingTransaction[] = [];
   const diagnostics: ValidationIssue[] = [];
+  const ruleApplications: RuleApplication<Money | ContributionLimitDecision | ProductEligibilityDecision>[] = [];
   const actions: PeriodAction[] = [];
   let taxAmount = Money.zero(currency);
+  let retirementContribution = Money.zero(currency);
+  let taxTraceRefs: readonly CalculationTraceRef[] = Object.freeze([]);
 
   const addTransaction = (tx: AccountingTransaction): void => {
     transactions.push(tx);
@@ -267,6 +296,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     settlementRequest: TaxSettlementRequest,
     policy: FundingPolicy,
     suppliedProvenance?: FactProvenance,
+    ruleTraceRefs?: readonly CalculationTraceRef[],
   ): void => {
     const provenance = createFactProvenance(suppliedProvenance ?? settlementRequest.provenance ?? {
       factKind: "authoritative_input",
@@ -314,6 +344,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
       requestedAt: settlementRequest.date,
       fundingPolicyId: policy.id,
       provenance,
+      ...(ruleTraceRefs === undefined ? {} : { traceRefs: ruleTraceRefs }),
     }, claim);
     settlementProposals.push(proposal);
     const funding = resolveFunding(proposal, claim, policy, projectedBalancesFrom(state), settlementRequest.date);
@@ -330,11 +361,11 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     settlements.push(acceptedSettlement);
     const updated = applySettlement(claim, acceptedSettlement) as Obligation;
     state.obligations[updated.id] = updated;
-    effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${acceptedSettlement.id}`), kind: "settlement", category: "tax", amount: acceptedSettlement.amount, occurredAt: acceptedSettlement.settledAt, claimId: acceptedSettlement.claimId, settlementId: acceptedSettlement.id, provenance }));
+    effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${acceptedSettlement.id}`), kind: "settlement", category: "tax", amount: acceptedSettlement.amount, occurredAt: acceptedSettlement.settledAt, claimId: acceptedSettlement.claimId, settlementId: acceptedSettlement.id, provenance, ...(ruleTraceRefs === undefined ? {} : { traceRefs: ruleTraceRefs }) }));
     addTransaction(transaction(`tx:tax-settlement:${acceptedSettlement.id}`, acceptedSettlement.settledAt, "tax_settlement", [
       { posting: "debit", type: "liability", amount: acceptedSettlement.amount, entityId: liabilityTarget },
       ...acceptedSettlement.fundingAllocations.map((allocation): AccountingLegDraft => ({ posting: "credit", type: "cash", amount: allocation.amount, accountId: allocation.accountId, cashFlowClass: "operating" })),
-    ]));
+    ], ruleTraceRefs));
   };
 
   actions.push({
@@ -351,7 +382,6 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
         { posting: "debit", type: "cash", amount: input.monthlyGrossCompensation, accountId: input.checkingAccountId, cashFlowClass: "operating" },
         { posting: "credit", type: "income", amount: input.monthlyGrossCompensation },
       ]));
-      taxAmount = calculateTax(input.monthlyGrossCompensation, input.taxRate, postingRounding);
     },
   });
 
@@ -359,9 +389,15 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     at: taxRecognitionAt,
     stableKey: "20:tax-recognition",
     execute: () => {
+      const rule = resolveEffectiveRule(input.ruleCatalog, input.incomeTaxRuleIds, "proportional_income_tax", { targetType: "person", targetId: input.ownerId }, taxRecognitionAt);
+      const evaluated = evaluatePrimitive({ primitiveId: "P20", input: { taxableBase: input.monthlyGrossCompensation, resolvedRule: rule }, priorState: null, context: { period: request.period, evaluationInstant: taxRecognitionAt, scenarioId: request.runContext.scenarioId, primitiveInstanceId: primitiveInstanceIds.taxRecognition, economicTargetId: input.ownerId, semanticEffectType: "tax-calculation" } });
+      const output = evaluated.output;
+      taxAmount = output.tax;
+      taxTraceRefs = evaluated.traceRefs ?? Object.freeze([]);
+      ruleApplications.push(output.application);
       if (!taxAmount.isPositive()) return;
       const provenance = generatedProvenance(primitiveInstanceIds.taxRecognition, taxRecognitionAt, "recognition", input.taxLiabilityId);
-      const taxRecognition = createRecognitionFact({ id: recognitionId(`recognition:tax:${request.period.start}`), category: "tax_expense", amount: taxAmount, recognizedAt: taxRecognitionAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, provenance }, state.identities.recognitionIds);
+      const taxRecognition = createRecognitionFact({ id: recognitionId(`recognition:tax:${request.period.start}`), category: "tax_expense", amount: taxAmount, recognizedAt: taxRecognitionAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, provenance, traceRefs: taxTraceRefs }, state.identities.recognitionIds);
       registerAuthoritativeIdentity(state.identities, "recognitionIds", taxRecognition.id);
       recognitions.push(taxRecognition);
       const obligation = createObligation({
@@ -374,11 +410,11 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
         recognizedAt: taxRecognition.recognizedAt,
       }, Object.values(state.obligations));
       state.obligations[obligation.id] = obligation;
-      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:tax-obligation:${request.period.start}`), kind: "claim", category: "tax", amount: taxAmount, occurredAt: taxRecognitionAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, recognitionId: taxRecognition.id, claimId: obligation.id, provenance }));
+      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:tax-obligation:${request.period.start}`), kind: "claim", category: "tax", amount: taxAmount, occurredAt: taxRecognitionAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, recognitionId: taxRecognition.id, claimId: obligation.id, provenance, traceRefs: taxTraceRefs }));
       addTransaction(transaction(`tx:tax-accrual:${request.period.start}`, taxRecognitionAt, "tax_accrual", [
         { posting: "debit", type: "tax", amount: taxAmount },
         { posting: "credit", type: "liability", amount: taxAmount, entityId: input.taxLiabilityId },
-      ]));
+      ], taxTraceRefs));
     },
   });
 
@@ -393,7 +429,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
         obligationId: `obligation:recognition:tax:${request.period.start}`,
         amount: taxAmount,
         date: taxSettlementAt,
-      }, input.taxFundingPolicy, provenance);
+      }, input.taxFundingPolicy, provenance, taxTraceRefs);
     },
   });
 
@@ -401,13 +437,26 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     at: retirementAt,
     stableKey: "40:retirement",
     execute: () => {
-      if (!input.retirementContribution.isPositive()) return;
+      const eligibilityRule = resolveEffectiveRule(input.ruleCatalog, input.retirementEligibilityRuleIds, "product_operation_eligibility", { targetType: "account", targetId: input.retirementAccountId }, retirementAt);
+      if (eligibilityRule.operation !== "contribution") failValidation({ severity: "error", code: issueCodes.ruleTargetMismatch, message: `Rule ${eligibilityRule.id} does not govern contributions`, entityType: "financial_rule", entityId: eligibilityRule.id, fieldPath: "operation" });
+      const eligibility = evaluateProductOperationEligibility(eligibilityRule, retirementAt);
+      ruleApplications.push(eligibility);
+      diagnostics.push(...eligibility.result.diagnostics);
+      if (!eligibility.result.allowed) return;
+      const limitRule = resolveEffectiveRule(input.ruleCatalog, input.retirementContributionLimitRuleIds, "annual_contribution_limit", { targetType: "account", targetId: input.retirementAccountId }, retirementAt);
+      if (input.retirementContributionUsage.calendarYear !== limitRule.calendarYear) failValidation({ severity: "error", code: issueCodes.ruleTargetMismatch, message: "Contribution usage year must match the active annual-limit rule", entityType: "rule_binding", fieldPath: "retirementContributionUsage.calendarYear", relatedIds: [limitRule.id] });
+      const limit = evaluateAnnualContributionLimit(limitRule, input.retirementContribution, input.retirementContributionUsage.usedBeforePeriod, retirementAt);
+      ruleApplications.push(limit);
+      diagnostics.push(...limit.result.diagnostics);
+      retirementContribution = limit.result.accepted;
+      const contributionTraceRefs = freezeTraceRefs([...eligibility.traceRefs, ...limit.traceRefs])!;
+      if (!retirementContribution.isPositive()) return;
       const provenance = generatedProvenance(primitiveInstanceIds.retirement, retirementAt, "flow", input.retirementAccountId);
-      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:retirement:${request.period.start}`), kind: "flow", category: "retirement_transfer", amount: input.retirementContribution, occurredAt: retirementAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, provenance }));
+      effects.push(createSemanticEffect({ id: semanticEffectId(`effect:retirement:${request.period.start}`), kind: "flow", category: "retirement_transfer", amount: retirementContribution, occurredAt: retirementAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, provenance, traceRefs: contributionTraceRefs }));
       addTransaction(transaction(`tx:retirement:${request.period.start}`, retirementAt, "internal_transfer", [
-        { posting: "debit", type: "cash", amount: input.retirementContribution, accountId: input.retirementAccountId, cashFlowClass: "non_cash" },
-        { posting: "credit", type: "cash", amount: input.retirementContribution, accountId: input.checkingAccountId, cashFlowClass: "non_cash" },
-      ]));
+        { posting: "debit", type: "cash", amount: retirementContribution, accountId: input.retirementAccountId, cashFlowClass: "non_cash" },
+        { posting: "credit", type: "cash", amount: retirementContribution, accountId: input.checkingAccountId, cashFlowClass: "non_cash" },
+      ], contributionTraceRefs));
     },
   });
 
@@ -462,13 +511,16 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     liquidityShortfalls: Object.freeze(liquidityShortfalls),
     transactions: Object.freeze(transactions),
     diagnostics: Object.freeze(diagnostics),
+    ruleApplications: Object.freeze(ruleApplications),
+    traceRefs: freezeTraceRefs([...new Map(ruleApplications.flatMap((application) => application.traceRefs).map((ref) => [ref.traceId, ref])).values()])!,
     dependencyOrder,
     statements,
     outputs: Object.freeze({
       grossCompensation: input.monthlyGrossCompensation,
       taxExpense: taxAmount,
       taxPayable: state.liabilities[input.taxLiabilityId]!.balance,
-      retirementContribution: input.retirementContribution,
+      retirementContribution,
+      retirementContributionUsageAfterPeriod: input.retirementContributionUsage.usedBeforePeriod.plus(retirementContribution),
       livingExpenses: input.monthlyLivingExpense,
       checkingCash: state.accounts[input.checkingAccountId]!.cash,
       retirementCash: state.accounts[input.retirementAccountId]!.cash,

@@ -5,6 +5,7 @@ import { createFactProvenance } from "../src/provenance.js";
 import { Currency, Quantity, SHARE } from "../src/values.js";
 import {
   Percentage,
+  RoundingPolicy,
   canonicalOpeningState,
   createFundingPolicy,
   createRunContext,
@@ -27,8 +28,16 @@ const input: VerticalSliceInput = {
   retirementAccountId: domainId("account", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
   taxLiabilityId: domainId("liability", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
   monthlyGrossCompensation: money("10000"),
-  taxRate: Percentage.parse("20").toRatio(),
+  ruleCatalog: [
+    { id: domainId("tax-rule", "20000000-0000-4000-8000-000000000011"), kind: "proportional_income_tax", target: { targetType: "person", targetId: domainId("person", "cccccccc-cccc-4ccc-8ccc-cccccccccccc") }, effectiveFrom: instant("2026-01-01T00:00:00.000Z"), effectiveRate: Percentage.parse("20").toRatio(), postingRounding: RoundingPolicy.currency(2, "half_up") },
+    { id: domainId("tax-rule", "20000000-0000-4000-8000-000000000012"), kind: "product_operation_eligibility", target: { targetType: "account", targetId: domainId("account", "dddddddd-dddd-4ddd-8ddd-dddddddddddd") }, effectiveFrom: instant("2026-01-01T00:00:00.000Z"), operation: "contribution", allowed: true },
+    { id: domainId("tax-rule", "20000000-0000-4000-8000-000000000013"), kind: "annual_contribution_limit", target: { targetType: "account", targetId: domainId("account", "dddddddd-dddd-4ddd-8ddd-dddddddddddd") }, effectiveFrom: instant("2026-01-01T00:00:00.000Z"), effectiveUntil: instant("2027-01-01T00:00:00.000Z"), calendarYear: 2026, calendar: "utc", annualLimit: money("24000") },
+  ],
+  incomeTaxRuleIds: [domainId("tax-rule", "20000000-0000-4000-8000-000000000011")],
   retirementContribution: money("2000"),
+  retirementEligibilityRuleIds: [domainId("tax-rule", "20000000-0000-4000-8000-000000000012")],
+  retirementContributionLimitRuleIds: [domainId("tax-rule", "20000000-0000-4000-8000-000000000013")],
+  retirementContributionUsage: { calendarYear: 2026, usedBeforePeriod: money("0") },
   monthlyLivingExpense: money("4000"),
   taxFundingPolicy: createFundingPolicy({
     id: fundingPolicyId("funding:test:checking"),
@@ -79,7 +88,7 @@ describe("Vertical Slice 1 run/state integration", () => {
       dataCutoff: context(1).dataCutoff,
       engineVersion: "0.1.0",
       resultSchemaVersion: "0.1.0",
-      financialSpecificationVersion: "0.1.7-draft",
+      financialSpecificationVersion: "0.1.8-draft",
       modelFormatVersion: "0.2.0-draft",
     }));
     expect(result.recognitions.every((fact) => fact.provenance?.factKind === "model_generated")).toBe(true);
