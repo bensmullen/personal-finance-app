@@ -35,13 +35,14 @@ const loan = (anchor: ReturnType<typeof instant>, totalPayments: number, extras:
 const input = (item: FixedAmortizingLoan): VerticalSlice4Input => ({ householdId: household, ownerId: owner, baseCurrency: USD, loans: [item] });
 
 const extra = (n: number, scheduledAt: ReturnType<typeof instant>) => ({ id: domainId("extra-principal-payment", `73000000-0000-4000-8000-${n.toString().padStart(12, "0")}`), scheduledAt, amount: money("1"), fundingPolicy: policy(), primitiveInstanceId: primitive(100 + n) });
+const skipScheduleCases = [
+  [instant("2026-01-29T00:00:00.000Z"), 24, instant("2028-02-29T00:00:00.000Z")],
+  [instant("2026-01-30T00:00:00.000Z"), 24, instant("2028-03-30T00:00:00.000Z")],
+  [instant("2026-01-31T00:00:00.000Z"), 24, instant("2029-05-31T00:00:00.000Z")],
+] as const;
 
 describe("VS4 finite contractual schedule and resume semantics", () => {
-  it.each([
-    [instant("2026-01-29T00:00:00.000Z"), 24, instant("2028-02-29T00:00:00.000Z")],
-    [instant("2026-01-30T00:00:00.000Z"), 24, instant("2028-03-30T00:00:00.000Z")],
-    [instant("2026-01-31T00:00:00.000Z"), 24, instant("2029-05-31T00:00:00.000Z")],
-  ])("accepts late contractual extras for skip schedules anchored at %s", (anchor, term, scheduledAt) => {
+  it.each(skipScheduleCases)("accepts late contractual extras for skip schedules anchored at %s", (anchor, term, scheduledAt) => {
     const item = loan(anchor, term, [extra(term, scheduledAt)]);
     const result = runVerticalSlice4({ runContext: contextAt(instant("2026-01-01T00:00:00.000Z"), 1, term), openingState: opening(), input: input(item) });
     expect(result.status).toBe("completed");
@@ -63,12 +64,11 @@ describe("VS4 finite contractual schedule and resume semantics", () => {
 
     const p22 = january.primitiveState[primitive(2)];
     const p24 = january.primitiveState[primitive(3)];
-    expect(p22?.primitiveId).toBe("P22");
-    expect(p24?.primitiveId).toBe("P24");
+    if (p22?.primitiveId !== "P22" || p24?.primitiveId !== "P24") throw new Error("Expected P22/P24 runtime state after January execution");
     const ahead = {
       ...january.primitiveState,
-      [primitive(2)]: { primitiveId: "P22" as const, state: { ...p22!.state, evaluations: 2 } },
-      [primitive(3)]: { primitiveId: "P24" as const, state: { ...p24!.state, evaluations: 2 } },
+      [primitive(2)]: { primitiveId: "P22" as const, state: { ...p22.state, evaluations: 2 } },
+      [primitive(3)]: { primitiveId: "P24" as const, state: { ...p24.state, evaluations: 2 } },
     };
     expect(() => runVerticalSlice4({ runContext: contextAt(instant("2026-02-01T00:00:00.000Z"), 1, 503), openingState: january.state, primitiveState: ahead, input: input(item) })).toThrow(/resume progress must reconcile exactly/);
   });
