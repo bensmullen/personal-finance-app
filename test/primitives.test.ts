@@ -63,10 +63,10 @@ describe("primitive runtime catalog", () => {
     expect(listPrimitiveDefinitions().map((entry) => entry.id)).toEqual(expected);
   });
 
-  it("marks exactly the PR 9 primitive set implemented", () => {
+  it("marks exactly the PR 10 primitive set implemented", () => {
     expect(listPrimitiveDefinitions().filter((entry) => entry.implementationStatus === "implemented").map((entry) => entry.id))
-      .toEqual(["P01", "P02", "P03", "P04", "P05", "P06", "P08", "P13", "P20", "P23", "P26", "P27", "P29", "P30"]);
-    expect(listPrimitiveDefinitions().filter((entry) => entry.implementationStatus === "registered_only")).toHaveLength(20);
+      .toEqual(["P01", "P02", "P03", "P04", "P05", "P06", "P08", "P13", "P20", "P22", "P23", "P24", "P26", "P27", "P29", "P30"]);
+    expect(listPrimitiveDefinitions().filter((entry) => entry.implementationStatus === "registered_only")).toHaveLength(18);
   });
 
   it("preserves representative canonical names, classes, state, and randomness", () => {

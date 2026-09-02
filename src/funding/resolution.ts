@@ -50,6 +50,118 @@ export interface LiquidityShortfall {
   readonly evaluatedAt: Instant;
 }
 
+export type FundingConstraintId = string & { readonly __fundingConstraintId: "FundingConstraintId" };
+
+export const fundingConstraintId = (value: string): FundingConstraintId => {
+  if (value.trim().length === 0) throw new Error("Funding constraint identity cannot be empty");
+  return value as FundingConstraintId;
+};
+
+export interface AllOrNothingFundingItem {
+  readonly proposal: SettlementProposal;
+  readonly claim: ObligationOrRight;
+}
+
+export interface AllOrNothingConstraintOutcome {
+  readonly kind: "all_or_nothing_group";
+  readonly constraintId: FundingConstraintId;
+  readonly proposalIds: readonly SettlementProposalId[];
+  readonly claimIds: readonly ClaimId[];
+  readonly fundingPolicyId: FundingPolicyId;
+  readonly status: "fully_satisfied" | "unfunded";
+  readonly requestedAmount: Money;
+  readonly acceptedAmount: Money;
+  readonly evaluatedAt: Instant;
+}
+
+export interface AllOrNothingLiquidityShortfall {
+  readonly kind: "all_or_nothing_group";
+  readonly constraintId: FundingConstraintId;
+  readonly proposalIds: readonly SettlementProposalId[];
+  readonly claimIds: readonly ClaimId[];
+  readonly fundingPolicyId: FundingPolicyId;
+  readonly requestedAmount: Money;
+  readonly fundedAmount: Money;
+  readonly shortfallAmount: Money;
+  readonly evaluatedAt: Instant;
+}
+
+export interface AllOrNothingFundingResolution {
+  readonly outcome: AllOrNothingConstraintOutcome;
+  readonly potentialAllocations: readonly FundingAllocation[];
+  readonly liquidityShortfall?: AllOrNothingLiquidityShortfall;
+}
+
+/**
+ * Evaluates one economically atomic group against real permitted liquidity.
+ * It never consumes cash. If the group cannot be funded in full, accepted
+ * amount is zero while potential allocations preserve truthful fundability.
+ */
+export const resolveAllOrNothingFunding = (
+  constraintId: FundingConstraintId,
+  items: readonly AllOrNothingFundingItem[],
+  policy: FundingPolicy,
+  availableBalances: Readonly<Record<string, Money>>,
+  evaluatedAt: Instant,
+): AllOrNothingFundingResolution => {
+  createFundingPolicy(policy);
+  if (policy.allowPartial || policy.insufficientFundsBehavior !== "unfunded") {
+    failValidation({ severity: "error", code: issueCodes.fundingPolicyInvalid, message: "All-or-nothing funding requires partial funding disabled with unfunded behavior", entityType: "funding_policy", entityId: policy.id });
+  }
+  if (
+    items.length === 0
+    || new Set(items.map((item) => item.proposal.id)).size !== items.length
+    || new Set(items.map((item) => item.claim.id)).size !== items.length
+  ) {
+    failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "All-or-nothing funding requires unique authoritative proposals and claims", entityType: "funding_constraint", entityId: constraintId });
+  }
+  for (const item of items) {
+    assertAuthoritativeSettlementProposal(item.proposal);
+    if (evaluatedAt < item.proposal.requestedAt) {
+      failValidation({
+        severity: "error",
+        code: issueCodes.fundingBeforeProposal,
+        message: `All-or-nothing funding for proposal ${item.proposal.id} cannot be evaluated before the proposal`,
+        entityType: "settlement_proposal",
+        entityId: item.proposal.id,
+        fieldPath: "evaluatedAt",
+        relatedIds: [constraintId],
+      });
+    }
+    if (item.proposal.claimId !== item.claim.id || !item.proposal.requestedAmount.isPositive() || !item.proposal.requestedAmount.currency.equals(item.claim.outstandingAmount.currency) || item.proposal.requestedAmount.compare(item.claim.outstandingAmount) > 0 || (item.proposal.fundingPolicyId !== undefined && item.proposal.fundingPolicyId !== policy.id)) {
+      failValidation({ severity: "error", code: issueCodes.settlementAmountInvalid, message: "All-or-nothing funding item must retain an authoritative proposal, matching claim, and policy", entityType: "funding_constraint", entityId: constraintId });
+    }
+  }
+  const currency = items[0]!.proposal.requestedAmount.currency;
+  if (items.some((item) => !item.proposal.requestedAmount.currency.equals(currency))) {
+    failValidation({ severity: "error", code: issueCodes.fundingCurrencyMismatch, message: "All-or-nothing funding items must use one currency", entityType: "funding_constraint", entityId: constraintId });
+  }
+  const requestedAmount = items.reduce((total, item) => total.plus(item.proposal.requestedAmount), Money.zero(currency));
+  let remaining = requestedAmount;
+  const potentialAllocations: FundingAllocation[] = [];
+  for (const source of policy.orderedSources) {
+    const available = availableBalances[source.accountId];
+    if (available === undefined) failValidation({ severity: "error", code: issueCodes.fundingSourceNotFound, message: `Funding source account ${source.accountId} was not found`, entityType: "funding_policy", entityId: policy.id, relatedIds: [source.accountId] });
+    if (!available.currency.equals(currency)) failValidation({ severity: "error", code: issueCodes.fundingCurrencyMismatch, message: `Funding source ${source.accountId} currency does not match constraint`, entityType: "funding_policy", entityId: policy.id, relatedIds: [source.accountId] });
+    if (available.isNegative()) failValidation({ severity: "error", code: issueCodes.fundingPolicyInvalid, message: `Funding source ${source.accountId} has a negative available balance`, entityType: "funding_policy", entityId: policy.id, relatedIds: [source.accountId] });
+    if (remaining.isZero() || available.isZero()) continue;
+    const amount = available.compare(remaining) >= 0 ? remaining : available;
+    potentialAllocations.push(Object.freeze({ kind: "cash_account", accountId: source.accountId, amount }));
+    remaining = remaining.minus(amount);
+  }
+  const fundedAmount = requestedAmount.minus(remaining);
+  const funded = remaining.isZero();
+  const proposalIds = Object.freeze(items.map((item) => item.proposal.id));
+  const claimIds = Object.freeze(items.map((item) => item.claim.id));
+  const outcome: AllOrNothingConstraintOutcome = Object.freeze({ kind: "all_or_nothing_group", constraintId, proposalIds, claimIds, fundingPolicyId: policy.id, status: funded ? "fully_satisfied" : "unfunded", requestedAmount, acceptedAmount: funded ? requestedAmount : Money.zero(currency), evaluatedAt });
+  if (funded) return Object.freeze({ outcome, potentialAllocations: Object.freeze(potentialAllocations) });
+  return Object.freeze({
+    outcome,
+    potentialAllocations: Object.freeze(potentialAllocations),
+    liquidityShortfall: Object.freeze({ kind: "all_or_nothing_group", constraintId, proposalIds, claimIds, fundingPolicyId: policy.id, requestedAmount, fundedAmount, shortfallAmount: requestedAmount.minus(fundedAmount), evaluatedAt }),
+  });
+};
+
 interface FundingResolutionBase<Status extends ConstraintOutcomeStatus> {
   readonly proposal: SettlementProposal;
   readonly outcome: ConstraintOutcome & { readonly status: Status };

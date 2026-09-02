@@ -85,5 +85,7 @@ export const issueCodes = Object.freeze({
   verticalSlice2InputInvalid: "VERTICAL_SLICE_2_INPUT_INVALID",
   verticalSlice2EventReferenceInvalid: "VERTICAL_SLICE_2_EVENT_REFERENCE_INVALID",
   verticalSlice3InputInvalid: "VERTICAL_SLICE_3_INPUT_INVALID",
+  verticalSlice4InputInvalid: "VERTICAL_SLICE_4_INPUT_INVALID",
+  liabilityConfigurationUnsupported: "LIABILITY_CONFIGURATION_UNSUPPORTED",
   duplicateStableIdentity: "DUPLICATE_STABLE_IDENTITY",
 } as const);

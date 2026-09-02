@@ -4,7 +4,7 @@ This module owns the canonical runtime catalog and typed evaluation contracts
 for personal-finance primitives.
 
 The catalog registers every canonical identity from P01 through P34 in stable
-order. Through Roadmap PR 8, exactly twelve identities are executable:
+order. Through Roadmap PR 10, exactly sixteen identities are executable:
 
 - P01 `static`
 - P02 `one_time`
@@ -15,11 +15,15 @@ order. Through Roadmap PR 8, exactly twelve identities are executable:
 - P08 `geometric_growth`
 - P13 `inflation_linked`
 - P20 `tax_dependent`
+- P22 `amortization`
+- P23 `compounding`
+- P24 `accrual`
+- P26 `mark_to_market`
 - P27 `event_trigger`
 - P29 `event_modification`
 - P30 `event_termination`
 
-The other 22 identities are deliberately `registered_only`. Attempting to
+The other 18 identities are deliberately `registered_only`. Attempting to
 evaluate one fails with `PRIMITIVE_NOT_IMPLEMENTED`; unknown identities fail
 separately with `PRIMITIVE_UNKNOWN`.
 
@@ -35,7 +39,12 @@ P03 currently supports explicit UTC instants and an anchored UTC-monthly
 schedule with an explicit `skip` policy for months lacking the anchor day. P08
 supports periodic integer growth and effective-annual growth over an explicit
 rational year fraction. P13 supports deterministic explicit price-index
-linkage. P20 supports the existing resolved proportional tax rule. P27, P29,
+linkage. P20 supports the existing resolved proportional tax rule. P22 emits
+exact fixed-payment and principal-allocation proposals; funding, settlement,
+and accounting remain downstream authorities. P24 supports exactly one
+non-prorated UTC contractual month at nominal annual rate / 12, with no inferred
+day count, stub handling, settlement, or capitalization. P23 and P26
+support deterministic compounding and mark-to-market valuation. P27, P29,
 and P30 support deterministic scheduled activation, typed replacement with
 optional reversion, and typed termination.
 

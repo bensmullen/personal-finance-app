@@ -34,7 +34,7 @@ shortcuts.
 
 The `primitives` module now contains one immutable runtime catalog for all
 canonical P01–P34 identities and common typed evaluation contracts. P01, P02,
-P03, P04, P05, P06, P08, P13, P20, P27, P29, and P30 are executable; the other 22 identities
+P03, P04, P05, P06, P08, P13, P20, P22, P23, P24, P26, P27, P29, and P30 are executable; the other 18 identities
 are deliberately registered-only and fail explicitly if evaluation is
 requested. Primitive evaluation returns values, occurrences/effects, explicit
 next primitive state, diagnostics, and lineage references without posting

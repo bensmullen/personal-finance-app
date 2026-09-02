@@ -6,7 +6,7 @@ export type PrimitiveId =
   | "P19" | "P20" | "P21" | "P22" | "P23" | "P24" | "P25" | "P26" | "P27"
   | "P28" | "P29" | "P30" | "P31" | "P32" | "P33" | "P34";
 
-export type ImplementedPrimitiveId = "P01" | "P02" | "P03" | "P04" | "P05" | "P06" | "P08" | "P13" | "P20" | "P23" | "P26" | "P27" | "P29" | "P30";
+export type ImplementedPrimitiveId = "P01" | "P02" | "P03" | "P04" | "P05" | "P06" | "P08" | "P13" | "P20" | "P22" | "P23" | "P24" | "P26" | "P27" | "P29" | "P30";
 export type RegisteredOnlyPrimitiveId = Exclude<PrimitiveId, ImplementedPrimitiveId>;
 export type PrimitiveClass = "temporal" | "functional" | "dependency" | "financial_mechanics" | "event_uncertainty";
 export type PrimitiveRandomness = "deterministic" | "deterministic_or_stochastic" | "stochastic" | "either";
@@ -45,9 +45,9 @@ export const primitiveCatalogEntries = Object.freeze([
   definition({ id: "P19", name: "market_dependent", class: "dependency", stateful: true, randomness: "stochastic", implementationStatus: "registered_only" }),
   definition({ id: "P20", name: "tax_dependent", class: "dependency", stateful: true, randomness: "deterministic", implementationStatus: "implemented" }),
   definition({ id: "P21", name: "dependency_driven", class: "dependency", stateful: true, randomness: "either", implementationStatus: "registered_only" }),
-  definition({ id: "P22", name: "amortization", class: "financial_mechanics", stateful: true, randomness: "deterministic", implementationStatus: "registered_only" }),
+  definition({ id: "P22", name: "amortization", class: "financial_mechanics", stateful: true, randomness: "deterministic", implementationStatus: "implemented" }),
   definition({ id: "P23", name: "compounding", class: "financial_mechanics", stateful: true, randomness: "deterministic_or_stochastic", implementationStatus: "implemented" }),
-  definition({ id: "P24", name: "accrual", class: "financial_mechanics", stateful: true, randomness: "deterministic", implementationStatus: "registered_only" }),
+  definition({ id: "P24", name: "accrual", class: "financial_mechanics", stateful: true, randomness: "deterministic", implementationStatus: "implemented" }),
   definition({ id: "P25", name: "depreciation", class: "financial_mechanics", stateful: true, randomness: "deterministic_or_stochastic", implementationStatus: "registered_only" }),
   definition({ id: "P26", name: "mark_to_market", class: "financial_mechanics", stateful: true, randomness: "stochastic", implementationStatus: "implemented" }),
   definition({ id: "P27", name: "event_trigger", class: "event_uncertainty", stateful: true, randomness: "either", implementationStatus: "implemented" }),
