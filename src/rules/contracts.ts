@@ -37,12 +37,20 @@ export interface AnnualContributionLimitRule extends EffectiveDatedRule {
 
 export type ProductOperationKind = "contribution" | "withdrawal" | "extra_principal";
 
-export interface ProductOperationEligibilityRule extends EffectiveDatedRule {
+interface ProductOperationEligibilityRuleBase extends EffectiveDatedRule {
   readonly kind: "product_operation_eligibility";
-  readonly target: RuleTarget & { readonly targetType: "account" | "liability" };
-  readonly operation: ProductOperationKind;
   readonly allowed: boolean;
 }
+
+export type ProductOperationEligibilityRule =
+  | ProductOperationEligibilityRuleBase & {
+      readonly target: RuleTarget & { readonly targetType: "account" };
+      readonly operation: "contribution" | "withdrawal";
+    }
+  | ProductOperationEligibilityRuleBase & {
+      readonly target: RuleTarget & { readonly targetType: "liability" };
+      readonly operation: "extra_principal";
+    };
 
 export interface FixedFeeRule extends EffectiveDatedRule {
   readonly kind: "fixed_fee";

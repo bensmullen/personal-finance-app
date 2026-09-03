@@ -1,8 +1,8 @@
-import { validationIssue, issueCodes, type ValidationIssue } from "../diagnostics/index.js";
+import { failValidation, validationIssue, issueCodes, type ValidationIssue } from "../diagnostics/index.js";
 import { calculationTraceId, calculationTraceRef, freezeTraceRefs } from "../lineage/index.js";
-import type { Instant } from "../time/index.js";
 import { Money } from "../values/index.js";
 import type { AnnualContributionLimitRule, RuleApplication } from "./contracts.js";
+import { resolvedRuleValue, type ResolvedRule } from "./resolver.js";
 
 export type ContributionLimitDecisionKind = "allowed" | "partially_allowed" | "rejected";
 export interface ContributionLimitDecision {
@@ -17,9 +17,13 @@ export interface ContributionLimitDecision {
   readonly diagnostics: readonly ValidationIssue[];
 }
 
-export const evaluateAnnualContributionLimit = (rule: AnnualContributionLimitRule, requested: Money, usedBefore: Money, at: Instant): RuleApplication<ContributionLimitDecision> => {
-  if (requested.isNegative() || usedBefore.isNegative()) throw new Error("Contribution request and prior usage must be nonnegative");
-  if (!requested.currency.equals(rule.annualLimit.currency) || !usedBefore.currency.equals(rule.annualLimit.currency)) throw new Error("Contribution values must use the rule currency");
+export const evaluateAnnualContributionLimit = (resolved: ResolvedRule<"annual_contribution_limit">, requested: Money, usedBefore: Money): RuleApplication<ContributionLimitDecision> => {
+  const rule = resolvedRuleValue(resolved, "annual_contribution_limit");
+  const at = resolved.resolvedAt;
+  if (requested.isNegative()) failValidation({ severity: "error", code: issueCodes.ruleInputInvalid, message: "Requested contribution must be nonnegative", entityType: "financial_rule_application", entityId: rule.id, fieldPath: "requested" });
+  if (usedBefore.isNegative()) failValidation({ severity: "error", code: issueCodes.ruleInputInvalid, message: "Prior contribution usage must be nonnegative", entityType: "financial_rule_application", entityId: rule.id, fieldPath: "usedBefore" });
+  if (!requested.currency.equals(rule.annualLimit.currency)) failValidation({ severity: "error", code: issueCodes.ruleInputInvalid, message: "Requested contribution must use the rule currency", entityType: "financial_rule_application", entityId: rule.id, fieldPath: "requested.currency" });
+  if (!usedBefore.currency.equals(rule.annualLimit.currency)) failValidation({ severity: "error", code: issueCodes.ruleInputInvalid, message: "Prior contribution usage must use the rule currency", entityType: "financial_rule_application", entityId: rule.id, fieldPath: "usedBefore.currency" });
   const remainingBefore = usedBefore.compare(rule.annualLimit) >= 0 ? Money.zero(rule.annualLimit.currency) : rule.annualLimit.minus(usedBefore);
   const accepted = requested.compare(remainingBefore) > 0 ? remainingBefore : requested;
   const excess = requested.minus(accepted);

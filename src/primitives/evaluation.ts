@@ -405,7 +405,8 @@ const taxDependentEvaluation = (request: Extract<ImplementedPrimitiveEvaluationR
   const { resolvedRule } = request.input;
   const application = (() => {
     try {
-      return applyProportionalIncomeTaxRule(resolvedRule, request.input.taxableBase, request.context.evaluationInstant);
+      if (resolvedRule.resolvedAt !== request.context.evaluationInstant) throw new Error("resolved rule instant must match the evaluation instant");
+      return applyProportionalIncomeTaxRule(resolvedRule, request.input.taxableBase);
     } catch (error) {
       return invalid(
         issueCodes.primitiveInputInvalid,

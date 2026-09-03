@@ -65,7 +65,7 @@ import {
   sumMoney,
 } from "../values/index.js";
 import { evaluatePrimitive } from "../primitives/index.js";
-import { freezeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
+import { calculationTraceRef, freezeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
 import {
   calculateProportionalTax,
   evaluateAnnualContributionLimit,
@@ -194,6 +194,15 @@ const validateState = (state: SliceState, input: VerticalSliceInput): void => {
 const transaction = (id: string, date: Instant, type: string, legs: readonly AccountingLegDraft[], traceRefs?: readonly CalculationTraceRef[]): AccountingTransaction =>
   createAccountingTransaction({ id: accountingTransactionId(id), date, type, legs: legs.map((leg) => createAccountingLeg({ ...leg, ...(traceRefs === undefined ? {} : { traceRefs: leg.traceRefs ?? traceRefs }) })), ...(traceRefs === undefined ? {} : { traceRefs }) });
 
+const mergeTraceRefs = (...groups: readonly (readonly CalculationTraceRef[] | undefined)[]): readonly CalculationTraceRef[] | undefined => {
+  const byTraceId = new Map<string, CalculationTraceRef>();
+  for (const ref of groups.flatMap((group) => group ?? [])) {
+    const existing = byTraceId.get(ref.traceId);
+    byTraceId.set(ref.traceId, calculationTraceRef(ref.traceId, [...(existing?.ruleIds ?? []), ...(ref.ruleIds ?? [])]));
+  }
+  return byTraceId.size === 0 ? undefined : freezeTraceRefs([...byTraceId.values()].sort((left, right) => left.traceId.localeCompare(right.traceId)));
+};
+
 const canonicalPolicyInput = (input: VerticalSliceInput): unknown => Object.freeze({
   ...input,
   ruleCatalog: Object.freeze([...input.ruleCatalog].sort((left, right) => left.id.localeCompare(right.id))),
@@ -313,6 +322,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
       failValidation({ severity: "error", code: issueCodes.settlementClaimNotFound, message: `Missing obligation ${settlementRequest.obligationId}`, entityType: "claim", entityId: settlementRequest.obligationId });
     }
     const claim = obligation as Obligation;
+    const effectiveTraceRefs = mergeTraceRefs(claim.traceRefs, ruleTraceRefs);
     const balanceEntityId = claim.balanceEntityId;
     if (balanceEntityId === undefined) {
       failValidation({
@@ -344,7 +354,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
       requestedAt: settlementRequest.date,
       fundingPolicyId: policy.id,
       provenance,
-      ...(ruleTraceRefs === undefined ? {} : { traceRefs: ruleTraceRefs }),
+      ...(effectiveTraceRefs === undefined ? {} : { traceRefs: effectiveTraceRefs }),
     }, claim);
     settlementProposals.push(proposal);
     const funding = resolveFunding(proposal, claim, policy, projectedBalancesFrom(state), settlementRequest.date);
@@ -356,16 +366,17 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
       id: settlementId(settlementRequest.settlementId),
       settledAt: settlementRequest.date,
       provenance,
+      ...(effectiveTraceRefs === undefined ? {} : { traceRefs: effectiveTraceRefs }),
     }, funding, claim, state.identities.settlementIds);
     registerAuthoritativeIdentity(state.identities, "settlementIds", acceptedSettlement.id);
     settlements.push(acceptedSettlement);
     const updated = applySettlement(claim, acceptedSettlement) as Obligation;
     state.obligations[updated.id] = updated;
-    effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${acceptedSettlement.id}`), kind: "settlement", category: "tax", amount: acceptedSettlement.amount, occurredAt: acceptedSettlement.settledAt, claimId: acceptedSettlement.claimId, settlementId: acceptedSettlement.id, provenance, ...(ruleTraceRefs === undefined ? {} : { traceRefs: ruleTraceRefs }) }));
+    effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${acceptedSettlement.id}`), kind: "settlement", category: "tax", amount: acceptedSettlement.amount, occurredAt: acceptedSettlement.settledAt, claimId: acceptedSettlement.claimId, settlementId: acceptedSettlement.id, provenance, ...(effectiveTraceRefs === undefined ? {} : { traceRefs: effectiveTraceRefs }) }));
     addTransaction(transaction(`tx:tax-settlement:${acceptedSettlement.id}`, acceptedSettlement.settledAt, "tax_settlement", [
       { posting: "debit", type: "liability", amount: acceptedSettlement.amount, entityId: liabilityTarget },
       ...acceptedSettlement.fundingAllocations.map((allocation): AccountingLegDraft => ({ posting: "credit", type: "cash", amount: allocation.amount, accountId: allocation.accountId, cashFlowClass: "operating" })),
-    ], ruleTraceRefs));
+    ], effectiveTraceRefs));
   };
 
   actions.push({
@@ -408,6 +419,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
         balanceEntityId: input.taxLiabilityId,
         originalAmount: taxRecognition.amount,
         recognizedAt: taxRecognition.recognizedAt,
+        traceRefs: taxTraceRefs,
       }, Object.values(state.obligations));
       state.obligations[obligation.id] = obligation;
       effects.push(createSemanticEffect({ id: semanticEffectId(`effect:tax-obligation:${request.period.start}`), kind: "claim", category: "tax", amount: taxAmount, occurredAt: taxRecognitionAt, sourceOccurrenceKey: provenance.generatedOccurrenceKey, recognitionId: taxRecognition.id, claimId: obligation.id, provenance, traceRefs: taxTraceRefs }));
@@ -429,7 +441,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
         obligationId: `obligation:recognition:tax:${request.period.start}`,
         amount: taxAmount,
         date: taxSettlementAt,
-      }, input.taxFundingPolicy, provenance, taxTraceRefs);
+      }, input.taxFundingPolicy, provenance);
     },
   });
 
@@ -438,14 +450,14 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     stableKey: "40:retirement",
     execute: () => {
       const eligibilityRule = resolveEffectiveRule(input.ruleCatalog, input.retirementEligibilityRuleIds, "product_operation_eligibility", { targetType: "account", targetId: input.retirementAccountId }, retirementAt);
-      if (eligibilityRule.operation !== "contribution") failValidation({ severity: "error", code: issueCodes.ruleTargetMismatch, message: `Rule ${eligibilityRule.id} does not govern contributions`, entityType: "financial_rule", entityId: eligibilityRule.id, fieldPath: "operation" });
-      const eligibility = evaluateProductOperationEligibility(eligibilityRule, retirementAt);
+      if (eligibilityRule.rule.operation !== "contribution") failValidation({ severity: "error", code: issueCodes.ruleTargetMismatch, message: `Rule ${eligibilityRule.rule.id} does not govern contributions`, entityType: "financial_rule", entityId: eligibilityRule.rule.id, fieldPath: "operation" });
+      const eligibility = evaluateProductOperationEligibility(eligibilityRule);
       ruleApplications.push(eligibility);
       diagnostics.push(...eligibility.result.diagnostics);
       if (!eligibility.result.allowed) return;
       const limitRule = resolveEffectiveRule(input.ruleCatalog, input.retirementContributionLimitRuleIds, "annual_contribution_limit", { targetType: "account", targetId: input.retirementAccountId }, retirementAt);
-      if (input.retirementContributionUsage.calendarYear !== limitRule.calendarYear) failValidation({ severity: "error", code: issueCodes.ruleTargetMismatch, message: "Contribution usage year must match the active annual-limit rule", entityType: "rule_binding", fieldPath: "retirementContributionUsage.calendarYear", relatedIds: [limitRule.id] });
-      const limit = evaluateAnnualContributionLimit(limitRule, input.retirementContribution, input.retirementContributionUsage.usedBeforePeriod, retirementAt);
+      if (input.retirementContributionUsage.calendarYear !== limitRule.rule.calendarYear) failValidation({ severity: "error", code: issueCodes.ruleTargetMismatch, message: "Contribution usage year must match the active annual-limit rule", entityType: "rule_binding", fieldPath: "retirementContributionUsage.calendarYear", relatedIds: [limitRule.rule.id] });
+      const limit = evaluateAnnualContributionLimit(limitRule, input.retirementContribution, input.retirementContributionUsage.usedBeforePeriod);
       ruleApplications.push(limit);
       diagnostics.push(...limit.result.diagnostics);
       retirementContribution = limit.result.accepted;

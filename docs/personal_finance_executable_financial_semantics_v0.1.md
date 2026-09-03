@@ -361,6 +361,8 @@ Each executable financial rule version MUST use the existing canonical `TaxRule`
 
 A required policy binding MUST list explicit candidate rule-version identities. Candidate identities are unique, every identity resolves, and every candidate matches the required kind and target. At the evaluation instant exactly one candidate MUST be active. Zero active candidates and multiple active candidates are validation errors. Catalog or binding array order conveys no precedence; implementations MUST NOT select a first, last, or implicitly most-recent entry.
 
+Rule evaluators MUST consume a resolver-produced resolved rule tied to that exact evaluation instant; arbitrary raw rule definitions are not valid evaluator inputs. Calculation lineage attached to a generated claim MUST persist through later settlement of that claim.
+
 Every application records the exact rule identity, kind, target, evaluation instant, decision/calculated value, and calculation trace references. Trace references MUST carry applied rule identities as machine-readable data, and influenced effects and transactions MUST propagate them. Rules are pure policy/calculation code: they neither mutate authoritative financial state nor directly post accounting transactions.
 
 The initial supported methods are deliberately narrow:

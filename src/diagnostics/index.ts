@@ -89,6 +89,7 @@ export const issueCodes = Object.freeze({
   liabilityConfigurationUnsupported: "LIABILITY_CONFIGURATION_UNSUPPORTED",
   duplicateStableIdentity: "DUPLICATE_STABLE_IDENTITY",
   ruleDefinitionInvalid: "RULE_DEFINITION_INVALID",
+  ruleInputInvalid: "RULE_INPUT_INVALID",
   ruleReferenceNotFound: "RULE_REFERENCE_NOT_FOUND",
   ruleNotActive: "RULE_NOT_ACTIVE",
   ruleAmbiguous: "RULE_AMBIGUOUS",
