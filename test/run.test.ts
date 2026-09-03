@@ -88,7 +88,7 @@ describe("run context and deterministic reproduction metadata", () => {
   it("has a stable fingerprint vector and ignores object insertion order", () => {
     const input = { runContext: context(), openingState: { cash: money("1.20"), nested: { z: "last", a: "first" } } };
     const reordered = { runContext: context(), openingState: { nested: { a: "first", z: "last" }, cash: money("1.2") } };
-    expect(createInputFingerprint(input)).toBe("fnv1a64:v1:dd7ab30063ca68b1");
+    expect(createInputFingerprint(input)).toBe("fnv1a64:v1:20c3db5b44a4fafa");
     expect(createInputFingerprint(reordered)).toBe(createInputFingerprint(input));
   });
 

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
-import { issueCodes } from "../src/diagnostics/index.js";
+import { ValidationError, issueCodes } from "../src/diagnostics/index.js";
 import { domainId } from "../src/identity/index.js";
 import { createAuthoritativeState } from "../src/state/index.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
-import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
+import { Quantity, Rate, Ratio, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
 import { runVerticalSlice3, type VerticalSlice3Input } from "../src/verticalSlice3.js";
 import type { VerticalSlice2Input } from "../src/verticalSlice2.js";
 
@@ -26,6 +26,11 @@ const monthlyBasis = { kind: "periodic" as const, period: ratePeriod("1", "calen
 const monthlyRate = (value: string) => Rate.fromDecimal(value, rateConvention.periodic(ratePeriod("1", "calendar_month")));
 const priceRounding = RoundingPolicy.currency(2, "half_up");
 const quantityRounding = new RoundingPolicy(12, "half_even");
+const feeRule = (id: string, target: typeof checking, amount: string) => ({ id: domainId("tax-rule", id), kind: "fixed_fee" as const, target: { targetType: "account" as const, targetId: target }, effectiveFrom: start, amount: money(amount) });
+const validationCode = (action: () => unknown): string | undefined => {
+  try { action(); } catch (error) { return error instanceof ValidationError ? error.issues[0]?.code : undefined; }
+  return undefined;
+};
 
 const context = (months = 1) => {
   const periods = utcMonthlyPeriods(start, months);
@@ -64,6 +69,7 @@ const base = (): VerticalSlice3Input => ({
   ownerId: owner,
   baseCurrency: USD,
   valuationAccountingPolicy: "economic_only",
+  ruleCatalog: [],
   transfers: [],
   purchases: [],
   fees: [],
@@ -71,21 +77,71 @@ const base = (): VerticalSlice3Input => ({
 });
 
 describe("Vertical Slice 3 semantic hardening", () => {
-  it("rejects zero-valued transfers, purchases, and fees", () => {
+  it("rejects dormant fee binding defects during initial structural validation", () => {
+    const valid = feeRule("54000000-0000-4000-8000-000000000101", checking, "1");
+    const missing = domainId("tax-rule", "54000000-0000-4000-8000-000000000102");
+    const wrongTarget = feeRule("54000000-0000-4000-8000-000000000103", savings as typeof checking, "1");
+    const wrongKind = {
+      id: domainId("tax-rule", "54000000-0000-4000-8000-000000000104"), kind: "proportional_income_tax" as const,
+      target: { targetType: "person" as const, targetId: owner }, effectiveFrom: start,
+      effectiveRate: Ratio.parse("0.2"), postingRounding: RoundingPolicy.currency(2, "half_up"),
+    };
+    const dormantFee = (ruleIds: readonly typeof valid.id[]) => ({
+      id: domainId("investment-fee", "54000000-0000-4000-8000-000000000105"), cashAccountId: checking, feeRuleIds: ruleIds,
+      eligibilitySchedule: { kind: "explicit_instants" as const, instants: [instant("2027-01-20T00:00:00.000Z")] },
+      executionTiming: "end_of_period" as const, order: 1, schedulePrimitiveId: primitive(90),
+    });
+    expect(validationCode(() => runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), ruleCatalog: [valid], fees: [dormantFee([missing])] } }))).toBe(issueCodes.ruleReferenceNotFound);
+    expect(validationCode(() => runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), ruleCatalog: [wrongKind], fees: [dormantFee([wrongKind.id])] } }))).toBe(issueCodes.ruleTargetMismatch);
+    expect(validationCode(() => runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), ruleCatalog: [wrongTarget], fees: [dormantFee([wrongTarget.id])] } }))).toBe(issueCodes.ruleTargetMismatch);
+    expect(validationCode(() => runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), ruleCatalog: [valid], fees: [dormantFee([valid.id, valid.id])] } }))).toBe(issueCodes.ruleDefinitionInvalid);
+    expect(validationCode(() => runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), ruleCatalog: [valid, { ...valid }], fees: [dormantFee([valid.id])] } }))).toBe(issueCodes.ruleDefinitionInvalid);
+  });
+
+  it("defers fee effective-date selection until the scheduled occurrence", () => {
+    const futureRule = { ...feeRule("54000000-0000-4000-8000-000000000111", checking, "1"), effectiveFrom: instant("2027-01-01T00:00:00.000Z") };
+    const futureFee = {
+      id: domainId("investment-fee", "54000000-0000-4000-8000-000000000112"), cashAccountId: checking, feeRuleIds: [futureRule.id],
+      eligibilitySchedule: { kind: "explicit_instants" as const, instants: [instant("2027-01-20T00:00:00.000Z")] }, executionTiming: "end_of_period" as const, order: 1, schedulePrimitiveId: primitive(91),
+    };
+    expect(runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), ruleCatalog: [futureRule], fees: [futureFee] } }).status).toBe("completed");
+    const executed = runVerticalSlice3({ runContext: context(13), openingState: opening(), input: { ...base(), ruleCatalog: [futureRule], fees: [futureFee] }, months: 13 });
+    expect(executed.status).toBe("completed");
+    expect(executed.periods[12]!.ruleApplications[0]?.ruleId).toBe(futureRule.id);
+
+    const inactiveRule = { ...feeRule("54000000-0000-4000-8000-000000000113", checking, "1"), effectiveFrom: instant("2026-02-01T00:00:00.000Z") };
+    const januaryFee = { ...futureFee, id: domainId("investment-fee", "54000000-0000-4000-8000-000000000114"), feeRuleIds: [inactiveRule.id], eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("20")] }, schedulePrimitiveId: primitive(92) };
+    const inactive = runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), ruleCatalog: [inactiveRule], fees: [januaryFee] } });
+    expect(inactive.status).toBe("incomplete");
+    expect(inactive.diagnostics.some((issue) => issue.code === issueCodes.ruleNotActive)).toBe(true);
+
+    const overlap = { ...feeRule("54000000-0000-4000-8000-000000000115", checking, "2") };
+    const ambiguousFee = { ...januaryFee, id: domainId("investment-fee", "54000000-0000-4000-8000-000000000116"), feeRuleIds: [futureRule.id, overlap.id], schedulePrimitiveId: primitive(93) };
+    const activeFutureNow = { ...futureRule, effectiveFrom: start };
+    const ambiguous = runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), ruleCatalog: [activeFutureNow, overlap], fees: [ambiguousFee] } });
+    expect(ambiguous.status).toBe("incomplete");
+    expect(ambiguous.diagnostics.some((issue) => issue.code === issueCodes.ruleAmbiguous)).toBe(true);
+  });
+
+  it("rejects zero-valued transfers and purchases but records a waived zero fee", () => {
     const transfer = { id: domainId("transfer", "54000000-0000-4000-8000-000000000001"), sourceAccountId: checking, destinationAccountId: savings, amount: money("0"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("20")] }, executionTiming: "end_of_period" as const, order: 1, schedulePrimitiveId: primitive(10) };
     const purchase = { id: domainId("investment-purchase", "54000000-0000-4000-8000-000000000002"), sourceCashAccountId: checking, destinationAccountId: brokerage, targetPositionId: position, amount: money("0"), quantityRounding, eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("20")] }, executionTiming: "end_of_period" as const, order: 1, schedulePrimitiveId: primitive(11) };
-    const fee = { id: domainId("investment-fee", "54000000-0000-4000-8000-000000000003"), cashAccountId: checking, amount: money("0"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("20")] }, executionTiming: "end_of_period" as const, order: 1, schedulePrimitiveId: primitive(12) };
+    const rule = feeRule("54000000-0000-4000-8000-000000000004", checking, "0");
+    const fee = { id: domainId("investment-fee", "54000000-0000-4000-8000-000000000003"), cashAccountId: checking, feeRuleIds: [rule.id], eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("20")] }, executionTiming: "end_of_period" as const, order: 1, schedulePrimitiveId: primitive(12) };
     expect(() => runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), transfers: [transfer] } })).toThrow(/strictly positive/);
     expect(() => runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), purchases: [purchase] } })).toThrow(/strictly positive/);
-    expect(() => runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), fees: [fee] } })).toThrow(/strictly positive/);
+    const result = runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), ruleCatalog: [rule], fees: [fee] } });
+    expect(result.periods[0]!.fees.isZero()).toBe(true);
+    expect(result.periods[0]!.ruleApplications).toHaveLength(1);
   });
 
   it("allows equal order for independent targets and rejects equal order on a shared target", () => {
     const left = { id: domainId("transfer", "54000000-0000-4000-8000-000000000011"), sourceAccountId: checking, destinationAccountId: savings, amount: money("10"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("20")] }, executionTiming: "end_of_period" as const, order: 5, schedulePrimitiveId: primitive(20) };
     const right = { id: domainId("transfer", "54000000-0000-4000-8000-000000000012"), sourceAccountId: brokerage, destinationAccountId: reserve, amount: money("10"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("20")] }, executionTiming: "end_of_period" as const, order: 5, schedulePrimitiveId: primitive(21) };
     expect(runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), transfers: [left, right] } }).status).toBe("completed");
-    const conflictingFee = { id: domainId("investment-fee", "54000000-0000-4000-8000-000000000013"), cashAccountId: checking, amount: money("1"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("20")] }, executionTiming: "end_of_period" as const, order: 5, schedulePrimitiveId: primitive(22) };
-    expect(() => runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), transfers: [left], fees: [conflictingFee] } })).toThrow(/Same-target/);
+    const rule = feeRule("54000000-0000-4000-8000-000000000014", checking, "1");
+    const conflictingFee = { id: domainId("investment-fee", "54000000-0000-4000-8000-000000000013"), cashAccountId: checking, feeRuleIds: [rule.id], eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("20")] }, executionTiming: "end_of_period" as const, order: 5, schedulePrimitiveId: primitive(22) };
+    expect(() => runVerticalSlice3({ runContext: context(), openingState: opening(), input: { ...base(), ruleCatalog: [rule], transfers: [left], fees: [conflictingFee] } })).toThrow(/Same-target/);
   });
 
   it("rejects a mismatched Rate convention before P23 execution", () => {
@@ -103,13 +159,14 @@ describe("Vertical Slice 3 semantic hardening", () => {
       { id: domainId("investment-purchase", "54000000-0000-4000-8000-000000000023"), sourceCashAccountId: savings, destinationAccountId: brokerage, targetPositionId: position, amount: money("10"), quantityRounding, eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("23")] }, executionTiming: "end_of_period" as const, order: 2, schedulePrimitiveId: primitive(32) },
       { id: domainId("investment-purchase", "54000000-0000-4000-8000-000000000024"), sourceCashAccountId: reserve, destinationAccountId: brokerage, targetPositionId: position2, amount: money("20"), quantityRounding, eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("24")] }, executionTiming: "end_of_period" as const, order: 2, schedulePrimitiveId: primitive(33) },
     ];
+    const rules = [feeRule("54000000-0000-4000-8000-000000000027", checking, "1"), feeRule("54000000-0000-4000-8000-000000000028", brokerage as typeof checking, "1")];
     const fees = [
-      { id: domainId("investment-fee", "54000000-0000-4000-8000-000000000025"), cashAccountId: checking, amount: money("1"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("25")] }, executionTiming: "end_of_period" as const, order: 3, schedulePrimitiveId: primitive(34) },
-      { id: domainId("investment-fee", "54000000-0000-4000-8000-000000000026"), cashAccountId: brokerage, amount: money("1"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("26")] }, executionTiming: "end_of_period" as const, order: 3, schedulePrimitiveId: primitive(35) },
+      { id: domainId("investment-fee", "54000000-0000-4000-8000-000000000025"), cashAccountId: checking, feeRuleIds: [rules[0]!.id], eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("25")] }, executionTiming: "end_of_period" as const, order: 3, schedulePrimitiveId: primitive(34) },
+      { id: domainId("investment-fee", "54000000-0000-4000-8000-000000000026"), cashAccountId: brokerage, feeRuleIds: [rules[1]!.id], eligibilitySchedule: { kind: "explicit_instants" as const, instants: [at("26")] }, executionTiming: "end_of_period" as const, order: 3, schedulePrimitiveId: primitive(35) },
     ];
-    const model = { ...base(), transfers, purchases, fees, returns: returns() };
+    const model = { ...base(), ruleCatalog: rules, transfers, purchases, fees, returns: returns() };
     const first = runVerticalSlice3({ runContext: context(2), openingState: opening(), input: model, months: 2 });
-    const reversed = runVerticalSlice3({ runContext: context(2), openingState: opening(), input: { ...model, transfers: [...transfers].reverse().map((item) => item.id === transfers[0]!.id ? { ...item, eligibilitySchedule: { ...item.eligibilitySchedule, instants: [...item.eligibilitySchedule.instants].reverse() } } : item), purchases: [...purchases].reverse(), fees: [...fees].reverse(), returns: [...model.returns].reverse() }, months: 2 });
+    const reversed = runVerticalSlice3({ runContext: context(2), openingState: opening(), input: { ...model, ruleCatalog: [...rules].reverse(), transfers: [...transfers].reverse().map((item) => item.id === transfers[0]!.id ? { ...item, eligibilitySchedule: { ...item.eligibilitySchedule, instants: [...item.eligibilitySchedule.instants].reverse() } } : item), purchases: [...purchases].reverse(), fees: [...fees].reverse(), returns: [...model.returns].reverse() }, months: 2 });
     expect(first.status).toBe("completed");
     expect(reversed.status).toBe("completed");
     expect(first.runMetadata.inputFingerprint).toBe(reversed.runMetadata.inputFingerprint);

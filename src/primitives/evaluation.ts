@@ -6,7 +6,7 @@ import {
 } from "../identity/index.js";
 import { freezeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
 import { createFactProvenance, type FactProvenance } from "../model/provenance.js";
-import { calculateProportionalTax, fixedMortgagePayment, mortgageInterest } from "../rules/index.js";
+import { applyProportionalIncomeTaxRule, fixedMortgagePayment, mortgageInterest, type ResolvedProportionalTaxRule } from "../rules/index.js";
 import {
   inPeriod,
   utcMonthlyOccurrences,
@@ -257,12 +257,6 @@ export type GrowthTimeBasis =
       readonly calculationRounding: RoundingPolicy;
     };
 
-export interface ResolvedProportionalTaxRule {
-  readonly id: DomainId<"tax-rule">;
-  readonly effectiveRate: Ratio;
-  readonly postingRounding: RoundingPolicy;
-}
-
 export type ImplementedPrimitiveEvaluationRequest =
   | { readonly primitiveId: "P01"; readonly input: { readonly value: PrimitiveValue }; readonly priorState: null; readonly context: PrimitiveEvaluationContext }
   | { readonly primitiveId: "P02"; readonly input: { readonly value: PrimitiveFlowValue }; readonly parameters: { readonly occurrenceAt: Instant }; readonly priorState: OneTimePrimitiveState; readonly context: PrimitiveEvaluationContext }
@@ -409,9 +403,10 @@ const inflationLinkedEvaluation = (request: Extract<ImplementedPrimitiveEvaluati
 
 const taxDependentEvaluation = (request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P20" }>) => {
   const { resolvedRule } = request.input;
-  const tax = (() => {
+  const application = (() => {
     try {
-      return calculateProportionalTax(request.input.taxableBase, resolvedRule.effectiveRate, resolvedRule.postingRounding);
+      if (resolvedRule.resolvedAt !== request.context.evaluationInstant) throw new Error("resolved rule instant must match the evaluation instant");
+      return applyProportionalIncomeTaxRule(resolvedRule, request.input.taxableBase);
     } catch (error) {
       return invalid(
         issueCodes.primitiveInputInvalid,
@@ -421,7 +416,8 @@ const taxDependentEvaluation = (request: Extract<ImplementedPrimitiveEvaluationR
       );
     }
   })();
-  return evaluation("P20", Object.freeze({ tax, ruleId: resolvedRule.id }), null, frozenEmpty, request.context.traceRefs);
+  const traceRefs = freezeTraceRefs([...(request.context.traceRefs ?? []), ...application.traceRefs]);
+  return evaluation("P20", Object.freeze({ tax: application.result, ruleId: application.ruleId, application }), null, frozenEmpty, traceRefs);
 };
 
 const assertStateMoney = (value: unknown, currency: Currency, primitiveId: "P22" | "P24", fieldPath: string): value is Money => {

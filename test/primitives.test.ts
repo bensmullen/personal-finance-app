@@ -16,6 +16,7 @@ import {
   primitiveEvaluationContext,
   type PrimitiveEvaluationContext,
 } from "../src/primitives/index.js";
+import { resolveEffectiveRule } from "../src/rules/index.js";
 import { civilDate, instant, period, subtractMilliseconds, utcMonth } from "../src/time/index.js";
 import {
   Currency,
@@ -419,20 +420,33 @@ describe("P13 inflation_linked", () => {
 describe("P20 tax_dependent and primitive composition", () => {
   const taxRule = Object.freeze({
     id: domainId("tax-rule", "44444444-4444-4444-8444-444444444444"),
+    kind: "proportional_income_tax" as const,
+    target: Object.freeze({ targetType: "person" as const, targetId: domainId("person", "44444444-4444-4444-8444-444444444445") }),
+    effectiveFrom: instant("2026-01-01T00:00:00.000Z"),
     effectiveRate: Ratio.parse("0.20"),
     postingRounding: RoundingPolicy.currency(2, "half_even"),
   });
+  const resolvedTaxRule = (runtimeContext: PrimitiveEvaluationContext) => resolveEffectiveRule(
+    [taxRule], [taxRule.id], "proportional_income_tax", taxRule.target, runtimeContext.evaluationInstant,
+  );
 
   it("reuses the proportional tax rule and reports exact rule identity", () => {
+    const runtimeContext = context();
     const result = evaluatePrimitive({
       primitiveId: "P20",
-      input: { taxableBase: money("10000"), resolvedRule: taxRule },
+      input: { taxableBase: money("10000"), resolvedRule: resolvedTaxRule(runtimeContext) },
       priorState: null,
-      context: context(),
+      context: runtimeContext,
     });
     expect(result.output.tax.amount.toString()).toBe("2000");
     expect(result.output.ruleId).toBe(taxRule.id);
+    expect(result.output.application.evaluatedAt).toBe(runtimeContext.evaluationInstant);
+    expect(result.traceRefs?.flatMap((ref) => ref.ruleIds ?? [])).toContain(taxRule.id);
     expect(result.effects).toEqual([]);
+    if (false) {
+      // @ts-expect-error P20 requires a resolver-produced rule.
+      evaluatePrimitive({ primitiveId: "P20", input: { taxableBase: money("10000"), resolvedRule: taxRule }, priorState: null, context: runtimeContext });
+    }
   });
 
   it("composes P06 constant into P03 monthly compensation", () => {
@@ -466,7 +480,7 @@ describe("P20 tax_dependent and primitive composition", () => {
     });
     const tax = evaluatePrimitive({
       primitiveId: "P20",
-      input: { taxableBase: recurring.output.aggregate!, resolvedRule: taxRule },
+      input: { taxableBase: recurring.output.aggregate!, resolvedRule: resolvedTaxRule(runtimeContext) },
       priorState: null,
       context: runtimeContext,
     });
@@ -485,8 +499,15 @@ describe("P20 tax_dependent and primitive composition", () => {
   it("does not mutate unrelated authoritative-like state passed as excess context", () => {
     const accidentalState = Object.freeze({ cash: money("5000"), postedTransactions: Object.freeze([]) });
     const excessContext = Object.freeze({ ...context(), accidentalState }) as PrimitiveEvaluationContext;
-    evaluatePrimitive({ primitiveId: "P20", input: { taxableBase: money("10000"), resolvedRule: taxRule }, priorState: null, context: excessContext });
+    evaluatePrimitive({ primitiveId: "P20", input: { taxableBase: money("10000"), resolvedRule: resolvedTaxRule(excessContext) }, priorState: null, context: excessContext });
     expect(accidentalState.cash.amount.toString()).toBe("5000");
     expect(accidentalState.postedTransactions).toEqual([]);
+  });
+
+  it("rejects resolver/application instant mismatches", () => {
+    const runtimeContext = context();
+    const resolved = resolveEffectiveRule([taxRule], [taxRule.id], "proportional_income_tax", taxRule.target, instant("2026-01-14T00:00:00.000Z"));
+    expect(diagnosticCode(() => evaluatePrimitive({ primitiveId: "P20", input: { taxableBase: money("100"), resolvedRule: resolved }, priorState: null, context: runtimeContext })))
+      .toBe(issueCodes.primitiveInputInvalid);
   });
 });

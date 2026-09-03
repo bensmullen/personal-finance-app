@@ -88,4 +88,12 @@ export const issueCodes = Object.freeze({
   verticalSlice4InputInvalid: "VERTICAL_SLICE_4_INPUT_INVALID",
   liabilityConfigurationUnsupported: "LIABILITY_CONFIGURATION_UNSUPPORTED",
   duplicateStableIdentity: "DUPLICATE_STABLE_IDENTITY",
+  ruleDefinitionInvalid: "RULE_DEFINITION_INVALID",
+  ruleInputInvalid: "RULE_INPUT_INVALID",
+  ruleReferenceNotFound: "RULE_REFERENCE_NOT_FOUND",
+  ruleNotActive: "RULE_NOT_ACTIVE",
+  ruleAmbiguous: "RULE_AMBIGUOUS",
+  ruleTargetMismatch: "RULE_TARGET_MISMATCH",
+  contributionLimitApplied: "CONTRIBUTION_LIMIT_APPLIED",
+  productOperationNotAllowed: "PRODUCT_OPERATION_NOT_ALLOWED",
 } as const);

@@ -27,6 +27,7 @@ const priceRounding = RoundingPolicy.currency(2, "half_up");
 const quantityRounding = new RoundingPolicy(12, "half_even");
 const monthlyRate = (value: string) => Rate.fromDecimal(value, rateConvention.periodic(ratePeriod("1", "calendar_month")));
 const returnBasis = { kind: "periodic" as const, period: ratePeriod("1", "calendar_month") };
+const feeRuleId = domainId("tax-rule", "40000000-0000-4000-8000-000000000020");
 
 const contextFrom = (simulationStart: ReturnType<typeof instant>, months: number, run: string) => {
   const periods = utcMonthlyPeriods(simulationStart, months);
@@ -55,9 +56,10 @@ const baseInput = (): VerticalSlice3Input => ({
   ownerId: ids.owner,
   baseCurrency: USD,
   valuationAccountingPolicy: "economic_only",
+  ruleCatalog: [{ id: feeRuleId, kind: "fixed_fee", target: { targetType: "account", targetId: ids.checking }, effectiveFrom: instant("2026-01-01T00:00:00.000Z"), amount: money("5") }],
   transfers: [{ id: domainId("transfer", "43000000-0000-4000-8000-000000000001"), sourceAccountId: ids.checking, destinationAccountId: ids.savings, amount: money("100"), eligibilitySchedule: { kind: "explicit_instants", instants: [at("05")] }, executionTiming: "end_of_period", order: 10, schedulePrimitiveId: primitive(1) }],
   purchases: [{ id: domainId("investment-purchase", "43000000-0000-4000-8000-000000000002"), sourceCashAccountId: ids.checking, destinationAccountId: ids.brokerage, targetPositionId: ids.position, amount: money("200"), quantityRounding, eligibilitySchedule: { kind: "explicit_instants", instants: [at("10")] }, executionTiming: "end_of_period", order: 20, schedulePrimitiveId: primitive(2) }],
-  fees: [{ id: domainId("investment-fee", "43000000-0000-4000-8000-000000000003"), cashAccountId: ids.checking, amount: money("5"), eligibilitySchedule: { kind: "explicit_instants", instants: [at("20")] }, executionTiming: "end_of_period", order: 30, schedulePrimitiveId: primitive(3) }],
+  fees: [{ id: domainId("investment-fee", "43000000-0000-4000-8000-000000000003"), cashAccountId: ids.checking, feeRuleIds: [feeRuleId], eligibilitySchedule: { kind: "explicit_instants", instants: [at("20")] }, executionTiming: "end_of_period", order: 30, schedulePrimitiveId: primitive(3) }],
   returns: [
     { targetPositionId: ids.position, accountId: ids.brokerage, rate: monthlyRate("0.1"), returnBasis, timing: "end_of_period_on_opening_quantity", priceRounding, primitiveIds: { compounding: primitive(4), markToMarket: primitive(5) } },
     { targetPositionId: ids.position2, accountId: ids.brokerage, rate: monthlyRate("0"), returnBasis, timing: "end_of_period_on_opening_quantity", priceRounding, primitiveIds: { compounding: primitive(6), markToMarket: primitive(7) } },

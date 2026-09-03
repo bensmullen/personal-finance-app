@@ -1,6 +1,6 @@
 # Personal Finance App — Vertical Slice 1 Formal Specification
 
-**Version:** 1.0.3-draft
+**Version:** 1.0.4-draft
 **Status:** Reviewable implementation contract  
 **Namespace:** `pfm`  
 **Slice:** Employment Compensation → Tax Obligation → Retirement Transfer → Spending  
@@ -196,11 +196,11 @@ For this slice the rule is intentionally simple:
 - `tax_rule_id`;
 - jurisdiction;
 - `tax_type` (for the canonical scenario, a generic income-tax rule is sufficient);
-- `effective_date`;
-- `calculation_method = proportional` or `flat`;
+- an effective-dated rule version and explicit person-target binding;
+- `calculation_method = proportional`;
 - an explicit effective rate of `20%` represented as a fraction `0.20`.
 
-The rule is not a simulation output. It is an authoritative policy input.
+The active version is resolved deterministically at tax calculation/recognition time from explicit candidate rule IDs using `[effectiveFrom, effectiveUntil)`. Exactly one candidate may be active and its identity is recorded in rule-application metadata and calculation lineage. The rule is not a simulation output. It is authoritative synthetic policy input.
 
 The slice treats the rule as a withholding/tax-estimation policy, not as an assertion of complete real-world tax law.
 
@@ -266,10 +266,16 @@ employment:
   grossMonthlyCompensation: $10000
 
 taxPolicy:
-  effectiveRate: 20%
+  method: proportional
+  syntheticEffectiveRate: 20%
+  candidateRuleVersionIds: [explicit-tax-rule-id]
 
 retirementPolicy:
-  contribution: $2000
+  requestedContribution: $2000
+  eligibilityRuleVersionIds: [explicit-eligibility-rule-id]
+  annualLimitRuleVersionIds: [explicit-limit-rule-id]
+  calendarYear: 2026
+  usedBeforePeriod: $0
 
 livingExpenseSchedule:
   monthlyAmount: $4000
@@ -336,14 +342,14 @@ Canonical case:
 Inputs:
 
 - recognized/eligible gross compensation flow;
-- explicit `TaxRule`;
+- one deterministically resolved, effective-dated proportional `TaxRule` version;
 - tax basis binding;
 - currency.
 
 Outputs:
 
 - tax flow/calculation fact;
-- rule identity;
+- exact applied rule-version identity in both output and calculation lineage;
 - tax basis;
 - calculated amount.
 
@@ -358,9 +364,9 @@ Rounding:
 
 ### 6.3 Retirement contribution primitive
 
-The slice supports:
+The slice begins with a requested fixed amount:
 
-`ContributionAmount = fixed amount`
+`RequestedContributionAmount = fixed amount`
 
 with an extension-compatible policy shape:
 
@@ -372,12 +378,15 @@ Canonical amount:
 
 `$2,000`.
 
+Before posting, the engine resolves an explicit account-targeted contribution eligibility rule. If allowed, it resolves an explicit account-specific UTC annual contribution-limit rule using caller-supplied `calendarYear` and `usedBeforePeriod`; it never infers usage from account balance. The actual contribution is the accepted amount after policy evaluation and may be zero or lower than requested. A product denial or limit outcome is nonblocking policy metadata, not a funding failure.
+
 Output:
 
 - internal transfer flow;
 - source account = checking;
 - destination account = retirement;
 - household ownership validation result.
+- requested, accepted, and excess contribution values with exact applied rule identities.
 
 It is neither an expense nor consolidated household cash consumption.
 

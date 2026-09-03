@@ -1,7 +1,6 @@
 import {
   type DecimalAmount,
   Money,
-  Ratio,
   Rate,
   RateBasis,
   RoundingPolicy,
@@ -38,8 +37,9 @@ export function mortgagePrincipal(payment: Money, interest: Money, balance: Mone
   return principal.compare(balance) > 0 ? balance : principal;
 }
 
-export const calculateProportionalTax = (base: Money, taxRate: Ratio, postingRounding: RoundingPolicy): Money => {
-  if (taxRate.value.isNegative() || taxRate.value.compare(decimal("1")) > 0) throw new Error("Tax ratio must be from 0 to 1");
-  if (base.isNegative()) throw new Error("Tax base cannot be negative");
-  return new Money(base.amount.times(taxRate.value).round(postingRounding), base.currency);
-};
+export * from "./contracts.js";
+export * from "./resolver.js";
+export * from "./tax.js";
+export * from "./contribution.js";
+export * from "./product.js";
+export * from "./fee.js";
