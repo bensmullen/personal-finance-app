@@ -58,13 +58,34 @@ describe("effective-dated financial rules", () => {
     }
   });
 
-  it("rejects inactive, ambiguous, duplicate, missing, wrong-target, and wrong-kind bindings", () => {
+  it("snapshots the selected rule so later source mutation cannot alter a resolved application", () => {
+    const source = tax(id(8), "2026-01-01T00:00:00.000Z");
+    const resolved = resolveEffectiveRule([source], [source.id], "proportional_income_tax", source.target, at);
+    const mutable = source as unknown as {
+      effectiveRate: Ratio;
+      effectiveUntil?: ReturnType<typeof instant>;
+      target: { targetType: "person"; targetId: typeof person };
+    };
+    mutable.effectiveRate = Ratio.parse("0.9");
+    mutable.effectiveUntil = instant("2026-05-01T00:00:00.000Z");
+    mutable.target.targetId = domainId("person", "71000000-0000-4000-8000-000000000099");
+
+    const application = applyProportionalIncomeTaxRule(resolved, money("100"));
+    expect(application.result.equals(money("20"))).toBe(true);
+    expect(application.target.targetId).toBe(person);
+    expect(resolved.rule.effectiveUntil).toBeUndefined();
+    expect(Object.isFrozen(resolved.rule)).toBe(true);
+    expect(Object.isFrozen(resolved.rule.target)).toBe(true);
+  });
+
+  it("rejects inactive, ambiguous, empty, duplicate, missing, wrong-target, and wrong-kind bindings", () => {
     const first = tax(id(3), "2026-01-01T00:00:00.000Z", "2027-01-01T00:00:00.000Z");
     const overlap = tax(id(5), "2026-05-01T00:00:00.000Z", "2027-05-01T00:00:00.000Z");
     const target = { targetType: "person" as const, targetId: person };
     expect(code(() => resolveEffectiveRule([first], [first.id], "proportional_income_tax", target, instant("2025-12-31T23:59:59.999Z")))).toBe(issueCodes.ruleNotActive);
     expect(code(() => resolveEffectiveRule([first], [first.id], "proportional_income_tax", target, instant("2027-01-01T00:00:00.000Z")))).toBe(issueCodes.ruleNotActive);
     expect(code(() => resolveEffectiveRule([first, overlap], [first.id, overlap.id], "proportional_income_tax", target, at))).toBe(issueCodes.ruleAmbiguous);
+    expect(code(() => resolveEffectiveRule([first], [], "proportional_income_tax", target, at))).toBe(issueCodes.ruleDefinitionInvalid);
     expect(code(() => resolveEffectiveRule([first], [first.id, first.id], "proportional_income_tax", target, at))).toBe(issueCodes.ruleDefinitionInvalid);
     expect(code(() => resolveEffectiveRule([first, { ...first }], [first.id], "proportional_income_tax", target, at))).toBe(issueCodes.ruleDefinitionInvalid);
     expect(code(() => resolveEffectiveRule([first], [id(99)], "proportional_income_tax", target, at))).toBe(issueCodes.ruleReferenceNotFound);

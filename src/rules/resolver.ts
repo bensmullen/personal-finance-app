@@ -43,6 +43,10 @@ export const assertValidRuleDefinition = (rule: FinancialRule): void => {
 
 const sameTarget = (left: RuleTarget, right: RuleTarget): boolean => left.targetType === right.targetType && left.targetId === right.targetId;
 const activeAt = (rule: FinancialRule, at: Instant): boolean => rule.effectiveFrom <= at && (rule.effectiveUntil === undefined || at < rule.effectiveUntil);
+const snapshotRule = <Rule extends FinancialRule>(rule: Rule): Rule => Object.freeze({
+  ...rule,
+  target: Object.freeze({ ...rule.target }),
+}) as unknown as Rule;
 
 const catalogById = (catalog: RuleCatalog): ReadonlyMap<FinancialRuleId, FinancialRule> => {
   const byId = new Map<FinancialRuleId, FinancialRule>();
@@ -62,6 +66,7 @@ export const validateRuleBinding = <Kind extends RuleKind>(
   requiredKind: Kind,
   target: RuleTarget,
 ): readonly Extract<FinancialRule, { readonly kind: Kind }>[] => {
+  if (candidateIds.length === 0) failValidation({ severity: "error", code: issueCodes.ruleDefinitionInvalid, message: "Required rule binding must contain at least one candidate identity", entityType: "rule_binding", fieldPath: "candidateIds" });
   if (new Set(candidateIds).size !== candidateIds.length) failValidation({ severity: "error", code: issueCodes.ruleDefinitionInvalid, message: "Rule candidate identities must be unique", entityType: "rule_binding", fieldPath: "candidateIds" });
   const byId = catalogById(catalog);
   return candidateIds.map((id) => {
@@ -90,7 +95,7 @@ export const resolveEffectiveRule = <Kind extends RuleKind>(
   const active = candidates.filter((rule) => activeAt(rule, at));
   if (active.length === 0) failValidation({ severity: "error", code: issueCodes.ruleNotActive, message: `No active ${requiredKind} rule exists at ${at}`, entityType: "rule_binding", relatedIds: [...candidateIds].sort() });
   if (active.length > 1) failValidation({ severity: "error", code: issueCodes.ruleAmbiguous, message: `Multiple active ${requiredKind} rules exist at ${at}`, entityType: "rule_binding", relatedIds: active.map((rule) => rule.id).sort() });
-  const resolved = Object.freeze({ rule: active[0]!, resolvedAt: at, [resolvedRuleBrand]: true as const });
+  const resolved = Object.freeze({ rule: snapshotRule(active[0]!), resolvedAt: at, [resolvedRuleBrand]: true as const });
   resolvedRules.add(resolved);
   return resolved as ResolvedRule<Kind>;
 };
