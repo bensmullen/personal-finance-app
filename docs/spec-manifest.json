@@ -2,7 +2,7 @@
   "manifest_version": "1.0.0",
   "canonical_schema_version": "1.0.0",
   "model_format_version": "0.2.0-draft",
-  "executable_semantics_version": "0.1.8-draft",
+  "executable_semantics_version": "0.1.9-draft",
   "engine_contract_version": "0.1.0",
   "result_schema_version": "0.1.0",
   "runtime_versions_path": "src/model/version.ts",
@@ -24,7 +24,7 @@
     {
       "id": "executable-financial-semantics",
       "path": "docs/personal_finance_executable_financial_semantics_v0.1.md",
-      "version": "0.1.8-draft",
+      "version": "0.1.9-draft",
       "authority": "level-2",
       "version_source": "markdown-version-header"
     },
