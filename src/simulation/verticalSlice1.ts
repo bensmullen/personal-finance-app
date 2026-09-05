@@ -65,7 +65,7 @@ import {
   sumMoney,
 } from "../values/index.js";
 import { evaluatePrimitive } from "../primitives/index.js";
-import { calculationTraceRef, freezeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
+import { calculationTraceRef, freezeTraceRefs, mergeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
 import {
   calculateProportionalTax,
   evaluateAnnualContributionLimit,
@@ -193,15 +193,6 @@ const validateState = (state: SliceState, input: VerticalSliceInput): void => {
 
 const transaction = (id: string, date: Instant, type: string, legs: readonly AccountingLegDraft[], traceRefs?: readonly CalculationTraceRef[]): AccountingTransaction =>
   createAccountingTransaction({ id: accountingTransactionId(id), date, type, legs: legs.map((leg) => createAccountingLeg({ ...leg, ...(traceRefs === undefined ? {} : { traceRefs: leg.traceRefs ?? traceRefs }) })), ...(traceRefs === undefined ? {} : { traceRefs }) });
-
-const mergeTraceRefs = (...groups: readonly (readonly CalculationTraceRef[] | undefined)[]): readonly CalculationTraceRef[] | undefined => {
-  const byTraceId = new Map<string, CalculationTraceRef>();
-  for (const ref of groups.flatMap((group) => group ?? [])) {
-    const existing = byTraceId.get(ref.traceId);
-    byTraceId.set(ref.traceId, calculationTraceRef(ref.traceId, [...(existing?.ruleIds ?? []), ...(ref.ruleIds ?? [])]));
-  }
-  return byTraceId.size === 0 ? undefined : freezeTraceRefs([...byTraceId.values()].sort((left, right) => left.traceId.localeCompare(right.traceId)));
-};
 
 const canonicalPolicyInput = (input: VerticalSliceInput): unknown => Object.freeze({
   ...input,
@@ -524,7 +515,7 @@ export function runVerticalSlicePeriod(request: VerticalSlicePeriodInput): Verti
     transactions: Object.freeze(transactions),
     diagnostics: Object.freeze(diagnostics),
     ruleApplications: Object.freeze(ruleApplications),
-    traceRefs: freezeTraceRefs([...new Map(ruleApplications.flatMap((application) => application.traceRefs).map((ref) => [ref.traceId, ref])).values()])!,
+    traceRefs: mergeTraceRefs(ruleApplications.flatMap((application) => application.traceRefs))!,
     dependencyOrder,
     statements,
     outputs: Object.freeze({
