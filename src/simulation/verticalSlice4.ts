@@ -2,7 +2,7 @@ import { accountingTransactionId, createAccountingLeg, createAccountingTransacti
 import { ValidationError, failValidation, issueCodes, validationIssue, type ValidationIssue } from "../diagnostics/index.js";
 import { createFundingPolicy, fundingConstraintId, isAcceptedFundingResolution, resolveAllOrNothingFunding, resolveFunding, type AllOrNothingConstraintOutcome, type AllOrNothingLiquidityShortfall, type ConstraintOutcome, type FundingPolicy, type LiquidityShortfall } from "../funding/index.js";
 import { domainId, generatedOccurrenceKey, type DomainId, type GeneratedOccurrenceKey } from "../identity/index.js";
-import { calculationTraceId, calculationTraceRef, freezeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
+import { calculationTraceId, calculationTraceRef, freezeTraceRefs, mergeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
 import { createFactProvenance, type FactProvenance, type ModelGeneratedFactProvenance } from "../model/provenance.js";
 import { fixedMortgagePayment } from "../rules/index.js";
 import { createSemanticEffect, type SemanticEffect } from "../semantics/effect.js";
@@ -20,12 +20,13 @@ export type LoanContractId = DomainId<"loan-contract">;
 export type ExtraPrincipalPaymentId = DomainId<"extra-principal-payment">;
 export type PrimitiveInstanceId = DomainId<"primitive-instance">;
 
-export interface ExtraPrincipalPayment { readonly id: ExtraPrincipalPaymentId; readonly scheduledAt: Instant; readonly amount: Money; readonly fundingPolicy: FundingPolicy; readonly primitiveInstanceId: PrimitiveInstanceId; }
+export interface ExtraPrincipalPayment { readonly id: ExtraPrincipalPaymentId; readonly scheduledAt: Instant; readonly amount: Money; readonly fundingPolicy: FundingPolicy; readonly primitiveInstanceId: PrimitiveInstanceId; readonly sourceTraceRefs?: readonly CalculationTraceRef[]; }
 export interface FixedAmortizingLoan {
   readonly id: LoanContractId; readonly ownerId: PersonId | HouseholdId; readonly principalLiabilityId: LiabilityId; readonly interestPayableLiabilityId: LiabilityId; readonly originalPrincipal: Money; readonly annualRate: Rate; readonly totalPayments: number;
   readonly rateType: "fixed"; readonly paymentFrequency: "monthly"; readonly interestConvention: "nominal_annual_12"; readonly amortization: "fully_amortizing"; readonly paymentResetPolicy: "fixed_no_recast"; readonly interestCapitalization: "none"; readonly partialPaymentPolicy: "all_or_nothing";
   readonly paymentSchedule: { readonly kind: "utc_monthly"; readonly anchor: Instant; readonly invalidDayPolicy: "skip" }; readonly fundingPolicy: FundingPolicy; readonly settlementPriority: number; readonly extraPrincipalPayments?: readonly ExtraPrincipalPayment[]; readonly postingRounding: RoundingPolicy;
   readonly primitiveIds: { readonly schedule: PrimitiveInstanceId; readonly amortization: PrimitiveInstanceId; readonly accrual: PrimitiveInstanceId };
+  readonly sourceTraceRefs?: readonly CalculationTraceRef[];
 }
 export interface VerticalSlice4Input { readonly householdId: HouseholdId; readonly ownerId: PersonId; readonly baseCurrency: Currency; readonly loans: readonly FixedAmortizingLoan[]; }
 export type VerticalSlice4ConstraintOutcome = ConstraintOutcome | AllOrNothingConstraintOutcome;
@@ -41,7 +42,11 @@ interface PendingExtra { readonly loan: FixedAmortizingLoan; readonly instructio
 const invalid = (message: string, fieldPath: string, unsupported = false): never => failValidation({ severity: "error", code: unsupported ? issueCodes.liabilityConfigurationUnsupported : issueCodes.verticalSlice4InputInvalid, message, entityType: "vertical_slice_4", fieldPath });
 const periodFailure = (message: string, entityId?: string): never => failValidation({ severity: "error", code: issueCodes.verticalSlice4InputInvalid, message, entityType: "vertical_slice_4_period", ...(entityId === undefined ? {} : { entityId }) });
 const transaction = (id: string, date: Instant, type: string, legs: readonly AccountingLegDraft[], traceRefs: readonly CalculationTraceRef[]): AccountingTransaction => createAccountingTransaction({ id: accountingTransactionId(id), date, type, legs: legs.map((leg) => createAccountingLeg({ ...leg, traceRefs: leg.traceRefs ?? traceRefs })), traceRefs });
-const refs = (loan: FixedAmortizingLoan, at: Instant): readonly CalculationTraceRef[] => freezeTraceRefs([calculationTraceRef(calculationTraceId(`vs4:loan:${loan.id}:opening-principal:${at}`)), calculationTraceRef(calculationTraceId(`vs4:loan:${loan.id}:interest-accrual:${at}`)), calculationTraceRef(calculationTraceId(`vs4:loan:${loan.id}:amortization:${at}`)), calculationTraceRef(calculationTraceId(`vs4:loan:${loan.id}:funding:${at}`))])!;
+const refs = (loan: FixedAmortizingLoan, at: Instant): readonly CalculationTraceRef[] => mergeTraceRefs(
+  [calculationTraceRef(calculationTraceId(`vs4:loan:${loan.id}:opening-principal:${at}`)), calculationTraceRef(calculationTraceId(`vs4:loan:${loan.id}:interest-accrual:${at}`)), calculationTraceRef(calculationTraceId(`vs4:loan:${loan.id}:amortization:${at}`)), calculationTraceRef(calculationTraceId(`vs4:loan:${loan.id}:funding:${at}`))],
+  loan.sourceTraceRefs,
+  (loan.extraPrincipalPayments ?? []).find((extra) => extra.scheduledAt === at)?.sourceTraceRefs,
+)!;
 const provenance = (loan: FixedAmortizingLoan, at: Instant, occurrenceId: GeneratedOccurrenceKey): ModelGeneratedFactProvenance => createFactProvenance({ factKind: "model_generated", sourceType: "model", sourceId: loan.primitiveIds.schedule, effectiveAt: at, generatedOccurrenceKey: occurrenceId }) as ModelGeneratedFactProvenance;
 const balances = (state: AuthoritativeState): Readonly<Record<string, Money>> => Object.fromEntries(Object.entries(state.accounts).map(([id, account]) => [id, account.cash]));
 const validatePolicy = (policy: FundingPolicy, openingState: AuthoritativeState, currency: Currency, path: string): void => { createFundingPolicy(policy); if (policy.allowPartial || policy.insufficientFundsBehavior !== "unfunded") invalid("PR 10 supports only all-or-nothing unfunded mortgage funding", path, true); for (const source of policy.orderedSources) { const account = openingState.accounts[source.accountId] ?? invalid(`Funding source ${source.accountId} does not exist`, path); if (!account.cash.currency.equals(currency)) invalid(`Funding source ${source.accountId} currency does not match the run`, path); } };
@@ -49,46 +54,17 @@ const canonicalInput = (input: VerticalSlice4Input): unknown => Object.freeze({ 
 const claimsFor = (state: AuthoritativeState, liabilityId: LiabilityId, category: string): readonly Obligation[] => Object.values(state.obligations).filter((claim): claim is Obligation => claim.kind === "obligation" && claim.balanceEntityId === liabilityId && claim.category === category && claim.outstandingAmount.isPositive()).sort((left, right) => left.recognizedAt.localeCompare(right.recognizedAt) || left.id.localeCompare(right.id));
 const claimTotal = (claims: readonly Obligation[], currency: Currency): Money => sumMoney(claims.map((claim) => claim.outstandingAmount), currency);
 const policiesShareSource = (left: FundingPolicy, right: FundingPolicy): boolean => left.orderedSources.some((source) => right.orderedSources.some((other) => other.accountId === source.accountId));
-const firstContractMonth = (loan: FixedAmortizingLoan): Instant => `${loan.paymentSchedule.anchor.slice(0, 8)}01T00:00:00.000Z` as Instant;
 /** Finite contract membership, independent of the caller's simulation window. */
 const isContractualOccurrence = (loan: FixedAmortizingLoan, scheduledAt: Instant): boolean => {
-  let month = firstContractMonth(loan); let found = 0;
-  while (found < loan.totalPayments) {
-    const period = utcMonthlyPeriods(month, 1)[0]!;
-    if (period.start > scheduledAt) return false;
-    const occurrence = utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy)[0];
-    if (occurrence !== undefined) { if (occurrence === scheduledAt) return true; if (occurrence > scheduledAt) return false; found += 1; }
-    month = period.end;
-  }
+  let month = loan.paymentSchedule.anchor.slice(0, 8) + "01T00:00:00.000Z"; let found = 0;
+  const limit = loan.totalPayments + Math.ceil(loan.totalPayments / 11) + 2;
+  for (let scanned = 0; scanned < limit && found < loan.totalPayments; scanned += 1) { const period = utcMonthlyPeriods(month as Instant, 1)[0]!; const occurrence = utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy)[0]; if (occurrence !== undefined) { if (occurrence === scheduledAt) return true; if (occurrence > scheduledAt) return false; found += 1; } month = period.end; }
   return false;
 };
 const contractualOccurrencesBefore = (loan: FixedAmortizingLoan, before: Instant): number => {
-  let month = firstContractMonth(loan); let count = 0;
-  while (count < loan.totalPayments) {
-    const period = utcMonthlyPeriods(month, 1)[0]!;
-    if (period.start >= before) break;
-    const occurrence = utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy)[0];
-    if (occurrence !== undefined) { if (occurrence >= before) break; count += 1; }
-    month = period.end;
-  }
+  let month = loan.paymentSchedule.anchor.slice(0, 8) + "01T00:00:00.000Z"; let count = 0; const limit = loan.totalPayments + Math.ceil(loan.totalPayments / 11) + 2;
+  for (let scanned = 0; scanned < limit && count < loan.totalPayments; scanned += 1) { const period = utcMonthlyPeriods(month as Instant, 1)[0]!; const occurrence = utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy)[0]; if (occurrence !== undefined && occurrence < before) count += 1; if (period.start >= before) break; month = period.end; }
   return count;
-};
-const committedContractualPrefixInRun = (request: VerticalSlice4RunInput, loan: FixedAmortizingLoan, scheduledBeforeRun: number): number => {
-  const remainingContractual = Math.max(0, loan.totalPayments - scheduledBeforeRun);
-  if (remainingContractual === 0) return 0;
-  const months = utcMonthDifference(request.runContext.simulationStart, request.runContext.simulationEnd);
-  const periods = utcMonthlyPeriods(request.runContext.simulationStart, months);
-  const committedKeys = new Set(request.openingState.identities.generatedOccurrenceKeys);
-  let prefix = 0;
-  for (const period of periods) {
-    const occurrence = utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy)[0];
-    if (occurrence === undefined) continue;
-    if (prefix >= remainingContractual) break;
-    const key = generatedOccurrenceKey({ scenarioId: request.runContext.scenarioId, primitiveInstanceId: loan.primitiveIds.schedule, scheduledAt: occurrence, semanticEffectType: "liability-payment", economicTargetId: loan.principalLiabilityId });
-    if (!committedKeys.has(key)) break;
-    prefix += 1;
-  }
-  return prefix;
 };
 
 const validatePrimitiveResume = (request: VerticalSlice4RunInput, loan: FixedAmortizingLoan): void => {
@@ -107,17 +83,14 @@ const validatePrimitiveResume = (request: VerticalSlice4RunInput, loan: FixedAmo
   if (amortizationState === undefined) { if (accrualState !== undefined) invalid("P24 resume state requires matching P22 progress", `primitiveState.${loan.primitiveIds.accrual}`); return; }
   const state = amortizationState.state;
   if (state.evaluations > loan.totalPayments) invalid("P22 evaluation progress cannot exceed contractual payment count", `primitiveState.${loan.primitiveIds.amortization}.evaluations`);
-  if (state.evaluations === loan.totalPayments && principal.isPositive() && !principalDue.equals(principal)) invalid("Matured principal must be fully represented by outstanding required-principal claims", `primitiveState.${loan.primitiveIds.amortization}`);
-  const debtStillActive = principal.isPositive() || historicalClaims;
-  const expectedProgress = scheduledBeforeRun + committedContractualPrefixInRun(request, loan, scheduledBeforeRun);
-  if ((debtStillActive && state.evaluations !== expectedProgress) || (!debtStillActive && state.evaluations > expectedProgress)) invalid("P22 resume progress must reconcile exactly with committed contractual occurrences while debt remains active", `primitiveState.${loan.primitiveIds.amortization}.evaluations`);
-  if (state.evaluations > 0) {
+    if (state.evaluations > 0) {
     const expectedPayment = fixedMortgagePayment(loan.originalPrincipal, loan.annualRate, loan.totalPayments, loan.postingRounding);
     if (state.contractualPayment === undefined || state.originalPrincipal === undefined || state.totalPayments !== loan.totalPayments || !state.contractualPayment.equals(expectedPayment) || !state.originalPrincipal.equals(loan.originalPrincipal)) invalid("P22 resume state does not match the loan contract", `primitiveState.${loan.primitiveIds.amortization}`);
     const compatibleAccrualState = accrualState ?? invalid("P22 resume state requires matching P24 progress", `primitiveState.${loan.primitiveIds.accrual}`);
     if (compatibleAccrualState.state.evaluations < state.evaluations || (state.evaluations < loan.totalPayments && compatibleAccrualState.state.evaluations !== state.evaluations)) invalid("P22/P24 resume progress is economically inconsistent", `primitiveState.${loan.primitiveIds.accrual}.evaluations`);
     if (compatibleAccrualState.state.lastAccruedAmount !== undefined && !compatibleAccrualState.state.lastAccruedAmount.currency.equals(request.input.baseCurrency)) invalid("P24 resume state currency does not match the loan", `primitiveState.${loan.primitiveIds.accrual}.lastAccruedAmount`);
   }
+  if (state.evaluations === loan.totalPayments && principal.isPositive() && !principalDue.equals(principal)) invalid("Matured principal must be fully represented by outstanding required-principal claims", `primitiveState.${loan.primitiveIds.amortization}`);
 };
 
 const validate = (request: VerticalSlice4RunInput, periods: readonly Period[]): void => {
@@ -186,7 +159,7 @@ export const runVerticalSlice4 = (request: VerticalSlice4RunInput): VerticalSlic
       }
     }
     for (const loan of request.input.loans) { const principal = candidateState.liabilities[loan.principalLiabilityId]!.balance; const principalDue = claimTotal(claimsFor(candidateState, loan.principalLiabilityId, "mortgage_principal_due"), request.input.baseCurrency); const interestDue = claimTotal(claimsFor(candidateState, loan.interestPayableLiabilityId, "mortgage_interest_payable"), request.input.baseCurrency); if (principalDue.compare(principal) > 0) periodFailure(`Required principal claims exceed authoritative principal for ${loan.id}`, loan.id); if (!interestDue.equals(candidateState.liabilities[loan.interestPayableLiabilityId]!.balance)) periodFailure(`Interest claims do not reconcile with interest payable for ${loan.id}`, loan.id); if (principal.isZero() && principalDue.isPositive()) periodFailure(`Paid-off loan ${loan.id} retains required principal claims`, loan.id); }
-    const result: VerticalSlice4PeriodResult = Object.freeze({ period: Object.freeze({ ...period }), liabilities: Object.freeze(loanResults.map((item) => Object.freeze({ ...item }))), interestExpense, principalReduction, endingPrincipal: totalLiability(candidateState, request.input.loans, "principal", request.input.baseCurrency), outstandingInterest: totalLiability(candidateState, request.input.loans, "interest", request.input.baseCurrency), transactions: Object.freeze(transactions), recognitions: Object.freeze(recognitions), settlementProposals: Object.freeze(proposals), settlements: Object.freeze(settlements), effects: Object.freeze(effects), constraintOutcomes: Object.freeze(outcomes), liquidityShortfalls: Object.freeze(shortfalls), statements: deriveStatements(candidateState, transactions, request.input.baseCurrency), diagnostics: Object.freeze(diagnostics), traceRefs: freezeTraceRefs([...new Map(periodRefs.map((ref) => [ref.traceId, ref])).values()])! }); state = candidateState; primitiveState = candidatePrimitiveState; committed.push(result); runDiagnostics.push(...diagnostics);
+    const result: VerticalSlice4PeriodResult = Object.freeze({ period: Object.freeze({ ...period }), liabilities: Object.freeze(loanResults.map((item) => Object.freeze({ ...item }))), interestExpense, principalReduction, endingPrincipal: totalLiability(candidateState, request.input.loans, "principal", request.input.baseCurrency), outstandingInterest: totalLiability(candidateState, request.input.loans, "interest", request.input.baseCurrency), transactions: Object.freeze(transactions), recognitions: Object.freeze(recognitions), settlementProposals: Object.freeze(proposals), settlements: Object.freeze(settlements), effects: Object.freeze(effects), constraintOutcomes: Object.freeze(outcomes), liquidityShortfalls: Object.freeze(shortfalls), statements: deriveStatements(candidateState, transactions, request.input.baseCurrency), diagnostics: Object.freeze(diagnostics), traceRefs: mergeTraceRefs(periodRefs)! }); state = candidateState; primitiveState = candidatePrimitiveState; committed.push(result); runDiagnostics.push(...diagnostics);
   } catch (error) { if (!(error instanceof ValidationError)) throw error; runDiagnostics.push(...error.issues); return Object.freeze({ status: "incomplete", runMetadata, requestedHorizon, stoppedAt: period.start, ...(committed.length === 0 ? {} : { reachedThrough: committed[committed.length - 1]!.period.end }), state, primitiveState, periods: Object.freeze(committed), diagnostics: Object.freeze(runDiagnostics) }); }
   return Object.freeze({ status: "completed", runMetadata, requestedHorizon, reachedThrough: requestedHorizon.end, state, primitiveState, periods: Object.freeze(committed), diagnostics: Object.freeze(runDiagnostics) });
 };
