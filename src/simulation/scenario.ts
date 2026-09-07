@@ -20,7 +20,7 @@ export type ScenarioChange =
   | { readonly kind: "income_growth"; readonly incomeId: IncomeId; readonly rate: Rate; readonly assumptionId: AssumptionId }
   | { readonly kind: "expense_inflation"; readonly expenseId: ExpenseId; readonly rate: Rate; readonly assumptionId: AssumptionId }
   | { readonly kind: "investment_return"; readonly positionId: PositionId; readonly rate: Rate; readonly assumptionId: AssumptionId }
-  | { readonly kind: "retirement_date"; readonly eventId: EventId; readonly effectiveAt: Instant }
+  | { readonly kind: "retirement_date"; readonly targetEventId: EventId; readonly effectiveAt: Instant; readonly eventId: ScenarioEventId }
   | { readonly kind: "investment_purchase"; readonly operation: ScenarioOperation; readonly purchaseId: PurchaseId; readonly eventId: ScenarioEventId; readonly purchase?: InvestmentPurchase }
   | { readonly kind: "extra_principal_payment"; readonly operation: ScenarioOperation; readonly loanId: LoanContractId; readonly paymentId: ExtraPrincipalPaymentId; readonly eventId: ScenarioEventId; readonly payment?: ExtraPrincipalPayment }
   | { readonly kind: "expense_funding_policy"; readonly expenseId: ExpenseId; readonly fundingPolicy: FundingPolicy; readonly assumptionId: AssumptionId }
@@ -36,6 +36,8 @@ export interface ResolvedScenario {
   readonly effectiveChanges: Readonly<Record<string, { readonly layerScenarioId: ScenarioId; readonly change: ScenarioChange }>>;
 }
 
+type EffectiveScenarioChange = { readonly layerScenarioId: ScenarioId; readonly change: ScenarioChange };
+
 const scenarioFailure = (code: string, message: string, fieldPath?: string, relatedIds?: readonly string[]): never => failValidation({
   severity: "error",
   code,
@@ -50,7 +52,7 @@ export const scenarioSemanticTarget = (change: ScenarioChange): string => {
     case "income_growth": return `income:${change.incomeId}:growth-rate`;
     case "expense_inflation": return `expense:${change.expenseId}:inflation-rate`;
     case "investment_return": return `position:${change.positionId}:deterministic-return`;
-    case "retirement_date": return `event:${change.eventId}:effective-at`;
+    case "retirement_date": return `event:${change.targetEventId}:effective-at`;
     case "investment_purchase": return `investment-purchase:${change.purchaseId}`;
     case "extra_principal_payment": return `loan:${change.loanId}:extra-principal:${change.paymentId}`;
     case "expense_funding_policy": return `expense:${change.expenseId}:funding-policy`;
@@ -79,6 +81,53 @@ const immutableChange = (change: ScenarioChange): ScenarioChange => {
 };
 const immutableScenario = (scenario: ExecutableScenario): ExecutableScenario => Object.freeze({ ...scenario, horizon: Object.freeze({ ...scenario.horizon }), changes: Object.freeze(scenario.changes.map(immutableChange)) });
 
+const isListChange = (change: ScenarioChange): change is Extract<ScenarioChange, { readonly kind: "investment_purchase" | "extra_principal_payment" }> => change.kind === "investment_purchase" || change.kind === "extra_principal_payment";
+const withOperation = <T extends Extract<ScenarioChange, { readonly kind: "investment_purchase" | "extra_principal_payment" }>>(change: T, operation: ScenarioOperation): T => Object.freeze({ ...change, operation }) as T;
+const resolveListHistory = (target: string, history: readonly EffectiveScenarioChange[]): EffectiveScenarioChange | undefined => {
+  const first = history[0]!;
+  const initial = first.change;
+  if (!isListChange(initial)) return history[history.length - 1];
+  let exists = initial.operation !== "remove";
+  let last = first;
+  for (let index = 1; index < history.length; index += 1) {
+    const entry = history[index]!;
+    const change = entry.change;
+    if (!isListChange(change)) return entry;
+    if (change.operation === "add") {
+      if (exists) scenarioFailure(issueCodes.scenarioOverlayConflict, `Scenario add requires an absent inherited target for ${target}`, "changes", [target]);
+      exists = true;
+    } else {
+      if (!exists) targetMissing(target);
+      exists = change.operation !== "remove";
+    }
+    last = entry;
+  }
+  if (initial.operation === "add") {
+    if (!exists) return undefined;
+    return Object.freeze({ layerScenarioId: last.layerScenarioId, change: withOperation(last.change as typeof initial, "add") });
+  }
+  if (!exists) return Object.freeze({ layerScenarioId: last.layerScenarioId, change: withOperation(last.change as typeof initial, "remove") });
+  return Object.freeze({ layerScenarioId: last.layerScenarioId, change: withOperation(last.change as typeof initial, "replace") });
+};
+
+const resolveEffectiveChanges = (layers: readonly ExecutableScenario[]): Readonly<Record<string, EffectiveScenarioChange>> => {
+  const histories = new Map<string, EffectiveScenarioChange[]>();
+  for (const layer of layers) for (const change of [...layer.changes].sort((a, b) => scenarioSemanticTarget(a).localeCompare(scenarioSemanticTarget(b)))) {
+    const target = scenarioSemanticTarget(change);
+    const history = histories.get(target) ?? [];
+    history.push(Object.freeze({ layerScenarioId: layer.scenarioId, change }));
+    histories.set(target, history);
+  }
+  const effective: Record<string, EffectiveScenarioChange> = {};
+  for (const target of [...histories.keys()].sort()) {
+    const history = histories.get(target)!;
+    const resolved = isListChange(history[0]!.change) ? resolveListHistory(target, history) : history[history.length - 1]!;
+    if (resolved !== undefined) effective[target] = resolved;
+  }
+  return Object.freeze(effective);
+};
+const effectiveEntries = (resolved: ResolvedScenario): readonly EffectiveScenarioChange[] => Object.freeze(Object.keys(resolved.effectiveChanges).sort().map((target) => resolved.effectiveChanges[target]!));
+
 export const resolveScenario = (catalog: readonly ExecutableScenario[], selectedScenarioId: ScenarioId, requestedRealizations = 1): ResolvedScenario => {
   if (!Number.isSafeInteger(requestedRealizations) || requestedRealizations <= 0) scenarioFailure(issueCodes.scenarioDefinitionInvalid, "Requested realization count must be a positive safe integer", "realizationCount");
   const byId = new Map<ScenarioId, ExecutableScenario>();
@@ -104,8 +153,7 @@ export const resolveScenario = (catalog: readonly ExecutableScenario[], selected
   if (disabled !== undefined) scenarioFailure(issueCodes.scenarioDefinitionInvalid, `Disabled scenario ${disabled.scenarioId} cannot be selected for execution`, "enabled", [disabled.scenarioId]);
   const nondeterministic = layers.find((layer) => layer.stochastic || layer.simulationCount > 1);
   if (nondeterministic !== undefined || requestedRealizations > 1) scenarioFailure(issueCodes.scenarioStochasticUnsupported, `Scenario ${nondeterministic?.scenarioId ?? selectedScenarioId} requests unsupported stochastic or multi-realization execution`, "stochastic", [nondeterministic?.scenarioId ?? selectedScenarioId]);
-  const effective: Record<string, { readonly layerScenarioId: ScenarioId; readonly change: ScenarioChange }> = {};
-  for (const layer of layers) for (const change of [...layer.changes].sort((a, b) => scenarioSemanticTarget(a).localeCompare(scenarioSemanticTarget(b)))) effective[scenarioSemanticTarget(change)] = Object.freeze({ layerScenarioId: layer.scenarioId, change });
+  const effective = resolveEffectiveChanges(layers);
   return Object.freeze({ scenario: selected, rootScenarioId: layers[0]!.scenarioId, layers: Object.freeze(layers), effectiveChanges: Object.freeze(effective) });
 };
 
@@ -120,13 +168,17 @@ const unsupported = (kind: ScenarioChange["kind"], adapter: string): never => sc
 const futureAt = (runContext: ScenarioRunContextTemplate): Instant => runContext.asOf > runContext.simulationStart ? runContext.asOf : runContext.simulationStart;
 const assertFuture = (at: Instant, runContext: ScenarioRunContextTemplate, target: string): void => { if (at < futureAt(runContext)) scenarioFailure(issueCodes.scenarioDefinitionInvalid, `Scenario modification ${target} is before the forecast boundary`, "effectiveAt", [target]); };
 const sameConvention = (left: Rate, right: Rate): boolean => canonicalSerialize(left.convention) === canonicalSerialize(right.convention);
+const validateOverlay = <T>(target: string, fieldPath: string, validate: () => T): T => {
+  try { return validate(); } catch { return scenarioFailure(issueCodes.scenarioDefinitionInvalid, `Scenario overlay ${target} is incompatible with the existing executable contract`, fieldPath, [target]); }
+};
+const onlyEffectiveChange = (resolved: ResolvedScenario, entry: EffectiveScenarioChange): ResolvedScenario => Object.freeze({ ...resolved, effectiveChanges: Object.freeze({ [scenarioSemanticTarget(entry.change)]: entry }) });
 
 export interface ScenarioRunContextTemplate extends Omit<RunContext, "runId" | "scenarioId"> {}
 
 export const applyVerticalSlice2Scenario = (base: VerticalSlice2Input, resolved: ResolvedScenario, runContext: ScenarioRunContextTemplate): VerticalSlice2Input => {
   let input: VerticalSlice2Input = Object.freeze({ ...base, incomes: Object.freeze([...base.incomes]), expenses: Object.freeze([...base.expenses]), events: Object.freeze([...base.events]) });
-  for (const layer of resolved.layers) for (const change of [...layer.changes].sort((a, b) => scenarioSemanticTarget(a).localeCompare(scenarioSemanticTarget(b)))) {
-    const refs = sourceRef(layer.scenarioId, change);
+  for (const { layerScenarioId, change } of effectiveEntries(resolved)) {
+    const refs = sourceRef(layerScenarioId, change);
     if (change.kind === "income_growth") {
       const current = input.incomes.find((item) => item.id === change.incomeId) ?? targetMissing(scenarioSemanticTarget(change));
       if (!sameConvention(current.growthRate, change.rate)) scenarioFailure(issueCodes.scenarioDefinitionInvalid, `Income growth rate basis is incompatible for ${change.incomeId}`, "rate", [change.incomeId]);
@@ -137,13 +189,13 @@ export const applyVerticalSlice2Scenario = (base: VerticalSlice2Input, resolved:
       input = Object.freeze({ ...input, expenses: Object.freeze(input.expenses.map((item) => item.id === change.expenseId ? withSource({ ...item, inflationRate: change.rate }, refs) : item)) });
     } else if (change.kind === "retirement_date") {
       assertFuture(change.effectiveAt, runContext, scenarioSemanticTarget(change));
-      if (change.effectiveAt >= runContext.simulationEnd) scenarioFailure(issueCodes.scenarioDefinitionInvalid, `Retirement event ${change.eventId} must fall within the current VS2 horizon`, "effectiveAt", [change.eventId]);
-      const event = input.events.find((item) => item.id === change.eventId) ?? targetMissing(scenarioSemanticTarget(change));
+      if (change.effectiveAt >= runContext.simulationEnd) scenarioFailure(issueCodes.scenarioDefinitionInvalid, `Retirement event ${change.targetEventId} must fall within the current VS2 horizon`, "effectiveAt", [change.targetEventId]);
+      const event = input.events.find((item) => item.id === change.targetEventId) ?? targetMissing(scenarioSemanticTarget(change));
       if (event.kind !== "termination" || !input.incomes.some((income) => income.id === event.targetId && income.terminationEventId === event.id)) targetMissing(scenarioSemanticTarget(change));
-      input = Object.freeze({ ...input, events: Object.freeze(input.events.map((item) => item.id === change.eventId ? withSource({ ...item, effectiveAt: change.effectiveAt }, refs) : item)) });
+      input = Object.freeze({ ...input, events: Object.freeze(input.events.map((item) => item.id === change.targetEventId ? withSource({ ...item, effectiveAt: change.effectiveAt }, refs) : item)) });
     } else if (change.kind === "expense_funding_policy") {
       input.expenses.find((item) => item.id === change.expenseId) ?? targetMissing(scenarioSemanticTarget(change));
-      const policy = createFundingPolicy(change.fundingPolicy);
+      const policy = validateOverlay(scenarioSemanticTarget(change), "changes.expense_funding_policy.fundingPolicy", () => createFundingPolicy(change.fundingPolicy));
       input = Object.freeze({ ...input, expenses: Object.freeze(input.expenses.map((item) => item.id === change.expenseId ? withSource({ ...item, fundingPolicy: policy }, refs) : item)) });
     } else unsupported(change.kind, "vertical_slice_2");
   }
@@ -166,17 +218,16 @@ const applyListOperation = <T extends { readonly id: string }>(items: readonly T
 
 export const applyVerticalSlice3Scenario = (base: VerticalSlice3Input, resolved: ResolvedScenario, runContext: ScenarioRunContextTemplate): VerticalSlice3Input => {
   let input: VerticalSlice3Input = Object.freeze({ ...base, transfers: Object.freeze([...base.transfers]), purchases: Object.freeze([...base.purchases]), fees: Object.freeze([...(base.fees ?? [])]), returns: Object.freeze([...base.returns]), ...(base.cashFlowInput === undefined ? {} : { cashFlowInput: Object.freeze({ ...base.cashFlowInput, incomes: Object.freeze([...base.cashFlowInput.incomes]), expenses: Object.freeze([...base.cashFlowInput.expenses]), events: Object.freeze([...base.cashFlowInput.events]) }) }) });
-  for (const layer of resolved.layers) for (const change of [...layer.changes].sort((a, b) => scenarioSemanticTarget(a).localeCompare(scenarioSemanticTarget(b)))) {
-    const refs = sourceRef(layer.scenarioId, change);
+  for (const entry of effectiveEntries(resolved)) {
+    const { layerScenarioId, change } = entry;
+    const refs = sourceRef(layerScenarioId, change);
     if (["income_growth", "expense_inflation", "retirement_date", "expense_funding_policy"].includes(change.kind)) {
       if (input.cashFlowInput === undefined) targetMissing(scenarioSemanticTarget(change));
       const cashFlowInput = input.cashFlowInput as VerticalSlice2Input;
-      const { baseScenarioId: _baseScenarioId, ...rootLayerFields } = layer;
-      const oneLayer: ExecutableScenario = Object.freeze({ ...rootLayerFields, changes: Object.freeze([change]) });
-      input = Object.freeze({ ...input, cashFlowInput: applyVerticalSlice2Scenario(cashFlowInput, Object.freeze({ scenario: oneLayer, rootScenarioId: layer.scenarioId, layers: Object.freeze([oneLayer]), effectiveChanges: Object.freeze({}) }), runContext) });
+      input = Object.freeze({ ...input, cashFlowInput: applyVerticalSlice2Scenario(cashFlowInput, onlyEffectiveChange(resolved, entry), runContext) });
     } else if (change.kind === "investment_return") {
       const current = input.returns.find((item) => item.targetPositionId === change.positionId) ?? targetMissing(scenarioSemanticTarget(change));
-      effectiveCompoundingPeriodReturn(change.rate, current.returnBasis);
+      validateOverlay(scenarioSemanticTarget(change), "changes.investment_return.rate", () => effectiveCompoundingPeriodReturn(change.rate, current.returnBasis));
       input = Object.freeze({ ...input, returns: Object.freeze(input.returns.map((item) => item.targetPositionId === change.positionId ? withSource({ ...item, rate: change.rate }, refs) : item)) });
     } else if (change.kind === "investment_purchase") {
       const payload = change.purchase === undefined ? undefined : withSource({ ...change.purchase, eligibilitySchedule: change.purchase.eligibilitySchedule.kind === "explicit_instants" ? Object.freeze({ ...change.purchase.eligibilitySchedule, instants: Object.freeze([...change.purchase.eligibilitySchedule.instants]) }) : Object.freeze({ ...change.purchase.eligibilitySchedule }) }, refs);
@@ -184,11 +235,13 @@ export const applyVerticalSlice3Scenario = (base: VerticalSlice3Input, resolved:
       input = Object.freeze({ ...input, purchases: applyListOperation(input.purchases, change.operation, change.purchaseId, payload, scenarioSemanticTarget(change)) });
     } else if (change.kind === "fee_rule_binding") {
       const fee = (input.fees ?? []).find((item) => item.id === change.feeId) ?? targetMissing(scenarioSemanticTarget(change));
-      validateRuleBinding(input.ruleCatalog, change.feeRuleIds, "fixed_fee", { targetType: "account", targetId: fee.cashAccountId });
-      for (const period of utcMonthlyPeriods(runContext.simulationStart, utcMonthDifference(runContext.simulationStart, runContext.simulationEnd))) {
-        const selected = fee.eligibilitySchedule.kind === "explicit_instants" ? fee.eligibilitySchedule.instants.some((at) => at >= period.start && at < period.end) : utcMonthlyOccurrences(fee.eligibilitySchedule.anchor, period, fee.eligibilitySchedule.invalidDayPolicy).length > 0;
-        if (selected) resolveEffectiveRule(input.ruleCatalog, change.feeRuleIds, "fixed_fee", { targetType: "account", targetId: fee.cashAccountId }, subtractMilliseconds(period.end, 1));
-      }
+      validateOverlay(scenarioSemanticTarget(change), "changes.fee_rule_binding.feeRuleIds", () => {
+        validateRuleBinding(input.ruleCatalog, change.feeRuleIds, "fixed_fee", { targetType: "account", targetId: fee.cashAccountId });
+        for (const period of utcMonthlyPeriods(runContext.simulationStart, utcMonthDifference(runContext.simulationStart, runContext.simulationEnd))) {
+          const selected = fee.eligibilitySchedule.kind === "explicit_instants" ? fee.eligibilitySchedule.instants.some((at) => at >= period.start && at < period.end) : utcMonthlyOccurrences(fee.eligibilitySchedule.anchor, period, fee.eligibilitySchedule.invalidDayPolicy).length > 0;
+          if (selected) resolveEffectiveRule(input.ruleCatalog, change.feeRuleIds, "fixed_fee", { targetType: "account", targetId: fee.cashAccountId }, subtractMilliseconds(period.end, 1));
+        }
+      });
       input = Object.freeze({ ...input, fees: Object.freeze((input.fees ?? []).map((item) => item.id === change.feeId ? withSource({ ...item, feeRuleIds: Object.freeze([...change.feeRuleIds]) }, refs) : item)) });
     } else unsupported(change.kind, "vertical_slice_3");
   }
@@ -197,16 +250,16 @@ export const applyVerticalSlice3Scenario = (base: VerticalSlice3Input, resolved:
 
 export const applyVerticalSlice4Scenario = (base: VerticalSlice4Input, resolved: ResolvedScenario, runContext: ScenarioRunContextTemplate): VerticalSlice4Input => {
   let input: VerticalSlice4Input = Object.freeze({ ...base, loans: Object.freeze(base.loans.map((loan) => Object.freeze({ ...loan, extraPrincipalPayments: Object.freeze([...(loan.extraPrincipalPayments ?? [])]) }))) });
-  for (const layer of resolved.layers) for (const change of [...layer.changes].sort((a, b) => scenarioSemanticTarget(a).localeCompare(scenarioSemanticTarget(b)))) {
-    const refs = sourceRef(layer.scenarioId, change);
+  for (const { layerScenarioId, change } of effectiveEntries(resolved)) {
+    const refs = sourceRef(layerScenarioId, change);
     if (change.kind === "loan_funding_policy") {
       input.loans.find((loan) => loan.id === change.loanId) ?? targetMissing(scenarioSemanticTarget(change));
-      const policy = createFundingPolicy(change.fundingPolicy);
+      const policy = validateOverlay(scenarioSemanticTarget(change), "changes.loan_funding_policy.fundingPolicy", () => createFundingPolicy(change.fundingPolicy));
       input = Object.freeze({ ...input, loans: Object.freeze(input.loans.map((loan) => loan.id === change.loanId ? withSource({ ...loan, fundingPolicy: policy }, refs) : loan)) });
     } else if (change.kind === "extra_principal_payment") {
       const loan = input.loans.find((item) => item.id === change.loanId) ?? targetMissing(scenarioSemanticTarget(change));
       if (change.payment !== undefined) assertFuture(change.payment.scheduledAt, runContext, scenarioSemanticTarget(change));
-      const payload = change.payment === undefined ? undefined : withSource({ ...change.payment, fundingPolicy: createFundingPolicy(change.payment.fundingPolicy) }, refs);
+      const payload = change.payment === undefined ? undefined : withSource({ ...change.payment, fundingPolicy: validateOverlay(scenarioSemanticTarget(change), "changes.extra_principal_payment.payment.fundingPolicy", () => createFundingPolicy(change.payment!.fundingPolicy)) }, refs);
       const payments = applyListOperation(loan.extraPrincipalPayments ?? [], change.operation, change.paymentId, payload, scenarioSemanticTarget(change));
       input = Object.freeze({ ...input, loans: Object.freeze(input.loans.map((item) => item.id === change.loanId ? Object.freeze({ ...item, extraPrincipalPayments: payments }) : item)) });
     } else unsupported(change.kind, "vertical_slice_4");
@@ -277,7 +330,7 @@ const configuredValue = (input: unknown, change: ScenarioChange): unknown => {
   switch (change.kind) {
     case "income_growth": return value.incomes?.find((item) => item.id === change.incomeId)?.growthRate ?? null;
     case "expense_inflation": return value.expenses?.find((item) => item.id === change.expenseId)?.inflationRate ?? null;
-    case "retirement_date": return value.events?.find((item) => item.id === change.eventId)?.effectiveAt ?? null;
+    case "retirement_date": return value.events?.find((item) => item.id === change.targetEventId)?.effectiveAt ?? null;
     case "expense_funding_policy": return value.expenses?.find((item) => item.id === change.expenseId)?.fundingPolicy ?? null;
     case "investment_return": return value.returns?.find((item) => item.targetPositionId === change.positionId)?.rate ?? null;
     case "investment_purchase": return value.purchases?.find((item) => item.id === change.purchaseId) ?? null;
