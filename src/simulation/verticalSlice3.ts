@@ -72,7 +72,10 @@ const validate = (request: VerticalSlice3RunInput, periods: readonly Period[]): 
     if (item.executionTiming !== "end_of_period") invalid("VS3 operations execute only at end_of_period", `${item.id}.executionTiming`);
     if (!Number.isSafeInteger(item.order) || item.order < 0) invalid("Operation order must be a non-negative integer", `${item.id}.order`);
     if ("amount" in item && (!item.amount.isPositive() || !item.amount.currency.equals(input.baseCurrency) || !item.amount.amount.fitsScale(input.baseCurrency.minorUnitScale))) invalid("Operation amount must be strictly positive posted money", `${item.id}.amount`);
-    if ("feeRuleIds" in item) validateRuleBinding(input.ruleCatalog, item.feeRuleIds, "fixed_fee", { targetType: "account", targetId: item.cashAccountId });
+    if ("feeRuleIds" in item) {
+      const feeRules = validateRuleBinding(input.ruleCatalog, item.feeRuleIds, "fixed_fee", { targetType: "account", targetId: item.cashAccountId });
+      for (const rule of feeRules) if (!rule.amount.currency.equals(input.baseCurrency) || !rule.amount.amount.fitsScale(input.baseCurrency.minorUnitScale)) invalid("Fee rule amount must use posted base-currency precision", `${rule.id}.amount`);
+    }
     for (const period of periods) { if (item.eligibilitySchedule.kind === "explicit_instants" && new Set(item.eligibilitySchedule.instants).size !== item.eligibilitySchedule.instants.length) invalid("Schedule instants must be unique", `${item.id}.eligibilitySchedule`); if (selected(item.eligibilitySchedule, period).length > 1) invalid("An operation may occur at most once per month", `${item.id}.eligibilitySchedule`); }
   }
   for (const item of input.transfers) { owned(item.sourceAccountId, `${item.id}.sourceAccountId`); owned(item.destinationAccountId, `${item.id}.destinationAccountId`); if (item.sourceAccountId === item.destinationAccountId) invalid("Transfer endpoints must differ", `${item.id}.destinationAccountId`); }
