@@ -34,6 +34,8 @@ export interface ResolvedScenario {
   readonly rootScenarioId: ScenarioId;
   readonly layers: readonly ExecutableScenario[];
   readonly effectiveChanges: Readonly<Record<string, { readonly layerScenarioId: ScenarioId; readonly change: ScenarioChange }>>;
+  /** Latest declared change per semantic target, retained for configuration-difference provenance. */
+  readonly terminalChanges: Readonly<Record<string, { readonly layerScenarioId: ScenarioId; readonly change: ScenarioChange }>>;
 }
 
 type EffectiveScenarioChange = { readonly layerScenarioId: ScenarioId; readonly change: ScenarioChange };
@@ -126,6 +128,11 @@ const resolveEffectiveChanges = (layers: readonly ExecutableScenario[]): Readonl
   }
   return Object.freeze(effective);
 };
+const resolveTerminalChanges = (layers: readonly ExecutableScenario[]): Readonly<Record<string, EffectiveScenarioChange>> => {
+  const terminal: Record<string, EffectiveScenarioChange> = {};
+  for (const layer of layers) for (const change of [...layer.changes].sort((a, b) => scenarioSemanticTarget(a).localeCompare(scenarioSemanticTarget(b)))) terminal[scenarioSemanticTarget(change)] = Object.freeze({ layerScenarioId: layer.scenarioId, change });
+  return Object.freeze(Object.fromEntries(Object.keys(terminal).sort().map((target) => [target, terminal[target]!])));
+};
 const effectiveEntries = (resolved: ResolvedScenario): readonly EffectiveScenarioChange[] => Object.freeze(Object.keys(resolved.effectiveChanges).sort().map((target) => resolved.effectiveChanges[target]!));
 
 export const resolveScenario = (catalog: readonly ExecutableScenario[], selectedScenarioId: ScenarioId, requestedRealizations = 1): ResolvedScenario => {
@@ -154,7 +161,8 @@ export const resolveScenario = (catalog: readonly ExecutableScenario[], selected
   const nondeterministic = layers.find((layer) => layer.stochastic || layer.simulationCount > 1);
   if (nondeterministic !== undefined || requestedRealizations > 1) scenarioFailure(issueCodes.scenarioStochasticUnsupported, `Scenario ${nondeterministic?.scenarioId ?? selectedScenarioId} requests unsupported stochastic or multi-realization execution`, "stochastic", [nondeterministic?.scenarioId ?? selectedScenarioId]);
   const effective = resolveEffectiveChanges(layers);
-  return Object.freeze({ scenario: selected, rootScenarioId: layers[0]!.scenarioId, layers: Object.freeze(layers), effectiveChanges: Object.freeze(effective) });
+  const terminal = resolveTerminalChanges(layers);
+  return Object.freeze({ scenario: selected, rootScenarioId: layers[0]!.scenarioId, layers: Object.freeze(layers), effectiveChanges: Object.freeze(effective), terminalChanges: terminal });
 };
 
 const sourceRef = (layerScenarioId: ScenarioId, change: ScenarioChange): readonly CalculationTraceRef[] => {
@@ -340,14 +348,15 @@ const configuredValue = (input: unknown, change: ScenarioChange): unknown => {
   }
 };
 const differences = (baseline: ResolvedScenario, alternative: ResolvedScenario, baselineInput: unknown, alternativeInput: unknown): readonly ScenarioConfigurationDifference[] => {
-  const targets = [...new Set([...Object.keys(baseline.effectiveChanges), ...Object.keys(alternative.effectiveChanges)])].sort();
+  const targets = [...new Set([...Object.keys(baseline.effectiveChanges), ...Object.keys(alternative.effectiveChanges), ...Object.keys(baseline.terminalChanges), ...Object.keys(alternative.terminalChanges)])].sort();
   return Object.freeze(targets.flatMap((target) => {
     const before = baseline.effectiveChanges[target]; const after = alternative.effectiveChanges[target];
-    if (canonicalSerialize(before === undefined ? null : before.change) === canonicalSerialize(after === undefined ? null : after.change)) return [];
-    const effective = after ?? before!; const change = effective.change;
+    const baselineTerminal = baseline.terminalChanges[target]; const alternativeTerminal = alternative.terminalChanges[target];
+    if (canonicalSerialize(before === undefined ? null : before.change) === canonicalSerialize(after === undefined ? null : after.change) && canonicalSerialize(baselineTerminal === undefined ? null : baselineTerminal.change) === canonicalSerialize(alternativeTerminal === undefined ? null : alternativeTerminal.change)) return [];
+    const terminal = alternativeTerminal ?? baselineTerminal!; const change = terminal.change;
     const beforeValue = configuredValue(baselineInput, change); const afterValue = configuredValue(alternativeInput, change);
     const configuredRuleIds = change.kind === "fee_rule_binding" ? [...new Set([...(beforeValue as readonly FinancialRuleId[] | null ?? []), ...(afterValue as readonly FinancialRuleId[] | null ?? [])])].sort() : [];
-    return [Object.freeze({ differenceId: `scenario-difference:${alternative.scenario.scenarioId}:${target}`, semanticTarget: target, changeKind: change.kind, scenarioLayerId: effective.layerScenarioId, before: beforeValue, after: afterValue, assumptionIds: Object.freeze("assumptionId" in change ? [change.assumptionId] : []), eventIds: Object.freeze("eventId" in change ? [change.eventId] : []), configuredRuleIds: Object.freeze(configuredRuleIds) })];
+    return [Object.freeze({ differenceId: `scenario-difference:${alternative.scenario.scenarioId}:${target}`, semanticTarget: target, changeKind: change.kind, scenarioLayerId: terminal.layerScenarioId, before: beforeValue, after: afterValue, assumptionIds: Object.freeze("assumptionId" in change ? [change.assumptionId] : []), eventIds: Object.freeze("eventId" in change ? [change.eventId] : []), configuredRuleIds: Object.freeze(configuredRuleIds) })];
   }));
 };
 const series = <T extends AnyPeriodResult>(scenarioId: ScenarioId, result: AnyRunResult, metric: Metrics<T>): ScenarioSeries => Object.freeze({ scenarioId, status: result.status, metadata: result.runMetadata, points: Object.freeze(result.periods.map((raw) => { const period = raw as T; const refs = mergeTraceRefs(period.traceRefs) ?? Object.freeze([]); return Object.freeze({ period: period.period, metrics: metric(period), traceRefs: refs, ruleIds: Object.freeze(idsFromRefs(refs).rules) }); })), diagnostics: result.diagnostics });
@@ -361,7 +370,7 @@ const subtractSeries = (baseline: ScenarioSeries, alternative: ScenarioSeries, d
     if (canonicalSerialize(leftKeys) !== canonicalSerialize(rightKeys)) scenarioFailure(issueCodes.scenarioComparisonIncompatible, "Scenario metric structures do not match", "metrics");
     const metrics = Object.freeze(Object.fromEntries(leftKeys.map((key) => [key, right.metrics[key]!.minus(left.metrics[key]!)]).filter(([, value]) => !(value as Money).isZero())));
     const refs = mergeTraceRefs(left.traceRefs, right.traceRefs) ?? Object.freeze([]); const ids = idsFromRefs(refs);
-    const related = diffs.filter((difference) => difference.assumptionIds.some((id) => ids.assumptions.includes(id)) || difference.eventIds.some((id) => ids.events.includes(id)) || difference.configuredRuleIds.some((id) => ids.rules.includes(id))).map((difference) => difference.differenceId).sort();
+    const related = diffs.filter((difference) => difference.assumptionIds.some((id) => ids.assumptions.includes(id)) || difference.eventIds.some((id) => ids.events.includes(id)) || difference.configuredRuleIds.some((id) => ids.rules.includes(id)) || refs.some((ref) => ref.traceId.endsWith(`:${difference.semanticTarget}`))).map((difference) => difference.differenceId).sort();
     deltas.push(Object.freeze({ period: left.period, metrics, traceRefs: refs, ruleIds: Object.freeze(ids.rules), relatedDifferenceIds: Object.freeze(related) }));
   }
   return Object.freeze({ deltas: Object.freeze(deltas), ...(count === 0 ? {} : { comparedThrough: baseline.points[count - 1]!.period.end }) });
