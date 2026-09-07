@@ -3,7 +3,7 @@ import { ValidationError } from "../src/diagnostics/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { domainId } from "../src/identity/index.js";
 import { calculationTraceId, calculationTraceRef, mergeTraceRefs } from "../src/lineage/index.js";
-import { CURRENT_RUN_VERSIONS, assumptionId, scenarioId } from "../src/model/index.js";
+import { CURRENT_RUN_VERSIONS, assumptionId, scenarioEventId, scenarioId } from "../src/model/index.js";
 import { compareVerticalSlice2Scenarios, applyVerticalSlice2Scenario, resolveScenario, type ExecutableScenario, type ScenarioChange } from "../src/simulation/scenario.js";
 import { createRunContext, runId } from "../src/simulation/run.js";
 import { createAuthoritativeState } from "../src/state/index.js";
@@ -27,6 +27,7 @@ const ids = {
   assumption1: assumptionId("71000000-0000-4000-8000-000000000020"),
   assumption2: assumptionId("71000000-0000-4000-8000-000000000021"),
   assumption3: assumptionId("71000000-0000-4000-8000-000000000022"),
+  retirementDecision: scenarioEventId("71000000-0000-4000-8000-000000000023"),
 };
 const primitive = (suffix: number) => domainId("primitive-instance", `72000000-0000-4000-8000-${suffix.toString().padStart(12, "0")}`);
 const start = instant("2026-01-01T00:00:00.000Z");
@@ -63,6 +64,15 @@ describe("scenario resolution and VS2 comparison", () => {
     expect(applied.incomes[0]!.sourceTraceRefs?.flatMap((ref) => ref.assumptionIds ?? [])).toContain(ids.assumption2);
   });
 
+  it("applies only the resolved leaf overlay, independent of overridden ancestor payloads", () => {
+    const leaf = scenario(ids.leaf, [change("0.1", ids.assumption2)], ids.root);
+    const first = applyVerticalSlice2Scenario(baseInput(), resolveScenario([scenario(ids.root, [change("0.01")]), leaf], ids.leaf), runContext);
+    const second = applyVerticalSlice2Scenario(baseInput(), resolveScenario([scenario(ids.root, [change("0.07", ids.assumption3)]), leaf], ids.leaf), runContext);
+    expect(first).toEqual(second);
+    const context = createRunContext({ ...runContext, runId: runId("73000000-0000-4000-8000-000000000009"), scenarioId: ids.leaf });
+    expect(runVerticalSlice2({ runContext: context, openingState: opening(), input: first, months: 13 }).runMetadata.inputFingerprint).toBe(runVerticalSlice2({ runContext: context, openingState: opening(), input: second, months: 13 }).runMetadata.inputFingerprint);
+  });
+
   it("is independent of catalog and independent change-array order", () => {
     const changes = [change("0.05"), { kind: "expense_inflation", expenseId: ids.rent, rate: annual("0.02"), assumptionId: ids.assumption2 } as const];
     const leafA = scenario(ids.leaf, changes, ids.root); const leafB = scenario(ids.leaf, [...changes].reverse(), ids.root); const root = scenario(ids.root);
@@ -94,7 +104,7 @@ describe("scenario resolution and VS2 comparison", () => {
     expect(issue(() => applyVerticalSlice2Scenario(baseInput(), resolveScenario([root, missing], ids.leaf), runContext))).toBe("SCENARIO_OVERLAY_TARGET_NOT_FOUND");
     const unsupported = scenario(ids.leaf, [{ kind: "investment_return", positionId: domainId("position", "71000000-0000-4000-8000-000000000099"), rate: monthly("0.1"), assumptionId: ids.assumption1 }], ids.root);
     expect(issue(() => applyVerticalSlice2Scenario(baseInput(), resolveScenario([root, unsupported], ids.leaf), runContext))).toBe("SCENARIO_CHANGE_UNSUPPORTED");
-    const backdated = scenario(ids.leaf, [{ kind: "retirement_date", eventId: ids.retire, effectiveAt: instant("2025-12-01T00:00:00.000Z") }], ids.root);
+    const backdated = scenario(ids.leaf, [{ kind: "retirement_date", targetEventId: ids.retire, eventId: ids.retirementDecision, effectiveAt: instant("2025-12-01T00:00:00.000Z") }], ids.root);
     const state = opening();
     expect(issue(() => applyVerticalSlice2Scenario(baseInput(), resolveScenario([root, backdated], ids.leaf), runContext))).toBe("SCENARIO_DEFINITION_INVALID");
     expect(state.accounts[ids.cash]!.cash.equals(money("0"))).toBe(true);
@@ -114,16 +124,17 @@ describe("scenario resolution and VS2 comparison", () => {
 
   it("moves only the explicitly targeted termination event", () => {
     const root = scenario(ids.root);
-    const leaf = scenario(ids.leaf, [{ kind: "retirement_date", eventId: ids.retire, effectiveAt: instant("2026-06-15T00:00:00.000Z") }], ids.root);
+    const leaf = scenario(ids.leaf, [{ kind: "retirement_date", targetEventId: ids.retire, eventId: ids.retirementDecision, effectiveAt: instant("2026-06-15T00:00:00.000Z") }], ids.root);
     const result = compareVerticalSlice2Scenarios({ scenarios: [root, leaf], baselineScenarioId: ids.root, alternativeScenarioIds: [ids.leaf], runIds: { [ids.root]: runId("73000000-0000-4000-8000-000000000003"), [ids.leaf]: runId("73000000-0000-4000-8000-000000000004") }, runContext, openingState: opening(), input: baseInput(), months: 13 });
     expect(result.alternatives[0]!.scenario.points[5]!.metrics.recognizedIncome!.equals(money("100"))).toBe(true);
     expect(result.alternatives[0]!.deltas[5]!.metrics.recognizedIncome!.equals(money("-1000"))).toBe(true);
+    expect(result.alternatives[0]!.differences[0]!.eventIds).toEqual([ids.retirementDecision]);
   });
 
   it("unions rule, assumption, and event lineage deterministically", () => {
     const trace = calculationTraceId("shared"); const rule = domainId("tax-rule", "74000000-0000-4000-8000-000000000001");
-    const merged = mergeTraceRefs([calculationTraceRef(trace, [rule])], [calculationTraceRef(trace, undefined, [ids.assumption1], [ids.retire])])!;
-    expect(merged).toEqual([calculationTraceRef(trace, [rule], [ids.assumption1], [ids.retire])]);
+    const merged = mergeTraceRefs([calculationTraceRef(trace, [rule])], [calculationTraceRef(trace, undefined, [ids.assumption1], [ids.retirementDecision])])!;
+    expect(merged).toEqual([calculationTraceRef(trace, [rule], [ids.assumption1], [ids.retirementDecision])]);
   });
 
   it("rejects incompatible baseline roots and horizons before execution", () => {
