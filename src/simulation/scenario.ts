@@ -370,7 +370,7 @@ const subtractSeries = (baseline: ScenarioSeries, alternative: ScenarioSeries, d
     if (canonicalSerialize(leftKeys) !== canonicalSerialize(rightKeys)) scenarioFailure(issueCodes.scenarioComparisonIncompatible, "Scenario metric structures do not match", "metrics");
     const metrics = Object.freeze(Object.fromEntries(leftKeys.map((key) => [key, right.metrics[key]!.minus(left.metrics[key]!)]).filter(([, value]) => !(value as Money).isZero())));
     const refs = mergeTraceRefs(left.traceRefs, right.traceRefs) ?? Object.freeze([]); const ids = idsFromRefs(refs);
-    const related = diffs.filter((difference) => difference.assumptionIds.some((id) => ids.assumptions.includes(id)) || difference.eventIds.some((id) => ids.events.includes(id)) || difference.configuredRuleIds.some((id) => ids.rules.includes(id)) || refs.some((ref) => ref.traceId.endsWith(`:${difference.semanticTarget}`))).map((difference) => difference.differenceId).sort();
+    const related = Object.keys(metrics).length === 0 ? [] : diffs.filter((difference) => difference.assumptionIds.some((id) => ids.assumptions.includes(id)) || difference.eventIds.some((id) => ids.events.includes(id)) || difference.configuredRuleIds.some((id) => ids.rules.includes(id)) || refs.some((ref) => ref.traceId.endsWith(`:${difference.semanticTarget}`))).map((difference) => difference.differenceId).sort();
     deltas.push(Object.freeze({ period: left.period, metrics, traceRefs: refs, ruleIds: Object.freeze(ids.rules), relatedDifferenceIds: Object.freeze(related) }));
   }
   return Object.freeze({ deltas: Object.freeze(deltas), ...(count === 0 ? {} : { comparedThrough: baseline.points[count - 1]!.period.end }) });
