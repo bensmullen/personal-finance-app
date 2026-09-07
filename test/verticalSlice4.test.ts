@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { assertBalanced } from "../src/accounting/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { domainId } from "../src/identity/index.js";
-import { createInputFingerprint, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { createAuthoritativeState } from "../src/state/index.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
 import { Rate, RoundingPolicy, USD, money, rateConvention, sumMoney } from "../src/values/index.js";
@@ -180,7 +180,7 @@ describe("Vertical Slice 4 liabilities", () => {
     expect(() => runVerticalSlice4({ runContext: context(1, "442"), openingState: opening("100", "1000"), primitiveState: malformedState, input: input(loan("100", "0", 2)) })).toThrow(/Matured principal/);
   });
 
-  it("includes economically meaningful primitive progress in the run fingerprint", () => {
+  it("rejects primitive progress that does not match resumed contractual occurrences", () => {
     const missed = runVerticalSlice4({ runContext: context(1, "451"), openingState: opening("100", "0"), input: input(loan("100", "0", 3)) });
     const secondProgress = {
       ...missed.primitiveState,
@@ -188,10 +188,37 @@ describe("Vertical Slice 4 liabilities", () => {
       [primitive(3)]: { primitiveId: "P24" as const, state: { ...(missed.primitiveState[primitive(3)]!.state as object), evaluations: 2 } },
     };
     const nextContext = contextAt(instant("2026-02-01T00:00:00.000Z"), 1, "452");
-    const model = input(loan("100", "0", 3));
-    const one = createInputFingerprint({ runContext: nextContext, openingState: missed.state, primitiveState: missed.primitiveState, model, executionPlan: { months: 1 } });
-    const two = createInputFingerprint({ runContext: { ...nextContext, runId: runId("64000000-0000-4000-8000-000000000453") }, openingState: missed.state, primitiveState: secondProgress, model, executionPlan: { months: 1 } });
-    expect(one).not.toBe(two);
+    expect(() => runVerticalSlice4({ runContext: nextContext, openingState: missed.state, primitiveState: missed.primitiveState, input: input(loan("100", "0", 3)) })).not.toThrow();
+    expect(() => runVerticalSlice4({ runContext: { ...nextContext, runId: runId("64000000-0000-4000-8000-000000000453") }, openingState: missed.state, primitiveState: secondProgress, input: input(loan("100", "0", 3)) })).toThrow(/reconcile exactly/);
+  });
+
+  it("reconciles active P22 progress exactly to historical and committed contractual occurrences", () => {
+    const first = runVerticalSlice4({ runContext: context(1, "501"), openingState: opening("100", "100"), input: input(loan("100", "0", 3)) });
+    const next = contextAt(instant("2026-02-01T00:00:00.000Z"), 1, "502");
+    const progress = (evaluations: number) => ({
+      ...first.primitiveState,
+      [primitive(2)]: { primitiveId: "P22" as const, state: evaluations === 0 ? { evaluations } : { ...(first.primitiveState[primitive(2)]!.state as object), evaluations } },
+      [primitive(3)]: { primitiveId: "P24" as const, state: evaluations === 0 ? { evaluations } : { ...(first.primitiveState[primitive(3)]!.state as object), evaluations } },
+    });
+    expect(() => runVerticalSlice4({ runContext: next, openingState: first.state, primitiveState: progress(2), input: input(loan("100", "0", 3)) })).toThrow(/reconcile exactly/);
+    expect(() => runVerticalSlice4({ runContext: next, openingState: first.state, primitiveState: progress(0), input: input(loan("100", "0", 3)) })).toThrow(/reconcile exactly/);
+    expect(() => runVerticalSlice4({ runContext: context(2, "503"), openingState: first.state, primitiveState: first.primitiveState, input: input(loan("100", "0", 3)) })).not.toThrow();
+  });
+
+  it("permits reduced P22 progress only after an early payoff and reconciles skipped calendar days", () => {
+    const extra = { id: domainId("extra-principal-payment", "65000000-0000-4000-8000-000000000010"), scheduledAt: paymentAt, amount: money("1000"), fundingPolicy: policy(), primitiveInstanceId: primitive(31) };
+    const paid = runVerticalSlice4({ runContext: context(1, "511"), openingState: opening("100", "1000"), input: input(loan("100", "0", 3, [extra])) });
+    const relaxed = {
+      ...paid.primitiveState,
+      [primitive(2)]: { primitiveId: "P22" as const, state: { evaluations: 0 } },
+      [primitive(3)]: { primitiveId: "P24" as const, state: { evaluations: 0 } },
+    };
+    expect(() => runVerticalSlice4({ runContext: context(2, "512"), openingState: paid.state, primitiveState: relaxed, input: input(loan("100", "0", 3, [extra])) })).not.toThrow();
+    for (const day of [29, 30, 31]) {
+      const scheduled = { ...loan("100", "0", 2), paymentSchedule: { kind: "utc_monthly" as const, anchor: instant(`2026-01-${day}T00:00:00.000Z`), invalidDayPolicy: "skip" as const } };
+      const first = runVerticalSlice4({ runContext: context(3, `52${day}`), openingState: opening("100", "100"), input: input(scheduled) });
+      expect(() => runVerticalSlice4({ runContext: contextAt(instant("2026-04-01T00:00:00.000Z"), 1, `53${day}`), openingState: first.state, primitiveState: first.primitiveState, input: input(scheduled) })).not.toThrow();
+    }
   });
 
   it("rejects replay and preserves the last committed financial and primitive state", () => {
