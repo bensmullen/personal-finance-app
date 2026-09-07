@@ -16,6 +16,7 @@ const middleId = scenarioId("81000000-0000-4000-8000-000000000002");
 const leafId = scenarioId("81000000-0000-4000-8000-000000000003");
 const assumption = assumptionId("81000000-0000-4000-8000-000000000004");
 const event = scenarioEventId("81000000-0000-4000-8000-000000000005");
+const removalEvent = scenarioEventId("81000000-0000-4000-8000-000000000006");
 const start = instant("2026-01-01T00:00:00.000Z");
 const horizon = { start, end: utcMonthlyPeriods(start, 2)[1]!.end };
 const context = { asOf: instant("2025-12-31T00:00:00.000Z"), dataCutoff: instant("2025-12-31T00:00:00.000Z"), simulationStart: start, simulationEnd: horizon.end, baseCurrency: USD, versions: CURRENT_RUN_VERSIONS } as const;
@@ -67,6 +68,18 @@ describe("VS3 scenario adapter", () => {
     expect(compared.baseline.points[0]!.metrics.portfolioValue!.equals(money("120"))).toBe(true);
   });
 
+  it("attributes inherited purchase removal to the child decision and links its delta", () => {
+    const add: ScenarioChange = { kind: "investment_purchase", operation: "add", purchaseId, eventId: event, purchase: purchase("20") };
+    const remove: ScenarioChange = { kind: "investment_purchase", operation: "remove", purchaseId, eventId: removalEvent };
+    const root = scenario(rootId, [add]); const child = scenario(leafId, [remove], rootId);
+    expect(applyVerticalSlice3Scenario(input3(), resolveScenario([root, child], leafId), context).purchases).toHaveLength(0);
+    const comparison = compareVerticalSlice3Scenarios({ scenarios: [root, child], baselineScenarioId: rootId, alternativeScenarioIds: [leafId], runIds, runContext: context, openingState: opening3(), input: input3(), months: 2 });
+    const difference = comparison.alternatives[0]!.differences[0]!;
+    expect(difference).toMatchObject({ scenarioLayerId: leafId, eventIds: [removalEvent], changeKind: "investment_purchase", after: null });
+    expect((difference.before as InvestmentPurchase).id).toBe(purchaseId);
+    expect(comparison.alternatives[0]!.deltas[0]!.relatedDifferenceIds).toContain(difference.differenceId);
+  });
+
   it("reports actual fee rules and preserves incomplete alternative status/common prefix", () => {
     const root = scenario(rootId); const leaf = scenario(leafId, [{ kind: "fee_rule_binding", feeId, feeRuleIds: [feeRule2], assumptionId: assumption }], rootId);
     const fees = compareVerticalSlice3Scenarios({ scenarios: [root, leaf], baselineScenarioId: rootId, alternativeScenarioIds: [leafId], runIds, runContext: context, openingState: opening3(), input: input3(true), months: 2 });
@@ -104,6 +117,18 @@ describe("VS4 scenario adapter", () => {
     expect(compared.baseline.points[0]!.metrics.principalReduction!.equals(money("50"))).toBe(true);
     expect(compared.alternatives[0]!.scenario.points[0]!.metrics.principalReduction!.equals(money("75"))).toBe(true);
     expect(compared.alternatives[0]!.deltas[0]!.metrics.endingPrincipal!.equals(money("-25"))).toBe(true);
+  });
+
+  it("attributes inherited extra-principal removal to the child decision and links its debt delta", () => {
+    const add: ScenarioChange = { kind: "extra_principal_payment", operation: "add", loanId, paymentId: extraId, eventId: event, payment: extra() };
+    const remove: ScenarioChange = { kind: "extra_principal_payment", operation: "remove", loanId, paymentId: extraId, eventId: removalEvent };
+    const root = scenario(rootId, [add]); const child = scenario(leafId, [remove], rootId);
+    expect(applyVerticalSlice4Scenario(input4(), resolveScenario([root, child], leafId), context).loans[0]!.extraPrincipalPayments).toHaveLength(0);
+    const comparison = compareVerticalSlice4Scenarios({ scenarios: [root, child], baselineScenarioId: rootId, alternativeScenarioIds: [leafId], runIds, runContext: context, openingState: opening4(), input: input4(), months: 2 });
+    const difference = comparison.alternatives[0]!.differences[0]!;
+    expect(difference).toMatchObject({ scenarioLayerId: leafId, eventIds: [removalEvent], changeKind: "extra_principal_payment", after: null });
+    expect((difference.before as ExtraPrincipalPayment).id).toBe(extraId);
+    expect(comparison.alternatives[0]!.deltas[0]!.relatedDifferenceIds).toContain(difference.differenceId);
   });
 
   it("preserves declared funding order and never invents funding", () => {
