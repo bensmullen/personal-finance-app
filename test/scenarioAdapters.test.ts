@@ -49,7 +49,7 @@ describe("VS3 scenario adapter", () => {
     expect(compared.alternatives[0]!.scenario.points[0]!.metrics.portfolioValue!.equals(money("110"))).toBe(true);
     expect(compared.alternatives[0]!.deltas[0]!.metrics.netWorth!.equals(money("10"))).toBe(true);
     const bad = scenario(leafId, [{ kind: "investment_return", positionId: position, rate: Rate.fromDecimal("0.1", rateConvention.effectiveAnnual()), assumptionId: assumption }], rootId);
-    expect(issue(() => applyVerticalSlice3Scenario(input3(), resolveScenario([root, bad], leafId), context))).toBe("PRIMITIVE_PARAMETERS_INVALID");
+    expect(issue(() => applyVerticalSlice3Scenario(input3(), resolveScenario([root, bad], leafId), context))).toBe("SCENARIO_DEFINITION_INVALID");
   });
 
   it("uses ordinary purchase mechanics and supports add/replace/remove inheritance", () => {
@@ -58,6 +58,10 @@ describe("VS3 scenario adapter", () => {
     const remove: ScenarioChange = { kind: "investment_purchase", operation: "remove", purchaseId, eventId: event };
     const root = scenario(rootId, [add]); const middle = scenario(middleId, [replace], rootId); const leaf = scenario(leafId, [remove], middleId);
     expect(applyVerticalSlice3Scenario(input3(), resolveScenario([middle, leaf, root], leafId), context).purchases).toHaveLength(0);
+    const emptyRoot = scenario(rootId); const replacementWithoutTarget = scenario(leafId, [replace], rootId);
+    expect(issue(() => applyVerticalSlice3Scenario(input3(), resolveScenario([emptyRoot, replacementWithoutTarget], leafId), context))).toBe("SCENARIO_OVERLAY_TARGET_NOT_FOUND");
+    expect(issue(() => applyVerticalSlice3Scenario({ ...input3(), purchases: [purchase("20")] }, resolveScenario([emptyRoot, scenario(leafId, [add], rootId)], leafId), context))).toBe("SCENARIO_OVERLAY_CONFLICT");
+    expect(applyVerticalSlice3Scenario({ ...input3(), purchases: [purchase("20")] }, resolveScenario([emptyRoot, scenario(leafId, [remove], rootId)], leafId), context).purchases).toHaveLength(0);
     const compared = compareVerticalSlice3Scenarios({ scenarios: [root, scenario(leafId, [], rootId)], baselineScenarioId: rootId, alternativeScenarioIds: [leafId], runIds, runContext: context, openingState: opening3(), input: input3(), months: 2 });
     expect(compared.baseline.points[0]!.metrics.contributionPrincipal!.equals(money("20"))).toBe(true);
     expect(compared.baseline.points[0]!.metrics.portfolioValue!.equals(money("120"))).toBe(true);
