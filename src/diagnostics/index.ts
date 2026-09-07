@@ -70,6 +70,8 @@ export const issueCodes = Object.freeze({
   invalidRunCompletionResult: "INVALID_RUN_COMPLETION_RESULT",
   unsupportedModelFormat: "UNSUPPORTED_MODEL_FORMAT",
   unsupportedFinancialSpecification: "UNSUPPORTED_FINANCIAL_SPECIFICATION",
+  modelDocumentInvalid: "MODEL_DOCUMENT_INVALID",
+  modelMigrationRequired: "MODEL_MIGRATION_REQUIRED",
   modelMigrationUnavailable: "MODEL_MIGRATION_UNAVAILABLE",
   modelVersionMismatch: "MODEL_VERSION_MISMATCH",
   primitiveUnknown: "PRIMITIVE_UNKNOWN",
