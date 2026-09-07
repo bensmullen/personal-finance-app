@@ -20,3 +20,5 @@ export type {
   VerticalSlice2PeriodResult,
   VerticalSlice2RunResult,
 } from "./simulation/verticalSlice2.js";
+export { compareVerticalSlice2Scenarios, applyVerticalSlice2Scenario, resolveScenario, scenarioSemanticTarget } from "./simulation/scenario.js";
+export type { ExecutableScenario, ScenarioChange, ScenarioComparisonRequest, ScenarioComparisonResult } from "./simulation/scenario.js";

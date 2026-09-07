@@ -96,4 +96,12 @@ export const issueCodes = Object.freeze({
   ruleTargetMismatch: "RULE_TARGET_MISMATCH",
   contributionLimitApplied: "CONTRIBUTION_LIMIT_APPLIED",
   productOperationNotAllowed: "PRODUCT_OPERATION_NOT_ALLOWED",
+  scenarioDefinitionInvalid: "SCENARIO_DEFINITION_INVALID",
+  scenarioReferenceNotFound: "SCENARIO_REFERENCE_NOT_FOUND",
+  scenarioInheritanceCycle: "SCENARIO_INHERITANCE_CYCLE",
+  scenarioOverlayConflict: "SCENARIO_OVERLAY_CONFLICT",
+  scenarioOverlayTargetNotFound: "SCENARIO_OVERLAY_TARGET_NOT_FOUND",
+  scenarioChangeUnsupported: "SCENARIO_CHANGE_UNSUPPORTED",
+  scenarioComparisonIncompatible: "SCENARIO_COMPARISON_INCOMPATIBLE",
+  scenarioStochasticUnsupported: "SCENARIO_STOCHASTIC_UNSUPPORTED",
 } as const);

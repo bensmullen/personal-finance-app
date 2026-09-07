@@ -88,7 +88,7 @@ describe("Vertical Slice 1 run/state integration", () => {
       dataCutoff: context(1).dataCutoff,
       engineVersion: "0.1.0",
       resultSchemaVersion: "0.1.0",
-      financialSpecificationVersion: "0.1.8-draft",
+      financialSpecificationVersion: "0.1.9-draft",
       modelFormatVersion: "0.2.0-draft",
     }));
     expect(result.recognitions.every((fact) => fact.provenance?.factKind === "model_generated")).toBe(true);

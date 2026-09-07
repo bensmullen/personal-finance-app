@@ -8,7 +8,7 @@ import {
 import { ValidationError, failValidation, issueCodes, type ValidationIssue } from "../diagnostics/index.js";
 import { isAcceptedFundingResolution, resolveFunding, type ConstraintOutcome, type FundingPolicy, type LiquidityShortfall } from "../funding/index.js";
 import { domainId, type DomainId, type GeneratedOccurrenceKey } from "../identity/index.js";
-import { calculationTraceId, calculationTraceRef, freezeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
+import { calculationTraceId, calculationTraceRef, freezeTraceRefs, mergeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
 import { createFactProvenance, type ModelGeneratedFactProvenance } from "../model/provenance.js";
 import { evaluatePrimitive, primitiveEvaluationContext, type PrimitivePeriodFlow } from "../primitives/index.js";
 import {
@@ -83,6 +83,7 @@ export interface ScheduledCashFlowEvent {
   readonly targetId: IncomeId | ExpenseId;
   readonly kind: "activation" | "termination";
   readonly effectiveAt: Instant;
+  readonly sourceTraceRefs?: readonly CalculationTraceRef[];
 }
 
 interface MonthlyStreamBase<Id extends IncomeId | ExpenseId> {
@@ -98,6 +99,7 @@ interface MonthlyStreamBase<Id extends IncomeId | ExpenseId> {
   };
   readonly activationEventId?: EventId;
   readonly terminationEventId?: EventId;
+  readonly sourceTraceRefs?: readonly CalculationTraceRef[];
 }
 
 export interface RecurringIncomeStream extends MonthlyStreamBase<IncomeId> {
@@ -340,7 +342,7 @@ const eventWork = (
   for (const stream of [...request.input.incomes, ...request.input.expenses].sort((a, b) => a.id.localeCompare(b.id))) {
     const activation = eventFor(request.input, stream.activationEventId);
     if (activation !== undefined) {
-      const traceRefs = traces(`event:${activation.id}`, `event-activation:${stream.id}`);
+      const traceRefs = mergeTraceRefs(traces(`event:${activation.id}`, `event-activation:${stream.id}`), activation.sourceTraceRefs, stream.sourceTraceRefs)!;
       const { period: _period, ...context } = primitiveContext(request, stream.id, stream.primitiveIds.activation!, at, "event", traceRefs);
       work.push({
         id: `event:activation:${stream.id}`,
@@ -355,7 +357,7 @@ const eventWork = (
     }
     const termination = eventFor(request.input, stream.terminationEventId);
     if (termination !== undefined) {
-      const traceRefs = traces(`event:${termination.id}`, `event-termination:${stream.id}`);
+      const traceRefs = mergeTraceRefs(traces(`event:${termination.id}`, `event-termination:${stream.id}`), termination.sourceTraceRefs, stream.sourceTraceRefs)!;
       const { period: _period, ...context } = primitiveContext(request, stream.id, stream.primitiveIds.termination!, at, "event", traceRefs);
       work.push({
         id: `event:termination:${stream.id}`,
@@ -374,6 +376,7 @@ const eventWork = (
 
 /** Uses only committed P27/P30 output, including their half-open edge state. */
 const eventRuntimeAllows = (
+  input: VerticalSlice2Input,
   stream: MonthlyStreamBase<IncomeId | ExpenseId>,
   outputs: ReadonlyMap<string, unknown>,
   at: Instant,
@@ -384,7 +387,13 @@ const eventRuntimeAllows = (
   const terminationAllowed = termination === undefined || (termination.active || (termination.terminatedNow && at < termination.terminationAt));
   return Object.freeze({
     allowed: activationAllowed && terminationAllowed,
-    traceRefs: activationAllowed && activation !== undefined ? traces(`event:${stream.activationEventId}`, `event-activation:${stream.id}`) : Object.freeze([]),
+    traceRefs: mergeTraceRefs(
+      activationAllowed && activation !== undefined ? traces(`event:${stream.activationEventId}`, `event-activation:${stream.id}`) : undefined,
+      termination === undefined ? undefined : traces(`event:${stream.terminationEventId}`, `event-termination:${stream.id}`),
+      eventFor(input, stream.activationEventId)?.sourceTraceRefs,
+      eventFor(input, stream.terminationEventId)?.sourceTraceRefs,
+      stream.sourceTraceRefs,
+    ) ?? Object.freeze([]),
   });
 };
 
@@ -454,14 +463,14 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
       const addIncomeActions = (stream: RecurringIncomeStream): void => {
         // Schedule and temporal eligibility deliberately precede growth: an
         // inactive future schedule must never request a backwards month index.
-        const scheduleTraces = traces(`income:${stream.id}:schedule`);
+        const scheduleTraces = mergeTraceRefs(traces(`income:${stream.id}:schedule`), stream.sourceTraceRefs)!;
         const scheduled = evaluatePrimitive({ primitiveId: "P03", input: { amount: stream.baseMonthlyAmount }, parameters: { schedule: stream.recurrence }, priorState: null, context: { ...primitiveContext(request, stream.id, stream.primitiveIds.recurrence, subtractMilliseconds(targetPeriod.end, 1), "income-recognition", scheduleTraces), period: targetPeriod } });
         for (const candidate of scheduled.output.occurrences) {
           const temporal = evaluatePrimitive({ primitiveId: "P04", input: { value: candidate.value }, parameters: { start: stream.start, end: stream.end ?? request.runContext.simulationEnd }, priorState: null, context: primitiveContext(request, stream.id, stream.primitiveIds.recurrence, candidate.scheduledAt, "income-eligibility", scheduleTraces) });
-          const eventEligibility = eventRuntimeAllows(stream, eventOutputs, candidate.scheduledAt);
+          const eventEligibility = eventRuntimeAllows(request.input, stream, eventOutputs, candidate.scheduledAt);
           if (!temporal.output.active || !eventEligibility.allowed) continue;
           const month = utcCalendarMonthDifference(stream.growthBaseAt, candidate.scheduledAt);
-          const baseTraces = traces(`income:${stream.id}:base`, `income:${stream.id}:salary-growth-assumption`, `income:${stream.id}:growth:${month}`);
+          const baseTraces = mergeTraceRefs(traces(`income:${stream.id}:base`, `income:${stream.id}:salary-growth-assumption`, `income:${stream.id}:growth:${month}`), stream.sourceTraceRefs)!;
           const growth = evaluatePrimitive({ primitiveId: "P08", input: { initial: stream.baseMonthlyAmount, rate: stream.growthRate }, parameters: { category: "recurring_occurrence_amount", timeBasis: growthTimeBasis(stream.growthRate, month) }, priorState: null, context: primitiveContext(request, stream.id, stream.primitiveIds.growth, candidate.scheduledAt, "income-growth", baseTraces) });
           const recurrenceTraces = [...baseTraces, ...traces(`income:${stream.id}:recurrence`)];
           const recurrence = evaluatePrimitive({ primitiveId: "P03", input: { amount: growth.output.value }, parameters: { schedule: stream.recurrence }, priorState: null, context: { ...primitiveContext(request, stream.id, stream.primitiveIds.recurrence, candidate.scheduledAt, "income-recognition", recurrenceTraces), period: targetPeriod } });
@@ -485,14 +494,14 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
       };
 
       const addExpenseActions = (stream: RecurringExpenseStream): void => {
-        const scheduleTraces = traces(`expense:${stream.id}:schedule`);
+        const scheduleTraces = mergeTraceRefs(traces(`expense:${stream.id}:schedule`), stream.sourceTraceRefs)!;
         const scheduled = evaluatePrimitive({ primitiveId: "P03", input: { amount: stream.baseMonthlyAmount }, parameters: { schedule: stream.recurrence }, priorState: null, context: { ...primitiveContext(request, stream.id, stream.primitiveIds.recurrence, subtractMilliseconds(targetPeriod.end, 1), "expense-recognition", scheduleTraces), period: targetPeriod } });
         for (const candidate of scheduled.output.occurrences) {
           const temporal = evaluatePrimitive({ primitiveId: "P04", input: { value: candidate.value }, parameters: { start: stream.start, end: stream.end ?? request.runContext.simulationEnd }, priorState: null, context: primitiveContext(request, stream.id, stream.primitiveIds.recurrence, candidate.scheduledAt, "expense-eligibility", scheduleTraces) });
-          const eventEligibility = eventRuntimeAllows(stream, eventOutputs, candidate.scheduledAt);
+          const eventEligibility = eventRuntimeAllows(request.input, stream, eventOutputs, candidate.scheduledAt);
           if (!temporal.output.active || !eventEligibility.allowed) continue;
           const month = utcCalendarMonthDifference(stream.inflationBaseAt, candidate.scheduledAt);
-          const indexTraces = traces(`expense:${stream.id}:base`, `expense:${stream.id}:inflation-assumption`, `expense:${stream.id}:inflation-index:${month}`);
+          const indexTraces = mergeTraceRefs(traces(`expense:${stream.id}:base`, `expense:${stream.id}:inflation-assumption`, `expense:${stream.id}:inflation-index:${month}`), stream.sourceTraceRefs)!;
           const baseIndex = decimal("100");
           const indexGrowth = evaluatePrimitive({ primitiveId: "P08", input: { initial: baseIndex, rate: stream.inflationRate }, parameters: { category: "series_quantity", timeBasis: growthTimeBasis(stream.inflationRate, month) }, priorState: null, context: primitiveContext(request, stream.id, stream.primitiveIds.indexGrowth, candidate.scheduledAt, "inflation-index", indexTraces) });
           const linkedTraces = [...indexTraces, ...traces(`expense:${stream.id}:inflation-linked`)];
@@ -573,7 +582,7 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
         constraintOutcomes: Object.freeze(outcomes),
         liquidityShortfalls: Object.freeze(shortfalls),
         diagnostics: Object.freeze(diagnostics),
-        traceRefs: freezeTraceRefs([...new Map(periodTraces.map((item) => [item.traceId, item])).values()])!,
+        traceRefs: mergeTraceRefs(periodTraces)!,
       });
       committedState = state;
       committedPrimitiveState = eventResult.primitiveState;

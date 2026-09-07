@@ -1,15 +1,16 @@
 import { failValidation, issueCodes, validationIssue, type ValidationIssue } from "../diagnostics/index.js";
 import { domainId, type DomainId } from "../identity/index.js";
+import { scenarioId, type ScenarioId } from "../model/scenario.js";
 import { isObservedFact, type FactProvenance } from "../model/provenance.js";
 import type { Instant, Period } from "../time/index.js";
 import { Currency, DecimalAmount, Money, Percentage, Quantity, Rate, Ratio, RoundingPolicy, Unit } from "../values/index.js";
 import { CURRENT_RUN_VERSIONS, type RunVersionMetadata } from "../model/version.js";
 
 export type RunId = DomainId<"run">;
-export type ScenarioId = DomainId<"scenario">;
+export type { ScenarioId } from "../model/scenario.js";
 
 export const runId = (value: string): RunId => domainId("run", value);
-export const scenarioId = (value: string): ScenarioId => domainId("scenario", value);
+export { scenarioId };
 
 export interface RunContext {
   readonly runId: RunId;

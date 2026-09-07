@@ -1,6 +1,6 @@
 # Personal Finance App — Executable Financial Semantics Specification
 
-**Version:** 0.1.8-draft
+**Version:** 0.1.9-draft
 **Status:** Draft implementation contract  
 **Namespace:** `pfm`  
 **Depends on:** `personal_finance_canonical_schema_v1.0.json`, `personal_finance_model.schema.json`, `personal_finance_simulation_interfaces_v1.0.ts`
@@ -1205,7 +1205,77 @@ The semantic kernel should expose implementation contracts such as:
 
 These are implementation concepts and need not become canonical persisted domain objects.
 
-## 20. Remaining v0.2 decisions
+## 20. Deterministic scenario overlays and comparison
+
+A runtime scenario defines an immutable alternate future configuration. It does
+not mutate authoritative opening state, observed facts, history, or another
+scenario. Every compared scenario starts from an independent clone of the same
+opening authoritative state and uses the same `asOf`, data cutoff, base
+currency, specification versions, monthly horizon, and half-open periods.
+Scenario application is future-only at or after `max(asOf, simulationStart)`.
+
+Scenario inheritance resolves deterministically from root to leaf. Within one
+scenario layer, two changes addressing the same typed semantic target are a
+conflict. Across layers, the nearest descendant value wins. Catalog order and
+the order of independent changes have no semantic effect. Planned investment
+purchases and extra-principal payments use explicit add, replace, or remove
+operations: add requires absence, while replace and remove require existence.
+No implicit deletion is permitted.
+
+This version supports deterministic monthly scenarios only. Stochastic
+scenarios and requests for multiple realizations are rejected, never silently
+treated as deterministic. A comparison baseline is a root scenario, every
+alternative must inherit from that root, and all horizons and period
+structures must exactly match the common run horizon. Each execution has its
+own scenario identity and non-economic run identity; generated occurrences
+therefore remain replay-safe per scenario while repeated execution is stable.
+
+Supported overlays are limited to existing executable mechanics:
+
+- VS2 recurring-income growth rates, recurring-expense inflation rates,
+  explicit income-termination event dates, and expense funding policies;
+- VS3 deterministic position returns, existing-shape `InvestmentPurchase`
+  add/replace/remove operations, and `InvestmentFee` rule bindings;
+- VS4 existing-shape `ExtraPrincipalPayment` add/replace/remove operations and
+  scheduled-payment funding policies.
+
+Replacement rates retain the existing primitive and rate basis. Funding source
+order is preserved exactly. Rule changes alter only bindings to existing,
+effective-dated rules and retain exact-one-active-version resolution. Scenario
+resolution never infers funding, borrowing, transfers, sales, overdraft,
+retirement consequences, rule precedence, refinancing, or new debt.
+
+A retirement-date overlay carries both `targetEventId`, which identifies the
+existing VS2 income-termination event to edit, and a distinct scenario
+`eventId`, which identifies the explanatory scenario decision in calculation
+lineage. It changes only that event's effective instant; it does not imply any
+other retirement consequence.
+
+“Large purchase” currently means only an acquisition through the authoritative
+VS3 investment-position purchase mechanic. It does not model a home, vehicle,
+or standalone asset. “Debt change” currently means only explicit VS4 extra
+principal; original principal, rate, term, amortization, capitalization, and
+default semantics are not scenario-mutable.
+
+Each comparison returns ordered exact-Money period metrics derived from the
+existing slice results and statements. Alternative deltas are computed as
+alternative minus baseline without floating-point conversion. Incomplete runs
+remain incomplete, and deltas stop at the common committed period prefix.
+Configuration differences identify their semantic target, effective scenario
+layer, exact before/after values or operation identity, and relevant
+assumption, event, and configured rule identities. Applied rule differences
+come from rules actually present in calculation lineage. Delta points relate
+only to differences whose assumption, event, or rule identities occur in the
+union of baseline and alternative lineage; they do not claim numeric causal
+attribution or apply a materiality threshold.
+
+Comparison is provided by typed per-slice adapters. This version deliberately
+does not compose VS2, VS3, and VS4 sequentially into a household scheduler:
+such composition could let later intraperiod cash fund an earlier obligation.
+An integrated scheduler must define shared intraperiod ordering before that
+composition is authoritative.
+
+## 21. Remaining v0.2 decisions
 
 The foundational semantic contract is now sufficiently constrained for deterministic-kernel implementation. The following may remain follow-up work:
 
