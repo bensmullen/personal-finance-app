@@ -1245,6 +1245,12 @@ effective-dated rules and retain exact-one-active-version resolution. Scenario
 resolution never infers funding, borrowing, transfers, sales, overdraft,
 retirement consequences, rule precedence, refinancing, or new debt.
 
+A retirement-date overlay carries both `targetEventId`, which identifies the
+existing VS2 income-termination event to edit, and a distinct scenario
+`eventId`, which identifies the explanatory scenario decision in calculation
+lineage. It changes only that event's effective instant; it does not imply any
+other retirement consequence.
+
 “Large purchase” currently means only an acquisition through the authoritative
 VS3 investment-position purchase mechanic. It does not model a home, vehicle,
 or standalone asset. “Debt change” currently means only explicit VS4 extra
