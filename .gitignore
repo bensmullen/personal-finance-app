@@ -7,8 +7,12 @@ npm-debug.log*
 
 # Build and test output
 dist/
+.next/
+out/
 coverage/
 .vitest/
+playwright-report/
+test-results/
 *.tsbuildinfo
 
 # Local Codex execution logs
