@@ -33,6 +33,13 @@ const currentDocument = (overrides: Record<string, unknown> = {}) => ({
 
 const asJson = (value: unknown): string => JSON.stringify(value);
 
+const protoKeyDocumentJson = (
+  modelFormatVersion = CURRENT_MODEL_FORMAT_VERSION,
+  reversed = false,
+): string => reversed
+  ? `{"financial_specification_version":"${CURRENT_RUN_VERSIONS.financialSpecificationVersion}","model_id":"${MODEL_ID}","objects":{"Regular":[{"safe":true,"__proto__":{"marker":"nested-data"}}],"__proto__":[{"nested":{"a":1,"__proto__":{"polluted":"model-data"},"z":2}}],"Zed":[]},"model_format_version":"${modelFormatVersion}"}`
+  : `{"model_format_version":"${modelFormatVersion}","objects":{"Zed":[],"__proto__":[{"nested":{"z":2,"__proto__":{"polluted":"model-data"},"a":1}}],"Regular":[{"__proto__":{"marker":"nested-data"},"safe":true}]},"model_id":"${MODEL_ID}","financial_specification_version":"${CURRENT_RUN_VERSIONS.financialSpecificationVersion}"}`;
+
 const capturedIssues = (operation: () => unknown) => {
   try {
     operation();
@@ -91,6 +98,44 @@ describe("personal model validation and direct import", () => {
     })));
     expect(exportPersonalModelJson(first)).toBe(exportPersonalModelJson(second));
     expect(exportPersonalModelJson(first).endsWith("\n")).toBe(true);
+  });
+
+  it("preserves __proto__ collection and nested keys without prototype pollution", () => {
+    const imported = importPersonalModelJson(protoKeyDocumentJson());
+    expect(Object.prototype.hasOwnProperty.call(imported.objects, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(imported.objects)).toBeNull();
+
+    const protoCollection = imported.objects["__proto__"]!;
+    const protoEntry = protoCollection[0] as { readonly nested: Readonly<Record<string, unknown>> };
+    expect(Object.prototype.hasOwnProperty.call(protoEntry.nested, "__proto__")).toBe(true);
+    expect(protoEntry.nested["__proto__"]).toEqual({ polluted: "model-data" });
+    expect(Object.getPrototypeOf(protoEntry.nested)).toBeNull();
+
+    const regularEntry = imported.objects.Regular![0] as Readonly<Record<string, unknown>>;
+    expect(Object.prototype.hasOwnProperty.call(regularEntry, "__proto__")).toBe(true);
+    expect(regularEntry["__proto__"]).toEqual({ marker: "nested-data" });
+    expect(Object.getPrototypeOf(regularEntry)).toBeNull();
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+
+    const exported = exportPersonalModelJson(imported);
+    const exportedObjects = (JSON.parse(exported) as { objects: Record<string, unknown> }).objects;
+    expect(Object.prototype.hasOwnProperty.call(exportedObjects, "__proto__")).toBe(true);
+    const exportedRegular = (exportedObjects.Regular as Record<string, unknown>[])[0]!;
+    expect(Object.prototype.hasOwnProperty.call(exportedRegular, "__proto__")).toBe(true);
+    expect(exportedRegular["__proto__"]).toEqual({ marker: "nested-data" });
+
+    const reimported = importPersonalModelJson(exported);
+    expect(Object.prototype.hasOwnProperty.call(reimported.objects, "__proto__")).toBe(true);
+    const reimportedRegular = reimported.objects.Regular![0] as Readonly<Record<string, unknown>>;
+    expect(Object.prototype.hasOwnProperty.call(reimportedRegular, "__proto__")).toBe(true);
+    expect(reimportedRegular["__proto__"]).toEqual({ marker: "nested-data" });
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("exports __proto__ data deterministically across equivalent insertion orders", () => {
+    const first = importPersonalModelJson(protoKeyDocumentJson(CURRENT_MODEL_FORMAT_VERSION, false));
+    const second = importPersonalModelJson(protoKeyDocumentJson(CURRENT_MODEL_FORMAT_VERSION, true));
+    expect(exportPersonalModelJson(first)).toBe(exportPersonalModelJson(second));
   });
 
   it("does not mutate exported input and returns an isolated deeply frozen import", () => {
@@ -341,6 +386,25 @@ describe("explicit model-format migration", () => {
       code: issueCodes.unsupportedFinancialSpecification,
       fieldPath: "financial_specification_version",
     }));
+  });
+
+  it("preserves __proto__ JSON properties through format migration and current serialization", () => {
+    const migrated = migratePersonalModelVersion(
+      protoKeyDocumentJson(OLD_FORMAT),
+      CURRENT_MODEL_FORMAT_VERSION,
+      migrationRegistry,
+    );
+    const migratedObjects = (JSON.parse(migrated) as { objects: Record<string, unknown> }).objects;
+    expect(Object.prototype.hasOwnProperty.call(migratedObjects, "__proto__")).toBe(true);
+    const migratedRegular = (migratedObjects.Regular as Record<string, unknown>[])[0]!;
+    expect(Object.prototype.hasOwnProperty.call(migratedRegular, "__proto__")).toBe(true);
+    expect(migratedRegular["__proto__"]).toEqual({ marker: "nested-data" });
+
+    const imported = importPersonalModelJson(migrated);
+    expect(Object.prototype.hasOwnProperty.call(imported.objects, "__proto__")).toBe(true);
+    const importedRegular = imported.objects.Regular![0] as Readonly<Record<string, unknown>>;
+    expect(importedRegular["__proto__"]).toEqual({ marker: "nested-data" });
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
   it("allows a deterministic current-to-current format no-op without executing financial semantics", () => {

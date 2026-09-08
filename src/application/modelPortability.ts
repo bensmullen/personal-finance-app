@@ -136,7 +136,7 @@ const validateCurrentEnvelope = (value: unknown): readonly ValidationIssue[] => 
 const deepCloneFrozenJson = (value: JsonValue): JsonValue => {
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) return Object.freeze(value.map((entry) => deepCloneFrozenJson(entry)));
-  const copy: Record<string, JsonValue> = {};
+  const copy = Object.create(null) as Record<string, JsonValue>;
   const record = value as { readonly [key: string]: JsonValue };
   for (const key of Object.keys(record)) copy[key] = deepCloneFrozenJson(record[key]!);
   return Object.freeze(copy);
@@ -145,7 +145,7 @@ const deepCloneFrozenJson = (value: JsonValue): JsonValue => {
 const stableJsonValue = (value: JsonValue): JsonValue => {
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map(stableJsonValue);
-  const sorted: Record<string, JsonValue> = {};
+  const sorted = Object.create(null) as Record<string, JsonValue>;
   const record = value as { readonly [key: string]: JsonValue };
   for (const key of Object.keys(record).sort()) sorted[key] = stableJsonValue(record[key]!);
   return sorted;
