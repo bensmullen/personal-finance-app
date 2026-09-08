@@ -308,8 +308,11 @@ export function PersonalFinanceApp() {
   });
   const metadata = getPersonalEditorMetadata();
   const position = useMemo(
-    () => (draft ? getCurrentPosition(draft) : undefined),
-    [draft],
+    () =>
+      draft
+        ? getCurrentPosition(draft, sessionSettings.baseCurrency)
+        : undefined,
+    [draft, sessionSettings.baseCurrency],
   );
   const issues = useMemo(
     () => (draft ? validatePersonalDraft(draft) : []),
@@ -361,11 +364,8 @@ export function PersonalFinanceApp() {
       />
     );
 
-  const runForecast = () => {
-    const resolved = resolvePersonalSessionSettings(
-      sessionSettings,
-      forecastScope,
-    );
+  const runForecast = (scope: ForecastRequest["scope"]) => {
+    const resolved = resolvePersonalSessionSettings(sessionSettings, scope);
     if (!resolved.request) {
       setRunSettingsError(resolved.error ?? "Run settings are not valid.");
       return;
@@ -491,10 +491,7 @@ export function PersonalFinanceApp() {
             <CashFlow
               position={position!}
               forecast={forecast}
-              run={() => {
-                setForecastScope("cash_flow");
-                runForecast();
-              }}
+              run={() => runForecast("cash_flow")}
             />
           )}
           {primary === "Net Worth" && subnav === "Overview" && (
@@ -504,7 +501,7 @@ export function PersonalFinanceApp() {
             <Plan
               forecastScope={forecastScope}
               setScope={setForecastScope}
-              run={runForecast}
+              run={() => runForecast(forecastScope)}
               forecast={forecast}
               settings={sessionSettings}
               error={runSettingsError}

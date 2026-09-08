@@ -7,6 +7,7 @@ import {
   createSyntheticPersonalDraft,
   deletePersonalObject,
   exportPersonalModelJson,
+  getCurrentPosition,
   importPersonalModelJson,
   patchPersonalObject,
   runPersonalForecast,
@@ -139,6 +140,42 @@ describe("Personal-MVP application facade", () => {
     );
     expect(runPersonalForecast(model, request("liabilities"))).toEqual(
       expect.objectContaining({ scope: "liabilities", status: "unavailable" }),
+    );
+  });
+
+  it("does not aggregate a mixed-currency current position without FX semantics", () => {
+    let model = createEmptyPersonalDraft(
+      "10000000-0000-4000-8000-000000000001",
+    );
+    model = addPersonalObject(
+      model,
+      "Account",
+      "10000000-0000-4000-8000-000000000002",
+      {
+        name: "USD cash",
+        account_type: "checking",
+        currency: "USD",
+        opening_balance: "100.00",
+      },
+    );
+    model = addPersonalObject(
+      model,
+      "Account",
+      "10000000-0000-4000-8000-000000000003",
+      {
+        name: "EUR cash",
+        account_type: "checking",
+        currency: "EUR",
+        opening_balance: "100.00",
+      },
+    );
+
+    const position = getCurrentPosition(model, "USD");
+    expect(position.cash).toBeUndefined();
+    expect(position.assets).toBeUndefined();
+    expect(position.netWorth).toBeUndefined();
+    expect(position.unavailable).toContain(
+      "Mixed-currency current position requires FX semantics not implemented in PR 14.",
     );
   });
 

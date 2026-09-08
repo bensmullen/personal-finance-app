@@ -60,6 +60,23 @@ test("session settings drive horizons and block invalid run ordering", async ({
   ).toBeVisible();
 });
 
+test("Money cash-flow run uses its explicit scope after Plan selects investments", async ({
+  page,
+}) => {
+  await loadExample(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByLabel("Forecast scope").selectOption("investments");
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Cash Flow", exact: true }).click();
+  await page.getByRole("button", { name: "Run cash-flow forecast" }).click();
+  await expect(
+    page.getByRole("table", { name: "Detailed cash-flow forecast" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Forecast unavailable for this model"),
+  ).toHaveCount(0);
+});
+
 test("money and net-worth workflows update friendly editors and forecast", async ({
   page,
 }) => {

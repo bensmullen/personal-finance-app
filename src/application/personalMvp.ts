@@ -498,7 +498,23 @@ export const getCurrentPosition = (
     currency,
   );
   const unavailable: string[] = [];
+  const hasIncompatibleAccountCurrency = accountObjects.some(
+    (item) => item.currency !== currency.code,
+  );
+  const hasIncompatibleLiabilityCurrency = liabilityObjects.some((item) =>
+    ["currency", "current_balance_currency"].some(
+      (field) =>
+        typeof item[field] === "string" && item[field] !== currency.code,
+    ),
+  );
+  const hasMixedCurrencyCurrentPosition =
+    hasIncompatibleAccountCurrency || hasIncompatibleLiabilityCurrency;
+  if (hasMixedCurrencyCurrentPosition)
+    unavailable.push(
+      "Mixed-currency current position requires FX semantics not implemented in PR 14.",
+    );
   const exactStateInputs =
+    !hasMixedCurrencyCurrentPosition &&
     accountObjects.every((item) => readMoney(item.opening_balance, currency)) &&
     liabilityObjects.every((item) => readMoney(item.current_balance, currency));
   const state = exactStateInputs
