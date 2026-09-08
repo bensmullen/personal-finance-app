@@ -19,7 +19,11 @@ import {
 } from "../simulation/verticalSlice2.js";
 import { createAuthoritativeState } from "../state/index.js";
 import { deriveStatements } from "../statements/index.js";
-import { instant, utcMonthlyPeriods } from "../time/index.js";
+import {
+  instant,
+  utcMonthDifference,
+  utcMonthlyPeriods,
+} from "../time/index.js";
 import {
   Currency,
   Money,
@@ -113,11 +117,41 @@ export interface PersonalForecastReadModel {
 }
 export interface ForecastRequest {
   readonly scope: "cash_flow" | "investments" | "liabilities";
+  readonly baseCurrency: string;
   readonly asOf: string;
   readonly dataCutoff: string;
   readonly simulationStart: string;
   readonly simulationEnd: string;
   readonly months: number;
+}
+export interface PersonalSessionSettings {
+  readonly baseCurrency: string;
+  readonly asOf: string;
+  readonly dataCutoff: string;
+  readonly simulationStart: string;
+  readonly simulationEnd: string;
+}
+export interface PersonalSessionSettingsResolution {
+  readonly settings?: PersonalSessionSettings;
+  readonly request?: ForecastRequest;
+  readonly error?: string;
+}
+export interface GuidedSetupInput {
+  readonly modelId: string;
+  readonly householdId: string;
+  readonly personId: string;
+  readonly accountId: string;
+  readonly incomeId: string;
+  readonly assetId: string;
+  readonly liabilityId: string;
+  readonly expenseId: string;
+  readonly householdName: string;
+  readonly monthlyIncome: string;
+  readonly openingCash: string;
+  readonly assetValue: string;
+  readonly debt: string;
+  readonly monthlySpending: string;
+  readonly startDate: string;
 }
 export interface ScenarioComparisonPoint {
   readonly period: string;
@@ -189,6 +223,56 @@ export const createEmptyPersonalDraft = (modelId: string): PersonalDraft =>
       PERSONAL_OBJECT_TYPES.map((type) => [type, []]),
     ) as PortableModelObjects,
   });
+
+/**
+ * Creates only the canonical objects directly represented by guided-setup
+ * inputs. Required fields the short wizard does not collect intentionally
+ * remain incomplete and are surfaced through draft validation.
+ */
+export const createGuidedSetupDraft = (
+  input: GuidedSetupInput,
+): PersonalDraft => {
+  let draft = createEmptyPersonalDraft(input.modelId);
+  draft = addPersonalObject(draft, "Household", input.householdId, {
+    name: input.householdName,
+    members: [input.personId],
+  });
+  draft = addPersonalObject(draft, "Person", input.personId, {
+    household_id: input.householdId,
+  });
+  draft = addPersonalObject(draft, "Account", input.accountId, {
+    name: "Cash account",
+    account_type: "checking",
+    owner_id: input.personId,
+    opening_date: input.startDate,
+    opening_balance: input.openingCash,
+  });
+  draft = addPersonalObject(draft, "Income", input.incomeId, {
+    owner_id: input.personId,
+    amount: input.monthlyIncome,
+    frequency: "monthly",
+    start_date: input.startDate,
+  });
+  draft = addPersonalObject(draft, "Expense", input.expenseId, {
+    owner_id: input.householdId,
+    category: "Spending",
+    amount: input.monthlySpending,
+    frequency: "monthly",
+    start_date: input.startDate,
+    payment_account_id: input.accountId,
+  });
+  draft = addPersonalObject(draft, "Asset", input.assetId, {
+    name: "Other asset",
+    owner_id: input.householdId,
+    acquisition_cost: input.assetValue,
+  });
+  return addPersonalObject(draft, "Liability", input.liabilityId, {
+    name: "Debt",
+    owner_id: input.householdId,
+    principal: input.debt,
+    current_balance: input.debt,
+  });
+};
 
 export const addPersonalObject = (
   draft: PersonalDraft,
@@ -414,21 +498,50 @@ export const getCurrentPosition = (
     currency,
   );
   const unavailable: string[] = [];
-  const exactStateInputs = accountObjects.every((item) => readMoney(item.opening_balance, currency)) && liabilityObjects.every((item) => readMoney(item.current_balance, currency));
-  const state = exactStateInputs ? createAuthoritativeState({
-    accounts: Object.fromEntries(accountObjects.map((item) => {
-      const id = domainId("account", String(item.account_id));
-      const canonicalKinds = ["checking", "savings", "cash", "brokerage", "retirement"];
-      const kind = canonicalKinds.includes(String(item.account_type)) ? String(item.account_type) as "checking" | "savings" | "cash" | "brokerage" | "retirement" : "other";
-      return [id, { id, kind, cash: readMoney(item.opening_balance, currency)! }];
-    })),
-    liabilities: Object.fromEntries(liabilityObjects.map((item) => {
-      const id = domainId("liability", String(item.liability_id));
-      return [id, { id, balance: readMoney(item.current_balance, currency)! }];
-    })),
-  }) : undefined;
+  const exactStateInputs =
+    accountObjects.every((item) => readMoney(item.opening_balance, currency)) &&
+    liabilityObjects.every((item) => readMoney(item.current_balance, currency));
+  const state = exactStateInputs
+    ? createAuthoritativeState({
+        accounts: Object.fromEntries(
+          accountObjects.map((item) => {
+            const id = domainId("account", String(item.account_id));
+            const canonicalKinds = [
+              "checking",
+              "savings",
+              "cash",
+              "brokerage",
+              "retirement",
+            ];
+            const kind = canonicalKinds.includes(String(item.account_type))
+              ? (String(item.account_type) as
+                  | "checking"
+                  | "savings"
+                  | "cash"
+                  | "brokerage"
+                  | "retirement")
+              : "other";
+            return [
+              id,
+              { id, kind, cash: readMoney(item.opening_balance, currency)! },
+            ];
+          }),
+        ),
+        liabilities: Object.fromEntries(
+          liabilityObjects.map((item) => {
+            const id = domainId("liability", String(item.liability_id));
+            return [
+              id,
+              { id, balance: readMoney(item.current_balance, currency)! },
+            ];
+          }),
+        ),
+      })
+    : undefined;
   const statements = state ? deriveStatements(state, [], currency) : undefined;
-  const hasUntranslatedHoldings = entries(draft, "Asset").length > 0 || entries(draft, "Investment").length > 0;
+  const hasUntranslatedHoldings =
+    entries(draft, "Asset").length > 0 ||
+    entries(draft, "Investment").length > 0;
   const cash = statements?.assets;
   const liabilities = statements?.liabilities;
   const assets = hasUntranslatedHoldings ? undefined : statements?.assets;
@@ -471,6 +584,90 @@ const unavailableForecast = (
     diagnostics: [],
   });
 const iso = (date: string) => instant(`${date}T00:00:00.000Z`);
+
+/** Creates a deterministic session-only run request without using wall clock time. */
+export const resolvePersonalSessionSettings = (
+  settings: PersonalSessionSettings,
+  scope: ForecastRequest["scope"],
+): PersonalSessionSettingsResolution => {
+  try {
+    const asOf = iso(settings.asOf);
+    const dataCutoff = iso(settings.dataCutoff);
+    const simulationStart = iso(settings.simulationStart);
+    const simulationEnd = iso(settings.simulationEnd);
+    Currency.of(settings.baseCurrency);
+    if (dataCutoff > asOf)
+      return deepFreeze({
+        error: "Data cutoff must not be later than as of.",
+      });
+    if (simulationStart >= simulationEnd)
+      return deepFreeze({
+        error: "Simulation start must be before simulation end.",
+      });
+    const months = utcMonthDifference(simulationStart, simulationEnd);
+    if (months <= 0)
+      return deepFreeze({ error: "Simulation horizon must include a month." });
+    return deepFreeze({
+      settings: deepFreeze({ ...settings }),
+      request: {
+        scope,
+        baseCurrency: settings.baseCurrency,
+        asOf: settings.asOf,
+        dataCutoff: settings.dataCutoff,
+        simulationStart: settings.simulationStart,
+        simulationEnd: settings.simulationEnd,
+        months,
+      },
+    });
+  } catch (error) {
+    return deepFreeze({
+      error:
+        error instanceof Error ? error.message : "Run settings are not valid.",
+    });
+  }
+};
+
+export const sessionSettingsFromHorizon = (
+  startDate: string,
+  horizonMonths: number,
+  baseCurrency = "USD",
+): PersonalSessionSettings => {
+  const periods = utcMonthlyPeriods(iso(startDate), horizonMonths);
+  return deepFreeze({
+    baseCurrency,
+    asOf: startDate,
+    dataCutoff: startDate,
+    simulationStart: startDate,
+    simulationEnd: periods[periods.length - 1]!.end.slice(0, 10),
+  });
+};
+
+const hasReference = (value: JsonValue | undefined): boolean =>
+  value !== undefined && value !== null && value !== "";
+const portableObjectLabel = (type: "Income" | "Expense", item: JsonObject) =>
+  String(item.source ?? item.category ?? item[`${type.toLowerCase()}_id`]);
+const unsupportedCashFlowSemantics = (
+  incomes: readonly JsonObject[],
+  expenses: readonly JsonObject[],
+): string | undefined => {
+  const incomeField = [
+    "growth_model_id",
+    "probability_model_id",
+    "related_event_id",
+  ] as const;
+  for (const income of incomes) {
+    const field = incomeField.find((name) => hasReference(income[name]));
+    if (field)
+      return `Income \"${portableObjectLabel("Income", income)}\" references ${field}; this cash-flow forecast cannot interpret that authored behavior.`;
+  }
+  const expenseField = ["growth_model_id", "event_trigger_id"] as const;
+  for (const expense of expenses) {
+    const field = expenseField.find((name) => hasReference(expense[name]));
+    if (field)
+      return `Expense \"${portableObjectLabel("Expense", expense)}\" references ${field}; this cash-flow forecast cannot interpret that authored behavior.`;
+  }
+  return undefined;
+};
 export const runPersonalForecast = (
   draft: PersonalDraft,
   request: ForecastRequest,
@@ -504,6 +701,9 @@ export const runPersonalForecast = (
       request,
       "Only monthly portable income and spending can be translated without guessing timing.",
     );
+  const unsupportedSemantics = unsupportedCashFlowSemantics(incomes, expenses);
+  if (unsupportedSemantics)
+    return unavailableForecast(request, unsupportedSemantics);
   if (
     expenses.some(
       (expense) => expense.payment_account_id !== cashAccount.account_id,
@@ -514,7 +714,12 @@ export const runPersonalForecast = (
       "Every spending item needs the selected cash account as its funding account.",
     );
   try {
-    const currency = Currency.of(String(cashAccount.currency));
+    if (cashAccount.currency !== request.baseCurrency)
+      return unavailableForecast(
+        request,
+        "Cash-flow forecast requires the selected cash account currency to match the session base currency.",
+      );
+    const currency = Currency.of(request.baseCurrency);
     const householdId = domainId(
       "household",
       String(households[0].household_id),
@@ -720,6 +925,8 @@ export const comparePersonalCashFlowPlans = (
     return unavailable(
       "Only monthly cash-flow inputs can be compared without guessing timing.",
     );
+  const unsupportedSemantics = unsupportedCashFlowSemantics(incomes, expenses);
+  if (unsupportedSemantics) return unavailable(unsupportedSemantics);
   if (
     expenses.some((item) => item.payment_account_id !== cashAccount.account_id)
   )
@@ -727,7 +934,11 @@ export const comparePersonalCashFlowPlans = (
       "Spending funding must identify the selected cash account.",
     );
   try {
-    const currency = Currency.of(String(cashAccount.currency));
+    if (cashAccount.currency !== request.baseCurrency)
+      return unavailable(
+        "Plan comparison requires the selected cash account currency to match the session base currency.",
+      );
+    const currency = Currency.of(request.baseCurrency);
     const householdId = domainId("household", String(household.household_id));
     const personId = domainId("person", String(person.person_id));
     const cashId = domainId("account", String(cashAccount.account_id));

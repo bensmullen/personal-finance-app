@@ -1,7 +1,13 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMemo, useRef, useState } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { useForm, type UseFormReturn } from "react-hook-form";
 import {
   Area,
@@ -22,7 +28,7 @@ import { z } from "zod";
 import {
   PERSONAL_OBJECT_TYPES,
   addPersonalObject,
-  createEmptyPersonalDraft,
+  createGuidedSetupDraft,
   createSyntheticPersonalDraft,
   deletePersonalObject,
   exportPersonalModelJson,
@@ -33,6 +39,8 @@ import {
   patchPersonalObject,
   comparePersonalCashFlowPlans,
   runPersonalForecast,
+  resolvePersonalSessionSettings,
+  sessionSettingsFromHorizon,
   validatePersonalDraft,
   validatePersonalModelJson,
   type ForecastRequest,
@@ -41,6 +49,7 @@ import {
   type PersonalForecastReadModel,
   type PersonalObjectType,
   type PersonalScenarioComparisonReadModel,
+  type PersonalSessionSettings,
 } from "../src/application/personalMvp.js";
 
 type Primary = "Overview" | "Money" | "Net Worth" | "Plan" | "Settings";
@@ -240,6 +249,7 @@ const setupSchema = z.object({
   debt: z.string().regex(/^\d+(\.\d+)?$/),
   spending: z.string().regex(/^\d+(\.\d+)?$/),
   horizon: z.string().regex(/^(?:[1-9]|[1-3][0-9]|40)$/),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a start date"),
 });
 type SetupValues = z.infer<typeof setupSchema>;
 const randomId = () => crypto.randomUUID();
@@ -273,6 +283,11 @@ export function PersonalFinanceApp() {
   const [forecast, setForecast] = useState<PersonalForecastReadModel>();
   const [comparison, setComparison] =
     useState<PersonalScenarioComparisonReadModel>();
+  const [sessionSettings, setSessionSettings] =
+    useState<PersonalSessionSettings>(() =>
+      sessionSettingsFromHorizon("2026-01-01", 12),
+    );
+  const [runSettingsError, setRunSettingsError] = useState("");
   const [fileReport, setFileReport] =
     useState<ReturnType<typeof validatePersonalModelJson>>();
   const [pendingJson, setPendingJson] = useState("");
@@ -288,6 +303,7 @@ export function PersonalFinanceApp() {
       debt: "235000.00",
       spending: "4200.00",
       horizon: "10",
+      startDate: "2026-01-01",
     },
   });
   const metadata = getPersonalEditorMetadata();
@@ -305,42 +321,27 @@ export function PersonalFinanceApp() {
     setSubnav(SUBNAV[next][0]!);
   };
   const completeSetup = setup.handleSubmit((values) => {
-    let next = createSyntheticPersonalDraft();
-    const household = objectEntries(next, "Household")[0]!;
-    const income = objectEntries(next, "Income")[0]!;
-    const account = objectEntries(next, "Account")[0]!;
-    const asset = objectEntries(next, "Asset")[0]!;
-    const liability = objectEntries(next, "Liability")[0]!;
-    const expense = objectEntries(next, "Expense")[0]!;
-    next = patchPersonalObject(
-      next,
-      "Household",
-      objectId("Household", household),
-      { name: values.name },
-    );
-    next = patchPersonalObject(next, "Income", objectId("Income", income), {
-      amount: values.income,
-    });
-    // opening_balance is canonically immutable after creation, so recreate only for setup.
-    next = deleteAndRecreate(next, "Account", account, {
-      ...account,
-      institution: "Synthetic example institution",
-      opening_balance: values.cash,
-    });
-    next = deleteAndRecreate(next, "Asset", asset, {
-      ...asset,
-      acquisition_cost: values.asset,
-    });
-    next = patchPersonalObject(
-      next,
-      "Liability",
-      objectId("Liability", liability),
-      { current_balance: values.debt },
-    );
-    next = patchPersonalObject(next, "Expense", objectId("Expense", expense), {
-      amount: values.spending,
+    const next = createGuidedSetupDraft({
+      modelId: randomId(),
+      householdId: randomId(),
+      personId: randomId(),
+      accountId: randomId(),
+      incomeId: randomId(),
+      assetId: randomId(),
+      liabilityId: randomId(),
+      expenseId: randomId(),
+      householdName: values.name,
+      monthlyIncome: values.income,
+      openingCash: values.cash,
+      assetValue: values.asset,
+      debt: values.debt,
+      monthlySpending: values.spending,
+      startDate: values.startDate,
     });
     setDraft(next);
+    setSessionSettings(
+      sessionSettingsFromHorizon(values.startDate, Number(values.horizon) * 12),
+    );
     setNotice("Your starting financial picture is ready");
     navigate("Overview");
   });
@@ -354,32 +355,39 @@ export function PersonalFinanceApp() {
         complete={completeSetup}
         loadExample={() => {
           setDraft(createSyntheticPersonalDraft());
+          setSessionSettings(sessionSettingsFromHorizon("2026-01-01", 120));
           setNotice("Synthetic example loaded");
         }}
       />
     );
 
   const runForecast = () => {
-    const request: ForecastRequest = {
-      scope: forecastScope,
-      asOf: "2026-01-01",
-      dataCutoff: "2026-01-01",
-      simulationStart: "2026-01-01",
-      simulationEnd: "2027-01-01",
-      months: 12,
-    };
-    setForecast(runPersonalForecast(draft, request));
+    const resolved = resolvePersonalSessionSettings(
+      sessionSettings,
+      forecastScope,
+    );
+    if (!resolved.request) {
+      setRunSettingsError(resolved.error ?? "Run settings are not valid.");
+      return;
+    }
+    setRunSettingsError("");
+    setForecast(runPersonalForecast(draft, resolved.request));
   };
   const runComparison = () => {
-    const request: ForecastRequest = {
-      scope: "cash_flow",
-      asOf: "2026-01-01",
-      dataCutoff: "2026-01-01",
-      simulationStart: "2026-01-01",
-      simulationEnd: "2027-01-01",
-      months: 12,
-    };
-    setComparison(comparePersonalCashFlowPlans(draft, request, "0.03"));
+    const resolved = resolvePersonalSessionSettings(
+      sessionSettings,
+      "cash_flow",
+    );
+    if (!resolved.request) {
+      setRunSettingsError(resolved.error ?? "Run settings are not valid.");
+      navigate("Settings");
+      setSubnav("Model Settings");
+      return;
+    }
+    setRunSettingsError("");
+    setComparison(
+      comparePersonalCashFlowPlans(draft, resolved.request, "0.03"),
+    );
     navigate("Plan");
     setSubnav("Compare Plans");
   };
@@ -498,13 +506,19 @@ export function PersonalFinanceApp() {
               setScope={setForecastScope}
               run={runForecast}
               forecast={forecast}
+              settings={sessionSettings}
+              error={runSettingsError}
             />
           )}
           {primary === "Plan" && subnav === "Compare Plans" && (
             <ComparePlans comparison={comparison} onRun={runComparison} />
           )}
           {primary === "Settings" && subnav === "Model Settings" && (
-            <ModelSettings />
+            <ModelSettings
+              settings={sessionSettings}
+              setSettings={setSessionSettings}
+              error={runSettingsError}
+            />
           )}
           {primary === "Settings" && subnav === "Import / Export" && (
             <Portability
@@ -573,6 +587,8 @@ function SetupWizard({
       title: "Your plan",
       field: "horizon",
       label: "Projection horizon (years)",
+      extraField: "startDate",
+      extraLabel: "Projection start date",
     },
   ] as const;
   const current = steps[step]!;
@@ -603,6 +619,17 @@ function SetupWizard({
           />
         </label>
         {error && <p className="field-error">{String(error)}</p>}
+        {"extraField" in current && (
+          <label>
+            {current.extraLabel}
+            <input type="date" {...form.register(current.extraField)} />
+            {form.formState.errors[current.extraField]?.message && (
+              <p className="field-error">
+                {String(form.formState.errors[current.extraField]?.message)}
+              </p>
+            )}
+          </label>
+        )}
         <div className="wizard-actions">
           <button className="secondary" onClick={loadExample}>
             Use synthetic example
@@ -757,10 +784,16 @@ function NetWorthOverview({
   position: ReturnType<typeof getCurrentPosition>;
   draft: PersonalDraft;
 }) {
-  const data = position.assets && position.liabilities ? [
-    { name: "Assets", value: chartNumber(position.assets.exact) },
-    { name: "Liabilities", value: chartNumber(position.liabilities.exact) },
-  ] : [];
+  const data =
+    position.assets && position.liabilities
+      ? [
+          { name: "Assets", value: chartNumber(position.assets.exact) },
+          {
+            name: "Liabilities",
+            value: chartNumber(position.liabilities.exact),
+          },
+        ]
+      : [];
   return (
     <>
       <PageHead
@@ -775,17 +808,28 @@ function NetWorthOverview({
       </section>
       <section className="panel">
         <h2>Current assets vs liabilities</h2>
-        {data.length ? <div className="chart">
-          <ResponsiveContainer>
-            <BarChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="value" fill="#3d7d6b" radius={[8, 8, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div> : <div className="capability"><strong>Current composition is unavailable</strong><p>The portable asset and investment records cannot be reconciled into the shared valuation state without additional executable configuration.</p></div>}
+        {data.length ? (
+          <div className="chart">
+            <ResponsiveContainer>
+              <BarChart data={data}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="value" fill="#3d7d6b" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div className="capability">
+            <strong>Current composition is unavailable</strong>
+            <p>
+              The portable asset and investment records cannot be reconciled
+              into the shared valuation state without additional executable
+              configuration.
+            </p>
+          </div>
+        )}
         <table>
           <thead>
             <tr>
@@ -817,11 +861,15 @@ function Plan({
   setScope,
   run,
   forecast,
+  settings,
+  error,
 }: {
   forecastScope: ForecastRequest["scope"];
   setScope: (scope: ForecastRequest["scope"]) => void;
   run: () => void;
   forecast: PersonalForecastReadModel | undefined;
+  settings: PersonalSessionSettings;
+  error: string;
 }) {
   return (
     <>
@@ -846,15 +894,23 @@ function Plan({
         </label>
         <label>
           As of
-          <input type="date" value="2026-01-01" readOnly />
+          <input type="date" value={settings.asOf} readOnly />
         </label>
         <label>
           Simulation
-          <input value="2026-01-01 → 2027-01-01" readOnly />
+          <input
+            value={`${settings.simulationStart} → ${settings.simulationEnd}`}
+            readOnly
+          />
         </label>
         <button className="primary" onClick={run}>
           Run {forecastScope.replace("_", " ")} forecast
         </button>
+        {error && (
+          <p className="field-error" role="alert">
+            {error}
+          </p>
+        )}
       </section>
       <section className="panel">
         <div className="scope-badge">
@@ -1025,7 +1081,18 @@ function ComparePlans({
     </>
   );
 }
-function ModelSettings() {
+function ModelSettings({
+  settings,
+  setSettings,
+  error,
+}: {
+  settings: PersonalSessionSettings;
+  setSettings: Dispatch<SetStateAction<PersonalSessionSettings>>;
+  error: string;
+}) {
+  const update = (field: keyof PersonalSessionSettings, value: string) =>
+    setSettings((current) => ({ ...current, [field]: value }));
+  const resolved = resolvePersonalSessionSettings(settings, "cash_flow");
   return (
     <>
       <PageHead
@@ -1036,28 +1103,58 @@ function ModelSettings() {
       <section className="panel form-grid">
         <label>
           Base currency
-          <input value="USD" readOnly />
+          <input
+            aria-label="Base currency"
+            value={settings.baseCurrency}
+            onChange={(event) => update("baseCurrency", event.target.value)}
+          />
         </label>
         <label>
           As of
-          <input type="date" value="2026-01-01" readOnly />
+          <input
+            type="date"
+            value={settings.asOf}
+            onChange={(event) => update("asOf", event.target.value)}
+          />
         </label>
         <label>
           Data cutoff
-          <input type="date" value="2026-01-01" readOnly />
+          <input
+            type="date"
+            value={settings.dataCutoff}
+            onChange={(event) => update("dataCutoff", event.target.value)}
+          />
         </label>
         <label>
           Simulation start
-          <input type="date" value="2026-01-01" readOnly />
+          <input
+            type="date"
+            value={settings.simulationStart}
+            onChange={(event) => update("simulationStart", event.target.value)}
+          />
         </label>
         <label>
           Simulation end
-          <input type="date" value="2027-01-01" readOnly />
+          <input
+            type="date"
+            value={settings.simulationEnd}
+            onChange={(event) => update("simulationEnd", event.target.value)}
+          />
         </label>
         <label>
           Default horizon
-          <input value="12 months" readOnly />
+          <input
+            value={
+              resolved.request ? `${resolved.request.months} months` : "Invalid"
+            }
+            readOnly
+          />
         </label>
+        {(error || resolved.error) && (
+          <p className="field-error full" role="alert">
+            {error || resolved.error}
+          </p>
+        )}
         <p className="muted full">
           These controls configure the current browser session. No persistence
           is introduced in PR 14.
@@ -1661,25 +1758,4 @@ function Empty({ text }: { text: string }) {
       <p>{text}</p>
     </div>
   );
-}
-function deleteAndRecreate(
-  draft: PersonalDraft,
-  type: PersonalObjectType,
-  object: JsonObject,
-  fields: JsonObject,
-) {
-  const id = objectId(type, object);
-  const idField = `${type.toLowerCase()}_id`;
-  const collection = (draft.objects[type] ?? []).filter(
-    (item) =>
-      typeof item !== "object" ||
-      item === null ||
-      Array.isArray(item) ||
-      (item as Record<string, unknown>)[idField] !== id,
-  );
-  const without = {
-    ...draft,
-    objects: { ...draft.objects, [type]: collection },
-  } as PersonalDraft;
-  return addPersonalObject(without, type, id, fields);
 }

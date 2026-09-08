@@ -3,12 +3,15 @@ import {
   addPersonalObject,
   comparePersonalCashFlowPlans,
   createEmptyPersonalDraft,
+  createGuidedSetupDraft,
   createSyntheticPersonalDraft,
   deletePersonalObject,
   exportPersonalModelJson,
   importPersonalModelJson,
   patchPersonalObject,
   runPersonalForecast,
+  resolvePersonalSessionSettings,
+  sessionSettingsFromHorizon,
   validatePersonalDraft,
 } from "../src/application/index.js";
 
@@ -18,6 +21,7 @@ const request = (
 ) =>
   ({
     scope,
+    baseCurrency: "USD",
     asOf: "2026-01-01",
     dataCutoff: "2026-01-01",
     simulationStart: "2026-01-01",
@@ -136,6 +140,131 @@ describe("Personal-MVP application facade", () => {
     expect(runPersonalForecast(model, request("liabilities"))).toEqual(
       expect.objectContaining({ scope: "liabilities", status: "unavailable" }),
     );
+  });
+
+  it("executes only plain monthly fixed streams and never silently zeroes authored behavior", () => {
+    const model = createSyntheticPersonalDraft();
+    expect(runPersonalForecast(model, request()).status).toBe("completed");
+
+    const income = model.objects.Income?.[0] as Record<string, string>;
+    const incomeGrowth = patchPersonalObject(
+      model,
+      "Income",
+      income.income_id!,
+      {
+        growth_model_id: "11111111-1111-4111-8111-111111111111",
+      },
+    );
+    expect(runPersonalForecast(incomeGrowth, request())).toEqual(
+      expect.objectContaining({
+        status: "unavailable",
+        message: expect.stringContaining("growth_model_id"),
+      }),
+    );
+
+    const expense = model.objects.Expense?.[0] as Record<string, string>;
+    const expenseGrowth = patchPersonalObject(
+      model,
+      "Expense",
+      expense.expense_id!,
+      {
+        growth_model_id: "22222222-2222-4222-8222-222222222222",
+      },
+    );
+    expect(runPersonalForecast(expenseGrowth, request())).toEqual(
+      expect.objectContaining({
+        status: "unavailable",
+        message: expect.stringContaining("growth_model_id"),
+      }),
+    );
+    const eventBoundExpense = patchPersonalObject(
+      model,
+      "Expense",
+      expense.expense_id!,
+      {
+        event_trigger_id: "33333333-3333-4333-8333-333333333333",
+      },
+    );
+    expect(runPersonalForecast(eventBoundExpense, request())).toEqual(
+      expect.objectContaining({
+        status: "unavailable",
+        message: expect.stringContaining("event_trigger_id"),
+      }),
+    );
+    expect(
+      comparePersonalCashFlowPlans(incomeGrowth, request(), "0.03"),
+    ).toEqual(
+      expect.objectContaining({
+        status: "unavailable",
+        message: expect.stringContaining("growth_model_id"),
+      }),
+    );
+  });
+
+  it("builds guided setup from user input without loading the synthetic example", () => {
+    const setup = createGuidedSetupDraft({
+      modelId: "10000000-0000-4000-8000-000000000001",
+      householdId: "10000000-0000-4000-8000-000000000002",
+      personId: "10000000-0000-4000-8000-000000000003",
+      accountId: "10000000-0000-4000-8000-000000000004",
+      incomeId: "10000000-0000-4000-8000-000000000005",
+      assetId: "10000000-0000-4000-8000-000000000006",
+      liabilityId: "10000000-0000-4000-8000-000000000007",
+      expenseId: "10000000-0000-4000-8000-000000000008",
+      householdName: "My household",
+      monthlyIncome: "1000.00",
+      openingCash: "200.00",
+      assetValue: "300.00",
+      debt: "400.00",
+      monthlySpending: "500.00",
+      startDate: "2028-02-01",
+    });
+    expect(setup.objects.Investment).toEqual([]);
+    expect(setup.objects.Assumption).toEqual([]);
+    expect(setup.objects.Scenario).toEqual([]);
+    expect(setup.objects.Household?.[0]).toEqual(
+      expect.objectContaining({ name: "My household" }),
+    );
+    expect(setup.objects.Liability?.[0]).toEqual(
+      expect.objectContaining({
+        liability_type: "other",
+        principal: "400.00",
+        current_balance: "400.00",
+        interest_rate: "0.0",
+      }),
+    );
+    expect(setup.objects.Liability?.[0]).not.toHaveProperty("maturity_date");
+    expect(setup.objects.Liability?.[0]).not.toHaveProperty("collateral_id");
+    expect(createSyntheticPersonalDraft().objects.Assumption).toHaveLength(1);
+  });
+
+  it("resolves session-only settings into a shared exact calendar-month horizon", () => {
+    const settings = sessionSettingsFromHorizon("2028-02-01", 24);
+    const forecast = resolvePersonalSessionSettings(settings, "cash_flow");
+    const comparison = resolvePersonalSessionSettings(settings, "cash_flow");
+    expect(forecast.request).toEqual(
+      expect.objectContaining({ simulationEnd: "2030-02-01", months: 24 }),
+    );
+    expect(comparison.request).toEqual(forecast.request);
+    expect(
+      comparePersonalCashFlowPlans(
+        createSyntheticPersonalDraft(),
+        comparison.request!,
+        "0.03",
+      ).points,
+    ).toHaveLength(24);
+    expect(
+      resolvePersonalSessionSettings(
+        { ...settings, asOf: "2028-03-01", dataCutoff: "2028-04-01" },
+        "cash_flow",
+      ).error,
+    ).toContain("Data cutoff");
+    expect(
+      resolvePersonalSessionSettings(
+        { ...settings, simulationEnd: "2028-02-01" },
+        "cash_flow",
+      ).error,
+    ).toContain("Simulation start");
   });
 
   it("preserves run boundaries, exact results, shortfalls, and real trace references", () => {

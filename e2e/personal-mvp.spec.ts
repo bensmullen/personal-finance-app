@@ -21,6 +21,43 @@ test("guided setup reaches the Personal-MVP overview", async ({ page }) => {
   await expect(
     page.getByRole("navigation", { name: "Primary navigation" }),
   ).toContainText("OverviewMoneyNet WorthPlanSettings");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Model Settings", exact: true })
+    .click();
+  await expect(page.getByLabel("Simulation end")).toHaveValue("2036-01-01");
+});
+
+test("session settings drive horizons and block invalid run ordering", async ({
+  page,
+}) => {
+  await loadExample(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Model Settings", exact: true })
+    .click();
+  await page.getByLabel("As of").fill("2026-02-01");
+  await page.getByLabel("Data cutoff").fill("2026-02-01");
+  await page.getByLabel("Simulation end").fill("2026-04-01");
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: /Run cash flow forecast/ }).click();
+  await expect(page.getByText("As of 2026-02-01T00:00:00.000Z")).toBeVisible();
+  await expect(
+    page
+      .getByRole("table", { name: "Detailed cash-flow forecast" })
+      .locator("tbody tr"),
+  ).toHaveCount(3);
+
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Model Settings", exact: true })
+    .click();
+  await page.getByLabel("Simulation end").fill("2026-01-01");
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: /Run cash flow forecast/ }).click();
+  await expect(
+    page.getByText("Simulation start must be before simulation end."),
+  ).toBeVisible();
 });
 
 test("money and net-worth workflows update friendly editors and forecast", async ({
@@ -32,7 +69,9 @@ test("money and net-worth workflows update friendly editors and forecast", async
   await page.getByRole("button", { name: /Example salary/ }).click();
   await page.getByLabel("Source / name").fill("Updated example salary");
   await page.getByRole("button", { name: "Close editor" }).click();
-  await expect(page.getByRole("button", { name: /Updated example salary/ })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Updated example salary/ }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Spending", exact: true }).click();
   await page.getByRole("button", { name: /Living costs/ }).click();
@@ -53,7 +92,9 @@ test("money and net-worth workflows update friendly editors and forecast", async
     page.getByRole("heading", { name: "What do I own and owe?" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Debt", exact: true }).click();
-  await expect(page.getByRole("button", { name: /Example mortgage/ })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Example mortgage/ }),
+  ).toBeVisible();
 });
 
 test("model portability and deterministic what-if comparison stay explicit", async ({
@@ -85,5 +126,7 @@ test("model portability and deterministic what-if comparison stay explicit", asy
   ).toBeVisible();
   await expect(page.getByText(/income growth/)).toBeVisible();
   await page.getByText("Explain").first().click();
-  await expect(page.locator("code").first()).toContainText("salary-growth-assumption");
+  await expect(page.locator("code").first()).toContainText(
+    "salary-growth-assumption",
+  );
 });
