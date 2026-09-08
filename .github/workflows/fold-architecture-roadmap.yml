@@ -1,8 +1,8 @@
 name: fold-architecture-roadmap
 
 on:
-  push:
-    branches: [docs/alpha-roadmap-after-pr14]
+  pull_request:
+    types: [ready_for_review]
 
 permissions:
   contents: write
@@ -388,10 +388,7 @@ The rationale is dependency order: first make the canonical model faithfully exe
           assert n == 1, n
 
           path.write_text(text)
-
-          amendment = Path('docs/architecture/personal-mvp-alpha-roadmap.md')
-          if amendment.exists():
-            amendment.unlink()
+          Path('docs/architecture/personal-mvp-alpha-roadmap.md').unlink()
           Path('.github/workflows/fold-architecture-roadmap.yml').unlink()
       - name: Commit folded architecture
         run: |
