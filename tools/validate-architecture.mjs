@@ -20,7 +20,8 @@ const facadeFiles = new Set([
   "src/verticalSlice3.ts", "src/verticalSlice4.ts",
 ]);
 const unambiguousBrowserGlobals = new Set([
-  "window", "HTMLElement", "HTMLInputElement", "localStorage", "navigator",
+  "window", "HTMLElement", "HTMLInputElement", "localStorage", "sessionStorage", "indexedDB", "navigator",
+  "XMLHttpRequest", "WebSocket", "EventSource",
 ]);
 const documentMembers = new Set([
   "body", "createElement", "getElementById", "querySelector", "querySelectorAll",
@@ -32,6 +33,8 @@ const moduleName = (file) => {
   const match = /^src\/([^/]+)\//.exec(file);
   return match && engineModules.has(match[1]) ? match[1] : undefined;
 };
+
+const isApplicationModule = (file) => file.startsWith("src/application/");
 
 const isRuntimeImport = (node) => {
   if (ts.isImportDeclaration(node)) {
@@ -98,6 +101,7 @@ export function validateSources(sourceFiles) {
   for (const [file, source] of files) {
     const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const owner = moduleName(file);
+    const application = isApplicationModule(file);
 
     if (facadeFiles.has(file)) {
       for (const statement of sourceFile.statements) {
@@ -115,6 +119,12 @@ export function validateSources(sourceFiles) {
       if (owner && target && facadeFiles.has(target)) {
         errors.push(`engine implementation imports compatibility facade: ${file} -> ${target}`);
       }
+      if (owner && target?.startsWith("src/application/")) {
+        errors.push(`engine-to-application import: ${file} -> ${target}`);
+      }
+      if (application && (target === "src/webApp.ts" || target?.includes("/web/"))) {
+        errors.push(`application-to-UI import: ${file} -> ${target}`);
+      }
       if (!isRuntimeImport(declaration)) continue;
       if (target) graph.get(file).add(target);
       if (owner && (target === "src/webApp.ts" || target?.includes("/web/"))) {
@@ -128,7 +138,7 @@ export function validateSources(sourceFiles) {
       }
     }
 
-    if (owner) {
+    if (owner || application) {
       const visit = (node) => {
         if (ts.isIdentifier(node)) {
           const parent = node.parent;
@@ -136,7 +146,7 @@ export function validateSources(sourceFiles) {
             || node.text === "fetch" && ts.isCallExpression(parent) && parent.expression === node
             || node.text === "location" && ts.isPropertyAccessExpression(parent) && parent.expression === node
             || node.text === "document" && ts.isPropertyAccessExpression(parent) && parent.expression === node && documentMembers.has(parent.name.text);
-          if (browserUse) errors.push(`browser global ${node.text} used in engine module: ${file}`);
+          if (browserUse) errors.push(`browser global ${node.text} used in ${application ? "application" : "engine"} module: ${file}`);
         }
         ts.forEachChild(node, visit);
       };
@@ -169,6 +179,14 @@ function runSelfTests() {
       name: "engine-to-UI",
       files: new Map([["src/values/bad.ts", 'import "../webApp.js";'], ["src/webApp.ts", "export {};" ]]),
       expected: "engine-to-UI import",
+    },
+    {
+      name: "engine-to-application",
+      files: new Map([
+        ["src/simulation/bad.ts", 'import "../application/index.js";'],
+        ["src/application/index.ts", "export {};"],
+      ]),
+      expected: "engine-to-application import",
     },
     {
       name: "lower-to-simulation",
@@ -221,6 +239,14 @@ function runSelfTests() {
       throw new Error(`Architecture validator self-test failed: ${testCase.name}`);
     }
   }
+  const allowedApplicationImports = validateSources(new Map([
+    ["src/application/allowed.ts", 'import "../model/index.js"; import "../simulation/run.js";'],
+    ["src/model/index.ts", "export {};"],
+    ["src/simulation/run.ts", "export {};"],
+  ]));
+  if (allowedApplicationImports.length > 0) {
+    throw new Error(`Architecture validator self-test failed: application inward imports: ${allowedApplicationImports.join(", ")}`);
+  }
 }
 
 export async function validateRepository(root = defaultRoot) {
@@ -234,6 +260,6 @@ if (path.resolve(process.argv[1] ?? "") === scriptPath) {
     console.error(`Architecture validation failed:\n${errors.map((error) => `- ${error}`).join("\n")}`);
     process.exitCode = 1;
   } else {
-    console.log("Architecture validation passed: engine/UI direction, internal facade isolation, lower-layer isolation, primitive accounting/state authority, facade shape, browser isolation, and runtime acyclicity are enforced (type-only imports are excluded from runtime cycles). Self-tests passed.");
+    console.log("Architecture validation passed: application boundaries, engine/UI direction, internal facade isolation, lower-layer isolation, primitive accounting/state authority, facade shape, browser isolation, and runtime acyclicity are enforced (type-only imports are excluded from runtime cycles). Self-tests passed.");
   }
 }

@@ -49,7 +49,7 @@ export interface ModelMigration {
 const migrationFailure = (
   code: string,
   message: string,
-  fieldPath: "model_format_version" | "financial_specification_version" = "model_format_version",
+  fieldPath: "model_format_version" | "financial_specification_version" | "model_id" = "model_format_version",
   relatedIds: readonly string[] = [],
 ): never =>
   failValidation({
@@ -90,9 +90,31 @@ export class ModelMigrationRegistry {
     }
     return Object.freeze(chain);
   }
+
+  hasMigrationFrom(sourceVersion: string): boolean {
+    return this.#bySource.has(sourceVersion);
+  }
 }
 
 export const DEFAULT_MODEL_MIGRATIONS = new ModelMigrationRegistry();
+
+const isJsonDocument = (value: unknown, ancestors = new Set<object>()): boolean => {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "object") return false;
+  if (ancestors.has(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return false;
+  if (Object.getOwnPropertySymbols(value).length > 0) return false;
+  const nextAncestors = new Set(ancestors).add(value);
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.prototype.hasOwnProperty.call(value, index) || !isJsonDocument(value[index], nextAncestors)) return false;
+    }
+    return true;
+  }
+  return Object.keys(value).every((key) => isJsonDocument((value as Record<string, unknown>)[key], nextAncestors));
+};
 
 export const classifyModelFormatVersion = (
   sourceVersion: string,
@@ -167,6 +189,13 @@ export const migratePortableModel = (
   if (chain === undefined) {
     return migrationFailure(issueCodes.modelMigrationUnavailable, `No complete migration chain from ${sourceVersion} to ${targetVersion}`, "model_format_version", [sourceVersion, targetVersion]);
   }
+  let sourceModelId: ModelId;
+  try {
+    if (typeof source.model_id !== "string") throw new Error("invalid model_id");
+    sourceModelId = domainId("model", source.model_id);
+  } catch {
+    return migrationFailure(issueCodes.modelVersionMismatch, "Migration source document must contain a valid model_id", "model_id");
+  }
   let current = source;
   let currentVersion = sourceVersion;
   for (const migration of chain) {
@@ -174,11 +203,24 @@ export const migratePortableModel = (
       migrationFailure(issueCodes.modelVersionMismatch, `Migration ${migration.migrationId} expected ${migration.sourceVersion} but received ${currentVersion}`);
     }
     const migrated = migration.migrate(current);
+    if (!isJsonDocument(migrated) || Array.isArray(migrated) || migrated === null) {
+      migrationFailure(issueCodes.modelVersionMismatch, `Migration ${migration.migrationId} did not produce a valid JSON document`);
+    }
     if (migrated.model_format_version !== migration.targetVersion) {
       migrationFailure(issueCodes.modelVersionMismatch, `Migration ${migration.migrationId} did not produce ${migration.targetVersion}`);
     }
     if (migrated.financial_specification_version !== current.financial_specification_version) {
       migrationFailure(issueCodes.unsupportedFinancialSpecification, `Model-format migration ${migration.migrationId} must not change financial_specification_version`, "financial_specification_version");
+    }
+    let migratedModelId: ModelId;
+    try {
+      if (typeof migrated.model_id !== "string") throw new Error("invalid model_id");
+      migratedModelId = domainId("model", migrated.model_id);
+    } catch {
+      return migrationFailure(issueCodes.modelVersionMismatch, `Migration ${migration.migrationId} did not preserve a valid model_id`, "model_id");
+    }
+    if (migratedModelId !== sourceModelId) {
+      migrationFailure(issueCodes.modelVersionMismatch, `Model-format migration ${migration.migrationId} must not change model_id`, "model_id");
     }
     current = migrated;
     currentVersion = migration.targetVersion;

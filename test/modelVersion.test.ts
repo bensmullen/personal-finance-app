@@ -105,11 +105,44 @@ describe("portable model format compatibility", () => {
       migrate: (source) => ({ ...source, model_format_version: CURRENT_MODEL_FORMAT_VERSION, financial_specification_version: "99.0.0-future" }),
     }]);
     expect(capturedIssue(() => migratePortableModel(
-      { model_format_version: "semantic-source", financial_specification_version: CURRENT_RUN_VERSIONS.financialSpecificationVersion },
+      {
+        model_format_version: "semantic-source",
+        financial_specification_version: CURRENT_RUN_VERSIONS.financialSpecificationVersion,
+        model_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      },
       "semantic-source",
       CURRENT_MODEL_FORMAT_VERSION,
       semanticRewrite,
     ))).toEqual(expect.objectContaining({ code: issueCodes.unsupportedFinancialSpecification, fieldPath: "financial_specification_version" }));
+  });
+
+  it("preserves canonical model identity across migrations while allowing UUID casing changes", () => {
+    const source = {
+      model_format_version: MIGRATABLE_VERSION,
+      financial_specification_version: CURRENT_RUN_VERSIONS.financialSpecificationVersion,
+      model_id: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+      objects: {},
+    } as const;
+    const casingOnly = new ModelMigrationRegistry([{
+      ...explicitMigration,
+      migrate: (document) => ({
+        ...document,
+        model_format_version: CURRENT_MODEL_FORMAT_VERSION,
+        model_id: String(document.model_id).toLowerCase(),
+      }),
+    }]);
+    expect(migratePortableModel(source, MIGRATABLE_VERSION, CURRENT_MODEL_FORMAT_VERSION, casingOnly).model_id)
+      .toBe("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const identityRewrite = new ModelMigrationRegistry([{
+      ...explicitMigration,
+      migrate: (document) => ({
+        ...document,
+        model_format_version: CURRENT_MODEL_FORMAT_VERSION,
+        model_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      }),
+    }]);
+    expect(capturedIssue(() => migratePortableModel(source, MIGRATABLE_VERSION, CURRENT_MODEL_FORMAT_VERSION, identityRewrite)))
+      .toEqual(expect.objectContaining({ code: issueCodes.modelVersionMismatch, fieldPath: "model_id" }));
   });
 
   it("round-trips the current envelope without losing distinct version metadata", () => {
