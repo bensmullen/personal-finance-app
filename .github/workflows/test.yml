@@ -26,11 +26,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run spec:validate
+      - run: npm run editor:check
       - run: npm run architecture:validate
       - run: npm run codex:tooling-test
       - run: npm run typecheck
       - run: npm test
       - run: npm run build:web
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
       - name: Upload web build
         if: github.event_name == 'push'
         uses: actions/upload-pages-artifact@v3
@@ -52,3 +55,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+

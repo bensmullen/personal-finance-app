@@ -1,21 +1,17 @@
 # Personal Finance App
 
-A deterministic personal-finance modeling and simulation engine with a small
-browser-based validation UI. The repository is currently an engine prototype:
-financial correctness, explicit semantics, and reproducible results come before
-product breadth.
+A deterministic personal-finance modeling and simulation engine with a typed,
+static Next.js Personal-MVP application. Financial correctness, explicit
+semantics, and reproducible results come before product breadth.
 
 ## Current milestone
 
-Vertical Slice 1 models one synthetic household month from domain inputs through
-compensation, tax recognition and settlement, a retirement transfer, living
-expenses, balanced accounting transactions, state transition, and financial
-statements.
-
-The browser demo is intentionally fixed to January 2026. It lets you vary gross
-compensation, tax rate, retirement contribution, and living expenses. Tax is
-recognized and settled in the same month; retirement is an internal household
-transfer rather than an expense.
+The browser application is organized around Overview, Money, Net Worth, Plan,
+and Settings. It provides guided setup, friendly editing of the ten canonical
+Personal-MVP object areas, PR 13 portability, scope-specific forecasts, and
+deterministic comparison surfaces with accessible chart tables. Changes are
+session-only; export the portable model to preserve them. Independent simulation
+slices are never presented as a reconciled household forecast.
 
 The engine remains one npm package, but its implementation now has explicit
 internal boundaries under `src/`: `values`, `time`, `identity`, `model`,
@@ -27,8 +23,8 @@ Root files such as `src/kernel.ts`, `src/verticalSlice1.ts`, `src/values.ts`,
 and `src/time.ts` are thin compatibility facades. They re-export the canonical
 module implementations and hold no independent financial logic or runtime
 authority. Internal implementation files import leaf modules directly where a
-barrel could create a cycle. The existing browser entry remains a consumer of
-the Vertical Slice public facade. Root compatibility facades are external and
+barrel could create a cycle. The React UI consumes only the Personal-MVP
+application facade. Root compatibility facades are external and
 legacy surfaces; engine implementation modules may not use them as dependency
 shortcuts.
 
@@ -53,9 +49,11 @@ Install and verify from a clean checkout:
 npm ci
 npm run spec:validate
 npm run architecture:validate
+npm run editor:check
 npm run typecheck
 npm test
 npm run build:web
+npm run test:e2e
 ```
 
 The web build is written to `dist/`. To inspect it locally, serve that directory
@@ -101,3 +99,4 @@ mappings, are declared in the specification manifest.
 The repository and public demo use synthetic data only. Never commit real
 personal financial information, secrets, account identifiers, screenshots, or
 logs containing financial content.
+

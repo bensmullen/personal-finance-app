@@ -7,24 +7,64 @@ const scriptPath = fileURLToPath(import.meta.url);
 const defaultRoot = path.resolve(path.dirname(scriptPath), "..");
 
 const engineModules = new Set([
-  "accounting", "dependencies", "diagnostics", "funding", "identity", "lineage",
-  "model", "primitives", "rules", "semantics", "simulation", "state", "statements",
-  "time", "valuation", "values",
+  "accounting",
+  "dependencies",
+  "diagnostics",
+  "funding",
+  "identity",
+  "lineage",
+  "model",
+  "primitives",
+  "rules",
+  "semantics",
+  "simulation",
+  "state",
+  "statements",
+  "time",
+  "valuation",
+  "values",
 ]);
-const lowerModules = new Set([...engineModules].filter((name) => name !== "simulation"));
+const lowerModules = new Set(
+  [...engineModules].filter((name) => name !== "simulation"),
+);
 const facadeFiles = new Set([
-  "src/accounting.ts", "src/diagnostics.ts", "src/funding.ts", "src/identity.ts",
-  "src/kernel.ts", "src/lineage.ts", "src/modelVersion.ts", "src/provenance.ts",
-  "src/run.ts", "src/semantics.ts", "src/state.ts", "src/time.ts", "src/values.ts",
-  "src/version.ts", "src/verticalSlice1.ts", "src/verticalSlice2.ts",
-  "src/verticalSlice3.ts", "src/verticalSlice4.ts",
+  "src/accounting.ts",
+  "src/diagnostics.ts",
+  "src/funding.ts",
+  "src/identity.ts",
+  "src/kernel.ts",
+  "src/lineage.ts",
+  "src/modelVersion.ts",
+  "src/provenance.ts",
+  "src/run.ts",
+  "src/semantics.ts",
+  "src/state.ts",
+  "src/time.ts",
+  "src/values.ts",
+  "src/version.ts",
+  "src/verticalSlice1.ts",
+  "src/verticalSlice2.ts",
+  "src/verticalSlice3.ts",
+  "src/verticalSlice4.ts",
 ]);
 const unambiguousBrowserGlobals = new Set([
-  "window", "HTMLElement", "HTMLInputElement", "localStorage", "sessionStorage", "indexedDB", "navigator",
-  "XMLHttpRequest", "WebSocket", "EventSource",
+  "window",
+  "HTMLElement",
+  "HTMLInputElement",
+  "localStorage",
+  "sessionStorage",
+  "indexedDB",
+  "navigator",
+  "XMLHttpRequest",
+  "WebSocket",
+  "EventSource",
 ]);
 const documentMembers = new Set([
-  "body", "createElement", "getElementById", "querySelector", "querySelectorAll",
+  "body",
+  "createElement",
+  "getElementById",
+  "querySelector",
+  "querySelectorAll",
 ]);
 
 const normalized = (value) => value.split(path.sep).join("/");
@@ -35,17 +75,28 @@ const moduleName = (file) => {
 };
 
 const isApplicationModule = (file) => file.startsWith("src/application/");
+const isUiModule = (file) => file.startsWith("app/") || file.startsWith("ui/");
 
 const isRuntimeImport = (node) => {
   if (ts.isImportDeclaration(node)) {
     if (!node.importClause) return true;
     if (node.importClause.isTypeOnly) return false;
-    if (node.importClause.name || node.importClause.namedBindings && ts.isNamespaceImport(node.importClause.namedBindings)) return true;
-    return node.importClause.namedBindings?.elements.some((element) => !element.isTypeOnly) ?? false;
+    if (
+      node.importClause.name ||
+      (node.importClause.namedBindings &&
+        ts.isNamespaceImport(node.importClause.namedBindings))
+    )
+      return true;
+    return (
+      node.importClause.namedBindings?.elements.some(
+        (element) => !element.isTypeOnly,
+      ) ?? false
+    );
   }
   if (ts.isExportDeclaration(node)) {
     if (node.isTypeOnly) return false;
-    if (!node.exportClause || ts.isNamespaceExport(node.exportClause)) return true;
+    if (!node.exportClause || ts.isNamespaceExport(node.exportClause))
+      return true;
     return node.exportClause.elements.some((element) => !element.isTypeOnly);
   }
   return false;
@@ -53,16 +104,28 @@ const isRuntimeImport = (node) => {
 
 const resolveImport = (fromFile, specifier, files) => {
   if (!specifier.startsWith(".")) return undefined;
-  const raw = path.posix.normalize(path.posix.join(path.posix.dirname(fromFile), specifier));
+  const raw = path.posix.normalize(
+    path.posix.join(path.posix.dirname(fromFile), specifier),
+  );
   const stem = raw.replace(/\.js$/, "");
-  for (const candidate of [`${stem}.ts`, `${stem}/index.ts`]) {
+  for (const candidate of [
+    `${stem}.ts`,
+    `${stem}.tsx`,
+    `${stem}/index.ts`,
+    `${stem}/index.tsx`,
+  ]) {
     if (files.has(candidate)) return candidate;
   }
   return undefined;
 };
 
-const importDeclarations = (sourceFile) => sourceFile.statements.filter((node) =>
-  (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier));
+const importDeclarations = (sourceFile) =>
+  sourceFile.statements.filter(
+    (node) =>
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteral(node.moduleSpecifier),
+  );
 
 const cycleErrors = (graph) => {
   const errors = [];
@@ -94,19 +157,32 @@ const cycleErrors = (graph) => {
 };
 
 export function validateSources(sourceFiles) {
-  const files = new Map([...sourceFiles].map(([name, source]) => [normalized(name), source]));
+  const files = new Map(
+    [...sourceFiles].map(([name, source]) => [normalized(name), source]),
+  );
   const errors = [];
   const graph = new Map([...files.keys()].map((file) => [file, new Set()]));
 
   for (const [file, source] of files) {
-    const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const sourceFile = ts.createSourceFile(
+      file,
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
     const owner = moduleName(file);
     const application = isApplicationModule(file);
+    const ui = isUiModule(file);
 
     if (facadeFiles.has(file)) {
       for (const statement of sourceFile.statements) {
-        if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)
-          && !ts.isInterfaceDeclaration(statement) && !ts.isTypeAliasDeclaration(statement)) {
+        if (
+          !ts.isImportDeclaration(statement) &&
+          !ts.isExportDeclaration(statement) &&
+          !ts.isInterfaceDeclaration(statement) &&
+          !ts.isTypeAliasDeclaration(statement)
+        ) {
           errors.push(`compatibility facade contains implementation: ${file}`);
           break;
         }
@@ -117,24 +193,45 @@ export function validateSources(sourceFiles) {
       const specifier = declaration.moduleSpecifier.text;
       const target = resolveImport(file, specifier, files);
       if (owner && target && facadeFiles.has(target)) {
-        errors.push(`engine implementation imports compatibility facade: ${file} -> ${target}`);
+        errors.push(
+          `engine implementation imports compatibility facade: ${file} -> ${target}`,
+        );
       }
       if (owner && target?.startsWith("src/application/")) {
         errors.push(`engine-to-application import: ${file} -> ${target}`);
       }
-      if (application && (target === "src/webApp.ts" || target?.includes("/web/"))) {
+      if (
+        application &&
+        (target === "src/webApp.ts" || target?.includes("/web/"))
+      ) {
         errors.push(`application-to-UI import: ${file} -> ${target}`);
+      }
+      if (ui && target && !isUiModule(target) && !isApplicationModule(target)) {
+        errors.push(`UI-to-engine import: ${file} -> ${target}`);
       }
       if (!isRuntimeImport(declaration)) continue;
       if (target) graph.get(file).add(target);
+      if (owner && target && isUiModule(target)) {
+        errors.push(`engine-to-UI import: ${file} -> ${target}`);
+      }
       if (owner && (target === "src/webApp.ts" || target?.includes("/web/"))) {
         errors.push(`engine-to-UI import: ${file} -> ${target}`);
       }
-      if (owner && lowerModules.has(owner) && target?.startsWith("src/simulation/")) {
+      if (
+        owner &&
+        lowerModules.has(owner) &&
+        target?.startsWith("src/simulation/")
+      ) {
         errors.push(`lower-module-to-simulation import: ${file} -> ${target}`);
       }
-      if (owner === "primitives" && (target?.startsWith("src/accounting/") || target?.startsWith("src/state/"))) {
-        errors.push(`primitive-authority-boundary import: ${file} -> ${target}`);
+      if (
+        owner === "primitives" &&
+        (target?.startsWith("src/accounting/") ||
+          target?.startsWith("src/state/"))
+      ) {
+        errors.push(
+          `primitive-authority-boundary import: ${file} -> ${target}`,
+        );
       }
     }
 
@@ -142,11 +239,22 @@ export function validateSources(sourceFiles) {
       const visit = (node) => {
         if (ts.isIdentifier(node)) {
           const parent = node.parent;
-          const browserUse = unambiguousBrowserGlobals.has(node.text)
-            || node.text === "fetch" && ts.isCallExpression(parent) && parent.expression === node
-            || node.text === "location" && ts.isPropertyAccessExpression(parent) && parent.expression === node
-            || node.text === "document" && ts.isPropertyAccessExpression(parent) && parent.expression === node && documentMembers.has(parent.name.text);
-          if (browserUse) errors.push(`browser global ${node.text} used in ${application ? "application" : "engine"} module: ${file}`);
+          const browserUse =
+            unambiguousBrowserGlobals.has(node.text) ||
+            (node.text === "fetch" &&
+              ts.isCallExpression(parent) &&
+              parent.expression === node) ||
+            (node.text === "location" &&
+              ts.isPropertyAccessExpression(parent) &&
+              parent.expression === node) ||
+            (node.text === "document" &&
+              ts.isPropertyAccessExpression(parent) &&
+              parent.expression === node &&
+              documentMembers.has(parent.name.text));
+          if (browserUse)
+            errors.push(
+              `browser global ${node.text} used in ${application ? "application" : "engine"} module: ${file}`,
+            );
         }
         ts.forEachChild(node, visit);
       };
@@ -164,20 +272,54 @@ async function readTypeScriptFiles(root) {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) await walk(absolute);
-      else if (entry.isFile() && entry.name.endsWith(".ts")) {
-        files.set(normalized(path.relative(root, absolute)), await readFile(absolute, "utf8"));
+      else if (
+        entry.isFile() &&
+        (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))
+      ) {
+        files.set(
+          normalized(path.relative(root, absolute)),
+          await readFile(absolute, "utf8"),
+        );
       }
     }
   };
   await walk(path.join(root, "src"));
+  for (const directory of ["app", "ui"]) await walk(path.join(root, directory));
   return files;
 }
 
 function runSelfTests() {
   const cases = [
     {
+      name: "UI-to-simulation",
+      files: new Map([
+        ["ui/bad.tsx", 'import "../src/simulation/run.js";'],
+        ["src/simulation/run.ts", "export {};"],
+      ]),
+      expected: "UI-to-engine import",
+    },
+    {
+      name: "UI-to-root-facade",
+      files: new Map([
+        ["ui/bad.tsx", 'import "../src/verticalSlice2.js";'],
+        ["src/verticalSlice2.ts", "export {};"],
+      ]),
+      expected: "UI-to-engine import",
+    },
+    {
+      name: "engine-to-new-UI",
+      files: new Map([
+        ["src/values/bad.ts", 'import "../../ui/view.js";'],
+        ["ui/view.tsx", "export {};"],
+      ]),
+      expected: "engine-to-UI import",
+    },
+    {
       name: "engine-to-UI",
-      files: new Map([["src/values/bad.ts", 'import "../webApp.js";'], ["src/webApp.ts", "export {};" ]]),
+      files: new Map([
+        ["src/values/bad.ts", 'import "../webApp.js";'],
+        ["src/webApp.ts", "export {};"],
+      ]),
       expected: "engine-to-UI import",
     },
     {
@@ -190,7 +332,10 @@ function runSelfTests() {
     },
     {
       name: "lower-to-simulation",
-      files: new Map([["src/state/bad.ts", 'import "../simulation/run.js";'], ["src/simulation/run.ts", "export {};" ]]),
+      files: new Map([
+        ["src/state/bad.ts", 'import "../simulation/run.js";'],
+        ["src/simulation/run.ts", "export {};"],
+      ]),
       expected: "lower-module-to-simulation import",
     },
     {
@@ -206,14 +351,20 @@ function runSelfTests() {
       name: "kernel-facade-bypass",
       files: new Map([
         ["src/rules/bad.ts", 'import { SemanticRunner } from "../kernel.js";'],
-        ["src/kernel.ts", 'export { SemanticRunner } from "./simulation/kernel.js";'],
+        [
+          "src/kernel.ts",
+          'export { SemanticRunner } from "./simulation/kernel.js";',
+        ],
         ["src/simulation/kernel.ts", "export class SemanticRunner {}"],
       ]),
       expected: "engine implementation imports compatibility facade",
     },
     {
       name: "runtime-cycle",
-      files: new Map([["src/values/a.ts", 'import "./b.js";'], ["src/values/b.ts", 'import "./a.js";']]),
+      files: new Map([
+        ["src/values/a.ts", 'import "./b.js";'],
+        ["src/values/b.ts", 'import "./a.js";'],
+      ]),
       expected: "runtime import cycle",
     },
     {
@@ -236,16 +387,36 @@ function runSelfTests() {
   for (const testCase of cases) {
     const errors = validateSources(testCase.files);
     if (!errors.some((error) => error.includes(testCase.expected))) {
-      throw new Error(`Architecture validator self-test failed: ${testCase.name}`);
+      throw new Error(
+        `Architecture validator self-test failed: ${testCase.name}`,
+      );
     }
   }
-  const allowedApplicationImports = validateSources(new Map([
-    ["src/application/allowed.ts", 'import "../model/index.js"; import "../simulation/run.js";'],
-    ["src/model/index.ts", "export {};"],
-    ["src/simulation/run.ts", "export {};"],
-  ]));
+  const allowedApplicationImports = validateSources(
+    new Map([
+      [
+        "src/application/allowed.ts",
+        'import "../model/index.js"; import "../simulation/run.js";',
+      ],
+      ["src/model/index.ts", "export {};"],
+      ["src/simulation/run.ts", "export {};"],
+    ]),
+  );
   if (allowedApplicationImports.length > 0) {
-    throw new Error(`Architecture validator self-test failed: application inward imports: ${allowedApplicationImports.join(", ")}`);
+    throw new Error(
+      `Architecture validator self-test failed: application inward imports: ${allowedApplicationImports.join(", ")}`,
+    );
+  }
+  const allowedUiImports = validateSources(
+    new Map([
+      ["ui/allowed.tsx", 'import "../src/application/index.js";'],
+      ["src/application/index.ts", "export {};"],
+    ]),
+  );
+  if (allowedUiImports.length > 0) {
+    throw new Error(
+      `Architecture validator self-test failed: UI-to-application import: ${allowedUiImports.join(", ")}`,
+    );
   }
 }
 
@@ -257,9 +428,13 @@ if (path.resolve(process.argv[1] ?? "") === scriptPath) {
   runSelfTests();
   const errors = await validateRepository();
   if (errors.length > 0) {
-    console.error(`Architecture validation failed:\n${errors.map((error) => `- ${error}`).join("\n")}`);
+    console.error(
+      `Architecture validation failed:\n${errors.map((error) => `- ${error}`).join("\n")}`,
+    );
     process.exitCode = 1;
   } else {
-    console.log("Architecture validation passed: application boundaries, engine/UI direction, internal facade isolation, lower-layer isolation, primitive accounting/state authority, facade shape, browser isolation, and runtime acyclicity are enforced (type-only imports are excluded from runtime cycles). Self-tests passed.");
+    console.log(
+      "Architecture validation passed: application boundaries, engine/UI direction, internal facade isolation, lower-layer isolation, primitive accounting/state authority, facade shape, browser isolation, and runtime acyclicity are enforced (type-only imports are excluded from runtime cycles). Self-tests passed.",
+    );
   }
 }
