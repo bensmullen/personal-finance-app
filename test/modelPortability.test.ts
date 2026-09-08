@@ -233,7 +233,7 @@ describe("explicit model-format migration", () => {
       .toBe(issueCodes.modelVersionMismatch);
   });
 
-  it("runs every registered step in order and rejects non-JSON migration output", () => {
+  it("runs every registered step through intermediate versions and rejects non-current application targets", () => {
     const intermediate = "0.1.6-separated-draft";
     const steps: string[] = [];
     const ordered = new ModelMigrationRegistry([
@@ -259,6 +259,29 @@ describe("explicit model-format migration", () => {
     ]);
     migratePersonalModelVersion(asJson(oldDocument()), CURRENT_MODEL_FORMAT_VERSION, ordered);
     expect(steps).toEqual(["first", "second"]);
+
+    const intermediateTarget = capturedIssue(() => migratePersonalModelVersion(asJson(oldDocument()), intermediate, ordered));
+    expect(intermediateTarget).toEqual(expect.objectContaining({
+      code: issueCodes.modelMigrationUnavailable,
+      fieldPath: "model_format_version",
+    }));
+    expect(steps).toEqual(["first", "second"]);
+
+    const futureTarget = "99.0.0-future-format";
+    const technicallyReachable = new ModelMigrationRegistry([{
+      migrationId: "test:old-to-future",
+      sourceVersion: OLD_FORMAT,
+      targetVersion: futureTarget,
+      migrate: (source) => ({ ...source, model_format_version: futureTarget }),
+    }]);
+    expect(capturedIssue(() => migratePersonalModelVersion(asJson(oldDocument()), futureTarget, technicallyReachable)))
+      .toEqual(expect.objectContaining({
+        code: issueCodes.modelMigrationUnavailable,
+        fieldPath: "model_format_version",
+      }));
+  });
+
+  it("rejects non-JSON migration output", () => {
 
     const nonJson = new ModelMigrationRegistry([{
       ...migration,
@@ -297,7 +320,22 @@ describe("explicit model-format migration", () => {
   });
 
   it("preserves an unsupported financial specification during format-only migration", () => {
-    const migrated = migratePersonalModelVersion(asJson(oldDocument(FUTURE_FINANCIAL_SPEC)), CURRENT_MODEL_FORMAT_VERSION, migrationRegistry);
+    const sourceJson = asJson(oldDocument(FUTURE_FINANCIAL_SPEC));
+    const report = validatePersonalModelJson(sourceJson, migrationRegistry);
+    expect(report).toEqual(expect.objectContaining({
+      modelFormatCompatibility: "migratable",
+      financialSpecificationCompatibility: "unsupported",
+      directlyImportable: false,
+      explicitMigrationAvailable: true,
+    }));
+    expect(report.issues).not.toContainEqual(expect.objectContaining({
+      severity: "error",
+      code: issueCodes.unsupportedFinancialSpecification,
+    }));
+    expect(capturedIssue(() => importPersonalModelJson(sourceJson, migrationRegistry)).code)
+      .toBe(issueCodes.modelMigrationRequired);
+
+    const migrated = migratePersonalModelVersion(sourceJson, CURRENT_MODEL_FORMAT_VERSION, migrationRegistry);
     expect(JSON.parse(migrated).financial_specification_version).toBe(FUTURE_FINANCIAL_SPEC);
     expect(capturedIssue(() => importPersonalModelJson(migrated))).toEqual(expect.objectContaining({
       code: issueCodes.unsupportedFinancialSpecification,

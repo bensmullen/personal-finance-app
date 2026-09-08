@@ -227,10 +227,6 @@ export const validatePersonalModelJson = (
       try { domainId("model", parsed.model_id); } catch { issues.push(documentIssue("model_id", "Portable model model_id must be a valid UUID")); }
     }
   }
-  if (modelCompatibility.classification !== "supported_directly" && financialCompatibility !== undefined) {
-    issues.push(...financialCompatibility.issues);
-  }
-
   const structuralErrors = issues.some((issue) => issue.severity === "error" && issue.code === issueCodes.modelDocumentInvalid);
   const directlyImportable = modelCompatibility.classification === "supported_directly"
     && financialCompatibility?.classification === "supported_directly"
@@ -290,6 +286,16 @@ export const migratePersonalModelVersion = (
 ): string => {
   const report = validatePersonalModelJson(json, migrations);
   if (!report.jsonParsed || report.detectedModelFormatVersion === undefined) failValidation(report.issues);
+  if (targetVersion !== CURRENT_MODEL_FORMAT_VERSION) {
+    failValidation({
+      severity: "error",
+      code: issueCodes.modelMigrationUnavailable,
+      message: "Application model migration target must be the current portable model format",
+      entityType: "portable_model",
+      fieldPath: "model_format_version",
+      relatedIds: [report.detectedModelFormatVersion, CURRENT_MODEL_FORMAT_VERSION, targetVersion],
+    });
+  }
   if (report.modelFormatCompatibility === "read_only_legacy") failValidation(report.issues);
   if (report.modelFormatCompatibility === "unsupported" && !migrations.hasMigrationFrom(report.detectedModelFormatVersion)) {
     failValidation(report.issues);
@@ -316,13 +322,8 @@ export const migratePersonalModelVersion = (
   }
   const outputIssue = jsonValueIssue(migrated, "", new Set());
   if (outputIssue !== undefined) failValidation(outputIssue);
-  if (targetVersion === CURRENT_MODEL_FORMAT_VERSION) {
-    const outputIssues = validateCurrentEnvelope(migrated);
-    if (outputIssues.length > 0) failValidation(outputIssues);
-  }
+  const outputIssues = validateCurrentEnvelope(migrated);
+  if (outputIssues.length > 0) failValidation(outputIssues);
   const output = migrated as unknown as SerializedPortableModelEnvelope;
-  if (targetVersion === CURRENT_MODEL_FORMAT_VERSION) {
-    return serializeDeterministically({ ...output, model_id: domainId("model", output.model_id) });
-  }
-  return `${JSON.stringify(stableJsonValue(migrated), null, 2)}\n`;
+  return serializeDeterministically({ ...output, model_id: domainId("model", output.model_id) });
 };
