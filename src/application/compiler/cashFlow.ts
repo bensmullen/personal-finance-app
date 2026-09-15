@@ -12,9 +12,11 @@ import {
 import { utcMonthlyHorizonMonths, type Instant } from "../../time/index.js";
 import { Currency, Rate, money, rateConvention } from "../../values/index.js";
 import type { VerticalSlice2Input } from "../../simulation/verticalSlice2.js";
-import { assertGeometricGrowthRate } from "../../primitives/index.js";
+import { assertGeometricGrowthRate, isPrimitiveId } from "../../primitives/index.js";
 import {
   EXACT_DECIMAL,
+  ASSUMPTION_CATEGORIES,
+  PAYMENT_FREQUENCIES,
   UUID,
   canonicalId,
   capability,
@@ -162,8 +164,7 @@ export const selectScenario = (
     return invalidResult("SCENARIO_TEMPORAL_INVALID", `Scenario ${id} requires valid ordered start_date and end_date.`, "Scenario", id, "start_date");
   if (
     selected.base_scenario_id !== undefined &&
-    selected.base_scenario_id !== null &&
-    selected.base_scenario_id !== ""
+    selected.base_scenario_id !== null
   ) {
     if (
       typeof selected.base_scenario_id !== "string" ||
@@ -337,7 +338,7 @@ export const resolveGrowth = (
   if (preflight.status !== "compiled") return preflight;
   const streamId = canonicalId(stream, `${streamType.toLowerCase()}_id`)!;
   const rawGrowth = stream.growth_model_id;
-  if (rawGrowth === undefined || rawGrowth === null || rawGrowth === "")
+  if (rawGrowth === undefined || rawGrowth === null)
     return {
       status: "compiled",
       value: Object.freeze({
@@ -378,13 +379,31 @@ export const resolveGrowth = (
       "growth_model_id",
       [growthId],
     );
-  if (primitive.enabled !== true || primitive.primitive_id !== "P08")
+  if (typeof primitive.enabled !== "boolean")
+    return invalidResult(
+      "GROWTH_PRIMITIVE_ENABLED_INVALID",
+      `PrimitiveInstance ${growthId} enabled must be a boolean.`,
+      "PrimitiveInstance", growthId, "enabled",
+    );
+  if (primitive.enabled === false)
     return unsupportedResult(
       "GROWTH_PRIMITIVE_UNSUPPORTED",
       `${streamType} ${streamId} requires an enabled P08 growth PrimitiveInstance.`,
       "PrimitiveInstance",
       growthId,
-      "primitive_id",
+      "enabled",
+    );
+  if (typeof primitive.primitive_id !== "string" || !isPrimitiveId(primitive.primitive_id))
+    return invalidResult(
+      "GROWTH_PRIMITIVE_ID_INVALID",
+      `PrimitiveInstance ${growthId} primitive_id must identify a registered primitive.`,
+      "PrimitiveInstance", growthId, "primitive_id",
+    );
+  if (primitive.primitive_id !== "P08")
+    return unsupportedResult(
+      "GROWTH_PRIMITIVE_UNSUPPORTED",
+      `${streamType} ${streamId} requires an enabled P08 growth PrimitiveInstance.`,
+      "PrimitiveInstance", growthId, "primitive_id",
     );
   if (
     typeof primitive.scenario_id !== "string" ||
@@ -543,9 +562,47 @@ export const resolveGrowth = (
       "assumption_ids",
       [assumptionId],
     );
+  const assumptionStart =
+    assumption.start_date === undefined || assumption.start_date === null
+      ? undefined
+      : utcDate(assumption.start_date);
+  const assumptionEnd =
+    assumption.end_date === undefined || assumption.end_date === null
+      ? undefined
+      : utcDate(assumption.end_date);
   if (
-    (assumption.start_date !== undefined && assumption.start_date !== null) ||
-    (assumption.end_date !== undefined && assumption.end_date !== null) ||
+    (assumption.start_date !== undefined && assumption.start_date !== null && !assumptionStart) ||
+    (assumption.end_date !== undefined && assumption.end_date !== null && !assumptionEnd) ||
+    (assumptionStart !== undefined && assumptionEnd !== undefined && assumptionEnd < assumptionStart)
+  )
+    return invalidResult(
+      "ASSUMPTION_TEMPORAL_INVALID",
+      `Assumption ${assumptionId} has invalid ordered date bounds.`,
+      "Assumption", assumptionId, "start_date",
+    );
+  const distributionTypes = ["normal", "lognormal", "uniform", "triangular", "discrete", "empirical", "mixture", "custom"] as const;
+  if (
+    assumption.distribution_type !== undefined && assumption.distribution_type !== null &&
+    (typeof assumption.distribution_type !== "string" || !distributionTypes.includes(assumption.distribution_type as never))
+  )
+    return invalidResult("ASSUMPTION_DISTRIBUTION_INVALID", `Assumption ${assumptionId} distribution_type is not canonical.`, "Assumption", assumptionId, "distribution_type");
+  if (
+    assumption.distribution_parameters !== undefined && assumption.distribution_parameters !== null &&
+    (typeof assumption.distribution_parameters !== "object" || Array.isArray(assumption.distribution_parameters))
+  )
+    return invalidResult("ASSUMPTION_DISTRIBUTION_PARAMETERS_INVALID", `Assumption ${assumptionId} distribution_parameters must be an object.`, "Assumption", assumptionId, "distribution_parameters");
+  if (
+    assumption.correlation_group !== undefined && assumption.correlation_group !== null &&
+    typeof assumption.correlation_group !== "string"
+  )
+    return invalidResult("ASSUMPTION_CORRELATION_GROUP_INVALID", `Assumption ${assumptionId} correlation_group must be a string.`, "Assumption", assumptionId, "correlation_group");
+  if (
+    typeof assumption.category !== "string" ||
+    !ASSUMPTION_CATEGORIES.includes(assumption.category as never)
+  )
+    return invalidResult("ASSUMPTION_CATEGORY_INVALID", `Assumption ${assumptionId} category is not canonical.`, "Assumption", assumptionId, "category");
+  if (
+    assumptionStart !== undefined || assumptionEnd !== undefined ||
     (assumption.distribution_type !== undefined && assumption.distribution_type !== null) ||
     (assumption.distribution_parameters !== undefined && assumption.distribution_parameters !== null) ||
     (assumption.correlation_group !== undefined && assumption.correlation_group !== null)
@@ -620,7 +677,7 @@ const validateEventReference = (
     ? (["probability_model_id", "related_event_id"] as const)
     : (["event_trigger_id"] as const)) {
     const value = stream[field];
-    if (value === undefined || value === null || value === "") continue;
+    if (value === undefined || value === null) continue;
     const id = canonicalId(stream, `${type.toLowerCase()}_id`)!;
     if (typeof value !== "string" || !UUID.test(value))
       return invalidResult(
@@ -954,7 +1011,7 @@ export const compileCashFlow = (
         );
       const event = validateEventReference(model, stream, type);
       if (event) return event;
-      if (!(["weekly", "biweekly", "semimonthly", "monthly", "bimonthly", "quarterly", "semiannual", "annual", "irregular"] as const).includes(stream.frequency as never))
+      if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never))
         return invalidResult("RECURRENCE_INVALID", `${type} ${id} frequency is not canonical.`, type, id, "frequency");
       if (stream.frequency !== "monthly")
         return unsupportedResult(

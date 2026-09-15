@@ -9,6 +9,7 @@ import {
   exportPersonalModelJson,
   getCurrentPosition,
   importPersonalModelJson,
+  isForecastStartDate,
   patchPersonalObject,
   runPersonalForecast,
   resolvePersonalSessionSettings,
@@ -136,12 +137,12 @@ describe("Personal-MVP application facade", () => {
 
   it("capability-gates non-executable scopes rather than consolidating slices", () => {
     const model = createSyntheticPersonalDraft();
-    expect(runPersonalForecast(model, request("investments"))).toEqual(
-      expect.objectContaining({ scope: "investments", status: "unavailable" }),
-    );
-    expect(runPersonalForecast(model, request("liabilities"))).toEqual(
-      expect.objectContaining({ scope: "liabilities", status: "unavailable" }),
-    );
+    const investments = runPersonalForecast(model, request("investments"));
+    const liabilities = runPersonalForecast(model, request("liabilities"));
+    expect(investments).toEqual(expect.objectContaining({ scope: "investments", status: "unavailable" }));
+    expect(liabilities).toEqual(expect.objectContaining({ scope: "liabilities", status: "unavailable" }));
+    expect(investments.diagnostics[0]).toEqual(expect.objectContaining({ code: "INVESTMENT_FORECAST_UNSUPPORTED", capability: "investments" }));
+    expect(liabilities.diagnostics[0]).toEqual(expect.objectContaining({ code: "LIABILITY_FORECAST_UNSUPPORTED", capability: "liabilities" }));
   });
 
   it("does not aggregate a mixed-currency current position without FX semantics", () => {
@@ -327,6 +328,26 @@ describe("Personal-MVP application facade", () => {
         "cash_flow",
       ).error,
     ).toContain("Simulation start");
+  });
+
+  it("rejects non-month-boundary guided setup dates before session construction", () => {
+    expect(isForecastStartDate("2026-01-15")).toBe(false);
+    expect(isForecastStartDate("2026-02-30")).toBe(false);
+    expect(isForecastStartDate("2026-02-01")).toBe(true);
+  });
+
+  it("keeps comparison target ambiguity typed", () => {
+    const model = createSyntheticPersonalDraft();
+    const income = model.objects.Income?.[0] as Record<string, string>;
+    const { income_id: _incomeId, ...secondIncome } = income;
+    const ambiguous = addPersonalObject(model, "Income", "10000000-0000-4000-8000-000000000099", {
+      ...secondIncome,
+      source: "Second income",
+      growth_model_id: null,
+    });
+    const result = comparePersonalCashFlowPlans(ambiguous, request(), "0.05");
+    expect(result.status).toBe("unavailable");
+    expect(result.diagnostics[0]).toEqual(expect.objectContaining({ code: "COMPARISON_INCOME_TARGET_AMBIGUOUS", capability: "cash_flow_comparison" }));
   });
 
   it("preserves run boundaries, exact results, shortfalls, and real trace references", () => {

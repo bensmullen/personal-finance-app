@@ -102,6 +102,20 @@ export const UUID =
 export const EXACT_DECIMAL = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
 export const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
+/** Canonical enums consumed by the PR15 executable-model boundary. */
+export const PAYMENT_FREQUENCIES = Object.freeze([
+  "daily", "weekly", "biweekly", "semimonthly", "monthly", "bimonthly",
+  "quarterly", "semiannual", "annual", "irregular",
+] as const);
+export const ASSET_VALUATION_METHODS = Object.freeze([
+  "market", "appraisal", "cost", "formula", "custom",
+] as const);
+export const ASSUMPTION_CATEGORIES = Object.freeze([
+  "inflation", "market_return", "salary_growth", "longevity", "healthcare",
+  "tax", "housing", "employment", "demographic", "interest_rate",
+  "expense_growth", "education", "insurance", "other",
+] as const);
+
 export const canonicalId = (
   object: CanonicalObject,
   field: string,
@@ -297,6 +311,7 @@ export const resolveHouseholdScope = (
     const personHousehold = person.household_id;
     if (
       personHousehold !== undefined &&
+      personHousehold !== null &&
       (typeof personHousehold !== "string" ||
         !UUID.test(personHousehold) ||
         personHousehold.toLowerCase() !== householdId)

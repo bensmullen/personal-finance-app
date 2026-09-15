@@ -16,6 +16,8 @@ import {
 } from "../../values/index.js";
 import {
   EXACT_DECIMAL,
+  ASSET_VALUATION_METHODS,
+  PAYMENT_FREQUENCIES,
   UUID,
   canonicalId,
   capability,
@@ -506,8 +508,25 @@ export const compileCurrentPosition = (
         continue;
       }
     }
-    if (!(["cost", "market", "appraisal", "model"] as const).includes(asset.valuation_method as never))
+    if (!ASSET_VALUATION_METHODS.includes(asset.valuation_method as never))
       return invalidResult("ASSET_VALUATION_METHOD_INVALID", `Asset ${id} valuation_method is not canonical.`, "Asset", id, "valuation_method");
+    const valuationPreflight = preflightCanonicalCollections(model, [
+      "PrimitiveInstance",
+    ]);
+    if (valuationPreflight.status !== "compiled") return valuationPreflight;
+    let hasAuthoredValuationModel = false;
+    for (const field of ["appreciation_model_id", "depreciation_model_id"] as const) {
+      const raw = asset[field];
+      if (raw === undefined || raw === null) continue;
+      if (typeof raw !== "string" || !UUID.test(raw))
+        return invalidResult("ASSET_MODEL_REFERENCE_INVALID", `Asset ${id} ${field} must be a UUID.`, "Asset", id, field);
+      if (!objects(model, "PrimitiveInstance").some((primitive) => canonicalId(primitive, "primitive_instance_id") === raw.toLowerCase()))
+        return invalidResult("ASSET_MODEL_REFERENCE_NOT_FOUND", `Asset ${id} ${field} does not resolve.`, "Asset", id, field);
+      assetsComplete = false;
+      diagnostics.push(diagnostic("ASSET_VALUATION_UNSUPPORTED", `Asset ${id} has authored valuation behavior.`, "assets", "Asset", id, field));
+      hasAuthoredValuationModel = true;
+    }
+    if (hasAuthoredValuationModel) continue;
     if (asset.valuation_method !== "cost") {
       assetsComplete = false;
       diagnostics.push(
@@ -522,19 +541,6 @@ export const compileCurrentPosition = (
       );
       continue;
     }
-    let hasAuthoredValuationModel = false;
-    for (const field of ["appreciation_model_id", "depreciation_model_id"] as const) {
-      const raw = asset[field];
-      if (raw === undefined || raw === null) continue;
-      if (typeof raw !== "string" || !UUID.test(raw))
-        return invalidResult("ASSET_MODEL_REFERENCE_INVALID", `Asset ${id} ${field} must be a UUID.`, "Asset", id, field);
-      if (!objects(model, "PrimitiveInstance").some((primitive) => canonicalId(primitive, "primitive_instance_id") === raw.toLowerCase()))
-        return invalidResult("ASSET_MODEL_REFERENCE_NOT_FOUND", `Asset ${id} ${field} does not resolve.`, "Asset", id, field);
-      assetsComplete = false;
-      diagnostics.push(diagnostic("ASSET_VALUATION_UNSUPPORTED", `Asset ${id} has authored valuation behavior.`, "assets", "Asset", id, field));
-      hasAuthoredValuationModel = true;
-    }
-    if (hasAuthoredValuationModel) continue;
     const costField = classifyExactMoney(asset, "acquisition_cost", currency);
     if (
       costField.kind === "invalid" ||
@@ -586,7 +592,7 @@ export const compileCurrentPosition = (
         ? (["probability_model_id", "related_event_id"] as const)
         : (["event_trigger_id"] as const)) {
         const raw = stream[field];
-        if (raw === undefined || raw === null || raw === "") continue;
+        if (raw === undefined || raw === null) continue;
         if (typeof raw !== "string" || !UUID.test(raw))
           return invalidResult(
             "EVENT_BINDING_INVALID",
@@ -633,7 +639,7 @@ export const compileCurrentPosition = (
           ]),
         };
       }
-      if (!(["weekly", "biweekly", "semimonthly", "monthly", "bimonthly", "quarterly", "semiannual", "annual", "irregular"] as const).includes(stream.frequency as never))
+      if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never))
         return invalidResult("RECURRENCE_INVALID", `${type} ${id} frequency is not canonical.`, type, id, "frequency");
       if (stream.frequency !== "monthly")
         return {
@@ -675,7 +681,7 @@ export const compileCurrentPosition = (
           "amount",
         );
       const rawGrowth = stream.growth_model_id;
-      if (rawGrowth === undefined || rawGrowth === null || rawGrowth === "") {
+      if (rawGrowth === undefined || rawGrowth === null) {
         values.push(base);
         continue;
       }

@@ -16,6 +16,7 @@ import { compareVerticalSlice2Scenarios } from "../simulation/scenario.js";
 import { runVerticalSlice2 } from "../simulation/verticalSlice2.js";
 import {
   instant,
+  utcDateOnlyInstant,
   utcMonthDifference,
   utcMonthlyPeriods,
 } from "../time/index.js";
@@ -30,6 +31,7 @@ import {
 import {
   compileCashFlow,
   compileCurrentPosition,
+  capability,
   type CapabilityDiagnostic,
 } from "./compiler/index.js";
 import { PERSONAL_EDITOR_DESCRIPTOR } from "./editorDescriptor.generated.js";
@@ -511,6 +513,7 @@ export const getCurrentPosition = (
 const unavailableForecast = (
   request: ForecastRequest,
   message: string,
+  diagnostics: readonly (ValidationIssue | CapabilityDiagnostic)[] = [],
 ): PersonalForecastReadModel =>
   deepFreeze({
     ...request,
@@ -519,7 +522,7 @@ const unavailableForecast = (
     message,
     points: [],
     shortfalls: [],
-    diagnostics: [],
+    diagnostics,
   });
 const iso = (date: string) => instant(`${date}T00:00:00.000Z`);
 
@@ -582,6 +585,10 @@ export const sessionSettingsFromHorizon = (
   });
 };
 
+/** Guided setup must provide a canonical UTC month boundary to VS2. */
+export const isForecastStartDate = (value: string): boolean =>
+  utcDateOnlyInstant(value) !== undefined && value.endsWith("-01");
+
 export const runPersonalForecast = (
   draft: PersonalDraft,
   request: ForecastRequest,
@@ -590,6 +597,16 @@ export const runPersonalForecast = (
     return unavailableForecast(
       request,
       `${request.scope === "investments" ? "Investment" : "Liability"} execution requires complete engine-specific configuration; this portable model is preserved but is not automatically executable.`,
+      [
+        capability(
+          request.scope === "investments"
+            ? "INVESTMENT_FORECAST_UNSUPPORTED"
+            : "LIABILITY_FORECAST_UNSUPPORTED",
+          `${request.scope === "investments" ? "Investment" : "Liability"} forecast execution is not implemented in PR 15.`,
+          request.scope === "investments" ? "investments" : "liabilities",
+          request.scope === "investments" ? "Investment" : "Liability",
+        ),
+      ],
     );
   try {
     const currency = Currency.of(request.baseCurrency);
@@ -721,6 +738,14 @@ export const comparePersonalCashFlowPlans = (
     if (input.incomes.length !== 1)
       return unavailable(
         `Plan comparison requires exactly one compiled Income target; found ${input.incomes.length}.`,
+        [
+          capability(
+            "COMPARISON_INCOME_TARGET_AMBIGUOUS",
+            `Plan comparison requires exactly one compiled Income target; found ${input.incomes.length}.`,
+            "cash_flow_comparison",
+            "Income",
+          ),
+        ],
       );
     const [comparisonIncome] = input.incomes;
     const openingState = compilation.value.openingState;

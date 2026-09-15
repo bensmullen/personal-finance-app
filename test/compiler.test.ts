@@ -1032,4 +1032,70 @@ describe("canonical executable-model compiler", () => {
     expect(valid.status).toBe("compiled");
     if (valid.status === "compiled") expect(valid.value.executionMonths).toBe(3);
   });
+
+  it("classifies daily recurrence and canonical asset valuation methods as unsupported", () => {
+    const daily = compileCashFlow(modelWith((value) => {
+      value.objects.Income![0]!.frequency = "daily";
+    }), request);
+    expect(daily.status).toBe("unsupported");
+    const formula = compileCurrentPosition(modelWith((value) => {
+      value.objects.Asset![0]!.valuation_method = "formula";
+    }), { baseCurrency: "USD", asOf: "2026-01-01" });
+    const custom = compileCurrentPosition(modelWith((value) => {
+      value.objects.Asset![0]!.valuation_method = "custom";
+    }), { baseCurrency: "USD", asOf: "2026-01-01" });
+    const model = compileCurrentPosition(modelWith((value) => {
+      value.objects.Asset![0]!.valuation_method = "model";
+    }), { baseCurrency: "USD", asOf: "2026-01-01" });
+    expect(formula.status).toBe("compiled");
+    expect(custom.status).toBe("compiled");
+    expect(model.status).toBe("invalid_model");
+    if (formula.status === "compiled") expect(formula.value.diagnostics).toContainEqual(expect.objectContaining({ code: "ASSET_VALUATION_UNSUPPORTED" }));
+    if (custom.status === "compiled") expect(custom.value.diagnostics).toContainEqual(expect.objectContaining({ code: "ASSET_VALUATION_UNSUPPORTED" }));
+  });
+
+  it("separates malformed, disabled, and non-P08 growth primitives", () => {
+    const resultFor = (change: (primitive: Record<string, unknown>) => void) =>
+      compileCashFlow(modelWith((value) => change(value.objects.PrimitiveInstance![0]!)), request);
+    expect(resultFor((primitive) => { delete primitive.enabled; }).status).toBe("invalid_model");
+    expect(resultFor((primitive) => { primitive.enabled = false; }).status).toBe("unsupported");
+    expect(resultFor((primitive) => { primitive.primitive_id = "P99"; }).status).toBe("invalid_model");
+    expect(resultFor((primitive) => { primitive.primitive_id = "P23"; }).status).toBe("unsupported");
+  });
+
+  it("validates assumption shape, null household membership, and empty UUID references", () => {
+    const malformedDate = compileCashFlow(modelWith((value) => {
+      value.objects.Assumption![0]!.start_date = "not-a-date";
+    }), request);
+    const malformedDistribution = compileCashFlow(modelWith((value) => {
+      value.objects.Assumption![0]!.distribution_parameters = [];
+    }), request);
+    const unsupportedDistribution = compileCashFlow(modelWith((value) => {
+      value.objects.Assumption![0]!.distribution_type = "normal";
+    }), request);
+    const nullHousehold = compileCashFlow(modelWith((value) => {
+      value.objects.Person![0]!.household_id = null;
+    }), request);
+    const emptyGrowth = compileCashFlow(modelWith((value) => {
+      value.objects.Income![0]!.growth_model_id = "";
+    }), request);
+    expect(malformedDate.status).toBe("invalid_model");
+    expect(malformedDistribution.status).toBe("invalid_model");
+    expect(unsupportedDistribution.status).toBe("unsupported");
+    expect(nullHousehold.status).toBe("compiled");
+    expect(emptyGrowth.status).toBe("invalid_model");
+  });
+
+  it("preflights PrimitiveInstances through Asset valuation references", () => {
+    const malformed = compileCurrentPosition(modelWith((value) => {
+      value.objects.Asset![0]!.appreciation_model_id = "90000000-0000-4000-8000-000000000012";
+      value.objects.PrimitiveInstance!.push("not-an-object" as never);
+    }), { baseCurrency: "USD", asOf: "2026-01-01" });
+    const duplicate = compileCurrentPosition(modelWith((value) => {
+      value.objects.Asset![0]!.appreciation_model_id = "90000000-0000-4000-8000-000000000012";
+      value.objects.PrimitiveInstance!.push({ ...value.objects.PrimitiveInstance![0]! });
+    }), { baseCurrency: "USD", asOf: "2026-01-01" });
+    expect(malformed.status).toBe("invalid_model");
+    expect(duplicate.status).toBe("invalid_model");
+  });
 });

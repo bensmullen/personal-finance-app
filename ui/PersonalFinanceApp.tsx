@@ -35,6 +35,7 @@ import {
   getCurrentPosition,
   getPersonalEditorMetadata,
   importPersonalModelJson,
+  isForecastStartDate,
   migratePersonalModelVersion,
   patchPersonalObject,
   comparePersonalCashFlowPlans,
@@ -249,7 +250,12 @@ const setupSchema = z.object({
   debt: z.string().regex(/^\d+(\.\d+)?$/),
   spending: z.string().regex(/^\d+(\.\d+)?$/),
   horizon: z.string().regex(/^(?:[1-9]|[1-3][0-9]|40)$/),
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a start date"),
+  startDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a start date")
+    .refine(isForecastStartDate, {
+      message: "Forecast start must be the first day of a month.",
+    }),
 });
 type SetupValues = z.infer<typeof setupSchema>;
 const randomId = () => crypto.randomUUID();
