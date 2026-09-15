@@ -31,6 +31,7 @@ const PRIMARY_ID_FIELDS = Object.freeze({
   Liability: "liability_id",
   Asset: "asset_id",
   Investment: "investment_id",
+  TaxRule: "tax_rule_id",
 } as const);
 
 export type ExecutableCollection = keyof typeof PRIMARY_ID_FIELDS;
@@ -138,6 +139,7 @@ export const generatedCompilerIds = (
   model: PortableModelEnvelope,
   slots: readonly string[],
   prefix: string,
+  reservedIds: readonly string[] = [],
 ): CompileResult<ReadonlyMap<string, string>> => {
   const authored = new Set<string>();
   for (const collection of Object.values(model.objects))
@@ -166,6 +168,12 @@ export const generatedCompilerIds = (
           [collision],
         ),
       ]),
+    };
+  const reservedCollision = [...result.values()].find((id) => reservedIds.map((value) => value.toLowerCase()).includes(id));
+  if (reservedCollision)
+    return {
+      status: "invalid_model",
+      diagnostics: Object.freeze([issue("GENERATED_ID_COLLISION", `Compiler-owned identity ${reservedCollision} collides with an execution instruction identity.`, "portable_model", undefined, "objects", [reservedCollision])]),
     };
   return { status: "compiled", value: result, diagnostics: Object.freeze([]) };
 };
