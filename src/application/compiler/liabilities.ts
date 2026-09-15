@@ -3,7 +3,7 @@ import { createFundingPolicy, fundingPolicyId } from "../../funding/index.js";
 import { domainId } from "../../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../lineage/index.js";
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
-import { fixedMortgagePayment } from "../../rules/index.js";
+import { fixedMortgagePayment, fixedMortgagePrincipalAfterPayments } from "../../rules/index.js";
 import type {
   ExtraPrincipalPayment,
   FixedAmortizingLoan,
@@ -179,6 +179,8 @@ export const compileLiabilities = (
     "Assumption",
     "Event",
     "Transaction",
+    "TaxRule",
+    "Asset",
   ]);
   if (preflight.status !== "compiled") return preflight;
   const scopeResult = resolveHouseholdScope(model);
@@ -244,7 +246,7 @@ export const compileLiabilities = (
       "executionOwnerId",
     );
 
-  const scenarioResult = selectScenario(model);
+  const scenarioResult = selectScenario(model, { capabilityName: "liability_forecast", executionLabel: "Liability" });
   if (scenarioResult.status !== "compiled") return scenarioResult;
   const selectedScenario = scenarioResult.value;
   const allLiabilities = objects(model, "Liability");
@@ -312,6 +314,7 @@ export const compileLiabilities = (
       ["amortization_model_id", "PrimitiveInstance", "primitive_instance_id"],
       ["fee_rule_id", "TaxRule", "tax_rule_id"],
       ["prepayment_rule_id", "TaxRule", "tax_rule_id"],
+      ["collateral_id", "Asset", "asset_id"],
     ] as const) {
       const raw = liability[field];
       if (raw === undefined || raw === null) continue;
@@ -379,12 +382,9 @@ export const compileLiabilities = (
       slots.push(`Liability:${id}:extra:${extraId}:primitive`, `Liability:${id}:extra:${extraId}:funding`);
     }
   }
-  const idsResult = generatedCompilerIds(model, slots, GENERATED_PREFIX);
+  const idsResult = generatedCompilerIds(model, slots, GENERATED_PREFIX, [...globalExtraIds]);
   if (idsResult.status !== "compiled") return idsResult;
   const generated = idsResult.value;
-  const generatedInstructionCollision = [...generated.values()].find((id) => globalExtraIds.has(id));
-  if (generatedInstructionCollision)
-    return invalidResult("GENERATED_ID_COLLISION", `Compiler-owned identity ${generatedInstructionCollision} collides with an execution instruction identity.`, "LiabilityExecutionProfile", generatedInstructionCollision, "extraPrincipalPayments.id", [generatedInstructionCollision]);
   const diagnostics: CapabilityDiagnostic[] = [];
   const inactiveLiabilityIds: string[] = [];
   const loans: FixedAmortizingLoan[] = [];
@@ -392,7 +392,7 @@ export const compileLiabilities = (
   const liabilityStates: AuthoritativeState["liabilities"] = {};
   const primitiveEntries: Record<string, PrimitiveRuntimeStateStore[string]> = {};
   const occurrenceSets = new Map<string, Set<string>>();
-  const fundingIds = new Map<string, string>();
+  const fundingIds = new Map<string, Set<string>>();
   const postingRounding = RoundingPolicy.currency(currency.minorUnitScale, "half_up");
 
   const gate = (value: CapabilityDiagnostic): void => {
@@ -408,22 +408,14 @@ export const compileLiabilities = (
     if (owner.value === "out_of_scope") continue;
     const originalPrincipal = exactMoney(liability.principal, currency)!;
     const currentPrincipal = exactMoney(liability.current_balance, currency)!;
-    if (currentPrincipal.isZero()) {
-      inactiveLiabilityIds.push(id);
-      continue;
-    }
-    const profile = profiles.get(id);
-    if (!profile) {
-      gate(diagnostic("LIABILITY_EXECUTION_PROFILE_REQUIRED", `Liability ${id} requires an explicit execution profile.`, "Liability", id, "executionProfile"));
-      continue;
-    }
     let supported = true;
     const reject = (value: CapabilityDiagnostic): void => {
       gate(value);
       supported = false;
     };
-    if (profile.kind !== "vs4_fixed_monthly_fully_amortizing")
-      reject(diagnostic("LIABILITY_RATE_CONVENTION_UNSUPPORTED", `Liability ${id} execution profile kind is unsupported.`, "LiabilityExecutionProfile", id, "kind"));
+    // Intrinsic capability gates deliberately precede the optional execution
+    // profile: callers must not have to configure an unsupported contract to
+    // learn why VS4 cannot execute it.
     if (liability.liability_type !== "mortgage")
       reject(diagnostic("LIABILITY_TYPE_UNSUPPORTED", `Liability ${id} type ${String(liability.liability_type)} is not supported by mortgage-specific VS4 accounting.`, "Liability", id, "liability_type"));
     if (liability.rate_type !== "fixed")
@@ -445,11 +437,23 @@ export const compileLiabilities = (
     if (canonicalExtra.isPositive())
       reject(diagnostic("LIABILITY_CONDITIONAL_EXTRA_PAYMENT_UNSUPPORTED", `Liability ${id} has a nonzero conditional canonical extra_payment without executable timing semantics.`, "Liability", id, "extra_payment"));
     const origination = utcDate(liability.origination_date)!;
+    if (origination > simulationStart)
+      reject(diagnostic("LIABILITY_FUTURE_ORIGINATION_UNSUPPORTED", `Liability ${id} originates after the forecast opening and requires issuance/new-draw semantics.`, "Liability", id, "origination_date"));
+    if (currentPrincipal.isZero() && origination <= simulationStart) {
+      inactiveLiabilityIds.push(id);
+      continue;
+    }
+    const profile = profiles.get(id);
+    if (!profile) {
+      if (supported)
+        gate(diagnostic("LIABILITY_EXECUTION_PROFILE_REQUIRED", `Liability ${id} requires an explicit execution profile.`, "Liability", id, "executionProfile"));
+      continue;
+    }
+    if (profile.kind !== "vs4_fixed_monthly_fully_amortizing")
+      reject(diagnostic("LIABILITY_RATE_CONVENTION_UNSUPPORTED", `Liability ${id} execution profile kind is unsupported.`, "LiabilityExecutionProfile", id, "kind"));
     const anchor = utcDate(profile.paymentAnchor)!;
     if (anchor < origination)
       return invalidResult("LIABILITY_PAYMENT_ANCHOR_INVALID", `Liability ${id} paymentAnchor cannot precede origination_date.`, "LiabilityExecutionProfile", id, "paymentAnchor", [id]);
-    if (origination > simulationStart)
-      reject(diagnostic("LIABILITY_FUTURE_ORIGINATION_UNSUPPORTED", `Liability ${id} originates after the forecast opening and requires issuance/new-draw semantics.`, "Liability", id, "origination_date"));
     const contractOccurrences = contractualOccurrences(anchor, profile.totalPayments);
     occurrenceSets.set(id, new Set(contractOccurrences));
     if (liability.maturity_date !== undefined && liability.maturity_date !== null) {
@@ -461,7 +465,11 @@ export const compileLiabilities = (
     if (priorOccurrences >= profile.totalPayments)
       reject(diagnostic("LIABILITY_POST_MATURITY_UNSUPPORTED", `Liability ${id} remains positive after all contractual occurrences.`, "Liability", id, "current_balance"));
     if (priorOccurrences === 0 && currentPrincipal.compare(originalPrincipal) < 0)
-      reject(diagnostic("LIABILITY_UNEXPLAINED_HISTORY_UNSUPPORTED", `Liability ${id} balance is below original principal before its first contractual payment.`, "Liability", id, "current_balance"));
+        reject(diagnostic("LIABILITY_UNEXPLAINED_HISTORY_UNSUPPORTED", `Liability ${id} balance is below original principal before its first contractual payment.`, "Liability", id, "current_balance"));
+    const annualRate = Rate.fromDecimal(String(liability.interest_rate), rateConvention.nominalAnnual(12));
+    const compatibleOpeningPrincipal = fixedMortgagePrincipalAfterPayments(originalPrincipal, annualRate, profile.totalPayments, priorOccurrences, postingRounding);
+    if (currentPrincipal.compare(compatibleOpeningPrincipal) > 0)
+      reject(diagnostic("LIABILITY_OPENING_HISTORY_UNSUPPORTED", `Liability ${id} current balance exceeds the fixed no-recast contractual balance at the forecast opening.`, "Liability", id, "current_balance"));
     let amortizationId: string;
     if (liability.amortization_model_id !== undefined && liability.amortization_model_id !== null) {
       amortizationId = String(liability.amortization_model_id).toLowerCase();
@@ -470,10 +478,13 @@ export const compileLiabilities = (
       const primitive = primitiveResult.value;
       if (primitive.enabled !== true)
         reject(diagnostic("LIABILITY_AMORTIZATION_PRIMITIVE_DISABLED", `Liability ${id} amortization PrimitiveInstance is disabled.`, "PrimitiveInstance", amortizationId, "enabled", [id]));
-      if (primitive.scenario_id !== selectedScenario.id)
+      if (String(primitive.scenario_id).toLowerCase() !== selectedScenario.id)
         reject(diagnostic("LIABILITY_AMORTIZATION_SCENARIO_UNSUPPORTED", `Liability ${id} amortization PrimitiveInstance is outside the selected Scenario.`, "PrimitiveInstance", amortizationId, "scenario_id", [selectedScenario.id]));
       if (primitive.primitive_id !== "P22")
         reject(diagnostic("LIABILITY_AMORTIZATION_PRIMITIVE_UNSUPPORTED", `Liability ${id} amortization PrimitiveInstance must be P22.`, "PrimitiveInstance", amortizationId, "primitive_id"));
+      const nonEmpty = (value: unknown): boolean => typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length > 0;
+      if (nonEmpty(primitive.input_bindings) || nonEmpty(primitive.parameters) || primitive.start_date !== undefined || primitive.end_date !== undefined)
+        reject(diagnostic("LIABILITY_AMORTIZATION_CONFIGURATION_UNSUPPORTED", `Liability ${id} authored P22 configuration is not inert.`, "PrimitiveInstance", amortizationId, "input_bindings", [id]));
     } else {
       amortizationId = generated.get(`Liability:${id}:amortization`)!;
     }
@@ -517,6 +528,9 @@ export const compileLiabilities = (
         continue;
       }
       const extraFundingId = (extra.fundingAccountId ?? profile.fundingAccountId).toLowerCase();
+      const extraFundingSources = fundingIds.get(id) ?? new Set<string>();
+      extraFundingSources.add(extraFundingId);
+      fundingIds.set(id, extraFundingSources);
       const extraAccount = accountById.get(extraFundingId)!;
       if (extraFundingId !== fundingAccountId) {
         const extraOwner = resolveOwnerScope(model, extraAccount.owner_id, scope, "Account", extraFundingId);
@@ -567,8 +581,9 @@ export const compileLiabilities = (
       allowPartial: false,
       insufficientFundsBehavior: "unfunded",
     });
-    fundingIds.set(id, fundingAccountId);
-    const annualRate = Rate.fromDecimal(String(liability.interest_rate), rateConvention.nominalAnnual(12));
+    const primaryFundingSources = fundingIds.get(id) ?? new Set<string>();
+    primaryFundingSources.add(fundingAccountId);
+    fundingIds.set(id, primaryFundingSources);
     loans.push(Object.freeze({
       id: loanId,
       ownerId: domainId(ownerId === scope.householdId ? "household" : "person", ownerId),
@@ -628,7 +643,9 @@ export const compileLiabilities = (
       const bCanonical = allLiabilities.find((item) => canonicalId(item, "liability_id") === b.principalLiabilityId)!;
       const aId = canonicalId(aCanonical, "liability_id")!;
       const bId = canonicalId(bCanonical, "liability_id")!;
-      if (fundingIds.get(aId) !== fundingIds.get(bId) || a.settlementPriority !== b.settlementPriority) continue;
+      const aFunding = fundingIds.get(aId) ?? new Set<string>();
+      const bFunding = fundingIds.get(bId) ?? new Set<string>();
+      if (![...aFunding].some((accountId) => bFunding.has(accountId)) || a.settlementPriority !== b.settlementPriority) continue;
       const overlap = [...occurrenceSets.get(aId)!].some((at) => occurrenceSets.get(bId)!.has(at));
       if (!overlap) continue;
       gate(diagnostic("LIABILITY_SETTLEMENT_PRIORITY_CONFLICT", `Liabilities ${aId} and ${bId} share funding at the same occurrence with duplicate priority.`, "LiabilityExecutionProfile", aId, "settlementPriority", [bId]));
