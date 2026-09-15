@@ -15,6 +15,7 @@ import { createRunContext, runId, scenarioId } from "../simulation/run.js";
 import { compareVerticalSlice2Scenarios } from "../simulation/scenario.js";
 import { runVerticalSlice2 } from "../simulation/verticalSlice2.js";
 import { runVerticalSlice4 } from "../simulation/verticalSlice4.js";
+import type { ConstraintOutcome } from "../funding/index.js";
 import {
   instant,
   utcDateOnlyInstant,
@@ -124,8 +125,8 @@ export interface LiabilityOccurrenceReadModel {
   readonly extraPrincipalPaid: MoneyReadModel;
   readonly endingPrincipal: MoneyReadModel;
   readonly outstandingInterest: MoneyReadModel;
-  readonly scheduledFundingStatus: string;
-  readonly extraFundingStatus?: string;
+  readonly scheduledFundingStatus: ConstraintOutcome["status"];
+  readonly extraFundingStatus?: ConstraintOutcome["status"];
   readonly traceIds: readonly string[];
 }
 export interface LiabilityPeriodTotalReadModel {
@@ -141,23 +142,35 @@ export interface LiabilityPayoffReadModel {
   readonly loanId: string;
   readonly scheduledAt: string;
 }
-export interface PersonalForecastReadModel {
+interface ForecastBoundary {
   readonly scope: "cash_flow" | "investments" | "liabilities";
-  readonly status: "completed" | "incomplete" | "unavailable";
-  readonly message?: string;
   readonly asOf: string;
   readonly dataCutoff: string;
   readonly simulationStart: string;
   readonly simulationEnd: string;
   readonly actualHistoryAvailable: false;
+  readonly diagnostics: readonly (ValidationIssue | CapabilityDiagnostic)[];
+}
+export interface UnavailablePersonalForecastReadModel extends ForecastBoundary {
+  readonly status: "unavailable";
+  readonly message: string;
+}
+export interface CashPersonalForecastReadModel extends ForecastBoundary {
+  readonly scope: "cash_flow";
+  readonly status: "completed" | "incomplete";
   readonly points: readonly ForecastPoint[];
+  readonly shortfalls: readonly ShortfallReadModel[];
+}
+export interface LiabilityPersonalForecastReadModel extends ForecastBoundary {
+  readonly scope: "liabilities";
+  readonly status: "completed" | "incomplete";
   readonly shortfalls: readonly ShortfallReadModel[];
   readonly liabilityOccurrences: readonly LiabilityOccurrenceReadModel[];
   readonly liabilityPeriodTotals: readonly LiabilityPeriodTotalReadModel[];
   readonly liabilityPayoffs: readonly LiabilityPayoffReadModel[];
   readonly inactiveLiabilityIds: readonly string[];
-  readonly diagnostics: readonly (ValidationIssue | CapabilityDiagnostic)[];
 }
+export type PersonalForecastReadModel = UnavailablePersonalForecastReadModel | CashPersonalForecastReadModel | LiabilityPersonalForecastReadModel;
 export interface ForecastRequest {
   readonly scope: "cash_flow" | "investments" | "liabilities";
   readonly baseCurrency: string;
@@ -550,22 +563,24 @@ export const getCurrentPosition = (
   });
 };
 
+const forecastBoundary = (request: ForecastRequest): ForecastBoundary => ({
+  scope: request.scope,
+  asOf: request.asOf,
+  dataCutoff: request.dataCutoff,
+  simulationStart: request.simulationStart,
+  simulationEnd: request.simulationEnd,
+  actualHistoryAvailable: false,
+  diagnostics: [],
+});
 const unavailableForecast = (
   request: ForecastRequest,
   message: string,
   diagnostics: readonly (ValidationIssue | CapabilityDiagnostic)[] = [],
 ): PersonalForecastReadModel =>
   deepFreeze({
-    ...request,
-    actualHistoryAvailable: false as const,
+    ...forecastBoundary(request),
     status: "unavailable" as const,
     message,
-    points: [],
-    shortfalls: [],
-    liabilityOccurrences: [],
-    liabilityPeriodTotals: [],
-    liabilityPayoffs: [],
-    inactiveLiabilityIds: [],
     diagnostics,
   });
 const iso = (date: string) => instant(`${date}T00:00:00.000Z`);
@@ -669,11 +684,11 @@ export const runPersonalForecast = (
       const compiled = compilation.value;
       if (compiled.input.loans.length === 0)
         return deepFreeze({
-          ...request,
+          ...forecastBoundary(request),
+          scope: "liabilities" as const,
           status: "completed" as const,
           asOf: iso(request.asOf),
           actualHistoryAvailable: false as const,
-          points: [],
           shortfalls: [],
           liabilityOccurrences: [],
           liabilityPeriodTotals: [],
@@ -698,18 +713,10 @@ export const runPersonalForecast = (
         primitiveState: compiled.primitiveState,
         months: compiled.executionMonths,
       });
-      const loanById = new Map(compiled.input.loans.map((loan) => [loan.id, loan]));
       const occurrences = result.periods.flatMap((period) =>
         period.liabilities.map((value) => {
-          const loan = loanById.get(value.loanId)!;
-          const relatedIds = new Set([loan.principalLiabilityId, loan.interestPayableLiabilityId]);
-          const traceIds = [...new Set(period.transactions
-            .filter((transaction) => transaction.legs.some((leg) => leg.type === "liability" && relatedIds.has(leg.entityId)))
-            .flatMap((transaction) => transaction.traceRefs ?? []))]
-            .map((ref) => ref.traceId)
-            .sort();
           return {
-            liabilityId: loan.principalLiabilityId,
+            liabilityId: compiled.input.loans.find((loan) => loan.id === value.loanId)!.principalLiabilityId,
             loanId: value.loanId,
             periodStart: period.period.start,
             periodEnd: period.period.end,
@@ -724,12 +731,12 @@ export const runPersonalForecast = (
             outstandingInterest: moneyDto(value.outstandingInterest),
             scheduledFundingStatus: value.scheduledFundingStatus,
             ...(value.extraFundingStatus === undefined ? {} : { extraFundingStatus: value.extraFundingStatus }),
-            traceIds: Object.freeze(traceIds),
+            traceIds: Object.freeze(value.traceRefs.map((ref) => ref.traceId).sort()),
           };
         }),
       );
       const payoffs = compiled.input.loans.flatMap((loan) => {
-        const point = occurrences.find((value) => value.loanId === loan.id && value.endingPrincipal.exact === "0" && value.outstandingInterest.exact === "0");
+        const point = result.periods.flatMap((period) => period.liabilities).find((value) => value.loanId === loan.id && value.endingPrincipal.isZero() && value.outstandingInterest.isZero());
         return point === undefined ? [] : [{ liabilityId: loan.principalLiabilityId, loanId: loan.id, scheduledAt: point.scheduledAt }];
       });
       const shortfalls = result.periods.flatMap((period) => period.liquidityShortfalls.map((shortfall) => ({
@@ -741,11 +748,10 @@ export const runPersonalForecast = (
         diagnostic: "Insufficient modeled liquidity; VS4 left the debt-service proposal unfunded.",
       })));
       return deepFreeze({
-        ...request,
+        ...forecastBoundary(request),
+        scope: "liabilities" as const,
         status: result.status,
         asOf: runContext.asOf,
-        actualHistoryAvailable: false as const,
-        points: [],
         shortfalls,
         liabilityOccurrences: occurrences,
         liabilityPeriodTotals: result.periods.map((period) => ({
@@ -832,10 +838,6 @@ export const runPersonalForecast = (
       actualHistoryAvailable: false,
       points,
       shortfalls,
-      liabilityOccurrences: [],
-      liabilityPeriodTotals: [],
-      liabilityPayoffs: [],
-      inactiveLiabilityIds: [],
       diagnostics: Object.freeze([
         ...compilation.diagnostics,
         ...result.diagnostics,
@@ -1078,7 +1080,8 @@ export const createSyntheticPersonalDraft = (): PersonalDraft => {
     liability_type: "mortgage",
     owner_id: ids.household,
     principal: "240000.00",
-    current_balance: "235000.00",
+    // Matches the no-recast P22/VS4 balance at the synthetic opening boundary.
+    current_balance: "225669.71",
     interest_rate: "0.0525",
     origination_date: "2022-01-01",
     maturity_date: "2052-01-01",
