@@ -467,8 +467,15 @@ export const compileCurrentPosition = (
         id,
         "asset_type",
       );
+    const acquired =
+      asset.acquisition_date === undefined || asset.acquisition_date === null
+        ? undefined
+        : utcDate(asset.acquisition_date);
+    const sold =
+      asset.sale_date === undefined || asset.sale_date === null
+        ? undefined
+        : utcDate(asset.sale_date);
     if (asset.acquisition_date !== undefined && asset.acquisition_date !== null) {
-      const acquired = utcDate(asset.acquisition_date);
       if (!acquired)
         return invalidResult(
           "DATE_INVALID",
@@ -477,10 +484,8 @@ export const compileCurrentPosition = (
           id,
           "acquisition_date",
         );
-      if (acquired > asOf) continue;
     }
     if (asset.sale_date !== undefined && asset.sale_date !== null) {
-      const sold = utcDate(asset.sale_date);
       if (!sold)
         return invalidResult(
           "DATE_INVALID",
@@ -489,7 +494,17 @@ export const compileCurrentPosition = (
           id,
           "sale_date",
         );
-      if (sold <= asOf) {
+    }
+    if (acquired !== undefined && sold !== undefined && sold < acquired)
+      return invalidResult(
+        "ASSET_TEMPORAL_INTERVAL_INVALID",
+        `Asset ${id} sale_date cannot precede acquisition_date.`,
+        "Asset",
+        id,
+        "sale_date",
+      );
+    if (acquired !== undefined && acquired > asOf) continue;
+    if (sold !== undefined && sold <= asOf) {
         assetsComplete = false;
         diagnostics.push(
           diagnostic(
@@ -501,8 +516,7 @@ export const compileCurrentPosition = (
             "sale_date",
           ),
         );
-        continue;
-      }
+      continue;
     }
     if (!ASSET_VALUATION_METHODS.includes(asset.valuation_method as never))
       return invalidResult("ASSET_VALUATION_METHOD_INVALID", `Asset ${id} valuation_method is not canonical.`, "Asset", id, "valuation_method");

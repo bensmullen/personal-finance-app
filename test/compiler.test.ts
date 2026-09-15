@@ -1151,4 +1151,49 @@ describe("canonical executable-model compiler", () => {
     expect(source.status).toBe("invalid_model");
     expect(destination.status).toBe("invalid_model");
   });
+
+  it("gates generic disabled and non-P08 primitives before P08-only bindings", () => {
+    const nonP08 = compileCashFlow(modelWith((value) => {
+      Object.assign(value.objects.PrimitiveInstance![0]!, {
+        primitive_id: "P23",
+        input_bindings: {},
+        parameters: {},
+      });
+    }), request);
+    const disabled = compileCashFlow(modelWith((value) => {
+      Object.assign(value.objects.PrimitiveInstance![0]!, {
+        enabled: false,
+        input_bindings: { source: "generic" },
+        parameters: {},
+      });
+    }), request);
+    expect(nonP08.status).toBe("unsupported");
+    expect(disabled.status).toBe("unsupported");
+  });
+
+  it("preflights malformed streams before payment and Scenario capability gates", () => {
+    const missingPayment = compileCashFlow(modelWith((value) => {
+      value.objects.Expense![0]!.payment_account_id = null;
+      value.objects.Income![0]!.amount = "bad";
+    }), request);
+    const stochastic = compileCashFlow(modelWith((value) => {
+      value.objects.Scenario![0]!.stochastic = true;
+      value.objects.Income![0]!.growth_model_id = "bad";
+    }), request);
+    expect(missingPayment.status).toBe("invalid_model");
+    expect(stochastic.status).toBe("invalid_model");
+  });
+
+  it("validates Asset acquisition and sale ordering before holding capability gates", () => {
+    const invalid = compileCurrentPosition(modelWith((value) => {
+      value.objects.Asset![0]!.acquisition_date = "2026-06-01";
+      value.objects.Asset![0]!.sale_date = "2026-05-01";
+    }), { baseCurrency: "USD", asOf: "2026-01-01" });
+    const sold = compileCurrentPosition(modelWith((value) => {
+      value.objects.Asset![0]!.sale_date = "2025-01-01";
+    }), { baseCurrency: "USD", asOf: "2026-01-01" });
+    expect(invalid.status).toBe("invalid_model");
+    expect(sold.status).toBe("compiled");
+    if (sold.status === "compiled") expect(sold.value.diagnostics).toContainEqual(expect.objectContaining({ code: "ASSET_SALE_RECONCILIATION_UNSUPPORTED" }));
+  });
 });

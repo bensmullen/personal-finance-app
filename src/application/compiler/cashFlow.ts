@@ -430,12 +430,24 @@ export const resolveGrowth = (
     primitive.parameters !== undefined && primitive.parameters !== null &&
     Object.keys(primitive.parameters as CanonicalObject).length > 0;
   const bindings = primitive.input_bindings;
+  if (typeof bindings !== "object" || bindings === null || Array.isArray(bindings))
+    return invalidResult(
+      "GROWTH_BINDINGS_INVALID",
+      `PrimitiveInstance ${growthId} input_bindings must be an object.`,
+      "PrimitiveInstance",
+      growthId,
+      "input_bindings",
+    );
+  if (primitiveDisabled || primitiveUnsupported)
+    return unsupportedResult(
+      "GROWTH_PRIMITIVE_UNSUPPORTED",
+      `${streamType} ${streamId} requires an enabled P08 growth PrimitiveInstance.`,
+      "PrimitiveInstance",
+      growthId,
+      primitiveDisabled ? "enabled" : "primitive_id",
+    );
   const rateRef =
-    typeof bindings === "object" &&
-    bindings !== null &&
-    !Array.isArray(bindings)
-      ? (bindings as CanonicalObject).rate
-      : undefined;
+    (bindings as CanonicalObject).rate;
   if (typeof rateRef !== "string" || !UUID.test(rateRef))
     return invalidResult(
       "GROWTH_RATE_BINDING_INVALID",
@@ -584,8 +596,6 @@ export const resolveGrowth = (
       rateConvention.effectiveAnnual(),
     );
     assertGeometricGrowthRate(rate);
-    if (primitiveDisabled || primitiveUnsupported)
-      return unsupportedResult("GROWTH_PRIMITIVE_UNSUPPORTED", `${streamType} ${streamId} requires an enabled P08 growth PrimitiveInstance.`, "PrimitiveInstance", growthId, primitiveDisabled ? "enabled" : "primitive_id");
     if (primitiveScenarioMismatch)
       return unsupportedResult("GROWTH_SCENARIO_MISMATCH_UNSUPPORTED", `PrimitiveInstance ${growthId} belongs to a different valid Scenario.`, "PrimitiveInstance", growthId, "scenario_id", [selected.id, primitiveScenarioId]);
     if (primitiveBounded)
@@ -696,17 +706,6 @@ export const compileCashFlow = (
       undefined,
       "sameInstantCashFlowOrder",
     );
-  if (scope.memberIds.length !== 1)
-    return unsupportedResult(
-      "CASH_FLOW_OWNER_AMBIGUOUS",
-      `VS2 cash-flow compilation requires exactly one Household member Person; found ${scope.memberIds.length}.`,
-      "Household",
-      scope.householdId,
-      "members",
-    );
-  const scenarioResult = selectScenario(model);
-  if (scenarioResult.status !== "compiled") return scenarioResult;
-  const selected = scenarioResult.value;
   const simulationStart = utcDate(request.simulationStart);
   const simulationEnd = utcDate(request.simulationEnd);
   if (!simulationStart || !simulationEnd || simulationStart >= simulationEnd)
@@ -774,6 +773,83 @@ export const compileCashFlow = (
       return invalidResult("ACCOUNT_TYPE_INVALID", `Account ${id} account_type is not canonical.`, "Account", id, "account_type");
   }
   const accounts = allAccounts.filter((account) => ownerInScope(account.owner_id, scope));
+  const allIncomes = objects(model, "Income");
+  const allExpenses = objects(model, "Expense");
+  /** Generic primitive shape is shared by preflight and P08-specific growth binding. */
+  const validateGenericPrimitive = (
+    primitiveId: string,
+    entityType: "Income" | "Expense",
+    entityId: string,
+    fieldPath: string,
+  ): Extract<CompileResult<never>, { readonly status: "invalid_model" }> | undefined => {
+    const primitive = objects(model, "PrimitiveInstance").find(
+      (item) => canonicalId(item, "primitive_instance_id") === primitiveId,
+    );
+    if (!primitive) return invalidResult("GROWTH_MODEL_REFERENCE_NOT_FOUND", `${entityType} ${entityId} ${fieldPath} does not resolve to a PrimitiveInstance.`, entityType, entityId, fieldPath, [primitiveId]);
+    if (typeof primitive.enabled !== "boolean") return invalidResult("GROWTH_PRIMITIVE_ENABLED_INVALID", `PrimitiveInstance ${primitiveId} enabled must be a boolean.`, "PrimitiveInstance", primitiveId, "enabled");
+    if (typeof primitive.primitive_id !== "string" || !isPrimitiveId(primitive.primitive_id)) return invalidResult("GROWTH_PRIMITIVE_ID_INVALID", `PrimitiveInstance ${primitiveId} primitive_id must identify a registered primitive.`, "PrimitiveInstance", primitiveId, "primitive_id");
+    const primitiveScenario = primitive.scenario_id;
+    if (typeof primitiveScenario !== "string" || !UUID.test(primitiveScenario) || !objects(model, "Scenario").some((scenario) => canonicalId(scenario, "scenario_id") === primitiveScenario.toLowerCase())) return invalidResult("GROWTH_SCENARIO_BINDING_INVALID", `PrimitiveInstance ${primitiveId} scenario_id must resolve to a Scenario UUID.`, "PrimitiveInstance", primitiveId, "scenario_id");
+    if (typeof primitive.input_bindings !== "object" || primitive.input_bindings === null || Array.isArray(primitive.input_bindings)) return invalidResult("GROWTH_BINDINGS_INVALID", `PrimitiveInstance ${primitiveId} input_bindings must be an object.`, "PrimitiveInstance", primitiveId, "input_bindings");
+    if (primitive.parameters !== undefined && primitive.parameters !== null && (typeof primitive.parameters !== "object" || Array.isArray(primitive.parameters))) return invalidResult("GROWTH_PARAMETERS_INVALID", `PrimitiveInstance ${primitiveId} parameters must be an object.`, "PrimitiveInstance", primitiveId, "parameters");
+    for (const dateField of ["start_date", "end_date"] as const)
+      if (primitive[dateField] !== undefined && primitive[dateField] !== null && !utcDate(primitive[dateField])) return invalidResult("DATE_INVALID", `PrimitiveInstance ${primitiveId} ${dateField} is invalid.`, "PrimitiveInstance", primitiveId, dateField);
+    return undefined;
+  };
+  const preflightStreams = (
+    type: "Income" | "Expense",
+    streams: readonly CanonicalObject[],
+  ): Extract<CompileResult<never>, { readonly status: "invalid_model" }> | undefined => {
+    for (const stream of streams) {
+      const id = canonicalId(stream, `${type.toLowerCase()}_id`)!;
+      const owner = resolveOwnerScope(model, stream.owner_id, scope, type, id);
+      if (owner.status !== "compiled") {
+        if (owner.status === "invalid_model") return owner;
+        continue;
+      }
+      if (owner.value === "out_of_scope") continue;
+      if (typeof stream.amount !== "string" || !EXACT_DECIMAL.test(stream.amount)) return invalidResult("EXACT_DECIMAL_INVALID", `${type} ${id} amount must be an exact decimal string.`, type, id, "amount");
+      try { if (money(stream.amount, currency).isNegative()) return invalidResult("DOMAIN_VALUE_INVALID", `${type} ${id} amount cannot be negative.`, type, id, "amount"); } catch { return invalidResult("DOMAIN_VALUE_INVALID", `${type} ${id} amount is invalid.`, type, id, "amount"); }
+      if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never)) return invalidResult("RECURRENCE_INVALID", `${type} ${id} frequency is not canonical.`, type, id, "frequency");
+      const start = utcDate(stream.start_date);
+      const end = stream.end_date === undefined || stream.end_date === null ? undefined : nextUtcDate(typeof stream.end_date === "string" ? stream.end_date : "");
+      if (!start || (stream.end_date !== undefined && stream.end_date !== null && !end)) return invalidResult("DATE_INVALID", `${type} ${id} has invalid dates.`, type, id, "start_date");
+      if (end !== undefined && end <= start) return invalidResult("TEMPORAL_INTERVAL_INVALID", `${type} ${id} inclusive end_date precedes start_date.`, type, id, "end_date");
+      const growth = stream.growth_model_id;
+      if (growth !== undefined && growth !== null) {
+        if (typeof growth !== "string" || !UUID.test(growth)) return invalidResult("GROWTH_MODEL_REFERENCE_INVALID", `${type} ${id} growth_model_id must be a UUID.`, type, id, "growth_model_id");
+        const invalidPrimitive = validateGenericPrimitive(growth.toLowerCase(), type, id, "growth_model_id");
+        if (invalidPrimitive) return invalidPrimitive;
+      }
+      for (const field of type === "Income" ? ["probability_model_id", "related_event_id"] as const : ["event_trigger_id"] as const) {
+        const raw = stream[field];
+        if (raw === undefined || raw === null) continue;
+        if (typeof raw !== "string" || !UUID.test(raw)) return invalidResult("EVENT_BINDING_INVALID", `${type} ${id} ${field} must be a UUID.`, type, id, field);
+        const collection = field === "probability_model_id" ? "PrimitiveInstance" : "Event";
+        const idField = field === "probability_model_id" ? "primitive_instance_id" : "event_id";
+        if (!objects(model, collection).some((item) => canonicalId(item, idField) === raw.toLowerCase())) return invalidResult("EVENT_BINDING_REFERENCE_NOT_FOUND", `${type} ${id} ${field} does not resolve.`, type, id, field);
+      }
+      if (type === "Expense" && stream.payment_account_id !== undefined && stream.payment_account_id !== null) {
+        if (typeof stream.payment_account_id !== "string" || !UUID.test(stream.payment_account_id) || !accountIds.has(stream.payment_account_id.toLowerCase())) return invalidResult("PAYMENT_ACCOUNT_REFERENCE_INVALID", `Expense ${id} payment_account_id must resolve to an Account UUID.`, type, id, "payment_account_id");
+      }
+    }
+    return undefined;
+  };
+  const incomePreflight = preflightStreams("Income", allIncomes);
+  if (incomePreflight) return incomePreflight;
+  const expensePreflight = preflightStreams("Expense", allExpenses);
+  if (expensePreflight) return expensePreflight;
+  const scenarioResult = selectScenario(model);
+  if (scenarioResult.status !== "compiled") return scenarioResult;
+  const selected = scenarioResult.value;
+  if (scope.memberIds.length !== 1)
+    return unsupportedResult(
+      "CASH_FLOW_OWNER_AMBIGUOUS",
+      `VS2 cash-flow compilation requires exactly one Household member Person; found ${scope.memberIds.length}.`,
+      "Household",
+      scope.householdId,
+      "members",
+    );
   for (const expense of objects(model, "Expense")) {
     const expenseId = canonicalId(expense, "expense_id")!;
     const expenseOwner = resolveOwnerScope(model, expense.owner_id, scope, "Expense", expenseId);
@@ -912,8 +988,6 @@ export const compileCashFlow = (
       accountId,
     );
 
-  const allIncomes = objects(model, "Income");
-  const allExpenses = objects(model, "Expense");
   const incomes = allIncomes.filter((stream) =>
     ownerInScope(stream.owner_id, scope),
   );
