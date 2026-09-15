@@ -51,6 +51,23 @@ export const instant = (value: string): Instant => {
   return value as Instant;
 };
 
+/** Converts a canonical date-only value to its UTC midnight instant. */
+export const utcDateOnlyInstant = (value: string): Instant | undefined => {
+  try {
+    civilDate(value);
+    return instant(`${value}T00:00:00.000Z`);
+  } catch {
+    return undefined;
+  }
+};
+
+/** Converts an inclusive canonical date-only end to an exclusive UTC boundary. */
+export const nextUtcDateOnlyInstant = (value: string): Instant | undefined => {
+  const start = utcDateOnlyInstant(value);
+  if (!start) return undefined;
+  return instant(new Date(Date.parse(start) + 86_400_000).toISOString());
+};
+
 export interface Period {
   readonly start: Instant;
   readonly end: Instant;
@@ -146,6 +163,42 @@ export const utcMonthlyOccurrences = (
     if (candidate >= anchor && inPeriod(candidate, target)) occurrences.push(candidate);
   }
   return Object.freeze(occurrences);
+};
+
+/** Latest valid UTC monthly occurrence at or before an as-of instant. */
+export const utcLatestMonthlyOccurrenceAtOrBefore = (
+  anchor: Instant,
+  asOf: Instant,
+  invalidDayPolicy: InvalidUtcMonthlyDayPolicy,
+): Instant | undefined => {
+  if (invalidDayPolicy !== "skip") throw new Error("Unsupported invalid UTC monthly day policy");
+  const anchorDate = new Date(anchor);
+  const asOfDate = new Date(asOf);
+  let year = asOfDate.getUTCFullYear();
+  let month = asOfDate.getUTCMonth();
+  if (asOfDate.getUTCDate() < anchorDate.getUTCDate()) {
+    month -= 1;
+    if (month < 0) { month = 11; year -= 1; }
+  }
+  const candidateDate = new Date(Date.UTC(
+    year, month, anchorDate.getUTCDate(), anchorDate.getUTCHours(),
+    anchorDate.getUTCMinutes(), anchorDate.getUTCSeconds(), anchorDate.getUTCMilliseconds(),
+  ));
+  if (candidateDate.getUTCFullYear() !== year || candidateDate.getUTCMonth() !== month) return undefined;
+  const candidate = instant(candidateDate.toISOString());
+  return candidate >= anchor && candidate <= asOf ? candidate : undefined;
+};
+
+/** Validates that a UTC monthly period plan ends exactly at the requested boundary. */
+export const utcMonthlyHorizonMonths = (start: Instant, end: Instant): number | undefined => {
+  try {
+    const months = utcMonthDifference(start, end);
+    if (months <= 0) return undefined;
+    const periods = utcMonthlyPeriods(start, months);
+    return periods[periods.length - 1]!.end === end ? months : undefined;
+  } catch {
+    return undefined;
+  }
 };
 
 export const subtractMilliseconds = (value: Instant, milliseconds: number): Instant => {

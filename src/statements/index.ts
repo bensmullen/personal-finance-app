@@ -25,6 +25,26 @@ export interface VerticalSliceStatements {
   readonly operatingCashFlow: Money;
 }
 
+export interface CurrentPositionTotals {
+  readonly cash: Money;
+  readonly assets: Money;
+  readonly liabilities: Money;
+  readonly netWorth: Money;
+}
+
+/** Accounting authority for static current-position balance-sheet aggregation. */
+export const deriveCurrentPositionTotals = (
+  cashBalances: readonly Money[],
+  nonCashAssetValues: readonly Money[],
+  liabilityBalances: readonly Money[],
+  currency: Currency,
+): CurrentPositionTotals => {
+  const cash = sumMoney(cashBalances, currency);
+  const assets = cash.plus(sumMoney(nonCashAssetValues, currency));
+  const liabilities = sumMoney(liabilityBalances, currency);
+  return Object.freeze({ cash, assets, liabilities, netWorth: assets.minus(liabilities) });
+};
+
 const totalByLeg = (
   transactions: readonly AccountingTransaction[],
   currency: Currency,

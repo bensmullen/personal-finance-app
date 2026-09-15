@@ -35,6 +35,7 @@ import {
   getCurrentPosition,
   getPersonalEditorMetadata,
   importPersonalModelJson,
+  isForecastStartDate,
   migratePersonalModelVersion,
   patchPersonalObject,
   comparePersonalCashFlowPlans,
@@ -249,7 +250,12 @@ const setupSchema = z.object({
   debt: z.string().regex(/^\d+(\.\d+)?$/),
   spending: z.string().regex(/^\d+(\.\d+)?$/),
   horizon: z.string().regex(/^(?:[1-9]|[1-3][0-9]|40)$/),
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a start date"),
+  startDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a start date")
+    .refine(isForecastStartDate, {
+      message: "Forecast start must be the first day of a month.",
+    }),
 });
 type SetupValues = z.infer<typeof setupSchema>;
 const randomId = () => crypto.randomUUID();
@@ -310,9 +316,15 @@ export function PersonalFinanceApp() {
   const position = useMemo(
     () =>
       draft
-        ? getCurrentPosition(draft, sessionSettings.baseCurrency)
+        ? getCurrentPosition(
+            draft,
+            {
+              baseCurrency: sessionSettings.baseCurrency,
+              asOf: sessionSettings.asOf,
+            },
+          )
         : undefined,
-    [draft, sessionSettings.baseCurrency],
+    [draft, sessionSettings.baseCurrency, sessionSettings.asOf],
   );
   const issues = useMemo(
     () => (draft ? validatePersonalDraft(draft) : []),
@@ -386,7 +398,7 @@ export function PersonalFinanceApp() {
     }
     setRunSettingsError("");
     setComparison(
-      comparePersonalCashFlowPlans(draft, resolved.request, "0.03"),
+      comparePersonalCashFlowPlans(draft, resolved.request, "0.05"),
     );
     navigate("Plan");
     setSubnav("Compare Plans");
@@ -577,7 +589,11 @@ function SetupWizard({
       field: "cash",
       label: "Opening cash balance",
     },
-    { title: "Home & other assets", field: "asset", label: "Asset value" },
+    {
+      title: "Home & other assets",
+      field: "asset",
+      label: "Asset cost basis",
+    },
     { title: "Debts", field: "debt", label: "Current debt" },
     { title: "Spending", field: "spending", label: "Monthly spending" },
     {
@@ -933,7 +949,7 @@ function WhatIfStarter({ onCompare }: { onCompare: () => void }) {
       <section className="panel">
         <div className="panel-head">
           <div>
-            <h2>What if income grows 3% per year?</h2>
+            <h2>What if income grows 5% instead of 3% per year?</h2>
             <p>
               Uses the existing cash-flow scenario engine and an exact
               effective-annual rate.
@@ -1137,6 +1153,24 @@ function ModelSettings({
             value={settings.simulationEnd}
             onChange={(event) => update("simulationEnd", event.target.value)}
           />
+        </label>
+        <label>
+          Same-time cash-flow order
+          <select
+            aria-label="Same-time cash-flow order"
+            value={settings.sameInstantCashFlowOrder}
+            onChange={(event) =>
+              setSettings((current) => ({
+                ...current,
+                sameInstantCashFlowOrder: event.target.value as
+                  | "income_before_expense"
+                  | "expense_before_income",
+              }))
+            }
+          >
+            <option value="income_before_expense">Income before expense</option>
+            <option value="expense_before_income">Expense before income</option>
+          </select>
         </label>
         <label>
           Default horizon
