@@ -88,6 +88,8 @@ export const createPrimitiveRuntimeStateStore = (
         case "P26": return Number.isSafeInteger(entry.state.evaluations) && entry.state.evaluations >= 0
           && (entry.state.evaluations === 0) === (entry.state.lastMarketValue === undefined)
           && (entry.state.lastMarketValue === undefined || (entry.state.lastMarketValue instanceof Money && !entry.state.lastMarketValue.isNegative()));
+        // A seeded resume state may lack a historical checkpoint; P24 writes
+        // lastAccruedAmount on every real evaluation, so omission never means zero interest.
         case "P24": return Number.isSafeInteger(entry.state.evaluations) && entry.state.evaluations >= 0
           && (entry.state.evaluations !== 0 || entry.state.lastAccruedAmount === undefined)
           && (entry.state.lastAccruedAmount === undefined || (entry.state.lastAccruedAmount instanceof Money && !entry.state.lastAccruedAmount.isNegative()));
