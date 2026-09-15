@@ -110,6 +110,10 @@ export const PAYMENT_FREQUENCIES = Object.freeze([
 export const ASSET_VALUATION_METHODS = Object.freeze([
   "market", "appraisal", "cost", "formula", "custom",
 ] as const);
+export const ASSET_TYPES = Object.freeze([
+  "cash", "investment", "real_estate", "vehicle", "business",
+  "personal_property", "other",
+] as const);
 export const ASSUMPTION_CATEGORIES = Object.freeze([
   "inflation", "market_return", "salary_growth", "longevity", "healthcare",
   "tax", "housing", "employment", "demographic", "interest_rate",
@@ -224,6 +228,19 @@ export const resolveHouseholdScope = (
         issue(
           "HOUSEHOLD_MEMBERS_INVALID",
           "Household members must be an array of Person UUIDs.",
+          "Household",
+          householdId,
+          "members",
+        ),
+      ]),
+    };
+  if (household.members.length === 0)
+    return {
+      status: "invalid_model",
+      diagnostics: Object.freeze([
+        issue(
+          "HOUSEHOLD_MEMBERS_EMPTY",
+          "Household members must contain at least one Person UUID.",
           "Household",
           householdId,
           "members",
@@ -517,7 +534,7 @@ export const inspectAccountBalanceBehavior = (
       "destination_account_id",
     ] as const) {
       const raw = transaction[field];
-      if (raw === undefined || raw === null || raw === "") continue;
+      if (raw === undefined || raw === null) continue;
       if (typeof raw !== "string" || !UUID.test(raw))
         return {
           status: "invalid_model",

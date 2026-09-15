@@ -1098,4 +1098,57 @@ describe("canonical executable-model compiler", () => {
     expect(malformed.status).toBe("invalid_model");
     expect(duplicate.status).toBe("invalid_model");
   });
+
+  it("lets malformed execution fields dominate unsupported stream behavior regardless of order", () => {
+    const result = (reverse: boolean) => compileCashFlow(modelWith((value) => {
+      const unsupported = { ...value.objects.Income![0]!, income_id: "91000000-0000-4000-8000-000000000090", frequency: "weekly" };
+      const malformed = { ...value.objects.Income![0]!, income_id: "91000000-0000-4000-8000-000000000091", amount: "bad" };
+      value.objects.Income = reverse ? [malformed, unsupported] : [unsupported, malformed];
+    }), request);
+    expect(result(false).status).toBe("invalid_model");
+    expect(result(true).status).toBe("invalid_model");
+  });
+
+  it("validates selected Scenario invariants before capability gates", () => {
+    const selfInheritance = compileCashFlow(modelWith((value) => {
+      value.objects.Scenario![0]!.base_scenario_id = value.objects.Scenario![0]!.scenario_id;
+    }), request);
+    const omittedMembership = compileCashFlow(modelWith((value) => {
+      delete value.objects.Scenario![0]!.assumption_ids;
+    }), request);
+    expect(selfInheritance.status).toBe("invalid_model");
+    expect(omittedMembership.status).toBe("unsupported");
+    if (omittedMembership.status === "unsupported") expect(omittedMembership.diagnostics[0]!.code).toBe("SCENARIO_ASSUMPTION_MEMBERSHIP_UNSUPPORTED");
+  });
+
+  it("rejects empty Household membership at both compiler boundaries", () => {
+    const draft = modelWith((value) => { value.objects.Household![0]!.members = []; });
+    expect(compileCashFlow(draft, request).status).toBe("invalid_model");
+    expect(compileCurrentPosition(draft, { baseCurrency: "USD", asOf: "2026-01-01" }).status).toBe("invalid_model");
+  });
+
+  it("does not preflight unrelated PrimitiveInstances for plain cost Assets", () => {
+    const result = compileCurrentPosition(modelWith((value) => {
+      delete value.objects.Income![0]!.growth_model_id;
+      value.objects.Scenario = [];
+      value.objects.Assumption = [];
+      value.objects.PrimitiveInstance!.push("malformed" as never);
+    }), { baseCurrency: "USD", asOf: "2026-01-01" });
+    expect(result.status).toBe("compiled");
+  });
+
+  it("rejects unknown asset types and empty transaction account references", () => {
+    const unknownAsset = compileCurrentPosition(modelWith((value) => {
+      value.objects.Asset![0]!.asset_type = "unknown";
+    }), { baseCurrency: "USD", asOf: "2026-01-01" });
+    const source = compileCashFlow(modelWith((value) => {
+      value.objects.Transaction = [{ transaction_id: "91000000-0000-4000-8000-000000000092", source_account_id: "" }];
+    }), request);
+    const destination = compileCashFlow(modelWith((value) => {
+      value.objects.Transaction = [{ transaction_id: "91000000-0000-4000-8000-000000000092", destination_account_id: "" }];
+    }), request);
+    expect(unknownAsset.status).toBe("invalid_model");
+    expect(source.status).toBe("invalid_model");
+    expect(destination.status).toBe("invalid_model");
+  });
 });

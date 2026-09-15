@@ -16,6 +16,7 @@ import {
 } from "../../values/index.js";
 import {
   EXACT_DECIMAL,
+  ASSET_TYPES,
   ASSET_VALUATION_METHODS,
   PAYMENT_FREQUENCIES,
   UUID,
@@ -458,19 +459,14 @@ export const compileCurrentPosition = (
           "account_id",
         );
     }
-    if (asset.asset_type === "cash" || (asset.account_id !== undefined && asset.account_id !== null)) {
-      assetsComplete = false;
-      diagnostics.push(
-        diagnostic(
-          "ASSET_ACCOUNT_OVERLAP_AMBIGUOUS",
-          `Asset ${id} may overlap an Account economic resource.`,
-          "assets",
-          "Asset",
-          id,
-        ),
+    if (!ASSET_TYPES.includes(asset.asset_type as never))
+      return invalidResult(
+        "ASSET_TYPE_INVALID",
+        `Asset ${id} asset_type is not canonical.`,
+        "Asset",
+        id,
+        "asset_type",
       );
-      continue;
-    }
     if (asset.acquisition_date !== undefined && asset.acquisition_date !== null) {
       const acquired = utcDate(asset.acquisition_date);
       if (!acquired)
@@ -510,10 +506,15 @@ export const compileCurrentPosition = (
     }
     if (!ASSET_VALUATION_METHODS.includes(asset.valuation_method as never))
       return invalidResult("ASSET_VALUATION_METHOD_INVALID", `Asset ${id} valuation_method is not canonical.`, "Asset", id, "valuation_method");
-    const valuationPreflight = preflightCanonicalCollections(model, [
-      "PrimitiveInstance",
-    ]);
-    if (valuationPreflight.status !== "compiled") return valuationPreflight;
+    const hasValuationModel =
+      (asset.appreciation_model_id !== undefined && asset.appreciation_model_id !== null) ||
+      (asset.depreciation_model_id !== undefined && asset.depreciation_model_id !== null);
+    if (hasValuationModel) {
+      const valuationPreflight = preflightCanonicalCollections(model, [
+        "PrimitiveInstance",
+      ]);
+      if (valuationPreflight.status !== "compiled") return valuationPreflight;
+    }
     let hasAuthoredValuationModel = false;
     for (const field of ["appreciation_model_id", "depreciation_model_id"] as const) {
       const raw = asset[field];
@@ -527,6 +528,19 @@ export const compileCurrentPosition = (
       hasAuthoredValuationModel = true;
     }
     if (hasAuthoredValuationModel) continue;
+    if (asset.asset_type === "cash" || (asset.account_id !== undefined && asset.account_id !== null)) {
+      assetsComplete = false;
+      diagnostics.push(
+        diagnostic(
+          "ASSET_ACCOUNT_OVERLAP_AMBIGUOUS",
+          `Asset ${id} may overlap an Account economic resource.`,
+          "assets",
+          "Asset",
+          id,
+        ),
+      );
+      continue;
+    }
     if (asset.valuation_method !== "cost") {
       assetsComplete = false;
       diagnostics.push(
@@ -573,6 +587,45 @@ export const compileCurrentPosition = (
   let monthlyIncome: Money | undefined;
   let monthlySpending: Money | undefined;
   let selectedScenario: ReturnType<typeof selectScenario> | undefined;
+  /** Validate every in-scope stream before a valid capability gate can return. */
+  const validateCurrentStreams = (type: "Income" | "Expense"): CompileResult<true> => {
+    for (const stream of objects(model, type)) {
+      const id = canonicalId(stream, `${type.toLowerCase()}_id`)!;
+      const owner = resolveOwnerScope(model, stream.owner_id, scope, type, id);
+      if (owner.status !== "compiled") return owner;
+      if (owner.value === "out_of_scope") continue;
+      for (const field of type === "Income" ? ["probability_model_id", "related_event_id"] as const : ["event_trigger_id"] as const) {
+        const raw = stream[field];
+        if (raw === undefined || raw === null) continue;
+        if (typeof raw !== "string" || !UUID.test(raw)) return invalidResult("EVENT_BINDING_INVALID", `${type} ${id} ${field} must be a UUID.`, type, id, field);
+        const collection = field === "probability_model_id" ? "PrimitiveInstance" : "Event";
+        const idField = field === "probability_model_id" ? "primitive_instance_id" : "event_id";
+        const preflight = preflightCanonicalCollections(model, [collection]);
+        if (preflight.status !== "compiled") return preflight;
+        if (!objects(model, collection).some((candidate) => canonicalId(candidate, idField) === raw.toLowerCase())) return invalidResult("EVENT_BINDING_REFERENCE_NOT_FOUND", `${type} ${id} ${field} does not resolve.`, type, id, field);
+      }
+      if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never)) return invalidResult("RECURRENCE_INVALID", `${type} ${id} frequency is not canonical.`, type, id, "frequency");
+      const start = utcDate(stream.start_date);
+      const end = stream.end_date === undefined || stream.end_date === null ? undefined : utcDate(stream.end_date);
+      if (!start || (stream.end_date !== undefined && stream.end_date !== null && !end)) return invalidResult("DATE_INVALID", `${type} ${id} has invalid dates.`, type, id, "start_date");
+      if (end !== undefined && end < start) return invalidResult("TEMPORAL_INTERVAL_INVALID", `${type} ${id} end_date cannot precede start_date.`, type, id, "end_date");
+      const base = exactMoney(stream, "amount", currency);
+      if (!base || base.isNegative()) return invalidResult("DOMAIN_VALUE_INVALID", `${type} ${id} amount is invalid.`, type, id, "amount");
+      if (stream.growth_model_id !== undefined && stream.growth_model_id !== null) {
+        selectedScenario ??= selectScenario(model);
+        if (selectedScenario.status === "invalid_model") return selectedScenario;
+        if (selectedScenario.status === "compiled") {
+          const growth = resolveGrowth(model, stream, type, selectedScenario.value);
+          if (growth.status === "invalid_model") return growth;
+        }
+      }
+    }
+    return { status: "compiled", value: true, diagnostics: Object.freeze([]) };
+  };
+  const incomeStructural = validateCurrentStreams("Income");
+  if (incomeStructural.status !== "compiled") return incomeStructural;
+  const expenseStructural = validateCurrentStreams("Expense");
+  if (expenseStructural.status !== "compiled") return expenseStructural;
   const aggregate = (type: "Income" | "Expense"): CompileResult<Money> => {
     const values: Money[] = [];
     for (const stream of objects(model, type)) {

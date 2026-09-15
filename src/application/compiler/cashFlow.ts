@@ -152,12 +152,9 @@ export const selectScenario = (
     );
   const selected = enabled[0]!;
   const id = canonicalId(selected, "scenario_id")!;
-  if (selected.stochastic)
-    return unsupportedResult("SCENARIO_STOCHASTIC_UNSUPPORTED", `Scenario ${id} is stochastic.`, "Scenario", id, "stochastic");
-  if ((selected.simulation_count ?? 1) !== 1)
-    return invalidResult("SCENARIO_SIMULATION_COUNT_INVARIANT", `Deterministic Scenario ${id} must use simulation_count 1.`, "Scenario", id, "simulation_count");
-  if (selected.timestep !== "monthly")
-    return unsupportedResult("SCENARIO_TIMESTEP_UNSUPPORTED", `Scenario ${id} timestep ${selected.timestep} is not supported.`, "Scenario", id, "timestep");
+  const scenarioStochastic = selected.stochastic;
+  const scenarioNonMonthly = selected.timestep !== "monthly";
+  const simulationCountInvalid = !scenarioStochastic && (selected.simulation_count ?? 1) !== 1;
   const scenarioStart = utcDate(selected.start_date);
   const scenarioEnd = utcDate(selected.end_date);
   if (!scenarioStart || !scenarioEnd || scenarioStart >= scenarioEnd)
@@ -191,17 +188,10 @@ export const selectScenario = (
         "base_scenario_id",
         [baseId],
       );
-    return unsupportedResult(
-      "SCENARIO_INHERITANCE_UNSUPPORTED",
-      `Scenario ${id} inherits from ${baseId}; PR 15 does not execute scenario inheritance.`,
-      "Scenario",
-      id,
-      "base_scenario_id",
-      [baseId],
-    );
+    if (baseId === id)
+      return invalidResult("SCENARIO_SELF_INHERITANCE_INVALID", `Scenario ${id} cannot inherit from itself.`, "Scenario", id, "base_scenario_id", [id]);
   }
-  if (selected.event_ids === null)
-    return unsupportedResult("SCENARIO_EVENT_MEMBERSHIP_UNKNOWN", `Scenario ${id} event membership is unknown.`, "Scenario", id, "event_ids");
+  const eventMembershipUnknown = selected.event_ids === null;
   if (selected.event_ids !== undefined && !Array.isArray(selected.event_ids))
     return invalidResult(
       "SCENARIO_EVENT_REFERENCES_INVALID",
@@ -234,16 +224,8 @@ export const selectScenario = (
           [eventId.toLowerCase()],
         );
     }
-    return unsupportedResult(
-      "SCENARIO_EVENTS_UNSUPPORTED",
-      `Scenario ${id} contains authored events whose operation semantics are not executable in PR 15.`,
-      "Scenario",
-      id,
-      "event_ids",
-    );
   }
-  if (selected.assumption_ids === null)
-    return unsupportedResult("SCENARIO_ASSUMPTION_MEMBERSHIP_UNKNOWN", `Scenario ${id} assumption membership is unknown.`, "Scenario", id, "assumption_ids");
+  const assumptionMembershipUnknown = selected.assumption_ids === null;
   if (selected.assumption_ids !== undefined && !Array.isArray(selected.assumption_ids))
     return invalidResult(
       "SCENARIO_ASSUMPTION_REFERENCES_INVALID",
@@ -278,6 +260,20 @@ export const selectScenario = (
         [assumptionId.toLowerCase()],
       );
   }
+  if (simulationCountInvalid)
+    return invalidResult("SCENARIO_SIMULATION_COUNT_INVARIANT", `Deterministic Scenario ${id} must use simulation_count 1.`, "Scenario", id, "simulation_count");
+  if (scenarioStochastic)
+    return unsupportedResult("SCENARIO_STOCHASTIC_UNSUPPORTED", `Scenario ${id} is stochastic.`, "Scenario", id, "stochastic");
+  if (scenarioNonMonthly)
+    return unsupportedResult("SCENARIO_TIMESTEP_UNSUPPORTED", `Scenario ${id} timestep ${selected.timestep} is not supported.`, "Scenario", id, "timestep");
+  if (selected.base_scenario_id !== undefined && selected.base_scenario_id !== null)
+    return unsupportedResult("SCENARIO_INHERITANCE_UNSUPPORTED", `Scenario ${id} inherits from ${selected.base_scenario_id}; PR 15 does not execute scenario inheritance.`, "Scenario", id, "base_scenario_id");
+  if (eventMembershipUnknown)
+    return unsupportedResult("SCENARIO_EVENT_MEMBERSHIP_UNKNOWN", `Scenario ${id} event membership is unknown.`, "Scenario", id, "event_ids");
+  if (Array.isArray(selected.event_ids) && selected.event_ids.length > 0)
+    return unsupportedResult("SCENARIO_EVENTS_UNSUPPORTED", `Scenario ${id} contains authored events whose operation semantics are not executable in PR 15.`, "Scenario", id, "event_ids");
+  if (assumptionMembershipUnknown)
+    return unsupportedResult("SCENARIO_ASSUMPTION_MEMBERSHIP_UNKNOWN", `Scenario ${id} assumption membership is unknown.`, "Scenario", id, "assumption_ids");
   return {
     status: "compiled",
     value: Object.freeze({ id, object: selected }),
@@ -385,26 +381,14 @@ export const resolveGrowth = (
       `PrimitiveInstance ${growthId} enabled must be a boolean.`,
       "PrimitiveInstance", growthId, "enabled",
     );
-  if (primitive.enabled === false)
-    return unsupportedResult(
-      "GROWTH_PRIMITIVE_UNSUPPORTED",
-      `${streamType} ${streamId} requires an enabled P08 growth PrimitiveInstance.`,
-      "PrimitiveInstance",
-      growthId,
-      "enabled",
-    );
+  const primitiveDisabled = primitive.enabled === false;
   if (typeof primitive.primitive_id !== "string" || !isPrimitiveId(primitive.primitive_id))
     return invalidResult(
       "GROWTH_PRIMITIVE_ID_INVALID",
       `PrimitiveInstance ${growthId} primitive_id must identify a registered primitive.`,
       "PrimitiveInstance", growthId, "primitive_id",
     );
-  if (primitive.primitive_id !== "P08")
-    return unsupportedResult(
-      "GROWTH_PRIMITIVE_UNSUPPORTED",
-      `${streamType} ${streamId} requires an enabled P08 growth PrimitiveInstance.`,
-      "PrimitiveInstance", growthId, "primitive_id",
-    );
+  const primitiveUnsupported = primitive.primitive_id !== "P08";
   if (
     typeof primitive.scenario_id !== "string" ||
     !UUID.test(primitive.scenario_id)
@@ -431,37 +415,20 @@ export const resolveGrowth = (
       "scenario_id",
       [primitiveScenarioId],
     );
-  if (primitiveScenarioId !== selected.id)
-    return unsupportedResult(
-      "GROWTH_SCENARIO_MISMATCH_UNSUPPORTED",
-      `PrimitiveInstance ${growthId} belongs to a different valid Scenario.`,
-      "PrimitiveInstance",
-      growthId,
-      "scenario_id",
-      [selected.id, primitiveScenarioId],
-    );
+  const primitiveScenarioMismatch = primitiveScenarioId !== selected.id;
   for (const field of ["start_date", "end_date"] as const) {
     const raw = primitive[field];
     if (raw !== undefined && raw !== null && !utcDate(raw))
       return invalidResult("DATE_INVALID", `PrimitiveInstance ${growthId} ${field} is invalid.`, "PrimitiveInstance", growthId, field);
   }
-  if ((primitive.start_date !== undefined && primitive.start_date !== null) || (primitive.end_date !== undefined && primitive.end_date !== null))
-    return unsupportedResult(
-      "BOUNDED_GROWTH_UNSUPPORTED",
-      `Bounded P08 PrimitiveInstance ${growthId} is not supported in PR 15.`,
-      "PrimitiveInstance",
-      growthId,
-    );
+  const primitiveBounded =
+    (primitive.start_date !== undefined && primitive.start_date !== null) ||
+    (primitive.end_date !== undefined && primitive.end_date !== null);
   if (primitive.parameters !== undefined && primitive.parameters !== null && (typeof primitive.parameters !== "object" || Array.isArray(primitive.parameters)))
     return invalidResult("GROWTH_PARAMETERS_INVALID", `P08 PrimitiveInstance ${growthId} parameters must be an object.`, "PrimitiveInstance", growthId, "parameters");
-  if (primitive.parameters !== undefined && primitive.parameters !== null && Object.keys(primitive.parameters as CanonicalObject).length > 0)
-    return unsupportedResult(
-      "GROWTH_PARAMETERS_UNSUPPORTED",
-      `P08 PrimitiveInstance ${growthId} must not contain parameters.`,
-      "PrimitiveInstance",
-      growthId,
-      "parameters",
-    );
+  const primitiveParametersUnsupported =
+    primitive.parameters !== undefined && primitive.parameters !== null &&
+    Object.keys(primitive.parameters as CanonicalObject).length > 0;
   const bindings = primitive.input_bindings;
   const rateRef =
     typeof bindings === "object" &&
@@ -477,14 +444,9 @@ export const resolveGrowth = (
       growthId,
       "input_bindings.rate",
     );
-  if (Object.keys(bindings as CanonicalObject).some((key) => key !== "rate"))
-    return unsupportedResult(
-      "GROWTH_BINDING_UNSUPPORTED",
-      `P08 PrimitiveInstance ${growthId} contains unsupported input bindings.`,
-      "PrimitiveInstance",
-      growthId,
-      "input_bindings",
-    );
+  const primitiveBindingsUnsupported = Object.keys(bindings as CanonicalObject).some(
+    (key) => key !== "rate",
+  );
   const assumptionId = rateRef.toLowerCase();
   const assumptions = objects(model, "Assumption");
   if (
@@ -537,30 +499,11 @@ export const resolveGrowth = (
       "scenario_id",
       [assumptionScenarioId],
     );
-  if (assumptionScenarioId !== selected.id)
-    return unsupportedResult(
-      "ASSUMPTION_SCENARIO_MISMATCH_UNSUPPORTED",
-      `Assumption ${assumptionId} belongs to a different valid Scenario.`,
-      "Assumption",
-      assumptionId,
-      "scenario_id",
-      [selected.id, assumptionScenarioId],
-    );
-  if (
-    selected.object &&
-    Array.isArray(selected.object.assumption_ids) &&
-    !selected.object.assumption_ids.some(
-      (value) =>
-        typeof value === "string" && value.toLowerCase() === assumptionId,
-    )
-  )
-    return unsupportedResult(
-      "SCENARIO_ASSUMPTION_MEMBERSHIP_UNSUPPORTED",
-      `Selected Scenario does not list bound Assumption ${assumptionId}.`,
-      "Scenario",
-      selected.id,
-      "assumption_ids",
-      [assumptionId],
+  const assumptionScenarioMismatch = assumptionScenarioId !== selected.id;
+  const assumptionMembershipMissing =
+    selected.object !== undefined &&
+    !((selected.object.assumption_ids ?? []) as readonly unknown[]).some(
+      (value) => typeof value === "string" && value.toLowerCase() === assumptionId,
     );
   const assumptionStart =
     assumption.start_date === undefined || assumption.start_date === null
@@ -601,6 +544,10 @@ export const resolveGrowth = (
     !ASSUMPTION_CATEGORIES.includes(assumption.category as never)
   )
     return invalidResult("ASSUMPTION_CATEGORY_INVALID", `Assumption ${assumptionId} category is not canonical.`, "Assumption", assumptionId, "category");
+  if (typeof assumption.unit !== "string")
+    return invalidResult("RATE_UNIT_INVALID", `Assumption ${assumptionId} unit must be a string.`, "Assumption", assumptionId, "unit");
+  if (typeof assumption.value !== "string" || !EXACT_DECIMAL.test(assumption.value))
+    return invalidResult("EXACT_DECIMAL_INVALID", `Assumption ${assumptionId} value must be an exact decimal string.`, "Assumption", assumptionId, "value");
   if (
     assumptionStart !== undefined || assumptionEnd !== undefined ||
     (assumption.distribution_type !== undefined && assumption.distribution_type !== null) ||
@@ -631,23 +578,26 @@ export const resolveGrowth = (
       assumptionId,
       "category",
     );
-  if (
-    typeof assumption.value !== "string" ||
-    !EXACT_DECIMAL.test(assumption.value)
-  )
-    return invalidResult(
-      "EXACT_DECIMAL_INVALID",
-      `Assumption ${assumptionId} value must be an exact decimal string.`,
-      "Assumption",
-      assumptionId,
-      "value",
-    );
   try {
     const rate = Rate.fromDecimal(
       assumption.value,
       rateConvention.effectiveAnnual(),
     );
     assertGeometricGrowthRate(rate);
+    if (primitiveDisabled || primitiveUnsupported)
+      return unsupportedResult("GROWTH_PRIMITIVE_UNSUPPORTED", `${streamType} ${streamId} requires an enabled P08 growth PrimitiveInstance.`, "PrimitiveInstance", growthId, primitiveDisabled ? "enabled" : "primitive_id");
+    if (primitiveScenarioMismatch)
+      return unsupportedResult("GROWTH_SCENARIO_MISMATCH_UNSUPPORTED", `PrimitiveInstance ${growthId} belongs to a different valid Scenario.`, "PrimitiveInstance", growthId, "scenario_id", [selected.id, primitiveScenarioId]);
+    if (primitiveBounded)
+      return unsupportedResult("BOUNDED_GROWTH_UNSUPPORTED", `Bounded P08 PrimitiveInstance ${growthId} is not supported in PR 15.`, "PrimitiveInstance", growthId);
+    if (primitiveParametersUnsupported)
+      return unsupportedResult("GROWTH_PARAMETERS_UNSUPPORTED", `P08 PrimitiveInstance ${growthId} must not contain parameters.`, "PrimitiveInstance", growthId, "parameters");
+    if (primitiveBindingsUnsupported)
+      return unsupportedResult("GROWTH_BINDING_UNSUPPORTED", `P08 PrimitiveInstance ${growthId} contains unsupported input bindings.`, "PrimitiveInstance", growthId, "input_bindings");
+    if (assumptionScenarioMismatch)
+      return unsupportedResult("ASSUMPTION_SCENARIO_MISMATCH_UNSUPPORTED", `Assumption ${assumptionId} belongs to a different valid Scenario.`, "Assumption", assumptionId, "scenario_id", [selected.id, assumptionScenarioId]);
+    if (assumptionMembershipMissing)
+      return unsupportedResult("SCENARIO_ASSUMPTION_MEMBERSHIP_UNSUPPORTED", `Selected Scenario does not list bound Assumption ${assumptionId}.`, "Scenario", selected.id, "assumption_ids", [assumptionId]);
     return {
       status: "compiled",
       value: Object.freeze({
@@ -970,6 +920,45 @@ export const compileCashFlow = (
   const expenses = allExpenses.filter((stream) =>
     ownerInScope(stream.owner_id, scope),
   );
+  /** Structural validation precedes capability gates so stream order is immaterial. */
+  const validateInScopeStreams = (
+    type: "Income" | "Expense",
+    collection: readonly CanonicalObject[],
+  ): Extract<CompileResult<never>, { readonly status: "invalid_model" }> | undefined => {
+    for (const stream of collection) {
+      const id = canonicalId(stream, `${type.toLowerCase()}_id`)!;
+      const event = validateEventReference(model, stream, type);
+      if (event?.status === "invalid_model") return event;
+      if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never))
+        return invalidResult("RECURRENCE_INVALID", `${type} ${id} frequency is not canonical.`, type, id, "frequency");
+      const start = utcDate(stream.start_date);
+      if (!start)
+        return invalidResult("DATE_INVALID", `${type} ${id} start_date is invalid.`, type, id, "start_date");
+      if (stream.end_date !== undefined && stream.end_date !== null) {
+        const end = nextUtcDate(typeof stream.end_date === "string" ? stream.end_date : "");
+        if (!end) return invalidResult("DATE_INVALID", `${type} ${id} end_date is invalid.`, type, id, "end_date");
+        if (end <= start) return invalidResult("TEMPORAL_INTERVAL_INVALID", `${type} ${id} inclusive end_date precedes start_date.`, type, id, "end_date");
+      }
+      if (typeof stream.amount !== "string" || !EXACT_DECIMAL.test(stream.amount))
+        return invalidResult("EXACT_DECIMAL_INVALID", `${type} ${id} amount must be an exact decimal string.`, type, id, "amount");
+      try {
+        if (money(stream.amount, currency).isNegative())
+          return invalidResult("DOMAIN_VALUE_INVALID", `${type} ${id} amount cannot be negative.`, type, id, "amount");
+      } catch (error) {
+        return invalidResult("DOMAIN_VALUE_INVALID", error instanceof Error ? error.message : `${type} amount is invalid.`, type, id, "amount");
+      }
+      if (type === "Expense" && String(stream.payment_account_id).toLowerCase() !== accountId)
+        return invalidResult("PAYMENT_ACCOUNT_REFERENCE_INVALID", `Expense ${id} payment_account_id must resolve to the one executable cash Account.`, type, id, "payment_account_id", [accountId]);
+      const growth = resolveGrowth(model, stream, type, selected);
+      if (growth.status === "invalid_model") return growth;
+    }
+    return undefined;
+  };
+  const incomeStructural = validateInScopeStreams("Income", incomes);
+  if (incomeStructural) return incomeStructural;
+  const expenseStructural = validateInScopeStreams("Expense", expenses);
+  if (expenseStructural) return expenseStructural;
+
   const slots: string[] = ["payable"];
   for (const [type, collection, all] of [
     ["Income", incomes, allIncomes],
