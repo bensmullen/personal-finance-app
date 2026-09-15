@@ -673,6 +673,7 @@ export const runPersonalForecast = (
     try {
       const compilation = compileLiabilities(draft, {
         baseCurrency: request.baseCurrency,
+        asOf: request.asOf,
         simulationStart: request.simulationStart,
         simulationEnd: request.simulationEnd,
         months: request.months,
