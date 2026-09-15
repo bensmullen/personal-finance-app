@@ -71,6 +71,7 @@ export interface LiabilityExecutionProfile {
 
 export interface LiabilityCompilerRequest {
   readonly baseCurrency: string;
+  readonly asOf: string;
   readonly simulationStart: string;
   readonly simulationEnd: string;
   readonly months?: number;
@@ -187,8 +188,9 @@ export const compileLiabilities = (
   if (scopeResult.status !== "compiled") return scopeResult;
   const scope = scopeResult.value;
   const simulationStart = utcDate(request.simulationStart);
+  const asOf = utcDate(request.asOf);
   const simulationEnd = utcDate(request.simulationEnd);
-  if (!simulationStart || !simulationEnd || simulationStart >= simulationEnd)
+  if (!asOf || !simulationStart || !simulationEnd || simulationStart >= simulationEnd)
     return invalidResult(
       "FORECAST_HORIZON_INVALID",
       "Liability simulation boundaries must be valid increasing date-only values.",
@@ -408,6 +410,10 @@ export const compileLiabilities = (
     if (owner.value === "out_of_scope") continue;
     const originalPrincipal = exactMoney(liability.principal, currency)!;
     const currentPrincipal = exactMoney(liability.current_balance, currency)!;
+    if (currentPrincipal.isPositive() && simulationStart !== asOf) {
+      gate(diagnostic("LIABILITY_OPENING_BOUNDARY_UNSUPPORTED", `Liability ${id} cannot be rolled between observed as-of ${request.asOf} and simulation opening ${request.simulationStart} in PR 16.`, "Liability", id, "current_balance"));
+      continue;
+    }
     let supported = true;
     const reject = (value: CapabilityDiagnostic): void => {
       gate(value);
