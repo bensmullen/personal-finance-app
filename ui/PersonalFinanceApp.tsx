@@ -278,6 +278,8 @@ const objectLabel = (type: PersonalObjectType, value: JsonObject) =>
       TITLES[type],
   );
 const chartNumber = (exact: string) => Number(exact); // Disposable display coordinate only; never returned to application/engine.
+type LiabilitySessionConfig = Readonly<{ ownerId: string; profiles: Readonly<Record<string, Readonly<{ paymentAnchor: string; totalPayments: string; fundingAccountId: string; settlementPriority: string; openingCurrent: string }>>> }>;
+const emptyLiabilityConfig = (): LiabilitySessionConfig => ({ ownerId: "", profiles: {} });
 
 export function PersonalFinanceApp() {
   const [draft, setDraft] = useState<PersonalDraft | undefined>();
@@ -294,6 +296,7 @@ export function PersonalFinanceApp() {
       sessionSettingsFromHorizon("2026-01-01", 12),
     );
   const [runSettingsError, setRunSettingsError] = useState("");
+  const [liabilityConfig, setLiabilityConfig] = useState<LiabilitySessionConfig>(emptyLiabilityConfig);
   const [fileReport, setFileReport] =
     useState<ReturnType<typeof validatePersonalModelJson>>();
   const [pendingJson, setPendingJson] = useState("");
@@ -354,6 +357,7 @@ export function PersonalFinanceApp() {
       startDate: values.startDate,
     });
     setDraft(next);
+    setLiabilityConfig(emptyLiabilityConfig());
     setSessionSettings(
       sessionSettingsFromHorizon(values.startDate, Number(values.horizon) * 12),
     );
@@ -370,6 +374,7 @@ export function PersonalFinanceApp() {
         complete={completeSetup}
         loadExample={() => {
           setDraft(createSyntheticPersonalDraft());
+          setLiabilityConfig(emptyLiabilityConfig());
           setSessionSettings(sessionSettingsFromHorizon("2026-01-01", 120));
           setNotice("Synthetic example loaded");
         }}
@@ -383,7 +388,16 @@ export function PersonalFinanceApp() {
       return;
     }
     setRunSettingsError("");
-    setForecast(runPersonalForecast(draft, resolved.request));
+    const request = scope !== "liabilities" ? resolved.request : {
+      ...resolved.request,
+      ...(liabilityConfig.ownerId ? { executionOwnerId: liabilityConfig.ownerId } : {}),
+      liabilityExecutionProfiles: Object.entries(liabilityConfig.profiles).map(([liabilityId, profile]) => ({
+        liabilityId, kind: "vs4_fixed_monthly_fully_amortizing" as const, paymentAnchor: profile.paymentAnchor,
+        totalPayments: Number(profile.totalPayments), fundingAccountId: profile.fundingAccountId,
+        settlementPriority: Number(profile.settlementPriority), openingContractStatus: "current" as const,
+      })),
+    };
+    setForecast(runPersonalForecast(draft, request));
   };
   const runComparison = () => {
     const resolved = resolvePersonalSessionSettings(
@@ -422,6 +436,7 @@ export function PersonalFinanceApp() {
   };
   const importModel = () => {
     setDraft(importPersonalModelJson(pendingJson));
+    setLiabilityConfig(emptyLiabilityConfig());
     setNotice("Model imported into this session");
     setFileReport(undefined);
   };
@@ -517,6 +532,9 @@ export function PersonalFinanceApp() {
               forecast={forecast}
               settings={sessionSettings}
               error={runSettingsError}
+              draft={draft}
+              liabilityConfig={liabilityConfig}
+              setLiabilityConfig={setLiabilityConfig}
             />
           )}
           {primary === "Plan" && subnav === "Compare Plans" && (
@@ -876,6 +894,9 @@ function Plan({
   forecast,
   settings,
   error,
+  draft,
+  liabilityConfig,
+  setLiabilityConfig,
 }: {
   forecastScope: ForecastRequest["scope"];
   setScope: (scope: ForecastRequest["scope"]) => void;
@@ -883,7 +904,14 @@ function Plan({
   forecast: PersonalForecastReadModel | undefined;
   settings: PersonalSessionSettings;
   error: string;
+  draft: PersonalDraft;
+  liabilityConfig: LiabilitySessionConfig;
+  setLiabilityConfig: React.Dispatch<React.SetStateAction<LiabilitySessionConfig>>;
 }) {
+  const mortgages = objectEntries(draft, "Liability").filter((item) => item.liability_type === "mortgage" && String(item.current_balance) !== "0" && String(item.current_balance) !== "0.00");
+  const people = objectEntries(draft, "Person");
+  const accounts = objectEntries(draft, "Account");
+  const updateProfile = (id: string, field: "paymentAnchor" | "totalPayments" | "fundingAccountId" | "settlementPriority" | "openingCurrent", value: string) => setLiabilityConfig((prior) => ({ ...prior, profiles: { ...prior.profiles, [id]: { paymentAnchor: "", totalPayments: "", fundingAccountId: "", settlementPriority: "", openingCurrent: "", ...prior.profiles[id], [field]: value } } }));
   return (
     <>
       <PageHead
@@ -925,6 +953,7 @@ function Plan({
           </p>
         )}
       </section>
+      {forecastScope === "liabilities" && <section className="panel controls"><h2>Debt execution configuration</h2><p className="muted">Session-only explicit configuration. These fields never modify or infer values from the portable model.</p><label>Execution owner<select value={liabilityConfig.ownerId} onChange={(event) => setLiabilityConfig((prior) => ({ ...prior, ownerId: event.target.value }))}><option value="">Select a household person</option>{people.map((person) => <option key={objectId("Person", person)} value={objectId("Person", person)}>{objectLabel("Person", person)}</option>)}</select></label>{mortgages.map((mortgage) => { const id = objectId("Liability", mortgage); const profile = liabilityConfig.profiles[id] ?? { paymentAnchor: "", totalPayments: "", fundingAccountId: "", settlementPriority: "", openingCurrent: "" }; return <fieldset key={id}><legend>{objectLabel("Liability", mortgage)}</legend><label>Payment anchor<input type="date" value={profile.paymentAnchor} onChange={(event) => updateProfile(id, "paymentAnchor", event.target.value)} /></label><label>Total payment count<input value={profile.totalPayments} onChange={(event) => updateProfile(id, "totalPayments", event.target.value)} /></label><label>Funding account<select value={profile.fundingAccountId} onChange={(event) => updateProfile(id, "fundingAccountId", event.target.value)}><option value="">Select funding account</option>{accounts.map((account) => <option key={objectId("Account", account)} value={objectId("Account", account)}>{objectLabel("Account", account)}</option>)}</select></label><label>Settlement priority<input value={profile.settlementPriority} onChange={(event) => updateProfile(id, "settlementPriority", event.target.value)} /></label><label>Opening current balance<input value={profile.openingCurrent} readOnly placeholder={String(mortgage.current_balance ?? "Not available")} /></label></fieldset>; })}</section>}
       <section className="panel">
         <div className="scope-badge">
           Active scope: {forecastScope.replace("_", " ")}
@@ -1525,6 +1554,14 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
           <dd>{forecast.dataCutoff}</dd>
         </dl>
       </div>
+    );
+  if (forecast.scope === "liabilities")
+    return (
+      <>
+        <div className="boundary-banner"><strong>As of {forecast.asOf}</strong><span>Debt-service projection</span></div>
+        <div className="table-scroll"><table><caption>Detailed liability forecast</caption><thead><tr><th>Scheduled</th><th>Opening principal</th><th>Interest</th><th>Payment</th><th>Ending principal</th><th>Funding</th><th>Why?</th></tr></thead><tbody>{forecast.liabilityOccurrences.map((item) => <tr key={`${item.loanId}:${item.scheduledAt}`}><td>{item.scheduledAt.slice(0, 10)}</td><td>{item.openingPrincipal.display}</td><td>{item.currentInterestExpense.display}</td><td>{item.scheduledPayment.display}</td><td>{item.endingPrincipal.display}</td><td>{item.scheduledFundingStatus}</td><td><details><summary>Explain</summary><code>{item.traceIds.join("\n") || "No trace metadata"}</code></details></td></tr>)}</tbody></table></div>
+        {forecast.shortfalls.map((item) => <div className="stress-detail" key={item.period}><strong>{item.period.slice(0, 10)} · {item.unfunded.display} unfunded</strong><p>{item.diagnostic}</p></div>)}
+      </>
     );
   const data = forecast.points.map((point) => ({
     period: point.periodStart.slice(0, 7),
