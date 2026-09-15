@@ -278,7 +278,9 @@ const objectLabel = (type: PersonalObjectType, value: JsonObject) =>
       TITLES[type],
   );
 const chartNumber = (exact: string) => Number(exact); // Disposable display coordinate only; never returned to application/engine.
-type LiabilitySessionConfig = Readonly<{ ownerId: string; profiles: Readonly<Record<string, Readonly<{ paymentAnchor: string; totalPayments: string; fundingAccountId: string; settlementPriority: string; openingCurrent: string }>>> }>;
+type LiabilitySessionProfile = Readonly<{ paymentAnchor: string; totalPayments: string; fundingAccountId: string; settlementPriority: string }>;
+type LiabilitySessionConfig = Readonly<{ ownerId: string; profiles: Readonly<Record<string, LiabilitySessionProfile>> }>;
+const EMPTY_LIABILITY_SESSION_PROFILE: LiabilitySessionProfile = Object.freeze({ paymentAnchor: "", totalPayments: "", fundingAccountId: "", settlementPriority: "" });
 const emptyLiabilityConfig = (): LiabilitySessionConfig => ({ ownerId: "", profiles: {} });
 
 export function PersonalFinanceApp() {
@@ -911,7 +913,10 @@ function Plan({
   const mortgages = objectEntries(draft, "Liability").filter((item) => item.liability_type === "mortgage" && String(item.current_balance) !== "0" && String(item.current_balance) !== "0.00");
   const people = objectEntries(draft, "Person");
   const accounts = objectEntries(draft, "Account");
-  const updateProfile = (id: string, field: "paymentAnchor" | "totalPayments" | "fundingAccountId" | "settlementPriority" | "openingCurrent", value: string) => setLiabilityConfig((prior) => ({ ...prior, profiles: { ...prior.profiles, [id]: { paymentAnchor: "", totalPayments: "", fundingAccountId: "", settlementPriority: "", openingCurrent: "", ...prior.profiles[id], [field]: value } } }));
+  const updateProfile = (id: string, field: keyof LiabilitySessionProfile, value: string) => setLiabilityConfig((prior) => {
+    const existing = prior.profiles[id] ?? EMPTY_LIABILITY_SESSION_PROFILE;
+    return { ...prior, profiles: { ...prior.profiles, [id]: { ...existing, [field]: value } } };
+  });
   return (
     <>
       <PageHead
@@ -953,7 +958,7 @@ function Plan({
           </p>
         )}
       </section>
-      {forecastScope === "liabilities" && <section className="panel controls"><h2>Debt execution configuration</h2><p className="muted">Session-only explicit configuration. These fields never modify or infer values from the portable model.</p><label>Execution owner<select value={liabilityConfig.ownerId} onChange={(event) => setLiabilityConfig((prior) => ({ ...prior, ownerId: event.target.value }))}><option value="">Select a household person</option>{people.map((person) => <option key={objectId("Person", person)} value={objectId("Person", person)}>{objectLabel("Person", person)}</option>)}</select></label>{mortgages.map((mortgage) => { const id = objectId("Liability", mortgage); const profile = liabilityConfig.profiles[id] ?? { paymentAnchor: "", totalPayments: "", fundingAccountId: "", settlementPriority: "", openingCurrent: "" }; return <fieldset key={id}><legend>{objectLabel("Liability", mortgage)}</legend><label>Payment anchor<input type="date" value={profile.paymentAnchor} onChange={(event) => updateProfile(id, "paymentAnchor", event.target.value)} /></label><label>Total payment count<input value={profile.totalPayments} onChange={(event) => updateProfile(id, "totalPayments", event.target.value)} /></label><label>Funding account<select value={profile.fundingAccountId} onChange={(event) => updateProfile(id, "fundingAccountId", event.target.value)}><option value="">Select funding account</option>{accounts.map((account) => <option key={objectId("Account", account)} value={objectId("Account", account)}>{objectLabel("Account", account)}</option>)}</select></label><label>Settlement priority<input value={profile.settlementPriority} onChange={(event) => updateProfile(id, "settlementPriority", event.target.value)} /></label><label>Opening current balance<input value={profile.openingCurrent} readOnly placeholder={String(mortgage.current_balance ?? "Not available")} /></label></fieldset>; })}</section>}
+      {forecastScope === "liabilities" && <section className="panel controls"><h2>Debt execution configuration</h2><p className="muted">Session-only explicit configuration. Current balance: canonical {mortgages.map((mortgage) => String(mortgage.current_balance ?? "Unavailable")).join(", ")}.</p><label>Execution owner<select value={liabilityConfig.ownerId} onChange={(event) => setLiabilityConfig((prior) => ({ ...prior, ownerId: event.target.value }))}><option value="">Select a household person</option>{people.map((person) => <option key={objectId("Person", person)} value={objectId("Person", person)}>{objectLabel("Person", person)}</option>)}</select></label>{mortgages.map((mortgage) => { const id = objectId("Liability", mortgage); const profile = liabilityConfig.profiles[id] ?? EMPTY_LIABILITY_SESSION_PROFILE; return <fieldset key={id}><legend>{objectLabel("Liability", mortgage)}</legend><label>Payment anchor<input type="date" value={profile.paymentAnchor} onChange={(event) => updateProfile(id, "paymentAnchor", event.target.value)} /></label><label>Total payment count<input type="number" min="1" step="1" value={profile.totalPayments} onChange={(event) => updateProfile(id, "totalPayments", event.target.value)} /></label><label>Funding account<select value={profile.fundingAccountId} onChange={(event) => updateProfile(id, "fundingAccountId", event.target.value)}><option value="">Select funding account</option>{accounts.map((account) => <option key={objectId("Account", account)} value={objectId("Account", account)}>{objectLabel("Account", account)}</option>)}</select></label><label>Settlement priority<input type="number" min="0" step="1" value={profile.settlementPriority} onChange={(event) => updateProfile(id, "settlementPriority", event.target.value)} /></label></fieldset>; })}</section>}
       <section className="panel">
         <div className="scope-badge">
           Active scope: {forecastScope.replace("_", " ")}
