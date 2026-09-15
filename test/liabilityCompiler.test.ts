@@ -172,6 +172,13 @@ describe("canonical liability compiler", () => {
     expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "LIABILITY_OPENING_HISTORY_UNSUPPORTED" })]));
   });
 
+  it("does not move an active current balance across the observed as-of boundary", () => {
+    for (const simulationStart of ["2025-12-01", "2026-02-01"]) {
+      const result = compileLiabilities(createSyntheticPersonalDraft(), { ...compilerRequest(), simulationStart });
+      expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "LIABILITY_OPENING_BOUNDARY_UNSUPPORTED" })]));
+    }
+  });
+
   it("does not classify a future zero-balance liability as an inactive completed contract", () => {
     const result = compileLiabilities(modelWith((draft) => { draft.objects.Liability![0]!.current_balance = "0"; draft.objects.Liability![0]!.origination_date = "2027-01-01"; }), compilerRequest([]));
     expect(result).toMatchObject({ status: "unsupported" });
