@@ -445,8 +445,8 @@ describe("canonical executable-model compiler", () => {
     if (result.status === "compiled") {
       expect(result.value.cash?.amount.toString()).toBe("5000");
       expect(result.value.assets?.amount.toString()).toBe("355000");
-      expect(result.value.liabilities?.amount.toString()).toBe("235000");
-      expect(result.value.netWorth?.amount.toString()).toBe("120000");
+      expect(result.value.liabilities?.amount.toString()).toBe("225669.71");
+      expect(result.value.netWorth?.amount.toString()).toBe("129330.29");
     }
   });
 
@@ -461,7 +461,7 @@ describe("canonical executable-model compiler", () => {
     expect(result.status).toBe("compiled");
     if (result.status === "compiled") {
       expect(result.value.cash?.amount.toString()).toBe("5000");
-      expect(result.value.liabilities?.amount.toString()).toBe("235000");
+      expect(result.value.liabilities?.amount.toString()).toBe("225669.71");
       expect(result.value.assets).toBeUndefined();
       expect(result.value.netWorth).toBeUndefined();
       expect(
@@ -525,7 +525,7 @@ describe("canonical executable-model compiler", () => {
     if (result.status === "compiled") {
       expect(result.value.cash).toBeUndefined();
       expect(result.value.assets).toBeUndefined();
-      expect(result.value.liabilities?.amount.toString()).toBe("235000");
+      expect(result.value.liabilities?.amount.toString()).toBe("225669.71");
     }
   });
 

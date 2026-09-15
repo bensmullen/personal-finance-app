@@ -37,6 +37,33 @@ export function mortgagePrincipal(payment: Money, interest: Money, balance: Mone
   return principal.compare(balance) > 0 ? balance : principal;
 }
 
+/**
+ * Replays the fixed, no-recast contractual schedule used by P22/VS4 to the
+ * opening boundary.  This is deliberately a loop over the public mortgage
+ * rules rather than a closed-form balance formula: every posting is rounded
+ * exactly as the engine will round it.
+ */
+export function fixedMortgagePrincipalAfterPayments(
+  originalPrincipal: Money,
+  annualRate: Rate,
+  totalPayments: number,
+  completedPayments: number,
+  postingRounding: RoundingPolicy,
+): Money {
+  if (!Number.isSafeInteger(totalPayments) || totalPayments <= 0 || !Number.isSafeInteger(completedPayments) || completedPayments < 0 || completedPayments > totalPayments)
+    throw new Error("Invalid fixed mortgage schedule terms");
+  let balance = originalPrincipal;
+  const contractualPayment = fixedMortgagePayment(originalPrincipal, annualRate, totalPayments, postingRounding);
+  for (let paymentNumber = 0; paymentNumber < completedPayments && balance.isPositive(); paymentNumber += 1) {
+    const interest = mortgageInterest(balance, annualRate, postingRounding);
+    const payment = paymentNumber + 1 === totalPayments
+      ? balance.plus(interest)
+      : contractualPayment;
+    balance = balance.minus(mortgagePrincipal(payment, interest, balance));
+  }
+  return balance;
+}
+
 export * from "./contracts.js";
 export * from "./resolver.js";
 export * from "./tax.js";

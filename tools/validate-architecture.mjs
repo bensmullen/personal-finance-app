@@ -76,6 +76,15 @@ const vs2ContractTargets = new Set([
   "src/simulation/verticalSlice2.ts",
   "src/verticalSlice2.ts",
 ]);
+const compilerOwnedVs4Shapes = new Set([
+  "VerticalSlice4Input",
+  "FixedAmortizingLoan",
+  "ExtraPrincipalPayment",
+]);
+const vs4ContractTargets = new Set([
+  "src/simulation/verticalSlice4.ts",
+  "src/verticalSlice4.ts",
+]);
 
 const normalized = (value) => value.split(path.sep).join("/");
 
@@ -240,6 +249,42 @@ export function validateSources(sourceFiles) {
                   `application re-exports compiler-owned VS2 translation shape ${exportedSourceName}: ${file}`,
                 );
             }
+        }
+      }
+      if (
+        application &&
+        !isCompilerModule(file) &&
+        target && vs4ContractTargets.has(target)
+      ) {
+        if (ts.isImportDeclaration(declaration)) {
+          const bindings = declaration.importClause?.namedBindings;
+          if (bindings && ts.isNamespaceImport(bindings))
+            errors.push(
+              `application imports compiler-owned VS4 translation namespace: ${file}`,
+            );
+          if (bindings && ts.isNamedImports(bindings))
+            for (const element of bindings.elements) {
+              const importedName = element.propertyName?.text ?? element.name.text;
+              if (compilerOwnedVs4Shapes.has(importedName))
+                errors.push(
+                  `application imports compiler-owned VS4 translation shape ${importedName}: ${file}`,
+                );
+            }
+        } else if (
+          !declaration.exportClause ||
+          ts.isNamespaceExport(declaration.exportClause)
+        ) {
+          errors.push(
+            `application re-exports compiler-owned VS4 translation namespace: ${file}`,
+          );
+        } else {
+          for (const element of declaration.exportClause.elements) {
+            const exportedSourceName = element.propertyName?.text ?? element.name.text;
+            if (compilerOwnedVs4Shapes.has(exportedSourceName))
+              errors.push(
+                `application re-exports compiler-owned VS4 translation shape ${exportedSourceName}: ${file}`,
+              );
+          }
         }
       }
       if (owner && target && facadeFiles.has(target)) {
@@ -492,6 +537,26 @@ function runSelfTests() {
   if (allowedCompilerTranslationImport.length > 0)
     throw new Error(
       `Architecture validator self-test failed: compiler translation import: ${allowedCompilerTranslationImport.join(", ")}`,
+    );
+  const forbiddenLiabilityTranslationImport = validateSources(
+    new Map([
+      [
+        "src/application/personalMvp.ts",
+        'import type { FixedAmortizingLoan } from "../simulation/verticalSlice4.js";',
+      ],
+      [
+        "src/simulation/verticalSlice4.ts",
+        "export interface FixedAmortizingLoan {}",
+      ],
+    ]),
+  );
+  if (
+    !forbiddenLiabilityTranslationImport.some((error) =>
+      error.includes("compiler-owned VS4 translation shape"),
+    )
+  )
+    throw new Error(
+      "Architecture validator self-test failed: outside-compiler VS4 translation import",
     );
   const forbiddenTranslationForms = [
     'import type { VerticalSlice2Input as Input } from "../simulation/verticalSlice2.js";',
