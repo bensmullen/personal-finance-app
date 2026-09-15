@@ -48,6 +48,7 @@ const compilerRequest = (
   executionProfiles: readonly LiabilityExecutionProfile[] = [profile()],
 ) => ({
   baseCurrency: "USD",
+  asOf: "2026-01-01",
   simulationStart: "2026-01-01",
   simulationEnd: "2026-04-01",
   months: 3,
