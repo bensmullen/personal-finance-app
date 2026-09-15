@@ -361,6 +361,7 @@ describe("Personal-MVP application facade", () => {
         actualHistoryAvailable: false,
       }),
     );
+    if (result.scope !== "cash_flow" || result.status === "unavailable") throw new Error("expected cash-flow forecast");
     expect(result.points).toHaveLength(3);
     expect(result.points[0]).toEqual(
       expect.objectContaining({
@@ -380,6 +381,7 @@ describe("Personal-MVP application facade", () => {
     );
     const stressResult = runPersonalForecast(stressed, request());
     expect(stressResult.status).toBe("completed");
+    if (stressResult.scope !== "cash_flow" || stressResult.status === "unavailable") throw new Error("expected cash-flow forecast");
     expect(stressResult.shortfalls.length).toBeGreaterThan(0);
     expect(stressResult.shortfalls[0]!.unfunded.exact).not.toBe("0");
   });
