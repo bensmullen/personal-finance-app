@@ -173,8 +173,8 @@ describe("canonical liability compiler", () => {
   });
 
   it("does not move an active current balance across the observed as-of boundary", () => {
-    for (const simulationStart of ["2025-12-01", "2026-02-01"]) {
-      const result = compileLiabilities(createSyntheticPersonalDraft(), { ...compilerRequest(), simulationStart });
+    for (const [simulationStart, simulationEnd] of [["2025-12-01", "2026-03-01"], ["2026-02-01", "2026-05-01"]]) {
+      const result = compileLiabilities(createSyntheticPersonalDraft(), { ...compilerRequest(), simulationStart, simulationEnd });
       expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "LIABILITY_OPENING_BOUNDARY_UNSUPPORTED" })]));
     }
   });
