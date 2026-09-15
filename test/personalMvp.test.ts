@@ -193,7 +193,7 @@ describe("Personal-MVP application facade", () => {
       },
     );
 
-    const position = getCurrentPosition(model, "USD");
+    const position = getCurrentPosition(model, { baseCurrency: "USD", asOf: "2026-01-01" });
     expect(position.cash).toBeUndefined();
     expect(position.assets).toBeUndefined();
     expect(position.netWorth).toBeUndefined();

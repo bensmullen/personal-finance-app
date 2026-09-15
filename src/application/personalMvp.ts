@@ -84,6 +84,10 @@ export interface CurrentPositionReadModel {
   readonly unavailable: readonly string[];
   readonly diagnostics: readonly (ValidationIssue | CapabilityDiagnostic)[];
 }
+export interface CurrentPositionRequest {
+  readonly baseCurrency: string;
+  readonly asOf: string;
+}
 export interface ForecastPoint {
   readonly periodStart: string;
   readonly periodEnd: string;
@@ -278,6 +282,7 @@ export const createGuidedSetupDraft = (
     owner_id: input.householdId,
     principal: input.debt,
     current_balance: input.debt,
+    origination_date: input.startDate,
   });
 };
 
@@ -472,12 +477,11 @@ const moneyDto = (value: Money): MoneyReadModel =>
 
 export const getCurrentPosition = (
   draft: PersonalDraft,
-  currencyCode = "USD",
-  asOf = "2026-01-01",
+  request: CurrentPositionRequest,
 ): CurrentPositionReadModel => {
   const result = compileCurrentPosition(draft, {
-    baseCurrency: currencyCode,
-    asOf,
+    baseCurrency: request.baseCurrency,
+    asOf: request.asOf,
   });
   if (result.status !== "compiled")
     return deepFreeze({
@@ -595,6 +599,7 @@ export const runPersonalForecast = (
       simulationStart: request.simulationStart,
       simulationEnd: request.simulationEnd,
       sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
+      months: request.months,
     });
     if (compilation.status !== "compiled") {
       const message = compilation.diagnostics
@@ -618,7 +623,7 @@ export const runPersonalForecast = (
       runContext,
       openingState: compilation.value.openingState,
       input: compilation.value.input,
-      months: request.months,
+      months: compilation.value.executionMonths,
     });
     const points = result.periods.map((period) => ({
       periodStart: period.period.start,
@@ -705,6 +710,7 @@ export const comparePersonalCashFlowPlans = (
       simulationStart: request.simulationStart,
       simulationEnd: request.simulationEnd,
       sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
+      months: request.months,
     });
     if (compilation.status !== "compiled")
       return unavailable(
@@ -780,7 +786,7 @@ export const comparePersonalCashFlowPlans = (
       },
       openingState,
       input,
-      months: request.months,
+      months: compilation.value.executionMonths,
     });
     const alternative = result.alternatives[0]!;
     const points = result.baseline.points.map((baseline, index) => {

@@ -72,6 +72,10 @@ const compilerOwnedVs2Shapes = new Set([
   "RecurringExpenseStream",
   "ScheduledCashFlowEvent",
 ]);
+const vs2ContractTargets = new Set([
+  "src/simulation/verticalSlice2.ts",
+  "src/verticalSlice2.ts",
+]);
 
 const normalized = (value) => value.split(path.sep).join("/");
 
@@ -202,7 +206,7 @@ export function validateSources(sourceFiles) {
       if (
         application &&
         !isCompilerModule(file) &&
-        target === "src/simulation/verticalSlice2.ts"
+        target && vs2ContractTargets.has(target)
       ) {
         if (ts.isImportDeclaration(declaration)) {
           const bindings = declaration.importClause?.namedBindings;
@@ -510,6 +514,14 @@ function runSelfTests() {
     )
       throw new Error(`Architecture validator self-test failed: ${source}`);
   }
+  const facadeBypass = validateSources(
+    new Map([
+      ["src/application/bad-facade.ts", 'import * as vs2 from "../verticalSlice2.js";'],
+      ["src/verticalSlice2.ts", "export interface VerticalSlice2Input {}"],
+    ]),
+  );
+  if (!facadeBypass.some((error) => error.includes("compiler-owned VS2 translation")))
+    throw new Error("Architecture validator self-test failed: root VS2 facade bypass");
   const allowedTranslationImports = validateSources(
     new Map([
       [

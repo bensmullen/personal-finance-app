@@ -352,7 +352,7 @@ describe("canonical executable-model compiler", () => {
       (value: ReturnType<typeof mutable>) => {
         value.objects.Scenario![0]!.stochastic = true;
       },
-      "SCENARIO_SELECTION_AMBIGUOUS",
+      "SCENARIO_STOCHASTIC_UNSUPPORTED",
     ],
     [
       "unsupported primitive",
@@ -466,13 +466,13 @@ describe("canonical executable-model compiler", () => {
       expect(result.value.netWorth).toBeUndefined();
       expect(
         result.value.diagnostics.some(
-          (item) => item.code === "INVESTMENT_PRICE_UNAVAILABLE",
+          (item) => item.code === "INVESTMENT_CURRENT_VALUATION_UNAVAILABLE",
         ),
       ).toBe(true);
     }
   });
 
-  it("accepts an exact zero investment price as a zero market value", () => {
+  it("does not promote an exact zero investment price into a current valuation", () => {
     const result = compileCurrentPosition(
       modelWith((value) => {
         value.objects.Investment![0]!.quantity = "2";
@@ -482,16 +482,16 @@ describe("canonical executable-model compiler", () => {
     );
     expect(result.status).toBe("compiled");
     if (result.status === "compiled") {
-      expect(result.value.assets?.amount.toString()).toBe("355000");
+      expect(result.value.assets).toBeUndefined();
       expect(
         result.value.diagnostics.some(
-          (item) => item.code === "INVESTMENT_PRICE_UNAVAILABLE",
+          (item) => item.code === "INVESTMENT_CURRENT_VALUATION_UNAVAILABLE",
         ),
-      ).toBe(false);
+      ).toBe(true);
     }
   });
 
-  it("does not double count an Investment and its linked Asset representation", () => {
+  it("keeps linked Investment valuation unavailable rather than using derived price", () => {
     const result = compileCurrentPosition(
       modelWith((value) => {
         value.objects.Investment![0]!.quantity = "2";
@@ -503,7 +503,7 @@ describe("canonical executable-model compiler", () => {
     );
     expect(result.status).toBe("compiled");
     if (result.status === "compiled")
-      expect(result.value.assets?.amount.toString()).toBe("5020");
+      expect(result.value.assets).toBeUndefined();
   });
 
   it("gates opening cash when authored Transaction history is not replayed", () => {
@@ -727,7 +727,7 @@ describe("canonical executable-model compiler", () => {
         }),
         { baseCurrency: "USD", asOf: "2026-01-01" },
       );
-      expect(result.status).toBe("invalid_model");
+      expect(result.status).toBe("compiled");
     }
     for (const cost of ["not-exact", "-1"]) {
       const result = compileCurrentPosition(
@@ -896,19 +896,18 @@ describe("canonical executable-model compiler", () => {
     const draft = modelWith((value) => {
       value.objects.Account![0]!.return_model_id = "bad";
     });
-    const current = getCurrentPosition(draft, "USD", "2026-01-01");
+    const current = getCurrentPosition(draft, { baseCurrency: "USD", asOf: "2026-01-01" });
     expect(current.diagnostics[0]!.code).toBe("RETURN_MODEL_REFERENCE_INVALID");
     const partial = getCurrentPosition(
       modelWith((value) => {
         value.objects.Investment![0]!.quantity = "2";
         delete value.objects.Investment![0]!.price;
       }),
-      "USD",
-      "2026-01-01",
+      { baseCurrency: "USD", asOf: "2026-01-01" },
     );
     expect(
       partial.diagnostics.some(
-        (diagnostic) => diagnostic.code === "INVESTMENT_PRICE_UNAVAILABLE",
+        (diagnostic) => diagnostic.code === "INVESTMENT_CURRENT_VALUATION_UNAVAILABLE",
       ),
     ).toBe(true);
     const comparison = comparePersonalCashFlowPlans(
@@ -938,7 +937,7 @@ describe("canonical executable-model compiler", () => {
         value.objects.Account!.push({
           ...value.objects.Account![0]!,
           account_id: id,
-          account_type: "brokerage",
+          account_type: "taxable_brokerage",
         });
         value.objects.Expense![0]!.payment_account_id = id;
       }),
@@ -998,5 +997,39 @@ describe("canonical executable-model compiler", () => {
     expect(
       comparison.points.slice(1).some((point) => point.delta.exact !== "0"),
     ).toBe(true);
+  });
+
+  it("does not let future investment links suppress a current Asset", () => {
+    const result = compileCurrentPosition(
+      modelWith((value) => {
+        value.objects.Account![0]!.opening_date = "2026-02-01";
+        value.objects.Investment![0]!.asset_id = "90000000-0000-4000-8000-000000000007";
+        value.objects.Investment![0]!.quantity = "2";
+      }),
+      { baseCurrency: "USD", asOf: "2026-01-01" },
+    );
+    expect(result.status).toBe("compiled");
+    if (result.status === "compiled") expect(result.value.assets?.amount.toString()).toBe("350000");
+  });
+
+  it("excludes future liabilities and ignores currency-like extensions", () => {
+    const result = compileCurrentPosition(
+      modelWith((value) => {
+        value.objects.Liability![0]!.origination_date = "2026-02-01";
+        value.objects.Liability![0]!.currency = "EUR";
+        value.objects.Liability![0]!.current_balance_currency = "EUR";
+      }),
+      { baseCurrency: "USD", asOf: "2026-01-01" },
+    );
+    expect(result.status).toBe("compiled");
+    if (result.status === "compiled") expect(result.value.liabilities?.amount.toString()).toBe("0");
+  });
+
+  it("requires a boundary-derived monthly horizon and matching request months", () => {
+    expect(compileCashFlow(createSyntheticPersonalDraft(), { ...request, months: 2 }).status).toBe("invalid_model");
+    expect(compileCashFlow(createSyntheticPersonalDraft(), { ...request, simulationStart: "2026-01-02" }).status).toBe("invalid_model");
+    const valid = compileCashFlow(createSyntheticPersonalDraft(), { ...request, months: 3 });
+    expect(valid.status).toBe("compiled");
+    if (valid.status === "compiled") expect(valid.value.executionMonths).toBe(3);
   });
 });

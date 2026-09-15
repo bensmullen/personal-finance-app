@@ -9,7 +9,7 @@ import {
   createAuthoritativeState,
   type AuthoritativeState,
 } from "../../state/index.js";
-import type { Instant } from "../../time/index.js";
+import { utcMonthlyHorizonMonths, type Instant } from "../../time/index.js";
 import { Currency, Rate, money, rateConvention } from "../../values/index.js";
 import type { VerticalSlice2Input } from "../../simulation/verticalSlice2.js";
 import { assertGeometricGrowthRate } from "../../primitives/index.js";
@@ -25,6 +25,7 @@ import {
   ownerInScope,
   preflightCanonicalCollections,
   resolveHouseholdScope,
+  resolveOwnerScope,
   utcDate,
   issue,
   inspectAccountBalanceBehavior,
@@ -41,12 +42,14 @@ export interface CashFlowCompilerRequest {
   readonly simulationStart: string;
   readonly simulationEnd: string;
   readonly sameInstantCashFlowOrder: SameInstantCashFlowOrder;
+  readonly months?: number;
 }
 
 export interface CompiledCashFlow {
   readonly input: VerticalSlice2Input;
   readonly openingState: AuthoritativeState;
   readonly scenarioIdentity: string;
+  readonly executionMonths: number;
 }
 
 const SYNTHETIC_SCENARIO = "f15c0000-0000-4000-8000-000000000001";
@@ -112,6 +115,18 @@ export const selectScenario = (
     };
   for (const scenario of scenarios) {
     const id = canonicalId(scenario, "scenario_id");
+    if (typeof scenario.enabled !== "boolean" || typeof scenario.stochastic !== "boolean")
+      return invalidResult(
+        "SCENARIO_SELECTION_FIELD_INVALID",
+        `Scenario ${id} enabled and stochastic must be booleans.`,
+        "Scenario", id,
+      );
+    if (!(["daily", "monthly", "quarterly", "annual"] as const).includes(scenario.timestep as never))
+      return invalidResult(
+        "SCENARIO_TIMESTEP_INVALID",
+        `Scenario ${id} timestep is not a canonical value.`,
+        "Scenario", id, "timestep",
+      );
     if (
       scenario.simulation_count !== undefined &&
       (typeof scenario.simulation_count !== "number" ||
@@ -126,21 +141,25 @@ export const selectScenario = (
         "simulation_count",
       );
   }
-  const eligible = scenarios.filter(
-    (scenario) =>
-      scenario.enabled === true &&
-      scenario.stochastic === false &&
-      scenario.timestep === "monthly" &&
-      (scenario.simulation_count ?? 1) === 1,
-  );
-  if (eligible.length !== 1)
+  const enabled = scenarios.filter((scenario) => scenario.enabled === true);
+  if (enabled.length !== 1)
     return unsupportedResult(
       "SCENARIO_SELECTION_AMBIGUOUS",
-      `Cash-flow compilation requires exactly one enabled deterministic monthly single-realization Scenario; found ${eligible.length}.`,
+      `Cash-flow compilation requires exactly one enabled Scenario; found ${enabled.length}.`,
       "Scenario",
     );
-  const selected = eligible[0]!;
+  const selected = enabled[0]!;
   const id = canonicalId(selected, "scenario_id")!;
+  if (selected.stochastic)
+    return unsupportedResult("SCENARIO_STOCHASTIC_UNSUPPORTED", `Scenario ${id} is stochastic.`, "Scenario", id, "stochastic");
+  if ((selected.simulation_count ?? 1) !== 1)
+    return invalidResult("SCENARIO_SIMULATION_COUNT_INVARIANT", `Deterministic Scenario ${id} must use simulation_count 1.`, "Scenario", id, "simulation_count");
+  if (selected.timestep !== "monthly")
+    return unsupportedResult("SCENARIO_TIMESTEP_UNSUPPORTED", `Scenario ${id} timestep ${selected.timestep} is not supported.`, "Scenario", id, "timestep");
+  const scenarioStart = utcDate(selected.start_date);
+  const scenarioEnd = utcDate(selected.end_date);
+  if (!scenarioStart || !scenarioEnd || scenarioStart >= scenarioEnd)
+    return invalidResult("SCENARIO_TEMPORAL_INVALID", `Scenario ${id} requires valid ordered start_date and end_date.`, "Scenario", id, "start_date");
   if (
     selected.base_scenario_id !== undefined &&
     selected.base_scenario_id !== null &&
@@ -180,6 +199,8 @@ export const selectScenario = (
       [baseId],
     );
   }
+  if (selected.event_ids === null)
+    return unsupportedResult("SCENARIO_EVENT_MEMBERSHIP_UNKNOWN", `Scenario ${id} event membership is unknown.`, "Scenario", id, "event_ids");
   if (selected.event_ids !== undefined && !Array.isArray(selected.event_ids))
     return invalidResult(
       "SCENARIO_EVENT_REFERENCES_INVALID",
@@ -220,10 +241,9 @@ export const selectScenario = (
       "event_ids",
     );
   }
-  if (
-    selected.assumption_ids !== undefined &&
-    !Array.isArray(selected.assumption_ids)
-  )
+  if (selected.assumption_ids === null)
+    return unsupportedResult("SCENARIO_ASSUMPTION_MEMBERSHIP_UNKNOWN", `Scenario ${id} assumption membership is unknown.`, "Scenario", id, "assumption_ids");
+  if (selected.assumption_ids !== undefined && !Array.isArray(selected.assumption_ids))
     return invalidResult(
       "SCENARIO_ASSUMPTION_REFERENCES_INVALID",
       `Scenario ${id} assumption_ids must be an array.`,
@@ -401,20 +421,21 @@ export const resolveGrowth = (
       "scenario_id",
       [selected.id, primitiveScenarioId],
     );
-  if (primitive.start_date !== undefined || primitive.end_date !== undefined)
+  for (const field of ["start_date", "end_date"] as const) {
+    const raw = primitive[field];
+    if (raw !== undefined && raw !== null && !utcDate(raw))
+      return invalidResult("DATE_INVALID", `PrimitiveInstance ${growthId} ${field} is invalid.`, "PrimitiveInstance", growthId, field);
+  }
+  if ((primitive.start_date !== undefined && primitive.start_date !== null) || (primitive.end_date !== undefined && primitive.end_date !== null))
     return unsupportedResult(
       "BOUNDED_GROWTH_UNSUPPORTED",
       `Bounded P08 PrimitiveInstance ${growthId} is not supported in PR 15.`,
       "PrimitiveInstance",
       growthId,
     );
-  if (
-    primitive.parameters !== undefined &&
-    (typeof primitive.parameters !== "object" ||
-      primitive.parameters === null ||
-      Array.isArray(primitive.parameters) ||
-      Object.keys(primitive.parameters).length > 0)
-  )
+  if (primitive.parameters !== undefined && primitive.parameters !== null && (typeof primitive.parameters !== "object" || Array.isArray(primitive.parameters)))
+    return invalidResult("GROWTH_PARAMETERS_INVALID", `P08 PrimitiveInstance ${growthId} parameters must be an object.`, "PrimitiveInstance", growthId, "parameters");
+  if (primitive.parameters !== undefined && primitive.parameters !== null && Object.keys(primitive.parameters as CanonicalObject).length > 0)
     return unsupportedResult(
       "GROWTH_PARAMETERS_UNSUPPORTED",
       `P08 PrimitiveInstance ${growthId} must not contain parameters.`,
@@ -523,11 +544,11 @@ export const resolveGrowth = (
       [assumptionId],
     );
   if (
-    assumption.start_date !== undefined ||
-    assumption.end_date !== undefined ||
-    assumption.distribution_type !== undefined ||
-    assumption.distribution_parameters !== undefined ||
-    assumption.correlation_group !== undefined
+    (assumption.start_date !== undefined && assumption.start_date !== null) ||
+    (assumption.end_date !== undefined && assumption.end_date !== null) ||
+    (assumption.distribution_type !== undefined && assumption.distribution_type !== null) ||
+    (assumption.distribution_parameters !== undefined && assumption.distribution_parameters !== null) ||
+    (assumption.correlation_group !== undefined && assumption.correlation_group !== null)
   )
     return unsupportedResult(
       "STOCHASTIC_OR_BOUNDED_ASSUMPTION_UNSUPPORTED",
@@ -689,6 +710,23 @@ export const compileCashFlow = (
       undefined,
       "simulationStart",
     );
+  const executionMonths = utcMonthlyHorizonMonths(simulationStart, simulationEnd);
+  if (executionMonths === undefined)
+    return invalidResult(
+      "FORECAST_HORIZON_MONTHLY_INVALID",
+      "Forecast boundaries must form an exact UTC calendar-month VS2 horizon.",
+      "forecast_request",
+      undefined,
+      "simulationStart",
+    );
+  if (request.months !== undefined && request.months !== executionMonths)
+    return invalidResult(
+      "FORECAST_MONTHS_MISMATCH",
+      `Forecast months ${request.months} must equal the boundary-derived month count ${executionMonths}.`,
+      "forecast_request",
+      undefined,
+      "months",
+    );
   let currency: Currency;
   try {
     currency = Currency.of(request.baseCurrency);
@@ -723,30 +761,26 @@ export const compileCashFlow = (
         "account_id",
       );
     accountIds.add(id);
-    if (typeof account.owner_id !== "string" || !UUID.test(account.owner_id))
-      return invalidResult(
-        "OWNER_REFERENCE_INVALID",
-        `Account ${id} owner_id must be a UUID.`,
-        "Account",
-        id,
-        "owner_id",
-      );
+    const owner = resolveOwnerScope(model, account.owner_id, scope, "Account", id);
+    if (owner.status !== "compiled") return owner;
+    if (!(["checking", "savings", "cash", "taxable_brokerage", "traditional_401k", "roth_401k", "traditional_ira", "roth_ira", "hsa", "hsa_investment", "529", "403b", "457b", "sep_ira", "simple_ira", "pension", "cash_value_insurance", "other"] as const).includes(account.account_type as never))
+      return invalidResult("ACCOUNT_TYPE_INVALID", `Account ${id} account_type is not canonical.`, "Account", id, "account_type");
   }
-  const accounts = allAccounts.filter((account) =>
-    ownerInScope(account.owner_id, scope),
-  );
+  const accounts = allAccounts.filter((account) => ownerInScope(account.owner_id, scope));
   for (const expense of objects(model, "Expense")) {
     const expenseId = canonicalId(expense, "expense_id")!;
-    if (typeof expense.owner_id !== "string" || !UUID.test(expense.owner_id))
-      return invalidResult(
-        "OWNER_REFERENCE_INVALID",
-        `Expense ${expenseId} owner_id must be a UUID.`,
+    const expenseOwner = resolveOwnerScope(model, expense.owner_id, scope, "Expense", expenseId);
+    if (expenseOwner.status !== "compiled") return expenseOwner;
+    if (expenseOwner.value === "out_of_scope") continue;
+    const rawPayment = expense.payment_account_id;
+    if (rawPayment === undefined || rawPayment === null)
+      return unsupportedResult(
+        "PAYMENT_ACCOUNT_REQUIRED",
+        `Expense ${expenseId} requires an explicit payment_account_id.`,
         "Expense",
         expenseId,
-        "owner_id",
+        "payment_account_id",
       );
-    if (!ownerInScope(expense.owner_id, scope)) continue;
-    const rawPayment = expense.payment_account_id;
     if (typeof rawPayment !== "string" || !UUID.test(rawPayment))
       return invalidResult(
         "PAYMENT_ACCOUNT_REFERENCE_INVALID",
@@ -759,7 +793,18 @@ export const compileCashFlow = (
     const paymentAccount = allAccounts.find(
       (candidate) => canonicalId(candidate, "account_id") === paymentId,
     );
-    if (!paymentAccount || !ownerInScope(paymentAccount.owner_id, scope))
+    if (!paymentAccount)
+      return invalidResult(
+        "PAYMENT_ACCOUNT_REFERENCE_INVALID",
+        `Expense ${expenseId} payment_account_id must resolve to an in-scope Account.`,
+        "Expense",
+        expenseId,
+        "payment_account_id",
+        [paymentId],
+      );
+    const paymentOwner = resolveOwnerScope(model, paymentAccount.owner_id, scope, "Account", paymentId);
+    if (paymentOwner.status !== "compiled") return paymentOwner;
+    if (paymentOwner.value === "out_of_scope")
       return invalidResult(
         "PAYMENT_ACCOUNT_REFERENCE_INVALID",
         `Expense ${expenseId} payment_account_id must resolve to an in-scope Account.`,
@@ -791,6 +836,8 @@ export const compileCashFlow = (
     );
   const account = eligibleAccounts[0]!;
   const accountId = canonicalId(account, "account_id")!;
+  if (typeof account.currency !== "string" || !/^[A-Z]{3}$/.test(account.currency))
+    return invalidResult("ACCOUNT_CURRENCY_INVALID", `Account ${accountId} currency must be a canonical ISO currency.`, "Account", accountId, "currency");
   if (account.currency !== currency.code)
     return unsupportedResult(
       "FX_UNSUPPORTED",
@@ -827,7 +874,7 @@ export const compileCashFlow = (
       accountId,
       "opening_date",
     );
-  if (account.closing_date !== undefined) {
+  if (account.closing_date !== undefined && account.closing_date !== null) {
     const closing = utcDate(account.closing_date);
     if (!closing)
       return invalidResult(
@@ -837,6 +884,8 @@ export const compileCashFlow = (
         accountId,
         "closing_date",
       );
+    if (closing < openingDate)
+      return invalidResult("TEMPORAL_INTERVAL_INVALID", `Account ${accountId} closing_date cannot precede opening_date.`, "Account", accountId, "closing_date");
     if (closing < simulationEnd)
       return unsupportedResult(
         "ACCOUNT_CLOSING_TIMING_UNSUPPORTED",
@@ -889,14 +938,8 @@ export const compileCashFlow = (
           `${type.toLowerCase()}_id`,
         );
       seen.add(id);
-      if (typeof stream.owner_id !== "string" || !UUID.test(stream.owner_id))
-        return invalidResult(
-          "OWNER_REFERENCE_INVALID",
-          `${type} ${id} owner_id must be a UUID.`,
-          type,
-          id,
-          "owner_id",
-        );
+      const owner = resolveOwnerScope(model, stream.owner_id, scope, type, id);
+      if (owner.status !== "compiled") return owner;
     }
     for (const stream of collection) {
       const idField = `${type.toLowerCase()}_id`;
@@ -911,6 +954,8 @@ export const compileCashFlow = (
         );
       const event = validateEventReference(model, stream, type);
       if (event) return event;
+      if (!(["weekly", "biweekly", "semimonthly", "monthly", "bimonthly", "quarterly", "semiannual", "annual", "irregular"] as const).includes(stream.frequency as never))
+        return invalidResult("RECURRENCE_INVALID", `${type} ${id} frequency is not canonical.`, type, id, "frequency");
       if (stream.frequency !== "monthly")
         return unsupportedResult(
           "RECURRENCE_UNSUPPORTED",
@@ -936,7 +981,7 @@ export const compileCashFlow = (
           id,
           "start_date",
         );
-      if (stream.end_date !== undefined) {
+      if (stream.end_date !== undefined && stream.end_date !== null) {
         if (
           typeof stream.end_date !== "string" ||
           !nextUtcDate(stream.end_date)
@@ -1085,7 +1130,9 @@ export const compileCashFlow = (
         : undefined;
     expenseOccurrenceSets.set(
       id,
-      new Set(monthlyOccurrences(start, end, simulationStart, simulationEnd)),
+      money(String(stream.amount), currency).amount.isZero()
+        ? new Set()
+        : new Set(monthlyOccurrences(start, end, simulationStart, simulationEnd)),
     );
     const assumptionIds = growth.value.assumptionId
       ? [domainId("assumption", growth.value.assumptionId)]
@@ -1217,6 +1264,7 @@ export const compileCashFlow = (
         input,
         openingState,
         scenarioIdentity: selected.id,
+        executionMonths,
       }),
       diagnostics: Object.freeze([]),
     };

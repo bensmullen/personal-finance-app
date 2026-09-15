@@ -6,7 +6,12 @@ import type {
   JsonValue,
   PortableModelEnvelope,
 } from "../../model/modelVersion.js";
-import { instant, type Instant } from "../../time/index.js";
+import {
+  nextUtcDateOnlyInstant,
+  utcDateOnlyInstant,
+  utcMonthlyOccurrences,
+  type Instant,
+} from "../../time/index.js";
 import type { CapabilityDiagnostic, CompileResult } from "./types.js";
 
 export type CanonicalObject = Readonly<Record<string, JsonValue>>;
@@ -109,22 +114,11 @@ export const canonicalId = (
 
 export const utcDate = (value: JsonValue | undefined): Instant | undefined => {
   if (typeof value !== "string") return undefined;
-  const match = DATE.exec(value);
-  if (!match) return undefined;
-  const date = new Date(`${value}T00:00:00.000Z`);
-  if (
-    !Number.isFinite(date.valueOf()) ||
-    date.toISOString().slice(0, 10) !== value
-  )
-    return undefined;
-  return instant(date.toISOString());
+  return utcDateOnlyInstant(value);
 };
 
 export const nextUtcDate = (value: string): Instant | undefined => {
-  const start = utcDate(value);
-  if (start === undefined) return undefined;
-  const next = new Date(Date.parse(start) + 86_400_000);
-  return instant(next.toISOString());
+  return nextUtcDateOnlyInstant(value);
 };
 
 export const monthAnchorDay = (date: Instant): number =>
@@ -363,6 +357,42 @@ export const ownerInScope = (
   (owner.toLowerCase() === scope.householdId ||
     scope.memberIds.includes(owner.toLowerCase()));
 
+export type OwnerScope = "in_scope" | "out_of_scope";
+
+/** Resolves canonical owners so broken UUIDs cannot be silently omitted. */
+export const resolveOwnerScope = (
+  model: PortableModelEnvelope,
+  owner: JsonValue | undefined,
+  scope: HouseholdScope,
+  entityType: string,
+  entityId: string,
+): CompileResult<OwnerScope> => {
+  if (typeof owner !== "string" || !UUID.test(owner))
+    return {
+      status: "invalid_model",
+      diagnostics: Object.freeze([
+        issue("OWNER_REFERENCE_INVALID", `${entityType} ${entityId} owner_id must be a UUID.`, entityType, entityId, "owner_id"),
+      ]),
+    };
+  const id = owner.toLowerCase();
+  const households = objects(model, "Household");
+  const people = objects(model, "Person");
+  const resolves = households.some((item) => canonicalId(item, "household_id") === id)
+    || people.some((item) => canonicalId(item, "person_id") === id);
+  if (!resolves)
+    return {
+      status: "invalid_model",
+      diagnostics: Object.freeze([
+        issue("OWNER_REFERENCE_NOT_FOUND", `${entityType} ${entityId} owner_id does not resolve.`, entityType, entityId, "owner_id", [id]),
+      ]),
+    };
+  return {
+    status: "compiled",
+    value: ownerInScope(owner, scope) ? "in_scope" : "out_of_scope",
+    diagnostics: Object.freeze([]),
+  };
+};
+
 export interface AccountBalanceBehavior {
   readonly hasAuthoredBehavior: boolean;
 }
@@ -374,7 +404,7 @@ export const inspectAccountBalanceBehavior = (
   const preflight = preflightCanonicalCollections(model, [
     "Account",
     "Transaction",
-    ...(account.return_model_id === undefined
+    ...(account.return_model_id === undefined || account.return_model_id === null
       ? []
       : (["PrimitiveInstance"] as const)),
   ]);
@@ -389,6 +419,20 @@ export const inspectAccountBalanceBehavior = (
       value,
     ]),
   );
+  if (account.transaction_ids === null)
+    return {
+      status: "unsupported",
+      diagnostics: Object.freeze([
+        capability(
+          "TRANSACTION_HISTORY_COMPLETENESS_UNKNOWN",
+          `Account ${accountId} transaction_ids is null, so opening-balance authority cannot be proven.`,
+          "opening_balance",
+          "Account",
+          accountId,
+          "transaction_ids",
+        ),
+      ]),
+    };
   if (
     account.transaction_ids !== undefined &&
     !Array.isArray(account.transaction_ids)
@@ -491,7 +535,7 @@ export const inspectAccountBalanceBehavior = (
     }
   }
   const returnModel = account.return_model_id;
-  if (returnModel !== undefined) {
+  if (returnModel !== undefined && returnModel !== null) {
     if (typeof returnModel !== "string" || !UUID.test(returnModel))
       return {
         status: "invalid_model",
@@ -539,17 +583,9 @@ export const monthlyOccurrences = (
   end: Instant | undefined,
   horizonStart: Instant,
   horizonEnd: Instant,
-): readonly Instant[] => {
-  const day = monthAnchorDay(anchor);
-  const values: Instant[] = [];
-  const cursor = new Date(
-    Date.UTC(Number(anchor.slice(0, 4)), Number(anchor.slice(5, 7)) - 1, day),
-  );
-  while (cursor.toISOString() < horizonEnd) {
-    const at = instant(cursor.toISOString());
-    if (at >= anchor && at >= horizonStart && (end === undefined || at < end))
-      values.push(at);
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-  }
-  return Object.freeze(values);
-};
+): readonly Instant[] =>
+  utcMonthlyOccurrences(
+    anchor,
+    { start: horizonStart, end: horizonEnd },
+    "skip",
+  ).filter((at) => end === undefined || at < end);

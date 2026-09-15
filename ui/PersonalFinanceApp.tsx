@@ -312,8 +312,10 @@ export function PersonalFinanceApp() {
       draft
         ? getCurrentPosition(
             draft,
-            sessionSettings.baseCurrency,
-            sessionSettings.asOf,
+            {
+              baseCurrency: sessionSettings.baseCurrency,
+              asOf: sessionSettings.asOf,
+            },
           )
         : undefined,
     [draft, sessionSettings.baseCurrency, sessionSettings.asOf],

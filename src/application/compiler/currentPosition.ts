@@ -1,9 +1,10 @@
-import { domainId } from "../../identity/index.js";
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { applyGeometricGrowth } from "../../primitives/index.js";
 import { deriveCurrentPositionTotals } from "../../statements/index.js";
-import { utcCalendarMonthDifference } from "../../time/index.js";
-import { positionMarketValue } from "../../valuation/index.js";
+import {
+  utcCalendarMonthDifference,
+  utcLatestMonthlyOccurrenceAtOrBefore,
+} from "../../time/index.js";
 import {
   Currency,
   Money,
@@ -22,8 +23,8 @@ import {
   inspectAccountBalanceBehavior,
   monthAnchorDay,
   objects,
-  ownerInScope,
   preflightCanonicalCollections,
+  resolveOwnerScope,
   resolveHouseholdScope,
   utcDate,
   type CanonicalObject,
@@ -173,20 +174,16 @@ export const compileCurrentPosition = (
         "account_id",
       );
     accountsById.set(id, account);
-    if (typeof account.owner_id !== "string" || !UUID.test(account.owner_id))
-      return invalidResult(
-        "OWNER_REFERENCE_INVALID",
-        `Account ${id} owner_id must be a UUID.`,
-        "Account",
-        id,
-        "owner_id",
-      );
-    if (!ownerInScope(account.owner_id, scope)) {
+    const owner = resolveOwnerScope(model, account.owner_id, scope, "Account", id);
+    if (owner.status !== "compiled") return owner;
+    if (typeof account.currency !== "string" || !/^[A-Z]{3}$/.test(account.currency))
+      return invalidResult("ACCOUNT_CURRENCY_INVALID", `Account ${id} currency must be a canonical ISO currency.`, "Account", id, "currency");
+    if (owner.value === "out_of_scope") {
       accountStatus.set(id, "out_of_scope");
       continue;
     }
     const balanceBehavior = inspectAccountBalanceBehavior(model, account);
-    if (balanceBehavior.status !== "compiled") return balanceBehavior;
+    if (balanceBehavior.status === "invalid_model") return balanceBehavior;
     const opening = utcDate(account.opening_date);
     if (!opening)
       return invalidResult(
@@ -197,10 +194,10 @@ export const compileCurrentPosition = (
         "opening_date",
       );
     const closing =
-      account.closing_date === undefined
+      account.closing_date === undefined || account.closing_date === null
         ? undefined
         : utcDate(account.closing_date);
-    if (account.closing_date !== undefined && !closing)
+    if (account.closing_date !== undefined && account.closing_date !== null && !closing)
       return invalidResult(
         "DATE_INVALID",
         `Account ${id} closing_date is invalid.`,
@@ -208,6 +205,8 @@ export const compileCurrentPosition = (
         id,
         "closing_date",
       );
+    if (closing !== undefined && closing < opening)
+      return invalidResult("TEMPORAL_INTERVAL_INVALID", `Account ${id} closing_date cannot precede opening_date.`, "Account", id, "closing_date");
     if (opening > asOf) {
       accountStatus.set(id, "future");
       continue;
@@ -239,7 +238,10 @@ export const compileCurrentPosition = (
         id,
         "opening_balance",
       );
-    if (balanceBehavior.value.hasAuthoredBehavior) {
+    if (
+      balanceBehavior.status === "unsupported" ||
+      (balanceBehavior.status === "compiled" && balanceBehavior.value.hasAuthoredBehavior)
+    ) {
       cashComplete = false;
       diagnostics.push(
         diagnostic(
@@ -283,20 +285,30 @@ export const compileCurrentPosition = (
         undefined,
         "liability_id",
       );
-    if (
-      typeof liability.owner_id !== "string" ||
-      !UUID.test(liability.owner_id)
-    )
+    const owner = resolveOwnerScope(model, liability.owner_id, scope, "Liability", id);
+    if (owner.status !== "compiled") return owner;
+    if (owner.value === "out_of_scope") continue;
+    const origination = utcDate(liability.origination_date);
+    if (!origination)
       return invalidResult(
-        "OWNER_REFERENCE_INVALID",
-        `Liability ${id} owner_id must be a UUID.`,
+        "DATE_INVALID",
+        `Liability ${id} origination_date is required and must be valid.`,
         "Liability",
         id,
-        "owner_id",
+        "origination_date",
       );
-    if (!ownerInScope(liability.owner_id, scope)) continue;
-    const explicitCurrency =
-      liability.current_balance_currency ?? liability.currency;
+    if (liability.maturity_date !== undefined && liability.maturity_date !== null) {
+      const maturity = utcDate(liability.maturity_date);
+      if (!maturity || maturity <= origination)
+        return invalidResult(
+          "TEMPORAL_INTERVAL_INVALID",
+          `Liability ${id} maturity_date must be valid and after origination_date.`,
+          "Liability",
+          id,
+          "maturity_date",
+        );
+    }
+    if (origination > asOf) continue;
     const balance = exactMoney(liability, "current_balance", currency);
     if (!balance || balance.isNegative())
       return invalidResult(
@@ -306,24 +318,6 @@ export const compileCurrentPosition = (
         id,
         "current_balance",
       );
-    if (
-      typeof explicitCurrency === "string" &&
-      explicitCurrency !== currency.code &&
-      !balance.amount.isZero()
-    ) {
-      liabilitiesComplete = false;
-      diagnostics.push(
-        diagnostic(
-          "FX_UNSUPPORTED",
-          `Liability ${id} uses ${explicitCurrency}; PR 15 does not perform FX.`,
-          "liabilities",
-          "Liability",
-          id,
-          "currency",
-        ),
-      );
-      continue;
-    }
     liabilityBalances.push(balance);
   }
 
@@ -350,31 +344,6 @@ export const compileCurrentPosition = (
         id,
         "account_id",
       );
-    if (investment.asset_id !== undefined) {
-      const assetRef = canonicalId(investment, "asset_id");
-      const linkedAsset = assetRef
-        ? objects(model, "Asset").find(
-            (asset) => canonicalId(asset, "asset_id") === assetRef,
-          )
-        : undefined;
-      if (!assetRef || !linkedAsset)
-        return invalidResult(
-          "INVESTMENT_ASSET_REFERENCE_INVALID",
-          `Investment ${id} asset_id does not resolve to an Asset.`,
-          "Investment",
-          id,
-          "asset_id",
-        );
-      if (!ownerInScope(linkedAsset.owner_id, scope))
-        return invalidResult(
-          "INVESTMENT_ASSET_SCOPE_INVALID",
-          `Investment ${id} references an Asset outside the selected Household.`,
-          "Investment",
-          id,
-          "asset_id",
-        );
-      linkedAssetIds.add(assetRef);
-    }
     const holdingStatus = accountStatus.get(accountRef);
     if (holdingStatus === "out_of_scope") continue;
     if (holdingStatus === "future") continue;
@@ -391,6 +360,33 @@ export const compileCurrentPosition = (
         ),
       );
       continue;
+    }
+    if (investment.asset_id !== undefined && investment.asset_id !== null) {
+      const assetRef = canonicalId(investment, "asset_id");
+      const linkedAsset = assetRef
+        ? objects(model, "Asset").find(
+            (asset) => canonicalId(asset, "asset_id") === assetRef,
+          )
+        : undefined;
+      if (!assetRef || !linkedAsset)
+        return invalidResult(
+          "INVESTMENT_ASSET_REFERENCE_INVALID",
+          `Investment ${id} asset_id does not resolve to an Asset.`,
+          "Investment",
+          id,
+          "asset_id",
+        );
+      const linkedOwner = resolveOwnerScope(model, linkedAsset.owner_id, scope, "Asset", assetRef);
+      if (linkedOwner.status !== "compiled") return linkedOwner;
+      if (linkedOwner.value !== "in_scope")
+        return invalidResult(
+          "INVESTMENT_ASSET_SCOPE_INVALID",
+          `Investment ${id} references an Asset outside the selected Household.`,
+          "Investment",
+          id,
+          "asset_id",
+        );
+      linkedAssetIds.add(assetRef);
     }
     if (
       typeof investment.quantity !== "string" ||
@@ -413,55 +409,15 @@ export const compileCurrentPosition = (
         "quantity",
       );
     if (qty.amount.isZero()) continue;
-    if (accountsById.get(accountRef)!.currency !== currency.code) {
-      assetsComplete = false;
-      diagnostics.push(
-        diagnostic(
-          "FX_UNSUPPORTED",
-          `Investment ${id} is held in a non-base-currency Account.`,
-          "assets",
-          "Investment",
-          id,
-          "account_id",
-        ),
-      );
-      continue;
-    }
-    const priceField = classifyExactMoney(investment, "price", currency);
-    if (
-      priceField.kind === "invalid" ||
-      (priceField.kind === "value" && priceField.value.isNegative())
-    )
-      return invalidResult(
-        "DOMAIN_VALUE_INVALID",
-        `Investment ${id} price must be a non-negative exact decimal when present.`,
+    assetsComplete = false;
+    diagnostics.push(
+      diagnostic(
+        "INVESTMENT_CURRENT_VALUATION_UNAVAILABLE",
+        `Investment ${id} has positive quantity but no authoritative current valuation in PR 15.`,
+        "assets",
         "Investment",
         id,
-        "price",
-      );
-    if (priceField.kind === "missing") {
-      assetsComplete = false;
-      diagnostics.push(
-        diagnostic(
-          "INVESTMENT_PRICE_UNAVAILABLE",
-          `Investment ${id} has positive quantity but no usable exact current price.`,
-          "assets",
-          "Investment",
-          id,
-          "price",
-        ),
-      );
-      continue;
-    }
-    const price = priceField.value;
-    nonCashAssets.push(
-      positionMarketValue({
-        id: domainId("position", id),
-        accountId: domainId("account", accountRef),
-        quantity: qty,
-        price,
-        carryingValue: Money.zero(currency),
-      }),
+      ),
     );
   }
 
@@ -475,17 +431,11 @@ export const compileCurrentPosition = (
         undefined,
         "asset_id",
       );
-    if (typeof asset.owner_id !== "string" || !UUID.test(asset.owner_id))
-      return invalidResult(
-        "OWNER_REFERENCE_INVALID",
-        `Asset ${id} owner_id must be a UUID.`,
-        "Asset",
-        id,
-        "owner_id",
-      );
-    if (!ownerInScope(asset.owner_id, scope)) continue;
+    const owner = resolveOwnerScope(model, asset.owner_id, scope, "Asset", id);
+    if (owner.status !== "compiled") return owner;
+    if (owner.value === "out_of_scope") continue;
     if (linkedAssetIds.has(id)) continue;
-    if (asset.account_id !== undefined) {
+    if (asset.account_id !== undefined && asset.account_id !== null) {
       const accountRef = canonicalId(asset, "account_id");
       if (!accountRef || !accountsById.has(accountRef))
         return invalidResult(
@@ -495,7 +445,9 @@ export const compileCurrentPosition = (
           id,
           "account_id",
         );
-      if (!ownerInScope(accountsById.get(accountRef)!.owner_id, scope))
+      const accountOwner = resolveOwnerScope(model, accountsById.get(accountRef)!.owner_id, scope, "Account", accountRef);
+      if (accountOwner.status !== "compiled") return accountOwner;
+      if (accountOwner.value !== "in_scope")
         return invalidResult(
           "ASSET_ACCOUNT_SCOPE_INVALID",
           `Asset ${id} references an Account outside the selected Household.`,
@@ -504,7 +456,7 @@ export const compileCurrentPosition = (
           "account_id",
         );
     }
-    if (asset.asset_type === "cash" || asset.account_id !== undefined) {
+    if (asset.asset_type === "cash" || (asset.account_id !== undefined && asset.account_id !== null)) {
       assetsComplete = false;
       diagnostics.push(
         diagnostic(
@@ -517,7 +469,7 @@ export const compileCurrentPosition = (
       );
       continue;
     }
-    if (asset.acquisition_date !== undefined) {
+    if (asset.acquisition_date !== undefined && asset.acquisition_date !== null) {
       const acquired = utcDate(asset.acquisition_date);
       if (!acquired)
         return invalidResult(
@@ -529,7 +481,7 @@ export const compileCurrentPosition = (
         );
       if (acquired > asOf) continue;
     }
-    if (asset.sale_date !== undefined) {
+    if (asset.sale_date !== undefined && asset.sale_date !== null) {
       const sold = utcDate(asset.sale_date);
       if (!sold)
         return invalidResult(
@@ -554,11 +506,9 @@ export const compileCurrentPosition = (
         continue;
       }
     }
-    if (
-      asset.valuation_method !== "cost" ||
-      asset.appreciation_model_id !== undefined ||
-      asset.depreciation_model_id !== undefined
-    ) {
+    if (!(["cost", "market", "appraisal", "model"] as const).includes(asset.valuation_method as never))
+      return invalidResult("ASSET_VALUATION_METHOD_INVALID", `Asset ${id} valuation_method is not canonical.`, "Asset", id, "valuation_method");
+    if (asset.valuation_method !== "cost") {
       assetsComplete = false;
       diagnostics.push(
         diagnostic(
@@ -572,6 +522,19 @@ export const compileCurrentPosition = (
       );
       continue;
     }
+    let hasAuthoredValuationModel = false;
+    for (const field of ["appreciation_model_id", "depreciation_model_id"] as const) {
+      const raw = asset[field];
+      if (raw === undefined || raw === null) continue;
+      if (typeof raw !== "string" || !UUID.test(raw))
+        return invalidResult("ASSET_MODEL_REFERENCE_INVALID", `Asset ${id} ${field} must be a UUID.`, "Asset", id, field);
+      if (!objects(model, "PrimitiveInstance").some((primitive) => canonicalId(primitive, "primitive_instance_id") === raw.toLowerCase()))
+        return invalidResult("ASSET_MODEL_REFERENCE_NOT_FOUND", `Asset ${id} ${field} does not resolve.`, "Asset", id, field);
+      assetsComplete = false;
+      diagnostics.push(diagnostic("ASSET_VALUATION_UNSUPPORTED", `Asset ${id} has authored valuation behavior.`, "assets", "Asset", id, field));
+      hasAuthoredValuationModel = true;
+    }
+    if (hasAuthoredValuationModel) continue;
     const costField = classifyExactMoney(asset, "acquisition_cost", currency);
     if (
       costField.kind === "invalid" ||
@@ -616,15 +579,9 @@ export const compileCurrentPosition = (
           undefined,
           `${type.toLowerCase()}_id`,
         );
-      if (typeof stream.owner_id !== "string" || !UUID.test(stream.owner_id))
-        return invalidResult(
-          "OWNER_REFERENCE_INVALID",
-          `${type} ${id} owner_id must be a UUID.`,
-          type,
-          id,
-          "owner_id",
-        );
-      if (!ownerInScope(stream.owner_id, scope)) continue;
+      const owner = resolveOwnerScope(model, stream.owner_id, scope, type, id);
+      if (owner.status !== "compiled") return owner;
+      if (owner.value === "out_of_scope") continue;
       for (const field of type === "Income"
         ? (["probability_model_id", "related_event_id"] as const)
         : (["event_trigger_id"] as const)) {
@@ -676,6 +633,8 @@ export const compileCurrentPosition = (
           ]),
         };
       }
+      if (!(["weekly", "biweekly", "semimonthly", "monthly", "bimonthly", "quarterly", "semiannual", "annual", "irregular"] as const).includes(stream.frequency as never))
+        return invalidResult("RECURRENCE_INVALID", `${type} ${id} frequency is not canonical.`, type, id, "frequency");
       if (stream.frequency !== "monthly")
         return {
           status: "unsupported",
@@ -692,8 +651,10 @@ export const compileCurrentPosition = (
         };
       const start = utcDate(stream.start_date);
       const end =
-        stream.end_date === undefined ? undefined : utcDate(stream.end_date);
-      if (!start || (stream.end_date !== undefined && !end))
+        stream.end_date === undefined || stream.end_date === null
+          ? undefined
+          : utcDate(stream.end_date);
+      if (!start || (stream.end_date !== undefined && stream.end_date !== null && !end))
         return invalidResult(
           "DATE_INVALID",
           `${type} ${id} has invalid dates.`,
@@ -701,6 +662,8 @@ export const compileCurrentPosition = (
           id,
           "start_date",
         );
+      if (end !== undefined && end < start)
+        return invalidResult("TEMPORAL_INTERVAL_INVALID", `${type} ${id} end_date cannot precede start_date.`, type, id, "end_date");
       if (asOf < start || (end !== undefined && asOf > end)) continue;
       const base = exactMoney(stream, "amount", currency);
       if (!base || base.isNegative())
@@ -756,21 +719,8 @@ export const compileCurrentPosition = (
             })),
           ),
         };
-      const asOfDate = new Date(Date.parse(asOf));
-      let year = asOfDate.getUTCFullYear();
-      let month = asOfDate.getUTCMonth();
-      if (asOfDate.getUTCDate() < monthAnchorDay(start)) {
-        month -= 1;
-        if (month < 0) {
-          month = 11;
-          year -= 1;
-        }
-      }
-      const latest = utcDate(
-        new Date(Date.UTC(year, month, monthAnchorDay(start)))
-          .toISOString()
-          .slice(0, 10),
-      )!;
+      const latest = utcLatestMonthlyOccurrenceAtOrBefore(start, asOf, "skip");
+      if (!latest) continue;
       if (latest < start) continue;
       const months = utcCalendarMonthDifference(start, latest);
       try {
