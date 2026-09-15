@@ -12,6 +12,7 @@ import {
 import type { Instant } from "../../time/index.js";
 import { Currency, Rate, money, rateConvention } from "../../values/index.js";
 import type { VerticalSlice2Input } from "../../simulation/verticalSlice2.js";
+import { assertGeometricGrowthRate } from "../../primitives/index.js";
 import {
   EXACT_DECIMAL,
   UUID,
@@ -22,9 +23,11 @@ import {
   nextUtcDate,
   objects,
   ownerInScope,
+  preflightCanonicalCollections,
   resolveHouseholdScope,
   utcDate,
   issue,
+  inspectAccountBalanceBehavior,
   type CanonicalObject,
 } from "./shared.js";
 import type { CompileResult } from "./types.js";
@@ -94,6 +97,12 @@ export interface SelectedScenario {
 export const selectScenario = (
   model: PortableModelEnvelope,
 ): CompileResult<SelectedScenario> => {
+  const preflight = preflightCanonicalCollections(model, [
+    "Scenario",
+    "Event",
+    "Assumption",
+  ]);
+  if (preflight.status !== "compiled") return preflight;
   const scenarios = objects(model, "Scenario");
   if (scenarios.length === 0)
     return {
@@ -101,33 +110,28 @@ export const selectScenario = (
       value: Object.freeze({ id: SYNTHETIC_SCENARIO }),
       diagnostics: Object.freeze([]),
     };
-  const scenarioIds = new Set<string>();
   for (const scenario of scenarios) {
     const id = canonicalId(scenario, "scenario_id");
-    if (!id)
+    if (
+      scenario.simulation_count !== undefined &&
+      (typeof scenario.simulation_count !== "number" ||
+        !Number.isSafeInteger(scenario.simulation_count) ||
+        scenario.simulation_count <= 0)
+    )
       return invalidResult(
-        "CANONICAL_ID_INVALID",
-        "Scenario scenario_id must be a valid UUID.",
-        "Scenario",
-        undefined,
-        "scenario_id",
-      );
-    if (scenarioIds.has(id))
-      return invalidResult(
-        "DUPLICATE_EXECUTABLE_IDENTITY",
-        `Duplicate Scenario identity ${id}.`,
+        "SCENARIO_SIMULATION_COUNT_INVALID",
+        `Scenario ${id} simulation_count must be a positive safe integer when present.`,
         "Scenario",
         id,
-        "scenario_id",
+        "simulation_count",
       );
-    scenarioIds.add(id);
   }
   const eligible = scenarios.filter(
     (scenario) =>
       scenario.enabled === true &&
       scenario.stochastic === false &&
       scenario.timestep === "monthly" &&
-      scenario.simulation_count === 1,
+      (scenario.simulation_count ?? 1) === 1,
   );
   if (eligible.length !== 1)
     return unsupportedResult(
@@ -137,6 +141,45 @@ export const selectScenario = (
     );
   const selected = eligible[0]!;
   const id = canonicalId(selected, "scenario_id")!;
+  if (
+    selected.base_scenario_id !== undefined &&
+    selected.base_scenario_id !== null &&
+    selected.base_scenario_id !== ""
+  ) {
+    if (
+      typeof selected.base_scenario_id !== "string" ||
+      !UUID.test(selected.base_scenario_id)
+    )
+      return invalidResult(
+        "BASE_SCENARIO_REFERENCE_INVALID",
+        `Scenario ${id} base_scenario_id must be a UUID.`,
+        "Scenario",
+        id,
+        "base_scenario_id",
+      );
+    const baseId = selected.base_scenario_id.toLowerCase();
+    if (
+      !scenarios.some(
+        (scenario) => canonicalId(scenario, "scenario_id") === baseId,
+      )
+    )
+      return invalidResult(
+        "BASE_SCENARIO_REFERENCE_NOT_FOUND",
+        `Scenario ${id} base_scenario_id does not resolve.`,
+        "Scenario",
+        id,
+        "base_scenario_id",
+        [baseId],
+      );
+    return unsupportedResult(
+      "SCENARIO_INHERITANCE_UNSUPPORTED",
+      `Scenario ${id} inherits from ${baseId}; PR 15 does not execute scenario inheritance.`,
+      "Scenario",
+      id,
+      "base_scenario_id",
+      [baseId],
+    );
+  }
   if (selected.event_ids !== undefined && !Array.isArray(selected.event_ids))
     return invalidResult(
       "SCENARIO_EVENT_REFERENCES_INVALID",
@@ -266,6 +309,12 @@ export const resolveGrowth = (
   streamType: "Income" | "Expense",
   selected: SelectedScenario,
 ): CompileResult<GrowthBinding> => {
+  const preflight = preflightCanonicalCollections(model, [
+    "Scenario",
+    "PrimitiveInstance",
+    "Assumption",
+  ]);
+  if (preflight.status !== "compiled") return preflight;
   const streamId = canonicalId(stream, `${streamType.toLowerCase()}_id`)!;
   const rawGrowth = stream.growth_model_id;
   if (rawGrowth === undefined || rawGrowth === null || rawGrowth === "")
@@ -319,15 +368,38 @@ export const resolveGrowth = (
     );
   if (
     typeof primitive.scenario_id !== "string" ||
-    primitive.scenario_id.toLowerCase() !== selected.id
+    !UUID.test(primitive.scenario_id)
   )
     return invalidResult(
       "GROWTH_SCENARIO_BINDING_INVALID",
-      `PrimitiveInstance ${growthId} does not belong to the selected Scenario.`,
+      `PrimitiveInstance ${growthId} scenario_id must be a UUID.`,
       "PrimitiveInstance",
       growthId,
       "scenario_id",
-      [selected.id],
+    );
+  const primitiveScenarioId = primitive.scenario_id.toLowerCase();
+  if (
+    !objects(model, "Scenario").some(
+      (scenario) =>
+        canonicalId(scenario, "scenario_id") === primitiveScenarioId,
+    )
+  )
+    return invalidResult(
+      "GROWTH_SCENARIO_REFERENCE_NOT_FOUND",
+      `PrimitiveInstance ${growthId} scenario_id does not resolve.`,
+      "PrimitiveInstance",
+      growthId,
+      "scenario_id",
+      [primitiveScenarioId],
+    );
+  if (primitiveScenarioId !== selected.id)
+    return unsupportedResult(
+      "GROWTH_SCENARIO_MISMATCH_UNSUPPORTED",
+      `PrimitiveInstance ${growthId} belongs to a different valid Scenario.`,
+      "PrimitiveInstance",
+      growthId,
+      "scenario_id",
+      [selected.id, primitiveScenarioId],
     );
   if (primitive.start_date !== undefined || primitive.end_date !== undefined)
     return unsupportedResult(
@@ -401,15 +473,38 @@ export const resolveGrowth = (
     );
   if (
     typeof assumption.scenario_id !== "string" ||
-    assumption.scenario_id.toLowerCase() !== selected.id
+    !UUID.test(assumption.scenario_id)
   )
     return invalidResult(
       "ASSUMPTION_SCENARIO_BINDING_INVALID",
-      `Assumption ${assumptionId} does not belong to the selected Scenario.`,
+      `Assumption ${assumptionId} scenario_id must be a UUID.`,
       "Assumption",
       assumptionId,
       "scenario_id",
-      [selected.id],
+    );
+  const assumptionScenarioId = assumption.scenario_id.toLowerCase();
+  if (
+    !objects(model, "Scenario").some(
+      (scenario) =>
+        canonicalId(scenario, "scenario_id") === assumptionScenarioId,
+    )
+  )
+    return invalidResult(
+      "ASSUMPTION_SCENARIO_REFERENCE_NOT_FOUND",
+      `Assumption ${assumptionId} scenario_id does not resolve.`,
+      "Assumption",
+      assumptionId,
+      "scenario_id",
+      [assumptionScenarioId],
+    );
+  if (assumptionScenarioId !== selected.id)
+    return unsupportedResult(
+      "ASSUMPTION_SCENARIO_MISMATCH_UNSUPPORTED",
+      `Assumption ${assumptionId} belongs to a different valid Scenario.`,
+      "Assumption",
+      assumptionId,
+      "scenario_id",
+      [selected.id, assumptionScenarioId],
     );
   if (
     selected.object &&
@@ -419,8 +514,8 @@ export const resolveGrowth = (
         typeof value === "string" && value.toLowerCase() === assumptionId,
     )
   )
-    return invalidResult(
-      "SCENARIO_ASSUMPTION_MEMBERSHIP_INVALID",
+    return unsupportedResult(
+      "SCENARIO_ASSUMPTION_MEMBERSHIP_UNSUPPORTED",
       `Selected Scenario does not list bound Assumption ${assumptionId}.`,
       "Scenario",
       selected.id,
@@ -470,13 +565,15 @@ export const resolveGrowth = (
       "value",
     );
   try {
+    const rate = Rate.fromDecimal(
+      assumption.value,
+      rateConvention.effectiveAnnual(),
+    );
+    assertGeometricGrowthRate(rate);
     return {
       status: "compiled",
       value: Object.freeze({
-        rate: Rate.fromDecimal(
-          assumption.value,
-          rateConvention.effectiveAnnual(),
-        ),
+        rate,
         primitiveId: growthId,
         assumptionId,
       }),
@@ -544,6 +641,19 @@ export const compileCashFlow = (
   model: PortableModelEnvelope,
   request: CashFlowCompilerRequest,
 ): CompileResult<CompiledCashFlow> => {
+  const preflight = preflightCanonicalCollections(model, [
+    "Household",
+    "Person",
+    "Account",
+    "Income",
+    "Expense",
+    "Scenario",
+    "PrimitiveInstance",
+    "Assumption",
+    "Event",
+    "Transaction",
+  ]);
+  if (preflight.status !== "compiled") return preflight;
   const scopeResult = resolveHouseholdScope(model);
   if (scopeResult.status !== "compiled") return scopeResult;
   const scope = scopeResult.value;
@@ -625,6 +735,49 @@ export const compileCashFlow = (
   const accounts = allAccounts.filter((account) =>
     ownerInScope(account.owner_id, scope),
   );
+  for (const expense of objects(model, "Expense")) {
+    const expenseId = canonicalId(expense, "expense_id")!;
+    if (typeof expense.owner_id !== "string" || !UUID.test(expense.owner_id))
+      return invalidResult(
+        "OWNER_REFERENCE_INVALID",
+        `Expense ${expenseId} owner_id must be a UUID.`,
+        "Expense",
+        expenseId,
+        "owner_id",
+      );
+    if (!ownerInScope(expense.owner_id, scope)) continue;
+    const rawPayment = expense.payment_account_id;
+    if (typeof rawPayment !== "string" || !UUID.test(rawPayment))
+      return invalidResult(
+        "PAYMENT_ACCOUNT_REFERENCE_INVALID",
+        `Expense ${expenseId} payment_account_id must be a UUID.`,
+        "Expense",
+        expenseId,
+        "payment_account_id",
+      );
+    const paymentId = rawPayment.toLowerCase();
+    const paymentAccount = allAccounts.find(
+      (candidate) => canonicalId(candidate, "account_id") === paymentId,
+    );
+    if (!paymentAccount || !ownerInScope(paymentAccount.owner_id, scope))
+      return invalidResult(
+        "PAYMENT_ACCOUNT_REFERENCE_INVALID",
+        `Expense ${expenseId} payment_account_id must resolve to an in-scope Account.`,
+        "Expense",
+        expenseId,
+        "payment_account_id",
+        [paymentId],
+      );
+    if (!CASH_TYPES.has(String(paymentAccount.account_type)))
+      return unsupportedResult(
+        "PAYMENT_ACCOUNT_TYPE_UNSUPPORTED",
+        `Expense ${expenseId} uses a valid non-cash payment Account.`,
+        "Expense",
+        expenseId,
+        "payment_account_id",
+        [paymentId],
+      );
+  }
   const eligibleAccounts = accounts.filter(
     (account) =>
       ownerInScope(account.owner_id, scope) &&
@@ -693,78 +846,9 @@ export const compileCashFlow = (
         "closing_date",
       );
   }
-  const transactionIds = account.transaction_ids;
-  if (transactionIds !== undefined && !Array.isArray(transactionIds))
-    return invalidResult(
-      "TRANSACTION_REFERENCES_INVALID",
-      `Account ${accountId} transaction_ids must be an array.`,
-      "Account",
-      accountId,
-      "transaction_ids",
-    );
-  for (const value of (transactionIds ?? []) as readonly unknown[]) {
-    if (typeof value !== "string" || !UUID.test(value))
-      return invalidResult(
-        "TRANSACTION_REFERENCE_INVALID",
-        `Account ${accountId} has a malformed transaction reference.`,
-        "Account",
-        accountId,
-        "transaction_ids",
-      );
-    if (
-      !objects(model, "Transaction").some(
-        (item) => canonicalId(item, "transaction_id") === value.toLowerCase(),
-      )
-    )
-      return invalidResult(
-        "TRANSACTION_REFERENCE_NOT_FOUND",
-        `Account ${accountId} transaction ${value} does not resolve.`,
-        "Account",
-        accountId,
-        "transaction_ids",
-        [value.toLowerCase()],
-      );
-  }
-  const affectingTransactions = objects(model, "Transaction").filter(
-    (transaction) =>
-      [
-        transaction.account_id,
-        transaction.from_account_id,
-        transaction.to_account_id,
-      ].includes(accountId),
-  );
-  if (account.return_model_id !== undefined) {
-    if (
-      typeof account.return_model_id !== "string" ||
-      !UUID.test(account.return_model_id)
-    )
-      return invalidResult(
-        "RETURN_MODEL_REFERENCE_INVALID",
-        `Account ${accountId} return_model_id must be a UUID.`,
-        "Account",
-        accountId,
-        "return_model_id",
-      );
-    if (
-      !objects(model, "PrimitiveInstance").some(
-        (primitive) =>
-          canonicalId(primitive, "primitive_instance_id") ===
-          String(account.return_model_id).toLowerCase(),
-      )
-    )
-      return invalidResult(
-        "RETURN_MODEL_REFERENCE_NOT_FOUND",
-        `Account ${accountId} return_model_id does not resolve.`,
-        "Account",
-        accountId,
-        "return_model_id",
-      );
-  }
-  if (
-    (transactionIds?.length ?? 0) > 0 ||
-    affectingTransactions.length > 0 ||
-    account.return_model_id !== undefined
-  )
+  const balanceBehavior = inspectAccountBalanceBehavior(model, account);
+  if (balanceBehavior.status !== "compiled") return balanceBehavior;
+  if (balanceBehavior.value.hasAuthoredBehavior)
     return unsupportedResult(
       "OPENING_BALANCE_AUTHORITY_UNSUPPORTED",
       `Account ${accountId} has authored balance-changing behavior PR 15 does not replay.`,
@@ -903,18 +987,7 @@ export const compileCashFlow = (
         );
       }
       if (type === "Expense") {
-        if (stream.payment_account_id === undefined)
-          return invalidResult(
-            "PAYMENT_ACCOUNT_REQUIRED",
-            `Expense ${id} requires payment_account_id.`,
-            type,
-            id,
-            "payment_account_id",
-          );
-        if (
-          typeof stream.payment_account_id !== "string" ||
-          stream.payment_account_id.toLowerCase() !== accountId
-        )
+        if (String(stream.payment_account_id).toLowerCase() !== accountId)
           return invalidResult(
             "PAYMENT_ACCOUNT_REFERENCE_INVALID",
             `Expense ${id} payment_account_id must resolve to the one executable cash Account.`,
@@ -1107,6 +1180,12 @@ export const compileCashFlow = (
 
   try {
     const ownerId = domainId("person", scope.memberIds[0]!);
+    const accountOwnerId = domainId(
+      String(account.owner_id).toLowerCase() === scope.householdId
+        ? "household"
+        : "person",
+      String(account.owner_id).toLowerCase(),
+    );
     const cashAccountId = domainId("account", accountId);
     const input: VerticalSlice2Input = Object.freeze({
       householdId: domainId("household", scope.householdId),
@@ -1124,7 +1203,7 @@ export const compileCashFlow = (
         [cashAccountId]: {
           id: cashAccountId,
           kind: String(account.account_type) as "checking" | "savings" | "cash",
-          ownerId,
+          ownerId: accountOwnerId,
           cash: money(String(account.opening_balance), currency),
         },
       },

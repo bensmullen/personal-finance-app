@@ -82,6 +82,7 @@ export interface CurrentPositionReadModel {
   readonly monthlySpending?: MoneyReadModel;
   readonly monthlyCashFlow?: MoneyReadModel;
   readonly unavailable: readonly string[];
+  readonly diagnostics: readonly (ValidationIssue | CapabilityDiagnostic)[];
 }
 export interface ForecastPoint {
   readonly periodStart: string;
@@ -181,6 +182,7 @@ export interface PersonalScenarioComparisonReadModel {
     baselineOnly: readonly string[];
     alternativeOnly: readonly string[];
   }>;
+  readonly diagnostics: readonly (ValidationIssue | CapabilityDiagnostic)[];
 }
 
 const asObject = (value: JsonValue | undefined): JsonObject | undefined =>
@@ -269,6 +271,7 @@ export const createGuidedSetupDraft = (
     name: "Other asset",
     owner_id: input.householdId,
     acquisition_cost: input.assetValue,
+    valuation_method: "cost",
   });
   return addPersonalObject(draft, "Liability", input.liabilityId, {
     name: "Debt",
@@ -479,6 +482,7 @@ export const getCurrentPosition = (
   if (result.status !== "compiled")
     return deepFreeze({
       unavailable: result.diagnostics.map((diagnostic) => diagnostic.message),
+      diagnostics: result.diagnostics,
     });
   const value = result.value;
   return deepFreeze({
@@ -496,6 +500,7 @@ export const getCurrentPosition = (
       ? { monthlyCashFlow: moneyDto(value.monthlyCashFlow) }
       : {}),
     unavailable: value.diagnostics.map((diagnostic) => diagnostic.message),
+    diagnostics: value.diagnostics,
   });
 };
 
@@ -672,16 +677,20 @@ export const comparePersonalCashFlowPlans = (
   request: ForecastRequest,
   annualIncomeGrowth: string,
 ): PersonalScenarioComparisonReadModel => {
-  const unavailable = (message: string): PersonalScenarioComparisonReadModel =>
+  const unavailable = (
+    message: string,
+    diagnostics: readonly (ValidationIssue | CapabilityDiagnostic)[] = [],
+  ): PersonalScenarioComparisonReadModel =>
     deepFreeze({
       status: "unavailable",
       message,
       scope: "cash_flow",
       baselineName: "Current plan",
-      alternativeName: "Income grows faster",
+      alternativeName: "Income grows 5%",
       points: [],
       configurationDifferences: [],
       appliedRuleDifferences: { baselineOnly: [], alternativeOnly: [] },
+      diagnostics,
     });
   if (request.scope !== "cash_flow")
     return unavailable(
@@ -700,6 +709,7 @@ export const comparePersonalCashFlowPlans = (
     if (compilation.status !== "compiled")
       return unavailable(
         compilation.diagnostics.map((value) => value.message).join("; "),
+        compilation.diagnostics,
       );
     const input = compilation.value.input;
     if (input.incomes.length !== 1)
@@ -733,7 +743,7 @@ export const comparePersonalCashFlowPlans = (
         {
           scenarioId: alternativeId,
           baseScenarioId: baselineId,
-          name: "Income grows faster",
+          name: "Income grows 5%",
           horizon,
           timestep: "monthly",
           enabled: true,
@@ -791,7 +801,7 @@ export const comparePersonalCashFlowPlans = (
       status: "completed",
       scope: "cash_flow",
       baselineName: "Current plan",
-      alternativeName: "Income grows faster",
+      alternativeName: "Income grows 5%",
       points,
       configurationDifferences: alternative.differences.map((difference) => ({
         target: difference.semanticTarget,
@@ -799,6 +809,7 @@ export const comparePersonalCashFlowPlans = (
         assumptionIds: difference.assumptionIds,
       })),
       appliedRuleDifferences: alternative.appliedRuleDifferences,
+      diagnostics: [],
     });
   } catch (error) {
     return unavailable(

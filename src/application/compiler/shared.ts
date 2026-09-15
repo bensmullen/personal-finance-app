@@ -11,6 +11,78 @@ import type { CapabilityDiagnostic, CompileResult } from "./types.js";
 
 export type CanonicalObject = Readonly<Record<string, JsonValue>>;
 
+const PRIMARY_ID_FIELDS = Object.freeze({
+  Household: "household_id",
+  Person: "person_id",
+  Account: "account_id",
+  Income: "income_id",
+  Expense: "expense_id",
+  Scenario: "scenario_id",
+  PrimitiveInstance: "primitive_instance_id",
+  Assumption: "assumption_id",
+  Event: "event_id",
+  Transaction: "transaction_id",
+  Liability: "liability_id",
+  Asset: "asset_id",
+  Investment: "investment_id",
+} as const);
+
+export type ExecutableCollection = keyof typeof PRIMARY_ID_FIELDS;
+
+/** Reject malformed collection entries and ambiguous identities before semantics. */
+export const preflightCanonicalCollections = (
+  model: PortableModelEnvelope,
+  collections: readonly ExecutableCollection[],
+): CompileResult<true> => {
+  for (const collection of collections) {
+    const seen = new Set<string>();
+    const idField = PRIMARY_ID_FIELDS[collection];
+    for (const value of model.objects[collection] ?? []) {
+      if (typeof value !== "object" || value === null || Array.isArray(value))
+        return {
+          status: "invalid_model",
+          diagnostics: Object.freeze([
+            issue(
+              "CANONICAL_OBJECT_INVALID",
+              `${collection} entries must be canonical objects.`,
+              collection,
+            ),
+          ]),
+        };
+      const object = value as CanonicalObject;
+      const id = canonicalId(object, idField);
+      if (!id)
+        return {
+          status: "invalid_model",
+          diagnostics: Object.freeze([
+            issue(
+              "CANONICAL_ID_INVALID",
+              `${collection} ${idField} must be a valid UUID.`,
+              collection,
+              undefined,
+              idField,
+            ),
+          ]),
+        };
+      if (seen.has(id))
+        return {
+          status: "invalid_model",
+          diagnostics: Object.freeze([
+            issue(
+              "DUPLICATE_EXECUTABLE_IDENTITY",
+              `Duplicate ${collection} identity ${id}.`,
+              collection,
+              id,
+              idField,
+            ),
+          ]),
+        };
+      seen.add(id);
+    }
+  }
+  return { status: "compiled", value: true, diagnostics: Object.freeze([]) };
+};
+
 export const objects = (
   model: PortableModelEnvelope,
   collection: string,
@@ -104,6 +176,11 @@ export interface HouseholdScope {
 export const resolveHouseholdScope = (
   model: PortableModelEnvelope,
 ): CompileResult<HouseholdScope> => {
+  const preflight = preflightCanonicalCollections(model, [
+    "Household",
+    "Person",
+  ]);
+  if (preflight.status !== "compiled") return preflight;
   const households = objects(model, "Household");
   if (households.length !== 1)
     return {
@@ -244,6 +321,27 @@ export const resolveHouseholdScope = (
         ]),
       };
   }
+  for (const [personId, person] of peopleById) {
+    if (
+      typeof person.household_id === "string" &&
+      UUID.test(person.household_id) &&
+      person.household_id.toLowerCase() === householdId &&
+      !(memberIds as string[]).includes(personId)
+    )
+      return {
+        status: "invalid_model",
+        diagnostics: Object.freeze([
+          issue(
+            "HOUSEHOLD_MEMBERSHIP_CONTRADICTION",
+            `Person ${personId} points to Household ${householdId} but is absent from members.`,
+            "Person",
+            personId,
+            "household_id",
+            [householdId],
+          ),
+        ]),
+      };
+  }
   return {
     status: "compiled",
     value: Object.freeze({
@@ -264,6 +362,177 @@ export const ownerInScope = (
   UUID.test(owner) &&
   (owner.toLowerCase() === scope.householdId ||
     scope.memberIds.includes(owner.toLowerCase()));
+
+export interface AccountBalanceBehavior {
+  readonly hasAuthoredBehavior: boolean;
+}
+
+export const inspectAccountBalanceBehavior = (
+  model: PortableModelEnvelope,
+  account: CanonicalObject,
+): CompileResult<AccountBalanceBehavior> => {
+  const preflight = preflightCanonicalCollections(model, [
+    "Account",
+    "Transaction",
+    ...(account.return_model_id === undefined
+      ? []
+      : (["PrimitiveInstance"] as const)),
+  ]);
+  if (preflight.status !== "compiled") return preflight;
+  const accountId = canonicalId(account, "account_id")!;
+  const accounts = new Set(
+    objects(model, "Account").map((value) => canonicalId(value, "account_id")!),
+  );
+  const transactions = new Map(
+    objects(model, "Transaction").map((value) => [
+      canonicalId(value, "transaction_id")!,
+      value,
+    ]),
+  );
+  if (
+    account.transaction_ids !== undefined &&
+    !Array.isArray(account.transaction_ids)
+  )
+    return {
+      status: "invalid_model",
+      diagnostics: Object.freeze([
+        issue(
+          "TRANSACTION_REFERENCES_INVALID",
+          `Account ${accountId} transaction_ids must be an array.`,
+          "Account",
+          accountId,
+          "transaction_ids",
+        ),
+      ]),
+    };
+  const listed = new Set<string>();
+  for (const raw of (account.transaction_ids ?? []) as readonly JsonValue[]) {
+    if (typeof raw !== "string" || !UUID.test(raw))
+      return {
+        status: "invalid_model",
+        diagnostics: Object.freeze([
+          issue(
+            "TRANSACTION_REFERENCE_INVALID",
+            `Account ${accountId} has a malformed transaction reference.`,
+            "Account",
+            accountId,
+            "transaction_ids",
+          ),
+        ]),
+      };
+    const id = raw.toLowerCase();
+    if (!transactions.has(id))
+      return {
+        status: "invalid_model",
+        diagnostics: Object.freeze([
+          issue(
+            "TRANSACTION_REFERENCE_NOT_FOUND",
+            `Account ${accountId} transaction ${id} does not resolve.`,
+            "Account",
+            accountId,
+            "transaction_ids",
+            [id],
+          ),
+        ]),
+      };
+    if (listed.has(id))
+      return {
+        status: "invalid_model",
+        diagnostics: Object.freeze([
+          issue(
+            "DUPLICATE_TRANSACTION_REFERENCE",
+            `Account ${accountId} lists transaction ${id} more than once.`,
+            "Account",
+            accountId,
+            "transaction_ids",
+            [id],
+          ),
+        ]),
+      };
+    listed.add(id);
+  }
+  let affecting = listed.size > 0;
+  for (const [transactionId, transaction] of transactions) {
+    for (const field of [
+      "source_account_id",
+      "destination_account_id",
+    ] as const) {
+      const raw = transaction[field];
+      if (raw === undefined || raw === null || raw === "") continue;
+      if (typeof raw !== "string" || !UUID.test(raw))
+        return {
+          status: "invalid_model",
+          diagnostics: Object.freeze([
+            issue(
+              "TRANSACTION_ACCOUNT_REFERENCE_INVALID",
+              `Transaction ${transactionId} ${field} must be a UUID.`,
+              "Transaction",
+              transactionId,
+              field,
+            ),
+          ]),
+        };
+      const normalized = raw.toLowerCase();
+      if (!accounts.has(normalized))
+        return {
+          status: "invalid_model",
+          diagnostics: Object.freeze([
+            issue(
+              "TRANSACTION_ACCOUNT_REFERENCE_NOT_FOUND",
+              `Transaction ${transactionId} ${field} does not resolve.`,
+              "Transaction",
+              transactionId,
+              field,
+              [normalized],
+            ),
+          ]),
+        };
+      if (normalized === accountId) affecting = true;
+    }
+  }
+  const returnModel = account.return_model_id;
+  if (returnModel !== undefined) {
+    if (typeof returnModel !== "string" || !UUID.test(returnModel))
+      return {
+        status: "invalid_model",
+        diagnostics: Object.freeze([
+          issue(
+            "RETURN_MODEL_REFERENCE_INVALID",
+            `Account ${accountId} return_model_id must be a UUID.`,
+            "Account",
+            accountId,
+            "return_model_id",
+          ),
+        ]),
+      };
+    const normalized = returnModel.toLowerCase();
+    if (
+      !objects(model, "PrimitiveInstance").some(
+        (primitive) =>
+          canonicalId(primitive, "primitive_instance_id") === normalized,
+      )
+    )
+      return {
+        status: "invalid_model",
+        diagnostics: Object.freeze([
+          issue(
+            "RETURN_MODEL_REFERENCE_NOT_FOUND",
+            `Account ${accountId} return_model_id does not resolve.`,
+            "Account",
+            accountId,
+            "return_model_id",
+            [normalized],
+          ),
+        ]),
+      };
+    affecting = true;
+  }
+  return {
+    status: "compiled",
+    value: Object.freeze({ hasAuthoredBehavior: affecting }),
+    diagnostics: Object.freeze([]),
+  };
+};
 
 export const monthlyOccurrences = (
   anchor: Instant,

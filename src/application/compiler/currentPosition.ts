@@ -19,8 +19,11 @@ import {
   canonicalId,
   capability,
   issue,
+  inspectAccountBalanceBehavior,
+  monthAnchorDay,
   objects,
   ownerInScope,
+  preflightCanonicalCollections,
   resolveHouseholdScope,
   utcDate,
   type CanonicalObject,
@@ -68,6 +71,28 @@ const exactMoney = (
   }
 };
 
+type ExactMoneyField =
+  | { readonly kind: "missing" }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "value"; readonly value: Money };
+
+const classifyExactMoney = (
+  object: CanonicalObject,
+  field: string,
+  currency: Currency,
+): ExactMoneyField => {
+  const raw = object[field];
+  if (raw === undefined || raw === null || raw === "")
+    return { kind: "missing" };
+  if (typeof raw !== "string" || !EXACT_DECIMAL.test(raw))
+    return { kind: "invalid" };
+  try {
+    return { kind: "value", value: money(raw, currency) };
+  } catch {
+    return { kind: "invalid" };
+  }
+};
+
 const invalidResult = <T>(
   code: string,
   message: string,
@@ -85,6 +110,18 @@ export const compileCurrentPosition = (
   model: PortableModelEnvelope,
   request: CurrentPositionCompilerRequest,
 ): CompileResult<CurrentPositionCompilation> => {
+  const preflight = preflightCanonicalCollections(model, [
+    "Household",
+    "Person",
+    "Account",
+    "Income",
+    "Expense",
+    "Transaction",
+    "Liability",
+    "Asset",
+    "Investment",
+  ]);
+  if (preflight.status !== "compiled") return preflight;
   const scopeResult = resolveHouseholdScope(model);
   if (scopeResult.status !== "compiled") return scopeResult;
   const scope = scopeResult.value;
@@ -113,6 +150,10 @@ export const compileCurrentPosition = (
   const cashBalances: Money[] = [];
   let cashComplete = true;
   const accountsById = new Map<string, CanonicalObject>();
+  const accountStatus = new Map<
+    string,
+    "out_of_scope" | "future" | "closed" | "current"
+  >();
   for (const account of objects(model, "Account")) {
     const id = canonicalId(account, "account_id");
     if (!id)
@@ -140,7 +181,12 @@ export const compileCurrentPosition = (
         id,
         "owner_id",
       );
-    if (!ownerInScope(account.owner_id, scope)) continue;
+    if (!ownerInScope(account.owner_id, scope)) {
+      accountStatus.set(id, "out_of_scope");
+      continue;
+    }
+    const balanceBehavior = inspectAccountBalanceBehavior(model, account);
+    if (balanceBehavior.status !== "compiled") return balanceBehavior;
     const opening = utcDate(account.opening_date);
     if (!opening)
       return invalidResult(
@@ -150,18 +196,25 @@ export const compileCurrentPosition = (
         id,
         "opening_date",
       );
-    if (opening > asOf) continue;
-    if (account.closing_date !== undefined) {
-      const closing = utcDate(account.closing_date);
-      if (!closing)
-        return invalidResult(
-          "DATE_INVALID",
-          `Account ${id} closing_date is invalid.`,
-          "Account",
-          id,
-          "closing_date",
-        );
+    const closing =
+      account.closing_date === undefined
+        ? undefined
+        : utcDate(account.closing_date);
+    if (account.closing_date !== undefined && !closing)
+      return invalidResult(
+        "DATE_INVALID",
+        `Account ${id} closing_date is invalid.`,
+        "Account",
+        id,
+        "closing_date",
+      );
+    if (opening > asOf) {
+      accountStatus.set(id, "future");
+      continue;
+    }
+    if (closing !== undefined) {
       if (closing <= asOf) {
+        accountStatus.set(id, "closed");
         cashComplete = false;
         diagnostics.push(
           diagnostic(
@@ -176,6 +229,7 @@ export const compileCurrentPosition = (
         continue;
       }
     }
+    accountStatus.set(id, "current");
     const balance = exactMoney(account, "opening_balance", currency);
     if (!balance || balance.isNegative())
       return invalidResult(
@@ -185,49 +239,7 @@ export const compileCurrentPosition = (
         id,
         "opening_balance",
       );
-    const transactionIds = account.transaction_ids;
-    if (transactionIds !== undefined && !Array.isArray(transactionIds))
-      return invalidResult(
-        "TRANSACTION_REFERENCES_INVALID",
-        `Account ${id} transaction_ids must be an array.`,
-        "Account",
-        id,
-        "transaction_ids",
-      );
-    for (const raw of (transactionIds ?? []) as readonly unknown[]) {
-      if (typeof raw !== "string" || !UUID.test(raw))
-        return invalidResult(
-          "TRANSACTION_REFERENCE_INVALID",
-          `Account ${id} has a malformed transaction reference.`,
-          "Account",
-          id,
-          "transaction_ids",
-        );
-      if (
-        !objects(model, "Transaction").some(
-          (value) => canonicalId(value, "transaction_id") === raw.toLowerCase(),
-        )
-      )
-        return invalidResult(
-          "TRANSACTION_REFERENCE_NOT_FOUND",
-          `Account ${id} transaction ${raw} does not resolve.`,
-          "Account",
-          id,
-          "transaction_ids",
-        );
-    }
-    const affected = objects(model, "Transaction").some((transaction) =>
-      [
-        transaction.account_id,
-        transaction.from_account_id,
-        transaction.to_account_id,
-      ].includes(id),
-    );
-    if (
-      (transactionIds?.length ?? 0) > 0 ||
-      affected ||
-      account.return_model_id !== undefined
-    ) {
+    if (balanceBehavior.value.hasAuthoredBehavior) {
       cashComplete = false;
       diagnostics.push(
         diagnostic(
@@ -338,7 +350,6 @@ export const compileCurrentPosition = (
         id,
         "account_id",
       );
-    if (!ownerInScope(accountsById.get(accountRef)!.owner_id, scope)) continue;
     if (investment.asset_id !== undefined) {
       const assetRef = canonicalId(investment, "asset_id");
       const linkedAsset = assetRef
@@ -363,6 +374,23 @@ export const compileCurrentPosition = (
           "asset_id",
         );
       linkedAssetIds.add(assetRef);
+    }
+    const holdingStatus = accountStatus.get(accountRef);
+    if (holdingStatus === "out_of_scope") continue;
+    if (holdingStatus === "future") continue;
+    if (holdingStatus === "closed") {
+      assetsComplete = false;
+      diagnostics.push(
+        diagnostic(
+          "CLOSED_INVESTMENT_ACCOUNT_UNSUPPORTED",
+          `Investment ${id} is held in an Account closed by the as-of date.`,
+          "assets",
+          "Investment",
+          id,
+          "account_id",
+        ),
+      );
+      continue;
     }
     if (
       typeof investment.quantity !== "string" ||
@@ -399,8 +427,19 @@ export const compileCurrentPosition = (
       );
       continue;
     }
-    const price = exactMoney(investment, "price", currency);
-    if (!price || price.isNegative() || price.amount.isZero()) {
+    const priceField = classifyExactMoney(investment, "price", currency);
+    if (
+      priceField.kind === "invalid" ||
+      (priceField.kind === "value" && priceField.value.isNegative())
+    )
+      return invalidResult(
+        "DOMAIN_VALUE_INVALID",
+        `Investment ${id} price must be a non-negative exact decimal when present.`,
+        "Investment",
+        id,
+        "price",
+      );
+    if (priceField.kind === "missing") {
       assetsComplete = false;
       diagnostics.push(
         diagnostic(
@@ -414,6 +453,7 @@ export const compileCurrentPosition = (
       );
       continue;
     }
+    const price = priceField.value;
     nonCashAssets.push(
       positionMarketValue({
         id: domainId("position", id),
@@ -532,8 +572,19 @@ export const compileCurrentPosition = (
       );
       continue;
     }
-    const cost = exactMoney(asset, "acquisition_cost", currency);
-    if (!cost || cost.isNegative()) {
+    const costField = classifyExactMoney(asset, "acquisition_cost", currency);
+    if (
+      costField.kind === "invalid" ||
+      (costField.kind === "value" && costField.value.isNegative())
+    )
+      return invalidResult(
+        "DOMAIN_VALUE_INVALID",
+        `Asset ${id} acquisition_cost must be a non-negative exact decimal when present.`,
+        "Asset",
+        id,
+        "acquisition_cost",
+      );
+    if (costField.kind === "missing") {
       assetsComplete = false;
       diagnostics.push(
         diagnostic(
@@ -547,134 +598,214 @@ export const compileCurrentPosition = (
       );
       continue;
     }
-    nonCashAssets.push(cost);
+    nonCashAssets.push(costField.value);
   }
 
-  const scenario = selectScenario(model);
-  if (scenario.status === "invalid_model") return scenario;
   let monthlyIncome: Money | undefined;
   let monthlySpending: Money | undefined;
-  if (scenario.status === "unsupported") {
-    diagnostics.push(
-      ...scenario.diagnostics.map((value) => ({
-        ...value,
-        capability: "monthly_cash_flow",
-      })),
-    );
-  } else {
-    const aggregate = (type: "Income" | "Expense"): CompileResult<Money> => {
-      const values: Money[] = [];
-      for (const stream of objects(model, type)) {
-        const id = canonicalId(stream, `${type.toLowerCase()}_id`);
-        if (!id)
+  let selectedScenario: ReturnType<typeof selectScenario> | undefined;
+  const aggregate = (type: "Income" | "Expense"): CompileResult<Money> => {
+    const values: Money[] = [];
+    for (const stream of objects(model, type)) {
+      const id = canonicalId(stream, `${type.toLowerCase()}_id`);
+      if (!id)
+        return invalidResult(
+          "CANONICAL_ID_INVALID",
+          `${type} identity is invalid.`,
+          type,
+          undefined,
+          `${type.toLowerCase()}_id`,
+        );
+      if (typeof stream.owner_id !== "string" || !UUID.test(stream.owner_id))
+        return invalidResult(
+          "OWNER_REFERENCE_INVALID",
+          `${type} ${id} owner_id must be a UUID.`,
+          type,
+          id,
+          "owner_id",
+        );
+      if (!ownerInScope(stream.owner_id, scope)) continue;
+      for (const field of type === "Income"
+        ? (["probability_model_id", "related_event_id"] as const)
+        : (["event_trigger_id"] as const)) {
+        const raw = stream[field];
+        if (raw === undefined || raw === null || raw === "") continue;
+        if (typeof raw !== "string" || !UUID.test(raw))
           return invalidResult(
-            "CANONICAL_ID_INVALID",
-            `${type} identity is invalid.`,
-            type,
-            undefined,
-            `${type.toLowerCase()}_id`,
-          );
-        if (typeof stream.owner_id !== "string" || !UUID.test(stream.owner_id))
-          return invalidResult(
-            "OWNER_REFERENCE_INVALID",
-            `${type} ${id} owner_id must be a UUID.`,
+            "EVENT_BINDING_INVALID",
+            `${type} ${id} ${field} must be a UUID.`,
             type,
             id,
-            "owner_id",
+            field,
           );
-        if (!ownerInScope(stream.owner_id, scope)) continue;
+        const collection =
+          field === "probability_model_id" ? "PrimitiveInstance" : "Event";
+        const idField =
+          field === "probability_model_id"
+            ? "primitive_instance_id"
+            : "event_id";
+        const referencePreflight = preflightCanonicalCollections(model, [
+          collection,
+        ]);
+        if (referencePreflight.status !== "compiled")
+          return referencePreflight;
         if (
-          (type === "Income" &&
-            (stream.probability_model_id !== undefined ||
-              stream.related_event_id !== undefined)) ||
-          (type === "Expense" && stream.event_trigger_id !== undefined)
+          !objects(model, collection).some(
+            (candidate) =>
+              canonicalId(candidate, idField) === raw.toLowerCase(),
+          )
         )
-          return {
-            status: "unsupported",
-            diagnostics: Object.freeze([
-              diagnostic(
-                "MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED",
-                `${type} ${id} has unresolved probability or event semantics.`,
+          return invalidResult(
+            "EVENT_BINDING_REFERENCE_NOT_FOUND",
+            `${type} ${id} ${field} does not resolve.`,
+            type,
+            id,
+            field,
+          );
+        return {
+          status: "unsupported",
+          diagnostics: Object.freeze([
+            diagnostic(
+              "MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED",
+              `${type} ${id} has unresolved probability or event semantics.`,
+              type === "Income" ? "monthly_income" : "monthly_spending",
+              type,
+              id,
+              field,
+            ),
+          ]),
+        };
+      }
+      if (stream.frequency !== "monthly")
+        return {
+          status: "unsupported",
+          diagnostics: Object.freeze([
+            diagnostic(
+              "MONTHLY_FLOW_RECURRENCE_UNSUPPORTED",
+              `${type} ${id} is not monthly.`,
+              type === "Income" ? "monthly_income" : "monthly_spending",
+              type,
+              id,
+              "frequency",
+            ),
+          ]),
+        };
+      const start = utcDate(stream.start_date);
+      const end =
+        stream.end_date === undefined ? undefined : utcDate(stream.end_date);
+      if (!start || (stream.end_date !== undefined && !end))
+        return invalidResult(
+          "DATE_INVALID",
+          `${type} ${id} has invalid dates.`,
+          type,
+          id,
+          "start_date",
+        );
+      if (asOf < start || (end !== undefined && asOf > end)) continue;
+      const base = exactMoney(stream, "amount", currency);
+      if (!base || base.isNegative())
+        return invalidResult(
+          "DOMAIN_VALUE_INVALID",
+          `${type} ${id} amount is invalid.`,
+          type,
+          id,
+          "amount",
+        );
+      const rawGrowth = stream.growth_model_id;
+      if (rawGrowth === undefined || rawGrowth === null || rawGrowth === "") {
+        values.push(base);
+        continue;
+      }
+      if (monthAnchorDay(start) > 28)
+        return {
+          status: "unsupported",
+          diagnostics: Object.freeze([
+            diagnostic(
+              "MONTHLY_GROWTH_ANCHOR_UNSUPPORTED",
+              `${type} ${id} uses an ambiguous monthly growth anchor day.`,
+              type === "Income" ? "monthly_income" : "monthly_spending",
+              type,
+              id,
+              "start_date",
+            ),
+          ]),
+        };
+      selectedScenario ??= selectScenario(model);
+      if (selectedScenario.status === "invalid_model") return selectedScenario;
+      if (selectedScenario.status === "unsupported")
+        return {
+          status: "unsupported",
+          diagnostics: Object.freeze(
+            selectedScenario.diagnostics.map((value) => ({
+              ...value,
+              capability:
                 type === "Income" ? "monthly_income" : "monthly_spending",
-                type,
-                id,
-              ),
-            ]),
-          };
-        if (stream.frequency !== "monthly")
-          return {
-            status: "unsupported",
-            diagnostics: Object.freeze([
-              diagnostic(
-                "MONTHLY_FLOW_RECURRENCE_UNSUPPORTED",
-                `${type} ${id} is not monthly.`,
+            })),
+          ),
+        };
+      const growth = resolveGrowth(model, stream, type, selectedScenario.value);
+      if (growth.status === "invalid_model") return growth;
+      if (growth.status === "unsupported")
+        return {
+          status: "unsupported",
+          diagnostics: Object.freeze(
+            growth.diagnostics.map((value) => ({
+              ...value,
+              capability:
                 type === "Income" ? "monthly_income" : "monthly_spending",
-                type,
-                id,
-                "frequency",
-              ),
-            ]),
-          };
-        const start = utcDate(stream.start_date);
-        const end =
-          stream.end_date === undefined ? undefined : utcDate(stream.end_date);
-        if (!start || (stream.end_date !== undefined && !end))
-          return invalidResult(
-            "DATE_INVALID",
-            `${type} ${id} has invalid dates.`,
-            type,
-            id,
-            "start_date",
-          );
-        if (asOf < start || (end !== undefined && asOf > end)) continue;
-        const base = exactMoney(stream, "amount", currency);
-        if (!base || base.isNegative())
-          return invalidResult(
-            "DOMAIN_VALUE_INVALID",
-            `${type} ${id} amount is invalid.`,
-            type,
-            id,
-            "amount",
-          );
-        const growth = resolveGrowth(model, stream, type, scenario.value);
-        if (growth.status !== "compiled") return growth;
-        const months = utcCalendarMonthDifference(start, asOf);
-        try {
-          values.push(
-            applyGeometricGrowth(base, growth.value.rate, {
-              kind: "effective_annual",
-              yearFraction: { numerator: months, denominator: 12 },
-              calculationRounding: new RoundingPolicy(18, "half_even"),
-            }),
-          );
-        } catch (error) {
-          return invalidResult(
-            "DOMAIN_VALUE_INVALID",
-            error instanceof Error
-              ? error.message
-              : `${type} growth is invalid.`,
-            type,
-            id,
-            "growth_model_id",
-          );
+            })),
+          ),
+        };
+      const asOfDate = new Date(Date.parse(asOf));
+      let year = asOfDate.getUTCFullYear();
+      let month = asOfDate.getUTCMonth();
+      if (asOfDate.getUTCDate() < monthAnchorDay(start)) {
+        month -= 1;
+        if (month < 0) {
+          month = 11;
+          year -= 1;
         }
       }
-      return {
-        status: "compiled",
-        value: sumMoney(values, currency),
-        diagnostics: Object.freeze([]),
-      };
+      const latest = utcDate(
+        new Date(Date.UTC(year, month, monthAnchorDay(start)))
+          .toISOString()
+          .slice(0, 10),
+      )!;
+      if (latest < start) continue;
+      const months = utcCalendarMonthDifference(start, latest);
+      try {
+        values.push(
+          applyGeometricGrowth(base, growth.value.rate, {
+            kind: "effective_annual",
+            yearFraction: { numerator: months, denominator: 12 },
+            calculationRounding: new RoundingPolicy(18, "half_even"),
+          }),
+        );
+      } catch (error) {
+        return invalidResult(
+          "DOMAIN_VALUE_INVALID",
+          error instanceof Error ? error.message : `${type} growth is invalid.`,
+          type,
+          id,
+          "growth_model_id",
+        );
+      }
+    }
+    return {
+      status: "compiled",
+      value: sumMoney(values, currency),
+      diagnostics: Object.freeze([]),
     };
-    const incomeResult = aggregate("Income");
-    if (incomeResult.status === "invalid_model") return incomeResult;
-    if (incomeResult.status === "compiled") monthlyIncome = incomeResult.value;
-    else diagnostics.push(...incomeResult.diagnostics);
-    const spendingResult = aggregate("Expense");
-    if (spendingResult.status === "invalid_model") return spendingResult;
-    if (spendingResult.status === "compiled")
-      monthlySpending = spendingResult.value;
-    else diagnostics.push(...spendingResult.diagnostics);
-  }
+  };
+  const incomeResult = aggregate("Income");
+  if (incomeResult.status === "invalid_model") return incomeResult;
+  if (incomeResult.status === "compiled") monthlyIncome = incomeResult.value;
+  else diagnostics.push(...incomeResult.diagnostics);
+  const spendingResult = aggregate("Expense");
+  if (spendingResult.status === "invalid_model") return spendingResult;
+  if (spendingResult.status === "compiled")
+    monthlySpending = spendingResult.value;
+  else diagnostics.push(...spendingResult.diagnostics);
 
   const cash = cashComplete ? sumMoney(cashBalances, currency) : undefined;
   const liabilities = liabilitiesComplete

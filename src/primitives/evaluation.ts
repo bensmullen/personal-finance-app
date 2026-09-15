@@ -334,14 +334,20 @@ const perpetualEvaluation = (request: Extract<ImplementedPrimitiveEvaluationRequ
 const constantEvaluation = (request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P06" }>) =>
   evaluation("P06", Object.freeze({ at: request.context.evaluationInstant, value: request.input.value }), null, frozenEmpty, request.context.traceRefs);
 
+/** Primitive-owned P08 domain validation, also used by model compilers. */
+export const assertGeometricGrowthRate = (rate: Rate): void => {
+  const base = decimal("1").plus(rate.value);
+  if (!base.isPositive()) {
+    invalid(issueCodes.primitiveParametersInvalid, "P08 growth requires 1 + rate to be positive", "P08", "input.rate");
+  }
+};
+
 const growthFactor = (
   rate: Rate,
   timeBasis: GrowthTimeBasis,
 ): DecimalAmount => {
+  assertGeometricGrowthRate(rate);
   const base = decimal("1").plus(rate.value);
-  if (!base.isPositive()) {
-    return invalid(issueCodes.primitiveParametersInvalid, "P08 growth requires 1 + rate to be positive", "P08", "input.rate");
-  }
   if (timeBasis.kind === "per_period") {
     if (rate.convention.basis !== RateBasis.Periodic) {
       return invalid(issueCodes.primitiveParametersInvalid, "P08 per-period mode requires a periodic Rate", "P08", "input.rate.convention");

@@ -4,10 +4,13 @@ import {
   compileCurrentPosition,
 } from "../src/application/compiler/index.js";
 import {
+  comparePersonalCashFlowPlans,
+  createGuidedSetupDraft,
   createSyntheticPersonalDraft,
   exportPersonalModelJson,
   importPersonalModelJson,
   type PersonalDraft,
+  getCurrentPosition,
 } from "../src/application/index.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { runVerticalSlice2 } from "../src/simulation/verticalSlice2.js";
@@ -451,7 +454,7 @@ describe("canonical executable-model compiler", () => {
     const result = compileCurrentPosition(
       modelWith((value) => {
         value.objects.Investment![0]!.quantity = "2";
-        value.objects.Investment![0]!.price = "0";
+        delete value.objects.Investment![0]!.price;
       }),
       { baseCurrency: "USD", asOf: "2026-01-01" },
     );
@@ -466,6 +469,25 @@ describe("canonical executable-model compiler", () => {
           (item) => item.code === "INVESTMENT_PRICE_UNAVAILABLE",
         ),
       ).toBe(true);
+    }
+  });
+
+  it("accepts an exact zero investment price as a zero market value", () => {
+    const result = compileCurrentPosition(
+      modelWith((value) => {
+        value.objects.Investment![0]!.quantity = "2";
+        value.objects.Investment![0]!.price = "0";
+      }),
+      { baseCurrency: "USD", asOf: "2026-01-01" },
+    );
+    expect(result.status).toBe("compiled");
+    if (result.status === "compiled") {
+      expect(result.value.assets?.amount.toString()).toBe("355000");
+      expect(
+        result.value.diagnostics.some(
+          (item) => item.code === "INVESTMENT_PRICE_UNAVAILABLE",
+        ),
+      ).toBe(false);
     }
   });
 
@@ -490,7 +512,7 @@ describe("canonical executable-model compiler", () => {
         value.objects.Transaction = [
           {
             transaction_id: "97000000-0000-4000-8000-000000000001",
-            account_id: "90000000-0000-4000-8000-000000000004",
+            source_account_id: "90000000-0000-4000-8000-000000000004",
           },
         ];
         value.objects.Account![0]!.transaction_ids = [
@@ -530,5 +552,451 @@ describe("canonical executable-model compiler", () => {
       importPersonalModelJson(exportPersonalModelJson(draft)).objects
         .PrimitiveInstance,
     ).toEqual(draft.objects.PrimitiveInstance);
+  });
+
+  it("preflights malformed entries and duplicate aggregated identities", () => {
+    const malformed = modelWith((value) => {
+      value.objects.Asset!.push(
+        "not-an-object" as unknown as Record<string, unknown>,
+      );
+    });
+    expect(
+      compileCurrentPosition(malformed, {
+        baseCurrency: "USD",
+        asOf: "2026-01-01",
+      }).status,
+    ).toBe("invalid_model");
+    for (const collection of ["Liability", "Asset", "Investment"] as const) {
+      const duplicate = modelWith((value) => {
+        value.objects[collection]!.push({ ...value.objects[collection]![0]! });
+      });
+      expect(
+        compileCurrentPosition(duplicate, {
+          baseCurrency: "USD",
+          asOf: "2026-01-01",
+        }).status,
+      ).toBe("invalid_model");
+    }
+  });
+
+  it("rejects the inverse Household membership contradiction", () => {
+    const result = compileCashFlow(
+      modelWith((value) => {
+        value.objects.Person!.push({
+          person_id: "98000000-0000-4000-8000-000000000001",
+          household_id: "90000000-0000-4000-8000-000000000002",
+        });
+      }),
+      request,
+    );
+    expect(result.status).toBe("invalid_model");
+    const establishedByMembers = compileCashFlow(
+      modelWith((value) => {
+        delete value.objects.Person![0]!.household_id;
+      }),
+      request,
+    );
+    expect(establishedByMembers.status).toBe("compiled");
+  });
+
+  it("preserves Person and Household Account ownership in opening state", () => {
+    for (const owner of [
+      "90000000-0000-4000-8000-000000000003",
+      "90000000-0000-4000-8000-000000000002",
+    ]) {
+      const result = compileCashFlow(
+        modelWith((value) => {
+          value.objects.Account![0]!.owner_id = owner;
+        }),
+        request,
+      );
+      expect(result.status).toBe("compiled");
+      if (result.status === "compiled")
+        expect(
+          Object.values(result.value.openingState.accounts)[0]!.ownerId,
+        ).toBe(owner);
+    }
+  });
+
+  it("defaults omitted simulation_count and gates valid scenario inheritance", () => {
+    const omitted = compileCashFlow(
+      modelWith((value) => {
+        delete value.objects.Scenario![0]!.simulation_count;
+      }),
+      request,
+    );
+    expect(omitted.status).toBe("compiled");
+    const inherited = compileCashFlow(
+      modelWith((value) => {
+        const baseId = "98000000-0000-4000-8000-000000000002";
+        value.objects.Scenario!.push({
+          scenario_id: baseId,
+          enabled: false,
+          stochastic: false,
+          timestep: "monthly",
+        });
+        value.objects.Scenario![0]!.base_scenario_id = baseId;
+      }),
+      request,
+    );
+    expect(inherited.status).toBe("unsupported");
+    if (inherited.status === "unsupported")
+      expect(inherited.diagnostics[0]!.code).toBe(
+        "SCENARIO_INHERITANCE_UNSUPPORTED",
+      );
+    const malformedCount = compileCashFlow(
+      modelWith((value) => {
+        value.objects.Scenario![0]!.simulation_count = "1";
+      }),
+      request,
+    );
+    expect(malformedCount.status).toBe("invalid_model");
+    for (const base of ["bad", "98000000-0000-4000-8000-000000000099"]) {
+      const result = compileCashFlow(
+        modelWith((value) => {
+          value.objects.Scenario![0]!.base_scenario_id = base;
+        }),
+        request,
+      );
+      expect(result.status).toBe("invalid_model");
+    }
+  });
+
+  it("classifies cross-scenario growth and missing explicit membership as unsupported", () => {
+    const other = "98000000-0000-4000-8000-000000000003";
+    const cross = compileCashFlow(
+      modelWith((value) => {
+        value.objects.Scenario!.push({
+          scenario_id: other,
+          enabled: false,
+          stochastic: false,
+          timestep: "monthly",
+        });
+        value.objects.PrimitiveInstance![0]!.scenario_id = other;
+      }),
+      request,
+    );
+    expect(cross.status).toBe("unsupported");
+    const missing = compileCashFlow(
+      modelWith((value) => {
+        value.objects.Scenario![0]!.assumption_ids = [];
+      }),
+      request,
+    );
+    expect(missing.status).toBe("unsupported");
+    const crossAssumption = compileCashFlow(
+      modelWith((value) => {
+        value.objects.Scenario!.push({
+          scenario_id: other,
+          enabled: false,
+          stochastic: false,
+          timestep: "monthly",
+        });
+        value.objects.Assumption![0]!.scenario_id = other;
+      }),
+      request,
+    );
+    expect(crossAssumption.status).toBe("unsupported");
+  });
+
+  it("rejects P08 rates at or below -1 and accepts a greater negative rate", () => {
+    for (const rate of ["-1.0", "-1.01"]) {
+      const result = compileCashFlow(
+        modelWith((value) => {
+          value.objects.Assumption![0]!.value = rate;
+        }),
+        request,
+      );
+      expect(result.status).toBe("invalid_model");
+    }
+    const valid = compileCashFlow(
+      modelWith((value) => {
+        value.objects.Assumption![0]!.value = "-0.5";
+      }),
+      request,
+    );
+    expect(valid.status).toBe("compiled");
+  });
+
+  it("classifies malformed and negative current values as invalid, but missing values as partial", () => {
+    for (const price of ["not-exact", "-1"]) {
+      const result = compileCurrentPosition(
+        modelWith((value) => {
+          value.objects.Investment![0]!.quantity = "2";
+          value.objects.Investment![0]!.price = price;
+        }),
+        { baseCurrency: "USD", asOf: "2026-01-01" },
+      );
+      expect(result.status).toBe("invalid_model");
+    }
+    for (const cost of ["not-exact", "-1"]) {
+      const result = compileCurrentPosition(
+        modelWith((value) => {
+          value.objects.Asset![0]!.acquisition_cost = cost;
+        }),
+        { baseCurrency: "USD", asOf: "2026-01-01" },
+      );
+      expect(result.status).toBe("invalid_model");
+    }
+    const missing = compileCurrentPosition(
+      modelWith((value) => {
+        delete value.objects.Asset![0]!.acquisition_cost;
+      }),
+      { baseCurrency: "USD", asOf: "2026-01-01" },
+    );
+    expect(missing.status).toBe("compiled");
+    if (missing.status === "compiled")
+      expect(missing.value.assets).toBeUndefined();
+  });
+
+  it("excludes future investment Accounts and gates already-closed positions", () => {
+    const future = compileCurrentPosition(
+      modelWith((value) => {
+        value.objects.Account![0]!.opening_date = "2026-02-01";
+        value.objects.Investment![0]!.quantity = "2";
+        value.objects.Investment![0]!.price = "10";
+      }),
+      { baseCurrency: "USD", asOf: "2026-01-01" },
+    );
+    expect(future.status).toBe("compiled");
+    if (future.status === "compiled")
+      expect(future.value.assets?.amount.toString()).toBe("350000");
+    const closed = compileCurrentPosition(
+      modelWith((value) => {
+        value.objects.Account![0]!.closing_date = "2026-01-01";
+        value.objects.Investment![0]!.quantity = "2";
+        value.objects.Investment![0]!.price = "10";
+      }),
+      { baseCurrency: "USD", asOf: "2026-01-01" },
+    );
+    expect(closed.status).toBe("compiled");
+    if (closed.status === "compiled") {
+      expect(closed.value.assets).toBeUndefined();
+      expect(
+        closed.value.diagnostics.some(
+          (item) => item.code === "CLOSED_INVESTMENT_ACCOUNT_UNSUPPORTED",
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("validates return models and detects uppercase Transaction references", () => {
+    for (const returnModel of ["bad", "98000000-0000-4000-8000-000000000099"]) {
+      const draft = modelWith((value) => {
+        value.objects.Account![0]!.return_model_id = returnModel;
+      });
+      expect(compileCashFlow(draft, request).status).toBe("invalid_model");
+      expect(
+        compileCurrentPosition(draft, {
+          baseCurrency: "USD",
+          asOf: "2026-01-01",
+        }).status,
+      ).toBe("invalid_model");
+    }
+    const authored = modelWith((value) => {
+      value.objects.Account![0]!.return_model_id =
+        "90000000-0000-4000-8000-000000000012";
+    });
+    expect(compileCashFlow(authored, request).status).toBe("unsupported");
+    const authoredCurrent = compileCurrentPosition(authored, {
+      baseCurrency: "USD",
+      asOf: "2026-01-01",
+    });
+    expect(authoredCurrent.status).toBe("compiled");
+    if (authoredCurrent.status === "compiled")
+      expect(authoredCurrent.value.cash).toBeUndefined();
+    const transaction = modelWith((value) => {
+      value.objects.Transaction = [
+        {
+          transaction_id: "98000000-0000-4000-8000-000000000004",
+          source_account_id:
+            "90000000-0000-4000-8000-000000000004".toUpperCase(),
+        },
+      ];
+    });
+    expect(compileCashFlow(transaction, request).status).toBe("unsupported");
+    const current = compileCurrentPosition(transaction, {
+      baseCurrency: "USD",
+      asOf: "2026-01-01",
+    });
+    expect(current.status).toBe("compiled");
+    if (current.status === "compiled")
+      expect(current.value.cash).toBeUndefined();
+    const malformedTransaction = modelWith((value) => {
+      value.objects.Transaction = [
+        {
+          transaction_id: "98000000-0000-4000-8000-000000000007",
+          source_account_id: "bad",
+        },
+      ];
+    });
+    expect(compileCashFlow(malformedTransaction, request).status).toBe(
+      "invalid_model",
+    );
+    expect(
+      compileCurrentPosition(malformedTransaction, {
+        baseCurrency: "USD",
+        asOf: "2026-01-01",
+      }).status,
+    ).toBe("invalid_model");
+  });
+
+  it("keeps fixed monthly metrics independent of unrelated Scenarios", () => {
+    const result = compileCurrentPosition(
+      modelWith((value) => {
+        delete value.objects.Income![0]!.growth_model_id;
+        value.objects.Scenario!.push({
+          scenario_id: "98000000-0000-4000-8000-000000000005",
+          enabled: true,
+          stochastic: false,
+          timestep: "monthly",
+        });
+      }),
+      { baseCurrency: "USD", asOf: "2026-02-01" },
+    );
+    expect(result.status).toBe("compiled");
+    if (result.status === "compiled") {
+      expect(result.value.monthlyIncome?.amount.toString()).toBe("6000");
+      expect(result.value.monthlySpending?.amount.toString()).toBe("4200");
+    }
+  });
+
+  it("uses the latest occurred monthly anchor for current P08 growth", () => {
+    const draft = modelWith((value) => {
+      value.objects.Income![0]!.start_date = "2026-01-15";
+    });
+    const before = compileCurrentPosition(draft, {
+      baseCurrency: "USD",
+      asOf: "2026-02-01",
+    });
+    const after = compileCurrentPosition(draft, {
+      baseCurrency: "USD",
+      asOf: "2026-02-15",
+    });
+    expect(before.status).toBe("compiled");
+    expect(after.status).toBe("compiled");
+    if (before.status === "compiled" && after.status === "compiled") {
+      expect(before.value.monthlyIncome?.amount.toString()).toBe("6000");
+      expect(after.value.monthlyIncome?.amount.toString()).not.toBe("6000");
+    }
+    const ambiguous = compileCurrentPosition(
+      modelWith((value) => {
+        value.objects.Income![0]!.start_date = "2026-01-29";
+      }),
+      { baseCurrency: "USD", asOf: "2026-02-01" },
+    );
+    expect(ambiguous.status).toBe("compiled");
+    if (ambiguous.status === "compiled") {
+      expect(ambiguous.value.monthlyIncome).toBeUndefined();
+      expect(ambiguous.value.monthlySpending?.amount.toString()).toBe("4200");
+    }
+  });
+
+  it("preserves typed compiler diagnostics through current and comparison facades", () => {
+    const draft = modelWith((value) => {
+      value.objects.Account![0]!.return_model_id = "bad";
+    });
+    const current = getCurrentPosition(draft, "USD", "2026-01-01");
+    expect(current.diagnostics[0]!.code).toBe("RETURN_MODEL_REFERENCE_INVALID");
+    const partial = getCurrentPosition(
+      modelWith((value) => {
+        value.objects.Investment![0]!.quantity = "2";
+        delete value.objects.Investment![0]!.price;
+      }),
+      "USD",
+      "2026-01-01",
+    );
+    expect(
+      partial.diagnostics.some(
+        (diagnostic) => diagnostic.code === "INVESTMENT_PRICE_UNAVAILABLE",
+      ),
+    ).toBe(true);
+    const comparison = comparePersonalCashFlowPlans(
+      draft,
+      {
+        scope: "cash_flow",
+        baseCurrency: "USD",
+        asOf: "2026-01-01",
+        dataCutoff: "2026-01-01",
+        simulationStart: "2026-01-01",
+        simulationEnd: "2026-04-01",
+        months: 3,
+        sameInstantCashFlowOrder: "income_before_expense",
+      },
+      "0.05",
+    );
+    expect(comparison.status).toBe("unavailable");
+    expect(comparison.diagnostics[0]!.code).toBe(
+      "RETURN_MODEL_REFERENCE_INVALID",
+    );
+  });
+
+  it("classifies a valid in-scope non-cash payment Account as unsupported", () => {
+    const result = compileCashFlow(
+      modelWith((value) => {
+        const id = "98000000-0000-4000-8000-000000000006";
+        value.objects.Account!.push({
+          ...value.objects.Account![0]!,
+          account_id: id,
+          account_type: "brokerage",
+        });
+        value.objects.Expense![0]!.payment_account_id = id;
+      }),
+      request,
+    );
+    expect(result.status).toBe("unsupported");
+    if (result.status === "unsupported")
+      expect(result.diagnostics[0]!.code).toBe(
+        "PAYMENT_ACCOUNT_TYPE_UNSUPPORTED",
+      );
+  });
+
+  it("makes guided setup cost-valued and the synthetic 3%-vs-5% comparison economic", () => {
+    const guided = createGuidedSetupDraft({
+      modelId: "99000000-0000-4000-8000-000000000001",
+      householdId: "99000000-0000-4000-8000-000000000002",
+      personId: "99000000-0000-4000-8000-000000000003",
+      accountId: "99000000-0000-4000-8000-000000000004",
+      incomeId: "99000000-0000-4000-8000-000000000005",
+      assetId: "99000000-0000-4000-8000-000000000006",
+      liabilityId: "99000000-0000-4000-8000-000000000007",
+      expenseId: "99000000-0000-4000-8000-000000000008",
+      householdName: "Household",
+      monthlyIncome: "6000",
+      openingCash: "5000",
+      assetValue: "10000",
+      debt: "1000",
+      monthlySpending: "3000",
+      startDate: "2026-01-01",
+    });
+    expect(
+      (guided.objects.Asset![0] as Record<string, unknown>).valuation_method,
+    ).toBe("cost");
+    const position = compileCurrentPosition(guided, {
+      baseCurrency: "USD",
+      asOf: "2026-01-01",
+    });
+    expect(position.status).toBe("compiled");
+    if (position.status === "compiled")
+      expect(position.value.assets?.amount.toString()).toBe("15000");
+    const comparison = comparePersonalCashFlowPlans(
+      createSyntheticPersonalDraft(),
+      {
+        scope: "cash_flow",
+        baseCurrency: "USD",
+        asOf: "2026-01-01",
+        dataCutoff: "2026-01-01",
+        simulationStart: "2026-01-01",
+        simulationEnd: "2026-07-01",
+        months: 6,
+        sameInstantCashFlowOrder: "income_before_expense",
+      },
+      "0.05",
+    );
+    expect(comparison.status).toBe("completed");
+    expect(comparison.configurationDifferences).not.toHaveLength(0);
+    expect(
+      comparison.points.slice(1).some((point) => point.delta.exact !== "0"),
+    ).toBe(true);
   });
 });

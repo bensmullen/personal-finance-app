@@ -202,16 +202,40 @@ export function validateSources(sourceFiles) {
       if (
         application &&
         !isCompilerModule(file) &&
-        ts.isImportDeclaration(declaration) &&
-        declaration.importClause?.namedBindings &&
-        ts.isNamedImports(declaration.importClause.namedBindings)
+        target === "src/simulation/verticalSlice2.ts"
       ) {
-        for (const element of declaration.importClause.namedBindings.elements) {
-          const importedName = element.propertyName?.text ?? element.name.text;
-          if (compilerOwnedVs2Shapes.has(importedName))
+        if (ts.isImportDeclaration(declaration)) {
+          const bindings = declaration.importClause?.namedBindings;
+          if (bindings && ts.isNamespaceImport(bindings))
             errors.push(
-              `application imports compiler-owned VS2 translation shape ${importedName}: ${file}`,
+              `application imports compiler-owned VS2 translation namespace: ${file}`,
             );
+          if (bindings && ts.isNamedImports(bindings))
+            for (const element of bindings.elements) {
+              const importedName =
+                element.propertyName?.text ?? element.name.text;
+              if (compilerOwnedVs2Shapes.has(importedName))
+                errors.push(
+                  `application imports compiler-owned VS2 translation shape ${importedName}: ${file}`,
+                );
+            }
+        } else {
+          if (
+            !declaration.exportClause ||
+            ts.isNamespaceExport(declaration.exportClause)
+          )
+            errors.push(
+              `application re-exports compiler-owned VS2 translation namespace: ${file}`,
+            );
+          else
+            for (const element of declaration.exportClause.elements) {
+              const exportedSourceName =
+                element.propertyName?.text ?? element.name.text;
+              if (compilerOwnedVs2Shapes.has(exportedSourceName))
+                errors.push(
+                  `application re-exports compiler-owned VS2 translation shape ${exportedSourceName}: ${file}`,
+                );
+            }
         }
       }
       if (owner && target && facadeFiles.has(target)) {
@@ -464,6 +488,51 @@ function runSelfTests() {
   if (allowedCompilerTranslationImport.length > 0)
     throw new Error(
       `Architecture validator self-test failed: compiler translation import: ${allowedCompilerTranslationImport.join(", ")}`,
+    );
+  const forbiddenTranslationForms = [
+    'import type { VerticalSlice2Input as Input } from "../simulation/verticalSlice2.js";',
+    'import * as vs2 from "../simulation/verticalSlice2.js";',
+    'export { VerticalSlice2Input as Input } from "../simulation/verticalSlice2.js";',
+    'export * from "../simulation/verticalSlice2.js";',
+  ];
+  for (const source of forbiddenTranslationForms) {
+    const errors = validateSources(
+      new Map([
+        ["src/application/bad.ts", source],
+        [
+          "src/simulation/verticalSlice2.ts",
+          "export interface VerticalSlice2Input {}",
+        ],
+      ]),
+    );
+    if (
+      !errors.some((error) => error.includes("compiler-owned VS2 translation"))
+    )
+      throw new Error(`Architecture validator self-test failed: ${source}`);
+  }
+  const allowedTranslationImports = validateSources(
+    new Map([
+      [
+        "src/application/allowed-vs2.ts",
+        'import { runVerticalSlice2 } from "../simulation/verticalSlice2.js";',
+      ],
+      [
+        "src/application/unrelated.ts",
+        'import type { VerticalSlice2Input } from "../other/verticalSlice2.js";',
+      ],
+      [
+        "src/simulation/verticalSlice2.ts",
+        "export const runVerticalSlice2 = () => {};",
+      ],
+      [
+        "src/other/verticalSlice2.ts",
+        "export interface VerticalSlice2Input {}",
+      ],
+    ]),
+  );
+  if (allowedTranslationImports.length > 0)
+    throw new Error(
+      `Architecture validator self-test failed: precise VS2 boundary: ${allowedTranslationImports.join(", ")}`,
     );
   const allowedUiImports = validateSources(
     new Map([

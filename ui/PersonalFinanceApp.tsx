@@ -390,7 +390,7 @@ export function PersonalFinanceApp() {
     }
     setRunSettingsError("");
     setComparison(
-      comparePersonalCashFlowPlans(draft, resolved.request, "0.03"),
+      comparePersonalCashFlowPlans(draft, resolved.request, "0.05"),
     );
     navigate("Plan");
     setSubnav("Compare Plans");
@@ -581,7 +581,11 @@ function SetupWizard({
       field: "cash",
       label: "Opening cash balance",
     },
-    { title: "Home & other assets", field: "asset", label: "Asset value" },
+    {
+      title: "Home & other assets",
+      field: "asset",
+      label: "Asset cost basis",
+    },
     { title: "Debts", field: "debt", label: "Current debt" },
     { title: "Spending", field: "spending", label: "Monthly spending" },
     {
@@ -937,7 +941,7 @@ function WhatIfStarter({ onCompare }: { onCompare: () => void }) {
       <section className="panel">
         <div className="panel-head">
           <div>
-            <h2>What if income grows 3% per year?</h2>
+            <h2>What if income grows 5% instead of 3% per year?</h2>
             <p>
               Uses the existing cash-flow scenario engine and an exact
               effective-annual rate.
