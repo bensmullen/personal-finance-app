@@ -115,15 +115,15 @@ export const validateGenericPrimitiveInstance = (
     return {
       status: "invalid_model",
       diagnostics: Object.freeze([
-        issue("GROWTH_MODEL_REFERENCE_NOT_FOUND", `${entityType} ${entityId} ${fieldPath} does not resolve to a PrimitiveInstance.`, entityType, entityId, fieldPath, [primitiveId]),
+        issue("PRIMITIVE_REFERENCE_NOT_FOUND", `${entityType} ${entityId} ${fieldPath} does not resolve to a PrimitiveInstance.`, entityType, entityId, fieldPath, [primitiveId]),
       ]),
     };
-  if (typeof primitive.enabled !== "boolean") return { status: "invalid_model", diagnostics: Object.freeze([issue("GROWTH_PRIMITIVE_ENABLED_INVALID", `PrimitiveInstance ${primitiveId} enabled must be a boolean.`, "PrimitiveInstance", primitiveId, "enabled")]) };
-  if (typeof primitive.primitive_id !== "string" || !isPrimitiveId(primitive.primitive_id)) return { status: "invalid_model", diagnostics: Object.freeze([issue("GROWTH_PRIMITIVE_ID_INVALID", `PrimitiveInstance ${primitiveId} primitive_id must identify a registered primitive.`, "PrimitiveInstance", primitiveId, "primitive_id")]) };
+  if (typeof primitive.enabled !== "boolean") return { status: "invalid_model", diagnostics: Object.freeze([issue("PRIMITIVE_ENABLED_INVALID", `PrimitiveInstance ${primitiveId} enabled must be a boolean.`, "PrimitiveInstance", primitiveId, "enabled")]) };
+  if (typeof primitive.primitive_id !== "string" || !isPrimitiveId(primitive.primitive_id)) return { status: "invalid_model", diagnostics: Object.freeze([issue("PRIMITIVE_ID_INVALID", `PrimitiveInstance ${primitiveId} primitive_id must identify a registered primitive.`, "PrimitiveInstance", primitiveId, "primitive_id")]) };
   const scenarioId = primitive.scenario_id;
-  if (typeof scenarioId !== "string" || !UUID.test(scenarioId) || !objects(model, "Scenario").some((scenario) => canonicalId(scenario, "scenario_id") === scenarioId.toLowerCase())) return { status: "invalid_model", diagnostics: Object.freeze([issue("GROWTH_SCENARIO_BINDING_INVALID", `PrimitiveInstance ${primitiveId} scenario_id must resolve to a Scenario UUID.`, "PrimitiveInstance", primitiveId, "scenario_id")]) };
-  if (typeof primitive.input_bindings !== "object" || primitive.input_bindings === null || Array.isArray(primitive.input_bindings)) return { status: "invalid_model", diagnostics: Object.freeze([issue("GROWTH_BINDINGS_INVALID", `PrimitiveInstance ${primitiveId} input_bindings must be an object.`, "PrimitiveInstance", primitiveId, "input_bindings")]) };
-  if (primitive.parameters !== undefined && primitive.parameters !== null && (typeof primitive.parameters !== "object" || Array.isArray(primitive.parameters))) return { status: "invalid_model", diagnostics: Object.freeze([issue("GROWTH_PARAMETERS_INVALID", `PrimitiveInstance ${primitiveId} parameters must be an object.`, "PrimitiveInstance", primitiveId, "parameters")]) };
+  if (typeof scenarioId !== "string" || !UUID.test(scenarioId) || !objects(model, "Scenario").some((scenario) => canonicalId(scenario, "scenario_id") === scenarioId.toLowerCase())) return { status: "invalid_model", diagnostics: Object.freeze([issue("PRIMITIVE_SCENARIO_BINDING_INVALID", `PrimitiveInstance ${primitiveId} scenario_id must resolve to a Scenario UUID.`, "PrimitiveInstance", primitiveId, "scenario_id")]) };
+  if (typeof primitive.input_bindings !== "object" || primitive.input_bindings === null || Array.isArray(primitive.input_bindings)) return { status: "invalid_model", diagnostics: Object.freeze([issue("PRIMITIVE_BINDINGS_INVALID", `PrimitiveInstance ${primitiveId} input_bindings must be an object.`, "PrimitiveInstance", primitiveId, "input_bindings")]) };
+  if (primitive.parameters !== undefined && primitive.parameters !== null && (typeof primitive.parameters !== "object" || Array.isArray(primitive.parameters))) return { status: "invalid_model", diagnostics: Object.freeze([issue("PRIMITIVE_PARAMETERS_INVALID", `PrimitiveInstance ${primitiveId} parameters must be an object.`, "PrimitiveInstance", primitiveId, "parameters")]) };
   for (const field of ["start_date", "end_date"] as const) if (primitive[field] !== undefined && primitive[field] !== null && !utcDate(primitive[field])) return { status: "invalid_model", diagnostics: Object.freeze([issue("DATE_INVALID", `PrimitiveInstance ${primitiveId} ${field} is invalid.`, "PrimitiveInstance", primitiveId, field)]) };
   return { status: "compiled", value: primitive, diagnostics: Object.freeze([]) };
 };
@@ -132,6 +132,43 @@ export const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const EXACT_DECIMAL = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
 export const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Deterministically allocates compiler-owned UUIDs without depending on input order. */
+export const generatedCompilerIds = (
+  model: PortableModelEnvelope,
+  slots: readonly string[],
+  prefix: string,
+): CompileResult<ReadonlyMap<string, string>> => {
+  const authored = new Set<string>();
+  for (const collection of Object.values(model.objects))
+    for (const value of collection) {
+      if (typeof value !== "object" || value === null || Array.isArray(value))
+        continue;
+      for (const [field, raw] of Object.entries(value))
+        if (field.endsWith("_id") && typeof raw === "string" && UUID.test(raw))
+          authored.add(raw.toLowerCase());
+    }
+  const result = new Map<string, string>();
+  [...new Set(slots)].sort().forEach((slot, index) => {
+    result.set(slot, `${prefix}${String(index + 1).padStart(12, "0")}`);
+  });
+  const collision = [...result.values()].find((id) => authored.has(id));
+  if (collision)
+    return {
+      status: "invalid_model",
+      diagnostics: Object.freeze([
+        issue(
+          "GENERATED_ID_COLLISION",
+          `Compiler-owned identity ${collision} collides with an authored identity.`,
+          "portable_model",
+          undefined,
+          "objects",
+          [collision],
+        ),
+      ]),
+    };
+  return { status: "compiled", value: result, diagnostics: Object.freeze([]) };
+};
 
 /** Canonical enums consumed by the PR15 executable-model boundary. */
 export const PAYMENT_FREQUENCIES = Object.freeze([

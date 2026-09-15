@@ -31,6 +31,7 @@ import {
   utcDate,
   issue,
   inspectAccountBalanceBehavior,
+  generatedCompilerIds,
   type CanonicalObject,
 } from "./shared.js";
 import type { CompileResult } from "./types.js";
@@ -279,39 +280,6 @@ export const selectScenario = (
     value: Object.freeze({ id, object: selected }),
     diagnostics: Object.freeze([]),
   };
-};
-
-const generatedIds = (
-  model: PortableModelEnvelope,
-  slots: readonly string[],
-): CompileResult<ReadonlyMap<string, string>> => {
-  const authored = new Set<string>();
-  for (const collection of Object.values(model.objects))
-    for (const value of collection) {
-      if (typeof value !== "object" || value === null || Array.isArray(value))
-        continue;
-      for (const [field, raw] of Object.entries(value))
-        if (field.endsWith("_id") && typeof raw === "string" && UUID.test(raw))
-          authored.add(raw.toLowerCase());
-    }
-  const result = new Map<string, string>();
-  [...new Set(slots)].sort().forEach((slot, index) => {
-    result.set(
-      slot,
-      `${GENERATED_PREFIX}${String(index + 1).padStart(12, "0")}`,
-    );
-  });
-  const collision = [...result.values()].find((id) => authored.has(id));
-  if (collision)
-    return invalidResult(
-      "GENERATED_ID_COLLISION",
-      `Compiler-owned identity ${collision} collides with an authored identity.`,
-      "portable_model",
-      undefined,
-      "objects",
-      [collision],
-    );
-  return { status: "compiled", value: result, diagnostics: Object.freeze([]) };
 };
 
 export interface GrowthBinding {
@@ -1183,7 +1151,7 @@ export const compileCashFlow = (
     }
   }
 
-  const idsResult = generatedIds(model, slots);
+  const idsResult = generatedCompilerIds(model, slots, GENERATED_PREFIX);
   if (idsResult.status !== "compiled") return idsResult;
   const generated = idsResult.value;
   const payableId = domainId("liability", generated.get("payable")!);

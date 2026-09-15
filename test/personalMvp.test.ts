@@ -142,7 +142,7 @@ describe("Personal-MVP application facade", () => {
     expect(investments).toEqual(expect.objectContaining({ scope: "investments", status: "unavailable" }));
     expect(liabilities).toEqual(expect.objectContaining({ scope: "liabilities", status: "unavailable" }));
     expect(investments.diagnostics[0]).toEqual(expect.objectContaining({ code: "INVESTMENT_FORECAST_UNSUPPORTED", capability: "investments" }));
-    expect(liabilities.diagnostics[0]).toEqual(expect.objectContaining({ code: "LIABILITY_FORECAST_UNSUPPORTED", capability: "liabilities" }));
+    expect(liabilities.diagnostics[0]).toEqual(expect.objectContaining({ code: "LIABILITY_EXECUTION_OWNER_REQUIRED", capability: "liability_forecast" }));
   });
 
   it("does not aggregate a mixed-currency current position without FX semantics", () => {

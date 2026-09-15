@@ -89,7 +89,7 @@ export const createPrimitiveRuntimeStateStore = (
           && (entry.state.evaluations === 0) === (entry.state.lastMarketValue === undefined)
           && (entry.state.lastMarketValue === undefined || (entry.state.lastMarketValue instanceof Money && !entry.state.lastMarketValue.isNegative()));
         case "P24": return Number.isSafeInteger(entry.state.evaluations) && entry.state.evaluations >= 0
-          && (entry.state.evaluations === 0) === (entry.state.lastAccruedAmount === undefined)
+          && (entry.state.evaluations !== 0 || entry.state.lastAccruedAmount === undefined)
           && (entry.state.lastAccruedAmount === undefined || (entry.state.lastAccruedAmount instanceof Money && !entry.state.lastAccruedAmount.isNegative()));
         case "P27": return (entry.state.activated === true || entry.state.activated === false)
           && entry.state.activated === (entry.state.occurrenceId !== undefined);
