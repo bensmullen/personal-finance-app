@@ -11,7 +11,7 @@ import {
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { domainId } from "../src/identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../src/lineage/index.js";
-import { fixedMortgagePayment } from "../src/rules/index.js";
+import { fixedMortgagePayment, fixedMortgagePrincipalAfterPayments } from "../src/rules/index.js";
 import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import {
@@ -136,7 +136,7 @@ describe("canonical liability compiler", () => {
       input: directInput,
       openingState: createAuthoritativeState({
         accounts: { [cashId]: { id: cashId, ownerId: directInput.ownerId, kind: "checking", cash: money("5000", currency) } },
-        liabilities: { [principalId]: { id: principalId, balance: money("235000", currency) }, [interestId]: { id: interestId, balance: money("0", currency) } },
+        liabilities: { [principalId]: { id: principalId, balance: fixedMortgagePrincipalAfterPayments(original, annualRate, 360, 47, rounding) }, [interestId]: { id: interestId, balance: money("0", currency) } },
       }),
       primitiveState: createPrimitiveRuntimeStateStore({
         [amortizationId]: { primitiveId: "P22", state: { evaluations: 47, contractualPayment: fixedMortgagePayment(original, annualRate, 360, rounding), originalPrincipal: original, totalPayments: 360 } },
@@ -163,6 +163,33 @@ describe("canonical liability compiler", () => {
     expect(result.value.primitiveState[loan.primitiveIds.accrual]).toMatchObject({ primitiveId: "P24", state: { evaluations: 47 } });
     expect(loan.sourceTraceRefs?.map((ref) => ref.traceId)).toContain(`compiler:canonical:Liability:${ids.liability}`);
     expect(runVerticalSlice4({ runContext: context(), input: result.value.input, openingState: result.value.openingState, primitiveState: result.value.primitiveState, months: 3 }).status).toBe("completed");
+  });
+
+  it("rejects an opening balance that cannot result from the fixed P22 schedule", () => {
+    const result = compileLiabilities(modelWith((draft) => { draft.objects.Liability![0]!.current_balance = "225669.72"; }), compilerRequest());
+    expect(result).toMatchObject({ status: "unsupported" });
+    expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "LIABILITY_OPENING_HISTORY_UNSUPPORTED" })]));
+  });
+
+  it("does not classify a future zero-balance liability as an inactive completed contract", () => {
+    const result = compileLiabilities(modelWith((draft) => { draft.objects.Liability![0]!.current_balance = "0"; draft.objects.Liability![0]!.origination_date = "2027-01-01"; }), compilerRequest([]));
+    expect(result).toMatchObject({ status: "unsupported" });
+    expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "LIABILITY_FUTURE_ORIGINATION_UNSUPPORTED" })]));
+  });
+
+  it("accepts case-insensitive inert authored P22, but gates executable authored configuration", () => {
+    const primitiveId = "97000000-0000-4000-8000-000000000010";
+    const inert = modelWith((draft) => {
+      draft.objects.PrimitiveInstance = [{ primitive_instance_id: primitiveId, primitive_id: "P22", scenario_id: ids.scenario.toUpperCase(), enabled: true, input_bindings: {}, parameters: {} }];
+      draft.objects.Liability![0]!.amortization_model_id = primitiveId;
+    });
+    expect(compileLiabilities(inert, compilerRequest()).status).toBe("compiled");
+    const configured = modelWith((draft) => {
+      draft.objects.PrimitiveInstance = [{ primitive_instance_id: primitiveId, primitive_id: "P22", scenario_id: ids.scenario, enabled: true, input_bindings: { balance: "authored" }, parameters: {} }];
+      draft.objects.Liability![0]!.amortization_model_id = primitiveId;
+    });
+    const result = compileLiabilities(configured, compilerRequest());
+    expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "LIABILITY_AMORTIZATION_CONFIGURATION_UNSUPPORTED" })]));
   });
 
   it("executes a supported mortgage while individually gating another debt type", () => {
@@ -198,6 +225,7 @@ describe("canonical liability compiler", () => {
       liabilityExecutionProfiles: [profile()],
     });
     expect(result.status).toBe("completed");
+    if (result.scope !== "liabilities" || result.status === "unavailable") throw new Error("expected liability forecast");
     expect(result.liabilityOccurrences[0]).toEqual(expect.objectContaining({ scheduledFundingStatus: "unfunded" }));
     expect(result.shortfalls[0]!.unfunded.exact).not.toBe("0");
   });
