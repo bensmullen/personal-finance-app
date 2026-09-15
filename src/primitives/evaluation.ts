@@ -361,9 +361,16 @@ const growthFactor = (
   return decimalNthRoot(base.pow(numerator), denominator, timeBasis.calculationRounding);
 };
 
+/** Shared P08 authority for callers that need the deterministic value without a runtime work envelope. */
+export const applyGeometricGrowth = <T extends PrimitiveFlowValue>(
+  initial: T,
+  rate: Rate,
+  timeBasis: GrowthTimeBasis,
+): T => scalePrimitiveValue(initial, growthFactor(rate, timeBasis)) as T;
+
 const geometricGrowthEvaluation = (request: Extract<ImplementedPrimitiveEvaluationRequest, { primitiveId: "P08" }>) => {
   const factor = growthFactor(request.input.rate, request.parameters.timeBasis);
-  const value = scalePrimitiveValue(request.input.initial, factor);
+  const value = applyGeometricGrowth(request.input.initial, request.input.rate, request.parameters.timeBasis);
   const timeBasis: GrowthTimeBasis = request.parameters.timeBasis.kind === "per_period"
     ? Object.freeze({ ...request.parameters.timeBasis })
     : Object.freeze({

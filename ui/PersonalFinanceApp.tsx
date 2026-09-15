@@ -310,9 +310,13 @@ export function PersonalFinanceApp() {
   const position = useMemo(
     () =>
       draft
-        ? getCurrentPosition(draft, sessionSettings.baseCurrency)
+        ? getCurrentPosition(
+            draft,
+            sessionSettings.baseCurrency,
+            sessionSettings.asOf,
+          )
         : undefined,
-    [draft, sessionSettings.baseCurrency],
+    [draft, sessionSettings.baseCurrency, sessionSettings.asOf],
   );
   const issues = useMemo(
     () => (draft ? validatePersonalDraft(draft) : []),
@@ -1137,6 +1141,24 @@ function ModelSettings({
             value={settings.simulationEnd}
             onChange={(event) => update("simulationEnd", event.target.value)}
           />
+        </label>
+        <label>
+          Same-time cash-flow order
+          <select
+            aria-label="Same-time cash-flow order"
+            value={settings.sameInstantCashFlowOrder}
+            onChange={(event) =>
+              setSettings((current) => ({
+                ...current,
+                sameInstantCashFlowOrder: event.target.value as
+                  | "income_before_expense"
+                  | "expense_before_income",
+              }))
+            }
+          >
+            <option value="income_before_expense">Income before expense</option>
+            <option value="expense_before_income">Expense before income</option>
+          </select>
         </label>
         <label>
           Default horizon

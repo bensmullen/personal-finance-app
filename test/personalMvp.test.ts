@@ -28,6 +28,7 @@ const request = (
     simulationStart: "2026-01-01",
     simulationEnd: "2026-04-01",
     months: 3,
+    sameInstantCashFlowOrder: "income_before_expense",
   }) as const;
 
 describe("Personal-MVP application facade", () => {
@@ -149,12 +150,32 @@ describe("Personal-MVP application facade", () => {
     );
     model = addPersonalObject(
       model,
+      "Household",
+      "10000000-0000-4000-8000-000000000010",
+      {
+        name: "Example",
+        formation_date: "2020-01-01",
+        members: ["10000000-0000-4000-8000-000000000011"],
+      },
+    );
+    model = addPersonalObject(
+      model,
+      "Person",
+      "10000000-0000-4000-8000-000000000011",
+      {
+        household_id: "10000000-0000-4000-8000-000000000010",
+      },
+    );
+    model = addPersonalObject(
+      model,
       "Account",
       "10000000-0000-4000-8000-000000000002",
       {
         name: "USD cash",
         account_type: "checking",
         currency: "USD",
+        owner_id: "10000000-0000-4000-8000-000000000011",
+        opening_date: "2020-01-01",
         opening_balance: "100.00",
       },
     );
@@ -166,6 +187,8 @@ describe("Personal-MVP application facade", () => {
         name: "EUR cash",
         account_type: "checking",
         currency: "EUR",
+        owner_id: "10000000-0000-4000-8000-000000000011",
+        opening_date: "2020-01-01",
         opening_balance: "100.00",
       },
     );
@@ -174,9 +197,11 @@ describe("Personal-MVP application facade", () => {
     expect(position.cash).toBeUndefined();
     expect(position.assets).toBeUndefined();
     expect(position.netWorth).toBeUndefined();
-    expect(position.unavailable).toContain(
-      "Mixed-currency current position requires FX semantics not implemented in PR 14.",
-    );
+    expect(
+      position.unavailable.some((message) =>
+        message.includes("does not perform FX"),
+      ),
+    ).toBe(true);
   });
 
   it("executes only plain monthly fixed streams and never silently zeroes authored behavior", () => {
@@ -342,7 +367,7 @@ describe("Personal-MVP application facade", () => {
     const result = comparePersonalCashFlowPlans(
       createSyntheticPersonalDraft(),
       request(),
-      "0.03",
+      "0.06",
     );
     expect(result.status).toBe("completed");
     expect(result.scope).toBe("cash_flow");

@@ -66,6 +66,12 @@ const documentMembers = new Set([
   "querySelector",
   "querySelectorAll",
 ]);
+const compilerOwnedVs2Shapes = new Set([
+  "VerticalSlice2Input",
+  "RecurringIncomeStream",
+  "RecurringExpenseStream",
+  "ScheduledCashFlowEvent",
+]);
 
 const normalized = (value) => value.split(path.sep).join("/");
 
@@ -75,6 +81,7 @@ const moduleName = (file) => {
 };
 
 const isApplicationModule = (file) => file.startsWith("src/application/");
+const isCompilerModule = (file) => file.startsWith("src/application/compiler/");
 const isUiModule = (file) => file.startsWith("app/") || file.startsWith("ui/");
 
 const isRuntimeImport = (node) => {
@@ -192,6 +199,21 @@ export function validateSources(sourceFiles) {
     for (const declaration of importDeclarations(sourceFile)) {
       const specifier = declaration.moduleSpecifier.text;
       const target = resolveImport(file, specifier, files);
+      if (
+        application &&
+        !isCompilerModule(file) &&
+        ts.isImportDeclaration(declaration) &&
+        declaration.importClause?.namedBindings &&
+        ts.isNamedImports(declaration.importClause.namedBindings)
+      ) {
+        for (const element of declaration.importClause.namedBindings.elements) {
+          const importedName = element.propertyName?.text ?? element.name.text;
+          if (compilerOwnedVs2Shapes.has(importedName))
+            errors.push(
+              `application imports compiler-owned VS2 translation shape ${importedName}: ${file}`,
+            );
+        }
+      }
       if (owner && target && facadeFiles.has(target)) {
         errors.push(
           `engine implementation imports compatibility facade: ${file} -> ${target}`,
@@ -407,6 +429,42 @@ function runSelfTests() {
       `Architecture validator self-test failed: application inward imports: ${allowedApplicationImports.join(", ")}`,
     );
   }
+  const forbiddenTranslationImport = validateSources(
+    new Map([
+      [
+        "src/application/personalMvp.ts",
+        'import type { VerticalSlice2Input } from "../simulation/verticalSlice2.js";',
+      ],
+      [
+        "src/simulation/verticalSlice2.ts",
+        "export interface VerticalSlice2Input {}",
+      ],
+    ]),
+  );
+  if (
+    !forbiddenTranslationImport.some((error) =>
+      error.includes("compiler-owned VS2 translation shape"),
+    )
+  )
+    throw new Error(
+      "Architecture validator self-test failed: outside-compiler translation import",
+    );
+  const allowedCompilerTranslationImport = validateSources(
+    new Map([
+      [
+        "src/application/compiler/cashFlow.ts",
+        'import type { VerticalSlice2Input } from "../../simulation/verticalSlice2.js";',
+      ],
+      [
+        "src/simulation/verticalSlice2.ts",
+        "export interface VerticalSlice2Input {}",
+      ],
+    ]),
+  );
+  if (allowedCompilerTranslationImport.length > 0)
+    throw new Error(
+      `Architecture validator self-test failed: compiler translation import: ${allowedCompilerTranslationImport.join(", ")}`,
+    );
   const allowedUiImports = validateSources(
     new Map([
       ["ui/allowed.tsx", 'import "../src/application/index.js";'],

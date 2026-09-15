@@ -1,5 +1,5 @@
-import { createFundingPolicy, fundingPolicyId } from "../funding/index.js";
 import { domainId } from "../identity/index.js";
+import type { ValidationIssue } from "../diagnostics/index.js";
 import {
   CURRENT_MODEL_FORMAT_VERSION,
   type JsonValue,
@@ -13,12 +13,7 @@ import {
 } from "../model/scenario.js";
 import { createRunContext, runId, scenarioId } from "../simulation/run.js";
 import { compareVerticalSlice2Scenarios } from "../simulation/scenario.js";
-import {
-  runVerticalSlice2,
-  type VerticalSlice2Input,
-} from "../simulation/verticalSlice2.js";
-import { createAuthoritativeState } from "../state/index.js";
-import { deriveStatements } from "../statements/index.js";
+import { runVerticalSlice2 } from "../simulation/verticalSlice2.js";
 import {
   instant,
   utcMonthDifference,
@@ -30,10 +25,13 @@ import {
   Rate,
   RoundingPolicy,
   formatMoney,
-  money,
   rateConvention,
-  sumMoney,
 } from "../values/index.js";
+import {
+  compileCashFlow,
+  compileCurrentPosition,
+  type CapabilityDiagnostic,
+} from "./compiler/index.js";
 import { PERSONAL_EDITOR_DESCRIPTOR } from "./editorDescriptor.generated.js";
 export {
   exportPersonalModelJson,
@@ -113,7 +111,7 @@ export interface PersonalForecastReadModel {
   readonly actualHistoryAvailable: false;
   readonly points: readonly ForecastPoint[];
   readonly shortfalls: readonly ShortfallReadModel[];
-  readonly diagnostics: readonly string[];
+  readonly diagnostics: readonly (ValidationIssue | CapabilityDiagnostic)[];
 }
 export interface ForecastRequest {
   readonly scope: "cash_flow" | "investments" | "liabilities";
@@ -123,6 +121,9 @@ export interface ForecastRequest {
   readonly simulationStart: string;
   readonly simulationEnd: string;
   readonly months: number;
+  readonly sameInstantCashFlowOrder:
+    | "income_before_expense"
+    | "expense_before_income";
 }
 export interface PersonalSessionSettings {
   readonly baseCurrency: string;
@@ -130,6 +131,9 @@ export interface PersonalSessionSettings {
   readonly dataCutoff: string;
   readonly simulationStart: string;
   readonly simulationEnd: string;
+  readonly sameInstantCashFlowOrder:
+    | "income_before_expense"
+    | "expense_before_income";
 }
 export interface PersonalSessionSettingsResolution {
   readonly settings?: PersonalSessionSettings;
@@ -462,127 +466,36 @@ const moneyDto = (value: Money): MoneyReadModel =>
     display: formatMoney(value, displayPolicy),
     currency: value.currency.code,
   });
-const readMoney = (
-  value: JsonValue | undefined,
-  currency: Currency,
-): Money | undefined =>
-  typeof value === "string" && EXACT_DECIMAL.test(value)
-    ? money(value, currency)
-    : undefined;
-const sumField = (
-  objects: readonly JsonObject[],
-  field: string,
-  currency: Currency,
-): Money | undefined => {
-  const values = objects.map((object) => readMoney(object[field], currency));
-  return values.some((value) => value === undefined)
-    ? undefined
-    : sumMoney(values as Money[], currency);
-};
 
 export const getCurrentPosition = (
   draft: PersonalDraft,
   currencyCode = "USD",
+  asOf = "2026-01-01",
 ): CurrentPositionReadModel => {
-  const currency = Currency.of(currencyCode);
-  const accountObjects = entries(draft, "Account");
-  const liabilityObjects = entries(draft, "Liability");
-  const monthlyIncome = sumField(
-    entries(draft, "Income").filter((value) => value.frequency === "monthly"),
-    "amount",
-    currency,
-  );
-  const monthlySpending = sumField(
-    entries(draft, "Expense").filter((value) => value.frequency === "monthly"),
-    "amount",
-    currency,
-  );
-  const unavailable: string[] = [];
-  const hasIncompatibleAccountCurrency = accountObjects.some(
-    (item) => item.currency !== currency.code,
-  );
-  const hasIncompatibleLiabilityCurrency = liabilityObjects.some((item) =>
-    ["currency", "current_balance_currency"].some(
-      (field) =>
-        typeof item[field] === "string" && item[field] !== currency.code,
-    ),
-  );
-  const hasMixedCurrencyCurrentPosition =
-    hasIncompatibleAccountCurrency || hasIncompatibleLiabilityCurrency;
-  if (hasMixedCurrencyCurrentPosition)
-    unavailable.push(
-      "Mixed-currency current position requires FX semantics not implemented in PR 14.",
-    );
-  const exactStateInputs =
-    !hasMixedCurrencyCurrentPosition &&
-    accountObjects.every((item) => readMoney(item.opening_balance, currency)) &&
-    liabilityObjects.every((item) => readMoney(item.current_balance, currency));
-  const state = exactStateInputs
-    ? createAuthoritativeState({
-        accounts: Object.fromEntries(
-          accountObjects.map((item) => {
-            const id = domainId("account", String(item.account_id));
-            const canonicalKinds = [
-              "checking",
-              "savings",
-              "cash",
-              "brokerage",
-              "retirement",
-            ];
-            const kind = canonicalKinds.includes(String(item.account_type))
-              ? (String(item.account_type) as
-                  | "checking"
-                  | "savings"
-                  | "cash"
-                  | "brokerage"
-                  | "retirement")
-              : "other";
-            return [
-              id,
-              { id, kind, cash: readMoney(item.opening_balance, currency)! },
-            ];
-          }),
-        ),
-        liabilities: Object.fromEntries(
-          liabilityObjects.map((item) => {
-            const id = domainId("liability", String(item.liability_id));
-            return [
-              id,
-              { id, balance: readMoney(item.current_balance, currency)! },
-            ];
-          }),
-        ),
-      })
-    : undefined;
-  const statements = state ? deriveStatements(state, [], currency) : undefined;
-  const hasUntranslatedHoldings =
-    entries(draft, "Asset").length > 0 ||
-    entries(draft, "Investment").length > 0;
-  const cash = statements?.assets;
-  const liabilities = statements?.liabilities;
-  const assets = hasUntranslatedHoldings ? undefined : statements?.assets;
-  const netWorth = hasUntranslatedHoldings ? undefined : statements?.netWorth;
-  const monthlyCashFlow =
-    monthlyIncome && monthlySpending
-      ? monthlyIncome.minus(monthlySpending)
-      : undefined;
-  if (!netWorth)
-    unavailable.push(
-      "Net worth needs exact current values in one supported currency.",
-    );
-  if (!monthlyCashFlow)
-    unavailable.push(
-      "Monthly cash flow needs monthly income and spending values.",
-    );
+  const result = compileCurrentPosition(draft, {
+    baseCurrency: currencyCode,
+    asOf,
+  });
+  if (result.status !== "compiled")
+    return deepFreeze({
+      unavailable: result.diagnostics.map((diagnostic) => diagnostic.message),
+    });
+  const value = result.value;
   return deepFreeze({
-    ...(netWorth ? { netWorth: moneyDto(netWorth) } : {}),
-    ...(cash ? { cash: moneyDto(cash) } : {}),
-    ...(assets ? { assets: moneyDto(assets) } : {}),
-    ...(liabilities ? { liabilities: moneyDto(liabilities) } : {}),
-    ...(monthlyIncome ? { monthlyIncome: moneyDto(monthlyIncome) } : {}),
-    ...(monthlySpending ? { monthlySpending: moneyDto(monthlySpending) } : {}),
-    ...(monthlyCashFlow ? { monthlyCashFlow: moneyDto(monthlyCashFlow) } : {}),
-    unavailable,
+    ...(value.netWorth ? { netWorth: moneyDto(value.netWorth) } : {}),
+    ...(value.cash ? { cash: moneyDto(value.cash) } : {}),
+    ...(value.assets ? { assets: moneyDto(value.assets) } : {}),
+    ...(value.liabilities ? { liabilities: moneyDto(value.liabilities) } : {}),
+    ...(value.monthlyIncome
+      ? { monthlyIncome: moneyDto(value.monthlyIncome) }
+      : {}),
+    ...(value.monthlySpending
+      ? { monthlySpending: moneyDto(value.monthlySpending) }
+      : {}),
+    ...(value.monthlyCashFlow
+      ? { monthlyCashFlow: moneyDto(value.monthlyCashFlow) }
+      : {}),
+    unavailable: value.diagnostics.map((diagnostic) => diagnostic.message),
   });
 };
 
@@ -633,6 +546,7 @@ export const resolvePersonalSessionSettings = (
         simulationStart: settings.simulationStart,
         simulationEnd: settings.simulationEnd,
         months,
+        sameInstantCashFlowOrder: settings.sameInstantCashFlowOrder,
       },
     });
   } catch (error) {
@@ -655,35 +569,10 @@ export const sessionSettingsFromHorizon = (
     dataCutoff: startDate,
     simulationStart: startDate,
     simulationEnd: periods[periods.length - 1]!.end.slice(0, 10),
+    sameInstantCashFlowOrder: "income_before_expense",
   });
 };
 
-const hasReference = (value: JsonValue | undefined): boolean =>
-  value !== undefined && value !== null && value !== "";
-const portableObjectLabel = (type: "Income" | "Expense", item: JsonObject) =>
-  String(item.source ?? item.category ?? item[`${type.toLowerCase()}_id`]);
-const unsupportedCashFlowSemantics = (
-  incomes: readonly JsonObject[],
-  expenses: readonly JsonObject[],
-): string | undefined => {
-  const incomeField = [
-    "growth_model_id",
-    "probability_model_id",
-    "related_event_id",
-  ] as const;
-  for (const income of incomes) {
-    const field = incomeField.find((name) => hasReference(income[name]));
-    if (field)
-      return `Income \"${portableObjectLabel("Income", income)}\" references ${field}; this cash-flow forecast cannot interpret that authored behavior.`;
-  }
-  const expenseField = ["growth_model_id", "event_trigger_id"] as const;
-  for (const expense of expenses) {
-    const field = expenseField.find((name) => hasReference(expense[name]));
-    if (field)
-      return `Expense \"${portableObjectLabel("Expense", expense)}\" references ${field}; this cash-flow forecast cannot interpret that authored behavior.`;
-  }
-  return undefined;
-};
 export const runPersonalForecast = (
   draft: PersonalDraft,
   request: ForecastRequest,
@@ -693,159 +582,37 @@ export const runPersonalForecast = (
       request,
       `${request.scope === "investments" ? "Investment" : "Liability"} execution requires complete engine-specific configuration; this portable model is preserved but is not automatically executable.`,
     );
-  const households = entries(draft, "Household");
-  const people = entries(draft, "Person");
-  const accounts = entries(draft, "Account");
-  const incomes = entries(draft, "Income");
-  const expenses = entries(draft, "Expense");
-  const cashAccount = accounts.find((account) =>
-    ["cash", "checking", "savings"].includes(String(account.account_type)),
-  );
-  if (
-    !households[0] ||
-    !people[0] ||
-    !cashAccount ||
-    incomes.length === 0 ||
-    expenses.length === 0
-  )
-    return unavailableForecast(
-      request,
-      "Cash-flow forecast needs a household, person, cash account, income, and spending item.",
-    );
-  if ([...incomes, ...expenses].some((item) => item.frequency !== "monthly"))
-    return unavailableForecast(
-      request,
-      "Only monthly portable income and spending can be translated without guessing timing.",
-    );
-  const unsupportedSemantics = unsupportedCashFlowSemantics(incomes, expenses);
-  if (unsupportedSemantics)
-    return unavailableForecast(request, unsupportedSemantics);
-  if (
-    expenses.some(
-      (expense) => expense.payment_account_id !== cashAccount.account_id,
-    )
-  )
-    return unavailableForecast(
-      request,
-      "Every spending item needs the selected cash account as its funding account.",
-    );
   try {
-    if (cashAccount.currency !== request.baseCurrency)
-      return unavailableForecast(
-        request,
-        "Cash-flow forecast requires the selected cash account currency to match the session base currency.",
-      );
     const currency = Currency.of(request.baseCurrency);
-    const householdId = domainId(
-      "household",
-      String(households[0].household_id),
-    );
-    const personId = domainId("person", String(people[0].person_id));
-    const cashId = domainId("account", String(cashAccount.account_id));
-    const payableId = domainId(
-      "liability",
-      "ffffffff-ffff-4fff-8fff-fffffffffff1",
-    );
     const start = iso(request.simulationStart);
-    const periods = utcMonthlyPeriods(start, request.months);
+    const compilation = compileCashFlow(draft, {
+      baseCurrency: request.baseCurrency,
+      simulationStart: request.simulationStart,
+      simulationEnd: request.simulationEnd,
+      sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
+    });
+    if (compilation.status !== "compiled") {
+      const message = compilation.diagnostics
+        .map((value) => value.message)
+        .join("; ");
+      return deepFreeze({
+        ...unavailableForecast(request, message),
+        diagnostics: compilation.diagnostics,
+      });
+    }
     const runContext = createRunContext({
       runId: runId(cryptoSafeRunId(draft.modelId)),
-      scenarioId: scenarioId("ffffffff-ffff-4fff-8fff-fffffffffff2"),
+      scenarioId: scenarioId(compilation.value.scenarioIdentity),
       asOf: iso(request.asOf),
       dataCutoff: iso(request.dataCutoff),
       simulationStart: start,
       simulationEnd: iso(request.simulationEnd),
       baseCurrency: currency,
     });
-    const primitive = (index: number) =>
-      domainId(
-        "primitive-instance",
-        `eeeeeeee-eeee-4eee-8eee-${index.toString().padStart(12, "0")}`,
-      );
-    const funding = createFundingPolicy({
-      id: fundingPolicyId(`personal-mvp:${cashId}`),
-      orderedSources: [{ kind: "cash_account", accountId: cashId }],
-      allowPartial: false,
-      insufficientFundsBehavior: "unfunded",
-    });
-    const input: VerticalSlice2Input = {
-      householdId,
-      ownerId: personId,
-      cashAccountId: cashId,
-      expensePayableLiabilityId: payableId,
-      baseCurrency: currency,
-      sameInstantCashFlowOrder: "income_before_expense",
-      events: [],
-      incomes: incomes.map((item, index) => ({
-        id: domainId("income", String(item.income_id)),
-        ownerId:
-          String(item.owner_id) === householdId
-            ? householdId
-            : domainId("person", String(item.owner_id)),
-        depositAccountId: cashId,
-        baseMonthlyAmount: money(String(item.amount), currency),
-        start: iso(String(item.start_date)),
-        ...(typeof item.end_date === "string"
-          ? { end: iso(item.end_date) }
-          : {}),
-        recurrence: {
-          kind: "utc_monthly",
-          anchor: iso(String(item.start_date)),
-          invalidDayPolicy: "skip",
-        },
-        growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
-        growthBaseAt: iso(String(item.start_date)),
-        primitiveIds: {
-          growth: primitive(index * 4 + 1),
-          recurrence: primitive(index * 4 + 2),
-        },
-      })),
-      expenses: expenses.map((item, index) => ({
-        id: domainId("expense", String(item.expense_id)),
-        ownerId:
-          String(item.owner_id) === householdId
-            ? householdId
-            : domainId("person", String(item.owner_id)),
-        paymentAccountId: cashId,
-        payableLiabilityId: payableId,
-        baseMonthlyAmount: money(String(item.amount), currency),
-        start: iso(String(item.start_date)),
-        ...(typeof item.end_date === "string"
-          ? { end: iso(item.end_date) }
-          : {}),
-        recurrence: {
-          kind: "utc_monthly",
-          anchor: iso(String(item.start_date)),
-          invalidDayPolicy: "skip",
-        },
-        inflationRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
-        inflationBaseAt: iso(String(item.start_date)),
-        fundingPolicy: funding,
-        settlementPriority: index + 1,
-        primitiveIds: {
-          indexGrowth: primitive(500 + index * 4 + 1),
-          inflationLink: primitive(500 + index * 4 + 2),
-          recurrence: primitive(500 + index * 4 + 3),
-        },
-      })),
-    };
-    const opening = createAuthoritativeState({
-      accounts: {
-        [cashId]: {
-          id: cashId,
-          kind: "checking",
-          ownerId: personId,
-          cash: money(String(cashAccount.opening_balance), currency),
-        },
-      },
-      liabilities: {
-        [payableId]: { id: payableId, balance: money("0", currency) },
-      },
-    });
     const result = runVerticalSlice2({
       runContext,
-      openingState: opening,
-      input,
+      openingState: compilation.value.openingState,
+      input: compilation.value.input,
       months: request.months,
     });
     const points = result.periods.map((period) => ({
@@ -882,7 +649,10 @@ export const runPersonalForecast = (
       actualHistoryAvailable: false,
       points,
       shortfalls,
-      diagnostics: result.diagnostics.map((issue) => issue.message),
+      diagnostics: Object.freeze([
+        ...compilation.diagnostics,
+        ...result.diagnostics,
+      ]),
     });
   } catch (error) {
     return unavailableForecast(
@@ -919,134 +689,25 @@ export const comparePersonalCashFlowPlans = (
     );
   if (!EXACT_DECIMAL.test(annualIncomeGrowth))
     return unavailable("Income growth must be an exact decimal string.");
-  const household = entries(draft, "Household")[0];
-  const person = entries(draft, "Person")[0];
-  const accounts = entries(draft, "Account");
-  const incomes = entries(draft, "Income");
-  const expenses = entries(draft, "Expense");
-  const cashAccount = accounts.find((account) =>
-    ["cash", "checking", "savings"].includes(String(account.account_type)),
-  );
-  if (
-    !household ||
-    !person ||
-    !cashAccount ||
-    !incomes[0] ||
-    expenses.length === 0
-  )
-    return unavailable(
-      "A household, person, cash account, income, and spending item are required.",
-    );
-  if ([...incomes, ...expenses].some((item) => item.frequency !== "monthly"))
-    return unavailable(
-      "Only monthly cash-flow inputs can be compared without guessing timing.",
-    );
-  const unsupportedSemantics = unsupportedCashFlowSemantics(incomes, expenses);
-  if (unsupportedSemantics) return unavailable(unsupportedSemantics);
-  if (
-    expenses.some((item) => item.payment_account_id !== cashAccount.account_id)
-  )
-    return unavailable(
-      "Spending funding must identify the selected cash account.",
-    );
   try {
-    if (cashAccount.currency !== request.baseCurrency)
-      return unavailable(
-        "Plan comparison requires the selected cash account currency to match the session base currency.",
-      );
     const currency = Currency.of(request.baseCurrency);
-    const householdId = domainId("household", String(household.household_id));
-    const personId = domainId("person", String(person.person_id));
-    const cashId = domainId("account", String(cashAccount.account_id));
-    const payableId = domainId(
-      "liability",
-      "ffffffff-ffff-4fff-8fff-fffffffffff1",
-    );
-    const primitive = (index: number) =>
-      domainId(
-        "primitive-instance",
-        `dddddddd-dddd-4ddd-8ddd-${index.toString().padStart(12, "0")}`,
+    const compilation = compileCashFlow(draft, {
+      baseCurrency: request.baseCurrency,
+      simulationStart: request.simulationStart,
+      simulationEnd: request.simulationEnd,
+      sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
+    });
+    if (compilation.status !== "compiled")
+      return unavailable(
+        compilation.diagnostics.map((value) => value.message).join("; "),
       );
-    const funding = createFundingPolicy({
-      id: fundingPolicyId(`personal-mvp:${cashId}`),
-      orderedSources: [{ kind: "cash_account", accountId: cashId }],
-      allowPartial: false,
-      insufficientFundsBehavior: "unfunded",
-    });
-    const input: VerticalSlice2Input = {
-      householdId,
-      ownerId: personId,
-      cashAccountId: cashId,
-      expensePayableLiabilityId: payableId,
-      baseCurrency: currency,
-      sameInstantCashFlowOrder: "income_before_expense",
-      events: [],
-      incomes: incomes.map((item, index) => ({
-        id: domainId("income", String(item.income_id)),
-        ownerId:
-          String(item.owner_id) === householdId
-            ? householdId
-            : domainId("person", String(item.owner_id)),
-        depositAccountId: cashId,
-        baseMonthlyAmount: money(String(item.amount), currency),
-        start: iso(String(item.start_date)),
-        ...(typeof item.end_date === "string"
-          ? { end: iso(item.end_date) }
-          : {}),
-        recurrence: {
-          kind: "utc_monthly",
-          anchor: iso(String(item.start_date)),
-          invalidDayPolicy: "skip",
-        },
-        growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
-        growthBaseAt: iso(String(item.start_date)),
-        primitiveIds: {
-          growth: primitive(index * 4 + 1),
-          recurrence: primitive(index * 4 + 2),
-        },
-      })),
-      expenses: expenses.map((item, index) => ({
-        id: domainId("expense", String(item.expense_id)),
-        ownerId:
-          String(item.owner_id) === householdId
-            ? householdId
-            : domainId("person", String(item.owner_id)),
-        paymentAccountId: cashId,
-        payableLiabilityId: payableId,
-        baseMonthlyAmount: money(String(item.amount), currency),
-        start: iso(String(item.start_date)),
-        ...(typeof item.end_date === "string"
-          ? { end: iso(item.end_date) }
-          : {}),
-        recurrence: {
-          kind: "utc_monthly",
-          anchor: iso(String(item.start_date)),
-          invalidDayPolicy: "skip",
-        },
-        inflationRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
-        inflationBaseAt: iso(String(item.start_date)),
-        fundingPolicy: funding,
-        settlementPriority: index + 1,
-        primitiveIds: {
-          indexGrowth: primitive(500 + index * 4 + 1),
-          inflationLink: primitive(500 + index * 4 + 2),
-          recurrence: primitive(500 + index * 4 + 3),
-        },
-      })),
-    };
-    const openingState = createAuthoritativeState({
-      accounts: {
-        [cashId]: {
-          id: cashId,
-          kind: "checking",
-          ownerId: personId,
-          cash: money(String(cashAccount.opening_balance), currency),
-        },
-      },
-      liabilities: {
-        [payableId]: { id: payableId, balance: money("0", currency) },
-      },
-    });
+    const input = compilation.value.input;
+    if (input.incomes.length !== 1)
+      return unavailable(
+        `Plan comparison requires exactly one compiled Income target; found ${input.incomes.length}.`,
+      );
+    const [comparisonIncome] = input.incomes;
+    const openingState = compilation.value.openingState;
     const baselineId = canonicalScenarioId(
       "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
     );
@@ -1081,7 +742,7 @@ export const comparePersonalCashFlowPlans = (
           changes: [
             {
               kind: "income_growth",
-              incomeId: input.incomes[0]!.id,
+              incomeId: comparisonIncome!.id,
               rate: Rate.fromDecimal(
                 annualIncomeGrowth,
                 rateConvention.effectiveAnnual(),
@@ -1161,6 +822,7 @@ export const createSyntheticPersonalDraft = (): PersonalDraft => {
     investment: "90000000-0000-4000-8000-000000000009",
     assumption: "90000000-0000-4000-8000-000000000010",
     scenario: "90000000-0000-4000-8000-000000000011",
+    primitive: "90000000-0000-4000-8000-000000000012",
   };
   let draft = createEmptyPersonalDraft(ids.model);
   draft = addPersonalObject(draft, "Household", ids.household, {
@@ -1191,6 +853,7 @@ export const createSyntheticPersonalDraft = (): PersonalDraft => {
     frequency: "monthly",
     start_date: "2026-01-01",
     gross_or_net: "gross",
+    growth_model_id: ids.primitive,
   });
   draft = addPersonalObject(draft, "Expense", ids.expense, {
     owner_id: ids.household,
@@ -1206,6 +869,7 @@ export const createSyntheticPersonalDraft = (): PersonalDraft => {
     owner_id: ids.household,
     acquisition_date: "2022-01-01",
     acquisition_cost: "350000.00",
+    valuation_method: "cost",
   });
   draft = addPersonalObject(draft, "Liability", ids.liability, {
     name: "Example mortgage",
@@ -1228,6 +892,12 @@ export const createSyntheticPersonalDraft = (): PersonalDraft => {
     name: "Current plan",
     start_date: "2026-01-01",
     end_date: "2036-01-01",
+    timestep: "monthly",
+    enabled: true,
+    stochastic: false,
+    simulation_count: 1,
+    assumption_ids: [ids.assumption],
+    event_ids: [],
   });
   draft = addPersonalObject(draft, "Assumption", ids.assumption, {
     name: "Salary growth",
@@ -1236,5 +906,17 @@ export const createSyntheticPersonalDraft = (): PersonalDraft => {
     unit: "effective annual rate",
     scenario_id: ids.scenario,
   });
-  return draft;
+  return withObjects(draft, {
+    ...draft.objects,
+    PrimitiveInstance: Object.freeze([
+      Object.freeze({
+        primitive_instance_id: ids.primitive,
+        primitive_id: "P08",
+        input_bindings: Object.freeze({ rate: ids.assumption }),
+        parameters: Object.freeze({}),
+        scenario_id: ids.scenario,
+        enabled: true,
+      }),
+    ]),
+  });
 };
