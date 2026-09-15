@@ -13,6 +13,7 @@ import {
   type Instant,
 } from "../../time/index.js";
 import type { CapabilityDiagnostic, CompileResult } from "./types.js";
+import { isPrimitiveId } from "../../primitives/index.js";
 
 export type CanonicalObject = Readonly<Record<string, JsonValue>>;
 
@@ -96,6 +97,36 @@ export const objects = (
     (value): value is CanonicalObject =>
       typeof value === "object" && value !== null && !Array.isArray(value),
   );
+
+/** Validates only the generic shape of a referenced PrimitiveInstance. */
+export const validateGenericPrimitiveInstance = (
+  model: PortableModelEnvelope,
+  primitiveId: string,
+  entityType: string,
+  entityId: string,
+  fieldPath: string,
+): CompileResult<CanonicalObject> => {
+  const preflight = preflightCanonicalCollections(model, ["PrimitiveInstance"]);
+  if (preflight.status !== "compiled") return preflight;
+  const primitive = objects(model, "PrimitiveInstance").find(
+    (item) => canonicalId(item, "primitive_instance_id") === primitiveId,
+  );
+  if (!primitive)
+    return {
+      status: "invalid_model",
+      diagnostics: Object.freeze([
+        issue("GROWTH_MODEL_REFERENCE_NOT_FOUND", `${entityType} ${entityId} ${fieldPath} does not resolve to a PrimitiveInstance.`, entityType, entityId, fieldPath, [primitiveId]),
+      ]),
+    };
+  if (typeof primitive.enabled !== "boolean") return { status: "invalid_model", diagnostics: Object.freeze([issue("GROWTH_PRIMITIVE_ENABLED_INVALID", `PrimitiveInstance ${primitiveId} enabled must be a boolean.`, "PrimitiveInstance", primitiveId, "enabled")]) };
+  if (typeof primitive.primitive_id !== "string" || !isPrimitiveId(primitive.primitive_id)) return { status: "invalid_model", diagnostics: Object.freeze([issue("GROWTH_PRIMITIVE_ID_INVALID", `PrimitiveInstance ${primitiveId} primitive_id must identify a registered primitive.`, "PrimitiveInstance", primitiveId, "primitive_id")]) };
+  const scenarioId = primitive.scenario_id;
+  if (typeof scenarioId !== "string" || !UUID.test(scenarioId) || !objects(model, "Scenario").some((scenario) => canonicalId(scenario, "scenario_id") === scenarioId.toLowerCase())) return { status: "invalid_model", diagnostics: Object.freeze([issue("GROWTH_SCENARIO_BINDING_INVALID", `PrimitiveInstance ${primitiveId} scenario_id must resolve to a Scenario UUID.`, "PrimitiveInstance", primitiveId, "scenario_id")]) };
+  if (typeof primitive.input_bindings !== "object" || primitive.input_bindings === null || Array.isArray(primitive.input_bindings)) return { status: "invalid_model", diagnostics: Object.freeze([issue("GROWTH_BINDINGS_INVALID", `PrimitiveInstance ${primitiveId} input_bindings must be an object.`, "PrimitiveInstance", primitiveId, "input_bindings")]) };
+  if (primitive.parameters !== undefined && primitive.parameters !== null && (typeof primitive.parameters !== "object" || Array.isArray(primitive.parameters))) return { status: "invalid_model", diagnostics: Object.freeze([issue("GROWTH_PARAMETERS_INVALID", `PrimitiveInstance ${primitiveId} parameters must be an object.`, "PrimitiveInstance", primitiveId, "parameters")]) };
+  for (const field of ["start_date", "end_date"] as const) if (primitive[field] !== undefined && primitive[field] !== null && !utcDate(primitive[field])) return { status: "invalid_model", diagnostics: Object.freeze([issue("DATE_INVALID", `PrimitiveInstance ${primitiveId} ${field} is invalid.`, "PrimitiveInstance", primitiveId, field)]) };
+  return { status: "compiled", value: primitive, diagnostics: Object.freeze([]) };
+};
 
 export const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -427,6 +458,7 @@ export const resolveOwnerScope = (
 
 export interface AccountBalanceBehavior {
   readonly hasAuthoredBehavior: boolean;
+  readonly historyCompletenessUnknown: boolean;
 }
 
 export const inspectAccountBalanceBehavior = (
@@ -451,22 +483,10 @@ export const inspectAccountBalanceBehavior = (
       value,
     ]),
   );
-  if (account.transaction_ids === null)
-    return {
-      status: "unsupported",
-      diagnostics: Object.freeze([
-        capability(
-          "TRANSACTION_HISTORY_COMPLETENESS_UNKNOWN",
-          `Account ${accountId} transaction_ids is null, so opening-balance authority cannot be proven.`,
-          "opening_balance",
-          "Account",
-          accountId,
-          "transaction_ids",
-        ),
-      ]),
-    };
+  const historyCompletenessUnknown = account.transaction_ids === null;
   if (
     account.transaction_ids !== undefined &&
+    account.transaction_ids !== null &&
     !Array.isArray(account.transaction_ids)
   )
     return {
@@ -603,9 +623,23 @@ export const inspectAccountBalanceBehavior = (
       };
     affecting = true;
   }
+  if (historyCompletenessUnknown)
+    return {
+      status: "unsupported",
+      diagnostics: Object.freeze([
+        capability(
+          "TRANSACTION_HISTORY_COMPLETENESS_UNKNOWN",
+          `Account ${accountId} transaction_ids is null, so opening-balance authority cannot be proven.`,
+          "opening_balance",
+          "Account",
+          accountId,
+          "transaction_ids",
+        ),
+      ]),
+    };
   return {
     status: "compiled",
-    value: Object.freeze({ hasAuthoredBehavior: affecting }),
+    value: Object.freeze({ hasAuthoredBehavior: affecting, historyCompletenessUnknown }),
     diagnostics: Object.freeze([]),
   };
 };

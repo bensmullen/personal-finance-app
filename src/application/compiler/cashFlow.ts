@@ -773,6 +773,22 @@ export const compileCashFlow = (
       return invalidResult("ACCOUNT_TYPE_INVALID", `Account ${id} account_type is not canonical.`, "Account", id, "account_type");
   }
   const accounts = allAccounts.filter((account) => ownerInScope(account.owner_id, scope));
+  /** Validate executable cash-account structure before ambiguity/FX/timing gates. */
+  for (const candidate of accounts.filter((item) => CASH_TYPES.has(String(item.account_type)))) {
+    const candidateId = canonicalId(candidate, "account_id")!;
+    if (typeof candidate.currency !== "string" || !/^[A-Z]{3}$/.test(candidate.currency)) return invalidResult("ACCOUNT_CURRENCY_INVALID", `Account ${candidateId} currency must be a canonical ISO currency.`, "Account", candidateId, "currency");
+    if (typeof candidate.opening_balance !== "string" || !EXACT_DECIMAL.test(candidate.opening_balance)) return invalidResult("EXACT_DECIMAL_INVALID", `Account ${candidateId} opening_balance must be an exact decimal string.`, "Account", candidateId, "opening_balance");
+    try { if (money(candidate.opening_balance, currency).isNegative()) return invalidResult("DOMAIN_VALUE_INVALID", `Account ${candidateId} opening_balance must be non-negative.`, "Account", candidateId, "opening_balance"); } catch { return invalidResult("DOMAIN_VALUE_INVALID", `Account ${candidateId} opening_balance is invalid.`, "Account", candidateId, "opening_balance"); }
+    const opening = utcDate(candidate.opening_date);
+    if (!opening) return invalidResult("DATE_INVALID", `Account ${candidateId} opening_date must be a valid date-only value.`, "Account", candidateId, "opening_date");
+    if (candidate.closing_date !== undefined && candidate.closing_date !== null) {
+      const closing = utcDate(candidate.closing_date);
+      if (!closing) return invalidResult("DATE_INVALID", `Account ${candidateId} closing_date is invalid.`, "Account", candidateId, "closing_date");
+      if (closing < opening) return invalidResult("TEMPORAL_INTERVAL_INVALID", `Account ${candidateId} closing_date cannot precede opening_date.`, "Account", candidateId, "closing_date");
+    }
+    const behavior = inspectAccountBalanceBehavior(model, candidate);
+    if (behavior.status === "invalid_model") return behavior;
+  }
   const allIncomes = objects(model, "Income");
   const allExpenses = objects(model, "Expense");
   /** Generic primitive shape is shared by preflight and P08-specific growth binding. */

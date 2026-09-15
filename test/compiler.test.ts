@@ -1196,4 +1196,44 @@ describe("canonical executable-model compiler", () => {
     expect(sold.status).toBe("compiled");
     if (sold.status === "compiled") expect(sold.value.diagnostics).toContainEqual(expect.objectContaining({ code: "ASSET_SALE_RECONCILIATION_UNSUPPORTED" }));
   });
+
+  it("validates current-position growth structure before unsupported Scenario results", () => {
+    const malformed = compileCurrentPosition(modelWith((value) => {
+      value.objects.Scenario![0]!.stochastic = true;
+      value.objects.Income![0]!.growth_model_id = "bad";
+    }), { baseCurrency: "USD", asOf: "2026-01-01" });
+    const missing = compileCurrentPosition(modelWith((value) => {
+      value.objects.Scenario![0]!.stochastic = true;
+      value.objects.Income![0]!.growth_model_id = "91000000-0000-4000-8000-000000000098";
+    }), { baseCurrency: "USD", asOf: "2026-01-01" });
+    const valid = compileCurrentPosition(modelWith((value) => {
+      value.objects.Scenario![0]!.stochastic = true;
+    }), { baseCurrency: "USD", asOf: "2026-01-01" });
+    expect(malformed.status).toBe("invalid_model");
+    expect(missing.status).toBe("invalid_model");
+    expect(valid.status).toBe("compiled");
+    if (valid.status === "compiled") expect(valid.value.diagnostics).toContainEqual(expect.objectContaining({ code: "SCENARIO_STOCHASTIC_UNSUPPORTED" }));
+  });
+
+  it("validates selected cash-account structure before FX and timing gates", () => {
+    const fx = compileCashFlow(modelWith((value) => {
+      value.objects.Account![0]!.currency = "EUR";
+      value.objects.Account![0]!.opening_balance = "bad";
+    }), request);
+    const future = compileCashFlow(modelWith((value) => {
+      value.objects.Account![0]!.opening_date = "2027-01-01";
+      value.objects.Account![0]!.closing_date = "bad";
+    }), request);
+    const malformedReturn = compileCashFlow(modelWith((value) => {
+      value.objects.Account![0]!.transaction_ids = null;
+      value.objects.Account![0]!.return_model_id = "bad";
+    }), request);
+    const unknownHistory = compileCashFlow(modelWith((value) => {
+      value.objects.Account![0]!.transaction_ids = null;
+    }), request);
+    expect(fx.status).toBe("invalid_model");
+    expect(future.status).toBe("invalid_model");
+    expect(malformedReturn.status).toBe("invalid_model");
+    expect(unknownHistory.status).toBe("unsupported");
+  });
 });

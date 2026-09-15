@@ -29,6 +29,7 @@ import {
   preflightCanonicalCollections,
   resolveOwnerScope,
   resolveHouseholdScope,
+  validateGenericPrimitiveInstance,
   utcDate,
   type CanonicalObject,
 } from "./shared.js";
@@ -626,6 +627,10 @@ export const compileCurrentPosition = (
       const base = exactMoney(stream, "amount", currency);
       if (!base || base.isNegative()) return invalidResult("DOMAIN_VALUE_INVALID", `${type} ${id} amount is invalid.`, type, id, "amount");
       if (stream.growth_model_id !== undefined && stream.growth_model_id !== null) {
+        if (typeof stream.growth_model_id !== "string" || !UUID.test(stream.growth_model_id))
+          return invalidResult("GROWTH_MODEL_REFERENCE_INVALID", `${type} ${id} growth_model_id must be a UUID.`, type, id, "growth_model_id");
+        const genericPrimitive = validateGenericPrimitiveInstance(model, stream.growth_model_id.toLowerCase(), type, id, "growth_model_id");
+        if (genericPrimitive.status === "invalid_model") return genericPrimitive;
         selectedScenario ??= selectScenario(model);
         if (selectedScenario.status === "invalid_model") return selectedScenario;
         if (selectedScenario.status === "compiled") {
