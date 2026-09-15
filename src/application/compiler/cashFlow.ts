@@ -100,9 +100,19 @@ export interface SelectedScenario {
   readonly object?: CanonicalObject;
 }
 
+export interface ScenarioSelectionContext {
+  readonly capabilityName: string;
+  readonly executionLabel: string;
+}
+
 export const selectScenario = (
   model: PortableModelEnvelope,
+  context: ScenarioSelectionContext = { capabilityName: "cash_flow_forecast", executionLabel: "Cash-flow" },
 ): CompileResult<SelectedScenario> => {
+  const scenarioUnsupported = (code: string, message: string, entityType?: string, entityId?: string, fieldPath?: string): Extract<CompileResult<never>, { readonly status: "unsupported" }> => ({
+    status: "unsupported",
+    diagnostics: Object.freeze([capability(code, message, context.capabilityName, entityType, entityId, fieldPath)]),
+  });
   const preflight = preflightCanonicalCollections(model, [
     "Scenario",
     "Event",
@@ -146,9 +156,9 @@ export const selectScenario = (
   }
   const enabled = scenarios.filter((scenario) => scenario.enabled === true);
   if (enabled.length !== 1)
-    return unsupportedResult(
+    return scenarioUnsupported(
       "SCENARIO_SELECTION_AMBIGUOUS",
-      `Cash-flow compilation requires exactly one enabled Scenario; found ${enabled.length}.`,
+      `${context.executionLabel} compilation requires exactly one enabled Scenario; found ${enabled.length}.`,
       "Scenario",
     );
   const selected = enabled[0]!;
@@ -264,17 +274,17 @@ export const selectScenario = (
   if (simulationCountInvalid)
     return invalidResult("SCENARIO_SIMULATION_COUNT_INVARIANT", `Deterministic Scenario ${id} must use simulation_count 1.`, "Scenario", id, "simulation_count");
   if (scenarioStochastic)
-    return unsupportedResult("SCENARIO_STOCHASTIC_UNSUPPORTED", `Scenario ${id} is stochastic.`, "Scenario", id, "stochastic");
+    return scenarioUnsupported("SCENARIO_STOCHASTIC_UNSUPPORTED", `Scenario ${id} is stochastic and cannot be executed by ${context.executionLabel}.`, "Scenario", id, "stochastic");
   if (scenarioNonMonthly)
-    return unsupportedResult("SCENARIO_TIMESTEP_UNSUPPORTED", `Scenario ${id} timestep ${selected.timestep} is not supported.`, "Scenario", id, "timestep");
+    return scenarioUnsupported("SCENARIO_TIMESTEP_UNSUPPORTED", `Scenario ${id} timestep ${selected.timestep} is not supported by ${context.executionLabel}.`, "Scenario", id, "timestep");
   if (selected.base_scenario_id !== undefined && selected.base_scenario_id !== null)
-    return unsupportedResult("SCENARIO_INHERITANCE_UNSUPPORTED", `Scenario ${id} inherits from ${selected.base_scenario_id}; PR 15 does not execute scenario inheritance.`, "Scenario", id, "base_scenario_id");
+    return scenarioUnsupported("SCENARIO_INHERITANCE_UNSUPPORTED", `Scenario ${id} inherits from ${selected.base_scenario_id}; ${context.executionLabel} does not execute scenario inheritance.`, "Scenario", id, "base_scenario_id");
   if (eventMembershipUnknown)
-    return unsupportedResult("SCENARIO_EVENT_MEMBERSHIP_UNKNOWN", `Scenario ${id} event membership is unknown.`, "Scenario", id, "event_ids");
+    return scenarioUnsupported("SCENARIO_EVENT_MEMBERSHIP_UNKNOWN", `Scenario ${id} event membership is unknown.`, "Scenario", id, "event_ids");
   if (Array.isArray(selected.event_ids) && selected.event_ids.length > 0)
-    return unsupportedResult("SCENARIO_EVENTS_UNSUPPORTED", `Scenario ${id} contains authored events whose operation semantics are not executable in PR 15.`, "Scenario", id, "event_ids");
+    return scenarioUnsupported("SCENARIO_EVENTS_UNSUPPORTED", `Scenario ${id} contains authored events whose operation semantics are not executable by ${context.executionLabel}.`, "Scenario", id, "event_ids");
   if (assumptionMembershipUnknown)
-    return unsupportedResult("SCENARIO_ASSUMPTION_MEMBERSHIP_UNKNOWN", `Scenario ${id} assumption membership is unknown.`, "Scenario", id, "assumption_ids");
+    return scenarioUnsupported("SCENARIO_ASSUMPTION_MEMBERSHIP_UNKNOWN", `Scenario ${id} assumption membership is unknown.`, "Scenario", id, "assumption_ids");
   return {
     status: "compiled",
     value: Object.freeze({ id, object: selected }),
