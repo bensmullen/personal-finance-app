@@ -114,6 +114,27 @@ test("money and net-worth workflows update friendly editors and forecast", async
   ).toBeVisible();
 });
 
+test("Debt runs the explicitly configured mortgage surface without classifying funding stress as partial coverage", async ({ page }) => {
+  await loadExample(page);
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Debt", exact: true }).click();
+  await page.getByLabel("Execution owner").selectOption({ label: "Taylor Example" });
+  await page.getByLabel("Payment anchor").fill("2022-02-01");
+  await page.getByLabel("Total payment count").fill("360");
+  await page.getByLabel("Funding account").selectOption({ label: "Everyday checking" });
+  await page.getByLabel("Settlement priority").fill("1");
+  await page.getByRole("button", { name: "Run liability forecast" }).click();
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" }).locator("tbody tr").first()).toBeVisible();
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" })).toContainText("Contractual payment");
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" })).toContainText("Interest");
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" })).toContainText("Scheduled principal");
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" })).toContainText("Ending principal");
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" })).toContainText("Required funding");
+  await page.getByText("Explain").first().click();
+  await expect(page.locator("code").first()).toContainText("compiler:canonical:Liability");
+});
+
 test("model portability and deterministic what-if comparison stay explicit", async ({
   page,
 }) => {
