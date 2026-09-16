@@ -297,4 +297,41 @@ describe("canonical liability compiler", () => {
     });
     expect(result).toEqual(expect.objectContaining({ status: "completed", inactiveLiabilityIds: [ids.liability], liabilityOccurrences: [] }));
   });
+
+  it("marks an already-originated paid-off debt inactive before execution-owner capability gates", () => {
+    const otherPerson = "97000000-0000-4000-8000-000000000099";
+    const model = modelWith((draft) => {
+      draft.objects.Person!.push({ ...draft.objects.Person![0]!, person_id: otherPerson, first_name: "Other" });
+      draft.objects.Household![0]!.members = [ids.person, otherPerson];
+      draft.objects.Liability![0]!.owner_id = otherPerson;
+      draft.objects.Liability![0]!.current_balance = "0";
+    });
+    const result = compileLiabilities(model, compilerRequest([]));
+    expect(result.status).toBe("compiled");
+    if (result.status === "compiled") {
+      expect(result.value.inactiveLiabilityIds).toEqual([ids.liability]);
+      expect(result.value.capabilityDiagnostics).not.toContainEqual(expect.objectContaining({ code: "LIABILITY_OWNER_UNSUPPORTED" }));
+    }
+  });
+
+  it("rejects duplicate executable stable identities before VS4 validation", () => {
+    const secondId = "97000000-0000-4000-8000-000000000010";
+    const p22Id = "97000000-0000-4000-8000-000000000011";
+    const model = modelWith((draft) => {
+      draft.objects.PrimitiveInstance = [{ primitive_instance_id: p22Id, primitive_id: "P22", scenario_id: ids.scenario, enabled: true, input_bindings: {}, parameters: {} }];
+      draft.objects.Liability![0]!.amortization_model_id = p22Id;
+      draft.objects.Liability!.push({ ...draft.objects.Liability![0]!, liability_id: secondId, amortization_model_id: p22Id });
+    });
+    const result = compileLiabilities(model, compilerRequest([profile(), profile({ liabilityId: secondId, settlementPriority: 2 })]));
+    expect(result).toMatchObject({ status: "invalid_model" });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "LIABILITY_STABLE_ID_COLLISION" }));
+  });
+
+  it("rejects an explicit extra instruction that collides with compiler-owned identity space", () => {
+    const result = compileLiabilities(createSyntheticPersonalDraft(), compilerRequest([profile({
+      extraPrincipalPayments: [{ id: "f16c0000-0000-4000-8001-000000000001", scheduledAt: "2026-02-01", amount: "1" }],
+    })]));
+    expect(result).toMatchObject({ status: "invalid_model" });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "GENERATED_ID_COLLISION" }));
+  });
 });
