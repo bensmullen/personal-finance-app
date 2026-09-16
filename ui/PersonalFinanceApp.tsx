@@ -1567,6 +1567,11 @@ function FieldControl({
 }
 
 function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
+  // Compiler diagnostics carry an explicit capability discriminator. Engine
+  // validation issues (including liquidity shortfalls) describe this run, not
+  // the supported surface area of the liability compiler.
+  const isCapabilityDiagnostic = (value: (typeof forecast.diagnostics)[number]): value is (typeof forecast.diagnostics)[number] & { capability: string } =>
+    "capability" in value && typeof value.capability === "string";
   if (forecast.status === "unavailable")
     return (
       <div className="capability">
@@ -1581,15 +1586,20 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
       </div>
     );
   if (forecast.scope === "liabilities")
+    {
+      const capabilityDiagnostics = forecast.diagnostics.filter(isCapabilityDiagnostic);
+      const executionDiagnostics = forecast.diagnostics.filter((item) => !isCapabilityDiagnostic(item));
     return (
       <>
         <div className="boundary-banner"><strong>As of {forecast.asOf}</strong><span>Debt-service projection</span></div>
         <div className="table-scroll"><table><caption>Detailed liability forecast</caption><thead><tr><th>Scheduled</th><th>Opening principal</th><th>Interest</th><th>Contractual payment</th><th>Scheduled principal</th><th>Extra principal</th><th>Ending principal</th><th>Outstanding interest</th><th>Required funding</th><th>Extra funding</th><th>Why?</th></tr></thead><tbody>{forecast.liabilityOccurrences.map((item) => <tr key={`${item.loanId}:${item.scheduledAt}`}><td>{item.scheduledAt.slice(0, 10)}</td><td>{item.openingPrincipal.display}</td><td>{item.currentInterestExpense.display}</td><td>{item.contractualPayment.display}</td><td>{item.scheduledPrincipalPaid.display}</td><td>{item.extraPrincipalPaid.display}</td><td>{item.endingPrincipal.display}</td><td>{item.outstandingInterest.display}</td><td>{item.scheduledFundingStatus}</td><td>{item.extraFundingStatus ?? "—"}</td><td><details><summary>Explain</summary><code>{item.traceIds.join("\n") || "No trace metadata"}</code></details></td></tr>)}</tbody></table></div>
         {forecast.liabilityPayoffs.length > 0 && <p className="muted">Payoff: {forecast.liabilityPayoffs.map((item) => `${item.liabilityId} at ${item.scheduledAt.slice(0, 10)}`).join(", ")}</p>}
         {forecast.shortfalls.map((item) => <div className="stress-detail" key={`${item.period}:${item.entityId}:${item.origin}`}><strong>{item.period.slice(0, 10)} · {item.unfunded.display} unfunded ({item.origin === "required_debt_service" ? "required debt service" : "optional extra principal"})</strong><p>{item.diagnostic}</p></div>)}
-        {forecast.diagnostics.length > 0 && <div className="capability"><strong>Debt coverage is partial where diagnostics are listed</strong>{forecast.diagnostics.map((item, index) => <p key={`${item.code}:${item.entityId ?? index}`}>{item.code}: {item.message}</p>)}</div>}
+        {capabilityDiagnostics.length > 0 && <div className="capability"><strong>Debt coverage is partial where diagnostics are listed</strong>{capabilityDiagnostics.map((item, index) => <p key={`${item.code}:${item.entityId ?? index}`}>{item.code}: {item.message}</p>)}</div>}
+        {executionDiagnostics.length > 0 && <div className="stress-detail"><strong>Forecast diagnostics</strong>{executionDiagnostics.map((item, index) => <p key={`${item.code}:${item.entityId ?? index}`}>{item.code}: {item.message}</p>)}</div>}
       </>
     );
+    }
   const data = forecast.points.map((point) => ({
     period: point.periodStart.slice(0, 7),
     income: chartNumber(point.income.exact),
