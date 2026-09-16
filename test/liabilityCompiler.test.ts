@@ -333,7 +333,7 @@ describe("canonical liability compiler", () => {
       ...compilerRequest([profile({ paymentAnchor: "2026-01-01" }), profile({ liabilityId: secondId, paymentAnchor: "2026-01-01" })]),
       asOf: "2025-01-01", simulationStart: "2025-01-01", simulationEnd: "2025-04-01",
     });
-    expect(result.diagnostics).not.toContainEqual(expect.objectContaining({ code: "LIABILITY_SETTLEMENT_PRIORITY_CONFLICT" }));
+    expect(result.status).toBe("compiled");
   });
 
   it("classifies malformed funding records as invalid and valid non-executable funding as unsupported for primary and alternate sources", () => {
