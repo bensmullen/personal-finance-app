@@ -321,6 +321,40 @@ describe("canonical liability compiler", () => {
       expect(runVerticalSlice4({ runContext: context(), input: requiredVsExtra.value.input, openingState: requiredVsExtra.value.openingState, primitiveState: requiredVsExtra.value.primitiveState, months: 3 }).status).toBe("completed");
   });
 
+  it("does not capability-gate otherwise equal priorities whose occurrences are outside the requested horizon", () => {
+    const secondId = "97000000-0000-4000-8000-000000000070";
+    const model = modelWith((draft) => {
+      draft.objects.Liability![0]!.current_balance = "240000";
+      delete draft.objects.Liability![0]!.maturity_date;
+      draft.objects.Account![0]!.opening_date = "2020-01-01";
+      draft.objects.Liability!.push({ ...draft.objects.Liability![0]!, liability_id: secondId });
+    });
+    const result = compileLiabilities(model, {
+      ...compilerRequest([profile({ paymentAnchor: "2026-01-01" }), profile({ liabilityId: secondId, paymentAnchor: "2026-01-01" })]),
+      asOf: "2025-01-01", simulationStart: "2025-01-01", simulationEnd: "2025-04-01",
+    });
+    expect(result.diagnostics).not.toContainEqual(expect.objectContaining({ code: "LIABILITY_SETTLEMENT_PRIORITY_CONFLICT" }));
+  });
+
+  it("classifies malformed funding records as invalid and valid non-executable funding as unsupported for primary and alternate sources", () => {
+    const alternateId = "97000000-0000-4000-8000-000000000071";
+    const requestFor = (fundingAccountId: string, alternate = false) => compilerRequest([profile(alternate
+      ? { extraPrincipalPayments: [{ id: "97000000-0000-4000-8000-000000000072", scheduledAt: "2026-01-01", amount: "1", fundingAccountId }] }
+      : { fundingAccountId })]);
+    for (const [field, value] of [["account_type", "bogus"], ["currency", "US"], ["opening_balance", "-1"]] as const) {
+      const primary = compileLiabilities(modelWith((draft) => { draft.objects.Account![0]![field] = value; }), requestFor(ids.account));
+      expect(primary.status).toBe("invalid_model");
+      const alternate = compileLiabilities(modelWith((draft) => { draft.objects.Account!.push({ ...draft.objects.Account![0]!, account_id: alternateId, [field]: value }); }), requestFor(alternateId, true));
+      expect(alternate.status).toBe("invalid_model");
+    }
+    for (const [field, value] of [["account_type", "taxable_brokerage"], ["currency", "EUR"], ["opening_date", "2026-02-01"]] as const) {
+      const primary = compileLiabilities(modelWith((draft) => { draft.objects.Account![0]![field] = value; }), requestFor(ids.account));
+      expect(primary.status).toBe("unsupported");
+      const alternate = compileLiabilities(modelWith((draft) => { draft.objects.Account!.push({ ...draft.objects.Account![0]!, account_id: alternateId, [field]: value }); }), requestFor(alternateId, true));
+      expect(alternate.status).toBe("unsupported");
+    }
+  });
+
   it("returns a completed empty application result for paid-off debt without invoking VS4", () => {
     const model = modelWith((draft) => { draft.objects.Liability![0]!.current_balance = "0"; });
     const compiled = compileLiabilities(model, compilerRequest([]));
