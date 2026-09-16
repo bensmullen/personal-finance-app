@@ -353,6 +353,9 @@ describe("canonical liability compiler", () => {
       const alternate = compileLiabilities(modelWith((draft) => { draft.objects.Account!.push({ ...draft.objects.Account![0]!, account_id: alternateId, [field]: value }); }), requestFor(alternateId, true));
       expect(alternate.status).toBe("unsupported");
     }
+    const closesEarly = compileLiabilities(modelWith((draft) => { draft.objects.Account![0]!.closing_date = "2026-02-01"; }), requestFor(ids.account));
+    expect(closesEarly).toMatchObject({ status: "unsupported" });
+    expect(closesEarly.diagnostics).toContainEqual(expect.objectContaining({ code: "LIABILITY_FUNDING_ACCOUNT_LIFECYCLE_UNSUPPORTED", fieldPath: "closing_date" }));
     const outsider = "97000000-0000-4000-8000-000000000073";
     const outOfScope = (alternate: boolean) => compileLiabilities(modelWith((draft) => {
       draft.objects.Person!.push({ ...draft.objects.Person![0]!, person_id: outsider, household_id: "97000000-0000-4000-8000-000000000074", first_name: "Outsider" });
