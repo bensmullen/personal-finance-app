@@ -401,6 +401,22 @@ export const compileLiabilities = (
   const gate = (value: CapabilityDiagnostic): void => {
     diagnostics.push(Object.freeze(value));
   };
+  // Keep the capability boundary identical for required funding and an
+  // alternate extra-principal source. Structural parsing remains at the
+  // caller so its field-specific invalid-model diagnostic is retained.
+  const fundingCapabilityUnsupported = (
+    account: CanonicalObject,
+    owner: "in_scope" | "out_of_scope",
+    opening: string,
+    closing: string | undefined,
+    behavior: ReturnType<typeof inspectAccountBalanceBehavior>,
+  ): boolean => owner === "out_of_scope" ||
+    !CASH_TYPES.has(String(account.account_type)) ||
+    account.currency !== currency.code ||
+    opening > simulationStart ||
+    (closing !== undefined && closing < simulationEnd) ||
+    behavior.status === "unsupported" ||
+    (behavior.status === "compiled" && (behavior.value.hasAuthoredBehavior || behavior.value.historyCompletenessUnknown));
 
   for (const liability of [...allLiabilities].sort((a, b) =>
     String(a.liability_id).localeCompare(String(b.liability_id)),
@@ -501,33 +517,23 @@ export const compileLiabilities = (
       return invalidResult("ACCOUNT_TYPE_INVALID", `Account ${fundingAccountId} account_type is not canonical.`, "Account", fundingAccountId, "account_type");
     const fundingOwner = resolveOwnerScope(model, fundingAccount.owner_id, scope, "Account", fundingAccountId);
     if (fundingOwner.status !== "compiled") return fundingOwner;
-    if (fundingOwner.value === "out_of_scope")
-      reject(diagnostic("LIABILITY_FUNDING_ACCOUNT_OUT_OF_SCOPE", `Liability ${id} funding Account is outside Household scope.`, "Account", fundingAccountId, "owner_id", [id]));
-    if (!CASH_TYPES.has(String(fundingAccount.account_type)))
-      reject(diagnostic("LIABILITY_FUNDING_ACCOUNT_TYPE_UNSUPPORTED", `Liability ${id} funding Account is not checking, savings, or cash.`, "Account", fundingAccountId, "account_type", [id]));
     if (typeof fundingAccount.currency !== "string" || !/^[A-Z]{3}$/.test(fundingAccount.currency))
       return invalidResult("ACCOUNT_CURRENCY_INVALID", `Account ${fundingAccountId} currency is invalid.`, "Account", fundingAccountId, "currency");
-    if (fundingAccount.currency !== currency.code)
-      reject(diagnostic("LIABILITY_FUNDING_ACCOUNT_CURRENCY_UNSUPPORTED", `Liability ${id} funding Account currency differs from the run.`, "Account", fundingAccountId, "currency", [id]));
     const accountBalance = exactMoney(fundingAccount.opening_balance, currency);
     if (!accountBalance || accountBalance.isNegative())
       return invalidResult("ACCOUNT_BALANCE_INVALID", `Account ${fundingAccountId} opening_balance must be non-negative exact Money.`, "Account", fundingAccountId, "opening_balance");
     const accountOpening = utcDate(fundingAccount.opening_date);
     if (!accountOpening)
       return invalidResult("ACCOUNT_DATE_INVALID", `Account ${fundingAccountId} opening_date is invalid.`, "Account", fundingAccountId, "opening_date");
-    if (accountOpening > simulationStart)
-      reject(diagnostic("LIABILITY_FUNDING_ACCOUNT_LIFECYCLE_UNSUPPORTED", `Liability ${id} funding Account does not exist at forecast opening.`, "Account", fundingAccountId, "opening_date", [id]));
     if (fundingAccount.closing_date !== undefined && fundingAccount.closing_date !== null) {
       const closing = utcDate(fundingAccount.closing_date);
       if (!closing || closing < accountOpening)
         return invalidResult("ACCOUNT_DATE_INVALID", `Account ${fundingAccountId} closing_date is invalid.`, "Account", fundingAccountId, "closing_date");
-      if (closing < simulationEnd)
-        reject(diagnostic("LIABILITY_FUNDING_ACCOUNT_LIFECYCLE_UNSUPPORTED", `Liability ${id} funding Account closes inside the horizon.`, "Account", fundingAccountId, "closing_date", [id]));
     }
     const behavior = inspectAccountBalanceBehavior(model, fundingAccount);
     if (behavior.status === "invalid_model") return behavior;
-    if (behavior.status === "unsupported" || behavior.value.hasAuthoredBehavior || behavior.value.historyCompletenessUnknown)
-      reject(diagnostic("LIABILITY_FUNDING_BALANCE_AUTHORITY_UNSUPPORTED", `Liability ${id} funding Account has balance-changing behavior the liability slice cannot replay.`, "Account", fundingAccountId, "transaction_ids", [id]));
+    if (fundingCapabilityUnsupported(fundingAccount, fundingOwner.value, accountOpening, fundingAccount.closing_date === undefined || fundingAccount.closing_date === null ? undefined : utcDate(fundingAccount.closing_date)!, behavior))
+      reject(diagnostic("LIABILITY_FUNDING_ACCOUNT_UNSUPPORTED", `Liability ${id} funding Account is not executable in PR 16.`, "Account", fundingAccountId, undefined, [id]));
     const extras: ExtraPrincipalPayment[] = [];
     for (const extra of profile.extraPrincipalPayments ?? []) {
       const extraId = extra.id.toLowerCase();
@@ -555,7 +561,7 @@ export const compileLiabilities = (
           return invalidResult("LIABILITY_FUNDING_ACCOUNT_INVALID", `Liability ${id} extra-principal funding Account has invalid date or Money fields.`, "Account", extraFundingId, undefined, [extra.id]);
         const extraBehavior = inspectAccountBalanceBehavior(model, extraAccount);
         if (extraBehavior.status === "invalid_model") return extraBehavior;
-        if (extraOwner.value === "out_of_scope" || !CASH_TYPES.has(String(extraAccount.account_type)) || extraAccount.currency !== currency.code || extraOpening > simulationStart || (extraClosing !== undefined && extraClosing < simulationEnd) || extraBehavior.status === "unsupported" || extraBehavior.value.hasAuthoredBehavior || extraBehavior.value.historyCompletenessUnknown)
+        if (fundingCapabilityUnsupported(extraAccount, extraOwner.value, extraOpening, extraClosing, extraBehavior))
           reject(diagnostic("LIABILITY_EXTRA_FUNDING_ACCOUNT_UNSUPPORTED", `Liability ${id} extra-principal funding Account is not executable.`, "Account", extraFundingId, undefined, [extra.id]));
         else {
           const extraAccountId = domainId("account", extraFundingId);
