@@ -135,6 +135,25 @@ test("Debt runs the explicitly configured mortgage surface without classifying f
   await expect(page.locator("code").first()).toContainText("compiler:canonical:Liability");
 });
 
+test("Debt execution settings are session-only and clear on model import", async ({ page }) => {
+  await loadExample(page);
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Debt", exact: true }).click();
+  await page.getByLabel("Execution owner").selectOption({ label: "Taylor Example" });
+  await page.getByLabel("Payment anchor").fill("2022-02-01");
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  await page.getByRole("button", { name: "Export model", exact: true }).click();
+  const download = await downloadPromise;
+  await page.locator('input[type="file"]').setInputFiles((await download.path())!);
+  await page.getByRole("button", { name: "Import into session" }).click();
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Debt", exact: true }).click();
+  await expect(page.getByLabel("Execution owner")).toHaveValue("");
+  await expect(page.getByLabel("Payment anchor")).toHaveValue("");
+});
+
 test("model portability and deterministic what-if comparison stay explicit", async ({
   page,
 }) => {
