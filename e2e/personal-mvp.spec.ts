@@ -116,6 +116,11 @@ test("money and net-worth workflows update friendly editors and forecast", async
 
 test("Debt runs the explicitly configured mortgage surface without classifying funding stress as partial coverage", async ({ page }) => {
   await loadExample(page);
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Accounts", exact: true }).click();
+  await page.getByRole("button", { name: /Everyday checking/ }).click();
+  await page.getByLabel("Balance").fill("100");
+  await page.getByRole("button", { name: "Close editor" }).click();
   await page.getByRole("button", { name: "Net Worth", exact: true }).click();
   await page.getByRole("button", { name: "Debt", exact: true }).click();
   await page.getByLabel("Execution owner").selectOption({ label: "Taylor Example" });
@@ -133,6 +138,9 @@ test("Debt runs the explicitly configured mortgage surface without classifying f
   await expect(page.getByRole("table", { name: "Detailed liability forecast" })).toContainText("Required funding");
   await page.getByText("Explain").first().click();
   await expect(page.locator("code").first()).toContainText("compiler:canonical:Liability");
+  await expect(page.getByText("Forecast diagnostics")).toBeVisible();
+  await expect(page.getByText(/unfunded \(required debt service\)/).first()).toBeVisible();
+  await expect(page.getByText("Debt coverage is partial where diagnostics are listed")).toHaveCount(0);
 });
 
 test("Debt execution settings are session-only and clear on model import", async ({ page }) => {
