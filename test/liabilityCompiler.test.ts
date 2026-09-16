@@ -353,6 +353,20 @@ describe("canonical liability compiler", () => {
       const alternate = compileLiabilities(modelWith((draft) => { draft.objects.Account!.push({ ...draft.objects.Account![0]!, account_id: alternateId, [field]: value }); }), requestFor(alternateId, true));
       expect(alternate.status).toBe("unsupported");
     }
+    const outsider = "97000000-0000-4000-8000-000000000073";
+    const outOfScope = (alternate: boolean) => compileLiabilities(modelWith((draft) => {
+      draft.objects.Person!.push({ ...draft.objects.Person![0]!, person_id: outsider, household_id: "97000000-0000-4000-8000-000000000074", first_name: "Outsider" });
+      if (alternate) draft.objects.Account!.push({ ...draft.objects.Account![0]!, account_id: alternateId, owner_id: outsider });
+      else draft.objects.Account![0]!.owner_id = outsider;
+    }), requestFor(alternate ? alternateId : ids.account, alternate));
+    expect(outOfScope(false).status).toBe("unsupported");
+    expect(outOfScope(true).status).toBe("unsupported");
+    const unreplayableHistory = (alternate: boolean) => compileLiabilities(modelWith((draft) => {
+      if (alternate) draft.objects.Account!.push({ ...draft.objects.Account![0]!, account_id: alternateId, transaction_ids: null });
+      else draft.objects.Account![0]!.transaction_ids = null;
+    }), requestFor(alternate ? alternateId : ids.account, alternate));
+    expect(unreplayableHistory(false).status).toBe("unsupported");
+    expect(unreplayableHistory(true).status).toBe("unsupported");
   });
 
   it("returns a completed empty application result for paid-off debt without invoking VS4", () => {
