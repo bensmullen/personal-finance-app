@@ -3,6 +3,7 @@ import { assertBalanced } from "../src/accounting/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { domainId } from "../src/identity/index.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { fixedMortgagePrincipalAfterPayments } from "../src/rules/index.js";
 import { createAuthoritativeState } from "../src/state/index.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
 import { Rate, RoundingPolicy, USD, money, rateConvention, sumMoney } from "../src/values/index.js";
@@ -24,6 +25,21 @@ const loan = (principal = "300000", rate = "0.06", term = 360, extras: FixedAmor
 const input = (item: FixedAmortizingLoan): VerticalSlice4Input => ({ householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [item] });
 
 describe("Vertical Slice 4 liabilities", () => {
+  it("replays the fixed-mortgage opening helper exactly as sequential VS4 postings", () => {
+    const cases: readonly { readonly principal: string; readonly rate: string; readonly term: number; readonly checkpoints: readonly number[] }[] = [
+      { principal: "12345.67", rate: "0.0525", term: 12, checkpoints: [6, 11] },
+      { principal: "1234.56", rate: "0", term: 12, checkpoints: [6, 11] },
+      { principal: "1000.01", rate: "0.031", term: 7, checkpoints: [3, 6] },
+    ];
+    for (const [caseIndex, { principal, rate, term, checkpoints }] of cases.entries()) {
+      const result = runVerticalSlice4({ runContext: context(term, `61${caseIndex}`), openingState: opening(principal, "100000"), input: input(loan(principal, rate, term)) });
+      expect(result.status).toBe("completed");
+      for (const completed of checkpoints) {
+        const engineBalance = result.periods[completed - 1]!.liabilities[0]!.endingPrincipal;
+        expect(fixedMortgagePrincipalAfterPayments(money(principal), annual(rate), term, completed, rounding).equals(engineBalance)).toBe(true);
+      }
+    }
+  });
   it("fully amortizes the 360-month mortgage with exact accounting and no negative principal", () => {
     const result = runVerticalSlice4({ runContext: context(360), openingState: opening("300000", "700000"), input: input(loan()) });
     expect(result.status).toBe("completed"); expect(result.periods).toHaveLength(360);
