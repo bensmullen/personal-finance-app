@@ -1600,6 +1600,14 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
       </>
     );
     }
+  if (forecast.scope === "investments")
+    return (
+      <>
+        <div className="boundary-banner"><strong>As of {forecast.asOf}</strong><span>Independent investment projection</span></div>
+        <div className="table-scroll"><table><caption>Detailed investment forecast</caption><thead><tr><th>Period</th><th>Portfolio</th><th>Contribution principal</th><th>Fees</th><th>Unrealized gain</th><th>Realized gain</th><th>Cash investment income</th><th>Accounts</th><th>Why?</th></tr></thead><tbody>{forecast.points.map((point) => <tr key={point.periodStart}><td>{point.periodStart.slice(0, 10)}</td><td>{point.portfolioValue.display}</td><td>{point.contributionPrincipal.display}</td><td>{point.fees.display}</td><td>{point.unrealizedGain.display}</td><td>{point.realizedGain.display}</td><td>{point.cashInvestmentIncome.display}</td><td>{point.accountValues.map((item) => `${item.accountId}: ${item.value.display}`).join("; ")}</td><td><details><summary>Explain</summary><code>{point.traceIds.join("\n") || "No trace metadata"}</code></details></td></tr>)}</tbody></table></div>
+        {forecast.diagnostics.length > 0 && <div className="stress-detail"><strong>Forecast diagnostics</strong>{forecast.diagnostics.map((item, index) => <p key={`${item.code}:${item.entityId ?? index}`}>{item.code}: {item.message}</p>)}</div>}
+      </>
+    );
   const data = forecast.points.map((point) => ({
     period: point.periodStart.slice(0, 7),
     income: chartNumber(point.income.exact),
