@@ -236,6 +236,21 @@ describe("canonical liability compiler", () => {
     if (result.scope !== "liabilities" || result.status === "unavailable") throw new Error("expected liability forecast");
     expect(result.liabilityOccurrences[0]).toEqual(expect.objectContaining({ scheduledFundingStatus: "unfunded" }));
     expect(result.shortfalls[0]!.unfunded.exact).not.toBe("0");
+    expect(result.shortfalls[0]).toEqual(expect.objectContaining({ origin: "required_debt_service" }));
+    expect(result.shortfalls[0]!.diagnostic).toMatch(/required contractual debt service/i);
+  });
+
+  it("keeps optional extra-principal shortfalls distinct from contractual debt service", () => {
+    const result = runPersonalForecast(createSyntheticPersonalDraft(), {
+      scope: "liabilities", baseCurrency: "USD", asOf: "2026-01-01", dataCutoff: "2026-01-01",
+      simulationStart: "2026-01-01", simulationEnd: "2026-04-01", months: 3,
+      sameInstantCashFlowOrder: "income_before_expense", executionOwnerId: ids.person,
+      liabilityExecutionProfiles: [profile({ extraPrincipalPayments: [{ id: "97000000-0000-4000-8000-000000000050", scheduledAt: "2026-01-01", amount: "5000" }] })],
+    });
+    expect(result.status).toBe("completed");
+    if (result.scope !== "liabilities" || result.status === "unavailable") throw new Error("expected liability forecast");
+    expect(result.liabilityOccurrences[0]).toEqual(expect.objectContaining({ scheduledFundingStatus: "fully_satisfied", extraFundingStatus: "unfunded" }));
+    expect(result.shortfalls).toContainEqual(expect.objectContaining({ origin: "extra_principal", diagnostic: expect.stringMatching(/not a missed contractual payment/i) }));
   });
 
   it("supports only explicitly scheduled extra principal and gates canonical conditional amounts", () => {
@@ -276,6 +291,34 @@ describe("canonical liability compiler", () => {
     expect(reversed.status).toBe("compiled");
     if (first.status === "compiled" && reversed.status === "compiled")
       expect(first.value.input.loans).toEqual(reversed.value.input.loans);
+  });
+
+  it("matches VS4 priority parity for extra-only collisions and required-versus-extra sharing", () => {
+    const secondId = "97000000-0000-4000-8000-000000000060";
+    const secondAccount = "97000000-0000-4000-8000-000000000061";
+    const extraAccount = "97000000-0000-4000-8000-000000000062";
+    const model = modelWith((draft) => {
+      draft.objects.Account!.push(
+        { ...draft.objects.Account![0]!, account_id: secondAccount, name: "Second checking" },
+        { ...draft.objects.Account![0]!, account_id: extraAccount, name: "Extra checking" },
+      );
+      draft.objects.Liability!.push({ ...draft.objects.Liability![0]!, liability_id: secondId });
+    });
+    const aExtra = { id: "97000000-0000-4000-8000-000000000063", scheduledAt: "2026-01-01", amount: "1", fundingAccountId: extraAccount };
+    const bExtra = { id: "97000000-0000-4000-8000-000000000064", scheduledAt: "2026-01-01", amount: "1", fundingAccountId: extraAccount };
+    const extrasConflict = compileLiabilities(model, compilerRequest([
+      profile({ fundingAccountId: ids.account, extraPrincipalPayments: [aExtra] }),
+      profile({ liabilityId: secondId, fundingAccountId: secondAccount, extraPrincipalPayments: [bExtra] }),
+    ]));
+    expect(extrasConflict).toMatchObject({ status: "unsupported" });
+    expect(extrasConflict.diagnostics).toContainEqual(expect.objectContaining({ code: "LIABILITY_SETTLEMENT_PRIORITY_CONFLICT" }));
+    const requiredVsExtra = compileLiabilities(model, compilerRequest([
+      profile({ fundingAccountId: extraAccount }),
+      profile({ liabilityId: secondId, fundingAccountId: secondAccount, extraPrincipalPayments: [bExtra] }),
+    ]));
+    expect(requiredVsExtra.status).toBe("compiled");
+    if (requiredVsExtra.status === "compiled")
+      expect(runVerticalSlice4({ runContext: context(), input: requiredVsExtra.value.input, openingState: requiredVsExtra.value.openingState, primitiveState: requiredVsExtra.value.primitiveState, months: 3 }).status).toBe("completed");
   });
 
   it("returns a completed empty application result for paid-off debt without invoking VS4", () => {
