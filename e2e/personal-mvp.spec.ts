@@ -114,6 +114,54 @@ test("money and net-worth workflows update friendly editors and forecast", async
   ).toBeVisible();
 });
 
+test("Debt runs the explicitly configured mortgage surface without classifying funding stress as partial coverage", async ({ page }) => {
+  await loadExample(page);
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Accounts", exact: true }).click();
+  await page.getByRole("button", { name: /Everyday checking/ }).click();
+  await page.getByLabel("Balance").fill("100");
+  await page.getByRole("button", { name: "Close editor" }).click();
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Debt", exact: true }).click();
+  await page.getByLabel("Execution owner").selectOption({ label: "Taylor Example" });
+  await page.getByLabel("Payment anchor").fill("2022-02-01");
+  await page.getByLabel("Total payment count").fill("360");
+  await page.getByLabel("Funding account").selectOption({ label: "Everyday checking" });
+  await page.getByLabel("Settlement priority").fill("1");
+  await page.getByRole("button", { name: "Run liability forecast" }).click();
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" }).locator("tbody tr").first()).toBeVisible();
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" })).toContainText("Contractual payment");
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" })).toContainText("Interest");
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" })).toContainText("Scheduled principal");
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" })).toContainText("Ending principal");
+  await expect(page.getByRole("table", { name: "Detailed liability forecast" })).toContainText("Required funding");
+  await page.getByText("Explain").first().click();
+  await expect(page.locator("code").first()).toContainText("compiler:canonical:Liability");
+  await expect(page.getByText("Forecast diagnostics")).toBeVisible();
+  await expect(page.getByText(/unfunded \(required debt service\)/).first()).toBeVisible();
+  await expect(page.getByText("Debt coverage is partial where diagnostics are listed")).toHaveCount(0);
+});
+
+test("Debt execution settings are session-only and clear on model import", async ({ page }) => {
+  await loadExample(page);
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Debt", exact: true }).click();
+  await page.getByLabel("Execution owner").selectOption({ label: "Taylor Example" });
+  await page.getByLabel("Payment anchor").fill("2022-02-01");
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  await page.getByRole("button", { name: "Export model", exact: true }).click();
+  const download = await downloadPromise;
+  await page.locator('input[type="file"]').setInputFiles((await download.path())!);
+  await page.getByRole("button", { name: "Import into session" }).click();
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Debt", exact: true }).click();
+  await expect(page.getByLabel("Execution owner")).toHaveValue("");
+  await expect(page.getByLabel("Payment anchor")).toHaveValue("");
+});
+
 test("model portability and deterministic what-if comparison stay explicit", async ({
   page,
 }) => {
