@@ -416,9 +416,6 @@ export const compileLiabilities = (
       gate(value);
       supported = false;
     };
-    const ownerId = String(liability.owner_id).toLowerCase();
-    if (ownerId !== scope.householdId && ownerId !== executionOwnerId)
-      reject(diagnostic("LIABILITY_OWNER_UNSUPPORTED", `Liability ${id} belongs to a different Household member than executionOwnerId.`, "Liability", id, "owner_id", [executionOwnerId]));
     const origination = utcDate(liability.origination_date)!;
     if (origination > simulationStart) {
       reject(diagnostic("LIABILITY_FUTURE_ORIGINATION_UNSUPPORTED", `Liability ${id} originates after the forecast opening and requires issuance/new-draw semantics.`, "Liability", id, "origination_date"));
@@ -428,6 +425,9 @@ export const compileLiabilities = (
       inactiveLiabilityIds.push(id);
       continue;
     }
+    const ownerId = String(liability.owner_id).toLowerCase();
+    if (ownerId !== scope.householdId && ownerId !== executionOwnerId)
+      reject(diagnostic("LIABILITY_OWNER_UNSUPPORTED", `Liability ${id} belongs to a different Household member than executionOwnerId.`, "Liability", id, "owner_id", [executionOwnerId]));
     if (simulationStart !== asOf) {
       gate(diagnostic("LIABILITY_OPENING_BOUNDARY_UNSUPPORTED", `Liability ${id} cannot be rolled between observed as-of ${request.asOf} and simulation opening ${request.simulationStart} in PR 16.`, "Liability", id, "current_balance"));
       continue;
