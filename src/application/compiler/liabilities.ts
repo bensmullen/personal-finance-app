@@ -410,11 +410,12 @@ export const compileLiabilities = (
     opening: string,
     closing: string | undefined,
     behavior: ReturnType<typeof inspectAccountBalanceBehavior>,
-  ): readonly ("scope" | "type" | "currency" | "lifecycle" | "history")[] => Object.freeze([
+  ): readonly ("scope" | "type" | "currency" | "opening" | "closing" | "history")[] => Object.freeze([
     ...(owner === "out_of_scope" ? ["scope" as const] : []),
     ...(!CASH_TYPES.has(String(account.account_type)) ? ["type" as const] : []),
     ...(account.currency !== currency.code ? ["currency" as const] : []),
-    ...(opening > simulationStart || (closing !== undefined && closing < simulationEnd) ? ["lifecycle" as const] : []),
+    ...(opening > simulationStart ? ["opening" as const] : []),
+    ...(closing !== undefined && closing < simulationEnd ? ["closing" as const] : []),
     ...(behavior.status === "unsupported" || (behavior.status === "compiled" && (behavior.value.hasAuthoredBehavior || behavior.value.historyCompletenessUnknown)) ? ["history" as const] : []),
   ]);
 
@@ -536,7 +537,8 @@ export const compileLiabilities = (
       const details = reason === "scope" ? ["LIABILITY_FUNDING_ACCOUNT_OUT_OF_SCOPE", "funding Account is outside Household scope.", "owner_id"] as const
         : reason === "type" ? ["LIABILITY_FUNDING_ACCOUNT_TYPE_UNSUPPORTED", "funding Account is not checking, savings, or cash.", "account_type"] as const
         : reason === "currency" ? ["LIABILITY_FUNDING_ACCOUNT_CURRENCY_UNSUPPORTED", "funding Account currency differs from the run.", "currency"] as const
-        : reason === "lifecycle" ? ["LIABILITY_FUNDING_ACCOUNT_LIFECYCLE_UNSUPPORTED", "funding Account lifecycle is incompatible with the forecast horizon.", "opening_date"] as const
+        : reason === "opening" ? ["LIABILITY_FUNDING_ACCOUNT_LIFECYCLE_UNSUPPORTED", "funding Account does not exist at forecast opening.", "opening_date"] as const
+        : reason === "closing" ? ["LIABILITY_FUNDING_ACCOUNT_LIFECYCLE_UNSUPPORTED", "funding Account closes inside the forecast horizon.", "closing_date"] as const
         : ["LIABILITY_FUNDING_BALANCE_AUTHORITY_UNSUPPORTED", "funding Account has balance-changing behavior the liability slice cannot replay.", "transaction_ids"] as const;
       reject(diagnostic(details[0], `Liability ${id} ${details[1]}`, "Account", fundingAccountId, details[2], [id]));
     }
