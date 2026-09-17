@@ -49,6 +49,15 @@ export {
   migratePersonalModelVersion,
   validatePersonalModelJson,
 } from "./modelPortability.js";
+export {
+  deletePersistedPersonalModel,
+  inspectPersistedPersonalModel,
+  migratePersistedPersonalModel,
+  readPersistedPersonalModelBackup,
+  savePersonalModel,
+  type PersistedPersonalModelState,
+  type PersonalModelPersistencePort,
+} from "./personalPersistence.js";
 
 export const PERSONAL_OBJECT_TYPES = Object.freeze([
   "Household",

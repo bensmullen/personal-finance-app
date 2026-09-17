@@ -12,6 +12,7 @@ Accepted foundation decisions:
 - [ADR-008: Identity and idempotency model](ADR-008-identity-and-idempotency-model.md)
 - [ADR-011: Portable model versioning and compatibility](ADR-011-portable-model-versioning-and-compatibility.md)
 - [ADR-013: Scenario overlay and inheritance model](ADR-013-scenario-overlay-inheritance-model.md)
+- [ADR-017: Personal persistence mode](ADR-017-personal-persistence-mode.md)
 - [ADR-020: Explicit financial value conventions](ADR-020-explicit-financial-value-conventions.md)
 - [ADR-021: Semantic settlement, funding, and accounting authority boundary](ADR-021-semantic-settlement-funding-and-accounting-authority-boundary.md)
 
