@@ -299,6 +299,7 @@ export function PersonalFinanceApp() {
     );
   const [runSettingsError, setRunSettingsError] = useState("");
   const [liabilityConfig, setLiabilityConfig] = useState<LiabilitySessionConfig>(emptyLiabilityConfig);
+  const [investmentOwnerId, setInvestmentOwnerId] = useState("");
   const [fileReport, setFileReport] =
     useState<ReturnType<typeof validatePersonalModelJson>>();
   const [pendingJson, setPendingJson] = useState("");
@@ -360,6 +361,7 @@ export function PersonalFinanceApp() {
     });
     setDraft(next);
     setLiabilityConfig(emptyLiabilityConfig());
+    setInvestmentOwnerId("");
     setSessionSettings(
       sessionSettingsFromHorizon(values.startDate, Number(values.horizon) * 12),
     );
@@ -377,6 +379,7 @@ export function PersonalFinanceApp() {
         loadExample={() => {
           setDraft(createSyntheticPersonalDraft());
           setLiabilityConfig(emptyLiabilityConfig());
+          setInvestmentOwnerId("");
           setSessionSettings(sessionSettingsFromHorizon("2026-01-01", 120));
           setNotice("Synthetic example loaded");
         }}
@@ -398,7 +401,10 @@ export function PersonalFinanceApp() {
         }
       }
     }
-    const request = scope !== "liabilities" ? resolved.request : {
+    const request = scope === "investments" ? {
+      ...resolved.request,
+      ...(investmentOwnerId ? { executionOwnerId: investmentOwnerId } : {}),
+    } : scope !== "liabilities" ? resolved.request : {
       ...resolved.request,
       ...(liabilityConfig.ownerId ? { executionOwnerId: liabilityConfig.ownerId } : {}),
       liabilityExecutionProfiles: (Object.entries(liabilityConfig.profiles) as [string, LiabilitySessionProfile][]).map(([liabilityId, profile]) => ({
@@ -447,6 +453,7 @@ export function PersonalFinanceApp() {
   const importModel = () => {
     setDraft(importPersonalModelJson(pendingJson));
     setLiabilityConfig(emptyLiabilityConfig());
+    setInvestmentOwnerId("");
     setNotice("Model imported into this session");
     setFileReport(undefined);
   };
@@ -551,6 +558,8 @@ export function PersonalFinanceApp() {
               draft={draft}
               liabilityConfig={liabilityConfig}
               setLiabilityConfig={setLiabilityConfig}
+              investmentOwnerId={investmentOwnerId}
+              setInvestmentOwnerId={setInvestmentOwnerId}
             />
           )}
           {primary === "Plan" && subnav === "Compare Plans" && (
@@ -913,6 +922,8 @@ function Plan({
   draft,
   liabilityConfig,
   setLiabilityConfig,
+  investmentOwnerId,
+  setInvestmentOwnerId,
 }: {
   forecastScope: ForecastRequest["scope"];
   setScope: (scope: ForecastRequest["scope"]) => void;
@@ -923,6 +934,8 @@ function Plan({
   draft: PersonalDraft;
   liabilityConfig: LiabilitySessionConfig;
   setLiabilityConfig: React.Dispatch<React.SetStateAction<LiabilitySessionConfig>>;
+  investmentOwnerId: string;
+  setInvestmentOwnerId: (ownerId: string) => void;
 }) {
   return (
     <>
@@ -966,6 +979,7 @@ function Plan({
         )}
       </section>
       {forecastScope === "liabilities" && <LiabilityExecutionControls draft={draft} liabilityConfig={liabilityConfig} setLiabilityConfig={setLiabilityConfig} />}
+      {forecastScope === "investments" && <InvestmentExecutionControls draft={draft} ownerId={investmentOwnerId} setOwnerId={setInvestmentOwnerId} />}
       <section className="panel">
         <div className="scope-badge">
           Active scope: {forecastScope.replace("_", " ")}
@@ -978,6 +992,10 @@ function Plan({
       </section>
     </>
   );
+}
+function InvestmentExecutionControls({ draft, ownerId, setOwnerId }: { draft: PersonalDraft; ownerId: string; setOwnerId: (ownerId: string) => void }) {
+  const people = objectEntries(draft, "Person");
+  return <section className="panel controls"><h2>Investment execution configuration</h2><p className="muted">Session-only explicit configuration. Select the Person whose investment scope should execute.</p><label>Execution owner<select value={ownerId} onChange={(event) => setOwnerId(event.target.value)}><option value="">Select a household person</option>{people.map((person) => <option key={objectId("Person", person)} value={objectId("Person", person)}>{objectLabel("Person", person)}</option>)}</select></label></section>;
 }
 function LiabilityExecutionControls({ draft, liabilityConfig, setLiabilityConfig }: { draft: PersonalDraft; liabilityConfig: LiabilitySessionConfig; setLiabilityConfig: React.Dispatch<React.SetStateAction<LiabilitySessionConfig>> }) {
   const mortgages = objectEntries(draft, "Liability").filter((item) => item.liability_type === "mortgage");

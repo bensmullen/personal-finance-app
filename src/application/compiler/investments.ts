@@ -1405,19 +1405,49 @@ export const compileInvestments = (
     );
   }
 
-  const transfers: VerticalSlice3Input["transfers"][number][] =
-    request.transferInstructions.map((item) => {
-      const id = item.id.toLowerCase();
-      return Object.freeze({
+  const transfers: VerticalSlice3Input["transfers"][number][] = [];
+  for (const item of request.transferInstructions) {
+    const id = item.id.toLowerCase();
+    const sourceId = item.sourceAccountId.toLowerCase();
+    const destinationId = item.destinationAccountId.toLowerCase();
+    const source = accounts.get(sourceId)!;
+    const destination = accounts.get(destinationId)!;
+    if (source.tax_treatment !== destination.tax_treatment)
+      return unsupportedResult(
+        "INVESTMENT_TRANSFER_TAX_BOUNDARY_UNSUPPORTED",
+        `Transfer ${id} crosses Account tax treatments and cannot be classified as a neutral owned-cash transfer.`,
+        "InvestmentTransferExecutionInstruction",
+        id,
+        "destinationAccountId",
+        [sourceId, destinationId],
+      );
+    if (
+      Array.isArray(source.withdrawal_rule_ids) &&
+      source.withdrawal_rule_ids.length > 0
+    )
+      return unsupportedResult(
+        "ACCOUNT_WITHDRAWAL_RULE_UNSUPPORTED",
+        `Transfer ${id} cannot bypass Account ${sourceId} withdrawal_rule_ids.`,
+        "Account",
+        sourceId,
+        "withdrawal_rule_ids",
+      );
+    if (
+      destination.contribution_limit_rule_id !== undefined &&
+      destination.contribution_limit_rule_id !== null
+    )
+      return unsupportedResult(
+        "ACCOUNT_CONTRIBUTION_LIMIT_UNSUPPORTED",
+        `Transfer ${id} cannot bypass Account ${destinationId} contribution_limit_rule_id.`,
+        "Account",
+        destinationId,
+        "contribution_limit_rule_id",
+      );
+    transfers.push(
+      Object.freeze({
         id: domainId("transfer", id),
-        sourceAccountId: domainId(
-          "account",
-          item.sourceAccountId.toLowerCase(),
-        ),
-        destinationAccountId: domainId(
-          "account",
-          item.destinationAccountId.toLowerCase(),
-        ),
+        sourceAccountId: domainId("account", sourceId),
+        destinationAccountId: domainId("account", destinationId),
         amount: exactMoney(item.amount, currency)!,
         eligibilitySchedule: compiledSchedules.get(id)!,
         executionTiming: "end_of_period" as const,
@@ -1426,8 +1456,9 @@ export const compileInvestments = (
           "primitive-instance",
           ids.value.get(`Transfer:${id}:schedule`)!,
         ),
-      });
-    });
+      }),
+    );
+  }
   const purchases: VerticalSlice3Input["purchases"][number][] = [];
   for (const item of request.purchaseInstructions) {
     const id = item.id.toLowerCase();
@@ -1455,7 +1486,20 @@ export const compileInvestments = (
         "contribution_limit_rule_id",
       );
     const sourceId = item.sourceCashAccountId.toLowerCase();
-    if (!FUNDING_TYPES.has(String(accounts.get(sourceId)!.account_type)))
+    const sourceAccount = accounts.get(sourceId)!;
+    if (
+      sourceId !== accountId &&
+      Array.isArray(sourceAccount.withdrawal_rule_ids) &&
+      sourceAccount.withdrawal_rule_ids.length > 0
+    )
+      return unsupportedResult(
+        "ACCOUNT_WITHDRAWAL_RULE_UNSUPPORTED",
+        `Purchase ${id} cannot bypass Account ${sourceId} withdrawal_rule_ids.`,
+        "Account",
+        sourceId,
+        "withdrawal_rule_ids",
+      );
+    if (!FUNDING_TYPES.has(String(sourceAccount.account_type)))
       return unsupportedResult(
         "INVESTMENT_PURCHASE_FUNDING_ACCOUNT_UNSUPPORTED",
         `Purchase ${id} source must be checking, savings, or cash.`,
@@ -1491,8 +1535,10 @@ export const compileInvestments = (
       order: item.order,
       schedule: item.eligibilitySchedule,
       targets: [
-        `account:${item.sourceAccountId}`,
-        `account:${item.destinationAccountId}`,
+        ...new Set([
+          `account:${item.sourceAccountId}`,
+          `account:${item.destinationAccountId}`,
+        ]),
       ],
     })),
     ...purchases.map((item) => ({
@@ -1500,9 +1546,10 @@ export const compileInvestments = (
       order: item.order,
       schedule: item.eligibilitySchedule,
       targets: [
-        `account:${item.sourceCashAccountId}`,
-        `account:${item.destinationAccountId}`,
-        `position:${item.targetPositionId}`,
+        ...new Set([
+          `account:${item.sourceCashAccountId}`,
+          `position:${item.targetPositionId}`,
+        ]),
       ],
     })),
   ];

@@ -725,7 +725,7 @@ export const runPersonalForecast = (
           realizedGain: moneyDto(period.realizedGain),
           cashInvestmentIncome: moneyDto(period.cashInvestmentIncome),
           accountValues: Object.entries(period.accountValues).sort(([left], [right]) => left.localeCompare(right)).map(([accountId, value]) => ({ accountId, value: moneyDto(value) })),
-          traceIds: Object.freeze([...new Set(period.traceRefs.map((ref) => ref.traceId))].sort()),
+          traceIds: Object.freeze([...new Set((period.traceRefs ?? []).map((ref) => ref.traceId))].sort()),
         })),
         diagnostics: result.diagnostics,
       });

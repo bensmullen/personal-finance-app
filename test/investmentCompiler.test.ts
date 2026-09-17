@@ -418,6 +418,80 @@ describe("canonical investment compiler", () => {
     );
   });
 
+  it("gates transfers across tax boundaries and explicit operations that would bypass account rules", () => {
+    const taxBoundary = compileInvestments(
+      fixture((draft) => {
+        draft.objects.Account![1]!.tax_treatment = "tax_deferred";
+      }),
+      request({ transferInstructions: [transfer] }),
+    );
+    expect(taxBoundary).toMatchObject({
+      status: "unsupported",
+      diagnostics: [
+        expect.objectContaining({
+          code: "INVESTMENT_TRANSFER_TAX_BOUNDARY_UNSUPPORTED",
+          capability: "investment_forecast",
+        }),
+      ],
+    });
+
+    const outgoingRule = compileInvestments(
+      fixture((draft) => {
+        draft.objects.TaxRule = [{ tax_rule_id: ids.rule }];
+        draft.objects.Account![0]!.withdrawal_rule_ids = [ids.rule];
+      }),
+      request({ transferInstructions: [transfer] }),
+    );
+    expect(outgoingRule.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "ACCOUNT_WITHDRAWAL_RULE_UNSUPPORTED" }),
+    );
+
+    const incomingLimit = compileInvestments(
+      fixture((draft) => {
+        draft.objects.TaxRule = [{ tax_rule_id: ids.rule }];
+        draft.objects.Account![1]!.contribution_limit_rule_id = ids.rule;
+      }),
+      request({ transferInstructions: [transfer] }),
+    );
+    expect(incomingLimit.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "ACCOUNT_CONTRIBUTION_LIMIT_UNSUPPORTED",
+      }),
+    );
+
+    const purchaseWithdrawal = compileInvestments(
+      fixture((draft) => {
+        draft.objects.TaxRule = [{ tax_rule_id: ids.rule }];
+        draft.objects.Account![0]!.withdrawal_rule_ids = [ids.rule];
+      }),
+      request({ purchaseInstructions: [purchase] }),
+    );
+    expect(purchaseWithdrawal.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "ACCOUNT_WITHDRAWAL_RULE_UNSUPPORTED" }),
+    );
+  });
+
+  it("keeps passive account rule metadata inert", () => {
+    const compiled = compileInvestments(
+      fixture((draft) => {
+        draft.objects.TaxRule = [{ tax_rule_id: ids.rule }];
+        draft.objects.Account![1]!.withdrawal_rule_ids = [ids.rule];
+        draft.objects.Account![1]!.contribution_limit_rule_id = ids.rule;
+      }),
+      request(),
+    );
+    expect(compiled.status).toBe("compiled");
+    if (compiled.status !== "compiled") return;
+    expect(
+      runVerticalSlice3({
+        runContext: context(),
+        input: compiled.value.input,
+        openingState: compiled.value.openingState,
+        months: 2,
+      }).status,
+    ).toBe("completed");
+  });
+
   it.each([
     ["quantity", "-1", "INVESTMENT_QUANTITY_INVALID"],
     ["price", "-1", "INVESTMENT_VALUE_INVALID"],
@@ -484,6 +558,26 @@ describe("canonical investment compiler", () => {
         }),
       ],
     });
+  });
+
+  it("allows a same-account cash purchase without a self-conflict", () => {
+    const compiled = compileInvestments(
+      fixture((draft) => {
+        draft.objects.Investment![0]!.account_id = ids.checking;
+      }),
+      request({ purchaseInstructions: [purchase] }),
+    );
+    expect(compiled.status).toBe("compiled");
+    if (compiled.status !== "compiled") return;
+    const run = runVerticalSlice3({
+      runContext: context(),
+      input: compiled.value.input,
+      openingState: compiled.value.openingState,
+      primitiveState: compiled.value.primitiveState,
+      months: 2,
+    });
+    expect(run.status).toBe("completed");
+    expect(run.periods[0]!.contributionPrincipal.amount.toString()).toBe("200");
   });
 
   it("requires a price for nonzero positions, permits the zero derived default, and gates contribution limits", () => {
@@ -565,6 +659,28 @@ describe("canonical investment compiler", () => {
           traceIds: expect.any(Array),
         }),
       ]),
+    });
+  });
+
+  it("maps a passive synthetic investment run without fabricating return traces", () => {
+    const read = runPersonalForecast(createSyntheticPersonalDraft(), {
+      scope: "investments",
+      baseCurrency: "USD",
+      asOf: "2026-01-01",
+      dataCutoff: "2026-01-01",
+      simulationStart: "2026-01-01",
+      simulationEnd: "2026-03-01",
+      months: 2,
+      sameInstantCashFlowOrder: "income_before_expense",
+      executionOwnerId: ids.person,
+    });
+    expect(read).toMatchObject({
+      scope: "investments",
+      status: "completed",
+      points: [
+        expect.objectContaining({ traceIds: [] }),
+        expect.objectContaining({ traceIds: [] }),
+      ],
     });
   });
 });
