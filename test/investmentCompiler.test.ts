@@ -541,6 +541,34 @@ describe("canonical investment compiler", () => {
     });
   });
 
+  it("gates cross-account purchases at tax boundaries while allowing matching treatments", () => {
+    const taxBoundary = compileInvestments(
+      fixture((draft) => {
+        draft.objects.Account![0]!.tax_treatment = "taxable";
+        draft.objects.Account![1]!.tax_treatment = "tax_deferred";
+      }),
+      request({ purchaseInstructions: [purchase] }),
+    );
+    expect(taxBoundary).toMatchObject({
+      status: "unsupported",
+      diagnostics: [
+        expect.objectContaining({
+          code: "INVESTMENT_PURCHASE_TAX_BOUNDARY_UNSUPPORTED",
+          capability: "investment_forecast",
+        }),
+      ],
+    });
+
+    const matchingTreatments = compileInvestments(
+      fixture((draft) => {
+        draft.objects.Account![0]!.tax_treatment = "taxable";
+        draft.objects.Account![1]!.tax_treatment = "taxable";
+      }),
+      request({ purchaseInstructions: [purchase] }),
+    );
+    expect(matchingTreatments.status).toBe("compiled");
+  });
+
   it("keeps passive account rule metadata inert", () => {
     const compiled = compileInvestments(
       fixture((draft) => {
@@ -704,6 +732,7 @@ describe("canonical investment compiler", () => {
       fixture((draft) => {
         draft.objects.TaxRule = [{ tax_rule_id: ids.rule }];
         draft.objects.Account![1]!.account_type = "traditional_401k";
+        draft.objects.Account![1]!.tax_treatment = "tax_deferred";
         draft.objects.Account![1]!.opening_balance = "200";
         draft.objects.Account![1]!.contribution_limit_rule_id = ids.rule;
         draft.objects.Account![1]!.withdrawal_rule_ids = [ids.rule];

@@ -1473,13 +1473,26 @@ export const compileInvestments = (
       );
     const investment = investments.get(investmentId)!;
     const accountId = String(investment.account_id).toLowerCase();
-    const account = accounts.get(accountId)!;
     const sourceId = item.sourceCashAccountId.toLowerCase();
     const sameAccountPurchase = sourceId === accountId;
+    const sourceAccount = accounts.get(sourceId)!;
+    const destinationAccount = accounts.get(accountId)!;
     if (
       !sameAccountPurchase &&
-      account.contribution_limit_rule_id !== undefined &&
-      account.contribution_limit_rule_id !== null
+      sourceAccount.tax_treatment !== destinationAccount.tax_treatment
+    )
+      return unsupportedResult(
+        "INVESTMENT_PURCHASE_TAX_BOUNDARY_UNSUPPORTED",
+        `Purchase ${id} crosses Account tax treatments and cannot be classified as a plain investment purchase without contribution, rollover, conversion, or tax semantics.`,
+        "InvestmentPurchaseExecutionInstruction",
+        id,
+        "sourceCashAccountId",
+        [sourceId, accountId],
+      );
+    if (
+      !sameAccountPurchase &&
+      destinationAccount.contribution_limit_rule_id !== undefined &&
+      destinationAccount.contribution_limit_rule_id !== null
     )
       return unsupportedResult(
         "ACCOUNT_CONTRIBUTION_LIMIT_UNSUPPORTED",
@@ -1488,7 +1501,6 @@ export const compileInvestments = (
         accountId,
         "contribution_limit_rule_id",
       );
-    const sourceAccount = accounts.get(sourceId)!;
     if (
       !sameAccountPurchase &&
       Array.isArray(sourceAccount.withdrawal_rule_ids) &&
