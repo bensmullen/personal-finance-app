@@ -14,9 +14,11 @@ export const isPersonalPersistenceEnabledOrigin = ({
   protocol,
   hostname,
 }: BrowserOriginLike): boolean => {
-  const host = hostname.toLowerCase();
+  const scheme = protocol.toLowerCase();
+  if (scheme !== "http:" && scheme !== "https:") return false;
+  const host = hostname.toLowerCase().replace(/\.+$/, "");
   if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]") return true;
-  return protocol === "https:" && !host.endsWith(".github.io");
+  return scheme === "https:" && host !== "github.io" && !host.endsWith(".github.io");
 };
 
 const requestResult = <T>(request: IDBRequest<T>): Promise<T> =>

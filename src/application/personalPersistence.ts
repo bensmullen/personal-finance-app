@@ -44,8 +44,6 @@ const classifyReport = (
   serializedModel: string,
   report: PersonalModelValidationReport,
 ): Exclude<PersistedPersonalModelState, { status: "empty" | "ready" }> => {
-  if (report.modelFormatCompatibility === "migratable" && report.explicitMigrationAvailable)
-    return Object.freeze({ status: "migration_required", serializedModel, report });
   if (report.modelFormatCompatibility === "read_only_legacy")
     return Object.freeze({ status: "read_only_legacy", serializedModel, report });
   if (
@@ -53,6 +51,12 @@ const classifyReport = (
     report.financialSpecificationCompatibility === "unsupported"
   )
     return Object.freeze({ status: "unsupported", serializedModel, report });
+  if (
+    report.modelFormatCompatibility === "migratable" &&
+    report.explicitMigrationAvailable &&
+    report.financialSpecificationCompatibility === "supported_directly"
+  )
+    return Object.freeze({ status: "migration_required", serializedModel, report });
   return Object.freeze({ status: "invalid", serializedModel, report });
 };
 

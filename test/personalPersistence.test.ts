@@ -40,6 +40,7 @@ const model = (overrides: Record<string, unknown> = {}) =>
 class MemoryPort implements PersonalModelPersistencePort {
   value: string | undefined;
   failReplace = false;
+  replaceCalls = 0;
 
   constructor(value?: string) {
     this.value = value;
@@ -47,6 +48,7 @@ class MemoryPort implements PersonalModelPersistencePort {
 
   async read() { return this.value; }
   async replace(value: string) {
+    this.replaceCalls += 1;
     if (this.failReplace) throw new Error("synthetic write failure");
     this.value = value;
   }
@@ -99,6 +101,32 @@ describe("personal persistence application policy", () => {
     expect(migrated.status).toBe("ready");
     expect(migrated.model.modelId).toBe(domainId("model", MODEL_ID));
     expect(port.value).toBe(migrated.serializedModel);
+  });
+
+  it("does not offer persisted format migration when the financial specification is unsupported", async () => {
+    const original = json(document({
+      model_format_version: OLD_FORMAT,
+      financial_specification_version: "99.0.0-future",
+    }));
+    const port = new MemoryPort(original);
+
+    expect((await inspectPersistedPersonalModel(port, migrations)).status).toBe("unsupported");
+    expect(port.value).toBe(original);
+    expect((await savePersonalModel(port, model(), { migrations })).status).toBe("recovery_required");
+    expect(port.value).toBe(original);
+    await expect(migratePersistedPersonalModel(port, migrations)).rejects.toThrow(
+      "Saved model is not eligible for explicit migration",
+    );
+    expect(port.replaceCalls).toBe(0);
+    expect(port.value).toBe(original);
+  });
+
+  it("classifies a structurally invalid migratable document as invalid", async () => {
+    const original = json(document({ model_format_version: OLD_FORMAT, model_id: "invalid" }));
+    const port = new MemoryPort(original);
+    expect((await inspectPersistedPersonalModel(port, migrations)).status).toBe("invalid");
+    expect(port.value).toBe(original);
+    expect(port.replaceCalls).toBe(0);
   });
 
   it("preserves original bytes when migration output is invalid or replacement rejects", async () => {
