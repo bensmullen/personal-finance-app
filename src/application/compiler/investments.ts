@@ -1474,7 +1474,10 @@ export const compileInvestments = (
     const investment = investments.get(investmentId)!;
     const accountId = String(investment.account_id).toLowerCase();
     const account = accounts.get(accountId)!;
+    const sourceId = item.sourceCashAccountId.toLowerCase();
+    const sameAccountPurchase = sourceId === accountId;
     if (
+      !sameAccountPurchase &&
       account.contribution_limit_rule_id !== undefined &&
       account.contribution_limit_rule_id !== null
     )
@@ -1485,10 +1488,9 @@ export const compileInvestments = (
         accountId,
         "contribution_limit_rule_id",
       );
-    const sourceId = item.sourceCashAccountId.toLowerCase();
     const sourceAccount = accounts.get(sourceId)!;
     if (
-      sourceId !== accountId &&
+      !sameAccountPurchase &&
       Array.isArray(sourceAccount.withdrawal_rule_ids) &&
       sourceAccount.withdrawal_rule_ids.length > 0
     )
@@ -1499,7 +1501,10 @@ export const compileInvestments = (
         sourceId,
         "withdrawal_rule_ids",
       );
-    if (!FUNDING_TYPES.has(String(sourceAccount.account_type)))
+    if (
+      !sameAccountPurchase &&
+      !FUNDING_TYPES.has(String(sourceAccount.account_type))
+    )
       return unsupportedResult(
         "INVESTMENT_PURCHASE_FUNDING_ACCOUNT_UNSUPPORTED",
         `Purchase ${id} source must be checking, savings, or cash.`,

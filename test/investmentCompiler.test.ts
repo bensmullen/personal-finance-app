@@ -469,6 +469,22 @@ describe("canonical investment compiler", () => {
     expect(purchaseWithdrawal.diagnostics).toContainEqual(
       expect.objectContaining({ code: "ACCOUNT_WITHDRAWAL_RULE_UNSUPPORTED" }),
     );
+
+    const brokerageSource = compileInvestments(
+      fixture((draft) => {
+        draft.objects.Investment![0]!.account_id = ids.checking;
+      }),
+      request({
+        purchaseInstructions: [
+          { ...purchase, sourceCashAccountId: ids.brokerage },
+        ],
+      }),
+    );
+    expect(brokerageSource.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "INVESTMENT_PURCHASE_FUNDING_ACCOUNT_UNSUPPORTED",
+      }),
+    );
   });
 
   it("requires explicit canonical Account tax treatments before transfer capability checks", () => {
@@ -614,12 +630,17 @@ describe("canonical investment compiler", () => {
     });
   });
 
-  it("allows a same-account cash purchase without a self-conflict", () => {
+  it("converts brokerage cash into its own position without creating value", () => {
     const compiled = compileInvestments(
       fixture((draft) => {
-        draft.objects.Investment![0]!.account_id = ids.checking;
+        draft.objects.Account![1]!.opening_balance = "200";
+        draft.objects.Assumption![0]!.value = "0";
       }),
-      request({ purchaseInstructions: [purchase] }),
+      request({
+        purchaseInstructions: [
+          { ...purchase, sourceCashAccountId: ids.brokerage },
+        ],
+      }),
     );
     expect(compiled.status).toBe("compiled");
     if (compiled.status !== "compiled") return;
@@ -631,7 +652,69 @@ describe("canonical investment compiler", () => {
       months: 2,
     });
     expect(run.status).toBe("completed");
+    expect(run.state.accounts[ids.brokerage]!.cash.amount.toString()).toBe("0");
+    expect(run.state.positions[ids.investment]!.quantity.amount.toString()).toBe(
+      "30",
+    );
+    expect(
+      run.state.positions[ids.investment]!.carryingValue.amount.toString(),
+    ).toBe("300");
+    expect(run.periods[0]!.accountValues[ids.brokerage]!.amount.toString()).toBe(
+      "300",
+    );
+    expect(run.periods[0]!.statements.assets.amount.toString()).toBe("300");
     expect(run.periods[0]!.contributionPrincipal.amount.toString()).toBe("200");
+  });
+
+  it("orders a transfer into brokerage cash before its same-account purchase", () => {
+    const compiled = compileInvestments(
+      fixture((draft) => {
+        draft.objects.Assumption![0]!.value = "0";
+      }),
+      request({
+        transferInstructions: [transfer],
+        purchaseInstructions: [
+          { ...purchase, sourceCashAccountId: ids.brokerage },
+        ],
+      }),
+    );
+    expect(compiled.status).toBe("compiled");
+    if (compiled.status !== "compiled") return;
+    const run = runVerticalSlice3({
+      runContext: context(),
+      input: compiled.value.input,
+      openingState: compiled.value.openingState,
+      primitiveState: compiled.value.primitiveState,
+      months: 2,
+    });
+    expect(run.status).toBe("completed");
+    expect(run.state.accounts[ids.checking]!.cash.amount.toString()).toBe("800");
+    expect(run.state.accounts[ids.brokerage]!.cash.amount.toString()).toBe("0");
+    expect(run.state.positions[ids.investment]!.quantity.amount.toString()).toBe(
+      "30",
+    );
+    expect(run.periods[0]!.accountValues[ids.brokerage]!.amount.toString()).toBe(
+      "300",
+    );
+    expect(run.periods[0]!.statements.assets.amount.toString()).toBe("1100");
+  });
+
+  it("allows a same-account retirement trade without crossing account rules", () => {
+    const compiled = compileInvestments(
+      fixture((draft) => {
+        draft.objects.TaxRule = [{ tax_rule_id: ids.rule }];
+        draft.objects.Account![1]!.account_type = "traditional_401k";
+        draft.objects.Account![1]!.opening_balance = "200";
+        draft.objects.Account![1]!.contribution_limit_rule_id = ids.rule;
+        draft.objects.Account![1]!.withdrawal_rule_ids = [ids.rule];
+      }),
+      request({
+        purchaseInstructions: [
+          { ...purchase, sourceCashAccountId: ids.brokerage },
+        ],
+      }),
+    );
+    expect(compiled.status).toBe("compiled");
   });
 
   it("requires a price for nonzero positions, permits the zero derived default, and gates contribution limits", () => {
