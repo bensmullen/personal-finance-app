@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 const loadExample = async (page: import("@playwright/test").Page) => {
   await page.goto("/");
@@ -17,7 +18,7 @@ test("guided setup reaches the Personal-MVP overview", async ({ page }) => {
   await expect(
     page.getByText("Your starting financial picture is ready"),
   ).toBeVisible();
-  await expect(page.getByText(/Session only/)).toBeVisible();
+  await expect(page.getByText(/edits stay in memory until saved/i)).toBeVisible();
   await expect(
     page.getByRole("navigation", { name: "Primary navigation" }),
   ).toContainText("OverviewMoneyNet WorthPlanSettings");
@@ -152,7 +153,7 @@ test("Debt execution settings are session-only and clear on model import", async
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Import / Export", exact: true }).click();
-  await page.getByRole("button", { name: "Export model", exact: true }).click();
+  await page.getByRole("button", { name: "Export current model", exact: true }).click();
   const download = await downloadPromise;
   await page.locator('input[type="file"]').setInputFiles((await download.path())!);
   await page.getByRole("button", { name: "Import into session" }).click();
@@ -184,7 +185,7 @@ test("Investments execute only after explicit owner selection and owner state cl
   await page
     .getByRole("button", { name: "Import / Export", exact: true })
     .click();
-  await page.getByRole("button", { name: "Export model", exact: true }).click();
+  await page.getByRole("button", { name: "Export current model", exact: true }).click();
   const download = await downloadPromise;
   await page
     .locator('input[type="file"]')
@@ -204,7 +205,7 @@ test("model portability and deterministic what-if comparison stay explicit", asy
     .getByRole("button", { name: "Import / Export", exact: true })
     .click();
   const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Export model", exact: true }).click();
+  await page.getByRole("button", { name: "Export current model", exact: true }).click();
   const download = await downloadPromise;
   const exportedPath = await download.path();
   expect(exportedPath).toBeTruthy();
@@ -227,4 +228,65 @@ test("model portability and deterministic what-if comparison stay explicit", asy
   await expect(page.locator("code").first()).toContainText(
     "salary-growth-assumption",
   );
+});
+
+test("manual local save survives reload and explicit load without restoring execution state", async ({ page }) => {
+  await loadExample(page);
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Income", exact: true }).click();
+  await page.getByRole("button", { name: /Example salary/ }).click();
+  await page.getByLabel("Source / name").fill("Recognizable saved salary");
+  await page.getByRole("button", { name: "Close editor" }).click();
+
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Debt", exact: true }).click();
+  await page.getByLabel("Execution owner").selectOption({ label: "Taylor Example" });
+  await page.getByLabel("Payment anchor").fill("2022-02-01");
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByLabel("Forecast scope").selectOption("investments");
+  await page.getByLabel("Execution owner").selectOption({ label: "Taylor Example" });
+  await page.getByRole("button", { name: "Run investments forecast" }).click();
+  await expect(page.getByRole("table", { name: "Detailed investment forecast" })).toBeVisible();
+  await page.getByRole("button", { name: "What If?", exact: true }).click();
+  await page.getByRole("button", { name: "Compare this plan" }).click();
+  await expect(page.getByRole("table", { name: /Current plan, alternative/ })).toBeVisible();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Canonical model saved to this browser")).toBeVisible();
+
+  await page.reload();
+  await page.getByRole("button", { name: "Load saved model" }).click();
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Income", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Recognizable saved salary/ })).toBeVisible();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByLabel("Forecast scope").selectOption("investments");
+  await expect(page.getByLabel("Execution owner")).toHaveValue("");
+  await expect(page.getByRole("table", { name: "Detailed investment forecast" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Compare Plans", exact: true }).click();
+  await expect(page.getByText("No executable comparison is available yet.")).toBeVisible();
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Debt", exact: true }).click();
+  await expect(page.getByLabel("Execution owner")).toHaveValue("");
+  await expect(page.getByLabel("Payment anchor")).toHaveValue("");
+});
+
+test("current and exact saved recovery exports match, and confirmed delete removes only local data", async ({ page }) => {
+  await loadExample(page);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+
+  const currentDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const current = await currentDownload;
+  const backupDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export saved backup", exact: true }).click();
+  const backup = await backupDownload;
+  expect(await readFile((await current.path())!, "utf8")).toBe(await readFile((await backup.path())!, "utf8"));
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Delete saved local model", exact: true }).click();
+  await expect(page.getByText(/open model is unchanged/i)).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Load saved model" })).toHaveCount(0);
 });

@@ -10,8 +10,10 @@ The browser application is organized around Overview, Money, Net Worth, Plan,
 and Settings. It provides guided setup, friendly editing of the ten canonical
 Personal-MVP object areas, PR 13 portability, scope-specific forecasts, and
 deterministic comparison surfaces with accessible chart tables. Changes are
-session-only; export the portable model to preserve them. Independent simulation
-slices are never presented as a reconciled household forecast.
+kept in memory until the user explicitly saves. On trusted local or dedicated
+origins, manual Save and Load store one canonical model in this browser with
+native IndexedDB. Portable export remains the recommended backup. Independent
+simulation slices are never presented as a reconciled household forecast.
 
 The engine remains one npm package, but its implementation now has explicit
 internal boundaries under `src/`: `values`, `time`, `identity`, `model`,
@@ -100,3 +102,12 @@ The repository and public demo use synthetic data only. Never commit real
 personal financial information, secrets, account identifiers, screenshots, or
 logs containing financial content.
 
+The default public `*.github.io` deployment intentionally disables browser
+persistence and remains a synthetic, in-memory demo; do not enter real personal
+financial data there. Insecure non-loopback HTTP origins are also disabled.
+Import and export continue to work when local persistence is unavailable.
+
+Browser persistence is convenience storage, not encryption or a backup
+guarantee. Browser data can be cleared, and no server or cloud synchronization
+exists. Make regular portable exports for recovery. Export files are plaintext
+JSON and should be stored securely.

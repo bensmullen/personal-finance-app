@@ -2,6 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -30,17 +31,21 @@ import {
   addPersonalObject,
   createGuidedSetupDraft,
   createSyntheticPersonalDraft,
+  deletePersistedPersonalModel,
   deletePersonalObject,
   exportPersonalModelJson,
   getCurrentPosition,
   getPersonalEditorMetadata,
   importPersonalModelJson,
+  inspectPersistedPersonalModel,
   isForecastStartDate,
   migratePersonalModelVersion,
+  migratePersistedPersonalModel,
   patchPersonalObject,
   comparePersonalCashFlowPlans,
   runPersonalForecast,
   resolvePersonalSessionSettings,
+  savePersonalModel,
   sessionSettingsFromHorizon,
   validatePersonalDraft,
   validatePersonalModelJson,
@@ -51,7 +56,12 @@ import {
   type PersonalObjectType,
   type PersonalScenarioComparisonReadModel,
   type PersonalSessionSettings,
+  type PersistedPersonalModelState,
 } from "../src/application/personalMvp.js";
+import {
+  IndexedDbPersonalModelStore,
+  isPersonalPersistenceEnabledOrigin,
+} from "./persistence/indexedDbPersonalModelStore.js";
 
 type Primary = "Overview" | "Money" | "Net Worth" | "Plan" | "Settings";
 const NAV: readonly Primary[] = [
@@ -304,6 +314,10 @@ export function PersonalFinanceApp() {
     useState<ReturnType<typeof validatePersonalModelJson>>();
   const [pendingJson, setPendingJson] = useState("");
   const [notice, setNotice] = useState("");
+  const [persistenceMode, setPersistenceMode] = useState<"checking" | "enabled" | "disabled">("checking");
+  const [persistenceStore, setPersistenceStore] = useState<IndexedDbPersonalModelStore>();
+  const [savedState, setSavedState] = useState<PersistedPersonalModelState>();
+  const [persistenceError, setPersistenceError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const setup = useForm<SetupValues>({
     resolver: zodResolver(setupSchema),
@@ -337,6 +351,100 @@ export function PersonalFinanceApp() {
     [draft],
   );
 
+  const inspectSavedModel = async (store: IndexedDbPersonalModelStore) => {
+    try {
+      setSavedState(await inspectPersistedPersonalModel(store));
+      setPersistenceError("");
+    } catch {
+      setPersistenceError("Local browser storage is currently unavailable.");
+    }
+  };
+
+  useEffect(() => {
+    if (!isPersonalPersistenceEnabledOrigin(window.location)) {
+      setPersistenceMode("disabled");
+      return;
+    }
+    const store = new IndexedDbPersonalModelStore(window.indexedDB);
+    setPersistenceStore(store);
+    setPersistenceMode("enabled");
+    void inspectSavedModel(store);
+  }, []);
+
+  const replaceCanonicalModel = (next: PersonalDraft, message: string) => {
+    setDraft(next);
+    setForecast(undefined);
+    setComparison(undefined);
+    setRunSettingsError("");
+    setLiabilityConfig(emptyLiabilityConfig());
+    setInvestmentOwnerId("");
+    setNotice(message);
+  };
+
+  const loadSavedModel = () => {
+    if (savedState?.status !== "ready") return;
+    replaceCanonicalModel(savedState.model, "Saved model loaded into this session");
+  };
+
+  const saveToBrowser = async () => {
+    if (!draft || !persistenceStore) return;
+    try {
+      let result = await savePersonalModel(persistenceStore, draft);
+      if (result.status === "different_model_confirmation_required") {
+        if (!window.confirm("Replace the different model currently saved in this browser?")) return;
+        result = await savePersonalModel(persistenceStore, draft, { confirmDifferentModel: true });
+      }
+      if (result.status === "recovery_required") {
+        setNotice("Saved data is protected. Export its backup or delete it before saving this model.");
+        setSavedState(result.savedState);
+        return;
+      }
+      setNotice("Canonical model saved to this browser");
+      await inspectSavedModel(persistenceStore);
+    } catch {
+      setPersistenceError("The model could not be saved; previously stored data was retained.");
+    }
+  };
+
+  const migrateSavedModel = async () => {
+    if (!persistenceStore) return;
+    try {
+      const migrated = await migratePersistedPersonalModel(persistenceStore);
+      setSavedState(migrated);
+      replaceCanonicalModel(migrated.model, "Saved model migrated explicitly and loaded");
+    } catch {
+      setPersistenceError("Migration failed; the original saved data was retained.");
+    }
+  };
+
+  const deleteSavedModel = async () => {
+    if (!persistenceStore || !window.confirm("Delete the saved local model from this browser? The open model and exported files will not be deleted.")) return;
+    try {
+      await deletePersistedPersonalModel(persistenceStore);
+      setSavedState({ status: "empty" });
+      setPersistenceError("");
+      setNotice("Saved local model deleted; the open model is unchanged");
+    } catch {
+      setPersistenceError("Saved local data could not be deleted.");
+    }
+  };
+
+  const downloadJson = (contents: string, filename: string) => {
+    const blob = new Blob([contents], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportSavedBackup = () => {
+    if (!savedState || savedState.status === "empty") return;
+    downloadJson(savedState.serializedModel, "personal-finance-model-backup.json");
+    setNotice("Exact saved bytes exported as a recovery backup");
+  };
+
   const navigate = (next: Primary) => {
     setPrimary(next);
     setSubnav(SUBNAV[next][0]!);
@@ -359,13 +467,10 @@ export function PersonalFinanceApp() {
       monthlySpending: values.spending,
       startDate: values.startDate,
     });
-    setDraft(next);
-    setLiabilityConfig(emptyLiabilityConfig());
-    setInvestmentOwnerId("");
+    replaceCanonicalModel(next, "Your starting financial picture is ready");
     setSessionSettings(
       sessionSettingsFromHorizon(values.startDate, Number(values.horizon) * 12),
     );
-    setNotice("Your starting financial picture is ready");
     navigate("Overview");
   });
 
@@ -376,12 +481,16 @@ export function PersonalFinanceApp() {
         step={setupStep}
         setStep={setSetupStep}
         complete={completeSetup}
+        persistenceMode={persistenceMode}
+        savedState={savedState}
+        persistenceError={persistenceError}
+        loadSaved={loadSavedModel}
+        migrateSaved={migrateSavedModel}
+        exportSavedBackup={exportSavedBackup}
+        deleteSaved={deleteSavedModel}
         loadExample={() => {
-          setDraft(createSyntheticPersonalDraft());
-          setLiabilityConfig(emptyLiabilityConfig());
-          setInvestmentOwnerId("");
+          replaceCanonicalModel(createSyntheticPersonalDraft(), "Synthetic example loaded");
           setSessionSettings(sessionSettingsFromHorizon("2026-01-01", 120));
-          setNotice("Synthetic example loaded");
         }}
       />
     );
@@ -434,15 +543,7 @@ export function PersonalFinanceApp() {
     setSubnav("Compare Plans");
   };
   const exportModel = () => {
-    const blob = new Blob([exportPersonalModelJson(draft)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "personal-finance-model.json";
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadJson(exportPersonalModelJson(draft), "personal-finance-model.json");
     setNotice("Model exported to a local file");
   };
   const readImport = async (file: File) => {
@@ -451,10 +552,7 @@ export function PersonalFinanceApp() {
     setFileReport(validatePersonalModelJson(json));
   };
   const importModel = () => {
-    setDraft(importPersonalModelJson(pendingJson));
-    setLiabilityConfig(emptyLiabilityConfig());
-    setInvestmentOwnerId("");
-    setNotice("Model imported into this session");
+    replaceCanonicalModel(importPersonalModelJson(pendingJson), "Model imported into this session");
     setFileReport(undefined);
   };
   const migrate = () => {
@@ -474,9 +572,12 @@ export function PersonalFinanceApp() {
           <span>Personal Finance</span>
         </button>
         <div className="session-banner" role="status">
-          <strong>Session only</strong> — changes are not saved.{" "}
-          <button onClick={exportModel}>Export your model</button> to preserve
-          them.
+          <strong>Manual save</strong> — edits stay in memory until saved.{" "}
+          {persistenceMode === "enabled" ? (
+            <><button onClick={() => void saveToBrowser()}>Save</button> locally to this browser/origin; export remains the recommended backup.</>
+          ) : (
+            <>This public/demo origin does not store personal models. <button onClick={exportModel}>Export your model</button>.</>
+          )}
         </div>
         <button className="avatar" aria-label="Model menu">
           ME
@@ -580,6 +681,14 @@ export function PersonalFinanceApp() {
               importModel={importModel}
               migrate={migrate}
               exportModel={exportModel}
+              persistenceMode={persistenceMode}
+              savedState={savedState}
+              persistenceError={persistenceError}
+              saveToBrowser={saveToBrowser}
+              loadSaved={loadSavedModel}
+              migrateSaved={migrateSavedModel}
+              exportSavedBackup={exportSavedBackup}
+              deleteSaved={deleteSavedModel}
             />
           )}
           {primary === "Settings" && subnav === "Advanced" && (
@@ -617,12 +726,26 @@ function SetupWizard({
   setStep,
   complete,
   loadExample,
+  persistenceMode,
+  savedState,
+  persistenceError,
+  loadSaved,
+  migrateSaved,
+  exportSavedBackup,
+  deleteSaved,
 }: {
   form: UseFormReturn<SetupValues>;
   step: number;
   setStep: (value: number) => void;
   complete: () => void;
   loadExample: () => void;
+  persistenceMode: "checking" | "enabled" | "disabled";
+  savedState: PersistedPersonalModelState | undefined;
+  persistenceError: string;
+  loadSaved: () => void;
+  migrateSaved: () => Promise<void>;
+  exportSavedBackup: () => void;
+  deleteSaved: () => Promise<void>;
 }) {
   const steps = [
     { title: "About you", field: "name", label: "Household name" },
@@ -708,8 +831,22 @@ function SetupWizard({
             </button>
           )}
         </div>
+        {persistenceMode === "enabled" && savedState && savedState.status !== "empty" && (
+          <div className="compatibility">
+            <strong>{savedState.status === "ready" ? "A saved model is available" : `Saved model status: ${savedState.status.replaceAll("_", " ")}`}</strong>
+            <div className="row">
+              {savedState.status === "ready" && <button className="primary" onClick={loadSaved}>Load saved model</button>}
+              {savedState.status === "migration_required" && <button className="secondary" onClick={() => void migrateSaved()}>Migrate saved model explicitly</button>}
+              <button className="secondary" onClick={exportSavedBackup}>Export saved backup</button>
+              <button className="ghost" onClick={() => void deleteSaved()}>Delete saved local model</button>
+            </div>
+          </div>
+        )}
+        {persistenceError && <p className="field-error" role="alert">{persistenceError}</p>}
         <p className="privacy">
-          Session only — nothing is saved or transmitted.
+          {persistenceMode === "disabled"
+            ? "Public/demo origin: local personal-data persistence is disabled. Do not enter real personal financial information here. Import/export remain available."
+            : "Edits stay in memory until you explicitly save. Nothing is transmitted."}
         </p>
       </section>
     </main>
@@ -1736,20 +1873,56 @@ function Portability({
   importModel,
   migrate,
   exportModel,
+  persistenceMode,
+  savedState,
+  persistenceError,
+  saveToBrowser,
+  loadSaved,
+  migrateSaved,
+  exportSavedBackup,
+  deleteSaved,
 }: any) {
   return (
     <>
       <PageHead
         eyebrow="Settings · Import / Export"
         title="Keep control of your model"
-        text="Files stay in your browser. Compatibility is inspected before any import or explicit migration."
+        text="Compatibility is inspected before import or migration. Local persistence is manual; portable export remains the recommended backup."
       />
+      {persistenceMode === "disabled" && (
+        <section className="panel compatibility">
+          <strong>Public/demo origin</strong>
+          <p>Local personal-data persistence is intentionally disabled here. Do not enter real personal financial information. Import and export remain available.</p>
+        </section>
+      )}
+      {persistenceError && <p className="field-error" role="alert">{persistenceError}</p>}
       <section className="action-grid">
+        {persistenceMode === "enabled" && (
+          <article className="panel">
+            <h2>Local browser storage</h2>
+            <p>Save stores only the canonical portable model. Edits are not saved automatically.</p>
+            <div className="row">
+              <button className="primary" onClick={() => void saveToBrowser()}>Save to this browser</button>
+              {savedState?.status === "ready" && <button className="secondary" onClick={loadSaved}>Load saved model / Replace current model</button>}
+              {savedState?.status === "migration_required" && <button className="secondary" onClick={() => void migrateSaved()}>Migrate saved model explicitly</button>}
+            </div>
+            {savedState && savedState.status !== "empty" && (
+              <div className="compatibility">
+                <strong>Saved model: {savedState.status.replaceAll("_", " ")}</strong>
+                {savedState.status !== "ready" && <p>This saved data is protected from ordinary Save. Export it for recovery or explicitly delete it.</p>}
+                <div className="row">
+                  <button className="secondary" onClick={exportSavedBackup}>Export saved backup</button>
+                  <button className="ghost" onClick={() => void deleteSaved()}>Delete saved local model</button>
+                </div>
+              </div>
+            )}
+          </article>
+        )}
         <article className="panel">
           <h2>Export</h2>
           <p>Download the deterministic PR 13 portable model JSON.</p>
           <button className="primary" onClick={exportModel}>
-            Export model
+            Export current model
           </button>
         </article>
         <article className="panel">
