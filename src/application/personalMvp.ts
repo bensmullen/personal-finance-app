@@ -14,6 +14,7 @@ import {
 import { createRunContext, runId, scenarioId } from "../simulation/run.js";
 import { compareVerticalSlice2Scenarios } from "../simulation/scenario.js";
 import { runVerticalSlice2 } from "../simulation/verticalSlice2.js";
+import { runVerticalSlice3 } from "../simulation/verticalSlice3.js";
 import { runVerticalSlice4 } from "../simulation/verticalSlice4.js";
 import type { ConstraintOutcome } from "../funding/index.js";
 import {
@@ -33,9 +34,12 @@ import {
 import {
   compileCashFlow,
   compileCurrentPosition,
+  compileInvestments,
   compileLiabilities,
   capability,
   type CapabilityDiagnostic,
+  type InvestmentPurchaseExecutionInstruction,
+  type InvestmentTransferExecutionInstruction,
   type LiabilityExecutionProfile,
 } from "./compiler/index.js";
 import { PERSONAL_EDITOR_DESCRIPTOR } from "./editorDescriptor.generated.js";
@@ -172,7 +176,28 @@ export interface LiabilityPersonalForecastReadModel extends ForecastBoundary {
   readonly liabilityPayoffs: readonly LiabilityPayoffReadModel[];
   readonly inactiveLiabilityIds: readonly string[];
 }
-export type PersonalForecastReadModel = UnavailablePersonalForecastReadModel | CashPersonalForecastReadModel | LiabilityPersonalForecastReadModel;
+export interface InvestmentAccountValueReadModel {
+  readonly accountId: string;
+  readonly value: MoneyReadModel;
+}
+export interface InvestmentForecastPoint {
+  readonly periodStart: string;
+  readonly periodEnd: string;
+  readonly portfolioValue: MoneyReadModel;
+  readonly contributionPrincipal: MoneyReadModel;
+  readonly fees: MoneyReadModel;
+  readonly unrealizedGain: MoneyReadModel;
+  readonly realizedGain: MoneyReadModel;
+  readonly cashInvestmentIncome: MoneyReadModel;
+  readonly accountValues: readonly InvestmentAccountValueReadModel[];
+  readonly traceIds: readonly string[];
+}
+export interface InvestmentPersonalForecastReadModel extends ForecastBoundary {
+  readonly scope: "investments";
+  readonly status: "completed" | "incomplete";
+  readonly points: readonly InvestmentForecastPoint[];
+}
+export type PersonalForecastReadModel = UnavailablePersonalForecastReadModel | CashPersonalForecastReadModel | LiabilityPersonalForecastReadModel | InvestmentPersonalForecastReadModel;
 export interface ForecastRequest {
   readonly scope: "cash_flow" | "investments" | "liabilities";
   readonly baseCurrency: string;
@@ -186,6 +211,8 @@ export interface ForecastRequest {
     | "expense_before_income";
   readonly executionOwnerId?: string;
   readonly liabilityExecutionProfiles?: readonly LiabilityExecutionProfile[];
+  readonly investmentTransferInstructions?: readonly InvestmentTransferExecutionInstruction[];
+  readonly investmentPurchaseInstructions?: readonly InvestmentPurchaseExecutionInstruction[];
 }
 export interface PersonalSessionSettings {
   readonly baseCurrency: string;
@@ -654,19 +681,60 @@ export const runPersonalForecast = (
   draft: PersonalDraft,
   request: ForecastRequest,
 ): PersonalForecastReadModel => {
-  if (request.scope === "investments")
-    return unavailableForecast(
-      request,
-      "Investment execution requires complete engine-specific configuration; this portable model is preserved but is not automatically executable.",
-      [
-        capability(
-          "INVESTMENT_FORECAST_UNSUPPORTED",
-          "Investment forecast execution is reserved for PR 17.",
-          "investments",
-          "Investment",
-        ),
-      ],
-    );
+  if (request.scope === "investments") {
+    if (!request.executionOwnerId)
+      return unavailableForecast(request, "Investment forecast requires an explicit executionOwnerId.", [
+        capability("INVESTMENT_EXECUTION_OWNER_REQUIRED", "Investment forecast requires an explicit Household-member execution owner.", "investment_forecast", "InvestmentCompilerRequest", undefined, "executionOwnerId"),
+      ]);
+    try {
+      const compilation = compileInvestments(draft, {
+        baseCurrency: request.baseCurrency,
+        asOf: request.asOf,
+        simulationStart: request.simulationStart,
+        simulationEnd: request.simulationEnd,
+        months: request.months,
+        executionOwnerId: request.executionOwnerId,
+        transferInstructions: request.investmentTransferInstructions ?? [],
+        purchaseInstructions: request.investmentPurchaseInstructions ?? [],
+      });
+      if (compilation.status !== "compiled")
+        return unavailableForecast(request, compilation.diagnostics.map((value) => value.message).join("; "), compilation.diagnostics);
+      const compiled = compilation.value;
+      const runContext = createRunContext({
+        runId: runId(cryptoSafeRunId(draft.modelId)),
+        scenarioId: scenarioId(compiled.scenarioIdentity),
+        asOf: iso(request.asOf),
+        dataCutoff: iso(request.dataCutoff),
+        simulationStart: iso(request.simulationStart),
+        simulationEnd: iso(request.simulationEnd),
+        baseCurrency: Currency.of(request.baseCurrency),
+      });
+      const result = runVerticalSlice3({ runContext, input: compiled.input, openingState: compiled.openingState, primitiveState: compiled.primitiveState, months: compiled.executionMonths });
+      return deepFreeze({
+        ...forecastBoundary(request),
+        scope: "investments" as const,
+        status: result.status,
+        asOf: runContext.asOf,
+        points: result.periods.map((period) => ({
+          periodStart: period.period.start,
+          periodEnd: period.period.end,
+          portfolioValue: moneyDto(period.portfolioValue),
+          contributionPrincipal: moneyDto(period.contributionPrincipal),
+          fees: moneyDto(period.fees),
+          unrealizedGain: moneyDto(period.unrealizedGain),
+          realizedGain: moneyDto(period.realizedGain),
+          cashInvestmentIncome: moneyDto(period.cashInvestmentIncome),
+          accountValues: Object.entries(period.accountValues).sort(([left], [right]) => left.localeCompare(right)).map(([accountId, value]) => ({ accountId, value: moneyDto(value) })),
+          traceIds: Object.freeze([...new Set((period.traceRefs ?? []).map((ref) => ref.traceId))].sort()),
+        })),
+        diagnostics: result.diagnostics,
+      });
+    } catch (error) {
+      if (error instanceof ValidationError)
+        return unavailableForecast(request, error.issues.map((value) => value.message).join("; "), error.issues);
+      return unavailableForecast(request, "Investment model could not be translated safely.");
+    }
+  }
   if (request.scope === "liabilities") {
     if (!request.executionOwnerId)
       return unavailableForecast(request, "Liability forecast requires an explicit executionOwnerId.", [

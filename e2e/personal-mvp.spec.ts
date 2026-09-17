@@ -162,6 +162,39 @@ test("Debt execution settings are session-only and clear on model import", async
   await expect(page.getByLabel("Payment anchor")).toHaveValue("");
 });
 
+test("Investments execute only after explicit owner selection and owner state clears on import", async ({
+  page,
+}) => {
+  await loadExample(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByLabel("Forecast scope").selectOption("investments");
+  await page
+    .getByLabel("Execution owner")
+    .selectOption({ label: "Taylor Example" });
+  await page.getByRole("button", { name: "Run investments forecast" }).click();
+  await expect(
+    page.getByRole("table", { name: "Detailed investment forecast" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Forecast unavailable for this model"),
+  ).toHaveCount(0);
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Import / Export", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Export model", exact: true }).click();
+  const download = await downloadPromise;
+  await page
+    .locator('input[type="file"]')
+    .setInputFiles((await download.path())!);
+  await page.getByRole("button", { name: "Import into session" }).click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByLabel("Forecast scope").selectOption("investments");
+  await expect(page.getByLabel("Execution owner")).toHaveValue("");
+});
+
 test("model portability and deterministic what-if comparison stay explicit", async ({
   page,
 }) => {
