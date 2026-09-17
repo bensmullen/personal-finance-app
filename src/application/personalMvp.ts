@@ -229,6 +229,7 @@ export interface ForecastRequest {
   readonly investmentTransferInstructions?: readonly InvestmentTransferExecutionInstruction[];
   readonly investmentPurchaseInstructions?: readonly InvestmentPurchaseExecutionInstruction[];
   readonly scenarioId?: string;
+  readonly retirementBindings?: readonly RetirementTerminationBinding[];
 }
 export interface PersonalSessionSettings {
   readonly baseCurrency: string;
@@ -982,6 +983,7 @@ export const runPersonalForecast = (
       ...(request.scenarioId === undefined
         ? {}
         : { scenarioId: request.scenarioId }),
+      ...(request.retirementBindings === undefined ? {} : { retirementBindings: request.retirementBindings }),
     });
     if (compilation.status !== "compiled") {
       const message = compilation.diagnostics
@@ -1102,6 +1104,7 @@ export const comparePersonalScenarios = (
     let base: Parameters<typeof compileExecutableScenario>[1];
     let comparison: ScenarioComparisonResult;
     let executionMonths: number;
+    let compilerCapabilityDiagnostics: readonly CapabilityDiagnostic[] = Object.freeze([]);
     const horizon = {
       start: iso(request.simulationStart),
       end: iso(request.simulationEnd),
@@ -1127,9 +1130,11 @@ export const comparePersonalScenarios = (
         ...comparisonRequest.alternatives.map((item) => item.scenarioId),
       ]);
       const alternatives = comparisonRequest.alternatives.map((alternative) => {
+        const normalizedAlternative = alternative.baseScenarioId === undefined
+          ? { ...alternative, baseScenarioId: scenarioIdentity }
+          : alternative;
         if (
-          alternative.baseScenarioId === undefined ||
-          !availableParents.has(alternative.baseScenarioId)
+          !availableParents.has(normalizedAlternative.baseScenarioId!)
         )
           return {
             status: "unsupported" as const,
@@ -1144,7 +1149,7 @@ export const comparePersonalScenarios = (
               ),
             ]),
           };
-        return compileExecutableScenario(draft, base, horizon, alternative);
+        return compileExecutableScenario(draft, base, horizon, normalizedAlternative);
       });
       const failed = alternatives.find((item) => item.status !== "compiled");
       return (
@@ -1274,6 +1279,7 @@ export const comparePersonalScenarios = (
         compiled: compiled.value,
         compilerRequest,
       };
+      compilerCapabilityDiagnostics = compiled.value.capabilityDiagnostics;
       executionMonths = compiled.value.executionMonths;
       const catalog = compileCatalog(compiled.value.scenarioIdentity);
       if (catalog.status !== "compiled")
@@ -1343,7 +1349,7 @@ export const comparePersonalScenarios = (
               delta: metrics[preferredMetric]!.delta,
               metrics: Object.freeze(metrics),
               traceIds: Object.freeze(
-                alternativePoint.traceRefs.map((ref) => ref.traceId),
+                deltaPoint.traceRefs.map((ref) => ref.traceId),
               ),
               relatedDifferenceIds: deltaPoint.relatedDifferenceIds,
             };
@@ -1392,6 +1398,7 @@ export const comparePersonalScenarios = (
       appliedRuleDifferences: first.appliedRuleDifferences,
       alternatives,
       diagnostics: Object.freeze([
+        ...compilerCapabilityDiagnostics,
         ...comparison.baseline.diagnostics,
         ...comparison.alternatives.flatMap((item) => item.scenario.diagnostics),
       ]),
@@ -1423,22 +1430,11 @@ export const comparePersonalCashFlowPlans = (
   if (incomeId === undefined) return unavailable("Plan comparison requires an explicit Income target.", [capability("SCENARIO_TARGET_MISSING", "Plan comparison requires an explicit Income target.", "cash_flow_comparison", "Income")]);
   const income = incomes.find((item) => typeof item.income_id === "string" && item.income_id.toLowerCase() === incomeId.toLowerCase());
   if (!income) return unavailable(`Income ${incomeId} is outside the compiled scope.`, [capability("SCENARIO_TARGET_UNEXECUTABLE", `Income ${incomeId} is outside the compiled scope.`, "cash_flow_comparison", "Income", incomeId)]);
-  const root = entries(draft, "Scenario").find(
-    (item) => item.enabled === true && item.base_scenario_id == null,
-  );
-  const rootId =
-    typeof root?.scenario_id === "string"
-      ? root.scenario_id
-      : "f15c0000-0000-4000-8000-000000000001";
   return comparePersonalScenarios(draft, request, {
     scope: "cash_flow",
-    ...(typeof root?.scenario_id === "string"
-      ? { baselineScenarioId: root.scenario_id }
-      : {}),
     alternatives: [
       {
         scenarioId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
-        baseScenarioId: rootId,
         name: `Income grows ${annualIncomeGrowth}`,
         changes: [
           {

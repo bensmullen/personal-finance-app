@@ -220,7 +220,7 @@ test("model portability and deterministic what-if comparison stay explicit", asy
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   for (const starter of ["Retire earlier/later", "Earn more/less", "Spend more/less", "Change investment returns", "Pay debt faster", "Change funding behavior"])
     await expect(page.getByRole("heading", { name: starter })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Requires income-termination binding" })).toBeDisabled();
+  await page.getByLabel("Exact effective annual rate").fill("0.0500");
   await page.getByLabel("Income target").selectOption({ index: 1 });
   await page.getByRole("button", { name: "Compare income growth" }).click();
   await expect(page.getByText("Active scope: cash flow")).toBeVisible();

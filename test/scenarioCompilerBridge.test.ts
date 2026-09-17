@@ -55,6 +55,16 @@ describe("PR 19 compiler scenario bridge", () => {
       status: "unsupported",
       diagnostics: [{ code: "SCENARIO_CHILD_AS_BASE_UNSUPPORTED" }],
     });
+    const reversed = structuredClone(model) as unknown as Mutable;
+    reversed.objects.Scenario!.reverse();
+    expect(compileCashFlow(reversed as unknown as PersonalDraft, cashRequest)).toMatchObject({
+      status: "compiled",
+      value: { scenarioIdentity: rootId },
+    });
+    const malformedChild = mutate((draft) => draft.objects.Scenario!.push({
+      ...draft.objects.Scenario![0]!, scenario_id: childId, name: "Malformed child", base_scenario_id: rootId, stochastic: false, simulation_count: 2,
+    }));
+    expect(compileCashFlow(malformedChild, cashRequest)).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "SCENARIO_DETERMINISTIC_COUNT_INVALID" }] });
   });
 
   it("keeps synthetic-root compatibility and reports root ambiguity and bounds", () => {
@@ -89,6 +99,8 @@ describe("PR 19 compiler scenario bridge", () => {
       status: "unsupported",
       diagnostics: [{ code: "SCENARIO_BASE_AMBIGUOUS" }],
     });
+    const malformedRoot = mutate((draft) => { draft.objects.Scenario![0]!.stochastic = false; draft.objects.Scenario![0]!.simulation_count = 2; });
+    expect(compileCashFlow(malformedRoot, cashRequest)).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "SCENARIO_DETERMINISTIC_COUNT_INVALID" }] });
     expect(
       compileCashFlow(createSyntheticPersonalDraft(), {
         ...cashRequest,
@@ -164,8 +176,8 @@ describe("PR 19 compiler scenario bridge", () => {
         },
       ),
     ).toMatchObject({
-      status: "unsupported",
-      diagnostics: [{ code: "SCENARIO_ASSUMPTION_BINDING_MISMATCH" }],
+      status: "invalid_model",
+      diagnostics: [{ code: "SCENARIO_ASSUMPTION_MEMBERSHIP_INVALID" }],
     });
     const funding = compileExecutableScenario(
       createSyntheticPersonalDraft(),
@@ -239,6 +251,7 @@ describe("PR 19 compiler scenario bridge", () => {
       ];
     });
     const incomeId = "90000000-0000-4000-8000-000000000005";
+    const terminationEventId = "93000000-0000-4000-8000-000000000099";
     const missing = compileCashFlow(model, cashRequest);
     expect(missing.status).toBe("compiled");
     if (missing.status !== "compiled") return;
@@ -271,7 +284,7 @@ describe("PR 19 compiler scenario bridge", () => {
       retirementBindings: [
         {
           incomeId,
-          terminationEventId: eventId,
+          terminationEventId,
           canonicalEventId: eventId,
           baselineDate: "2026-03-01",
         },
@@ -291,7 +304,7 @@ describe("PR 19 compiler scenario bridge", () => {
           {
             kind: "retirement_date",
             incomeId,
-            targetEventId: eventId,
+              targetEventId: terminationEventId,
             baselineDate: "2026-03-01",
             newDate: "2026-02-01",
           },
@@ -302,7 +315,7 @@ describe("PR 19 compiler scenario bridge", () => {
     if (scenario.status === "compiled")
       expect(scenario.value.changes[0]).toMatchObject({
         kind: "retirement_date",
-        targetEventId: eventId,
+        targetEventId: terminationEventId,
         effectiveAt: "2026-02-01T00:00:00.000Z",
       });
   });

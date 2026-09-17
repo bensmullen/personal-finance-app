@@ -58,6 +58,8 @@ import {
   type PersonalSessionSettings,
   type PersistedPersonalModelState,
 } from "../src/application/personalMvp.js";
+import type { ScenarioChangeIntent } from "../src/application/compiler/scenarios.js";
+import type { RetirementTerminationBinding } from "../src/application/compiler/cashFlow.js";
 import {
   IndexedDbPersonalModelStore,
   isPersonalPersistenceEnabledOrigin,
@@ -575,10 +577,10 @@ export function PersonalFinanceApp() {
     };
     setForecast(runPersonalForecast(draft, request));
   };
-  const runComparison = (kind: "income_growth" | "expense_inflation", targetId: string) => {
+  const runComparison = (scope: "cash_flow" | "investments" | "liabilities", change: ScenarioChangeIntent, retirementBinding?: RetirementTerminationBinding) => {
     const resolved = resolvePersonalSessionSettings(
       sessionSettings,
-      "cash_flow",
+      scope,
     );
     if (!resolved.request) {
       setRunSettingsError(resolved.error ?? "Run settings are not valid.");
@@ -587,25 +589,18 @@ export function PersonalFinanceApp() {
       return;
     }
     setRunSettingsError("");
-    const root = objectEntries(draft, "Scenario").find(
-      (item) => item.enabled === true && item.base_scenario_id == null,
-    );
-    const rootId =
-      typeof root?.scenario_id === "string"
-        ? root.scenario_id
-        : "f15c0000-0000-4000-8000-000000000001";
+    const request = scope === "investments" ? { ...resolved.request, ...(investmentOwnerId ? { executionOwnerId: investmentOwnerId } : {}) }
+      : scope === "liabilities" ? { ...resolved.request, ...(liabilityConfig.ownerId ? { executionOwnerId: liabilityConfig.ownerId } : {}), liabilityExecutionProfiles: (Object.entries(liabilityConfig.profiles) as [string, LiabilitySessionProfile][]).map(([liabilityId, profile]) => ({ liabilityId, kind: "vs4_fixed_monthly_fully_amortizing" as const, paymentAnchor: profile.paymentAnchor, totalPayments: Number(profile.totalPayments), fundingAccountId: profile.fundingAccountId, settlementPriority: Number(profile.settlementPriority), openingContractStatus: "current" as const })) }
+      : { ...resolved.request, ...(retirementBinding === undefined ? {} : { retirementBindings: [retirementBinding] }) };
     setComparison(
-      comparePersonalScenarios(draft, resolved.request, {
-        scope: "cash_flow",
-        ...(typeof root?.scenario_id === "string"
-          ? { baselineScenarioId: root.scenario_id }
-          : {}),
+      comparePersonalScenarios(draft, request, {
+        scope,
+        ...(retirementBinding === undefined ? {} : { retirementBindings: [retirementBinding] }),
         alternatives: [
           {
             scenarioId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
-            baseScenarioId: rootId,
-            name: kind === "income_growth" ? "Income growth alternative" : "Spending growth alternative",
-            changes: kind === "income_growth" ? [{ kind, incomeId: targetId, annualRate: "0.05" }] : [{ kind, expenseId: targetId, annualRate: "0.05" }],
+            name: "What-if alternative",
+            changes: [change],
           },
         ],
       }),
@@ -791,7 +786,7 @@ export function PersonalFinanceApp() {
             <Advanced draft={draft} issues={issues} />
           )}
           {primary === "Plan" && subnav === "What If?" && (
-            <WhatIfStarter draft={draft} onCompare={runComparison} />
+            <WhatIfStarter draft={draft} investmentOwnerId={investmentOwnerId} liabilityConfig={liabilityConfig} onCompare={runComparison} />
           )}
           {EDITORS[subnav] && !(primary === "Net Worth" && subnav === "Debt") && (
             <EditorHub
@@ -1257,11 +1252,38 @@ function LiabilityExecutionControls({ draft, liabilityConfig, setLiabilityConfig
 function DebtExecutionPanel({ draft, liabilityConfig, setLiabilityConfig, run, forecast, error }: { draft: PersonalDraft; liabilityConfig: LiabilitySessionConfig; setLiabilityConfig: React.Dispatch<React.SetStateAction<LiabilitySessionConfig>>; run: () => void; forecast: PersonalForecastReadModel | undefined; error: string }) {
   return <><PageHead eyebrow="Net Worth · Debt" title="Debt schedule and funding" text="Edit canonical debt records, then provide explicit session-only execution terms for supported mortgages." /><LiabilityExecutionControls draft={draft} liabilityConfig={liabilityConfig} setLiabilityConfig={setLiabilityConfig} /><section className="panel"><button className="primary" onClick={run}>Run liability forecast</button>{error && <p className="field-error" role="alert">{error}</p>}{forecast?.scope === "liabilities" ? <ForecastVisual forecast={forecast} /> : <Empty text="Enter explicit execution configuration and run the liability forecast." />}</section></>;
 }
-function WhatIfStarter({ draft, onCompare }: { draft: PersonalDraft; onCompare: (kind: "income_growth" | "expense_inflation", targetId: string) => void }) {
+function WhatIfStarter({ draft, investmentOwnerId, liabilityConfig, onCompare }: { draft: PersonalDraft; investmentOwnerId: string; liabilityConfig: LiabilitySessionConfig; onCompare: (scope: "cash_flow" | "investments" | "liabilities", change: ScenarioChangeIntent, retirementBinding?: RetirementTerminationBinding) => void }) {
   const [incomeId, setIncomeId] = useState("");
   const [expenseId, setExpenseId] = useState("");
+  const [rate, setRate] = useState("0.05");
+  const [investmentId, setInvestmentId] = useState("");
+  const [retirementIncomeId, setRetirementIncomeId] = useState("");
+  const [retirementEventId, setRetirementEventId] = useState("");
+  const [baselineDate, setBaselineDate] = useState("");
+  const [retirementDate, setRetirementDate] = useState("");
+  const [liabilityId, setLiabilityId] = useState("");
+  const [extraAmount, setExtraAmount] = useState("");
+  const [extraDate, setExtraDate] = useState("");
+  const [extraFundingId, setExtraFundingId] = useState("");
+  const [fundingScope, setFundingScope] = useState<"expense" | "loan">("expense");
+  const [fundingTargetId, setFundingTargetId] = useState("");
+  const [fundingAccountIds, setFundingAccountIds] = useState<string[]>([]);
+  const [runtimeTerminationEventId] = useState(() => randomId());
+  const [runtimeExtraPaymentId] = useState(() => randomId());
   const incomes = objectEntries(draft, "Income");
   const expenses = objectEntries(draft, "Expense");
+  const investments = objectEntries(draft, "Investment");
+  const liabilities = objectEntries(draft, "Liability").filter((item) => item.liability_type === "mortgage");
+  const accounts = objectEntries(draft, "Account");
+  const retirementEvents = ((draft.objects as Record<string, readonly JsonObject[]>).Event ?? []).filter((item) => item.enabled === true && item.event_type === "retirement" && item.trigger_type === "scheduled");
+  const exactRate = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(rate);
+  const chosenEvent = retirementEvents.find((item) => item.event_id === retirementEventId);
+  const runRetirement = () => {
+    const runtimeEventId = runtimeTerminationEventId;
+    const baseline = typeof chosenEvent?.start_date === "string" ? chosenEvent.start_date : baselineDate;
+    const binding = { incomeId: retirementIncomeId, terminationEventId: runtimeEventId, baselineDate: baseline, ...(retirementEventId ? { canonicalEventId: retirementEventId } : {}) };
+    onCompare("cash_flow", { kind: "retirement_date", incomeId: retirementIncomeId, targetEventId: runtimeEventId, baselineDate: baseline, newDate: retirementDate }, binding);
+  };
   return (
     <>
       <PageHead
@@ -1272,13 +1294,15 @@ function WhatIfStarter({ draft, onCompare }: { draft: PersonalDraft; onCompare: 
       <section className="panel">
         <label>Income target<select value={incomeId} onChange={(event) => setIncomeId(event.target.value)}><option value="">Select an income</option>{incomes.map((income) => <option key={objectId("Income", income)} value={objectId("Income", income)}>{objectLabel("Income", income)}</option>)}</select></label>
         <label>Expense target<select value={expenseId} onChange={(event) => setExpenseId(event.target.value)}><option value="">Select an expense</option>{expenses.map((expense) => <option key={objectId("Expense", expense)} value={objectId("Expense", expense)}>{objectLabel("Expense", expense)}</option>)}</select></label>
+        <label>Exact effective annual rate<input aria-label="Exact effective annual rate" inputMode="decimal" value={rate} onChange={(event) => setRate(event.target.value)} /></label>
+        {!exactRate && <p className="field-error" role="alert">Enter an exact decimal rate, such as 0.05.</p>}
         <div className="object-grid">
-          <article className="object-card"><h2>Retire earlier/later</h2><p>Changes only the selected income stop date; it does not model other retirement consequences.</p><button disabled>Requires income-termination binding</button></article>
-          <article className="object-card"><h2>Earn more/less</h2><p>Replace one selected income&apos;s exact effective-annual growth rate.</p><button className="primary" disabled={!incomeId} onClick={() => onCompare("income_growth", incomeId)}>Compare income growth</button></article>
-          <article className="object-card"><h2>Spend more/less</h2><p>Replace one selected expense&apos;s exact effective-annual inflation rate.</p><button className="primary" disabled={!expenseId} onClick={() => onCompare("expense_inflation", expenseId)}>Compare spending growth</button></article>
-          <article className="object-card"><h2>Change investment returns</h2><p>Runs only the selected investment scope, not a household-wide projection.</p><button disabled>Requires investment execution configuration</button></article>
-          <article className="object-card"><h2>Pay debt faster</h2><p>Means an explicit extra-principal payment only; it does not refinance or recast the loan.</p><button disabled>Requires extra-principal payload</button></article>
-          <article className="object-card"><h2>Change funding behavior</h2><p>Requires explicitly ordered funding accounts and complete insufficient-funds behavior.</p><button disabled>Requires complete funding policy</button></article>
+          <article className="object-card"><h2>Retire earlier/later</h2><p>Changes only one executable income stop date.</p><select aria-label="Retirement income" value={retirementIncomeId} onChange={(event) => setRetirementIncomeId(event.target.value)}><option value="">Select income</option>{incomes.map((item) => <option key={objectId("Income", item)} value={objectId("Income", item)}>{objectLabel("Income", item)}</option>)}</select><select aria-label="Canonical retirement event" value={retirementEventId} onChange={(event) => { setRetirementEventId(event.target.value); const selected = retirementEvents.find((item) => item.event_id === event.target.value); if (typeof selected?.start_date === "string") setBaselineDate(selected.start_date); }}><option value="">Session-only explicit binding</option>{retirementEvents.map((item) => <option key={String(item.event_id)} value={String(item.event_id)}>{String(item.name ?? item.event_id)}</option>)}</select><input aria-label="Baseline retirement date" type="date" value={baselineDate} disabled={Boolean(retirementEventId)} onChange={(event) => setBaselineDate(event.target.value)} /><input aria-label="New retirement date" type="date" value={retirementDate} onChange={(event) => setRetirementDate(event.target.value)} /><button className="primary" disabled={!retirementIncomeId || !baselineDate || !retirementDate} onClick={runRetirement}>Compare retirement date</button></article>
+          <article className="object-card"><h2>Earn more/less</h2><p>Replace one selected income&apos;s exact effective-annual growth rate.</p><button className="primary" disabled={!incomeId || !exactRate} onClick={() => onCompare("cash_flow", { kind: "income_growth", incomeId, annualRate: rate })}>Compare income growth</button></article>
+          <article className="object-card"><h2>Spend more/less</h2><p>Replace one selected expense&apos;s exact effective-annual inflation rate.</p><button className="primary" disabled={!expenseId || !exactRate} onClick={() => onCompare("cash_flow", { kind: "expense_inflation", expenseId, annualRate: rate })}>Compare spending growth</button></article>
+          <article className="object-card"><h2>Change investment returns</h2><p>Runs only the selected investment scope, not a household-wide projection.</p><select aria-label="Investment target" value={investmentId} onChange={(event) => setInvestmentId(event.target.value)}><option value="">Select investment</option>{investments.map((item) => <option key={objectId("Investment", item)} value={objectId("Investment", item)}>{objectLabel("Investment", item)}</option>)}</select><button className="primary" disabled={!investmentId || !investmentOwnerId || !exactRate} onClick={() => onCompare("investments", { kind: "investment_return", investmentId, annualRate: rate })}>Compare investment return</button>{(!investmentOwnerId || investments.length === 0) && <p className="capability">{investments.length === 0 ? "No executable investment target exists." : "Select an investment execution owner first."}</p>}</article>
+          <article className="object-card"><h2>Pay debt faster</h2><p>Creates one explicit extra-principal payment; no refinance or recast.</p><select aria-label="Liability target" value={liabilityId} onChange={(event) => setLiabilityId(event.target.value)}><option value="">Select liability</option>{liabilities.map((item) => <option key={objectId("Liability", item)} value={objectId("Liability", item)}>{objectLabel("Liability", item)}</option>)}</select><input aria-label="Extra principal amount" inputMode="decimal" value={extraAmount} onChange={(event) => setExtraAmount(event.target.value)} /><input aria-label="Extra principal date" type="date" value={extraDate} onChange={(event) => setExtraDate(event.target.value)} /><select aria-label="Extra principal funding account" value={extraFundingId} onChange={(event) => setExtraFundingId(event.target.value)}><option value="">Select funding account</option>{accounts.map((item) => <option key={objectId("Account", item)} value={objectId("Account", item)}>{objectLabel("Account", item)}</option>)}</select><button className="primary" disabled={!liabilityId || !extraAmount || !extraDate || !extraFundingId || !liabilityConfig.ownerId || !liabilityConfig.profiles[liabilityId]} onClick={() => onCompare("liabilities", { kind: "extra_principal_payment", operation: "add", liabilityId, paymentId: runtimeExtraPaymentId, instruction: { id: runtimeExtraPaymentId, scheduledAt: `${extraDate}T00:00:00.000Z`, amount: extraAmount, fundingAccountId: extraFundingId } })}>Compare extra principal</button>{(!liabilityConfig.ownerId || !liabilityConfig.profiles[liabilityId]) && <p className="capability">Complete the debt execution profile first.</p>}</article>
+          <article className="object-card"><h2>Change funding behavior</h2><p>Choose a target and complete ordered cash-account sources.</p><select aria-label="Funding scope" value={fundingScope} onChange={(event) => { setFundingScope(event.target.value as "expense" | "loan"); setFundingTargetId(""); }}><option value="expense">Expense</option><option value="loan">Loan</option></select><select aria-label="Funding target" value={fundingTargetId} onChange={(event) => setFundingTargetId(event.target.value)}><option value="">Select target</option>{(fundingScope === "expense" ? expenses : liabilities).map((item) => <option key={objectId(fundingScope === "expense" ? "Expense" : "Liability", item)} value={objectId(fundingScope === "expense" ? "Expense" : "Liability", item)}>{objectLabel(fundingScope === "expense" ? "Expense" : "Liability", item)}</option>)}</select><select multiple aria-label="Ordered funding accounts" value={fundingAccountIds} onChange={(event) => setFundingAccountIds(Array.from(event.currentTarget.selectedOptions, (option) => option.value))}>{accounts.map((item) => <option key={objectId("Account", item)} value={objectId("Account", item)}>{objectLabel("Account", item)}</option>)}</select><button className="primary" disabled={!fundingTargetId || fundingAccountIds.length === 0 || (fundingScope === "loan" && (!liabilityConfig.ownerId || !liabilityConfig.profiles[fundingTargetId]))} onClick={() => onCompare(fundingScope === "expense" ? "cash_flow" : "liabilities", fundingScope === "expense" ? { kind: "expense_funding_policy", expenseId: fundingTargetId, policy: { id: "what-if-expense-funding", orderedAccountIds: fundingAccountIds, allowPartial: false, insufficientFundsBehavior: "unfunded" } } : { kind: "loan_funding_policy", liabilityId: fundingTargetId, policy: { id: "what-if-loan-funding", orderedAccountIds: fundingAccountIds, allowPartial: false, insufficientFundsBehavior: "unfunded" } })}>Compare funding policy</button></article>
         </div>
         <p className="muted">Comparisons are deterministic and scope-specific. Investment purchases mean modeled investment-position purchases only. Cross-slice household effects remain capability-gated.</p>
       </section>

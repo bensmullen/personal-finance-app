@@ -140,6 +140,13 @@ export const selectScenario = (
         id,
         "simulation_count",
       );
+    if (scenario.stochastic === false && (scenario.simulation_count ?? 1) !== 1)
+      return invalid(
+        "SCENARIO_DETERMINISTIC_COUNT_INVALID",
+        `Deterministic Scenario ${id} must have simulation_count 1.`,
+        id,
+        "simulation_count",
+      );
     const start = utcDate(scenario.start_date);
     const end = utcDate(scenario.end_date);
     if (!start || !end || start >= end)

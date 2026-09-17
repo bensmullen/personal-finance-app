@@ -652,16 +652,23 @@ export const compileCashFlow = (
   const selected = scenarioResult.value;
   const retirementByIncome = new Map<string, RetirementTerminationBinding>();
   const retirementEventIds = new Set<string>();
+  const authoredIdentityIds = new Set(Object.values(model.objects).flatMap((collection) => collection.flatMap((entry) =>
+    typeof entry === "object" && entry !== null && !Array.isArray(entry)
+      ? Object.entries(entry).filter(([key, value]) => key.endsWith("_id") && typeof value === "string" && UUID.test(value)).map(([, value]) => String(value).toLowerCase())
+      : [])));
   for (const binding of request.retirementBindings ?? []) {
     const incomeId = binding.incomeId.toLowerCase(); const eventId = binding.terminationEventId.toLowerCase();
     if (!UUID.test(binding.incomeId) || !UUID.test(binding.terminationEventId) || !utcDate(binding.baselineDate)) return invalidResult("RETIREMENT_BINDING_INVALID", "Retirement bindings require UUID income/event identities and a date-only baselineDate.", "retirement_binding", eventId);
     if (retirementByIncome.has(incomeId) || retirementEventIds.has(eventId)) return unsupportedResult("RETIREMENT_BINDING_AMBIGUOUS", "Each retirement binding must identify one distinct Income and termination event.", "retirement_binding", eventId);
     if (!objects(model, "Income").some((item) => canonicalId(item, "income_id") === incomeId)) return invalidResult("RETIREMENT_BINDING_INCOME_NOT_FOUND", `Retirement binding Income ${incomeId} does not resolve.`, "Income", incomeId);
+    if (authoredIdentityIds.has(eventId)) return invalidResult("RETIREMENT_BINDING_ID_COLLISION", `Runtime termination Event ${eventId} must not collide with an authored canonical identity.`, "retirement_binding", eventId);
     if (binding.canonicalEventId !== undefined) {
       const canonicalEventId = binding.canonicalEventId.toLowerCase(); const event = objects(model, "Event").find((item) => canonicalId(item, "event_id") === canonicalEventId);
       if (!event) return invalidResult("RETIREMENT_BINDING_EVENT_NOT_FOUND", `Retirement Event ${canonicalEventId} does not resolve.`, "Event", canonicalEventId);
       const listed = Array.isArray(selected.object?.event_ids) && (selected.object!.event_ids as readonly unknown[]).some((value) => typeof value === "string" && value.toLowerCase() === canonicalEventId);
-      if (event.enabled !== true || event.event_type !== "retirement" || event.trigger_type !== "scheduled" || event.probability_model_id != null || String(event.scenario_id).toLowerCase() !== selected.id || !listed || event.start_date !== binding.baselineDate) return unsupportedResult("RETIREMENT_BINDING_MISMATCH", `Event ${canonicalEventId} is not an enabled deterministic scheduled retirement Event in the selected root Scenario at ${binding.baselineDate}.`, "Event", canonicalEventId);
+      if (event.enabled !== true || event.event_type !== "retirement" || event.trigger_type !== "scheduled" || String(event.scenario_id).toLowerCase() !== selected.id || !listed || event.start_date !== binding.baselineDate) return unsupportedResult("RETIREMENT_BINDING_MISMATCH", `Event ${canonicalEventId} is not an enabled scheduled retirement Event in the selected root Scenario at ${binding.baselineDate}.`, "Event", canonicalEventId);
+      if (event.probability_model_id != null || event.trigger_condition != null || (Array.isArray(event.effect_ids) && event.effect_ids.length > 0) || (Array.isArray(event.dependencies) && event.dependencies.length > 0) || event.duration_days != null || event.end_date != null || (event.precedence != null && event.precedence !== 0))
+        return unsupportedResult("RETIREMENT_BINDING_EVENT_SEMANTICS_UNSUPPORTED", `Retirement Event ${canonicalEventId} contains semantics the income-termination binding cannot execute.`, "Event", canonicalEventId);
     }
     retirementByIncome.set(incomeId, Object.freeze({ ...binding, incomeId, terminationEventId: eventId })); retirementEventIds.add(eventId);
   }
@@ -817,6 +824,9 @@ export const compileCashFlow = (
   const expenses = allExpenses.filter((stream) =>
     ownerInScope(stream.owner_id, scope),
   );
+  for (const incomeId of retirementByIncome.keys())
+    if (!incomes.some((income) => canonicalId(income, "income_id") === incomeId))
+      return unsupportedResult("RETIREMENT_BINDING_TARGET_UNEXECUTABLE", `Retirement binding Income ${incomeId} is outside the executable VS2 scope.`, "Income", incomeId);
   /** Structural validation precedes capability gates so stream order is immaterial. */
   const validateInScopeStreams = (
     type: "Income" | "Expense",
