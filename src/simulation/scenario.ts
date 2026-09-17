@@ -9,6 +9,7 @@ import { instant, subtractMilliseconds, utcMonthDifference, utcMonthlyOccurrence
 import { createFundingPolicy, type FundingPolicy } from "../funding/index.js";
 import type { Money, Rate } from "../values/index.js";
 import { canonicalSerialize, createRunContext, type RunContext, type RunId, type RunMetadata } from "./run.js";
+import type { PrimitiveRuntimeStateStore } from "./period.js";
 import { runVerticalSlice2, type EventId, type ExpenseId, type IncomeId, type RecurringExpenseStream, type RecurringIncomeStream, type ScheduledCashFlowEvent, type VerticalSlice2Input, type VerticalSlice2PeriodResult, type VerticalSlice2RunResult } from "./verticalSlice2.js";
 import { runVerticalSlice3, type DeterministicPositionReturn, type InvestmentFeeId, type InvestmentPurchase, type PurchaseId, type VerticalSlice3Input, type VerticalSlice3PeriodResult, type VerticalSlice3RunResult } from "./verticalSlice3.js";
 import { runVerticalSlice4, type ExtraPrincipalPayment, type ExtraPrincipalPaymentId, type LoanContractId, type VerticalSlice4Input, type VerticalSlice4PeriodResult, type VerticalSlice4RunResult } from "./verticalSlice4.js";
@@ -323,6 +324,7 @@ export interface ScenarioComparisonRequest<Input> {
   readonly input: Input;
   readonly months?: number;
   readonly realizationCount?: number;
+  readonly primitiveState?: PrimitiveRuntimeStateStore;
 }
 
 const idsFromRefs = (refs: readonly CalculationTraceRef[]): { rules: FinancialRuleId[]; assumptions: AssumptionId[]; events: ScenarioEventId[] } => ({
@@ -376,7 +378,7 @@ const subtractSeries = (baseline: ScenarioSeries, alternative: ScenarioSeries, d
   return Object.freeze({ deltas: Object.freeze(deltas), ...(count === 0 ? {} : { comparedThrough: baseline.points[count - 1]!.period.end }) });
 };
 
-const compare = <Input, PeriodResult extends AnyPeriodResult>(request: ScenarioComparisonRequest<Input>, apply: (input: Input, resolved: ResolvedScenario, context: ScenarioRunContextTemplate) => Input, run: (args: { runContext: RunContext; openingState: AuthoritativeState; input: Input; months?: number }) => AnyRunResult, metric: Metrics<PeriodResult>): ScenarioComparisonResult => {
+const compare = <Input, PeriodResult extends AnyPeriodResult>(request: ScenarioComparisonRequest<Input>, apply: (input: Input, resolved: ResolvedScenario, context: ScenarioRunContextTemplate) => Input, run: (args: { runContext: RunContext; openingState: AuthoritativeState; input: Input; months?: number; primitiveState?: PrimitiveRuntimeStateStore }) => AnyRunResult, metric: Metrics<PeriodResult>): ScenarioComparisonResult => {
   const requested = request.realizationCount ?? 1;
   const baselineResolved = resolveScenario(request.scenarios, request.baselineScenarioId, requested);
   if (baselineResolved.scenario.baseScenarioId !== undefined) scenarioFailure(issueCodes.scenarioComparisonIncompatible, "Comparison baseline must be a root scenario", "baselineScenarioId", [request.baselineScenarioId]);
@@ -386,7 +388,7 @@ const compare = <Input, PeriodResult extends AnyPeriodResult>(request: ScenarioC
   if (new Set(ids).size !== ids.length) scenarioFailure(issueCodes.scenarioDefinitionInvalid, "Each compared scenario requires a distinct run ID", "runIds");
   const execute = (resolved: ResolvedScenario, input: Input): ScenarioSeries => {
     const runContext = createRunContext({ ...request.runContext, runId: request.runIds[resolved.scenario.scenarioId]!, scenarioId: resolved.scenario.scenarioId });
-    return series(resolved.scenario.scenarioId, run({ runContext, openingState: request.openingState, input, ...(request.months === undefined ? {} : { months: request.months }) }), metric);
+    return series(resolved.scenario.scenarioId, run({ runContext, openingState: request.openingState, input, ...(request.months === undefined ? {} : { months: request.months }), ...(request.primitiveState === undefined ? {} : { primitiveState: request.primitiveState }) }), metric);
   };
   const baselineInput = apply(request.input, baselineResolved, request.runContext);
   const baseline = execute(baselineResolved, baselineInput);

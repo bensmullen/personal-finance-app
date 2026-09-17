@@ -47,7 +47,7 @@ import {
   validateGenericPrimitiveInstance,
   type CanonicalObject,
 } from "./shared.js";
-import { selectScenario } from "./cashFlow.js";
+import { selectScenario } from "./scenarioSelection.js";
 import type { CompileResult } from "./types.js";
 
 export type InvestmentOperationSchedule =
@@ -89,6 +89,7 @@ export interface InvestmentCompilerRequest {
   readonly executionOwnerId: string;
   readonly transferInstructions: readonly InvestmentTransferExecutionInstruction[];
   readonly purchaseInstructions: readonly InvestmentPurchaseExecutionInstruction[];
+  readonly scenarioId?: string;
 }
 
 export interface CompiledInvestments {
@@ -97,6 +98,12 @@ export interface CompiledInvestments {
   readonly primitiveState: PrimitiveRuntimeStateStore;
   readonly scenarioIdentity: string;
   readonly executionMonths: number;
+  readonly scenarioBindings: Readonly<{
+    positionIds: Readonly<Record<string, string>>;
+    purchaseIds: Readonly<Record<string, string>>;
+    feeIds: Readonly<Record<string, string>>;
+    accountIds: Readonly<Record<string, string>>;
+  }>;
 }
 
 const GENERATED_PREFIX = "f17c0000-0000-4000-8001-";
@@ -948,6 +955,9 @@ export const compileInvestments = (
   const scenario = selectScenario(model, {
     capabilityName: CAPABILITY,
     executionLabel: "Investment",
+    ...(request.scenarioId === undefined ? {} : { scenarioId: request.scenarioId }),
+    simulationStart: request.simulationStart,
+    simulationEnd: request.simulationEnd,
   });
   if (scenario.status !== "compiled") return scenario;
 
@@ -1594,28 +1604,16 @@ export const compileInvestments = (
     }
   }
 
+  const input: VerticalSlice3Input = Object.freeze({
+    householdId: domainId("household", household.value.householdId), ownerId: domainId("person", ownerId), baseCurrency: currency,
+    valuationAccountingPolicy: "economic_only", ruleCatalog: Object.freeze([]),
+    transfers: Object.freeze(transfers.sort((a, b) => a.id.localeCompare(b.id))), purchases: Object.freeze(purchases.sort((a, b) => a.id.localeCompare(b.id))), fees: Object.freeze([]),
+    returns: Object.freeze(returns.sort((a, b) => a.targetPositionId.localeCompare(b.targetPositionId))),
+  });
   return {
     status: "compiled",
     value: Object.freeze({
-      input: Object.freeze({
-        householdId: domainId("household", household.value.householdId),
-        ownerId: domainId("person", ownerId),
-        baseCurrency: currency,
-        valuationAccountingPolicy: "economic_only",
-        ruleCatalog: Object.freeze([]),
-        transfers: Object.freeze(
-          transfers.sort((a, b) => a.id.localeCompare(b.id)),
-        ),
-        purchases: Object.freeze(
-          purchases.sort((a, b) => a.id.localeCompare(b.id)),
-        ),
-        fees: Object.freeze([]),
-        returns: Object.freeze(
-          returns.sort((a, b) =>
-            a.targetPositionId.localeCompare(b.targetPositionId),
-          ),
-        ),
-      }),
+      input,
       openingState: createAuthoritativeState({
         accounts: accountStates,
         positions,
@@ -1623,6 +1621,12 @@ export const compileInvestments = (
       primitiveState: createPrimitiveRuntimeStateStore(),
       scenarioIdentity: scenario.value.id,
       executionMonths,
+      scenarioBindings: Object.freeze({
+        positionIds: Object.freeze(Object.fromEntries(input.returns.map((item) => [String(item.targetPositionId), String(item.targetPositionId)]))),
+        purchaseIds: Object.freeze(Object.fromEntries(input.purchases.map((item) => [String(item.id), String(item.id)]))),
+        feeIds: Object.freeze(Object.fromEntries((input.fees ?? []).map((item) => [String(item.id), String(item.id)]))),
+        accountIds: Object.freeze(Object.fromEntries(Object.keys(accountStates).map((id) => [id, id]))),
+      }),
     }),
     diagnostics: Object.freeze([]),
   };

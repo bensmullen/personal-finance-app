@@ -218,7 +218,11 @@ test("model portability and deterministic what-if comparison stay explicit", asy
 
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "What If?", exact: true }).click();
-  await page.getByRole("button", { name: "Compare this plan" }).click();
+  for (const starter of ["Retire earlier/later", "Earn more/less", "Spend more/less", "Change investment returns", "Pay debt faster", "Change funding behavior"])
+    await expect(page.getByRole("heading", { name: starter })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Requires income-termination binding" })).toBeDisabled();
+  await page.getByLabel("Income target").selectOption({ index: 1 });
+  await page.getByRole("button", { name: "Compare income growth" }).click();
   await expect(page.getByText("Active scope: cash flow")).toBeVisible();
   await expect(
     page.getByRole("table", { name: /Current plan, alternative/ }),
@@ -248,7 +252,8 @@ test("manual local save survives reload and explicit load without restoring exec
   await page.getByRole("button", { name: "Run investments forecast" }).click();
   await expect(page.getByRole("table", { name: "Detailed investment forecast" })).toBeVisible();
   await page.getByRole("button", { name: "What If?", exact: true }).click();
-  await page.getByRole("button", { name: "Compare this plan" }).click();
+  await page.getByLabel("Income target").selectOption({ index: 1 });
+  await page.getByRole("button", { name: "Compare income growth" }).click();
   await expect(page.getByRole("table", { name: /Current plan, alternative/ })).toBeVisible();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Canonical model saved to this browser")).toBeVisible();

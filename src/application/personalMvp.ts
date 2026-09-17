@@ -7,12 +7,13 @@ import {
   type PortableModelObjects,
 } from "../model/modelVersion.js";
 import { CURRENT_RUN_VERSIONS } from "../model/version.js";
-import {
-  assumptionId,
-  scenarioId as canonicalScenarioId,
-} from "../model/scenario.js";
 import { createRunContext, runId, scenarioId } from "../simulation/run.js";
-import { compareVerticalSlice2Scenarios } from "../simulation/scenario.js";
+import {
+  compareVerticalSlice2Scenarios,
+  compareVerticalSlice3Scenarios,
+  compareVerticalSlice4Scenarios,
+  type ScenarioComparisonResult,
+} from "../simulation/scenario.js";
 import { runVerticalSlice2 } from "../simulation/verticalSlice2.js";
 import { runVerticalSlice3 } from "../simulation/verticalSlice3.js";
 import { runVerticalSlice4 } from "../simulation/verticalSlice4.js";
@@ -26,21 +27,22 @@ import {
 import {
   Currency,
   Money,
-  Rate,
   RoundingPolicy,
   formatMoney,
-  rateConvention,
 } from "../values/index.js";
 import {
   compileCashFlow,
   compileCurrentPosition,
   compileInvestments,
   compileLiabilities,
+  compileExecutableScenario,
   capability,
   type CapabilityDiagnostic,
   type InvestmentPurchaseExecutionInstruction,
   type InvestmentTransferExecutionInstruction,
   type LiabilityExecutionProfile,
+  type ExecutableScenarioIntent,
+  type RetirementTerminationBinding,
 } from "./compiler/index.js";
 import { PERSONAL_EDITOR_DESCRIPTOR } from "./editorDescriptor.generated.js";
 export {
@@ -206,7 +208,11 @@ export interface InvestmentPersonalForecastReadModel extends ForecastBoundary {
   readonly status: "completed" | "incomplete";
   readonly points: readonly InvestmentForecastPoint[];
 }
-export type PersonalForecastReadModel = UnavailablePersonalForecastReadModel | CashPersonalForecastReadModel | LiabilityPersonalForecastReadModel | InvestmentPersonalForecastReadModel;
+export type PersonalForecastReadModel =
+  | UnavailablePersonalForecastReadModel
+  | CashPersonalForecastReadModel
+  | LiabilityPersonalForecastReadModel
+  | InvestmentPersonalForecastReadModel;
 export interface ForecastRequest {
   readonly scope: "cash_flow" | "investments" | "liabilities";
   readonly baseCurrency: string;
@@ -222,6 +228,7 @@ export interface ForecastRequest {
   readonly liabilityExecutionProfiles?: readonly LiabilityExecutionProfile[];
   readonly investmentTransferInstructions?: readonly InvestmentTransferExecutionInstruction[];
   readonly investmentPurchaseInstructions?: readonly InvestmentPurchaseExecutionInstruction[];
+  readonly scenarioId?: string;
 }
 export interface PersonalSessionSettings {
   readonly baseCurrency: string;
@@ -262,24 +269,62 @@ export interface ScenarioComparisonPoint {
   readonly delta: MoneyReadModel;
   readonly traceIds: readonly string[];
   readonly relatedDifferenceIds: readonly string[];
+  readonly metrics?: Readonly<
+    Record<
+      string,
+      Readonly<{
+        baseline: MoneyReadModel;
+        alternative: MoneyReadModel;
+        delta: MoneyReadModel;
+      }>
+    >
+  >;
 }
 export interface PersonalScenarioComparisonReadModel {
-  readonly status: "completed" | "unavailable";
+  readonly status: "completed" | "incomplete" | "unavailable";
   readonly message?: string;
-  readonly scope: "cash_flow";
+  readonly scope: "cash_flow" | "investments" | "liabilities";
   readonly baselineName: string;
   readonly alternativeName: string;
   readonly points: readonly ScenarioComparisonPoint[];
   readonly configurationDifferences: readonly Readonly<{
     target: string;
     kind: string;
+    scenarioLayerId: string;
     assumptionIds: readonly string[];
+    eventIds: readonly string[];
+    configuredRuleIds: readonly string[];
+    before: unknown;
+    after: unknown;
   }>[];
   readonly appliedRuleDifferences: Readonly<{
     baselineOnly: readonly string[];
     alternativeOnly: readonly string[];
   }>;
   readonly diagnostics: readonly (ValidationIssue | CapabilityDiagnostic)[];
+  readonly baselineScenarioId?: string;
+  readonly alternativeScenarioId?: string;
+  readonly comparedThrough?: string;
+  readonly alternatives?: readonly Readonly<{
+    scenarioId: string;
+    name: string;
+    status: "completed" | "incomplete";
+    comparedThrough?: string;
+    points: readonly ScenarioComparisonPoint[];
+    configurationDifferences: readonly Readonly<Record<string, unknown>>[];
+    appliedRuleDifferences: Readonly<{
+      baselineOnly: readonly string[];
+      alternativeOnly: readonly string[];
+    }>;
+  }>[];
+}
+
+export interface PersonalScenarioComparisonRequest {
+  readonly scope: "cash_flow" | "investments" | "liabilities";
+  readonly baselineScenarioId?: string;
+  readonly baselineName?: string;
+  readonly alternatives: readonly ExecutableScenarioIntent[];
+  readonly retirementBindings?: readonly RetirementTerminationBinding[];
 }
 
 const asObject = (value: JsonValue | undefined): JsonObject | undefined =>
@@ -692,9 +737,20 @@ export const runPersonalForecast = (
 ): PersonalForecastReadModel => {
   if (request.scope === "investments") {
     if (!request.executionOwnerId)
-      return unavailableForecast(request, "Investment forecast requires an explicit executionOwnerId.", [
-        capability("INVESTMENT_EXECUTION_OWNER_REQUIRED", "Investment forecast requires an explicit Household-member execution owner.", "investment_forecast", "InvestmentCompilerRequest", undefined, "executionOwnerId"),
-      ]);
+      return unavailableForecast(
+        request,
+        "Investment forecast requires an explicit executionOwnerId.",
+        [
+          capability(
+            "INVESTMENT_EXECUTION_OWNER_REQUIRED",
+            "Investment forecast requires an explicit Household-member execution owner.",
+            "investment_forecast",
+            "InvestmentCompilerRequest",
+            undefined,
+            "executionOwnerId",
+          ),
+        ],
+      );
     try {
       const compilation = compileInvestments(draft, {
         baseCurrency: request.baseCurrency,
@@ -705,9 +761,16 @@ export const runPersonalForecast = (
         executionOwnerId: request.executionOwnerId,
         transferInstructions: request.investmentTransferInstructions ?? [],
         purchaseInstructions: request.investmentPurchaseInstructions ?? [],
+        ...(request.scenarioId === undefined
+          ? {}
+          : { scenarioId: request.scenarioId }),
       });
       if (compilation.status !== "compiled")
-        return unavailableForecast(request, compilation.diagnostics.map((value) => value.message).join("; "), compilation.diagnostics);
+        return unavailableForecast(
+          request,
+          compilation.diagnostics.map((value) => value.message).join("; "),
+          compilation.diagnostics,
+        );
       const compiled = compilation.value;
       const runContext = createRunContext({
         runId: runId(cryptoSafeRunId(draft.modelId)),
@@ -718,7 +781,13 @@ export const runPersonalForecast = (
         simulationEnd: iso(request.simulationEnd),
         baseCurrency: Currency.of(request.baseCurrency),
       });
-      const result = runVerticalSlice3({ runContext, input: compiled.input, openingState: compiled.openingState, primitiveState: compiled.primitiveState, months: compiled.executionMonths });
+      const result = runVerticalSlice3({
+        runContext,
+        input: compiled.input,
+        openingState: compiled.openingState,
+        primitiveState: compiled.primitiveState,
+        months: compiled.executionMonths,
+      });
       return deepFreeze({
         ...forecastBoundary(request),
         scope: "investments" as const,
@@ -733,22 +802,49 @@ export const runPersonalForecast = (
           unrealizedGain: moneyDto(period.unrealizedGain),
           realizedGain: moneyDto(period.realizedGain),
           cashInvestmentIncome: moneyDto(period.cashInvestmentIncome),
-          accountValues: Object.entries(period.accountValues).sort(([left], [right]) => left.localeCompare(right)).map(([accountId, value]) => ({ accountId, value: moneyDto(value) })),
-          traceIds: Object.freeze([...new Set((period.traceRefs ?? []).map((ref) => ref.traceId))].sort()),
+          accountValues: Object.entries(period.accountValues)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([accountId, value]) => ({
+              accountId,
+              value: moneyDto(value),
+            })),
+          traceIds: Object.freeze(
+            [
+              ...new Set((period.traceRefs ?? []).map((ref) => ref.traceId)),
+            ].sort(),
+          ),
         })),
         diagnostics: result.diagnostics,
       });
     } catch (error) {
       if (error instanceof ValidationError)
-        return unavailableForecast(request, error.issues.map((value) => value.message).join("; "), error.issues);
-      return unavailableForecast(request, "Investment model could not be translated safely.");
+        return unavailableForecast(
+          request,
+          error.issues.map((value) => value.message).join("; "),
+          error.issues,
+        );
+      return unavailableForecast(
+        request,
+        "Investment model could not be translated safely.",
+      );
     }
   }
   if (request.scope === "liabilities") {
     if (!request.executionOwnerId)
-      return unavailableForecast(request, "Liability forecast requires an explicit executionOwnerId.", [
-        capability("LIABILITY_EXECUTION_OWNER_REQUIRED", "Liability forecast requires an explicit Household-member execution owner.", "liability_forecast", "LiabilityExecutionProfile", undefined, "executionOwnerId"),
-      ]);
+      return unavailableForecast(
+        request,
+        "Liability forecast requires an explicit executionOwnerId.",
+        [
+          capability(
+            "LIABILITY_EXECUTION_OWNER_REQUIRED",
+            "Liability forecast requires an explicit Household-member execution owner.",
+            "liability_forecast",
+            "LiabilityExecutionProfile",
+            undefined,
+            "executionOwnerId",
+          ),
+        ],
+      );
     try {
       const compilation = compileLiabilities(draft, {
         baseCurrency: request.baseCurrency,
@@ -758,9 +854,16 @@ export const runPersonalForecast = (
         months: request.months,
         executionOwnerId: request.executionOwnerId,
         executionProfiles: request.liabilityExecutionProfiles ?? [],
+        ...(request.scenarioId === undefined
+          ? {}
+          : { scenarioId: request.scenarioId }),
       });
       if (compilation.status !== "compiled")
-        return unavailableForecast(request, compilation.diagnostics.map((value) => value.message).join("; "), compilation.diagnostics);
+        return unavailableForecast(
+          request,
+          compilation.diagnostics.map((value) => value.message).join("; "),
+          compilation.diagnostics,
+        );
       const compiled = compilation.value;
       if (compiled.input.loans.length === 0)
         return deepFreeze({
@@ -796,7 +899,9 @@ export const runPersonalForecast = (
       const occurrences = result.periods.flatMap((period) =>
         period.liabilities.map((value) => {
           return {
-            liabilityId: compiled.input.loans.find((loan) => loan.id === value.loanId)!.principalLiabilityId,
+            liabilityId: compiled.input.loans.find(
+              (loan) => loan.id === value.loanId,
+            )!.principalLiabilityId,
             loanId: value.loanId,
             periodStart: period.period.start,
             periodEnd: period.period.end,
@@ -847,12 +952,22 @@ export const runPersonalForecast = (
         })),
         liabilityPayoffs: payoffs,
         inactiveLiabilityIds: compiled.inactiveLiabilityIds,
-        diagnostics: Object.freeze([...compiled.capabilityDiagnostics, ...result.diagnostics]),
+        diagnostics: Object.freeze([
+          ...compiled.capabilityDiagnostics,
+          ...result.diagnostics,
+        ]),
       });
     } catch (error) {
       if (error instanceof ValidationError)
-        return unavailableForecast(request, error.issues.map((value) => value.message).join("; "), error.issues);
-      return unavailableForecast(request, "Liability model could not be translated safely.");
+        return unavailableForecast(
+          request,
+          error.issues.map((value) => value.message).join("; "),
+          error.issues,
+        );
+      return unavailableForecast(
+        request,
+        "Liability model could not be translated safely.",
+      );
     }
   }
   try {
@@ -864,6 +979,9 @@ export const runPersonalForecast = (
       simulationEnd: request.simulationEnd,
       sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
       months: request.months,
+      ...(request.scenarioId === undefined
+        ? {}
+        : { scenarioId: request.scenarioId }),
     });
     if (compilation.status !== "compiled") {
       const message = compilation.diagnostics
@@ -940,11 +1058,11 @@ export const runPersonalForecast = (
 
 const cryptoSafeRunId = (modelId: string) => modelId;
 
-/** Runs a deterministic VS2 comparison; it never combines independent slices. */
-export const comparePersonalCashFlowPlans = (
+/** Generic, scope-specific scenario comparison. It never composes slice results. */
+export const comparePersonalScenarios = (
   draft: PersonalDraft,
   request: ForecastRequest,
-  annualIncomeGrowth: string,
+  comparisonRequest: PersonalScenarioComparisonRequest,
 ): PersonalScenarioComparisonReadModel => {
   const unavailable = (
     message: string,
@@ -953,149 +1071,385 @@ export const comparePersonalCashFlowPlans = (
     deepFreeze({
       status: "unavailable",
       message,
-      scope: "cash_flow",
-      baselineName: "Current plan",
-      alternativeName: "Income grows 5%",
+      scope: comparisonRequest.scope,
+      baselineName: comparisonRequest.baselineName ?? "Current plan",
+      alternativeName: comparisonRequest.alternatives[0]?.name ?? "Alternative",
       points: [],
       configurationDifferences: [],
       appliedRuleDifferences: { baselineOnly: [], alternativeOnly: [] },
       diagnostics,
     });
-  if (request.scope !== "cash_flow")
-    return unavailable(
-      "Plan comparison is available only for the selected cash-flow scope.",
-    );
-  if (!EXACT_DECIMAL.test(annualIncomeGrowth))
-    return unavailable("Income growth must be an exact decimal string.");
+  if (request.scope !== comparisonRequest.scope)
+    return unavailable("Forecast and comparison scopes must match.", [
+      capability(
+        "SCENARIO_SCOPE_UNSUPPORTED",
+        "Forecast and comparison scopes must match.",
+        "scenario_comparison",
+      ),
+    ]);
+  if (comparisonRequest.alternatives.length === 0)
+    return unavailable("At least one explicit alternative is required.");
   try {
-    const currency = Currency.of(request.baseCurrency);
-    const compilation = compileCashFlow(draft, {
+    const common = {
       baseCurrency: request.baseCurrency,
       simulationStart: request.simulationStart,
       simulationEnd: request.simulationEnd,
-      sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
       months: request.months,
-    });
-    if (compilation.status !== "compiled")
-      return unavailable(
-        compilation.diagnostics.map((value) => value.message).join("; "),
-        compilation.diagnostics,
-      );
-    const input = compilation.value.input;
-    if (input.incomes.length !== 1)
-      return unavailable(
-        `Plan comparison requires exactly one compiled Income target; found ${input.incomes.length}.`,
-        [
-          capability(
-            "COMPARISON_INCOME_TARGET_AMBIGUOUS",
-            `Plan comparison requires exactly one compiled Income target; found ${input.incomes.length}.`,
-            "cash_flow_comparison",
-            "Income",
-          ),
-        ],
-      );
-    const [comparisonIncome] = input.incomes;
-    const openingState = compilation.value.openingState;
-    const baselineId = canonicalScenarioId(
-      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
-    );
-    const alternativeId = canonicalScenarioId(
-      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
-    );
+      ...(comparisonRequest.baselineScenarioId === undefined
+        ? {}
+        : { scenarioId: comparisonRequest.baselineScenarioId }),
+    };
+    let base: Parameters<typeof compileExecutableScenario>[1];
+    let comparison: ScenarioComparisonResult;
+    let executionMonths: number;
     const horizon = {
       start: iso(request.simulationStart),
       end: iso(request.simulationEnd),
     };
-    const result = compareVerticalSlice2Scenarios({
-      scenarios: [
-        {
-          scenarioId: baselineId,
-          name: "Current plan",
-          horizon,
-          timestep: "monthly",
-          enabled: true,
-          stochastic: false,
-          simulationCount: 1,
-          changes: [],
-        },
-        {
-          scenarioId: alternativeId,
-          baseScenarioId: baselineId,
-          name: "Income grows 5%",
-          horizon,
-          timestep: "monthly",
-          enabled: true,
-          stochastic: false,
-          simulationCount: 1,
-          changes: [
-            {
-              kind: "income_growth",
-              incomeId: comparisonIncome!.id,
-              rate: Rate.fromDecimal(
-                annualIncomeGrowth,
-                rateConvention.effectiveAnnual(),
+    const currency = Currency.of(request.baseCurrency);
+    const context = {
+      asOf: iso(request.asOf),
+      dataCutoff: iso(request.dataCutoff),
+      simulationStart: horizon.start,
+      simulationEnd: horizon.end,
+      baseCurrency: currency,
+      versions: CURRENT_RUN_VERSIONS,
+    };
+    const compileCatalog = (scenarioIdentity: string) => {
+      const root = compileExecutableScenario(draft, base, horizon, {
+        scenarioId: scenarioIdentity,
+        name: comparisonRequest.baselineName ?? "Current plan",
+        changes: [],
+      });
+      if (root.status !== "compiled") return root;
+      const availableParents = new Set([
+        scenarioIdentity,
+        ...comparisonRequest.alternatives.map((item) => item.scenarioId),
+      ]);
+      const alternatives = comparisonRequest.alternatives.map((alternative) => {
+        if (
+          alternative.baseScenarioId === undefined ||
+          !availableParents.has(alternative.baseScenarioId)
+        )
+          return {
+            status: "unsupported" as const,
+            diagnostics: Object.freeze([
+              capability(
+                "SCENARIO_BASE_BINDING_MISMATCH",
+                `Alternative ${alternative.scenarioId} must explicitly inherit from the root or another supplied alternative.`,
+                `${comparisonRequest.scope}_scenario_comparison`,
+                "Scenario",
+                alternative.scenarioId,
+                "baseScenarioId",
               ),
-              assumptionId: assumptionId(
-                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
-              ),
-            },
+            ]),
+          };
+        return compileExecutableScenario(draft, base, horizon, alternative);
+      });
+      const failed = alternatives.find((item) => item.status !== "compiled");
+      return (
+        failed ?? {
+          status: "compiled" as const,
+          value: [
+            root.value,
+            ...alternatives.map((item) =>
+              item.status === "compiled" ? item.value : root.value,
+            ),
           ],
-        },
-      ],
-      baselineScenarioId: baselineId,
-      alternativeScenarioIds: [alternativeId],
-      runIds: {
-        [baselineId]: runId("cccccccc-cccc-4ccc-8ccc-ccccccccccc1"),
-        [alternativeId]: runId("cccccccc-cccc-4ccc-8ccc-ccccccccccc2"),
-      },
-      runContext: {
-        asOf: iso(request.asOf),
-        dataCutoff: iso(request.dataCutoff),
-        simulationStart: horizon.start,
-        simulationEnd: horizon.end,
-        baseCurrency: currency,
-        versions: CURRENT_RUN_VERSIONS,
-      },
-      openingState,
-      input,
-      months: compilation.value.executionMonths,
-    });
-    const alternative = result.alternatives[0]!;
-    const points = result.baseline.points.map((baseline, index) => {
-      const other = alternative.scenario.points[index]!;
-      const delta = alternative.deltas[index]!;
-      const baselineCash = baseline.metrics.endingCash!;
-      const alternativeCash = other.metrics.endingCash!;
-      return {
-        period: baseline.period.start,
-        baseline: moneyDto(baselineCash),
-        alternative: moneyDto(alternativeCash),
-        delta: moneyDto(alternativeCash.minus(baselineCash)),
-        traceIds: Object.freeze(other.traceRefs.map((ref) => ref.traceId)),
-        relatedDifferenceIds: delta.relatedDifferenceIds,
+          diagnostics: Object.freeze([]),
+        }
+      );
+    };
+    if (comparisonRequest.scope === "cash_flow") {
+      const compiled = compileCashFlow(draft, {
+        ...common,
+        sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
+        ...(comparisonRequest.retirementBindings === undefined
+          ? {}
+          : { retirementBindings: comparisonRequest.retirementBindings }),
+      });
+      if (compiled.status !== "compiled")
+        return unavailable(
+          compiled.diagnostics.map((item) => item.message).join("; "),
+          compiled.diagnostics,
+        );
+      base = { scope: "cash_flow", compiled: compiled.value };
+      executionMonths = compiled.value.executionMonths;
+      const catalog = compileCatalog(compiled.value.scenarioIdentity);
+      if (catalog.status !== "compiled")
+        return unavailable(
+          catalog.diagnostics.map((item) => item.message).join("; "),
+          catalog.diagnostics,
+        );
+      const runIds = Object.fromEntries(
+        catalog.value.map((scenario, index) => [
+          scenario.scenarioId,
+          runId(
+            `d1900000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+          ),
+        ]),
+      );
+      comparison = compareVerticalSlice2Scenarios({
+        scenarios: catalog.value,
+        baselineScenarioId: catalog.value[0]!.scenarioId,
+        alternativeScenarioIds: catalog.value
+          .slice(1)
+          .map((item) => item.scenarioId),
+        runIds,
+        runContext: context,
+        openingState: compiled.value.openingState,
+        input: compiled.value.input,
+        months: executionMonths,
+      });
+    } else if (comparisonRequest.scope === "investments") {
+      if (!request.executionOwnerId)
+        return unavailable(
+          "Investment comparison requires an explicit execution owner.",
+        );
+      const compilerRequest = {
+        ...common,
+        asOf: request.asOf,
+        executionOwnerId: request.executionOwnerId,
+        transferInstructions: request.investmentTransferInstructions ?? [],
+        purchaseInstructions: request.investmentPurchaseInstructions ?? [],
       };
-    });
+      const compiled = compileInvestments(draft, compilerRequest);
+      if (compiled.status !== "compiled")
+        return unavailable(
+          compiled.diagnostics.map((item) => item.message).join("; "),
+          compiled.diagnostics,
+        );
+      base = {
+        scope: "investments",
+        compiled: compiled.value,
+        compilerRequest,
+      };
+      executionMonths = compiled.value.executionMonths;
+      const catalog = compileCatalog(compiled.value.scenarioIdentity);
+      if (catalog.status !== "compiled")
+        return unavailable(
+          catalog.diagnostics.map((item) => item.message).join("; "),
+          catalog.diagnostics,
+        );
+      const runIds = Object.fromEntries(
+        catalog.value.map((scenario, index) => [
+          scenario.scenarioId,
+          runId(
+            `d1910000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+          ),
+        ]),
+      );
+      comparison = compareVerticalSlice3Scenarios({
+        scenarios: catalog.value,
+        baselineScenarioId: catalog.value[0]!.scenarioId,
+        alternativeScenarioIds: catalog.value
+          .slice(1)
+          .map((item) => item.scenarioId),
+        runIds,
+        runContext: context,
+        openingState: compiled.value.openingState,
+        input: compiled.value.input,
+        months: executionMonths,
+        primitiveState: compiled.value.primitiveState,
+      });
+    } else {
+      if (!request.executionOwnerId)
+        return unavailable(
+          "Liability comparison requires an explicit execution owner.",
+        );
+      const compilerRequest = {
+        ...common,
+        asOf: request.asOf,
+        executionOwnerId: request.executionOwnerId,
+        executionProfiles: request.liabilityExecutionProfiles ?? [],
+      };
+      const compiled = compileLiabilities(draft, compilerRequest);
+      if (compiled.status !== "compiled")
+        return unavailable(
+          compiled.diagnostics.map((item) => item.message).join("; "),
+          compiled.diagnostics,
+        );
+      base = {
+        scope: "liabilities",
+        compiled: compiled.value,
+        compilerRequest,
+      };
+      executionMonths = compiled.value.executionMonths;
+      const catalog = compileCatalog(compiled.value.scenarioIdentity);
+      if (catalog.status !== "compiled")
+        return unavailable(
+          catalog.diagnostics.map((item) => item.message).join("; "),
+          catalog.diagnostics,
+        );
+      const runIds = Object.fromEntries(
+        catalog.value.map((scenario, index) => [
+          scenario.scenarioId,
+          runId(
+            `d1920000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+          ),
+        ]),
+      );
+      comparison = compareVerticalSlice4Scenarios({
+        scenarios: catalog.value,
+        baselineScenarioId: catalog.value[0]!.scenarioId,
+        alternativeScenarioIds: catalog.value
+          .slice(1)
+          .map((item) => item.scenarioId),
+        runIds,
+        runContext: context,
+        openingState: compiled.value.openingState,
+        input: compiled.value.input,
+        months: executionMonths,
+        primitiveState: compiled.value.primitiveState,
+      });
+    }
+    const preferredMetric =
+      comparisonRequest.scope === "cash_flow"
+        ? "endingCash"
+        : comparisonRequest.scope === "investments"
+          ? "portfolioValue"
+          : "endingPrincipal";
+    const alternatives = comparison.alternatives.map(
+      (alternative, alternativeIndex) => {
+        const points = comparison.baseline.points
+          .slice(0, alternative.deltas.length)
+          .map((baselinePoint, index) => {
+            const alternativePoint = alternative.scenario.points[index]!;
+            const deltaPoint = alternative.deltas[index]!;
+            const keys = [
+              ...new Set([
+                ...Object.keys(baselinePoint.metrics),
+                ...Object.keys(alternativePoint.metrics),
+              ]),
+            ].sort();
+            const metrics = Object.fromEntries(
+              keys.map((key) => [
+                key,
+                {
+                  baseline: moneyDto(baselinePoint.metrics[key]!),
+                  alternative: moneyDto(alternativePoint.metrics[key]!),
+                  delta: moneyDto(
+                    alternativePoint.metrics[key]!.minus(
+                      baselinePoint.metrics[key]!,
+                    ),
+                  ),
+                },
+              ]),
+            );
+            return {
+              period: baselinePoint.period.start,
+              baseline: metrics[preferredMetric]!.baseline,
+              alternative: metrics[preferredMetric]!.alternative,
+              delta: metrics[preferredMetric]!.delta,
+              metrics: Object.freeze(metrics),
+              traceIds: Object.freeze(
+                alternativePoint.traceRefs.map((ref) => ref.traceId),
+              ),
+              relatedDifferenceIds: deltaPoint.relatedDifferenceIds,
+            };
+          });
+        return {
+          scenarioId: alternative.scenario.scenarioId,
+          name: comparisonRequest.alternatives[alternativeIndex]!.name,
+          status: alternative.scenario.status,
+          ...(alternative.comparedThrough === undefined
+            ? {}
+            : { comparedThrough: alternative.comparedThrough }),
+          points,
+          configurationDifferences: alternative.differences.map(
+            (difference) => ({
+              target: difference.semanticTarget,
+              kind: difference.changeKind,
+              scenarioLayerId: difference.scenarioLayerId,
+              assumptionIds: difference.assumptionIds,
+              eventIds: difference.eventIds,
+              configuredRuleIds: difference.configuredRuleIds,
+              before: difference.before,
+              after: difference.after,
+            }),
+          ),
+          appliedRuleDifferences: alternative.appliedRuleDifferences,
+        };
+      },
+    );
+    const first = alternatives[0]!;
     return deepFreeze({
-      status: "completed",
-      scope: "cash_flow",
-      baselineName: "Current plan",
-      alternativeName: "Income grows 5%",
-      points,
-      configurationDifferences: alternative.differences.map((difference) => ({
-        target: difference.semanticTarget,
-        kind: difference.changeKind,
-        assumptionIds: difference.assumptionIds,
-      })),
-      appliedRuleDifferences: alternative.appliedRuleDifferences,
-      diagnostics: [],
+      status:
+        comparison.baseline.status === "completed" &&
+        alternatives.every((item) => item.status === "completed")
+          ? "completed"
+          : "incomplete",
+      scope: comparisonRequest.scope,
+      baselineName: comparisonRequest.baselineName ?? "Current plan",
+      alternativeName: first.name,
+      baselineScenarioId: comparison.baseline.scenarioId,
+      alternativeScenarioId: first.scenarioId,
+      ...(first.comparedThrough === undefined
+        ? {}
+        : { comparedThrough: first.comparedThrough }),
+      points: first.points,
+      configurationDifferences: first.configurationDifferences,
+      appliedRuleDifferences: first.appliedRuleDifferences,
+      alternatives,
+      diagnostics: Object.freeze([
+        ...comparison.baseline.diagnostics,
+        ...comparison.alternatives.flatMap((item) => item.scenario.diagnostics),
+      ]),
     });
   } catch (error) {
+    if (error instanceof ValidationError)
+      return unavailable(
+        error.issues.map((item) => item.message).join("; "),
+        error.issues,
+      );
     return unavailable(
       error instanceof Error
         ? error.message
-        : "The cash-flow plans could not be compared safely.",
+        : "Scenario comparison could not be executed safely.",
     );
   }
+};
+
+/** Compatibility wrapper for the original cash-flow income-growth starter. */
+export const comparePersonalCashFlowPlans = (
+  draft: PersonalDraft,
+  request: ForecastRequest,
+  annualIncomeGrowth: string,
+  incomeId?: string,
+): PersonalScenarioComparisonReadModel => {
+  const unavailable = (message: string, diagnostics: readonly CapabilityDiagnostic[] = []): PersonalScenarioComparisonReadModel => deepFreeze({ status: "unavailable", message, scope: "cash_flow", baselineName: "Current plan", alternativeName: "Income growth alternative", points: [], configurationDifferences: [], appliedRuleDifferences: { baselineOnly: [], alternativeOnly: [] }, diagnostics });
+  if (!EXACT_DECIMAL.test(annualIncomeGrowth)) return unavailable("Income growth must be an exact decimal string.");
+  const incomes = entries(draft, "Income");
+  if (incomeId === undefined) return unavailable("Plan comparison requires an explicit Income target.", [capability("SCENARIO_TARGET_MISSING", "Plan comparison requires an explicit Income target.", "cash_flow_comparison", "Income")]);
+  const income = incomes.find((item) => typeof item.income_id === "string" && item.income_id.toLowerCase() === incomeId.toLowerCase());
+  if (!income) return unavailable(`Income ${incomeId} is outside the compiled scope.`, [capability("SCENARIO_TARGET_UNEXECUTABLE", `Income ${incomeId} is outside the compiled scope.`, "cash_flow_comparison", "Income", incomeId)]);
+  const root = entries(draft, "Scenario").find(
+    (item) => item.enabled === true && item.base_scenario_id == null,
+  );
+  const rootId =
+    typeof root?.scenario_id === "string"
+      ? root.scenario_id
+      : "f15c0000-0000-4000-8000-000000000001";
+  return comparePersonalScenarios(draft, request, {
+    scope: "cash_flow",
+    ...(typeof root?.scenario_id === "string"
+      ? { baselineScenarioId: root.scenario_id }
+      : {}),
+    alternatives: [
+      {
+        scenarioId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
+        baseScenarioId: rootId,
+        name: `Income grows ${annualIncomeGrowth}`,
+        changes: [
+          {
+            kind: "income_growth",
+            incomeId: String(income.income_id),
+            annualRate: annualIncomeGrowth,
+          },
+        ],
+      },
+    ],
+  });
 };
 
 export const createSyntheticPersonalDraft = (): PersonalDraft => {

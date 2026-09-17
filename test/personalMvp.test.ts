@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addPersonalObject,
   comparePersonalCashFlowPlans,
+  comparePersonalScenarios,
   createEmptyPersonalDraft,
   createGuidedSetupDraft,
   createSyntheticPersonalDraft,
@@ -255,7 +256,7 @@ describe("Personal-MVP application facade", () => {
       }),
     );
     expect(
-      comparePersonalCashFlowPlans(incomeGrowth, request(), "0.03"),
+      comparePersonalCashFlowPlans(incomeGrowth, request(), "0.03", income.income_id!),
     ).toEqual(
       expect.objectContaining({
         status: "unavailable",
@@ -314,6 +315,7 @@ describe("Personal-MVP application facade", () => {
         createSyntheticPersonalDraft(),
         comparison.request!,
         "0.03",
+        "90000000-0000-4000-8000-000000000005",
       ).points,
     ).toHaveLength(24);
     expect(
@@ -347,7 +349,7 @@ describe("Personal-MVP application facade", () => {
     });
     const result = comparePersonalCashFlowPlans(ambiguous, request(), "0.05");
     expect(result.status).toBe("unavailable");
-    expect(result.diagnostics[0]).toEqual(expect.objectContaining({ code: "COMPARISON_INCOME_TARGET_AMBIGUOUS", capability: "cash_flow_comparison" }));
+    expect(result.diagnostics[0]).toEqual(expect.objectContaining({ code: "SCENARIO_TARGET_MISSING", capability: "cash_flow_comparison" }));
   });
 
   it("preserves run boundaries, exact results, shortfalls, and real trace references", () => {
@@ -391,13 +393,14 @@ describe("Personal-MVP application facade", () => {
       createSyntheticPersonalDraft(),
       request(),
       "0.06",
+      "90000000-0000-4000-8000-000000000005",
     );
     expect(result.status).toBe("completed");
     expect(result.scope).toBe("cash_flow");
     expect(result.configurationDifferences).toContainEqual(
       expect.objectContaining({
         kind: "income_growth",
-        assumptionIds: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"],
+        assumptionIds: [expect.stringMatching(/^[0-9a-f-]{36}$/)],
       }),
     );
     expect(result.points).toHaveLength(3);
@@ -406,5 +409,20 @@ describe("Personal-MVP application facade", () => {
       result.points[1]!.baseline.exact,
     );
     expect(result.points[1]!.traceIds.length).toBeGreaterThan(0);
+  });
+
+  it("compares multiple explicit alternatives deterministically without flattening scope metrics", () => {
+    const model = createSyntheticPersonalDraft();
+    const incomeId = String((model.objects.Income?.[0] as Record<string, unknown>).income_id);
+    const comparison = { scope: "cash_flow" as const, baselineScenarioId: "90000000-0000-4000-8000-000000000011", alternatives: [
+      { scenarioId: "aa000000-0000-4000-8000-000000000001", baseScenarioId: "90000000-0000-4000-8000-000000000011", name: "Higher", changes: [{ kind: "income_growth" as const, incomeId, annualRate: "0.06" }] },
+      { scenarioId: "aa000000-0000-4000-8000-000000000002", baseScenarioId: "90000000-0000-4000-8000-000000000011", name: "Lower", changes: [{ kind: "income_growth" as const, incomeId, annualRate: "0.01" }] },
+    ] };
+    const first = comparePersonalScenarios(model, request(), comparison);
+    const second = comparePersonalScenarios(model, request(), comparison);
+    expect(first.status).toBe("completed");
+    expect(first.alternatives).toHaveLength(2);
+    expect(first.points[0]!.metrics).toHaveProperty("recognizedIncome");
+    expect(second).toEqual(first);
   });
 });

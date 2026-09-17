@@ -35,6 +35,7 @@ import {
   type CanonicalObject,
 } from "./shared.js";
 import type { CompileResult } from "./types.js";
+import { selectScenario, type SelectedScenario } from "./scenarioSelection.js";
 
 export type SameInstantCashFlowOrder =
   | "income_before_expense"
@@ -46,6 +47,14 @@ export interface CashFlowCompilerRequest {
   readonly simulationEnd: string;
   readonly sameInstantCashFlowOrder: SameInstantCashFlowOrder;
   readonly months?: number;
+  readonly scenarioId?: string;
+  readonly retirementBindings?: readonly RetirementTerminationBinding[];
+}
+
+export interface RetirementTerminationBinding { readonly incomeId: string; readonly terminationEventId: string; readonly baselineDate: string; readonly canonicalEventId?: string; }
+export interface CashFlowScenarioBindings {
+  readonly incomeIds: Readonly<Record<string, string>>; readonly expenseIds: Readonly<Record<string, string>>; readonly accountIds: Readonly<Record<string, string>>;
+  readonly retirementEvents: Readonly<Record<string, Readonly<{ incomeId: string; eventId: string; baselineDate: string }>>>;
 }
 
 export interface CompiledCashFlow {
@@ -53,9 +62,9 @@ export interface CompiledCashFlow {
   readonly openingState: AuthoritativeState;
   readonly scenarioIdentity: string;
   readonly executionMonths: number;
+  readonly scenarioBindings: CashFlowScenarioBindings;
 }
 
-const SYNTHETIC_SCENARIO = "f15c0000-0000-4000-8000-000000000001";
 const GENERATED_PREFIX = "f15c0000-0000-4000-8001-";
 const CASH_TYPES = new Set(["cash", "checking", "savings"]);
 
@@ -94,203 +103,6 @@ const unsupportedResult = (
     ),
   ]),
 });
-
-export interface SelectedScenario {
-  readonly id: string;
-  readonly object?: CanonicalObject;
-}
-
-export interface ScenarioSelectionContext {
-  readonly capabilityName: string;
-  readonly executionLabel: string;
-}
-
-export const selectScenario = (
-  model: PortableModelEnvelope,
-  context: ScenarioSelectionContext = { capabilityName: "cash_flow_forecast", executionLabel: "Cash-flow" },
-): CompileResult<SelectedScenario> => {
-  const scenarioUnsupported = (code: string, message: string, entityType?: string, entityId?: string, fieldPath?: string): Extract<CompileResult<never>, { readonly status: "unsupported" }> => ({
-    status: "unsupported",
-    diagnostics: Object.freeze([capability(code, message, context.capabilityName, entityType, entityId, fieldPath)]),
-  });
-  const preflight = preflightCanonicalCollections(model, [
-    "Scenario",
-    "Event",
-    "Assumption",
-  ]);
-  if (preflight.status !== "compiled") return preflight;
-  const scenarios = objects(model, "Scenario");
-  if (scenarios.length === 0)
-    return {
-      status: "compiled",
-      value: Object.freeze({ id: SYNTHETIC_SCENARIO }),
-      diagnostics: Object.freeze([]),
-    };
-  for (const scenario of scenarios) {
-    const id = canonicalId(scenario, "scenario_id");
-    if (typeof scenario.enabled !== "boolean" || typeof scenario.stochastic !== "boolean")
-      return invalidResult(
-        "SCENARIO_SELECTION_FIELD_INVALID",
-        `Scenario ${id} enabled and stochastic must be booleans.`,
-        "Scenario", id,
-      );
-    if (!(["daily", "monthly", "quarterly", "annual"] as const).includes(scenario.timestep as never))
-      return invalidResult(
-        "SCENARIO_TIMESTEP_INVALID",
-        `Scenario ${id} timestep is not a canonical value.`,
-        "Scenario", id, "timestep",
-      );
-    if (
-      scenario.simulation_count !== undefined &&
-      (typeof scenario.simulation_count !== "number" ||
-        !Number.isSafeInteger(scenario.simulation_count) ||
-        scenario.simulation_count <= 0)
-    )
-      return invalidResult(
-        "SCENARIO_SIMULATION_COUNT_INVALID",
-        `Scenario ${id} simulation_count must be a positive safe integer when present.`,
-        "Scenario",
-        id,
-        "simulation_count",
-      );
-  }
-  const enabled = scenarios.filter((scenario) => scenario.enabled === true);
-  if (enabled.length !== 1)
-    return scenarioUnsupported(
-      "SCENARIO_SELECTION_AMBIGUOUS",
-      `${context.executionLabel} compilation requires exactly one enabled Scenario; found ${enabled.length}.`,
-      "Scenario",
-    );
-  const selected = enabled[0]!;
-  const id = canonicalId(selected, "scenario_id")!;
-  const scenarioStochastic = selected.stochastic;
-  const scenarioNonMonthly = selected.timestep !== "monthly";
-  const simulationCountInvalid = !scenarioStochastic && (selected.simulation_count ?? 1) !== 1;
-  const scenarioStart = utcDate(selected.start_date);
-  const scenarioEnd = utcDate(selected.end_date);
-  if (!scenarioStart || !scenarioEnd || scenarioStart >= scenarioEnd)
-    return invalidResult("SCENARIO_TEMPORAL_INVALID", `Scenario ${id} requires valid ordered start_date and end_date.`, "Scenario", id, "start_date");
-  if (
-    selected.base_scenario_id !== undefined &&
-    selected.base_scenario_id !== null
-  ) {
-    if (
-      typeof selected.base_scenario_id !== "string" ||
-      !UUID.test(selected.base_scenario_id)
-    )
-      return invalidResult(
-        "BASE_SCENARIO_REFERENCE_INVALID",
-        `Scenario ${id} base_scenario_id must be a UUID.`,
-        "Scenario",
-        id,
-        "base_scenario_id",
-      );
-    const baseId = selected.base_scenario_id.toLowerCase();
-    if (
-      !scenarios.some(
-        (scenario) => canonicalId(scenario, "scenario_id") === baseId,
-      )
-    )
-      return invalidResult(
-        "BASE_SCENARIO_REFERENCE_NOT_FOUND",
-        `Scenario ${id} base_scenario_id does not resolve.`,
-        "Scenario",
-        id,
-        "base_scenario_id",
-        [baseId],
-      );
-    if (baseId === id)
-      return invalidResult("SCENARIO_SELF_INHERITANCE_INVALID", `Scenario ${id} cannot inherit from itself.`, "Scenario", id, "base_scenario_id", [id]);
-  }
-  const eventMembershipUnknown = selected.event_ids === null;
-  if (selected.event_ids !== undefined && !Array.isArray(selected.event_ids))
-    return invalidResult(
-      "SCENARIO_EVENT_REFERENCES_INVALID",
-      `Scenario ${id} event_ids must be an array.`,
-      "Scenario",
-      id,
-      "event_ids",
-    );
-  if (Array.isArray(selected.event_ids) && selected.event_ids.length > 0) {
-    for (const eventId of selected.event_ids) {
-      if (typeof eventId !== "string" || !UUID.test(eventId))
-        return invalidResult(
-          "SCENARIO_EVENT_REFERENCE_INVALID",
-          `Scenario ${id} contains a malformed event reference.`,
-          "Scenario",
-          id,
-          "event_ids",
-        );
-      if (
-        !objects(model, "Event").some(
-          (event) => canonicalId(event, "event_id") === eventId.toLowerCase(),
-        )
-      )
-        return invalidResult(
-          "SCENARIO_EVENT_REFERENCE_NOT_FOUND",
-          `Scenario ${id} event ${eventId} does not resolve.`,
-          "Scenario",
-          id,
-          "event_ids",
-          [eventId.toLowerCase()],
-        );
-    }
-  }
-  const assumptionMembershipUnknown = selected.assumption_ids === null;
-  if (selected.assumption_ids !== undefined && !Array.isArray(selected.assumption_ids))
-    return invalidResult(
-      "SCENARIO_ASSUMPTION_REFERENCES_INVALID",
-      `Scenario ${id} assumption_ids must be an array.`,
-      "Scenario",
-      id,
-      "assumption_ids",
-    );
-  for (const assumptionId of (selected.assumption_ids ??
-    []) as readonly unknown[]) {
-    if (typeof assumptionId !== "string" || !UUID.test(assumptionId))
-      return invalidResult(
-        "SCENARIO_ASSUMPTION_REFERENCE_INVALID",
-        `Scenario ${id} contains a malformed Assumption reference.`,
-        "Scenario",
-        id,
-        "assumption_ids",
-      );
-    if (
-      !objects(model, "Assumption").some(
-        (assumption) =>
-          canonicalId(assumption, "assumption_id") ===
-          assumptionId.toLowerCase(),
-      )
-    )
-      return invalidResult(
-        "SCENARIO_ASSUMPTION_REFERENCE_NOT_FOUND",
-        `Scenario ${id} Assumption ${assumptionId} does not resolve.`,
-        "Scenario",
-        id,
-        "assumption_ids",
-        [assumptionId.toLowerCase()],
-      );
-  }
-  if (simulationCountInvalid)
-    return invalidResult("SCENARIO_SIMULATION_COUNT_INVARIANT", `Deterministic Scenario ${id} must use simulation_count 1.`, "Scenario", id, "simulation_count");
-  if (scenarioStochastic)
-    return scenarioUnsupported("SCENARIO_STOCHASTIC_UNSUPPORTED", `Scenario ${id} is stochastic and cannot be executed by ${context.executionLabel}.`, "Scenario", id, "stochastic");
-  if (scenarioNonMonthly)
-    return scenarioUnsupported("SCENARIO_TIMESTEP_UNSUPPORTED", `Scenario ${id} timestep ${selected.timestep} is not supported by ${context.executionLabel}.`, "Scenario", id, "timestep");
-  if (selected.base_scenario_id !== undefined && selected.base_scenario_id !== null)
-    return scenarioUnsupported("SCENARIO_INHERITANCE_UNSUPPORTED", `Scenario ${id} inherits from ${selected.base_scenario_id}; ${context.executionLabel} does not execute scenario inheritance.`, "Scenario", id, "base_scenario_id");
-  if (eventMembershipUnknown)
-    return scenarioUnsupported("SCENARIO_EVENT_MEMBERSHIP_UNKNOWN", `Scenario ${id} event membership is unknown.`, "Scenario", id, "event_ids");
-  if (Array.isArray(selected.event_ids) && selected.event_ids.length > 0)
-    return scenarioUnsupported("SCENARIO_EVENTS_UNSUPPORTED", `Scenario ${id} contains authored events whose operation semantics are not executable by ${context.executionLabel}.`, "Scenario", id, "event_ids");
-  if (assumptionMembershipUnknown)
-    return scenarioUnsupported("SCENARIO_ASSUMPTION_MEMBERSHIP_UNKNOWN", `Scenario ${id} assumption membership is unknown.`, "Scenario", id, "assumption_ids");
-  return {
-    status: "compiled",
-    value: Object.freeze({ id, object: selected }),
-    diagnostics: Object.freeze([]),
-  };
-};
 
 export interface GrowthBinding {
   readonly rate: Rate;
@@ -610,6 +422,7 @@ const validateEventReference = (
   model: PortableModelEnvelope,
   stream: CanonicalObject,
   type: "Income" | "Expense",
+  retirementBindings: readonly RetirementTerminationBinding[] = [],
 ): CompileResult<never> | undefined => {
   for (const field of type === "Income"
     ? (["probability_model_id", "related_event_id"] as const)
@@ -642,6 +455,7 @@ const validateEventReference = (
         field,
         [value.toLowerCase()],
       );
+    if (field === "related_event_id" && retirementBindings.some((binding) => binding.incomeId.toLowerCase() === id && binding.canonicalEventId?.toLowerCase() === value.toLowerCase())) continue;
     return unsupportedResult(
       "EVENT_BINDING_UNSUPPORTED",
       `${type} ${id} has authored ${field} behavior not supported in PR 15.`,
@@ -833,9 +647,24 @@ export const compileCashFlow = (
   if (incomePreflight) return incomePreflight;
   const expensePreflight = preflightStreams("Expense", allExpenses);
   if (expensePreflight) return expensePreflight;
-  const scenarioResult = selectScenario(model);
+  const scenarioResult = selectScenario(model, { capabilityName: "cash_flow_forecast", executionLabel: "Cash-flow", ...(request.scenarioId === undefined ? {} : { scenarioId: request.scenarioId }), simulationStart: request.simulationStart, simulationEnd: request.simulationEnd });
   if (scenarioResult.status !== "compiled") return scenarioResult;
   const selected = scenarioResult.value;
+  const retirementByIncome = new Map<string, RetirementTerminationBinding>();
+  const retirementEventIds = new Set<string>();
+  for (const binding of request.retirementBindings ?? []) {
+    const incomeId = binding.incomeId.toLowerCase(); const eventId = binding.terminationEventId.toLowerCase();
+    if (!UUID.test(binding.incomeId) || !UUID.test(binding.terminationEventId) || !utcDate(binding.baselineDate)) return invalidResult("RETIREMENT_BINDING_INVALID", "Retirement bindings require UUID income/event identities and a date-only baselineDate.", "retirement_binding", eventId);
+    if (retirementByIncome.has(incomeId) || retirementEventIds.has(eventId)) return unsupportedResult("RETIREMENT_BINDING_AMBIGUOUS", "Each retirement binding must identify one distinct Income and termination event.", "retirement_binding", eventId);
+    if (!objects(model, "Income").some((item) => canonicalId(item, "income_id") === incomeId)) return invalidResult("RETIREMENT_BINDING_INCOME_NOT_FOUND", `Retirement binding Income ${incomeId} does not resolve.`, "Income", incomeId);
+    if (binding.canonicalEventId !== undefined) {
+      const canonicalEventId = binding.canonicalEventId.toLowerCase(); const event = objects(model, "Event").find((item) => canonicalId(item, "event_id") === canonicalEventId);
+      if (!event) return invalidResult("RETIREMENT_BINDING_EVENT_NOT_FOUND", `Retirement Event ${canonicalEventId} does not resolve.`, "Event", canonicalEventId);
+      const listed = Array.isArray(selected.object?.event_ids) && (selected.object!.event_ids as readonly unknown[]).some((value) => typeof value === "string" && value.toLowerCase() === canonicalEventId);
+      if (event.enabled !== true || event.event_type !== "retirement" || event.trigger_type !== "scheduled" || event.probability_model_id != null || String(event.scenario_id).toLowerCase() !== selected.id || !listed || event.start_date !== binding.baselineDate) return unsupportedResult("RETIREMENT_BINDING_MISMATCH", `Event ${canonicalEventId} is not an enabled deterministic scheduled retirement Event in the selected root Scenario at ${binding.baselineDate}.`, "Event", canonicalEventId);
+    }
+    retirementByIncome.set(incomeId, Object.freeze({ ...binding, incomeId, terminationEventId: eventId })); retirementEventIds.add(eventId);
+  }
   if (scope.memberIds.length !== 1)
     return unsupportedResult(
       "CASH_FLOW_OWNER_AMBIGUOUS",
@@ -995,7 +824,7 @@ export const compileCashFlow = (
   ): Extract<CompileResult<never>, { readonly status: "invalid_model" }> | undefined => {
     for (const stream of collection) {
       const id = canonicalId(stream, `${type.toLowerCase()}_id`)!;
-      const event = validateEventReference(model, stream, type);
+      const event = validateEventReference(model, stream, type, request.retirementBindings ?? []);
       if (event?.status === "invalid_model") return event;
       if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never))
         return invalidResult("RECURRENCE_INVALID", `${type} ${id} frequency is not canonical.`, type, id, "frequency");
@@ -1066,7 +895,7 @@ export const compileCashFlow = (
           undefined,
           idField,
         );
-      const event = validateEventReference(model, stream, type);
+      const event = validateEventReference(model, stream, type, request.retirementBindings ?? []);
       if (event) return event;
       if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never))
         return invalidResult("RECURRENCE_INVALID", `${type} ${id} frequency is not canonical.`, type, id, "frequency");
@@ -1207,6 +1036,7 @@ export const compileCashFlow = (
         }),
         growthRate: growth.value.rate,
         growthBaseAt: start,
+        ...(retirementByIncome.has(id) ? { terminationEventId: domainId("event", retirementByIncome.get(id)!.terminationEventId) } : {}),
         primitiveIds: Object.freeze({
           growth: domainId(
             "primitive-instance",
@@ -1348,6 +1178,7 @@ export const compileCashFlow = (
       String(account.owner_id).toLowerCase(),
     );
     const cashAccountId = domainId("account", accountId);
+    const retirementEvents = [...retirementByIncome.values()].map((binding) => Object.freeze({ id: domainId("event", binding.terminationEventId), targetId: domainId("income", binding.incomeId), kind: "termination" as const, effectiveAt: utcDate(binding.baselineDate)!, sourceTraceRefs: Object.freeze([calculationTraceRef(calculationTraceId(`compiler:retirement-binding:${binding.terminationEventId}`))]) }));
     const input: VerticalSlice2Input = Object.freeze({
       householdId: domainId("household", scope.householdId),
       ownerId,
@@ -1355,7 +1186,7 @@ export const compileCashFlow = (
       expensePayableLiabilityId: payableId,
       baseCurrency: currency,
       sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
-      events: Object.freeze([]),
+      events: Object.freeze(retirementEvents),
       incomes: Object.freeze(compiledIncomes),
       expenses: Object.freeze(compiledExpenses),
     });
@@ -1379,6 +1210,10 @@ export const compileCashFlow = (
         openingState,
         scenarioIdentity: selected.id,
         executionMonths,
+        scenarioBindings: Object.freeze({
+          incomeIds: Object.freeze(Object.fromEntries(compiledIncomes.map((item) => [String(item.id), String(item.id)]))), expenseIds: Object.freeze(Object.fromEntries(compiledExpenses.map((item) => [String(item.id), String(item.id)]))), accountIds: Object.freeze({ [accountId]: String(cashAccountId) }),
+          retirementEvents: Object.freeze(Object.fromEntries(retirementEvents.map((item) => [String(item.id), Object.freeze({ incomeId: String(item.targetId), eventId: String(item.id), baselineDate: item.effectiveAt.slice(0, 10) })]))),
+        }),
       }),
       diagnostics: Object.freeze([]),
     };
