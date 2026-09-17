@@ -515,8 +515,8 @@ export const compileInvestments = (
         "opening_balance",
       );
     if (
-      account.tax_treatment !== undefined &&
-      !TAX_TREATMENTS.has(String(account.tax_treatment))
+      typeof account.tax_treatment !== "string" ||
+      !TAX_TREATMENTS.has(account.tax_treatment)
     )
       return invalidResult(
         "ACCOUNT_TAX_TREATMENT_INVALID",

@@ -471,6 +471,60 @@ describe("canonical investment compiler", () => {
     );
   });
 
+  it("requires explicit canonical Account tax treatments before transfer capability checks", () => {
+    const missingParticipatingTreatment = compileInvestments(
+      fixture((draft) => {
+        delete draft.objects.Account![1]!.tax_treatment;
+      }),
+      request(),
+    );
+    expect(missingParticipatingTreatment).toMatchObject({
+      status: "invalid_model",
+      diagnostics: [
+        expect.objectContaining({ code: "ACCOUNT_TAX_TREATMENT_INVALID" }),
+      ],
+    });
+
+    const bothMissing = compileInvestments(
+      fixture((draft) => {
+        delete draft.objects.Account![0]!.tax_treatment;
+        delete draft.objects.Account![1]!.tax_treatment;
+      }),
+      request({ transferInstructions: [transfer] }),
+    );
+    expect(bothMissing).toMatchObject({
+      status: "invalid_model",
+      diagnostics: [
+        expect.objectContaining({ code: "ACCOUNT_TAX_TREATMENT_INVALID" }),
+      ],
+    });
+
+    const explicitlyTaxable = compileInvestments(
+      fixture((draft) => {
+        draft.objects.Account![0]!.tax_treatment = "taxable";
+        draft.objects.Account![1]!.tax_treatment = "taxable";
+      }),
+      request({ transferInstructions: [transfer] }),
+    );
+    expect(explicitlyTaxable.status).toBe("compiled");
+
+    const differingTreatments = compileInvestments(
+      fixture((draft) => {
+        draft.objects.Account![0]!.tax_treatment = "taxable";
+        draft.objects.Account![1]!.tax_treatment = "tax_deferred";
+      }),
+      request({ transferInstructions: [transfer] }),
+    );
+    expect(differingTreatments).toMatchObject({
+      status: "unsupported",
+      diagnostics: [
+        expect.objectContaining({
+          code: "INVESTMENT_TRANSFER_TAX_BOUNDARY_UNSUPPORTED",
+        }),
+      ],
+    });
+  });
+
   it("keeps passive account rule metadata inert", () => {
     const compiled = compileInvestments(
       fixture((draft) => {
