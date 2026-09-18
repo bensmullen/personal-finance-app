@@ -33,6 +33,22 @@ const mutate = (change: (draft: Mutable) => void): PersonalDraft => {
 };
 
 describe("PR 19 compiler scenario bridge", () => {
+  it("validates exact canonical rate assumptions and rejects unsupported stochastic or bounded semantics", () => {
+    const assumption = "95000000-0000-4000-8000-000000000001";
+    const modelWith = (extras: Record<string, unknown> = {}) => mutate((draft) => {
+      draft.objects.Scenario!.push({ ...draft.objects.Scenario![0]!, scenario_id: alternativeId, name: "Alternative", base_scenario_id: rootId, assumption_ids: [assumption] });
+      draft.objects.Assumption!.push({ assumption_id: assumption, name: "Growth", category: "salary_growth", value: "0.0500", unit: "effective annual rate", source: "user", scenario_id: alternativeId, ...extras });
+    });
+    const compile = (model: PersonalDraft) => {
+      const base = compileCashFlow(model, cashRequest);
+      expect(base, JSON.stringify(base)).toMatchObject({ status: "compiled" });
+      if (base.status !== "compiled") return base;
+      return compileExecutableScenario(model, { scope: "cash_flow", compiled: base.value }, { start: "2026-01-01T00:00:00.000Z", end: "2026-04-01T00:00:00.000Z" }, { scenarioId: alternativeId, baseScenarioId: rootId, name: "Alternative", changes: [{ kind: "income_growth", incomeId: "90000000-0000-4000-8000-000000000005", annualRate: "0.05", assumptionId: assumption }] });
+    };
+    expect(compile(modelWith())).toMatchObject({ status: "compiled" });
+    for (const extras of [{ correlation_group: "market" }, { start_date: "2026-02-01" }, { distribution_type: "normal", distribution_parameters: { mean: "0.05" } }])
+      expect(compile(modelWith(extras))).toMatchObject({ status: "unsupported", diagnostics: [{ code: "SCENARIO_ASSUMPTION_SEMANTICS_UNSUPPORTED" }] });
+  });
   it("selects roots independently of enabled children and rejects a child as an explicit base", () => {
     const model = mutate((draft) =>
       draft.objects.Scenario!.push({
@@ -138,6 +154,9 @@ describe("PR 19 compiler scenario bridge", () => {
       status: "compiled",
       value: { changes: [{ kind: "income_growth", incomeId }] },
     });
+    const normalizedRate = compileExecutableScenario(createSyntheticPersonalDraft(), { scope: "cash_flow", compiled: compiled.value }, { start: "2026-01-01T00:00:00.000Z", end: "2026-04-01T00:00:00.000Z" }, { scenarioId: alternativeId, baseScenarioId: rootId, name: "Equivalent", changes: [{ annualRate: "0.0600", incomeId: incomeId.toUpperCase(), kind: "income_growth" }] });
+    expect(normalizedRate.status).toBe("compiled");
+    if (income.status === "compiled" && normalizedRate.status === "compiled") expect(normalizedRate.value.changes[0]).toMatchObject({ assumptionId: (income.value.changes[0] as { assumptionId: string }).assumptionId });
     expect(
       compileExecutableScenario(
         createSyntheticPersonalDraft(),
@@ -206,6 +225,7 @@ describe("PR 19 compiler scenario bridge", () => {
       expect(funding.value.changes[0]).toMatchObject({
         fundingPolicy: { orderedSources: [{ accountId }] },
       });
+    expect(compileExecutableScenario(createSyntheticPersonalDraft(), { scope: "cash_flow", compiled: compiled.value }, { start: "2026-01-01T00:00:00.000Z", end: "2026-04-01T00:00:00.000Z" }, { scenarioId: alternativeId, baseScenarioId: rootId, name: "Collision", changes: [{ kind: "expense_funding_policy", expenseId, assumptionId: accountId, policy: { id: "collision", orderedAccountIds: [accountId], allowPartial: false, insufficientFundsBehavior: "unfunded" } }] })).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "SCENARIO_LINEAGE_ID_COLLISION" }] });
     expect(
       compileExecutableScenario(
         createSyntheticPersonalDraft(),
@@ -291,6 +311,15 @@ describe("PR 19 compiler scenario bridge", () => {
       ],
     });
     expect(bound.status).toBe("compiled");
+    const unsupportedEvent = structuredClone(model) as unknown as Mutable;
+    unsupportedEvent.objects.Event![0]!.precedence = 1;
+    expect(compileCashFlow(unsupportedEvent as unknown as PersonalDraft, { ...cashRequest, retirementBindings: [{ incomeId, terminationEventId, canonicalEventId: eventId, baselineDate: "2026-03-01" }] })).toMatchObject({ status: "unsupported", diagnostics: [{ code: "RETIREMENT_BINDING_EVENT_SEMANTICS_UNSUPPORTED" }] });
+    const outOfScope = structuredClone(model) as unknown as Mutable;
+    const otherPersonId = "93000000-0000-4000-8000-000000000097";
+    const otherIncomeId = "93000000-0000-4000-8000-000000000098";
+    outOfScope.objects.Person!.push({ ...outOfScope.objects.Person![0]!, person_id: otherPersonId, household_id: null });
+    outOfScope.objects.Income!.push({ ...outOfScope.objects.Income![0]!, income_id: otherIncomeId, owner_id: otherPersonId });
+    expect(compileCashFlow(outOfScope as unknown as PersonalDraft, { ...cashRequest, retirementBindings: [{ incomeId: otherIncomeId, terminationEventId: "93000000-0000-4000-8000-000000000096", baselineDate: "2026-03-01" }] })).toMatchObject({ status: "unsupported", diagnostics: [{ code: "RETIREMENT_BINDING_TARGET_UNEXECUTABLE" }] });
     if (bound.status !== "compiled") return;
     const scenario = compileExecutableScenario(
       model,

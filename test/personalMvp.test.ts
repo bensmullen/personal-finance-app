@@ -409,6 +409,21 @@ describe("Personal-MVP application facade", () => {
       result.points[1]!.baseline.exact,
     );
     expect(result.points[1]!.traceIds.length).toBeGreaterThan(0);
+    expect(result.points[1]!.traceIds.some((id) => id.startsWith("compiler:canonical:"))).toBe(true);
+    expect(result.points[1]!.traceIds.some((id) => id.startsWith("scenario:"))).toBe(true);
+  });
+
+  it("uses one retirement binding for the ordinary forecast and comparison baseline", () => {
+    const model = createSyntheticPersonalDraft();
+    const incomeId = "90000000-0000-4000-8000-000000000005";
+    const terminationEventId = "96000000-0000-4000-8000-000000000001";
+    const boundRequest = { ...request(), retirementBindings: [{ incomeId, terminationEventId, baselineDate: "2026-03-01" }] };
+    const forecast = runPersonalForecast(model, boundRequest);
+    const comparison = comparePersonalScenarios(model, boundRequest, { scope: "cash_flow", alternatives: [{ scenarioId: "96000000-0000-4000-8000-000000000002", name: "Earlier", changes: [{ kind: "retirement_date", incomeId, targetEventId: terminationEventId, baselineDate: "2026-03-01", newDate: "2026-02-01" }] }] });
+    expect(forecast, JSON.stringify(forecast)).toMatchObject({ status: "completed" });
+    expect(comparison, JSON.stringify(comparison)).toMatchObject({ status: "completed" });
+    if (forecast.scope !== "cash_flow" || forecast.status === "unavailable") throw new Error("expected cash-flow forecast");
+    expect(comparison.points.map((point) => point.baseline.exact)).toEqual(forecast.points.map((point) => point.endingCash.exact));
   });
 
   it("compares multiple explicit alternatives deterministically without flattening scope metrics", () => {
@@ -424,5 +439,14 @@ describe("Personal-MVP application facade", () => {
     expect(first.alternatives).toHaveLength(2);
     expect(first.points[0]!.metrics).toHaveProperty("recognizedIncome");
     expect(second).toEqual(first);
+  });
+
+  it("retains liability compiler capability diagnostics in comparisons", () => {
+    const model = structuredClone(createSyntheticPersonalDraft());
+    const unsupportedId = "97000000-0000-4000-8000-000000000001";
+    (model.objects.Liability as unknown as Record<string, unknown>[]).push({ ...(model.objects.Liability![0] as Record<string, unknown>), liability_id: unsupportedId, liability_type: "credit_card" });
+    const liabilityRequest = { ...request("liabilities"), executionOwnerId: "90000000-0000-4000-8000-000000000003", liabilityExecutionProfiles: [{ liabilityId: "90000000-0000-4000-8000-000000000008", kind: "vs4_fixed_monthly_fully_amortizing" as const, paymentAnchor: "2026-01-15", totalPayments: 360, fundingAccountId: "90000000-0000-4000-8000-000000000004", settlementPriority: 1, openingContractStatus: "current" as const }] };
+    const result = comparePersonalScenarios(model, liabilityRequest, { scope: "liabilities", alternatives: [{ scenarioId: "97000000-0000-4000-8000-000000000002", name: "Funding", changes: [{ kind: "loan_funding_policy", liabilityId: "90000000-0000-4000-8000-000000000008", policy: { id: "ordered", orderedAccountIds: ["90000000-0000-4000-8000-000000000004"], allowPartial: false, insufficientFundsBehavior: "unfunded" } }] }] });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "LIABILITY_TYPE_UNSUPPORTED", entityId: unsupportedId }));
   });
 });

@@ -63,6 +63,11 @@ describe("VS3 scenario adapter", () => {
     expect(issue(() => applyVerticalSlice3Scenario(input3(), resolveScenario([emptyRoot, replacementWithoutTarget], leafId), context))).toBe("SCENARIO_OVERLAY_TARGET_NOT_FOUND");
     expect(issue(() => applyVerticalSlice3Scenario({ ...input3(), purchases: [purchase("20")] }, resolveScenario([emptyRoot, scenario(leafId, [add], rootId)], leafId), context))).toBe("SCENARIO_OVERLAY_CONFLICT");
     expect(applyVerticalSlice3Scenario({ ...input3(), purchases: [purchase("20")] }, resolveScenario([emptyRoot, scenario(leafId, [remove], rootId)], leafId), context).purchases).toHaveLength(0);
+    expect(applyVerticalSlice3Scenario(input3(), resolveScenario([emptyRoot, scenario(middleId, [add], rootId), scenario(leafId, [replace], middleId)], leafId), context).purchases[0]!.amount.equals(money("30"))).toBe(true);
+    expect(applyVerticalSlice3Scenario(input3(), resolveScenario([emptyRoot, scenario(middleId, [add], rootId), scenario(leafId, [remove], middleId)], leafId), context).purchases).toHaveLength(0);
+    expect(applyVerticalSlice3Scenario({ ...input3(), purchases: [purchase("20")] }, resolveScenario([emptyRoot, scenario(middleId, [remove], rootId), scenario(leafId, [add], middleId)], leafId), context).purchases[0]!.amount.equals(money("20"))).toBe(true);
+    expect(issue(() => applyVerticalSlice3Scenario({ ...input3(), purchases: [purchase("20")] }, resolveScenario([emptyRoot, scenario(middleId, [add], rootId), scenario(leafId, [remove], middleId)], leafId), context))).toBe("SCENARIO_OVERLAY_CONFLICT");
+    expect(issue(() => applyVerticalSlice3Scenario(input3(), resolveScenario([emptyRoot, scenario(middleId, [remove], rootId), scenario(leafId, [add], middleId)], leafId), context))).toBe("SCENARIO_OVERLAY_TARGET_NOT_FOUND");
     const compared = compareVerticalSlice3Scenarios({ scenarios: [root, scenario(leafId, [], rootId)], baselineScenarioId: rootId, alternativeScenarioIds: [leafId], runIds, runContext: context, openingState: opening3(), input: input3(), months: 2 });
     expect(compared.baseline.points[0]!.metrics.contributionPrincipal!.equals(money("20"))).toBe(true);
     expect(compared.baseline.points[0]!.metrics.portfolioValue!.equals(money("120"))).toBe(true);
@@ -86,6 +91,10 @@ describe("VS3 scenario adapter", () => {
     expect(fees.alternatives[0]!.appliedRuleDifferences).toEqual({ baselineOnly: [feeRule1], alternativeOnly: [feeRule2] });
     expect(fees.alternatives[0]!.differences[0]!.configuredRuleIds).toEqual([feeRule1, feeRule2]);
     expect(fees.alternatives[0]!.deltas[0]!.relatedDifferenceIds).toEqual([fees.alternatives[0]!.differences[0]!.differenceId]);
+    const permuted = resolveScenario([root, scenario(leafId, [{ kind: "fee_rule_binding", feeId, feeRuleIds: [feeRule2, feeRule1], assumptionId: assumption }], rootId)], leafId);
+    const ordered = resolveScenario([root, scenario(leafId, [{ kind: "fee_rule_binding", feeId, feeRuleIds: [feeRule1, feeRule2], assumptionId: assumption }], rootId)], leafId);
+    expect(permuted.effectiveChanges).toEqual(ordered.effectiveChanges);
+    expect(issue(() => resolveScenario([root, scenario(leafId, [{ kind: "fee_rule_binding", feeId, feeRuleIds: [feeRule1, feeRule1], assumptionId: assumption }], rootId)], leafId))).toBe("SCENARIO_OVERLAY_CONFLICT");
 
     const added = scenario(leafId, [{ kind: "investment_purchase", operation: "add", purchaseId, eventId: event, purchase: purchase("20") }], rootId);
     const incomplete = compareVerticalSlice3Scenarios({ scenarios: [root, added], baselineScenarioId: rootId, alternativeScenarioIds: [leafId], runIds, runContext: context, openingState: opening3("0"), input: input3(), months: 2 });
@@ -117,6 +126,15 @@ describe("VS4 scenario adapter", () => {
     expect(compared.baseline.points[0]!.metrics.principalReduction!.equals(money("50"))).toBe(true);
     expect(compared.alternatives[0]!.scenario.points[0]!.metrics.principalReduction!.equals(money("75"))).toBe(true);
     expect(compared.alternatives[0]!.deltas[0]!.metrics.endingPrincipal!.equals(money("-25"))).toBe(true);
+    const add: ScenarioChange = { kind: "extra_principal_payment", operation: "add", loanId, paymentId: extraId, eventId: event, payment: extra() };
+    const replace: ScenarioChange = { kind: "extra_principal_payment", operation: "replace", loanId, paymentId: extraId, eventId: event, payment: extra("30") };
+    const remove: ScenarioChange = { kind: "extra_principal_payment", operation: "remove", loanId, paymentId: extraId, eventId: removalEvent };
+    const emptyRoot = scenario(rootId);
+    expect(applyVerticalSlice4Scenario(input4(), resolveScenario([emptyRoot, scenario(middleId, [add], rootId), scenario(leafId, [replace], middleId)], leafId), context).loans[0]!.extraPrincipalPayments![0]!.amount.equals(money("30"))).toBe(true);
+    expect(applyVerticalSlice4Scenario(input4(), resolveScenario([emptyRoot, scenario(middleId, [add], rootId), scenario(leafId, [remove], middleId)], leafId), context).loans[0]!.extraPrincipalPayments).toHaveLength(0);
+    expect(applyVerticalSlice4Scenario({ ...input4(), loans: [{ ...loan(), extraPrincipalPayments: [extra()] }] }, resolveScenario([emptyRoot, scenario(middleId, [remove], rootId), scenario(leafId, [add], middleId)], leafId), context).loans[0]!.extraPrincipalPayments).toHaveLength(1);
+    expect(issue(() => applyVerticalSlice4Scenario({ ...input4(), loans: [{ ...loan(), extraPrincipalPayments: [extra()] }] }, resolveScenario([emptyRoot, scenario(middleId, [add], rootId), scenario(leafId, [remove], middleId)], leafId), context))).toBe("SCENARIO_OVERLAY_CONFLICT");
+    expect(issue(() => applyVerticalSlice4Scenario(input4(), resolveScenario([emptyRoot, scenario(middleId, [remove], rootId), scenario(leafId, [add], middleId)], leafId), context))).toBe("SCENARIO_OVERLAY_TARGET_NOT_FOUND");
   });
 
   it("attributes inherited extra-principal removal to the child decision and links its debt delta", () => {

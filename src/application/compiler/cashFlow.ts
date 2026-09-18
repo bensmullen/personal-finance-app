@@ -996,6 +996,8 @@ export const compileCashFlow = (
           );
       }
       slots.push(`${type}:${id}:recurrence`, `${type}:${id}:zero-growth`);
+      if (type === "Income" && retirementByIncome.has(id))
+        slots.push(`${type}:${id}:termination`);
       if (type === "Expense") slots.push(`${type}:${id}:inflation-link`);
     }
   }
@@ -1057,6 +1059,14 @@ export const compileCashFlow = (
             "primitive-instance",
             generated.get(`Income:${id}:recurrence`)!,
           ),
+          ...(retirementByIncome.has(id)
+            ? {
+                termination: domainId(
+                  "primitive-instance",
+                  generated.get(`Income:${id}:termination`)!,
+                ),
+              }
+            : {}),
         }),
         sourceTraceRefs: Object.freeze([
           calculationTraceRef(

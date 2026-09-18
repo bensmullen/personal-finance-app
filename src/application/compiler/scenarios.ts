@@ -37,6 +37,7 @@ import {
   canonicalId,
   issue,
   objects,
+  utcDate,
   UUID,
 } from "./shared.js";
 import type { CompileResult } from "./types.js";
@@ -216,10 +217,22 @@ const authoredIds = (model: PortableModelEnvelope): Set<string> =>
     ),
   );
 
-const semanticIntent = (intent: ScenarioChangeIntent): unknown =>
-  intent.kind === "fee_rule_binding"
-    ? { ...intent, taxRuleIds: [...intent.taxRuleIds].sort() }
-    : intent;
+const exact = (value: string): string => DecimalAmount.parse(value).toString();
+const uuid = (value: string): string => value.toLowerCase();
+const canonicalInstant = (value: string): string => utcDate(value) ?? instant(value);
+const semanticIntent = (intent: ScenarioChangeIntent): unknown => {
+  switch (intent.kind) {
+    case "income_growth": return { kind: intent.kind, incomeId: uuid(intent.incomeId), annualRate: exact(intent.annualRate) };
+    case "expense_inflation": return { kind: intent.kind, expenseId: uuid(intent.expenseId), annualRate: exact(intent.annualRate) };
+    case "investment_return": return { kind: intent.kind, investmentId: uuid(intent.investmentId), annualRate: exact(intent.annualRate) };
+    case "retirement_date": return { kind: intent.kind, incomeId: uuid(intent.incomeId), targetEventId: uuid(intent.targetEventId), baselineDate: utcDate(intent.baselineDate)?.slice(0, 10), newDate: utcDate(intent.newDate)?.slice(0, 10) };
+    case "fee_rule_binding": return { kind: intent.kind, feeId: uuid(intent.feeId), taxRuleIds: [...intent.taxRuleIds].map(uuid).sort() };
+    case "expense_funding_policy":
+    case "loan_funding_policy": return { kind: intent.kind, ...(intent.kind === "expense_funding_policy" ? { expenseId: uuid(intent.expenseId) } : { liabilityId: uuid(intent.liabilityId) }), policy: { id: intent.policy.id, orderedAccountIds: intent.policy.orderedAccountIds.map(uuid), allowPartial: intent.policy.allowPartial, insufficientFundsBehavior: intent.policy.insufficientFundsBehavior } };
+    case "investment_purchase": return { kind: intent.kind, operation: intent.operation, purchaseId: uuid(intent.purchaseId), ...(intent.investmentId === undefined ? {} : { investmentId: uuid(intent.investmentId) }), ...(intent.instruction === undefined ? {} : { instruction: { ...intent.instruction, id: uuid(intent.instruction.id), investmentId: uuid(intent.instruction.investmentId), sourceCashAccountId: uuid(intent.instruction.sourceCashAccountId), amount: exact(intent.instruction.amount), schedule: intent.instruction.schedule.kind === "explicit_dates" ? { ...intent.instruction.schedule, dates: intent.instruction.schedule.dates.map(canonicalInstant) } : { ...intent.instruction.schedule, anchor: canonicalInstant(intent.instruction.schedule.anchor) } } }) };
+    case "extra_principal_payment": return { kind: intent.kind, operation: intent.operation, liabilityId: uuid(intent.liabilityId), paymentId: uuid(intent.paymentId), ...(intent.instruction === undefined ? {} : { instruction: { ...intent.instruction, id: uuid(intent.instruction.id), scheduledAt: canonicalInstant(intent.instruction.scheduledAt), amount: exact(intent.instruction.amount), ...(intent.instruction.fundingAccountId === undefined ? {} : { fundingAccountId: uuid(intent.instruction.fundingAccountId) }) } }) };
+  }
+};
 
 const lineageId = (
   model: PortableModelEnvelope,
@@ -701,6 +714,8 @@ export const compileExecutableScenario = (
           "InvestmentFee",
           change.feeId,
         );
+      if (new Set(change.taxRuleIds.map((id) => id.toLowerCase())).size !== change.taxRuleIds.length)
+        return invalid("SCENARIO_RULE_BINDING_INVALID", "Fee TaxRule candidate identities must be unique.", change.feeId);
       const lineage = lineageId(
         model,
         "assumption",
@@ -708,8 +723,6 @@ export const compileExecutableScenario = (
         change.assumptionId,
       );
       if (lineage.status !== "compiled") return lineage;
-      if (new Set(change.taxRuleIds.map((id) => id.toLowerCase())).size !== change.taxRuleIds.length)
-        return invalid("SCENARIO_RULE_BINDING_INVALID", "Fee TaxRule candidate identities must be unique.", change.feeId);
       try {
         changes.push({
           kind: change.kind,

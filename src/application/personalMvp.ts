@@ -325,7 +325,6 @@ export interface PersonalScenarioComparisonRequest {
   readonly baselineScenarioId?: string;
   readonly baselineName?: string;
   readonly alternatives: readonly ExecutableScenarioIntent[];
-  readonly retirementBindings?: readonly RetirementTerminationBinding[];
 }
 
 const asObject = (value: JsonValue | undefined): JsonObject | undefined =>
@@ -1169,9 +1168,9 @@ export const comparePersonalScenarios = (
       const compiled = compileCashFlow(draft, {
         ...common,
         sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
-        ...(comparisonRequest.retirementBindings === undefined
+        ...(request.retirementBindings === undefined
           ? {}
-          : { retirementBindings: comparisonRequest.retirementBindings }),
+          : { retirementBindings: request.retirementBindings }),
       });
       if (compiled.status !== "compiled")
         return unavailable(
