@@ -33,4 +33,4 @@ matcher = "^Bash$"
 type = "command"
 command = 'node "$(git rev-parse --show-toplevel)/.codex/hooks/quiet-test.mjs"'
 timeout = 5
-statusMessage = "Applying quiet test policy"
+statusMessage = "Applying verification budget policy"
