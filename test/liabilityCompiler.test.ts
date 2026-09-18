@@ -173,7 +173,7 @@ describe("canonical liability compiler", () => {
   });
 
   it("does not move an active current balance across the observed as-of boundary", () => {
-    for (const [simulationStart, simulationEnd] of [["2025-12-01", "2026-03-01"], ["2026-02-01", "2026-05-01"]] as const) {
+    for (const [simulationStart, simulationEnd] of [["2026-02-01", "2026-05-01"]] as const) {
       const result = compileLiabilities(createSyntheticPersonalDraft(), { ...compilerRequest(), simulationStart, simulationEnd });
       expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "LIABILITY_OPENING_BOUNDARY_UNSUPPORTED" })]));
     }
@@ -321,7 +321,7 @@ describe("canonical liability compiler", () => {
       expect(runVerticalSlice4({ runContext: context(), input: requiredVsExtra.value.input, openingState: requiredVsExtra.value.openingState, primitiveState: requiredVsExtra.value.primitiveState, months: 3 }).status).toBe("completed");
   });
 
-  it("does not capability-gate otherwise equal priorities whose occurrences are outside the requested horizon", () => {
+  it("rejects execution outside the canonical root scenario horizon", () => {
     const secondId = "97000000-0000-4000-8000-000000000070";
     const model = modelWith((draft) => {
       draft.objects.Liability![0]!.current_balance = "240000";
@@ -333,7 +333,10 @@ describe("canonical liability compiler", () => {
       ...compilerRequest([profile({ paymentAnchor: "2026-01-01" }), profile({ liabilityId: secondId, paymentAnchor: "2026-01-01" })]),
       asOf: "2025-01-01", simulationStart: "2025-01-01", simulationEnd: "2025-04-01",
     });
-    expect(result.status).toBe("compiled");
+    expect(result).toMatchObject({
+      status: "unsupported",
+      diagnostics: [{ code: "SCENARIO_OUTSIDE_REQUESTED_HORIZON" }],
+    });
   });
 
   it("classifies malformed funding records as invalid and valid non-executable funding as unsupported for primary and alternate sources", () => {

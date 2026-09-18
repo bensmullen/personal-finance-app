@@ -101,8 +101,88 @@ task requires them.
 Do not spawn subagents for routine implementation. Use at most one subagent at
 a time, and only for a clearly separable read-only or mechanical task.
 
-During implementation, run targeted tests for the behavior being changed.
-Before completion, use `$pfm-verify` once for the repository verification gate.
+## Task sizing and context budget
+
+A task is **surgical** when its prompt supplies a concrete diagnosis, expected
+behavior, and narrow implementation surface. Treat that contract as
+authoritative: inspect the named symbol/file and nearest tests first; normally
+start with no more than two production files and one relevant test file. Do
+not inspect architecture/specification documents, PR history, or invoke
+`$pfm-semantic-review`, `$pfm-architecture-review`, or `$pfm-spec-scope` for
+reassurance. Do not spawn a subagent. Stop discovery when the requested change
+is clear and run only focused verification.
+
+A **local** task affects one subsystem but needs discovery. Start with targeted
+symbol/search queries, then read only directly relevant implementation and
+tests. Use `$pfm-spec-scope` only for an unclear governing semantic rule;
+expand into adjacent files only for a concrete dependency. Do not automatically
+perform architecture or semantic audits.
+
+A task is **cross-cutting** only when it crosses architectural boundaries,
+changes financial semantics, or has unresolved normative questions. Only then
+do broader specification lookup or architecture/semantic review routinely fit.
+
+Fresh threads should use committed `AGENTS.md`, skills, and specifications as
+durable context rather than reconstructing chat history. In an existing thread,
+the current explicit task supersedes stale exploratory plans. Reread a file
+only when the task needs it or it changed. Before expanding scope, identify the
+missing fact and perform the smallest lookup that answers it. Prefer symbols
+and narrow ranges; do not restate large architecture/specification sections in
+notes or final responses. When architecture or semantics are resolved in the
+prompt, implement them rather than re-deriving them.
+
+## Verification discipline
+
+Verification must be proportional to the change. Token and context cost are
+part of the engineering constraint: do not run broad checks merely because a
+task is ending.
+
+During implementation:
+
+- Run the smallest directly relevant test or check for the changed behavior.
+- Prefer one focused Vitest file/test name over a suite. Prefer one focused
+  Playwright file/test name only when browser behavior cannot be established
+  more cheaply.
+- Do not rerun a passing check unless code relevant to that check changed
+  afterward.
+- Documentation, agent-instruction, and configuration-only changes normally do
+  not require application tests. If Codex tooling itself changes, run only its
+  tooling self-test.
+- Run typecheck only when TypeScript APIs/types/import relationships changed or
+  a focused test exposes a type problem.
+- Run architecture/spec validation only when the relevant architecture/spec
+  surface changed.
+- Run a web build only when build configuration, exports, framework
+  integration, or compile-time UI integration changed.
+- Stop after one successful focused verification command unless a concrete
+  remaining risk justifies another check.
+
+Do not invoke `$pfm-verify`, the full Vitest suite, full Playwright, build,
+typecheck, architecture validation, or specification validation as a routine
+completion ritual.
+
+GitHub CI is the authoritative broad pre-merge verification gate after push.
+Leave full-suite and full-E2E verification to CI unless:
+
+- the user explicitly requests full local verification;
+- CI is unavailable;
+- CI failed and the failing gate must be reproduced locally; or
+- the change is broad/cross-cutting enough that focused verification cannot
+  establish basic correctness.
+
+Repository hooks guard broad verification commands. Before running a guarded
+broad command, state the concrete reason in the working notes and prefix that
+single command with `CODEX_ALLOW_BROAD_VERIFY=1`. Never use the override merely
+to satisfy task completion.
+
+Examples of preferred focused commands:
+
+- `npm run codex:test -- test/scenarioCompilerBridge.test.ts`
+- `npx vitest run test/scenarioCompilerBridge.test.ts -t "specific behavior"`
+- `npm run test:e2e -- e2e/personal-mvp.spec.ts`
+
+Use `$pfm-verify` only as the explicit full-local-verification escalation
+path described by that skill.
 
 Keep the final report concise: changed files, material decisions, and
 verification status.

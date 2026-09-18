@@ -33,7 +33,8 @@ import {
   utcDate,
   type CanonicalObject,
 } from "./shared.js";
-import { resolveGrowth, selectScenario } from "./cashFlow.js";
+import { resolveGrowth } from "./cashFlow.js";
+import { selectScenario } from "./scenarioSelection.js";
 import type { CapabilityDiagnostic, CompileResult } from "./types.js";
 
 export interface CurrentPositionCompilerRequest {

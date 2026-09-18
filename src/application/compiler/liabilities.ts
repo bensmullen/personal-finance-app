@@ -32,7 +32,7 @@ import {
   rateConvention,
   type Money,
 } from "../../values/index.js";
-import { selectScenario } from "./cashFlow.js";
+import { selectScenario } from "./scenarioSelection.js";
 import {
   EXACT_DECIMAL,
   UUID,
@@ -77,6 +77,7 @@ export interface LiabilityCompilerRequest {
   readonly months?: number;
   readonly executionOwnerId: string;
   readonly executionProfiles: readonly LiabilityExecutionProfile[];
+  readonly scenarioId?: string;
 }
 
 export interface CompiledLiabilities {
@@ -87,6 +88,11 @@ export interface CompiledLiabilities {
   readonly executionMonths: number;
   readonly capabilityDiagnostics: readonly CapabilityDiagnostic[];
   readonly inactiveLiabilityIds: readonly string[];
+  readonly scenarioBindings: Readonly<{
+    loanIds: Readonly<Record<string, string>>;
+    extraPrincipalPaymentIds: Readonly<Record<string, string>>;
+    accountIds: Readonly<Record<string, string>>;
+  }>;
 }
 
 const GENERATED_PREFIX = "f16c0000-0000-4000-8001-";
@@ -249,7 +255,7 @@ export const compileLiabilities = (
       "executionOwnerId",
     );
 
-  const scenarioResult = selectScenario(model, { capabilityName: "liability_forecast", executionLabel: "Liability" });
+  const scenarioResult = selectScenario(model, { capabilityName: "liability_forecast", executionLabel: "Liability", ...(request.scenarioId === undefined ? {} : { scenarioId: request.scenarioId }), simulationStart: request.simulationStart, simulationEnd: request.simulationEnd });
   if (scenarioResult.status !== "compiled") return scenarioResult;
   const selectedScenario = scenarioResult.value;
   const allLiabilities = objects(model, "Liability");
@@ -745,6 +751,11 @@ export const compileLiabilities = (
       executionMonths,
       capabilityDiagnostics: Object.freeze([...diagnostics].sort((a, b) => a.code.localeCompare(b.code) || String(a.entityId).localeCompare(String(b.entityId)))),
       inactiveLiabilityIds: Object.freeze([...inactiveLiabilityIds].sort()),
+      scenarioBindings: Object.freeze({
+        loanIds: Object.freeze(Object.fromEntries(input.loans.map((loan) => [String(loan.principalLiabilityId), String(loan.id)]))),
+        extraPrincipalPaymentIds: Object.freeze(Object.fromEntries(input.loans.flatMap((loan) => (loan.extraPrincipalPayments ?? []).map((payment) => [String(payment.id), String(payment.id)])))),
+        accountIds: Object.freeze(Object.fromEntries(Object.keys(prunedAccounts).map((id) => [id, id]))),
+      }),
     }),
     diagnostics: Object.freeze([]),
   };

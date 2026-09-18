@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { createSyntheticPersonalDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
 
 const loadExample = async (page: import("@playwright/test").Page) => {
   await page.goto("/");
@@ -7,6 +8,15 @@ const loadExample = async (page: import("@playwright/test").Page) => {
   await expect(
     page.getByRole("heading", { name: "How am I doing?" }),
   ).toBeVisible();
+};
+
+const importDraft = async (page: import("@playwright/test").Page, draft: unknown) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Use synthetic example" }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  await page.locator('input[type="file"]').setInputFiles({ name: "fixture.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(draft as never)) });
+  await page.getByRole("button", { name: "Import into session" }).click();
 };
 
 test("guided setup reaches the Personal-MVP overview", async ({ page }) => {
@@ -218,7 +228,11 @@ test("model portability and deterministic what-if comparison stay explicit", asy
 
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "What If?", exact: true }).click();
-  await page.getByRole("button", { name: "Compare this plan" }).click();
+  for (const starter of ["Retire earlier/later", "Earn more/less", "Spend more/less", "Change investment returns", "Pay debt faster", "Change funding behavior"])
+    await expect(page.getByRole("heading", { name: starter })).toBeVisible();
+  await page.getByLabel("Exact effective annual rate").fill("0.0500");
+  await page.getByLabel("Income target").selectOption({ index: 1 });
+  await page.getByRole("button", { name: "Compare income growth" }).click();
   await expect(page.getByText("Active scope: cash flow")).toBeVisible();
   await expect(
     page.getByRole("table", { name: /Current plan, alternative/ }),
@@ -228,6 +242,86 @@ test("model portability and deterministic what-if comparison stay explicit", asy
   await expect(page.locator("code").first()).toContainText(
     "salary-growth-assumption",
   );
+});
+
+test("What If executes retirement and reports missing investment prerequisites", async ({ page }) => {
+  await loadExample(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "What If?", exact: true }).click();
+  await expect(page.getByText("Select an investment execution owner first.")).toBeVisible();
+  await page.getByLabel("Retirement income").selectOption({ index: 1 });
+  await page.getByLabel("Baseline retirement date").fill("2026-03-01");
+  await page.getByLabel("New retirement date").fill("2026-02-01");
+  await page.getByRole("button", { name: "Compare retirement date" }).click();
+  await expect(page.getByText("Active scope: cash flow")).toBeVisible();
+  await expect(page.getByText(/retirement date/i)).toBeVisible();
+  const replacement = structuredClone(createSyntheticPersonalDraft()) as any;
+  replacement.objects.Income[0].income_id = "98000000-0000-4000-8000-000000000004";
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  await page.locator('input[type="file"]').setInputFiles({ name: "replacement.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(replacement)) });
+  await page.getByRole("button", { name: "Import into session" }).click();
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Cash Flow", exact: true }).click();
+  await page.getByRole("button", { name: "Run cash-flow forecast" }).click();
+  await expect(page.getByRole("table", { name: "Detailed cash-flow forecast" })).toBeVisible();
+});
+
+test("What If executes deterministic investment return", async ({ page }) => {
+  const draft = structuredClone(createSyntheticPersonalDraft()) as any;
+  const assumptionId = "98000000-0000-4000-8000-000000000001";
+  const primitiveId = "98000000-0000-4000-8000-000000000002";
+  draft.objects.Assumption.push({ assumption_id: assumptionId, name: "Return", category: "market_return", value: "0.05", unit: "effective annual rate", source: "user", scenario_id: "90000000-0000-4000-8000-000000000011" });
+  draft.objects.Scenario[0].assumption_ids.push(assumptionId);
+  draft.objects.PrimitiveInstance.push({ primitive_instance_id: primitiveId, primitive_id: "P23", input_bindings: { rate: assumptionId }, parameters: {}, scenario_id: "90000000-0000-4000-8000-000000000011", enabled: true });
+  draft.objects.Investment[0].return_model_id = primitiveId;
+  await importDraft(page, draft);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByLabel("Forecast scope").selectOption("investments");
+  await page.getByLabel("Execution owner").selectOption({ label: "Taylor Example" });
+  await page.getByRole("button", { name: "What If?", exact: true }).click();
+  await page.getByLabel("Investment target").selectOption({ index: 1 });
+  await page.getByLabel("Exact effective annual rate").fill("0.0700");
+  await page.getByRole("button", { name: "Compare investment return" }).click();
+  await expect(page.getByText("Active scope: investments")).toBeVisible();
+  await expect(page.getByText(/investment return/i)).toBeVisible();
+});
+
+test("What If executes explicit liability extra principal", async ({ page }) => {
+  await loadExample(page);
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Debt", exact: true }).click();
+  await page.getByLabel("Execution owner").selectOption({ label: "Taylor Example" });
+  await page.getByLabel("Payment anchor").fill("2022-02-01");
+  await page.getByLabel("Total payment count").fill("360");
+  await page.getByLabel("Funding account").selectOption({ label: "Everyday checking" });
+  await page.getByLabel("Settlement priority").fill("1");
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "What If?", exact: true }).click();
+  await page.getByLabel("Liability target").selectOption({ index: 1 });
+  await page.getByLabel("Extra principal amount").fill("not-money");
+  await expect(page.getByText("Enter an exact decimal amount, such as 100.00.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Compare extra principal" })).toBeDisabled();
+  await page.getByLabel("Extra principal amount").fill("100.00");
+  await page.getByLabel("Extra principal date").fill("2026-02-01");
+  await page.getByLabel("Extra principal funding account").selectOption({ label: "Everyday checking" });
+  await page.getByRole("button", { name: "Compare extra principal" }).click();
+  await expect(page.getByText("Active scope: liabilities")).toBeVisible();
+  await expect(page.getByText(/extra principal payment/i)).toBeVisible();
+});
+
+test("What If preserves explicitly reversed funding priority", async ({ page }) => {
+  const draft = structuredClone(createSyntheticPersonalDraft()) as any;
+  draft.objects.Account.push({ ...draft.objects.Account[0], account_id: "98000000-0000-4000-8000-000000000003", name: "Reserve checking" });
+  await importDraft(page, draft);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "What If?", exact: true }).click();
+  await page.getByLabel("Funding account to add").selectOption({ label: "Everyday checking" });
+  await page.getByRole("button", { name: "Add funding source" }).click();
+  await page.getByLabel("Funding account to add").selectOption({ label: "Reserve checking" });
+  await page.getByRole("button", { name: "Add funding source" }).click();
+  await page.getByRole("button", { name: /Move 98000000-0000-4000-8000-000000000003 up/ }).click();
+  await expect(page.getByRole("list", { name: "Ordered funding accounts" }).getByRole("listitem")).toHaveText([/Reserve checking/, /Everyday checking/]);
 });
 
 test("manual local save survives reload and explicit load without restoring execution state", async ({ page }) => {
@@ -248,7 +342,8 @@ test("manual local save survives reload and explicit load without restoring exec
   await page.getByRole("button", { name: "Run investments forecast" }).click();
   await expect(page.getByRole("table", { name: "Detailed investment forecast" })).toBeVisible();
   await page.getByRole("button", { name: "What If?", exact: true }).click();
-  await page.getByRole("button", { name: "Compare this plan" }).click();
+  await page.getByLabel("Income target").selectOption({ index: 1 });
+  await page.getByRole("button", { name: "Compare income growth" }).click();
   await expect(page.getByRole("table", { name: /Current plan, alternative/ })).toBeVisible();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Canonical model saved to this browser")).toBeVisible();

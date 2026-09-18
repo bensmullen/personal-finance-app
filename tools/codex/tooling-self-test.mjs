@@ -38,18 +38,64 @@ const hookResult = (input) => {
   return JSON.parse(result.stdout || "{}");
 };
 
-for (const command of ["npm test", "npm run test"]) {
+const broadCommands = [
+  "npm test",
+  "npm run test",
+  "npm run codex:test",
+  "npm run codex:verify",
+  "npm run test:e2e",
+  "npm run typecheck",
+  "npm run build:web",
+  "npm run architecture:validate",
+  "npm run spec:validate",
+  "npx vitest run",
+  "npx playwright test",
+];
+
+for (const command of broadCommands) {
   const output = hookResult(hookPayload(command));
-  const updated = output?.hookSpecificOutput?.updatedInput;
-  assert(updated?.command === "npm run codex:test", `${command} was not rewritten`);
-  assert(updated?.timeout === 123, `${command} rewrite did not preserve tool input`);
-  assert(output?.hookSpecificOutput?.permissionDecision === "allow", `${command} was not explicitly allowed`);
+  const decision = output?.hookSpecificOutput;
+  assert(decision?.permissionDecision === "deny", `${command} was not blocked`);
+  assert(
+    String(decision?.permissionDecisionReason ?? "").includes("CODEX_ALLOW_BROAD_VERIFY=1"),
+    `${command} denial did not explain the explicit broad-verification override`,
+  );
 }
 
-assert(
-  JSON.stringify(hookResult(hookPayload("npx vitest run test/state.test.ts"))) === "{}",
-  "targeted Vitest command should remain unchanged",
+for (const command of [
+  "npm run codex:test -- test/state.test.ts",
+  "npx vitest run test/state.test.ts",
+  "npm run test:e2e -- e2e/personal-mvp.spec.ts",
+  'npx playwright test e2e/personal-mvp.spec.ts -g "retirement"',
+  "npm run codex:tooling-test",
+]) {
+  assert(
+    JSON.stringify(hookResult(hookPayload(command))) === "{}",
+    `focused command should remain unchanged: ${command}`,
+  );
+}
+
+const overriddenTests = hookResult(
+  hookPayload("CODEX_ALLOW_BROAD_VERIFY=1 npm test"),
 );
+assert(
+  overriddenTests?.hookSpecificOutput?.updatedInput?.command ===
+    "CODEX_ALLOW_BROAD_VERIFY=1 npm run codex:test",
+  "explicit full-unit override was not rewritten to quiet Vitest",
+);
+assert(
+  overriddenTests?.hookSpecificOutput?.permissionDecision === "allow",
+  "explicit full-unit override was not allowed",
+);
+assert(
+  JSON.stringify(
+    hookResult(
+      hookPayload("CODEX_ALLOW_BROAD_VERIFY=1 npm run codex:verify"),
+    ),
+  ) === "{}",
+  "explicit full-verification override should pass through unchanged",
+);
+
 assert(JSON.stringify(hookResult("not-json")) === "{}", "malformed hook input should fail open quietly");
 
 await mkdir(path.dirname(smokeTestPath), { recursive: true });

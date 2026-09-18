@@ -1,4 +1,6 @@
 export * from "./types.js";
+export * from "./scenarios.js";
+export * from "./scenarioSelection.js";
 export * from "./shared.js";
 export * from "./cashFlow.js";
 export * from "./currentPosition.js";

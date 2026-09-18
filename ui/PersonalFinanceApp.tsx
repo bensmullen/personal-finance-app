@@ -42,7 +42,7 @@ import {
   migratePersonalModelVersion,
   migratePersistedPersonalModel,
   patchPersonalObject,
-  comparePersonalCashFlowPlans,
+  comparePersonalScenarios,
   runPersonalForecast,
   resolvePersonalSessionSettings,
   savePersonalModel,
@@ -58,6 +58,8 @@ import {
   type PersonalSessionSettings,
   type PersistedPersonalModelState,
 } from "../src/application/personalMvp.js";
+import type { ScenarioChangeIntent } from "../src/application/compiler/scenarios.js";
+import type { RetirementTerminationBinding } from "../src/application/compiler/cashFlow.js";
 import {
   IndexedDbPersonalModelStore,
   isPersonalPersistenceEnabledOrigin,
@@ -288,10 +290,26 @@ const objectLabel = (type: PersonalObjectType, value: JsonObject) =>
       TITLES[type],
   );
 const chartNumber = (exact: string) => Number(exact); // Disposable display coordinate only; never returned to application/engine.
-type LiabilitySessionProfile = Readonly<{ paymentAnchor: string; totalPayments: string; fundingAccountId: string; settlementPriority: string }>;
-type LiabilitySessionConfig = Readonly<{ ownerId: string; profiles: Readonly<Record<string, LiabilitySessionProfile>> }>;
-const EMPTY_LIABILITY_SESSION_PROFILE: LiabilitySessionProfile = Object.freeze({ paymentAnchor: "", totalPayments: "", fundingAccountId: "", settlementPriority: "" });
-const emptyLiabilityConfig = (): LiabilitySessionConfig => ({ ownerId: "", profiles: {} });
+type LiabilitySessionProfile = Readonly<{
+  paymentAnchor: string;
+  totalPayments: string;
+  fundingAccountId: string;
+  settlementPriority: string;
+}>;
+type LiabilitySessionConfig = Readonly<{
+  ownerId: string;
+  profiles: Readonly<Record<string, LiabilitySessionProfile>>;
+}>;
+const EMPTY_LIABILITY_SESSION_PROFILE: LiabilitySessionProfile = Object.freeze({
+  paymentAnchor: "",
+  totalPayments: "",
+  fundingAccountId: "",
+  settlementPriority: "",
+});
+const emptyLiabilityConfig = (): LiabilitySessionConfig => ({
+  ownerId: "",
+  profiles: {},
+});
 
 export function PersonalFinanceApp() {
   const [draft, setDraft] = useState<PersonalDraft | undefined>();
@@ -308,14 +326,20 @@ export function PersonalFinanceApp() {
       sessionSettingsFromHorizon("2026-01-01", 12),
     );
   const [runSettingsError, setRunSettingsError] = useState("");
-  const [liabilityConfig, setLiabilityConfig] = useState<LiabilitySessionConfig>(emptyLiabilityConfig);
+  const [liabilityConfig, setLiabilityConfig] =
+    useState<LiabilitySessionConfig>(emptyLiabilityConfig);
   const [investmentOwnerId, setInvestmentOwnerId] = useState("");
+  const [retirementBindings, setRetirementBindings] = useState<readonly RetirementTerminationBinding[]>([]);
+  const [whatIfIds] = useState(() => ({ terminationEventId: randomId(), extraPaymentId: randomId(), alternativeScenarioId: randomId() }));
   const [fileReport, setFileReport] =
     useState<ReturnType<typeof validatePersonalModelJson>>();
   const [pendingJson, setPendingJson] = useState("");
   const [notice, setNotice] = useState("");
-  const [persistenceMode, setPersistenceMode] = useState<"checking" | "enabled" | "disabled">("checking");
-  const [persistenceStore, setPersistenceStore] = useState<IndexedDbPersonalModelStore>();
+  const [persistenceMode, setPersistenceMode] = useState<
+    "checking" | "enabled" | "disabled"
+  >("checking");
+  const [persistenceStore, setPersistenceStore] =
+    useState<IndexedDbPersonalModelStore>();
   const [savedState, setSavedState] = useState<PersistedPersonalModelState>();
   const [persistenceError, setPersistenceError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -378,12 +402,16 @@ export function PersonalFinanceApp() {
     setRunSettingsError("");
     setLiabilityConfig(emptyLiabilityConfig());
     setInvestmentOwnerId("");
+    setRetirementBindings([]);
     setNotice(message);
   };
 
   const loadSavedModel = () => {
     if (savedState?.status !== "ready") return;
-    replaceCanonicalModel(savedState.model, "Saved model loaded into this session");
+    replaceCanonicalModel(
+      savedState.model,
+      "Saved model loaded into this session",
+    );
   };
 
   const saveToBrowser = async () => {
@@ -391,18 +419,29 @@ export function PersonalFinanceApp() {
     try {
       let result = await savePersonalModel(persistenceStore, draft);
       if (result.status === "different_model_confirmation_required") {
-        if (!window.confirm("Replace the different model currently saved in this browser?")) return;
-        result = await savePersonalModel(persistenceStore, draft, { confirmDifferentModel: true });
+        if (
+          !window.confirm(
+            "Replace the different model currently saved in this browser?",
+          )
+        )
+          return;
+        result = await savePersonalModel(persistenceStore, draft, {
+          confirmDifferentModel: true,
+        });
       }
       if (result.status === "recovery_required") {
-        setNotice("Saved data is protected. Export its backup or delete it before saving this model.");
+        setNotice(
+          "Saved data is protected. Export its backup or delete it before saving this model.",
+        );
         setSavedState(result.savedState);
         return;
       }
       setNotice("Canonical model saved to this browser");
       await inspectSavedModel(persistenceStore);
     } catch {
-      setPersistenceError("The model could not be saved; previously stored data was retained.");
+      setPersistenceError(
+        "The model could not be saved; previously stored data was retained.",
+      );
     }
   };
 
@@ -411,14 +450,25 @@ export function PersonalFinanceApp() {
     try {
       const migrated = await migratePersistedPersonalModel(persistenceStore);
       setSavedState(migrated);
-      replaceCanonicalModel(migrated.model, "Saved model migrated explicitly and loaded");
+      replaceCanonicalModel(
+        migrated.model,
+        "Saved model migrated explicitly and loaded",
+      );
     } catch {
-      setPersistenceError("Migration failed; the original saved data was retained.");
+      setPersistenceError(
+        "Migration failed; the original saved data was retained.",
+      );
     }
   };
 
   const deleteSavedModel = async () => {
-    if (!persistenceStore || !window.confirm("Delete the saved local model from this browser? The open model and exported files will not be deleted.")) return;
+    if (
+      !persistenceStore ||
+      !window.confirm(
+        "Delete the saved local model from this browser? The open model and exported files will not be deleted.",
+      )
+    )
+      return;
     try {
       await deletePersistedPersonalModel(persistenceStore);
       setSavedState({ status: "empty" });
@@ -441,7 +491,10 @@ export function PersonalFinanceApp() {
 
   const exportSavedBackup = () => {
     if (!savedState || savedState.status === "empty") return;
-    downloadJson(savedState.serializedModel, "personal-finance-model-backup.json");
+    downloadJson(
+      savedState.serializedModel,
+      "personal-finance-model-backup.json",
+    );
     setNotice("Exact saved bytes exported as a recovery backup");
   };
 
@@ -489,7 +542,10 @@ export function PersonalFinanceApp() {
         exportSavedBackup={exportSavedBackup}
         deleteSaved={deleteSavedModel}
         loadExample={() => {
-          replaceCanonicalModel(createSyntheticPersonalDraft(), "Synthetic example loaded");
+          replaceCanonicalModel(
+            createSyntheticPersonalDraft(),
+            "Synthetic example loaded",
+          );
           setSessionSettings(sessionSettingsFromHorizon("2026-01-01", 120));
         }}
       />
@@ -513,7 +569,7 @@ export function PersonalFinanceApp() {
     const request = scope === "investments" ? {
       ...resolved.request,
       ...(investmentOwnerId ? { executionOwnerId: investmentOwnerId } : {}),
-    } : scope !== "liabilities" ? resolved.request : {
+    } : scope !== "liabilities" ? { ...resolved.request, ...(retirementBindings.length === 0 ? {} : { retirementBindings }) } : {
       ...resolved.request,
       ...(liabilityConfig.ownerId ? { executionOwnerId: liabilityConfig.ownerId } : {}),
       liabilityExecutionProfiles: (Object.entries(liabilityConfig.profiles) as [string, LiabilitySessionProfile][]).map(([liabilityId, profile]) => ({
@@ -524,10 +580,10 @@ export function PersonalFinanceApp() {
     };
     setForecast(runPersonalForecast(draft, request));
   };
-  const runComparison = () => {
+  const runComparison = (scope: "cash_flow" | "investments" | "liabilities", change: ScenarioChangeIntent, retirementBinding?: RetirementTerminationBinding) => {
     const resolved = resolvePersonalSessionSettings(
       sessionSettings,
-      "cash_flow",
+      scope,
     );
     if (!resolved.request) {
       setRunSettingsError(resolved.error ?? "Run settings are not valid.");
@@ -536,8 +592,22 @@ export function PersonalFinanceApp() {
       return;
     }
     setRunSettingsError("");
+    const effectiveRetirementBindings = retirementBinding === undefined ? retirementBindings : [retirementBinding];
+    if (retirementBinding !== undefined) setRetirementBindings(effectiveRetirementBindings);
+    const request = scope === "investments" ? { ...resolved.request, ...(investmentOwnerId ? { executionOwnerId: investmentOwnerId } : {}) }
+      : scope === "liabilities" ? { ...resolved.request, ...(liabilityConfig.ownerId ? { executionOwnerId: liabilityConfig.ownerId } : {}), liabilityExecutionProfiles: (Object.entries(liabilityConfig.profiles) as [string, LiabilitySessionProfile][]).map(([liabilityId, profile]) => ({ liabilityId, kind: "vs4_fixed_monthly_fully_amortizing" as const, paymentAnchor: profile.paymentAnchor, totalPayments: Number(profile.totalPayments), fundingAccountId: profile.fundingAccountId, settlementPriority: Number(profile.settlementPriority), openingContractStatus: "current" as const })) }
+      : { ...resolved.request, ...(effectiveRetirementBindings.length === 0 ? {} : { retirementBindings: effectiveRetirementBindings }) };
     setComparison(
-      comparePersonalCashFlowPlans(draft, resolved.request, "0.05"),
+      comparePersonalScenarios(draft, request, {
+        scope,
+        alternatives: [
+          {
+            scenarioId: whatIfIds.alternativeScenarioId,
+            name: "What-if alternative",
+            changes: [change],
+          },
+        ],
+      }),
     );
     navigate("Plan");
     setSubnav("Compare Plans");
@@ -552,7 +622,10 @@ export function PersonalFinanceApp() {
     setFileReport(validatePersonalModelJson(json));
   };
   const importModel = () => {
-    replaceCanonicalModel(importPersonalModelJson(pendingJson), "Model imported into this session");
+    replaceCanonicalModel(
+      importPersonalModelJson(pendingJson),
+      "Model imported into this session",
+    );
     setFileReport(undefined);
   };
   const migrate = () => {
@@ -574,9 +647,15 @@ export function PersonalFinanceApp() {
         <div className="session-banner" role="status">
           <strong>Manual save</strong> — edits stay in memory until saved.{" "}
           {persistenceMode === "enabled" ? (
-            <><button onClick={() => void saveToBrowser()}>Save</button> locally to this browser/origin; export remains the recommended backup.</>
+            <>
+              <button onClick={() => void saveToBrowser()}>Save</button> locally
+              to this browser/origin; export remains the recommended backup.
+            </>
           ) : (
-            <>This public/demo origin does not store personal models. <button onClick={exportModel}>Export your model</button>.</>
+            <>
+              This public/demo origin does not store personal models.{" "}
+              <button onClick={exportModel}>Export your model</button>.
+            </>
           )}
         </div>
         <button className="avatar" aria-label="Model menu">
@@ -644,8 +723,21 @@ export function PersonalFinanceApp() {
           )}
           {primary === "Net Worth" && subnav === "Debt" && (
             <>
-              <EditorHub types={EDITORS.Debt!} draft={draft} setDraft={setDraft} metadata={metadata} setNotice={setNotice} />
-              <DebtExecutionPanel draft={draft} liabilityConfig={liabilityConfig} setLiabilityConfig={setLiabilityConfig} run={() => runForecast("liabilities")} forecast={forecast} error={runSettingsError} />
+              <EditorHub
+                types={EDITORS.Debt!}
+                draft={draft}
+                setDraft={setDraft}
+                metadata={metadata}
+                setNotice={setNotice}
+              />
+              <DebtExecutionPanel
+                draft={draft}
+                liabilityConfig={liabilityConfig}
+                setLiabilityConfig={setLiabilityConfig}
+                run={() => runForecast("liabilities")}
+                forecast={forecast}
+                error={runSettingsError}
+              />
             </>
           )}
           {primary === "Plan" && subnav === "Current Plan" && (
@@ -664,7 +756,10 @@ export function PersonalFinanceApp() {
             />
           )}
           {primary === "Plan" && subnav === "Compare Plans" && (
-            <ComparePlans comparison={comparison} onRun={runComparison} />
+            <ComparePlans
+              comparison={comparison}
+              onRun={() => setSubnav("What If?")}
+            />
           )}
           {primary === "Settings" && subnav === "Model Settings" && (
             <ModelSettings
@@ -695,7 +790,7 @@ export function PersonalFinanceApp() {
             <Advanced draft={draft} issues={issues} />
           )}
           {primary === "Plan" && subnav === "What If?" && (
-            <WhatIfStarter onCompare={runComparison} />
+            <WhatIfStarter draft={draft} investmentOwnerId={investmentOwnerId} liabilityConfig={liabilityConfig} runtimeIds={whatIfIds} onCompare={runComparison} />
           )}
           {EDITORS[subnav] && !(primary === "Net Worth" && subnav === "Debt") && (
             <EditorHub
@@ -711,7 +806,7 @@ export function PersonalFinanceApp() {
             !EDITORS[subnav] && (
               <Capability
                 title="Life events"
-                message="Canonical events are preserved on import. Event types without existing execution semantics are marked not currently executable."
+                message="Retirement can execute only with an explicit binding to one income-termination event and changes that stop date only. Marriage, childbirth, home purchase, disability, and other event types are preserved but have no modeled consequences yet."
               />
             )}
         </main>
@@ -1070,7 +1165,9 @@ function Plan({
   error: string;
   draft: PersonalDraft;
   liabilityConfig: LiabilitySessionConfig;
-  setLiabilityConfig: React.Dispatch<React.SetStateAction<LiabilitySessionConfig>>;
+  setLiabilityConfig: React.Dispatch<
+    React.SetStateAction<LiabilitySessionConfig>
+  >;
   investmentOwnerId: string;
   setInvestmentOwnerId: (ownerId: string) => void;
 }) {
@@ -1115,8 +1212,20 @@ function Plan({
           </p>
         )}
       </section>
-      {forecastScope === "liabilities" && <LiabilityExecutionControls draft={draft} liabilityConfig={liabilityConfig} setLiabilityConfig={setLiabilityConfig} />}
-      {forecastScope === "investments" && <InvestmentExecutionControls draft={draft} ownerId={investmentOwnerId} setOwnerId={setInvestmentOwnerId} />}
+      {forecastScope === "liabilities" && (
+        <LiabilityExecutionControls
+          draft={draft}
+          liabilityConfig={liabilityConfig}
+          setLiabilityConfig={setLiabilityConfig}
+        />
+      )}
+      {forecastScope === "investments" && (
+        <InvestmentExecutionControls
+          draft={draft}
+          ownerId={investmentOwnerId}
+          setOwnerId={setInvestmentOwnerId}
+        />
+      )}
       <section className="panel">
         <div className="scope-badge">
           Active scope: {forecastScope.replace("_", " ")}
@@ -1147,7 +1256,38 @@ function LiabilityExecutionControls({ draft, liabilityConfig, setLiabilityConfig
 function DebtExecutionPanel({ draft, liabilityConfig, setLiabilityConfig, run, forecast, error }: { draft: PersonalDraft; liabilityConfig: LiabilitySessionConfig; setLiabilityConfig: React.Dispatch<React.SetStateAction<LiabilitySessionConfig>>; run: () => void; forecast: PersonalForecastReadModel | undefined; error: string }) {
   return <><PageHead eyebrow="Net Worth · Debt" title="Debt schedule and funding" text="Edit canonical debt records, then provide explicit session-only execution terms for supported mortgages." /><LiabilityExecutionControls draft={draft} liabilityConfig={liabilityConfig} setLiabilityConfig={setLiabilityConfig} /><section className="panel"><button className="primary" onClick={run}>Run liability forecast</button>{error && <p className="field-error" role="alert">{error}</p>}{forecast?.scope === "liabilities" ? <ForecastVisual forecast={forecast} /> : <Empty text="Enter explicit execution configuration and run the liability forecast." />}</section></>;
 }
-function WhatIfStarter({ onCompare }: { onCompare: () => void }) {
+function WhatIfStarter({ draft, investmentOwnerId, liabilityConfig, runtimeIds, onCompare }: { draft: PersonalDraft; investmentOwnerId: string; liabilityConfig: LiabilitySessionConfig; runtimeIds: { terminationEventId: string; extraPaymentId: string; alternativeScenarioId: string }; onCompare: (scope: "cash_flow" | "investments" | "liabilities", change: ScenarioChangeIntent, retirementBinding?: RetirementTerminationBinding) => void }) {
+  const [incomeId, setIncomeId] = useState("");
+  const [expenseId, setExpenseId] = useState("");
+  const [rate, setRate] = useState("0.05");
+  const [investmentId, setInvestmentId] = useState("");
+  const [retirementIncomeId, setRetirementIncomeId] = useState("");
+  const [retirementEventId, setRetirementEventId] = useState("");
+  const [baselineDate, setBaselineDate] = useState("");
+  const [retirementDate, setRetirementDate] = useState("");
+  const [liabilityId, setLiabilityId] = useState("");
+  const [extraAmount, setExtraAmount] = useState("");
+  const [extraDate, setExtraDate] = useState("");
+  const [extraFundingId, setExtraFundingId] = useState("");
+  const [fundingScope, setFundingScope] = useState<"expense" | "loan">("expense");
+  const [fundingTargetId, setFundingTargetId] = useState("");
+  const [fundingAccountIds, setFundingAccountIds] = useState<string[]>([]);
+  const [fundingCandidateId, setFundingCandidateId] = useState("");
+  const incomes = objectEntries(draft, "Income");
+  const expenses = objectEntries(draft, "Expense");
+  const investments = objectEntries(draft, "Investment");
+  const liabilities = objectEntries(draft, "Liability").filter((item) => item.liability_type === "mortgage");
+  const accounts = objectEntries(draft, "Account");
+  const retirementEvents = ((draft.objects as Record<string, readonly JsonObject[]>).Event ?? []).filter((item) => item.enabled === true && item.event_type === "retirement" && item.trigger_type === "scheduled");
+  const exactRate = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(rate);
+  const exactExtraAmount = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(extraAmount);
+  const chosenEvent = retirementEvents.find((item) => item.event_id === retirementEventId);
+  const runRetirement = () => {
+    const runtimeEventId = runtimeIds.terminationEventId;
+    const baseline = typeof chosenEvent?.start_date === "string" ? chosenEvent.start_date : baselineDate;
+    const binding = { incomeId: retirementIncomeId, terminationEventId: runtimeEventId, baselineDate: baseline, ...(retirementEventId ? { canonicalEventId: retirementEventId } : {}) };
+    onCompare("cash_flow", { kind: "retirement_date", incomeId: retirementIncomeId, targetEventId: runtimeEventId, baselineDate: baseline, newDate: retirementDate }, binding);
+  };
   return (
     <>
       <PageHead
@@ -1156,23 +1296,19 @@ function WhatIfStarter({ onCompare }: { onCompare: () => void }) {
         text="Start with a supported deterministic change. Technical scenario metadata stays below."
       />
       <section className="panel">
-        <div className="panel-head">
-          <div>
-            <h2>What if income grows 5% instead of 3% per year?</h2>
-            <p>
-              Uses the existing cash-flow scenario engine and an exact
-              effective-annual rate.
-            </p>
-          </div>
-          <button className="primary" onClick={onCompare}>
-            Compare this plan
-          </button>
+        <label>Income target<select value={incomeId} onChange={(event) => setIncomeId(event.target.value)}><option value="">Select an income</option>{incomes.map((income) => <option key={objectId("Income", income)} value={objectId("Income", income)}>{objectLabel("Income", income)}</option>)}</select></label>
+        <label>Expense target<select value={expenseId} onChange={(event) => setExpenseId(event.target.value)}><option value="">Select an expense</option>{expenses.map((expense) => <option key={objectId("Expense", expense)} value={objectId("Expense", expense)}>{objectLabel("Expense", expense)}</option>)}</select></label>
+        <label>Exact effective annual rate<input aria-label="Exact effective annual rate" inputMode="decimal" value={rate} onChange={(event) => setRate(event.target.value)} /></label>
+        {!exactRate && <p className="field-error" role="alert">Enter an exact decimal rate, such as 0.05.</p>}
+        <div className="object-grid">
+          <article className="object-card"><h2>Retire earlier/later</h2><p>Changes only one executable income stop date.</p><select aria-label="Retirement income" value={retirementIncomeId} onChange={(event) => setRetirementIncomeId(event.target.value)}><option value="">Select income</option>{incomes.map((item) => <option key={objectId("Income", item)} value={objectId("Income", item)}>{objectLabel("Income", item)}</option>)}</select><select aria-label="Canonical retirement event" value={retirementEventId} onChange={(event) => { setRetirementEventId(event.target.value); const selected = retirementEvents.find((item) => item.event_id === event.target.value); if (typeof selected?.start_date === "string") setBaselineDate(selected.start_date); }}><option value="">Session-only explicit binding</option>{retirementEvents.map((item) => <option key={String(item.event_id)} value={String(item.event_id)}>{String(item.name ?? item.event_id)}</option>)}</select><input aria-label="Baseline retirement date" type="date" value={baselineDate} disabled={Boolean(retirementEventId)} onChange={(event) => setBaselineDate(event.target.value)} /><input aria-label="New retirement date" type="date" value={retirementDate} onChange={(event) => setRetirementDate(event.target.value)} /><button className="primary" disabled={!retirementIncomeId || !baselineDate || !retirementDate} onClick={runRetirement}>Compare retirement date</button></article>
+          <article className="object-card"><h2>Earn more/less</h2><p>Replace one selected income&apos;s exact effective-annual growth rate.</p><button className="primary" disabled={!incomeId || !exactRate} onClick={() => onCompare("cash_flow", { kind: "income_growth", incomeId, annualRate: rate })}>Compare income growth</button></article>
+          <article className="object-card"><h2>Spend more/less</h2><p>Replace one selected expense&apos;s exact effective-annual inflation rate.</p><button className="primary" disabled={!expenseId || !exactRate} onClick={() => onCompare("cash_flow", { kind: "expense_inflation", expenseId, annualRate: rate })}>Compare spending growth</button></article>
+          <article className="object-card"><h2>Change investment returns</h2><p>Runs only the selected investment scope, not a household-wide projection.</p><select aria-label="Investment target" value={investmentId} onChange={(event) => setInvestmentId(event.target.value)}><option value="">Select investment</option>{investments.map((item) => <option key={objectId("Investment", item)} value={objectId("Investment", item)}>{objectLabel("Investment", item)}</option>)}</select><button className="primary" disabled={!investmentId || !investmentOwnerId || !exactRate} onClick={() => onCompare("investments", { kind: "investment_return", investmentId, annualRate: rate })}>Compare investment return</button>{(!investmentOwnerId || investments.length === 0) && <p className="capability">{investments.length === 0 ? "No executable investment target exists." : "Select an investment execution owner first."}</p>}</article>
+          <article className="object-card"><h2>Pay debt faster</h2><p>Creates one explicit extra-principal payment; no refinance or recast.</p><select aria-label="Liability target" value={liabilityId} onChange={(event) => setLiabilityId(event.target.value)}><option value="">Select liability</option>{liabilities.map((item) => <option key={objectId("Liability", item)} value={objectId("Liability", item)}>{objectLabel("Liability", item)}</option>)}</select><input aria-label="Extra principal amount" inputMode="decimal" value={extraAmount} onChange={(event) => setExtraAmount(event.target.value)} />{extraAmount && !exactExtraAmount && <p className="field-error" role="alert">Enter an exact decimal amount, such as 100.00.</p>}<input aria-label="Extra principal date" type="date" value={extraDate} onChange={(event) => setExtraDate(event.target.value)} /><select aria-label="Extra principal funding account" value={extraFundingId} onChange={(event) => setExtraFundingId(event.target.value)}><option value="">Select funding account</option>{accounts.map((item) => <option key={objectId("Account", item)} value={objectId("Account", item)}>{objectLabel("Account", item)}</option>)}</select><button className="primary" disabled={!liabilityId || !exactExtraAmount || !extraDate || !extraFundingId || !liabilityConfig.ownerId || !liabilityConfig.profiles[liabilityId]} onClick={() => onCompare("liabilities", { kind: "extra_principal_payment", operation: "add", liabilityId, paymentId: runtimeIds.extraPaymentId, instruction: { id: runtimeIds.extraPaymentId, scheduledAt: extraDate, amount: extraAmount, fundingAccountId: extraFundingId } })}>Compare extra principal</button>{(!liabilityConfig.ownerId || !liabilityConfig.profiles[liabilityId]) && <p className="capability">Complete the debt execution profile first.</p>}</article>
+          <article className="object-card"><h2>Change funding behavior</h2><p>Choose a target and add cash accounts in explicit priority order.</p><select aria-label="Funding scope" value={fundingScope} onChange={(event) => { setFundingScope(event.target.value as "expense" | "loan"); setFundingTargetId(""); }}><option value="expense">Expense</option><option value="loan">Loan</option></select><select aria-label="Funding target" value={fundingTargetId} onChange={(event) => setFundingTargetId(event.target.value)}><option value="">Select target</option>{(fundingScope === "expense" ? expenses : liabilities).map((item) => <option key={objectId(fundingScope === "expense" ? "Expense" : "Liability", item)} value={objectId(fundingScope === "expense" ? "Expense" : "Liability", item)}>{objectLabel(fundingScope === "expense" ? "Expense" : "Liability", item)}</option>)}</select><select aria-label="Funding account to add" value={fundingCandidateId} onChange={(event) => setFundingCandidateId(event.target.value)}><option value="">Select account</option>{accounts.filter((item) => !fundingAccountIds.includes(objectId("Account", item))).map((item) => <option key={objectId("Account", item)} value={objectId("Account", item)}>{objectLabel("Account", item)}</option>)}</select><button disabled={!fundingCandidateId} onClick={() => { setFundingAccountIds((prior) => [...prior, fundingCandidateId]); setFundingCandidateId(""); }}>Add funding source</button><ol aria-label="Ordered funding accounts">{fundingAccountIds.map((id, index) => <li key={id}><span>{objectLabel("Account", accounts.find((item) => objectId("Account", item) === id)!)}</span><button aria-label={`Move ${id} up`} disabled={index === 0} onClick={() => setFundingAccountIds((prior) => prior.map((value, position) => position === index - 1 ? id : position === index ? prior[index - 1]! : value))}>Move Up</button><button aria-label={`Move ${id} down`} disabled={index === fundingAccountIds.length - 1} onClick={() => setFundingAccountIds((prior) => prior.map((value, position) => position === index + 1 ? id : position === index ? prior[index + 1]! : value))}>Move Down</button><button aria-label={`Remove ${id}`} onClick={() => setFundingAccountIds((prior) => prior.filter((value) => value !== id))}>Remove</button></li>)}</ol><button className="primary" disabled={!fundingTargetId || fundingAccountIds.length === 0 || (fundingScope === "loan" && (!liabilityConfig.ownerId || !liabilityConfig.profiles[fundingTargetId]))} onClick={() => onCompare(fundingScope === "expense" ? "cash_flow" : "liabilities", fundingScope === "expense" ? { kind: "expense_funding_policy", expenseId: fundingTargetId, policy: { id: "what-if-expense-funding", orderedAccountIds: fundingAccountIds, allowPartial: false, insufficientFundsBehavior: "unfunded" } } : { kind: "loan_funding_policy", liabilityId: fundingTargetId, policy: { id: "what-if-loan-funding", orderedAccountIds: fundingAccountIds, allowPartial: false, insufficientFundsBehavior: "unfunded" } })}>Compare funding policy</button></article>
         </div>
-        <p className="muted">
-          Other supported scenario changes remain editable as canonical plan
-          data; execution is capability-gated unless they translate
-          unambiguously to the selected scope.
-        </p>
+        <p className="muted">Comparisons are deterministic and scope-specific. Investment purchases mean modeled investment-position purchases only. Cross-slice household effects remain capability-gated.</p>
       </section>
     </>
   );
@@ -1197,17 +1333,19 @@ function ComparePlans({
           <div>
             <h2>Current plan vs alternatives</h2>
             <p>
-              Cash-flow comparison can run only after the current plan is
-              executable.
+              The selected scope must be executable and every target must be
+              explicit.
             </p>
           </div>
           <button className="primary" onClick={onRun}>
             Compare supported what-if
           </button>
         </div>
-        {comparison?.status === "completed" ? (
+        {comparison?.status === "completed" || comparison?.status === "incomplete" ? (
           <>
-            <div className="scope-badge">Active scope: cash flow</div>
+            <div className="scope-badge">
+              Active scope: {comparison.scope.replace("_", " ")} · {comparison.status}
+            </div>
             <div className="chart">
               <ResponsiveContainer>
                 <LineChart
@@ -1245,6 +1383,7 @@ function ComparePlans({
                 <thead>
                   <tr>
                     <th>Period</th>
+                    <th>Metric</th>
                     <th>Current plan</th>
                     <th>Alternative</th>
                     <th>Delta</th>
@@ -1252,12 +1391,12 @@ function ComparePlans({
                   </tr>
                 </thead>
                 <tbody>
-                  {comparison.points.map((point) => (
-                    <tr key={point.period}>
-                      <td>{point.period.slice(0, 10)}</td>
-                      <td>{point.baseline.display}</td>
-                      <td>{point.alternative.display}</td>
-                      <td>{point.delta.display}</td>
+                  {comparison.points.flatMap((point) => Object.entries(point.metrics ?? { primary: { baseline: point.baseline, alternative: point.alternative, delta: point.delta } }).map(([metric, values]) => (
+                    <tr key={`${point.period}:${metric}`}>
+                      <td>{point.period.slice(0, 10)}</td><td>{metric.replaceAll(/([A-Z])/g, " $1")}</td>
+                      <td>{values.baseline.display}</td>
+                      <td>{values.alternative.display}</td>
+                      <td>{values.delta.display}</td>
                       <td>
                         <details>
                           <summary>Explain</summary>
@@ -1270,7 +1409,7 @@ function ComparePlans({
                         </details>
                       </td>
                     </tr>
-                  ))}
+                  ))) }
                 </tbody>
               </table>
             </div>
@@ -1279,7 +1418,10 @@ function ComparePlans({
               {comparison.configurationDifferences.map((difference) => (
                 <p key={difference.target}>
                   {difference.kind.replaceAll("_", " ")} · {difference.target} ·{" "}
-                  {difference.assumptionIds.join(", ")}
+                  layer {difference.scenarioLayerId}
+                  {[...difference.assumptionIds, ...difference.eventIds, ...difference.configuredRuleIds].length > 0
+                    ? ` · ${[...difference.assumptionIds, ...difference.eventIds, ...difference.configuredRuleIds].join(", ")}`
+                    : ""}
                 </p>
               ))}
               <p>
@@ -1725,7 +1867,9 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
   // Compiler diagnostics carry an explicit capability discriminator. Engine
   // validation issues (including liquidity shortfalls) describe this run, not
   // the supported surface area of the liability compiler.
-  const isCapabilityDiagnostic = (value: (typeof forecast.diagnostics)[number]): value is (typeof forecast.diagnostics)[number] & { capability: string } =>
+  const isCapabilityDiagnostic = (
+    value: (typeof forecast.diagnostics)[number],
+  ): value is (typeof forecast.diagnostics)[number] & { capability: string } =>
     "capability" in value && typeof value.capability === "string";
   if (forecast.status === "unavailable")
     return (
@@ -1892,27 +2036,62 @@ function Portability({
       {persistenceMode === "disabled" && (
         <section className="panel compatibility">
           <strong>Public/demo origin</strong>
-          <p>Local personal-data persistence is intentionally disabled here. Do not enter real personal financial information. Import and export remain available.</p>
+          <p>
+            Local personal-data persistence is intentionally disabled here. Do
+            not enter real personal financial information. Import and export
+            remain available.
+          </p>
         </section>
       )}
-      {persistenceError && <p className="field-error" role="alert">{persistenceError}</p>}
+      {persistenceError && (
+        <p className="field-error" role="alert">
+          {persistenceError}
+        </p>
+      )}
       <section className="action-grid">
         {persistenceMode === "enabled" && (
           <article className="panel">
             <h2>Local browser storage</h2>
-            <p>Save stores only the canonical portable model. Edits are not saved automatically.</p>
+            <p>
+              Save stores only the canonical portable model. Edits are not saved
+              automatically.
+            </p>
             <div className="row">
-              <button className="primary" onClick={() => void saveToBrowser()}>Save to this browser</button>
-              {savedState?.status === "ready" && <button className="secondary" onClick={loadSaved}>Load saved model / Replace current model</button>}
-              {savedState?.status === "migration_required" && <button className="secondary" onClick={() => void migrateSaved()}>Migrate saved model explicitly</button>}
+              <button className="primary" onClick={() => void saveToBrowser()}>
+                Save to this browser
+              </button>
+              {savedState?.status === "ready" && (
+                <button className="secondary" onClick={loadSaved}>
+                  Load saved model / Replace current model
+                </button>
+              )}
+              {savedState?.status === "migration_required" && (
+                <button
+                  className="secondary"
+                  onClick={() => void migrateSaved()}
+                >
+                  Migrate saved model explicitly
+                </button>
+              )}
             </div>
             {savedState && savedState.status !== "empty" && (
               <div className="compatibility">
-                <strong>Saved model: {savedState.status.replaceAll("_", " ")}</strong>
-                {savedState.status !== "ready" && <p>This saved data is protected from ordinary Save. Export it for recovery or explicitly delete it.</p>}
+                <strong>
+                  Saved model: {savedState.status.replaceAll("_", " ")}
+                </strong>
+                {savedState.status !== "ready" && (
+                  <p>
+                    This saved data is protected from ordinary Save. Export it
+                    for recovery or explicitly delete it.
+                  </p>
+                )}
                 <div className="row">
-                  <button className="secondary" onClick={exportSavedBackup}>Export saved backup</button>
-                  <button className="ghost" onClick={() => void deleteSaved()}>Delete saved local model</button>
+                  <button className="secondary" onClick={exportSavedBackup}>
+                    Export saved backup
+                  </button>
+                  <button className="ghost" onClick={() => void deleteSaved()}>
+                    Delete saved local model
+                  </button>
                 </div>
               </div>
             )}

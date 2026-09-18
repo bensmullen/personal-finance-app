@@ -618,7 +618,7 @@ describe("canonical executable-model compiler", () => {
     }
   });
 
-  it("defaults omitted simulation_count and gates valid scenario inheritance", () => {
+  it("defaults omitted simulation_count and permits valid child alternatives", () => {
     const omitted = compileCashFlow(
       modelWith((value) => {
         delete value.objects.Scenario![0]!.simulation_count;
@@ -628,22 +628,23 @@ describe("canonical executable-model compiler", () => {
     expect(omitted.status).toBe("compiled");
     const inherited = compileCashFlow(
       modelWith((value) => {
-        const baseId = "98000000-0000-4000-8000-000000000002";
+        const childId = "98000000-0000-4000-8000-000000000002";
+        const root = value.objects.Scenario![0]!;
         value.objects.Scenario!.push({
-          scenario_id: baseId,
-          enabled: false,
+          scenario_id: childId,
+          base_scenario_id: root.scenario_id,
+          start_date: root.start_date,
+          end_date: root.end_date,
+          event_ids: [],
+          assumption_ids: [],
+          enabled: true,
           stochastic: false,
           timestep: "monthly",
         });
-        value.objects.Scenario![0]!.base_scenario_id = baseId;
       }),
       request,
     );
-    expect(inherited.status).toBe("unsupported");
-    if (inherited.status === "unsupported")
-      expect(inherited.diagnostics[0]!.code).toBe(
-        "SCENARIO_INHERITANCE_UNSUPPORTED",
-      );
+    expect(inherited.status).toBe("compiled");
     const malformedCount = compileCashFlow(
       modelWith((value) => {
         value.objects.Scenario![0]!.simulation_count = "1";
@@ -666,8 +667,13 @@ describe("canonical executable-model compiler", () => {
     const other = "98000000-0000-4000-8000-000000000003";
     const cross = compileCashFlow(
       modelWith((value) => {
+        const root = value.objects.Scenario![0]!;
         value.objects.Scenario!.push({
           scenario_id: other,
+          start_date: root.start_date,
+          end_date: root.end_date,
+          event_ids: [],
+          assumption_ids: [],
           enabled: false,
           stochastic: false,
           timestep: "monthly",
@@ -686,8 +692,13 @@ describe("canonical executable-model compiler", () => {
     expect(missing.status).toBe("unsupported");
     const crossAssumption = compileCashFlow(
       modelWith((value) => {
+        const root = value.objects.Scenario![0]!;
         value.objects.Scenario!.push({
           scenario_id: other,
+          start_date: root.start_date,
+          end_date: root.end_date,
+          event_ids: [],
+          assumption_ids: [],
           enabled: false,
           stochastic: false,
           timestep: "monthly",
@@ -923,6 +934,7 @@ describe("canonical executable-model compiler", () => {
         sameInstantCashFlowOrder: "income_before_expense",
       },
       "0.05",
+      "90000000-0000-4000-8000-000000000005",
     );
     expect(comparison.status).toBe("unavailable");
     expect(comparison.diagnostics[0]!.code).toBe(
@@ -991,6 +1003,7 @@ describe("canonical executable-model compiler", () => {
         sameInstantCashFlowOrder: "income_before_expense",
       },
       "0.05",
+      "90000000-0000-4000-8000-000000000005",
     );
     expect(comparison.status).toBe("completed");
     expect(comparison.configurationDifferences).not.toHaveLength(0);
