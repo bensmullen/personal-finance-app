@@ -255,6 +255,16 @@ test("What If executes retirement and reports missing investment prerequisites",
   await page.getByRole("button", { name: "Compare retirement date" }).click();
   await expect(page.getByText("Active scope: cash flow")).toBeVisible();
   await expect(page.getByText(/retirement date/i)).toBeVisible();
+  const replacement = structuredClone(createSyntheticPersonalDraft()) as any;
+  replacement.objects.Income[0].income_id = "98000000-0000-4000-8000-000000000004";
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  await page.locator('input[type="file"]').setInputFiles({ name: "replacement.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(replacement)) });
+  await page.getByRole("button", { name: "Import into session" }).click();
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Cash Flow", exact: true }).click();
+  await page.getByRole("button", { name: "Run cash-flow forecast" }).click();
+  await expect(page.getByRole("table", { name: "Detailed cash-flow forecast" })).toBeVisible();
 });
 
 test("What If executes deterministic investment return", async ({ page }) => {
@@ -289,6 +299,9 @@ test("What If executes explicit liability extra principal", async ({ page }) => 
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   await page.getByLabel("Liability target").selectOption({ index: 1 });
+  await page.getByLabel("Extra principal amount").fill("not-money");
+  await expect(page.getByText("Enter an exact decimal amount, such as 100.00.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Compare extra principal" })).toBeDisabled();
   await page.getByLabel("Extra principal amount").fill("100.00");
   await page.getByLabel("Extra principal date").fill("2026-02-01");
   await page.getByLabel("Extra principal funding account").selectOption({ label: "Everyday checking" });

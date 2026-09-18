@@ -229,7 +229,7 @@ const semanticIntent = (intent: ScenarioChangeIntent): unknown => {
     case "fee_rule_binding": return { kind: intent.kind, feeId: uuid(intent.feeId), taxRuleIds: [...intent.taxRuleIds].map(uuid).sort() };
     case "expense_funding_policy":
     case "loan_funding_policy": return { kind: intent.kind, ...(intent.kind === "expense_funding_policy" ? { expenseId: uuid(intent.expenseId) } : { liabilityId: uuid(intent.liabilityId) }), policy: { id: intent.policy.id, orderedAccountIds: intent.policy.orderedAccountIds.map(uuid), allowPartial: intent.policy.allowPartial, insufficientFundsBehavior: intent.policy.insufficientFundsBehavior } };
-    case "investment_purchase": return { kind: intent.kind, operation: intent.operation, purchaseId: uuid(intent.purchaseId), ...(intent.investmentId === undefined ? {} : { investmentId: uuid(intent.investmentId) }), ...(intent.instruction === undefined ? {} : { instruction: { ...intent.instruction, id: uuid(intent.instruction.id), investmentId: uuid(intent.instruction.investmentId), sourceCashAccountId: uuid(intent.instruction.sourceCashAccountId), amount: exact(intent.instruction.amount), schedule: intent.instruction.schedule.kind === "explicit_dates" ? { ...intent.instruction.schedule, dates: intent.instruction.schedule.dates.map(canonicalInstant) } : { ...intent.instruction.schedule, anchor: canonicalInstant(intent.instruction.schedule.anchor) } } }) };
+    case "investment_purchase": return { kind: intent.kind, operation: intent.operation, purchaseId: uuid(intent.purchaseId), ...(intent.investmentId === undefined ? {} : { investmentId: uuid(intent.investmentId) }), ...(intent.instruction === undefined ? {} : { instruction: { ...intent.instruction, id: uuid(intent.instruction.id), investmentId: uuid(intent.instruction.investmentId), sourceCashAccountId: uuid(intent.instruction.sourceCashAccountId), amount: exact(intent.instruction.amount), schedule: intent.instruction.schedule.kind === "explicit_dates" ? { ...intent.instruction.schedule, dates: intent.instruction.schedule.dates.map(canonicalInstant).sort() } : { ...intent.instruction.schedule, anchor: canonicalInstant(intent.instruction.schedule.anchor) } } }) };
     case "extra_principal_payment": return { kind: intent.kind, operation: intent.operation, liabilityId: uuid(intent.liabilityId), paymentId: uuid(intent.paymentId), ...(intent.instruction === undefined ? {} : { instruction: { ...intent.instruction, id: uuid(intent.instruction.id), scheduledAt: canonicalInstant(intent.instruction.scheduledAt), amount: exact(intent.instruction.amount), ...(intent.instruction.fundingAccountId === undefined ? {} : { fundingAccountId: uuid(intent.instruction.fundingAccountId) }) } }) };
   }
 };
@@ -754,8 +754,6 @@ export const compileExecutableScenario = (
             ? change.purchaseId
             : change.paymentId,
         );
-      const event = lineageId(model, "event", change, change.eventId);
-      if (event.status !== "compiled") return event;
       if (change.kind === "investment_purchase") {
         if (base.scope !== "investments")
           return bridgeUnsupported(
@@ -834,6 +832,8 @@ export const compileExecutableScenario = (
             schedulePrimitiveId: primitiveId,
           });
         }
+        const event = lineageId(model, "event", change, change.eventId);
+        if (event.status !== "compiled") return event;
         changes.push({
           kind: change.kind,
           operation: change.operation,
@@ -941,6 +941,8 @@ export const compileExecutableScenario = (
             primitiveInstanceId: primitiveId,
           });
         }
+        const event = lineageId(model, "event", change, change.eventId);
+        if (event.status !== "compiled") return event;
         changes.push({
           kind: change.kind,
           operation: change.operation,

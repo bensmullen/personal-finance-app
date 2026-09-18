@@ -1127,13 +1127,13 @@ export const comparePersonalScenarios = (
       const availableParents = new Set([
         scenarioIdentity,
         ...comparisonRequest.alternatives.map((item) => item.scenarioId),
-      ]);
+      ].map((id) => id.toLowerCase()));
       const alternatives = comparisonRequest.alternatives.map((alternative) => {
         const normalizedAlternative = alternative.baseScenarioId === undefined
           ? { ...alternative, baseScenarioId: scenarioIdentity }
           : alternative;
         if (
-          !availableParents.has(normalizedAlternative.baseScenarioId!)
+          !availableParents.has(normalizedAlternative.baseScenarioId!.toLowerCase())
         )
           return {
             status: "unsupported" as const,

@@ -546,6 +546,21 @@ describe("PR 19 compiler scenario bridge", () => {
         ],
       },
     });
+    const compilePurchase = (instruction: typeof purchase | Record<string, unknown>) => compileExecutableScenario(model, base, horizon, { scenarioId: alternativeId, baseScenarioId: rootId, name: "Buy", changes: [{ kind: "investment_purchase", operation: "add", purchaseId: ids.purchase, investmentId: ids.investment, instruction: instruction as typeof purchase }] });
+    for (const [instruction, code] of [
+      [{ ...purchase, amount: "invalid" }, "INVESTMENT_OPERATION_AMOUNT_INVALID"],
+      [{ ...purchase, schedule: { kind: "explicit_dates", dates: ["invalid"] } }, "INVESTMENT_SCHEDULE_INVALID"],
+      [{ ...purchase, schedule: { kind: "utc_monthly", anchor: "invalid", invalidDayPolicy: "skip" } }, "INVESTMENT_SCHEDULE_INVALID"],
+    ] as const) {
+      let result: ReturnType<typeof compilePurchase> | undefined;
+      expect(() => { result = compilePurchase(instruction); }).not.toThrow();
+      expect(result).toMatchObject({ status: "invalid_model", diagnostics: [{ code }] });
+    }
+    const firstDates = compilePurchase({ ...purchase, schedule: { kind: "explicit_dates", dates: ["2026-02-05", "2026-01-05"] } });
+    const secondDates = compilePurchase({ ...purchase, schedule: { kind: "explicit_dates", dates: ["2026-01-05", "2026-02-05"] } });
+    expect(firstDates.status).toBe("compiled");
+    expect(secondDates.status).toBe("compiled");
+    if (firstDates.status === "compiled" && secondDates.status === "compiled") expect(firstDates.value.changes[0]).toMatchObject({ eventId: (secondDates.value.changes[0] as { eventId: string }).eventId });
     const withPurchase = compileInvestments(model, {
       ...request,
       purchaseInstructions: [purchase],
@@ -658,6 +673,12 @@ describe("PR 19 compiler scenario bridge", () => {
       status: "compiled",
       value: { changes: [{ operation: "add", paymentId }] },
     });
+    const compilePayment = (replacement: Record<string, unknown>) => compileExecutableScenario(createSyntheticPersonalDraft(), { scope: "liabilities", compiled: compiled.value, compilerRequest: request }, horizon, { scenarioId: alternativeId, baseScenarioId: rootId, name: "Extra", changes: [{ kind: "extra_principal_payment", operation: "add", liabilityId, paymentId, instruction: { ...instruction, ...replacement } }] });
+    for (const [replacement, code] of [[{ amount: "invalid" }, "EXTRA_PRINCIPAL_AMOUNT_INVALID"], [{ scheduledAt: "invalid" }, "EXTRA_PRINCIPAL_DATE_INVALID"]] as const) {
+      let result: ReturnType<typeof compilePayment> | undefined;
+      expect(() => { result = compilePayment(replacement); }).not.toThrow();
+      expect(result).toMatchObject({ status: "invalid_model", diagnostics: [{ code }] });
+    }
     if (
       added.status === "compiled" &&
       added.value.changes[0]!.kind === "extra_principal_payment"

@@ -441,6 +441,14 @@ describe("Personal-MVP application facade", () => {
     expect(second).toEqual(first);
   });
 
+  it("normalizes explicit comparison parent UUID casing", () => {
+    const model = createSyntheticPersonalDraft();
+    const incomeId = String((model.objects.Income?.[0] as Record<string, unknown>).income_id);
+    const rootId = "90000000-0000-4000-8000-000000000011";
+    const result = comparePersonalScenarios(model, request(), { scope: "cash_flow", baselineScenarioId: rootId, alternatives: [{ scenarioId: "aa000000-0000-4000-8000-000000000003", baseScenarioId: rootId.toUpperCase(), name: "Equivalent parent", changes: [{ kind: "income_growth", incomeId, annualRate: "0.06" }] }] });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: "completed" });
+  });
+
   it("retains liability compiler capability diagnostics in comparisons", () => {
     const model = structuredClone(createSyntheticPersonalDraft());
     const unsupportedId = "97000000-0000-4000-8000-000000000001";
