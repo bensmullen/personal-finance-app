@@ -572,8 +572,7 @@ describe("PR 19 compiler scenario bridge", () => {
       compiled: withPurchase.value,
       compilerRequest: { ...request, purchaseInstructions: [purchase] },
     };
-    expect(
-      compileExecutableScenario(model, existingBase, horizon, {
+    const remove = (investmentId?: string) => compileExecutableScenario(model, existingBase, horizon, {
         scenarioId: alternativeId,
         baseScenarioId: rootId,
         name: "Remove",
@@ -582,14 +581,24 @@ describe("PR 19 compiler scenario bridge", () => {
             kind: "investment_purchase",
             operation: "remove",
             purchaseId: ids.purchase,
-            investmentId: ids.investment,
+            ...(investmentId === undefined ? {} : { investmentId }),
           },
         ],
-      }),
-    ).toMatchObject({
+      });
+    const removedWithPurchaseId = remove();
+    const removedWithInvestmentId = remove(ids.investment);
+    const removedWithIrrelevantInvestmentId = remove("90000000-0000-4000-8000-000000000099");
+    expect(removedWithPurchaseId).toMatchObject({
       status: "compiled",
       value: { changes: [{ operation: "remove" }] },
     });
+    expect(removedWithInvestmentId).toMatchObject({ status: "compiled" });
+    expect(removedWithIrrelevantInvestmentId).toMatchObject({ status: "compiled" });
+    if (removedWithPurchaseId.status === "compiled" && removedWithInvestmentId.status === "compiled" && removedWithIrrelevantInvestmentId.status === "compiled") {
+      const eventId = (removedWithPurchaseId.value.changes[0] as { eventId: string }).eventId;
+      expect(removedWithInvestmentId.value.changes[0]).toMatchObject({ eventId });
+      expect(removedWithIrrelevantInvestmentId.value.changes[0]).toMatchObject({ eventId });
+    }
     expect(
       compileExecutableScenario(model, base, horizon, {
         scenarioId: alternativeId,

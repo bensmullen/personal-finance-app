@@ -1,6 +1,6 @@
 ---
 name: pfm-architecture-review
-description: Review a Personal Finance App change for module-boundary, dependency-direction, facade, and scope violations. Use for architecture audits or merge-readiness checks.
+description: Review a Personal Finance App change for module-boundary, dependency-direction, facade, and scope violations. Use for requested architecture audits or merge-readiness checks, not routine surgical or local implementation patches.
 ---
 
 # PFM Architecture Review
