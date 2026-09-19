@@ -3155,7 +3155,7 @@ This is **not** a UI aggregation PR.
 
 Introduce an engine/application orchestration contract that establishes one authoritative household state transition across the applicable cash-flow, investment, and liability mechanics.
 
-The reconciled orchestrator SHALL implement Executable Financial Semantics Sections 3.4–3.5 as its ordering authority. It SHALL construct one unified intraperiod household work plan and SHALL NOT establish economic precedence by serially executing complete vertical slices. Vertical-slice/module identity is a capability/composition boundary, not a temporal or economic-priority boundary.
+The reconciled orchestrator SHALL implement Executable Financial Semantics Sections 3.4–3.5 and 9 as its temporal, ordering, and dependency authority. It SHALL construct one unified intraperiod household work plan and SHALL NOT establish economic precedence by serially executing complete vertical slices. Vertical-slice/module identity is a capability/composition boundary, not a temporal or economic-priority boundary.
 
 The orchestrator SHALL advance state-interacting work by the canonical applicable sequencing instant. Pure calculations MAY be precomputed only when that does not expose later state early, change eligibility/precedence, or alter an authoritative result. Candidate-state visibility between operations must arise from explicit chronological progression, declared dependencies, or another explicit semantic contract; incidental mutation/call order is not a dependency.
 
