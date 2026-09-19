@@ -135,7 +135,9 @@ Global semantic barriers are:
 11. perform closing valuation and derived-output calculation;
 12. validate invariants and commit the period.
 
-These barriers define lifecycle and authority constraints. They MUST NOT be interpreted as whole-period batch phases when batching would allow state that becomes economically available later to influence an earlier occurrence, proposal, funding evaluation, settlement, posting, or other state-sensitive decision. Pure or preparatory calculations MAY be evaluated ahead of their economic instant only when doing so cannot expose future state early, change eligibility or precedence, or change any authoritative observable result.
+These barriers define lifecycle and authority constraints. Stages 1–4 are period-planning barriers; stages 5–10 are ordered lifecycle stages that each affected work/effect chain must respect; stages 11–12 are closing barriers after all applicable intraperiod state-affecting work. Stages 5–10 MAY interleave across different work/effect chains when required by applicable sequencing time, declared dependencies, or explicit contention policy, provided no individual chain reverses or skips its required lifecycle authority sequence. For example, an explicitly prior same-instant income-settlement chain may reach posting/state before a dependent expense proposal performs funding, while both chains still preserve their own recognition/claim/funding/accounting rules.
+
+The barriers MUST NOT be interpreted as whole-period batch phases when batching would allow state that becomes economically available later to influence an earlier occurrence, proposal, funding evaluation, settlement, posting, or other state-sensitive decision. Conversely, interleaving MUST NOT be inferred merely from implementation order. Pure or preparatory calculations MAY be evaluated ahead of their economic instant only when doing so cannot expose future state early, change eligibility or precedence, or change any authoritative observable result.
 
 #### 3.4.1 Temporal frontier and candidate-state visibility
 
@@ -157,7 +159,7 @@ The funding rule in Section 4.4.1 remains controlling: permitted liquidity is ev
 
 #### 3.4.2 Same-instant contention and economic priority
 
-Two otherwise-eligible same-instant operations **contend for a constrained shared resource** when changing their relative execution order can change an authoritative economic outcome because they consume, allocate, reserve, or mutate overlapping constrained state. Authoritative outcomes include accepted funding or allocation, settlement amount/status, account/position/liability/obligation state, generated authoritative identity, or another committed economic result. Mere simultaneous execution does not imply contention when relative order cannot change any authoritative outcome.
+Two otherwise-eligible same-instant operations **contend for a constrained shared resource** when changing their relative execution order can change an authoritative economic outcome because they consume, allocate, reserve, or mutate overlapping constrained state. Authoritative outcomes include accepted funding or allocation, settlement amount/status, account/position/liability/obligation state, authoritative transaction/effect acceptance, or another committed economic result. Mere simultaneous execution does not imply contention when relative order cannot change any authoritative outcome.
 
 At the same applicable sequencing instant:
 
@@ -166,7 +168,7 @@ At the same applicable sequencing instant:
 3. if contention remains unresolved because no applicable policy exists, the applicable priorities are tied without an explicit economic tie rule, or policies cannot be compared under a common contract, execution MUST fail with a hard semantic-validation error no later than before any of those contending operations executes;
 4. unresolved contention is invalid execution semantics, not a liquidity shortfall, contract default, rejection, deferral, or permission to choose a deterministic implementation order.
 
-An economic/resource-contention policy that can change authoritative outcomes is authoritative executable input. It MUST have stable identity or a canonical serialized value, be included in the deterministic run/input fingerprint, and be represented in calculation lineage or diagnostics for decisions whose outcomes depend on it.
+An economic/resource-contention policy that can change authoritative outcomes is authoritative executable input. It MUST have stable identity plus canonical, versioned semantics, or be a closed versioned policy constant whose stable identity uniquely and immutably determines those semantics. The deterministic run/input fingerprint MUST include the policy identity/version and every economically relevant policy value. Successful decisions whose outcomes depend on the policy MUST preserve its identity/version in calculation lineage; validation failures involving the policy MUST identify the policy and contending operations in structured diagnostics.
 
 Priority values are meaningful only inside the policy/namespace that defines their direction and comparison semantics. Raw numeric priorities from different domain-specific policies MUST NOT be compared merely because their representations are both numbers. A unified orchestrator MAY translate existing domain-specific priorities into a common scheduling representation only when the translation preserves their declared meaning and comparison direction.
 
@@ -190,7 +192,9 @@ The stable tie-break is, using the applicable stable identities for the operatio
 2. primitive instance identifier ascending, where applicable;
 3. generated occurrence identity/sequence ascending, where applicable.
 
-Every executable operation requiring a deterministic tie-break MUST expose sufficient stable identity for that ordering. Request-array position, object iteration order, module order, and function-call order are not stable-order authorities.
+Every executable operation requiring a deterministic tie-break MUST expose sufficient stable identity for that ordering. A generated occurrence sequence is admissible as a stable key only when it is derived from canonical schedule/occurrence semantics independently of execution order. Request-array position, object iteration order, module order, function-call order, and an execution-order-assigned counter are not stable-order authorities.
+
+Generated authoritative identities MUST remain deterministic from their declared identity inputs and MUST NOT vary merely because economically independent work was scheduled in a different stable order.
 
 Stable ordering is deterministic bookkeeping only. It MUST NOT create economic meaning, resolve an omitted dependency, resolve unresolved constrained-resource contention, or change which operation receives a scarce resource.
 
