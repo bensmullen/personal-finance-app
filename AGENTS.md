@@ -59,6 +59,8 @@ or mutate authoritative financial state.
 - Identical deterministic inputs must produce identical observable results.
 - Financial primitives must not call `Math.random()`.
 - Failed or uncommitted execution must not mutate committed opening state.
+- Do not infer economic precedence from vertical-slice/module order, request-array order, object iteration order, or function-call order.
+- Stable tie-breaking is non-economic only; same-instant constrained-resource contention that can change authoritative outcomes requires explicit dependency/contention semantics or must fail validation.
 - Do not invent funding, borrowing, transfers, sales, or overdraft behavior.
 - Every posted transaction must balance by currency.
 - Settlement must not re-recognize the underlying income or expense.
