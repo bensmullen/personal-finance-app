@@ -18,7 +18,7 @@ The intended production lifecycle remains the specification's semantic-barrier s
 
 ## Dependencies
 
-`DependencyGraph` uses deterministic Kahn topological sorting with lexicographic tie-breaking. Zero-lag cycles fail explicitly. Nonzero-lag edges are accepted without adding a same-period dependency and remain the responsibility of the higher-level planner to expand into prior-state dependencies.
+`DependencyGraph` uses deterministic Kahn topological sorting with lexicographic tie-breaking. That lexical tie-break is non-economic bookkeeping and is valid only after economically meaningful temporal, dependency, and constrained-resource precedence has been resolved; it must not decide which contending operation receives scarce resources. Zero-lag cycles fail explicitly. Nonzero-lag edges are accepted without adding a same-period dependency and remain the responsibility of the higher-level planner to expand into prior-state dependencies. Cross-domain reconciled scheduling is governed by Executable Financial Semantics Sections 3.4–3.5 rather than by kernel lexical order.
 
 ## Accounting
 
