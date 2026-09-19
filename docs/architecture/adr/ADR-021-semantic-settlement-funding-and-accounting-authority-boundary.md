@@ -25,6 +25,12 @@ recognition
 → state
 ```
 
+This authority sequence applies to each recognition/claim/settlement lifecycle
+chain. It does not require whole-period batching across unrelated chains.
+Distinct chains may interleave only as permitted by the canonical intraperiod
+time/dependency/contention rules in Executable Financial Semantics Sections
+3.4–3.5; no chain may reverse or skip its own required authority sequence.
+
 Funding resolution is pure: it does not mutate claims or balances and cannot
 create accounting history. Insufficient liquidity is a modeled constraint
 outcome rather than an accounting failure by itself. Only a positive accepted
