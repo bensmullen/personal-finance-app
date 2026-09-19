@@ -509,11 +509,11 @@ The primitive MUST identify whether it grows a stock, a recurring occurrence amo
 
 ### P10 — stepwise
 
-The active level is the most recent breakpoint at or before the evaluation instant. Same-instant breakpoints require priority or are invalid.
+The active level is the most recent breakpoint at or before the evaluation instant. Same-instant breakpoints require explicit P10-local breakpoint precedence with a defined comparison direction or are invalid. That precedence selects a stepwise value; it is not an economic/resource-contention policy.
 
 ### P11 — piecewise
 
-Exactly one segment SHOULD apply. Overlap requires explicit priority. No-match requires an explicit default or validation failure.
+Exactly one segment SHOULD apply. Overlap requires explicit P11-local segment-selection precedence with a defined comparison direction. That precedence selects a piecewise segment; it is not an economic/resource-contention policy. No-match requires an explicit default or validation failure.
 
 ### P12 — periodic
 
@@ -675,7 +675,7 @@ Activation occurs when an event/predicate becomes effective according to its eve
 
 ### P29 — event_modification
 
-A modification has an effective time, target, precedence, duration/reversibility, and provenance.
+A modification has an effective time, target, explicit event-modification precedence scoped to that target, duration/reversibility, and provenance. Event-modification precedence resolves competing modifications of the same semantic target; it is not automatically an economic/resource-contention policy for downstream constrained resources.
 
 `Y_t=X_t` before effective time and `Y_t=M(X_t,eventState_t)` after it.
 
@@ -1352,8 +1352,9 @@ attribution or apply a materiality threshold.
 Comparison is provided by typed per-slice adapters. This version deliberately
 does not compose VS2, VS3, and VS4 sequentially into a household scheduler:
 such composition could let later intraperiod cash fund an earlier obligation.
-An integrated scheduler must define shared intraperiod ordering before that
-composition is authoritative.
+Any integrated household scheduler MUST implement the shared temporal,
+dependency, contention, and stable-order contracts in Sections 3.4–3.5 and 9;
+serial slice order is not authoritative composition.
 
 ## 21. Remaining v0.2 decisions
 
