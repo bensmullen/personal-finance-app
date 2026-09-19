@@ -3142,17 +3142,24 @@ Do not emulate unsupported stochastic scenarios.
 
 This is **not** a UI aggregation PR.
 
-Introduce an engine/application orchestration contract that establishes one authoritative period ordering and state transition across the applicable cash-flow, investment, and liability mechanics.
+Introduce an engine/application orchestration contract that establishes one authoritative household state transition across the applicable cash-flow, investment, and liability mechanics.
+
+The reconciled orchestrator SHALL implement the intraperiod ordering contract defined by the executable financial-semantics specification. It SHALL construct one unified household work plan across applicable mechanics and SHALL NOT establish economic precedence by serially executing complete vertical slices. Vertical-slice identity is a capability/composition boundary, not a temporal or economic-priority boundary.
+
+The semantic barriers in the canonical execution pipeline are lifecycle/authority constraints. They SHALL NOT be implemented as whole-period batching that permits later economic state to influence an earlier occurrence, proposal, funding evaluation, settlement, or posting.
+
+Where same-instant operations compete for constrained shared liquidity or another shared resource, precedence SHALL come from an explicit applicable economic/resource-contention priority policy. The orchestrator SHALL NOT invent a universal debt/expense/investment hierarchy or infer priority from module order, request-array order, account type, or implementation call order. Existing domain-specific priorities remain authoritative only within the semantics they explicitly declare and may be translated into the unified scheduling representation without changing their meaning.
 
 The orchestrator SHALL define and test:
 
 - one opening authoritative household state;
 - one run context and horizon;
-- one deterministic period ordering;
+- one deterministic intraperiod work plan governed by semantic lifecycle, applicable time, declared dependencies, explicit contention priority, and stable non-economic tie-breaking;
 - cash-flow recognition/settlement ordering;
 - investment transfer/purchase/valuation ordering;
 - liability accrual/payment ordering;
 - explicit funding interactions across supported sources;
+- prevention of future cash or other later state from funding an earlier proposal;
 - closing valuation;
 - statements/net worth after all accepted effects;
 - no double counting of account/position/asset values;
