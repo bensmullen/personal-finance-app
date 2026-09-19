@@ -182,6 +182,42 @@ Priority concepts are distinct:
 
 An implementation MUST NOT use one priority concept as an implicit substitute for another.
 
+#### 3.4.3 Current slice-local ordering contracts
+
+The currently supported slice contracts use several explicit local ordering
+fields. Their meanings are normative for those slice APIs but their raw values
+are **not** one common cross-domain priority scale:
+
+- **VS2 cash flow:** when income and expense actions share an instant,
+  `sameInstantCashFlowOrder` explicitly selects
+  `income_before_expense` or `expense_before_income`; absence is invalid for
+  that case. Same-instant expense actions require distinct
+  `settlementPriority` values, and the **lower numeric value executes first**.
+  Economically independent actions remaining after those rules use only the
+  stable tie-break in Section 3.5.
+- **VS3 investments:** supported transfers, purchases, and fees execute at their
+  declared `end_of_period` timing when their eligibility schedule selects the
+  period. Operations that overlap an authoritative target require distinct
+  `order` values, and the **lower numeric value executes first** by an explicit
+  dependency chain. A return configured as
+  `end_of_period_on_opening_quantity` is evaluated/valued on the pre-purchase
+  quantity before those period-end purchase operations, as declared by that
+  timing contract.
+- **VS4 liabilities:** among same-instant required debt-service groups that
+  share permitted funding liquidity, distinct `settlementPriority` values are
+  required and the **higher numeric value executes first**. The same direction
+  applies among same-instant voluntary extra-principal instructions across
+  loans when they share liquidity. Within the currently supported loan profile,
+  the required-before-voluntary dependency in P22 applies before extra-principal
+  priority is considered.
+
+A reconciled scheduler MUST preserve these directions when translating local
+contracts into a common scheduling representation. It MUST NOT directly compare
+VS2 `settlementPriority`, VS3 `order`, and VS4 `settlementPriority` numbers.
+Any cross-domain precedence that can alter a constrained-resource outcome
+requires an explicit common economic/resource-contention policy under Section
+3.4.2.
+
 ### 3.5 Stable ordering
 
 After applying semantic lifecycle constraints, applicable sequencing time, declared dependency topology/dependency priority, and any required explicit economic/resource-contention policy, operations that remain economically independent MAY be executed in deterministic stable order.
