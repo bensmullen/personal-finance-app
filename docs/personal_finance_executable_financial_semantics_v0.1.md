@@ -203,13 +203,18 @@ are **not** one common cross-domain priority scale:
   `end_of_period_on_opening_quantity` is evaluated/valued on the pre-purchase
   quantity before those period-end purchase operations, as declared by that
   timing contract.
-- **VS4 liabilities:** among same-instant required debt-service groups that
-  share permitted funding liquidity, distinct `settlementPriority` values are
-  required and the **higher numeric value executes first**. The same direction
-  applies among same-instant voluntary extra-principal instructions across
-  loans when they share liquidity. Within the currently supported loan profile,
-  the required-before-voluntary dependency in P22 applies before extra-principal
-  priority is considered.
+- **VS4 liabilities:** at a supported debt-service instant, all required
+  contractual debt-service groups are resolved before any voluntary
+  extra-principal instruction at that instant. Among same-instant required
+  groups that share permitted funding liquidity, distinct
+  `settlementPriority` values are required and the **higher numeric value
+  executes first**. Only after the required phase is resolved are voluntary
+  extras considered; an extra is eligible only when its own loan's required
+  service is fully satisfied. Among same-instant voluntary extras across loans
+  that share liquidity, the same **higher numeric value executes first**
+  direction applies. This required-before-voluntary two-phase rule is a
+  VS4-local product/dependency contract, not a cross-domain rule that debt
+  outranks other household operations.
 
 A reconciled scheduler MUST preserve these directions when translating local
 contracts into a common scheduling representation. It MUST NOT directly compare
