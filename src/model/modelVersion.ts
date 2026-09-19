@@ -156,14 +156,14 @@ export const classifyModelFormatVersion = (
   });
 };
 
-const directlySupportedFinancialSpecificationVersions: readonly string[] = Object.freeze([
-  "0.1.9-draft",
-  CURRENT_RUN_VERSIONS.financialSpecificationVersion,
-]);
+const directlySupportedFinancialSpecificationVersions = (targetVersion: string): readonly string[] =>
+  targetVersion === "0.1.10-draft"
+    ? Object.freeze(["0.1.9-draft", "0.1.10-draft"])
+    : Object.freeze([targetVersion]);
 
 export const classifyFinancialSpecificationVersion = (sourceVersion: string): ModelCompatibilityResult => {
   const targetVersion = CURRENT_RUN_VERSIONS.financialSpecificationVersion;
-  if (directlySupportedFinancialSpecificationVersions.includes(sourceVersion)) {
+  if (directlySupportedFinancialSpecificationVersions(targetVersion).includes(sourceVersion)) {
     return Object.freeze({ classification: "supported_directly", sourceVersion, targetVersion, issues: Object.freeze([]) });
   }
   return Object.freeze({
