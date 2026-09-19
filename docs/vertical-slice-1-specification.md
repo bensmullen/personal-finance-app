@@ -1,6 +1,6 @@
 # Personal Finance App — Vertical Slice 1 Formal Specification
 
-**Version:** 1.0.4-draft
+**Version:** 1.0.5-draft
 **Status:** Reviewable implementation contract  
 **Namespace:** `pfm`  
 **Slice:** Employment Compensation → Tax Obligation → Retirement Transfer → Spending  
@@ -561,10 +561,15 @@ recognition, the tax liability, and the obligation intact and produces a
 settlement transaction or recognize tax expense again.
 
 Permitted balances are evaluated as of the proposal's evaluation timestamp.
-Generated and externally requested actions execute in chronological order with
-a deterministic stable tie-break, independent of request-array order. Future
-income or other cash movements cannot fund an earlier proposal; earlier cash
-expenses reduce liquidity available to a later proposal.
+Generated and externally requested actions execute consistently with the
+canonical intraperiod ordering contract. Chronology determines state
+availability; same-instant dependency or constrained-resource precedence must
+be explicit whenever relative order can change an authoritative economic
+outcome. Generic stable tie-breaking applies only after economically meaningful
+precedence is fully resolved and MUST NOT decide which operation receives
+scarce liquidity. Request-array order is never authoritative. Future income or
+other cash movements cannot fund an earlier proposal; earlier cash expenses
+reduce liquidity available to a later proposal.
 
 An accepted funding result is the sole authority for settlement amount and
 allocations. Caller-provided settlement identity, timestamp, and trace metadata
