@@ -118,9 +118,9 @@ These MAY be identical, but they MUST be independently representable.
 
 ### 3.4 Intraperiod evaluation
 
-There is no universal ordering such as "tax before contribution" or "investment before expense." The engine uses semantic barriers plus dependency topology.
+There is no universal ordering such as "tax before contribution" or "investment before expense." The engine uses semantic barriers, applicable economic time, dependency topology, and explicit economic/resource-contention priority.
 
-Global barriers are:
+Global semantic barriers are:
 
 1. establish period context;
 2. resolve external inputs and stochastic realization;
@@ -129,26 +129,48 @@ Global barriers are:
 5. evaluate eligible dependency nodes and primitive compositions;
 6. generate flows and recognition facts;
 7. generate obligation/right and settlement proposals;
-8. translate accepted effects into accounting transactions;
-9. post transactions and apply owned state transitions;
-10. perform closing valuation and derived-output calculation;
-11. validate invariants and commit the period.
+8. resolve funding/constraints and accept/reject/partially satisfy proposals;
+9. translate accepted effects into accounting transactions;
+10. post transactions and apply owned state transitions;
+11. perform closing valuation and derived-output calculation;
+12. validate invariants and commit the period.
 
-Within barriers 5–8, declared dependency topology, temporal basis, and explicit priority determine order.
+These barriers define semantic lifecycle and authority constraints; they MUST NOT be interpreted as permission to batch an entire period in a way that allows later economic state to influence an earlier occurrence, proposal, funding evaluation, settlement, or posting.
 
-An implementation MUST NOT impose an economic ordering merely because two calculations are in the same barrier.
+For executable operations whose effects may interact within a period:
+
+1. an operation MUST NOT observe or consume an authoritative state effect whose economic availability occurs at a later applicable instant;
+2. eligible occurrences, proposals, funding evaluations, settlements, and postings that affect shared state MUST therefore execute consistently with their applicable occurrence, effective, recognition, proposal, funding-evaluation, and settlement times as defined by their semantic contracts;
+3. at the same applicable instant, declared dependency topology determines precedence where a dependency exists;
+4. otherwise-independent same-instant operations competing for a constrained shared resource MUST use an explicit applicable economic/resource-contention priority policy;
+5. the engine MUST NOT infer such priority from vertical-slice identity, module identity, request-array position, account type, or implementation call order;
+6. if operations remain economically independent after temporal, dependency, and explicit-priority rules, deterministic stable ordering is used only as a tie-breaker and creates no economic meaning.
+
+Vertical slices and implementation modules are capability/composition boundaries, not economic sequencing boundaries.
+
+Candidate-state effects produced by an earlier eligible operation MAY be visible to a later eligible operation within the same period when the semantic lifecycle permits it. No candidate-state mutation becomes committed unless the entire period reaches successful validation and commit.
+
+The funding rule in Section 4.4.1 remains controlling: a future cash movement MUST NOT fund an earlier proposal.
+
+Priority concepts are distinct:
+
+- **dependency priority** orders dependency-graph work where the model declares such precedence;
+- **economic/resource-contention priority** orders otherwise-independent same-instant operations that compete for a constrained shared resource;
+- **stable tie-breaking** exists only to make economically unordered execution deterministic.
+
+An implementation MUST NOT use one priority concept as an implicit substitute for another.
 
 ### 3.5 Stable ordering
 
-When eligible operations are otherwise independent, stable ordering is:
+When eligible operations are otherwise independent after applying semantic lifecycle, applicable time, declared dependency topology, and any explicit economic/resource-contention priority, stable ordering is:
 
-1. explicit dependency priority, descending;
+1. explicit dependency priority, descending, where dependency priority is applicable;
 2. semantic barrier;
 3. stable node identifier ascending;
 4. primitive instance identifier ascending;
 5. generated occurrence sequence ascending.
 
-Stable ordering is deterministic bookkeeping only and MUST NOT substitute for an omitted economic dependency.
+Stable ordering is deterministic bookkeeping only and MUST NOT substitute for an omitted economic dependency or omitted resource-contention policy.
 
 ### 3.6 Partial-period temporal modes
 
