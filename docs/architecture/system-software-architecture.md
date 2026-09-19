@@ -1,6 +1,6 @@
 # Personal Finance App — System / Software Architecture Specification
 
-**Version:** 1.2.0-draft
+**Version:** 1.2.1-draft
 **Status:** Architecture baseline  
 **Namespace:** `pfm`  
 **Applies to:** Prototype → Personal MVP → Private Alpha  
@@ -313,6 +313,14 @@ For each simulation period:
        ↓
 14. Commit period result
 ```
+
+The numbered stages are lifecycle and authority constraints, not permission to
+batch all work for an entire period at each stage when doing so would violate
+economic chronology or explicit dependencies. Implementations SHALL follow the
+intraperiod ordering contract in Executable Financial Semantics Sections
+3.4–3.5. Pure/preparatory calculations may be evaluated ahead only when future
+state is not made visible early and no authoritative economic outcome can
+change.
 
 Partially mutated state SHALL NOT be exposed as an undeclared dependency.
 
@@ -3144,33 +3152,40 @@ This is **not** a UI aggregation PR.
 
 Introduce an engine/application orchestration contract that establishes one authoritative household state transition across the applicable cash-flow, investment, and liability mechanics.
 
-The reconciled orchestrator SHALL implement the intraperiod ordering contract defined by the executable financial-semantics specification. It SHALL construct one unified household work plan across applicable mechanics and SHALL NOT establish economic precedence by serially executing complete vertical slices. Vertical-slice identity is a capability/composition boundary, not a temporal or economic-priority boundary.
+The reconciled orchestrator SHALL implement Executable Financial Semantics Sections 3.4–3.5 as its ordering authority. It SHALL construct one unified intraperiod household work plan and SHALL NOT establish economic precedence by serially executing complete vertical slices. Vertical-slice/module identity is a capability/composition boundary, not a temporal or economic-priority boundary.
 
-The semantic barriers in the canonical execution pipeline are lifecycle/authority constraints. They SHALL NOT be implemented as whole-period batching that permits later economic state to influence an earlier occurrence, proposal, funding evaluation, settlement, or posting.
+The orchestrator SHALL advance state-interacting work by the canonical applicable sequencing instant. Pure calculations MAY be precomputed only when that does not expose later state early, change eligibility/precedence, or alter an authoritative result. Candidate-state visibility between operations must arise from explicit chronological progression, declared dependencies, or another explicit semantic contract; incidental mutation/call order is not a dependency.
 
-Where same-instant operations compete for constrained shared liquidity or another shared resource, precedence SHALL come from an explicit applicable economic/resource-contention priority policy. The orchestrator SHALL NOT invent a universal debt/expense/investment hierarchy or infer priority from module order, request-array order, account type, or implementation call order. Existing domain-specific priorities remain authoritative only within the semantics they explicitly declare and may be translated into the unified scheduling representation without changing their meaning.
+Where otherwise-independent same-instant operations can change an authoritative outcome by competing for constrained shared state, an explicit applicable economic/resource-contention policy is required. Such a policy is authoritative executable input and SHALL have stable identity or canonical serialized value, participate in the run/input fingerprint, and be represented in lineage or diagnostics for affected decisions.
+
+The orchestrator SHALL NOT invent a universal debt/expense/investment hierarchy or infer priority from module order, request-array order, account type, stable-ID lexical order, or implementation call order. Existing domain-specific ordering contracts—including cash-flow same-instant ordering, expense/debt settlement priorities, and investment operation order—retain only the meaning and comparison direction their own contracts define. Raw priority numbers from different policy namespaces SHALL NOT be compared directly. Translation into a common scheduling representation is allowed only when it preserves declared semantics.
+
+If actually eligible same-instant operations contend and no applicable common policy/dependency determines precedence, or an applicable policy leaves an economically material tie unresolved, execution SHALL fail with a typed hard semantic-validation diagnostic before any of the contending operations executes. Generic stable ordering SHALL NOT allocate scarce liquidity or otherwise resolve that contention. The compiler/orchestrator SHALL capability-gate or reject missing ordering semantics rather than fabricate a default.
 
 The orchestrator SHALL define and test:
 
-- one opening authoritative household state;
-- one run context and horizon;
-- one deterministic intraperiod work plan governed by semantic lifecycle, applicable time, declared dependencies, explicit contention priority, and stable non-economic tie-breaking;
-- cash-flow recognition/settlement ordering;
-- investment transfer/purchase/valuation ordering;
-- liability accrual/payment ordering;
-- explicit funding interactions across supported sources;
-- prevention of future cash or other later state from funding an earlier proposal;
-- closing valuation;
-- statements/net worth after all accepted effects;
+- one reconciled opening authoritative household state;
+- one shared primitive-runtime state, run context, scenario identity, and horizon;
+- one deterministic intraperiod work plan governed by semantic lifecycle, applicable sequencing time, declared dependencies, explicit contention policy where required, and non-economic stable tie-breaking only after economic precedence is complete;
+- chronological state availability, including prevention of future cash or other later state from funding an earlier proposal;
+- explicit cash-flow recognition/settlement ordering;
+- investment return/valuation and explicit transfer/purchase/fee ordering;
+- liability accrual, required payment, and optional extra-principal ordering;
+- cross-domain funding interactions against the same candidate balances;
+- rejection of unresolved economically material same-instant contention;
+- preservation/translation of existing domain-local priority semantics without comparing unrelated raw priority scales;
+- fingerprinting and lineage/diagnostics for economically material contention policy;
+- closing valuation only after applicable intraperiod state-affecting work;
+- statements/net worth derived from the one closing state and accepted period transactions;
 - no double counting of account/position/asset values;
-- one completed/incomplete status;
+- one completed/incomplete/invalid-model outcome consistent with run semantics;
 - merged trace references without fabricated causality;
-- failed-period atomicity;
-- deterministic scenario execution.
+- failed-period atomicity across all household mechanics;
+- deterministic scenario execution and comparison.
 
 Do not obtain household net worth by summing separately executed VS2/VS3/VS4 result tables.
 
-The preferred implementation SHOULD reuse/refactor existing slice period candidates or common orchestration primitives rather than duplicate VS2/VS3/VS4 financial formulas.
+The preferred implementation SHOULD reuse/refactor existing slice mechanics or common lower-level orchestration primitives rather than duplicate VS2/VS3/VS4 financial formulas. Standalone slice APIs SHALL retain their existing supported semantics.
 
 Once complete, expose:
 
