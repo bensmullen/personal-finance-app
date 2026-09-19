@@ -164,6 +164,11 @@ describe("portable model format compatibility", () => {
 
   it("requires independent support for the financial specification", () => {
     expect(classifyFinancialSpecificationVersion(CURRENT_RUN_VERSIONS.financialSpecificationVersion).classification).toBe("supported_directly");
+    expect(classifyFinancialSpecificationVersion("0.1.9-draft")).toEqual(expect.objectContaining({
+      classification: "supported_directly",
+      sourceVersion: "0.1.9-draft",
+      targetVersion: CURRENT_RUN_VERSIONS.financialSpecificationVersion,
+    }));
     expect(classifyFinancialSpecificationVersion("99.0.0-future").classification).toBe("unsupported");
     const serialized = {
       model_format_version: CURRENT_MODEL_FORMAT_VERSION,
