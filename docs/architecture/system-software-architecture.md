@@ -316,11 +316,14 @@ For each simulation period:
 
 The numbered stages are lifecycle and authority constraints, not permission to
 batch all work for an entire period at each stage when doing so would violate
-economic chronology or explicit dependencies. Implementations SHALL follow the
-intraperiod ordering contract in Executable Financial Semantics Sections
-3.4–3.5. Pure/preparatory calculations may be evaluated ahead only when future
-state is not made visible early and no authoritative economic outcome can
-change.
+economic chronology or explicit dependencies. Stages 5–10 may interleave across
+distinct work/effect chains when required by the canonical temporal/dependency
+contract, while every individual chain preserves its own lifecycle authority
+order. Stages 11–14 remain closing/finalization barriers after applicable
+intraperiod state-affecting work. Implementations SHALL follow Executable
+Financial Semantics Sections 3.4–3.5. Pure/preparatory calculations may be
+evaluated ahead only when future state is not made visible early and no
+authoritative economic outcome can change.
 
 Partially mutated state SHALL NOT be exposed as an undeclared dependency.
 
@@ -3156,7 +3159,7 @@ The reconciled orchestrator SHALL implement Executable Financial Semantics Secti
 
 The orchestrator SHALL advance state-interacting work by the canonical applicable sequencing instant. Pure calculations MAY be precomputed only when that does not expose later state early, change eligibility/precedence, or alter an authoritative result. Candidate-state visibility between operations must arise from explicit chronological progression, declared dependencies, or another explicit semantic contract; incidental mutation/call order is not a dependency.
 
-Where otherwise-independent same-instant operations can change an authoritative outcome by competing for constrained shared state, an explicit applicable economic/resource-contention policy is required. Such a policy is authoritative executable input and SHALL have stable identity or canonical serialized value, participate in the run/input fingerprint, and be represented in lineage or diagnostics for affected decisions.
+Where otherwise-independent same-instant operations can change an authoritative outcome by competing for constrained shared state, an explicit applicable economic/resource-contention policy is required. Such a policy is authoritative executable input and SHALL have stable identity plus canonical/versioned semantics (or be a closed versioned constant whose identity fixes immutable semantics). Its identity/version and all economically relevant policy values SHALL participate in the run/input fingerprint. Successful priority-dependent decisions SHALL preserve that policy identity/version in lineage; failures SHALL identify the policy and contending operations in structured diagnostics.
 
 The orchestrator SHALL NOT invent a universal debt/expense/investment hierarchy or infer priority from module order, request-array order, account type, stable-ID lexical order, or implementation call order. Existing domain-specific ordering contracts—including cash-flow same-instant ordering, expense/debt settlement priorities, and investment operation order—retain only the meaning and comparison direction their own contracts define. Raw priority numbers from different policy namespaces SHALL NOT be compared directly. Translation into a common scheduling representation is allowed only when it preserves declared semantics.
 
