@@ -728,7 +728,9 @@ Events MUST be non-retroactive unless a model explicitly declares a historical r
 
 ## 9. Dependency semantics
 
-The dependency graph is the primary mechanism determining evaluation order inside a period.
+The dependency graph is the primary mechanism for declared causal/evaluation
+precedence **within the temporal eligibility established by Sections 3.4–3.5**.
+It operates together with, and cannot override, applicable sequencing time.
 
 A dependency edge identifies both direction and temporal basis.
 
@@ -738,9 +740,27 @@ Conceptually:
 
 where scope can be current-period, opening-state, intraperiod phase, prior-period, or lagged.
 
-Lagged/state-mediated cycles are valid only when the cycle crosses an explicit prior-state boundary. Zero-lag algebraic cycles are invalid unless the model explicitly supplies a solved mathematical operator with a unique valid solution.
+For an intraperiod dependency that consumes state produced by its source, the
+source's required state MUST be economically available no later than the
+target's applicable sequencing instant. A zero-lag/current-period dependency
+that would require an earlier target to observe state becoming available only
+at a later sequencing instant is invalid. Such a relationship must instead use
+an explicit valid prior-state/lagged boundary or another semantic contract that
+does not expose future state retroactively.
 
-Conflicting writes require explicit operation type and priority. Additive effects may merge when target semantics permit; competing replacements require priority; equal-priority incompatible writes are errors.
+Lagged/state-mediated cycles are valid only when the cycle crosses an explicit
+prior-state boundary. Zero-lag algebraic cycles are invalid unless the model
+explicitly supplies a solved mathematical operator with a unique valid
+solution.
+
+Conflicting writes require an explicit operation type and a priority whose
+namespace and comparison direction are defined by the relevant write/dependency
+contract. Additive effects may merge when target semantics permit; competing
+replacements require such explicit precedence; equal-priority incompatible
+writes are errors. Write/dependency priority is not automatically an
+economic/resource-contention priority and MUST NOT be used to allocate scarce
+funding or another constrained resource unless one explicit policy contract
+deliberately defines both meanings.
 
 ## 10. State transition and ownership
 
