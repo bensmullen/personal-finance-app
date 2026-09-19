@@ -881,9 +881,13 @@ A representative sequence is:
 
 Exact timestamps are deterministic fixture data; semantic correctness does not depend on these particular minutes.
 
-All same-period generated and externally supplied actions are interleaved by
-effective timestamp before evaluation. Equal timestamps use a deterministic
-semantic key, so reversing an input request array cannot change economics.
+All same-period generated and externally supplied state-interacting actions are
+interleaved according to the canonical applicable sequencing instant. At an
+equal instant, declared dependencies and any required explicit
+resource-contention precedence are applied before deterministic stable
+tie-breaking. The stable semantic key is used only for economically independent
+actions remaining unordered after those rules; it MUST NOT allocate scarce
+resources. Reversing an input request array therefore cannot change economics.
 
 ### 13.3 Period-end exclusion
 
@@ -1284,7 +1288,10 @@ Statements and time-series values are recomputed from authoritative state, seman
 The single-period runner accepts canonical `RunContext`, records current engine,
 financial-specification, model-format, and result-schema versions, and computes
 its input fingerprint from context (excluding `runId`), opening authoritative
-state, domain inputs, ordered economic actions, and explicit funding policy.
+state, domain inputs, canonically normalized economic actions, and explicit
+funding policy. Canonical action normalization reflects authored temporal and
+semantic ordering inputs; caller request-array position is not an ordering
+authority.
 Generated recognitions/effects retain model provenance and deterministic
 occurrence keys. Externally observed settlement facts retain source and
 idempotency identity and are admitted only when `observedAt ≤ dataCutoff`;
