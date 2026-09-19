@@ -169,6 +169,13 @@ describe("portable model format compatibility", () => {
       sourceVersion: "0.1.9-draft",
       targetVersion: CURRENT_RUN_VERSIONS.financialSpecificationVersion,
     }));
+    const compatiblePrior = deserializePortableModelEnvelope({
+      model_format_version: CURRENT_MODEL_FORMAT_VERSION,
+      financial_specification_version: "0.1.9-draft",
+      model_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      objects: {},
+    });
+    expect(compatiblePrior.financialSpecificationVersion).toBe("0.1.9-draft");
     expect(classifyFinancialSpecificationVersion("99.0.0-future").classification).toBe("unsupported");
     const serialized = {
       model_format_version: CURRENT_MODEL_FORMAT_VERSION,
