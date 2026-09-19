@@ -1,6 +1,6 @@
 # Personal Finance App — Executable Financial Semantics Specification
 
-**Version:** 0.1.9-draft
+**Version:** 0.1.10-draft
 **Status:** Draft implementation contract  
 **Namespace:** `pfm`  
 **Depends on:** `personal_finance_canonical_schema_v1.0.json`, `personal_finance_model.schema.json`, `personal_finance_simulation_interfaces_v1.0.ts`
@@ -118,7 +118,7 @@ These MAY be identical, but they MUST be independently representable.
 
 ### 3.4 Intraperiod evaluation
 
-There is no universal ordering such as "tax before contribution" or "investment before expense." The engine uses semantic barriers, applicable economic time, dependency topology, and explicit economic/resource-contention priority.
+There is no universal ordering such as "tax before contribution" or "investment before expense." The engine uses semantic lifecycle constraints, applicable economic time, declared dependency topology, explicit economic/resource-contention policy where required, and deterministic non-economic tie-breaking.
 
 Global semantic barriers are:
 
@@ -135,42 +135,64 @@ Global semantic barriers are:
 11. perform closing valuation and derived-output calculation;
 12. validate invariants and commit the period.
 
-These barriers define semantic lifecycle and authority constraints; they MUST NOT be interpreted as permission to batch an entire period in a way that allows later economic state to influence an earlier occurrence, proposal, funding evaluation, settlement, or posting.
+These barriers define lifecycle and authority constraints. They MUST NOT be interpreted as whole-period batch phases when batching would allow state that becomes economically available later to influence an earlier occurrence, proposal, funding evaluation, settlement, posting, or other state-sensitive decision. Pure or preparatory calculations MAY be evaluated ahead of their economic instant only when doing so cannot expose future state early, change eligibility or precedence, or change any authoritative observable result.
 
-For executable operations whose effects may interact within a period:
+#### 3.4.1 Temporal frontier and candidate-state visibility
 
-1. an operation MUST NOT observe or consume an authoritative state effect whose economic availability occurs at a later applicable instant;
-2. eligible occurrences, proposals, funding evaluations, settlements, and postings that affect shared state MUST therefore execute consistently with their applicable occurrence, effective, recognition, proposal, funding-evaluation, and settlement times as defined by their semantic contracts;
-3. at the same applicable instant, declared dependency topology determines precedence where a dependency exists;
-4. otherwise-independent same-instant operations competing for a constrained shared resource MUST use an explicit applicable economic/resource-contention priority policy;
-5. the engine MUST NOT infer such priority from vertical-slice identity, module identity, request-array position, account type, or implementation call order;
-6. if operations remain economically independent after temporal, dependency, and explicit-priority rules, deterministic stable ordering is used only as a tie-breaker and creates no economic meaning.
+For state-interacting intraperiod work, the **applicable sequencing instant** is the instant at which the relevant state-affecting consequence is permitted to become visible to other work under that operation's semantic contract. It is determined from the operation's explicit occurrence, effective, recognition, proposal, funding-evaluation, settlement, or other contractually defined time; it MUST NOT be inferred from request-array position, module order, or incidental implementation timing.
 
-Vertical slices and implementation modules are capability/composition boundaries, not economic sequencing boundaries.
+State-interacting work advances in nondecreasing applicable sequencing instant. At a given sequencing instant, eligible work advances through its required semantic lifecycle subject to declared dependencies and any applicable explicit contention policy. Work at a later sequencing instant MUST NOT mutate or otherwise supply balances, claims, identities, primitive state, or other state that an earlier-instant operation can observe.
 
-Candidate-state effects produced by an earlier eligible operation MAY be visible to a later eligible operation within the same period when the semantic lifecycle permits it. No candidate-state mutation becomes committed unless the entire period reaches successful validation and commit.
+Candidate-state output from earlier eligible work MAY be consumed by later eligible work only when that visibility follows from at least one explicit semantic basis:
 
-The funding rule in Section 4.4.1 remains controlling: a future cash movement MUST NOT fund an earlier proposal.
+- chronological progression to a later applicable sequencing instant;
+- declared dependency topology;
+- another explicit semantic contract that authorizes the read-after-write relationship.
+
+Incidental mutation order, function-call order, module order, or access to a shared candidate object MUST NOT create an implicit dependency.
+
+No candidate-state mutation is committed until the period reaches successful invariant validation and commit. A hard failure anywhere before commit rolls back the entire period candidate as defined in Section 16.
+
+The funding rule in Section 4.4.1 remains controlling: permitted liquidity is evaluated as of the funding evaluation time, and a future cash movement MUST NOT fund an earlier proposal.
+
+#### 3.4.2 Same-instant contention and economic priority
+
+Two otherwise-eligible same-instant operations **contend for a constrained shared resource** when changing their relative execution order can change an authoritative economic outcome because they consume, allocate, reserve, or mutate overlapping constrained state. Authoritative outcomes include accepted funding or allocation, settlement amount/status, account/position/liability/obligation state, generated authoritative identity, or another committed economic result. Mere simultaneous execution does not imply contention when relative order cannot change any authoritative outcome.
+
+At the same applicable sequencing instant:
+
+1. declared dependency topology determines precedence where a dependency exists;
+2. otherwise-independent contending operations MUST be ordered by an explicit applicable economic/resource-contention policy;
+3. if contention remains unresolved because no applicable policy exists, the applicable priorities are tied without an explicit economic tie rule, or policies cannot be compared under a common contract, execution MUST fail with a hard semantic-validation error no later than before any of those contending operations executes;
+4. unresolved contention is invalid execution semantics, not a liquidity shortfall, contract default, rejection, deferral, or permission to choose a deterministic implementation order.
+
+An economic/resource-contention policy that can change authoritative outcomes is authoritative executable input. It MUST have stable identity or a canonical serialized value, be included in the deterministic run/input fingerprint, and be represented in calculation lineage or diagnostics for decisions whose outcomes depend on it.
+
+Priority values are meaningful only inside the policy/namespace that defines their direction and comparison semantics. Raw numeric priorities from different domain-specific policies MUST NOT be compared merely because their representations are both numbers. A unified orchestrator MAY translate existing domain-specific priorities into a common scheduling representation only when the translation preserves their declared meaning and comparison direction.
+
+The engine MUST NOT infer economic/resource-contention priority from vertical-slice identity, module identity, request-array position, account type, stable identifier lexical order, or implementation call order. A generic stable tie-break MUST NOT decide which contending operation receives a scarce resource.
 
 Priority concepts are distinct:
 
-- **dependency priority** orders dependency-graph work where the model declares such precedence;
-- **economic/resource-contention priority** orders otherwise-independent same-instant operations that compete for a constrained shared resource;
-- **stable tie-breaking** exists only to make economically unordered execution deterministic.
+- **dependency priority** orders dependency-graph work where the dependency contract declares such precedence;
+- **economic/resource-contention priority** supplies economic precedence among otherwise-independent same-instant operations whose relative order can change a constrained-resource outcome;
+- **stable tie-breaking** exists only to make economically unordered work deterministic after all economically meaningful precedence is resolved.
 
 An implementation MUST NOT use one priority concept as an implicit substitute for another.
 
 ### 3.5 Stable ordering
 
-When eligible operations are otherwise independent after applying semantic lifecycle, applicable time, declared dependency topology, and any explicit economic/resource-contention priority, stable ordering is:
+After applying semantic lifecycle constraints, applicable sequencing time, declared dependency topology/dependency priority, and any required explicit economic/resource-contention policy, operations that remain economically independent MAY be executed in deterministic stable order.
 
-1. explicit dependency priority, descending, where dependency priority is applicable;
-2. semantic barrier;
-3. stable node identifier ascending;
-4. primitive instance identifier ascending;
-5. generated occurrence sequence ascending.
+The stable tie-break is, using the applicable stable identities for the operation:
 
-Stable ordering is deterministic bookkeeping only and MUST NOT substitute for an omitted economic dependency or omitted resource-contention policy.
+1. stable operation/node identifier ascending;
+2. primitive instance identifier ascending, where applicable;
+3. generated occurrence identity/sequence ascending, where applicable.
+
+Every executable operation requiring a deterministic tie-break MUST expose sufficient stable identity for that ordering. Request-array position, object iteration order, module order, and function-call order are not stable-order authorities.
+
+Stable ordering is deterministic bookkeeping only. It MUST NOT create economic meaning, resolve an omitted dependency, resolve unresolved constrained-resource contention, or change which operation receives a scarce resource.
 
 ### 3.6 Partial-period temporal modes
 
@@ -992,6 +1014,18 @@ under current financial semantics unless the identified
 `financial_specification_version` is also explicitly supported. A model-format
 migration MUST NOT claim to migrate financial meaning unless a separately
 reviewed semantic migration contract explicitly does so.
+
+Version `0.1.10-draft` is an explicit backward-compatible semantic clarification
+of `0.1.9-draft` for portable-model interpretation. It formalizes intraperiod
+ordering and the new reconciled-household orchestration boundary without
+changing canonical authored model fields or assigning new meaning to a
+previously valid explicit ordering policy. A runtime conforming to
+`0.1.10-draft` MAY therefore classify `0.1.9-draft` as
+`supported_directly`; the loaded model is still compiled and validated under
+the current runtime contract, and any execution plan whose same-instant
+resource contention is semantically ambiguous MUST be rejected rather than
+assigned a new implicit order. This compatibility statement applies only to
+`0.1.9-draft` → `0.1.10-draft` and does not generalize to other versions.
 
 The former `0.1.0-draft` root used `specification_version` without
 unambiguously identifying whether that value represented financial semantics or
