@@ -603,6 +603,17 @@ Actual principal reduction is:
 
 subject to explicit payment/contract constraints.
 
+For the currently supported fixed-rate, fully amortizing, all-or-nothing monthly
+loan profile, required contractual debt service and an optional extra-principal
+instruction at the same contractual occurrence have an explicit product
+dependency: required contractual service is resolved first, and voluntary
+extra principal is eligible for funding only after the required service is
+fully satisfied. An unfunded required service therefore cannot be bypassed by a
+same-instant voluntary prepayment. This is a scoped product/dependency contract
+for that supported loan profile, not a universal rule that debt outranks other
+household operations. Cross-domain same-instant contention remains governed by
+Sections 3.4–3.5 and 9.
+
 Ending principal balance:
 
 `B_{k+1}=B_k-PrincipalReduction_k+CapitalizedInterest_k+NewDraws_k`
