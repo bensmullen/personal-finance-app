@@ -5,5 +5,6 @@ export * from "./scenario.js";
 export * from "./timeline.js";
 export * from "./verticalSlice1.js";
 export { runVerticalSlice2, createVerticalSlice2PrimitiveId } from "./verticalSlice2.js";
-export { runVerticalSlice3, createVerticalSlice3Id } from "./verticalSlice3.js";
-export { runVerticalSlice4, createVerticalSlice4Id } from "./verticalSlice4.js";
+export { runVerticalSlice3, executeVerticalSlice3PeriodCandidate, createVerticalSlice3Id } from "./verticalSlice3.js";
+export { runVerticalSlice4, executeVerticalSlice4PeriodCandidate, createVerticalSlice4Id } from "./verticalSlice4.js";
+export * from "./householdProjection.js";

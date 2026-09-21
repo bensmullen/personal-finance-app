@@ -141,4 +141,21 @@ export const runVerticalSlice3 = (request: VerticalSlice3RunInput): VerticalSlic
   } catch (error) { if (!(error instanceof ValidationError)) throw error; diagnostics.push(...error.issues); return Object.freeze({ status: "incomplete", runMetadata, requestedHorizon, stoppedAt: period.start, ...(committed.length === 0 ? {} : { reachedThrough: committed[committed.length - 1]!.period.end }), state, primitiveState, periods: Object.freeze(committed), diagnostics: Object.freeze(diagnostics) }); }
   return Object.freeze({ status: "completed", runMetadata, requestedHorizon, reachedThrough: requestedHorizon.end, state, primitiveState, periods: Object.freeze(committed), diagnostics: Object.freeze(diagnostics) });
 };
+
+/** Executes only VS3 investment mechanics for one household period. */
+export const executeVerticalSlice3PeriodCandidate = (
+  request: VerticalSlice3RunInput,
+  period: Period,
+  openingState: AuthoritativeState,
+  primitiveState: PrimitiveRuntimeStateStore,
+): { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly period: VerticalSlice3PeriodResult } => {
+  const runContext = Object.freeze({ ...request.runContext, simulationStart: period.start, simulationEnd: period.end });
+  const { cashFlowInput: _cashFlowInput, ...investmentOnlyInput } = request.input;
+  const input: VerticalSlice3Input = Object.freeze(investmentOnlyInput);
+  const result = runVerticalSlice3({ ...request, runContext, input, openingState, primitiveState, months: 1 });
+  if (result.status === "incomplete") {
+    throw new ValidationError(result.diagnostics);
+  }
+  return Object.freeze({ state: result.state, primitiveState: result.primitiveState, period: result.periods[0]! });
+};
 export const createVerticalSlice3Id = <Kind extends string>(kind: Kind, value: string): DomainId<Kind> => domainId(kind, value);
