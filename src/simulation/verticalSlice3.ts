@@ -34,7 +34,20 @@ export interface VerticalSlice3Input {
   readonly cashFlowInput?: VerticalSlice2Input;
   readonly ruleCatalog: RuleCatalog; readonly transfers: readonly OwnedCashTransfer[]; readonly purchases: readonly InvestmentPurchase[]; readonly fees?: readonly InvestmentFee[]; readonly returns: readonly DeterministicPositionReturn[];
 }
-export interface VerticalSlice3RunInput { readonly runContext: RunContext; readonly openingState: AuthoritativeState; readonly input: VerticalSlice3Input; readonly months?: number; readonly primitiveState?: PrimitiveRuntimeStateStore; }
+/**
+ * Composition seam for a cash-flow period. Household orchestration supplies
+ * this from its shared candidate stream; standalone VS3 retains the VS2
+ * implementation as its compatibility default.
+ */
+export type VerticalSlice3CashFlowPeriodExecutor = (input: {
+  readonly runContext: RunContext;
+  readonly input: VerticalSlice2Input;
+  readonly period: Period;
+  readonly openingState: AuthoritativeState;
+  readonly primitiveState: PrimitiveRuntimeStateStore;
+}) => { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly period: VerticalSlice2PeriodResult };
+
+export interface VerticalSlice3RunInput { readonly runContext: RunContext; readonly openingState: AuthoritativeState; readonly input: VerticalSlice3Input; readonly months?: number; readonly primitiveState?: PrimitiveRuntimeStateStore; readonly cashFlowPeriodExecutor?: VerticalSlice3CashFlowPeriodExecutor; }
 export interface VerticalSlice3PeriodResult { readonly period: Period; readonly transactions: readonly AccountingTransaction[]; readonly effects: readonly SemanticEffect[]; readonly statements: Statements; readonly accountValues: Readonly<Record<string, Money>>; readonly portfolioValue: Money; readonly contributionPrincipal: Money; readonly fees: Money; readonly unrealizedGain: Money; readonly realizedGain: Money; readonly cashInvestmentIncome: Money; readonly ruleApplications: readonly RuleApplication<Money>[]; readonly traceRefs: readonly CalculationTraceRef[]; readonly cashFlowPeriod?: VerticalSlice2PeriodResult; }
 export interface VerticalSlice3RunResult { readonly status: "completed" | "incomplete"; readonly runMetadata: RunMetadata; readonly requestedHorizon: Period; readonly reachedThrough?: Instant; readonly stoppedAt?: Instant; readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly periods: readonly VerticalSlice3PeriodResult[]; readonly diagnostics: readonly ValidationIssue[]; }
 
@@ -124,7 +137,11 @@ export const runVerticalSlice3 = (request: VerticalSlice3RunInput): VerticalSlic
   let state = cloneAuthoritativeState(request.openingState); let primitiveState = createPrimitiveRuntimeStateStore(request.primitiveState); const committed: VerticalSlice3PeriodResult[] = []; const diagnostics: ValidationIssue[] = [];
   for (const period of periods) try {
     let candidateState = state; let candidatePrimitiveState = primitiveState; let cashFlowPeriod: VerticalSlice2PeriodResult | undefined;
-    if (request.input.cashFlowInput !== undefined) { const result = executeVerticalSlice2PeriodCandidate({ runContext: request.runContext, openingState: candidateState, primitiveState: candidatePrimitiveState, input: request.input.cashFlowInput } as VerticalSlice2RunInput, period, candidateState, candidatePrimitiveState); candidateState = result.state; candidatePrimitiveState = result.primitiveState; cashFlowPeriod = result.period; }
+    if (request.input.cashFlowInput !== undefined) {
+      const execute = request.cashFlowPeriodExecutor ?? ((args: Parameters<VerticalSlice3CashFlowPeriodExecutor>[0]) => executeVerticalSlice2PeriodCandidate({ runContext: args.runContext, openingState: args.openingState, primitiveState: args.primitiveState, input: args.input } as VerticalSlice2RunInput, args.period, args.openingState, args.primitiveState));
+      const result = execute({ runContext: request.runContext, input: request.input.cashFlowInput, period, openingState: candidateState, primitiveState: candidatePrimitiveState });
+      candidateState = result.state; candidatePrimitiveState = result.primitiveState; cashFlowPeriod = result.period;
+    }
     const p23Work: PeriodWork[] = request.input.returns.slice().sort((a, b) => a.targetPositionId.localeCompare(b.targetPositionId)).map((item) => ({ id: `return:${item.targetPositionId}`, kind: "primitive", request: { primitiveId: "P23", input: { baseValue: candidateState.positions[item.targetPositionId]!.price, rate: item.rate }, parameters: { returnBasis: item.returnBasis, cashFlowTiming: "end_of_period", postingRounding: item.priceRounding }, context: { evaluationInstant: closeAt(period), scenarioId: request.runContext.scenarioId, primitiveInstanceId: item.primitiveIds.compounding, economicTargetId: item.targetPositionId, semanticEffectType: "investment-return", traceRefs: traceRefs(item, period) } } }));
     const p23 = runPeriod({ period, runContext: request.runContext, openingState: candidateState, primitiveState: candidatePrimitiveState, work: p23Work }); candidatePrimitiveState = p23.primitiveState;
     const closing = Object.fromEntries(request.input.returns.map((item) => [item.targetPositionId, (p23.primitiveOutputs.find((output) => output.primitiveInstanceId === item.primitiveIds.compounding)!.output as { readonly closingValue: Money }).closingValue])) as Readonly<Record<string, Money>>;

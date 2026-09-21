@@ -6,7 +6,7 @@ This milestone establishes the first executable runtime boundary for the financi
 
 A run consumes explicit run/as-of/data-cutoff context, clones the opening state, builds a zero-lag dependency DAG, evaluates events in deterministic topological order, validates each event's period/date and balanced transaction, applies each transaction atomically to candidate state, and derives closing statements. If execution fails, the opening state remains unchanged because all mutations occur on the clone. Successful results carry the requested/reached horizon, versions, and deterministic input fingerprint.
 
-The intended production lifecycle remains the specification's semantic-barrier sequence: establish period context → resolve inputs → activate events → build/validate dependencies → evaluate primitives → generate flows/recognition → generate obligations/settlements → translate to transactions → post/apply state → closing valuation/outputs → validate/commit. v0.1 supplies the executable boundary for the dependency/effect/transaction/state portion; richer primitive evaluation and obligation identity remain subsequent work.
+The intended production lifecycle remains the specification's semantic-barrier sequence: establish period context → resolve inputs → activate events → build/validate dependencies → evaluate primitives → generate flows/recognition → generate obligations → propose settlement → resolve funding and constrained-resource precedence → accept settlement/accounting → translate to transactions → post/apply state → closing valuation/outputs → validate/commit. v0.1 supplies the executable boundary for the dependency/effect/transaction/state portion; richer primitive evaluation and obligation identity remain subsequent work.
 
 ## State ownership
 
@@ -18,7 +18,7 @@ The intended production lifecycle remains the specification's semantic-barrier s
 
 ## Dependencies
 
-`DependencyGraph` uses deterministic Kahn topological sorting with lexicographic tie-breaking. That lexical tie-break is non-economic bookkeeping and is valid only after economically meaningful temporal, dependency, and constrained-resource precedence has been resolved; it must not decide which contending operation receives scarce resources. Zero-lag cycles fail explicitly. Nonzero-lag edges are accepted without adding a same-period dependency and remain the responsibility of the higher-level planner to expand into prior-state dependencies. Cross-domain reconciled scheduling is governed by Executable Financial Semantics Sections 3.4–3.5 rather than by kernel lexical order.
+`DependencyGraph` uses deterministic Kahn topological sorting with lexicographic tie-breaking. That lexical tie-break is non-economic bookkeeping and is valid only after economically meaningful temporal, dependency, and constrained-resource precedence has been resolved; it must not decide which contending operation receives scarce resources. Zero-lag cycles fail explicitly. Nonzero-lag edges are accepted without adding a same-period dependency and remain the responsibility of the higher-level planner to expand into prior-state dependencies. Cross-domain reconciled scheduling is governed by Executable Financial Semantics Sections 3.4–3.5 and 9 rather than by kernel lexical order.
 
 ## Accounting
 
