@@ -31,12 +31,11 @@ const boundary = (request: HouseholdProjectionCompilerRequest) => request.invest
 
 const execute = (model: PortableModelEnvelope, request: HouseholdForecastRequest): { readonly compiled?: ReturnType<typeof compileHouseholdProjection>; readonly result?: CompiledHouseholdProjectionRunResult; readonly read: PersonalHouseholdForecastReadModel } => {
   try {
-    if (request.compiler.cashFlow === undefined || request.compiler.investments === undefined || request.compiler.liabilities === undefined) return { read: Object.freeze({ scope: "household", status: "unavailable", message: "Authoritative household forecasts require cash-flow, investment, and liability compiler requests.", diagnostics: Object.freeze([{ code: "HOUSEHOLD_CONSTITUENT_REQUIRED", message: "All three supported household domains must participate explicitly.", capability: "household_projection" }]) }) };
     const compiled = compileHouseholdProjection(model, request.compiler);
     if (compiled.status !== "compiled") return { compiled, read: Object.freeze({ scope: "household", status: "unavailable", message: compiled.diagnostics.map((item) => item.message).join("; "), diagnostics: compiled.diagnostics }) };
     const selected = boundary(request.compiler);
     if (selected === undefined) return { compiled, read: Object.freeze({ scope: "household", status: "unavailable", message: "A household execution boundary is required.", diagnostics: Object.freeze([]) }) };
-    const compilerAsOf = [request.compiler.investments?.asOf, request.compiler.liabilities?.asOf].filter((value): value is string => value !== undefined);
+    const compilerAsOf = [request.compiler.cashFlow?.asOf, request.compiler.investments?.asOf, request.compiler.liabilities?.asOf].filter((value): value is string => value !== undefined);
     if (compilerAsOf.some((value) => value !== request.asOf)) throw new ValidationError({ severity: "error", code: "HOUSEHOLD_AS_OF_MISMATCH", message: "Household asOf must match every participating compiler boundary.", entityType: "household_projection" });
     const context = createRunContext({ runId: runId(request.runIdentity), scenarioId: scenarioId(compiled.value.scenarioIdentity), asOf: instant(`${request.asOf}T00:00:00.000Z`), dataCutoff: instant(`${request.dataCutoff}T00:00:00.000Z`), simulationStart: instant(`${selected.simulationStart}T00:00:00.000Z`), simulationEnd: instant(`${selected.simulationEnd}T00:00:00.000Z`), baseCurrency: Currency.of(selected.baseCurrency) });
     const result = runCompiledHouseholdProjection({ runContext: context, compiled: compiled.value });
