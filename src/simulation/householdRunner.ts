@@ -1,9 +1,9 @@
 import { ValidationError, type ValidationIssue } from "../diagnostics/index.js";
 import { cloneAuthoritativeState, validateAuthoritativeState, type AuthoritativeState } from "../state/index.js";
-import type { Period } from "../time/index.js";
-import { createPrimitiveRuntimeStateStore, type PrimitiveRuntimeStateStore } from "./period.js";
-import { createRunMetadata, type RunContext, type RunMetadata } from "./run.js";
-import { buildHouseholdScheduledPlan, type HouseholdContentionPolicy, type HouseholdScheduledPlan, type HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
+import type { Instant, Period } from "../time/index.js";
+import { assertPrimitiveRuntimeStateConsistent, createPrimitiveRuntimeStateStore, type PrimitiveRuntimeStateStore } from "./period.js";
+import { assertRunContext, createRunMetadata, type RunContext, type RunMetadata } from "./run.js";
+import { buildHouseholdScheduledPlan, type HouseholdContentionPolicy, type HouseholdPlanDependency, type HouseholdScheduledPlan, type HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
 import { createHouseholdProjectionFingerprint } from "./householdProjection.js";
 
 /** Executable mechanics are intentionally separate from household descriptors. */
@@ -23,22 +23,24 @@ export interface HouseholdPeriodPlan {
 export interface HouseholdCommittedPeriod {
   readonly period: Period;
   readonly executedWorkIds: readonly string[];
+  /** Includes explicit and policy-derived precedence used for this atomic commit. */
+  readonly orderingLineage: readonly HouseholdPlanDependency[];
 }
 
 export type HouseholdProjectionRunResult =
   | { readonly status: "invalid_model"; readonly diagnostics: readonly ValidationIssue[]; readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore }
-  | { readonly status: "incomplete"; readonly runMetadata: RunMetadata; readonly requestedHorizon: Period; readonly stoppedAt: string; readonly reachedThrough?: string; readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly periods: readonly HouseholdCommittedPeriod[]; readonly diagnostics: readonly ValidationIssue[] }
-  | { readonly status: "completed"; readonly runMetadata: RunMetadata; readonly requestedHorizon: Period; readonly reachedThrough: string; readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly periods: readonly HouseholdCommittedPeriod[]; readonly diagnostics: readonly ValidationIssue[] };
+  | { readonly status: "incomplete"; readonly runMetadata: RunMetadata; readonly requestedHorizon: Period; readonly stoppedAt: Instant; readonly reachedThrough?: Instant; readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly periods: readonly HouseholdCommittedPeriod[]; readonly diagnostics: readonly ValidationIssue[] }
+  | { readonly status: "completed"; readonly runMetadata: RunMetadata; readonly requestedHorizon: Period; readonly reachedThrough: Instant; readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly periods: readonly HouseholdCommittedPeriod[]; readonly diagnostics: readonly ValidationIssue[] };
 
 const invalid = (state: AuthoritativeState, primitiveState: PrimitiveRuntimeStateStore, diagnostics: readonly ValidationIssue[]): HouseholdProjectionRunResult => ({ status: "invalid_model", state, primitiveState, diagnostics: Object.freeze([...diagnostics]) });
 const periodIssue = (code: string, message: string, ids: readonly string[] = []): ValidationIssue => ({ severity: "error", code, message, entityType: "household_projection", relatedIds: Object.freeze([...ids].sort()) });
 
-const orderedAtInstant = (plan: HouseholdScheduledPlan, at: string): readonly HouseholdWorkDescriptor[] => {
+const orderedAtInstant = (plan: HouseholdScheduledPlan, at: Instant): readonly HouseholdWorkDescriptor[] => {
   const remaining = new Map(plan.descriptors.filter((descriptor) => descriptor.sequencingInstant === at).map((descriptor) => [descriptor.id, descriptor]));
   const executed = new Set(plan.descriptors.filter((descriptor) => descriptor.sequencingInstant < at).map((descriptor) => descriptor.id));
   const ordered: HouseholdWorkDescriptor[] = [];
   while (remaining.size > 0) {
-    const ready = [...remaining.values()].filter((descriptor) => descriptor.dependsOn.every((dependency) => executed.has(dependency))).sort((left, right) => left.id.localeCompare(right.id));
+    const ready = [...remaining.values()].filter((descriptor) => plan.dependencies.filter((edge) => edge.after === descriptor.id).every((edge) => executed.has(edge.before))).sort((left, right) => left.id.localeCompare(right.id));
     if (ready.length === 0) throw new ValidationError(periodIssue("HOUSEHOLD_WORK_CYCLE", "No dependency-ready household work remains at this sequencing instant.", [...remaining.keys()]));
     for (const descriptor of ready) { remaining.delete(descriptor.id); executed.add(descriptor.id); ordered.push(descriptor); }
   }
@@ -61,6 +63,14 @@ export const runHouseholdProjection = (input: {
 }): HouseholdProjectionRunResult => {
   const openingState = cloneAuthoritativeState(input.openingState);
   const openingPrimitiveState = createPrimitiveRuntimeStateStore(input.primitiveState);
+  try {
+    assertRunContext(input.runContext);
+    validateAuthoritativeState(openingState);
+    assertPrimitiveRuntimeStateConsistent(openingPrimitiveState, openingState);
+  } catch (error) {
+    if (error instanceof ValidationError) return invalid(openingState, openingPrimitiveState, error.issues);
+    throw error;
+  }
   const sortedPlans = [...input.periodPlans].sort((left, right) => left.period.start.localeCompare(right.period.start));
   if (sortedPlans.length === 0 || sortedPlans[0]!.period.start !== input.runContext.simulationStart || sortedPlans[sortedPlans.length - 1]!.period.end !== input.runContext.simulationEnd || sortedPlans.some((plan, index) => plan.period.start >= plan.period.end || (index > 0 && sortedPlans[index - 1]!.period.end !== plan.period.start))) return invalid(openingState, openingPrimitiveState, [periodIssue("HOUSEHOLD_PERIOD_PLAN_INVALID", "Household period plans must be contiguous and exactly cover the run horizon.")]);
   const preflight: { readonly source: HouseholdPeriodPlan; readonly plan: HouseholdScheduledPlan }[] = [];
@@ -84,10 +94,16 @@ export const runHouseholdProjection = (input: {
       }
       validateAuthoritativeState(candidateState);
       candidatePrimitiveState = createPrimitiveRuntimeStateStore(candidatePrimitiveState);
+      assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
       state = candidateState; primitiveState = candidatePrimitiveState;
-      committed.push(Object.freeze({ period: Object.freeze({ ...source.period }), executedWorkIds: Object.freeze(executedWorkIds) }));
+      committed.push(Object.freeze({
+        period: Object.freeze({ ...source.period }),
+        executedWorkIds: Object.freeze(executedWorkIds),
+        orderingLineage: Object.freeze(plan.dependencies.map((edge) => Object.freeze({ ...edge }))),
+      }));
     } catch (error) {
-      const issues = error instanceof ValidationError ? error.issues : [periodIssue("HOUSEHOLD_PERIOD_EXECUTION_FAILED", error instanceof Error ? error.message : "Household period execution failed.", executedWorkIds)];
+      if (!(error instanceof ValidationError)) throw error;
+      const issues = error.issues;
       diagnostics.push(...issues);
       return Object.freeze({ status: "incomplete", runMetadata, requestedHorizon, stoppedAt: source.period.start, ...(committed.length === 0 ? {} : { reachedThrough: committed[committed.length - 1]!.period.end }), state, primitiveState, periods: Object.freeze(committed), diagnostics: Object.freeze(diagnostics) });
     }

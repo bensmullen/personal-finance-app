@@ -3,6 +3,7 @@ import { createAuthoritativeIdentityRegistry, createAuthoritativeState, type Aut
 import { createPrimitiveRuntimeStateStore, type PrimitiveRuntimeStateStore } from "./period.js";
 import { canonicalSerialize, createInputFingerprint, type InputFingerprint, type RunContext } from "./run.js";
 import { Money, sumMoney, type Currency } from "../values/index.js";
+import { positionMarketValue } from "../valuation/index.js";
 import { canonicalHouseholdContentionPolicy, canonicalHouseholdWorkPlan, type HouseholdContentionPolicy, type HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
 
 export type HouseholdReconciliationResult<T> =
@@ -70,7 +71,7 @@ export interface HouseholdClosingMetrics { readonly cash: Money; readonly invest
 /** Consolidates the one closing state; account containers are intentionally never added. */
 export const deriveHouseholdClosingMetrics = (state: AuthoritativeState, currency: Currency, standaloneAssets: readonly { readonly value: Money }[] = []): HouseholdClosingMetrics => {
   const cash = sumMoney(Object.values(state.accounts).map((item) => item.cash), currency);
-  const investmentValue = sumMoney(Object.values(state.positions).map((item) => item.carryingValue), currency);
+  const investmentValue = sumMoney(Object.values(state.positions).map(positionMarketValue), currency);
   const standaloneAssetValue = sumMoney(standaloneAssets.map((item) => item.value), currency);
   const totalAssets = cash.plus(investmentValue).plus(standaloneAssetValue);
   const totalLiabilities = sumMoney(Object.values(state.liabilities).map((item) => item.balance), currency);

@@ -1,8 +1,8 @@
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { canonicalSerialize } from "../../simulation/run.js";
 import { reconcileHouseholdOpeningState, reconcileHouseholdPrimitiveState } from "../../simulation/householdProjection.js";
-import type { HouseholdContentionPolicy } from "../../simulation/intraperiodScheduler.js";
-import { compileCashFlow, type CashFlowCompilerRequest, type CompiledCashFlow } from "./cashFlow.js";
+import { buildHouseholdScheduledPlan, type HouseholdContentionPolicy } from "../../simulation/intraperiodScheduler.js";
+import { compileCashFlow, type CashFlowCompilerRequest, type CashFlowScenarioBindings, type CompiledCashFlow } from "./cashFlow.js";
 import { compileInvestments, type InvestmentCompilerRequest, type CompiledInvestments } from "./investments.js";
 import { compileLiabilities, type LiabilityCompilerRequest, type CompiledLiabilities } from "./liabilities.js";
 import type { CapabilityDiagnostic, CompileResult } from "./types.js";
@@ -26,7 +26,12 @@ export interface CompiledHouseholdProjection {
   readonly scenarioIdentity: string;
   readonly executionMonths: number;
   readonly contentionPolicy: HouseholdContentionPolicy;
-  readonly scenarioBindings: Readonly<Record<string, unknown>>;
+  /** Binding names are part of the household scenario contract, never request-order slots. */
+  readonly scenarioBindings: Readonly<{
+    readonly cashFlow?: CashFlowScenarioBindings;
+    readonly investments?: CompiledInvestments["scenarioBindings"];
+    readonly liabilities?: CompiledLiabilities["scenarioBindings"];
+  }>;
 }
 
 const invalid = <T>(code: string, message: string): CompileResult<T> => ({ status: "invalid_model", diagnostics: Object.freeze([{ severity: "error", code, message, entityType: "household_projection" }]) });
@@ -39,6 +44,11 @@ const unsupported = <T>(diagnostics: readonly CapabilityDiagnostic[]): CompileRe
  */
 export const compileHouseholdProjection = (model: PortableModelEnvelope, request: HouseholdProjectionCompilerRequest): CompileResult<CompiledHouseholdProjection> => {
   if (request.contentionPolicy === undefined) return invalid("HOUSEHOLD_CONTENTION_POLICY_INVALID", "Household projections require an explicit contention policy.");
+  // Policy syntax is a pre-execution semantic input. Validate it even when a
+  // particular horizon has no contending work yet; runtime planning adds the
+  // descriptor-specific ambiguity checks later.
+  const policyValidation = buildHouseholdScheduledPlan([], request.contentionPolicy);
+  if (policyValidation.status === "invalid_model") return policyValidation;
   const results = [
     request.cashFlow === undefined ? undefined : compileCashFlow(model, request.cashFlow),
     request.investments === undefined ? undefined : compileInvestments(model, request.investments),
@@ -60,7 +70,11 @@ export const compileHouseholdProjection = (model: PortableModelEnvelope, request
   if (opening.status === "invalid_model") return opening;
   const primitive = reconcileHouseholdPrimitiveState(compiled.map((value) => "primitiveState" in value ? value.primitiveState : undefined));
   if (primitive.status === "invalid_model") return primitive;
-  const bindings = Object.fromEntries(compiled.map((value, index) => [`domain-${index}`, "scenarioBindings" in value ? value.scenarioBindings : {}]));
+  const bindings = Object.freeze({
+    ...(cash === undefined ? {} : { cashFlow: cash.value.scenarioBindings }),
+    ...(investments === undefined ? {} : { investments: investments.value.scenarioBindings }),
+    ...(liabilities === undefined ? {} : { liabilities: liabilities.value.scenarioBindings }),
+  });
   return { status: "compiled", diagnostics: Object.freeze([]), value: Object.freeze({
     ...(cash === undefined ? {} : { cashFlowInput: cash.value.input }),
     ...(investments === undefined ? {} : { investmentInput: investments.value.input }),
@@ -71,6 +85,6 @@ export const compileHouseholdProjection = (model: PortableModelEnvelope, request
     scenarioIdentity: compiled[0]!.scenarioIdentity,
     executionMonths: compiled[0]!.executionMonths,
     contentionPolicy: Object.freeze({ ...request.contentionPolicy, rules: Object.freeze([...request.contentionPolicy.rules].sort((a, b) => canonicalSerialize(a).localeCompare(canonicalSerialize(b)))) }),
-    scenarioBindings: Object.freeze(bindings),
+    scenarioBindings: bindings,
   }) };
 };

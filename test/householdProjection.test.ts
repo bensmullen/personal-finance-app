@@ -5,10 +5,13 @@ import { instant } from "../src/time/index.js";
 import { createAuthoritativeState } from "../src/state/index.js";
 import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
 import { buildHouseholdScheduledPlan, canonicalHouseholdWorkPlan, type HouseholdWorkDescriptor } from "../src/simulation/intraperiodScheduler.js";
-import { createHouseholdProjectionFingerprint, reconcileHouseholdOpeningState, reconcileHouseholdPrimitiveState } from "../src/simulation/householdProjection.js";
+import { createHouseholdProjectionFingerprint, deriveHouseholdClosingMetrics, reconcileHouseholdOpeningState, reconcileHouseholdPrimitiveState } from "../src/simulation/householdProjection.js";
+import { ValidationError } from "../src/diagnostics/index.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { runHouseholdProjection } from "../src/simulation/householdRunner.js";
-import { money, USD } from "../src/values/index.js";
+import { money, quantity, SHARE, USD } from "../src/values/index.js";
+import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
+import type { PortableModelEnvelope } from "../src/model/modelVersion.js";
 
 const account = domainId("account", "91000000-0000-4000-8000-000000000001");
 const owner = domainId("person", "91000000-0000-4000-8000-000000000002");
@@ -66,6 +69,13 @@ describe("PR20 household boundaries", () => {
     expect(buildHouseholdScheduledPlan([{ ...expense, dependsOn: ["debt"] }, debt], { id: "reverse", version: "1", rules: [{ before: "cash_expense_settlement", after: "liability_required_service" }] })).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_POLICY_DEPENDENCY_CONTRADICTION" }] });
   });
 
+  it("preflights malformed household contention policy before domain compilation", () => {
+    const compiled = compileHouseholdProjection({} as PortableModelEnvelope, {
+      contentionPolicy: { id: "bad", version: "1", rules: [{ before: "cash_expense_settlement", after: "cash_expense_settlement" }] },
+    });
+    expect(compiled).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_CONTENTION_POLICY_INVALID" }] });
+  });
+
   it("makes policy identity and semantics, but not run identity or request order, material to fingerprints", () => {
     const context = (id: string) => createRunContext({ runId: runId(id), scenarioId: scenarioId("91000000-0000-4000-8000-000000000003"), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
     const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume");
@@ -82,9 +92,33 @@ describe("PR20 household boundaries", () => {
     const expense = { ...descriptor("expense", "cash_flow", "cash_expense_settlement", "consume"), sequencingInstant: instant("2026-01-15T00:00:00.000Z") };
     const run = (fail: boolean) => runHouseholdProjection({ runContext: context, openingState: state(), contentionPolicy: { id: "empty", version: "1", rules: [] }, periodPlans: [{ period: { start: context.simulationStart, end: context.simulationEnd }, descriptors: [income, expense], executors: {
       income: ({ state: candidate }) => { candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.plus(money("10")); },
-      expense: ({ state: candidate }) => { if (fail) throw new Error("late failure"); candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(money("5")); },
+      expense: ({ state: candidate }) => { if (fail) throw new ValidationError([{ severity: "error", code: "EXPECTED_FINANCIAL_FAILURE", message: "late failure", entityType: "household_projection" }]); candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(money("5")); },
     } }] });
     expect(run(false)).toMatchObject({ status: "completed", state: { accounts: { [account]: { cash: money("15") } } }, periods: [{ executedWorkIds: ["income", "expense"] }] });
     expect(run(true)).toMatchObject({ status: "incomplete", stoppedAt: context.simulationStart, state: { accounts: { [account]: { cash: money("10") } } }, periods: [] });
+  });
+
+  it("executes policy-derived dependencies, not only descriptor dependencies", () => {
+    const context = createRunContext({ runId: runId("91000000-0000-4000-8000-000000000016"), scenarioId: scenarioId("91000000-0000-4000-8000-000000000017"), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
+    const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume");
+    const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
+    const run = (rules: readonly { readonly before: "cash_expense_settlement" | "liability_required_service"; readonly after: "cash_expense_settlement" | "liability_required_service" }[]) => runHouseholdProjection({ runContext: context, openingState: state(), contentionPolicy: { id: "ordering", version: "1", rules }, periodPlans: [{ period: { start: context.simulationStart, end: context.simulationEnd }, descriptors: [expense, debt], executors: {
+      expense: ({ state: candidate }) => { if (!candidate.accounts[account]!.cash.isZero()) candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(money("10")); },
+      debt: ({ state: candidate }) => { if (!candidate.accounts[account]!.cash.isZero()) candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(money("10")); },
+    } }] });
+    expect(run([{ before: "cash_expense_settlement", after: "liability_required_service" }])).toMatchObject({ status: "completed", periods: [{ executedWorkIds: ["expense", "debt"], orderingLineage: [{ before: "expense", after: "debt", source: "policy", policyId: "ordering", policyVersion: "1" }] }] });
+    expect(run([{ before: "liability_required_service", after: "cash_expense_settlement" }])).toMatchObject({ status: "completed", periods: [{ executedWorkIds: ["debt", "expense"] }] });
+  });
+
+  it("uses position market value, not carrying value, in household metrics", () => {
+    const position = domainId("position", "91000000-0000-4000-8000-000000000019");
+    const closing = createAuthoritativeState({ accounts: state().accounts, positions: { [position]: { id: position, accountId: account, quantity: quantity("2", SHARE), price: money("10"), carryingValue: money("3") } } });
+    expect(deriveHouseholdClosingMetrics(closing, USD)).toMatchObject({ investmentValue: money("20"), totalAssets: money("30"), netWorth: money("30") });
+  });
+
+  it("propagates unexpected executor bugs", () => {
+    const context = createRunContext({ runId: runId("91000000-0000-4000-8000-000000000020"), scenarioId: scenarioId("91000000-0000-4000-8000-000000000021"), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
+    const income = descriptor("income", "cash_flow", "cash_income_settlement", "produce");
+    expect(() => runHouseholdProjection({ runContext: context, openingState: state(), contentionPolicy: { id: "empty", version: "1", rules: [] }, periodPlans: [{ period: { start: context.simulationStart, end: context.simulationEnd }, descriptors: [income], executors: { income: () => { throw new Error("programming bug"); } } }] })).toThrow("programming bug");
   });
 });
