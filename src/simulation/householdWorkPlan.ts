@@ -1,9 +1,11 @@
 import { generatedOccurrenceKey } from "../identity/index.js";
+import type { AuthoritativeState } from "../state/index.js";
 import { subtractMilliseconds, utcMonthlyOccurrences, type Instant, type Period } from "../time/index.js";
 import type { RunContext } from "./run.js";
+import type { PrimitiveRuntimeStateStore } from "./period.js";
 import type { VerticalSlice2Input } from "./verticalSlice2.js";
 import type { VerticalSlice3Input } from "./verticalSlice3.js";
-import type { VerticalSlice4Input } from "./verticalSlice4.js";
+import { prepareVerticalSlice4Period, type VerticalSlice4Input } from "./verticalSlice4.js";
 import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
 
 const descriptor = (value: Omit<HouseholdWorkDescriptor, "dependsOn" | "traceRefs"> & { readonly dependsOn?: readonly string[] }): HouseholdWorkDescriptor =>
@@ -84,20 +86,24 @@ export const describeVerticalSlice3PeriodWork = (context: RunContext, input: Ver
 };
 
 /** VS4 emits required service before every voluntary extra at the same instant. */
-export const describeVerticalSlice4PeriodWork = (context: RunContext, input: VerticalSlice4Input, period: Period): readonly HouseholdWorkDescriptor[] => {
+export const describeVerticalSlice4PeriodWork = (context: RunContext, input: VerticalSlice4Input, period: Period, currentState?: AuthoritativeState, currentPrimitiveState?: PrimitiveRuntimeStateStore): readonly HouseholdWorkDescriptor[] => {
+  if (currentState !== undefined) return prepareVerticalSlice4Period(context, input, period, currentState, currentPrimitiveState).descriptors;
   const work: HouseholdWorkDescriptor[] = [];
   const priority = new Map<string, number>();
+  const sources = new Map<string, readonly string[]>();
   for (const loan of input.loans) for (const at of utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy)) {
     const occurrenceIdentity = generatedOccurrenceKey({ scenarioId: context.scenarioId, primitiveInstanceId: loan.primitiveIds.schedule, scheduledAt: at, semanticEffectType: "liability-payment", economicTargetId: loan.principalLiabilityId });
     const requiredId = `liability-required:${loan.id}:${occurrenceIdentity}`;
     work.push(descriptor({ id: requiredId, domain: "liabilities", operationClass: "liability_required_service", sequencingInstant: at, resourceAccesses: cashConsumes(loan.fundingPolicy), primitiveInstanceId: loan.primitiveIds.schedule, occurrenceIdentity }));
     priority.set(requiredId, loan.settlementPriority);
+    sources.set(requiredId, loan.fundingPolicy.orderedSources.map((source) => source.accountId));
     const extra = (loan.extraPrincipalPayments ?? []).find((item) => item.scheduledAt === at);
     if (extra !== undefined) {
       const extraIdentity = generatedOccurrenceKey({ scenarioId: context.scenarioId, primitiveInstanceId: extra.primitiveInstanceId, scheduledAt: at, semanticEffectType: "extra-principal-payment", economicTargetId: loan.principalLiabilityId });
       const extraId = `liability-extra:${extra.id}:${extraIdentity}`;
       work.push(descriptor({ id: extraId, domain: "liabilities", operationClass: "liability_extra_principal", sequencingInstant: at, dependsOn: [requiredId], resourceAccesses: cashConsumes(extra.fundingPolicy), primitiveInstanceId: extra.primitiveInstanceId, occurrenceIdentity: extraIdentity }));
       priority.set(extraId, loan.settlementPriority);
+      sources.set(extraId, extra.fundingPolicy.orderedSources.map((source) => source.accountId));
     }
   }
   const required = work.filter((item) => item.operationClass === "liability_required_service");
@@ -105,7 +111,9 @@ export const describeVerticalSlice4PeriodWork = (context: RunContext, input: Ver
   for (const phase of [required, extras]) for (const at of new Set(phase.map((item) => item.sequencingInstant))) {
     const chain = phase.filter((item) => item.sequencingInstant === at).sort((left, right) => priority.get(right.id)! - priority.get(left.id)! || left.id.localeCompare(right.id));
     for (let index = 1; index < chain.length; index += 1) {
-      const current = chain[index]!; work[work.indexOf(current)] = mergeDependency(current, chain[index - 1]!.id);
+      const previous = chain[index - 1]!; const current = chain[index]!;
+      const sharesLiquidity = sources.get(previous.id)!.some((accountId) => sources.get(current.id)!.includes(accountId));
+      if (sharesLiquidity) work[work.indexOf(current)] = mergeDependency(current, previous.id);
     }
   }
   for (const extra of extras) for (const service of required) if (extra.sequencingInstant === service.sequencingInstant) work[work.indexOf(extra)] = mergeDependency(work[work.indexOf(extra)]!, service.id);

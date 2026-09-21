@@ -13,6 +13,7 @@ import { utcMonthDifference, utcMonthlyOccurrences, utcMonthlyPeriods, type Inst
 import { Money, RateBasis, RoundingPolicy, sumMoney, type Currency, type Rate } from "../values/index.js";
 import { createPrimitiveRuntimeStateStore, runPeriod, type PeriodWork, type PrimitiveRuntimeStateStore } from "./period.js";
 import { createInputFingerprint, createRunMetadata, type RunContext, type RunMetadata } from "./run.js";
+import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -39,6 +40,20 @@ export interface VerticalSlice4RunResult { readonly status: "completed" | "incom
 
 interface MutableLiabilityResult { loanId: LoanContractId; occurrenceId: GeneratedOccurrenceKey; scheduledAt: Instant; openingPrincipal: Money; contractualPayment: Money; currentInterest: Money; scheduledPayment: Money; scheduledPrincipalPaid: Money; extraPrincipalPaid: Money; endingPrincipal: Money; outstandingInterest: Money; scheduledFundingStatus: ConstraintOutcome["status"]; extraFundingStatus?: ConstraintOutcome["status"]; traceRefs: readonly CalculationTraceRef[]; }
 interface PendingExtra { readonly loan: FixedAmortizingLoan; readonly instruction: ExtraPrincipalPayment; readonly proposedAmount: Money; readonly traceRefs: readonly CalculationTraceRef[]; readonly result: MutableLiabilityResult; }
+
+export type PreparedVerticalSlice4Operation =
+  | { readonly kind: "required_service"; readonly descriptor: HouseholdWorkDescriptor; readonly loan: FixedAmortizingLoan; readonly scheduledAt: Instant }
+  | { readonly kind: "extra_principal"; readonly descriptor: HouseholdWorkDescriptor; readonly loan: FixedAmortizingLoan; readonly instruction: ExtraPrincipalPayment; readonly scheduledAt: Instant };
+
+export interface PreparedVerticalSlice4Period {
+  readonly period: Period;
+  /** The candidate state/runtime inspected while deciding which debt work exists. */
+  readonly state: AuthoritativeState;
+  readonly primitiveState: PrimitiveRuntimeStateStore;
+  readonly descriptors: readonly HouseholdWorkDescriptor[];
+  readonly operations: readonly PreparedVerticalSlice4Operation[];
+  readonly traceRefs: readonly CalculationTraceRef[];
+}
 
 const invalid = (message: string, fieldPath: string, unsupported = false): never => failValidation({ severity: "error", code: unsupported ? issueCodes.liabilityConfigurationUnsupported : issueCodes.verticalSlice4InputInvalid, message, entityType: "vertical_slice_4", fieldPath });
 const periodFailure = (message: string, entityId?: string): never => failValidation({ severity: "error", code: issueCodes.verticalSlice4InputInvalid, message, entityType: "vertical_slice_4_period", ...(entityId === undefined ? {} : { entityId }) });
@@ -153,6 +168,80 @@ const validate = (request: VerticalSlice4RunInput, periods: readonly Period[]): 
   for (const period of periods) { const active = input.loans.flatMap((loan) => utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy).map((at) => ({ loan, at }))); for (let left = 0; left < active.length; left += 1) for (let right = left + 1; right < active.length; right += 1) { const a = active[left]!; const b = active[right]!; if (a.at !== b.at) continue; if (policiesShareSource(a.loan.fundingPolicy, b.loan.fundingPolicy) && a.loan.settlementPriority === b.loan.settlementPriority) invalid("Same-instant required debt service sharing liquidity requires distinct priorities", "input.loans.settlementPriority"); const aExtra = (a.loan.extraPrincipalPayments ?? []).find((extra) => extra.scheduledAt === a.at); const bExtra = (b.loan.extraPrincipalPayments ?? []).find((extra) => extra.scheduledAt === b.at); if (aExtra !== undefined && bExtra !== undefined && policiesShareSource(aExtra.fundingPolicy, bExtra.fundingPolicy) && a.loan.settlementPriority === b.loan.settlementPriority) invalid("Same-instant voluntary prepayments sharing liquidity require distinct priorities", "input.loans.settlementPriority"); } }
 };
 const totalLiability = (state: AuthoritativeState, loans: readonly FixedAmortizingLoan[], selector: "principal" | "interest", currency: Currency): Money => sumMoney(loans.map((loan) => state.liabilities[selector === "principal" ? loan.principalLiabilityId : loan.interestPayableLiabilityId]!.balance), currency);
+
+const householdDescriptor = (value: Omit<HouseholdWorkDescriptor, "dependsOn" | "traceRefs"> & { readonly dependsOn?: readonly string[] }): HouseholdWorkDescriptor =>
+  Object.freeze({ ...value, dependsOn: Object.freeze([...(value.dependsOn ?? [])].sort()), traceRefs: Object.freeze([]) });
+
+const cashConsumes = (policy: FundingPolicy): HouseholdWorkDescriptor["resourceAccesses"] =>
+  policy.orderedSources.map((source) => ({ kind: "account_cash", accountId: source.accountId, mode: "consume" }));
+
+const requiredDescriptorId = (context: RunContext, loan: FixedAmortizingLoan, at: Instant): string => {
+  const occurrenceIdentity = generatedOccurrenceKey({ scenarioId: context.scenarioId, primitiveInstanceId: loan.primitiveIds.schedule, scheduledAt: at, semanticEffectType: "liability-payment", economicTargetId: loan.principalLiabilityId });
+  return `liability-required:${loan.id}:${occurrenceIdentity}`;
+};
+
+const extraDescriptorId = (context: RunContext, loan: FixedAmortizingLoan, instruction: ExtraPrincipalPayment, at: Instant): string => {
+  const occurrenceIdentity = generatedOccurrenceKey({ scenarioId: context.scenarioId, primitiveInstanceId: instruction.primitiveInstanceId, scheduledAt: at, semanticEffectType: "extra-principal-payment", economicTargetId: loan.principalLiabilityId });
+  return `liability-extra:${instruction.id}:${occurrenceIdentity}`;
+};
+
+/**
+ * Prepares only debt work that is real for the supplied candidate state.
+ * Preparation is deliberately read-only: accrual, amortization, funding, and
+ * settlement remain in the VS4 executor below and in runVerticalSlice4.
+ */
+export const prepareVerticalSlice4Period = (
+  runContext: RunContext,
+  input: VerticalSlice4Input,
+  period: Period,
+  currentState: AuthoritativeState,
+  currentPrimitiveState: PrimitiveRuntimeStateStore = {},
+): PreparedVerticalSlice4Period => {
+  const scopedContext = Object.freeze({ ...runContext, simulationStart: period.start, simulationEnd: period.end });
+  const request: VerticalSlice4RunInput = { runContext: scopedContext, openingState: currentState, input, months: 1, primitiveState: currentPrimitiveState };
+  const primitiveState = createPrimitiveRuntimeStateStore(currentPrimitiveState);
+  validate({ ...request, primitiveState }, [period]);
+  const operations: PreparedVerticalSlice4Operation[] = [];
+  const traceRefs: CalculationTraceRef[] = [];
+  for (const loan of input.loans) {
+    const principal = currentState.liabilities[loan.principalLiabilityId]!.balance;
+    const interest = currentState.liabilities[loan.interestPayableLiabilityId]!.balance;
+    const hasOutstandingClaims = claimsFor(currentState, loan.principalLiabilityId, "mortgage_principal_due").length > 0 || claimsFor(currentState, loan.interestPayableLiabilityId, "mortgage_interest_payable").length > 0;
+    if (!principal.isPositive() && !interest.isPositive() && !hasOutstandingClaims) continue;
+    for (const at of utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy)) {
+      const occurrenceIdentity = generatedOccurrenceKey({ scenarioId: scopedContext.scenarioId, primitiveInstanceId: loan.primitiveIds.schedule, scheduledAt: at, semanticEffectType: "liability-payment", economicTargetId: loan.principalLiabilityId });
+      const id = requiredDescriptorId(scopedContext, loan, at);
+      const descriptor = householdDescriptor({ id, domain: "liabilities", operationClass: "liability_required_service", sequencingInstant: at, resourceAccesses: cashConsumes(loan.fundingPolicy), primitiveInstanceId: loan.primitiveIds.schedule, occurrenceIdentity });
+      operations.push({ kind: "required_service", descriptor, loan, scheduledAt: at });
+      traceRefs.push(...refs(loan, at));
+      const extra = (loan.extraPrincipalPayments ?? []).find((item) => item.scheduledAt === at);
+      const extraOccurrenceIdentity = extra === undefined ? undefined : generatedOccurrenceKey({ scenarioId: scopedContext.scenarioId, primitiveInstanceId: extra.primitiveInstanceId, scheduledAt: at, semanticEffectType: "extra-principal-payment", economicTargetId: loan.principalLiabilityId });
+      const alreadyApplied = extraOccurrenceIdentity !== undefined && currentState.identities.generatedOccurrenceKeys.includes(extraOccurrenceIdentity);
+      if (extra !== undefined && principal.isPositive() && !alreadyApplied) {
+        const extraDescriptor = householdDescriptor({ id: extraDescriptorId(scopedContext, loan, extra, at), domain: "liabilities", operationClass: "liability_extra_principal", sequencingInstant: at, dependsOn: [id], resourceAccesses: cashConsumes(extra.fundingPolicy), primitiveInstanceId: extra.primitiveInstanceId, occurrenceIdentity: extraOccurrenceIdentity! });
+        operations.push({ kind: "extra_principal", descriptor: extraDescriptor, loan, instruction: extra, scheduledAt: at });
+      }
+    }
+  }
+  const byInstant = new Map<Instant, PreparedVerticalSlice4Operation[]>();
+  for (const operation of operations) byInstant.set(operation.scheduledAt, [...(byInstant.get(operation.scheduledAt) ?? []), operation]);
+  const descriptors = new Map(operations.map((operation) => [operation.descriptor.id, operation.descriptor]));
+  for (const instantOperations of byInstant.values()) for (const phase of ["required_service", "extra_principal"] as const) {
+    const phaseOperations = instantOperations.filter((operation) => operation.kind === phase).sort((left, right) => {
+      const priority = right.loan.settlementPriority - left.loan.settlementPriority;
+      return priority || left.descriptor.id.localeCompare(right.descriptor.id);
+    });
+    for (let index = 1; index < phaseOperations.length; index += 1) {
+      const previous = phaseOperations[index - 1]!;
+      const current = phaseOperations[index]!;
+      if (policiesShareSource(previous.kind === "required_service" ? previous.loan.fundingPolicy : previous.instruction.fundingPolicy, current.kind === "required_service" ? current.loan.fundingPolicy : current.instruction.fundingPolicy)) {
+        descriptors.set(current.descriptor.id, householdDescriptor({ ...descriptors.get(current.descriptor.id)!, dependsOn: [...descriptors.get(current.descriptor.id)!.dependsOn, previous.descriptor.id] }));
+      }
+    }
+  }
+  const prepared = operations.map((operation) => Object.freeze({ ...operation, descriptor: descriptors.get(operation.descriptor.id)! }));
+  return Object.freeze({ period: Object.freeze({ ...period }), state: currentState, primitiveState, descriptors: Object.freeze(prepared.map((operation) => operation.descriptor)), operations: Object.freeze(prepared), traceRefs: Object.freeze(mergeTraceRefs(traceRefs) ?? []) });
+};
 
 export const runVerticalSlice4 = (request: VerticalSlice4RunInput): VerticalSlice4RunResult => {
   const months = request.months ?? utcMonthDifference(request.runContext.simulationStart, request.runContext.simulationEnd); const periods = utcMonthlyPeriods(request.runContext.simulationStart, months); const initialPrimitiveState = createPrimitiveRuntimeStateStore(request.primitiveState); validate({ ...request, primitiveState: initialPrimitiveState }, periods);
