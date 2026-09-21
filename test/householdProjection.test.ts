@@ -128,4 +128,27 @@ describe("PR20 household boundaries", () => {
     const income = descriptor("income", "cash_flow", "cash_income_settlement", "produce");
     expect(() => runHouseholdProjection({ runContext: context, openingState: state(), contentionPolicy: { id: "empty", version: "1", rules: [] }, periodPlans: [{ period: { start: context.simulationStart, end: context.simulationEnd }, descriptors: [income], executors: { income: () => { throw new Error("programming bug"); } } }] })).toThrow("programming bug");
   });
+
+  it("resolves only material state-sensitive contention and rolls back unresolved groups", () => {
+    const context = createRunContext({ runId: runId("91000000-0000-4000-8000-000000000030"), scenarioId: scenarioId("91000000-0000-4000-8000-000000000031"), asOf: at, dataCutoff: at, simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
+    const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume");
+    const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
+    const run = (cash: string, rules: readonly { readonly before: "cash_expense_settlement" | "liability_required_service"; readonly after: "cash_expense_settlement" | "liability_required_service" }[] = []) => runHouseholdProjection({ runContext: context, openingState: state(cash), contentionPolicy: { id: "contention-test", version: "1", rules }, periodPlans: [{ period: { start: context.simulationStart, end: context.simulationEnd }, descriptors: [expense, debt], executors: { expense: ({ state: candidate }) => { if (candidate.accounts[account]!.cash.compare(money("7")) >= 0) candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(money("7")); }, debt: ({ state: candidate }) => { if (candidate.accounts[account]!.cash.compare(money("10")) >= 0) candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(money("10")); } } }] });
+    expect(run("30").status).toBe("completed");
+    expect(run("10").status).toBe("incomplete");
+    expect(run("10").state.accounts[account]!.cash).toEqual(money("10"));
+    expect(run("10", [{ before: "cash_expense_settlement", after: "liability_required_service" }])).toMatchObject({ status: "completed", state: { accounts: { [account]: { cash: money("3") } } }, periods: [{ executedWorkIds: ["expense", "debt"], orderingLineage: [{ source: "policy", policyId: "contention-test" }] }] });
+    expect(run("10", [{ before: "liability_required_service", after: "cash_expense_settlement" }])).toMatchObject({ status: "completed", periods: [{ executedWorkIds: ["debt", "expense"] }] });
+  });
+
+  it("detects group contention across three connected consumers", () => {
+    const context = createRunContext({ runId: runId("91000000-0000-4000-8000-000000000032"), scenarioId: scenarioId("91000000-0000-4000-8000-000000000033"), asOf: at, dataCutoff: at, simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
+    const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume");
+    const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
+    const purchase = descriptor("purchase", "investments", "investment_purchase", "consume");
+    const amounts = { expense: "3", debt: "3", purchase: "5" };
+    const executors = Object.fromEntries([expense, debt, purchase].map((item) => [item.id, ({ state: candidate }: { readonly state: ReturnType<typeof state> }) => { const amount = money(amounts[item.id as keyof typeof amounts]); if (candidate.accounts[account]!.cash.compare(amount) >= 0) candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(amount); }])) as never;
+    const result = runHouseholdProjection({ runContext: context, openingState: state("10"), periodPlans: [{ period: { start: context.simulationStart, end: context.simulationEnd }, descriptors: [expense, debt, purchase], executors }] });
+    expect(result).toMatchObject({ status: "incomplete", diagnostics: [{ code: "HOUSEHOLD_CONTENTION_UNRESOLVED", relatedIds: ["debt", "expense", "purchase"] }] });
+  });
 });
