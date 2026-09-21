@@ -26,6 +26,7 @@ export interface CompiledHouseholdProjection {
   readonly scenarioIdentity: string;
   readonly executionMonths: number;
   readonly contentionPolicy: HouseholdContentionPolicy;
+  readonly diagnostics: readonly CapabilityDiagnostic[];
   /** Binding names are part of the household scenario contract, never request-order slots. */
   readonly scenarioBindings: Readonly<{
     readonly cashFlow?: CashFlowScenarioBindings;
@@ -49,6 +50,8 @@ export const compileHouseholdProjection = (model: PortableModelEnvelope, request
   // descriptor-specific ambiguity checks later.
   const policyValidation = buildHouseholdScheduledPlan([], request.contentionPolicy);
   if (policyValidation.status === "invalid_model") return policyValidation;
+  const phase = (value: string): number => value.startsWith("cash_") ? 0 : value.startsWith("investment_") ? 1 : 2;
+  if (request.contentionPolicy.rules.some((rule) => phase(rule.before) > phase(rule.after))) return invalid("HOUSEHOLD_CONTENTION_POLICY_ORDER_INVALID", "Household contention policy cannot contradict the PR20 cash-flow, investment, then liability phase order.");
   const results = [
     request.cashFlow === undefined ? undefined : compileCashFlow(model, request.cashFlow),
     request.investments === undefined ? undefined : compileInvestments(model, request.investments),
@@ -65,7 +68,12 @@ export const compileHouseholdProjection = (model: PortableModelEnvelope, request
   const horizons = new Set(compiled.map((value) => value.executionMonths));
   const currencies = new Set(compiled.map((value) => value.input.baseCurrency.code));
   const households = new Set(compiled.map((value) => String(value.input.householdId)));
-  if (scenarios.size !== 1 || horizons.size !== 1 || currencies.size !== 1 || households.size !== 1) return invalid("HOUSEHOLD_COMPILER_DISAGREEMENT", "Participating compilers must agree on Household, currency, scenario, and horizon.");
+  const owners = new Set(compiled.map((value) => String(value.input.ownerId)));
+  const requests = [request.cashFlow, request.investments, request.liabilities].filter((value): value is CashFlowCompilerRequest | InvestmentCompilerRequest | LiabilityCompilerRequest => value !== undefined);
+  const starts = new Set(requests.map((value) => value.simulationStart));
+  const ends = new Set(requests.map((value) => value.simulationEnd));
+  const asOfs = new Set(requests.flatMap((value) => "asOf" in value ? [value.asOf] : []));
+  if (scenarios.size !== 1 || horizons.size !== 1 || currencies.size !== 1 || households.size !== 1 || owners.size !== 1 || starts.size !== 1 || ends.size !== 1 || asOfs.size > 1) return invalid("HOUSEHOLD_COMPILER_DISAGREEMENT", "Participating compilers must agree on Household, execution owner, currency, scenario, as-of boundary, and exact horizon.");
   const opening = reconcileHouseholdOpeningState(compiled.map((value) => value.openingState));
   if (opening.status === "invalid_model") return opening;
   const primitive = reconcileHouseholdPrimitiveState(compiled.map((value) => "primitiveState" in value ? value.primitiveState : undefined));
@@ -85,6 +93,7 @@ export const compileHouseholdProjection = (model: PortableModelEnvelope, request
     scenarioIdentity: compiled[0]!.scenarioIdentity,
     executionMonths: compiled[0]!.executionMonths,
     contentionPolicy: Object.freeze({ ...request.contentionPolicy, rules: Object.freeze([...request.contentionPolicy.rules].sort((a, b) => canonicalSerialize(a).localeCompare(canonicalSerialize(b)))) }),
+    diagnostics: Object.freeze(liabilities?.value.capabilityDiagnostics ?? []),
     scenarioBindings: bindings,
   }) };
 };

@@ -196,4 +196,26 @@ export const runVerticalSlice4 = (request: VerticalSlice4RunInput): VerticalSlic
   } catch (error) { if (!(error instanceof ValidationError)) throw error; runDiagnostics.push(...error.issues); return Object.freeze({ status: "incomplete", runMetadata, requestedHorizon, stoppedAt: period.start, ...(committed.length === 0 ? {} : { reachedThrough: committed[committed.length - 1]!.period.end }), state, primitiveState, periods: Object.freeze(committed), diagnostics: Object.freeze(runDiagnostics) }); }
   return Object.freeze({ status: "completed", runMetadata, requestedHorizon, reachedThrough: requestedHorizon.end, state, primitiveState, periods: Object.freeze(committed), diagnostics: Object.freeze(runDiagnostics) });
 };
+
+/** Executes VS4 mechanics for one household candidate period. */
+export const executeVerticalSlice4PeriodCandidate = (
+  request: VerticalSlice4RunInput,
+  period: Period,
+  openingState: AuthoritativeState,
+  primitiveState: PrimitiveRuntimeStateStore,
+): { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly period: VerticalSlice4PeriodResult } => {
+  if (request.input.loans.length === 0) {
+    const state = cloneAuthoritativeState(openingState); const zero = Money.zero(request.input.baseCurrency); const transactions = Object.freeze([]) as readonly AccountingTransaction[];
+    return Object.freeze({ state, primitiveState: createPrimitiveRuntimeStateStore(primitiveState), period: Object.freeze({ period: Object.freeze({ ...period }), liabilities: Object.freeze([]), interestExpense: zero, principalReduction: zero, endingPrincipal: zero, outstandingInterest: zero, transactions, recognitions: Object.freeze([]), settlementProposals: Object.freeze([]), settlements: Object.freeze([]), effects: Object.freeze([]), constraintOutcomes: Object.freeze([]), liquidityShortfalls: Object.freeze([]), statements: deriveStatements(state, transactions, request.input.baseCurrency), diagnostics: Object.freeze([]), traceRefs: Object.freeze([]) }) });
+  }
+  const result = runVerticalSlice4({
+    ...request,
+    runContext: Object.freeze({ ...request.runContext, simulationStart: period.start, simulationEnd: period.end }),
+    openingState,
+    primitiveState,
+    months: 1,
+  });
+  if (result.status === "incomplete") throw new ValidationError(result.diagnostics);
+  return Object.freeze({ state: result.state, primitiveState: result.primitiveState, period: result.periods[0]! });
+};
 export const createVerticalSlice4Id = <Kind extends string>(kind: Kind, value: string): DomainId<Kind> => domainId(kind, value);
