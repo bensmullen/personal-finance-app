@@ -7,7 +7,7 @@ import { fixedMortgagePrincipalAfterPayments } from "../src/rules/index.js";
 import { createAuthoritativeState } from "../src/state/index.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
 import { Rate, RoundingPolicy, USD, money, rateConvention, sumMoney } from "../src/values/index.js";
-import { runVerticalSlice4, type FixedAmortizingLoan, type VerticalSlice4Input } from "../src/verticalSlice4.js";
+import { executeVerticalSlice4PeriodCandidate, runVerticalSlice4, type FixedAmortizingLoan, type VerticalSlice4Input } from "../src/verticalSlice4.js";
 
 const ids = {
   household: domainId("household", "62000000-0000-4000-8000-000000000001"), owner: domainId("person", "62000000-0000-4000-8000-000000000002"), cash: domainId("account", "62000000-0000-4000-8000-000000000003"), principal: domainId("liability", "62000000-0000-4000-8000-000000000004"), interest: domainId("liability", "62000000-0000-4000-8000-000000000005"), loan: domainId("loan-contract", "62000000-0000-4000-8000-000000000006"),
@@ -25,6 +25,18 @@ const loan = (principal = "300000", rate = "0.06", term = 360, extras: FixedAmor
 const input = (item: FixedAmortizingLoan): VerticalSlice4Input => ({ householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [item] });
 
 describe("Vertical Slice 4 liabilities", () => {
+  it("executes prepared one-period debt work with standalone VS4 results", () => {
+    const extra = { id: domainId("extra-principal-payment", "65000000-0000-4000-8000-000000000099"), scheduledAt: paymentAt, amount: money("1000"), fundingPolicy: policy(), primitiveInstanceId: primitive(99) };
+    const model = input(loan("300000", "0.06", 360, [extra]));
+    const standalone = runVerticalSlice4({ runContext: context(1, "991"), openingState: opening("300000", "1000000"), input: model });
+    const prepared = executeVerticalSlice4PeriodCandidate({ runContext: context(1, "992"), openingState: opening("300000", "1000000"), input: model }, utcMonthlyPeriods(start, 1)[0]!, opening("300000", "1000000"), {});
+    expect(standalone.status).toBe("completed");
+    expect(prepared.state.liabilities[ids.principal]!.balance.equals(standalone.state.liabilities[ids.principal]!.balance)).toBe(true);
+    expect(prepared.state.accounts[ids.cash]!.cash.equals(standalone.state.accounts[ids.cash]!.cash)).toBe(true);
+    expect(prepared.period.principalReduction.equals(standalone.periods[0]!.principalReduction)).toBe(true);
+    expect(prepared.period.transactions).toHaveLength(standalone.periods[0]!.transactions.length);
+  });
+
   it("replays the fixed-mortgage opening helper exactly as sequential VS4 postings", () => {
     const cases: readonly { readonly principal: string; readonly rate: string; readonly term: number; readonly checkpoints: readonly number[] }[] = [
       { principal: "12345.67", rate: "0.0525", term: 12, checkpoints: [6, 11] },
