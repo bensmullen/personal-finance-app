@@ -6,7 +6,6 @@ export * from "./timeline.js";
 export * from "./intraperiodScheduler.js";
 export * from "./householdProjection.js";
 export * from "./householdWorkPlan.js";
-export * from "./householdRunner.js";
 export * from "./householdExecution.js";
 export * from "./verticalSlice1.js";
 export { runVerticalSlice2, executeVerticalSlice2PeriodCandidate, createVerticalSlice2PrimitiveId } from "./verticalSlice2.js";
