@@ -79,11 +79,14 @@ Do not silently reinterpret old portable-model versions.
 
 ## Change discipline
 
-Implement only the requested milestone or patch.
+Implement only the requested milestone or patch, and complete that requested
+scope before treating the task as done.
 
-Prefer the smallest defensible diff. Do not combine architectural
-restructuring, financial semantic changes, UI redesign, and persistence work
-unless explicitly required.
+Prefer the smallest defensible diff that fully completes the requested scope.
+Do not treat partial implementation of a larger requested feature as completion
+merely because one local change passes its focused tests. Do not combine
+architectural restructuring, financial semantic changes, UI redesign, and
+persistence work unless explicitly required.
 
 If required financial behavior is undefined, do not invent it. Locate the
 governing specification or surface the ambiguity.
@@ -124,14 +127,17 @@ A task is **cross-cutting** only when it crosses architectural boundaries,
 changes financial semantics, or has unresolved normative questions. Only then
 do broader specification lookup or architecture/semantic review routinely fit.
 
-Fresh threads should use committed `AGENTS.md`, skills, and specifications as
-durable context rather than reconstructing chat history. In an existing thread,
-the current explicit task supersedes stale exploratory plans. Reread a file
-only when the task needs it or it changed. Before expanding scope, identify the
-missing fact and perform the smallest lookup that answers it. Prefer symbols
-and narrow ranges; do not restate large architecture/specification sections in
-notes or final responses. When architecture or semantics are resolved in the
-prompt, implement them rather than re-deriving them.
+Fresh threads should use committed repository state, `AGENTS.md`, skills, and
+specifications as durable context rather than reconstructing chat history.
+User-provided handoffs may supply resolved intent and design decisions; validate
+only what is necessary to continue implementation rather than re-deriving
+already-resolved decisions. In an existing thread, the current explicit task
+supersedes stale exploratory plans. Reread a file only when the task needs it or
+it changed. Before expanding scope, identify the missing fact and perform the
+smallest lookup that answers it. Prefer symbols and narrow ranges; do not
+restate large architecture/specification sections in notes or final responses.
+When architecture or semantics are resolved in the prompt, implement them
+rather than re-deriving them.
 
 ## Verification discipline
 
@@ -156,8 +162,11 @@ During implementation:
   surface changed.
 - Run a web build only when build configuration, exports, framework
   integration, or compile-time UI integration changed.
-- Stop after one successful focused verification command unless a concrete
-  remaining risk justifies another check.
+- Stop additional verification after one successful focused verification
+  command unless a concrete remaining risk justifies another check. This limits
+  verification work only; it does not mean the implementation task is complete.
+  Continue implementing until the user's requested scope and acceptance criteria
+  are fully satisfied.
 
 Do not invoke `$pfm-verify`, the full Vitest suite, full Playwright, build,
 typecheck, architecture validation, or specification validation as a routine
