@@ -55,7 +55,7 @@ export const runHouseholdProjection = (input: {
   readonly runContext: RunContext;
   readonly openingState: AuthoritativeState;
   readonly primitiveState?: PrimitiveRuntimeStateStore;
-  readonly contentionPolicy: HouseholdContentionPolicy;
+  readonly contentionPolicy?: HouseholdContentionPolicy;
   readonly periodPlans: readonly HouseholdPeriodPlan[];
   readonly scenario?: unknown;
   readonly executableInputs?: unknown;
@@ -82,7 +82,7 @@ export const runHouseholdProjection = (input: {
     preflight.push({ source, plan: compiled.value });
   }
   const requestedHorizon: Period = Object.freeze({ start: sortedPlans[0]!.period.start, end: sortedPlans[sortedPlans.length - 1]!.period.end });
-  const runMetadata = createRunMetadata(input.runContext, createHouseholdProjectionFingerprint({ runContext: input.runContext, openingState, primitiveState: openingPrimitiveState, descriptors: preflight.flatMap((item) => item.plan.descriptors), contentionPolicy: input.contentionPolicy, scenario: input.scenario, executableInputs: input.executableInputs, standaloneAssets: input.standaloneAssets }));
+  const runMetadata = createRunMetadata(input.runContext, createHouseholdProjectionFingerprint({ runContext: input.runContext, openingState, primitiveState: openingPrimitiveState, descriptors: preflight.flatMap((item) => item.plan.descriptors), ...(input.contentionPolicy === undefined ? {} : { contentionPolicy: input.contentionPolicy }), scenario: input.scenario, executableInputs: input.executableInputs, standaloneAssets: input.standaloneAssets }));
   let state = openingState; let primitiveState = openingPrimitiveState; const committed: HouseholdCommittedPeriod[] = []; const diagnostics: ValidationIssue[] = [];
   for (const { source, plan } of preflight) {
     const candidateState = cloneAuthoritativeState(state); let candidatePrimitiveState = createPrimitiveRuntimeStateStore(primitiveState); const executedWorkIds: string[] = [];

@@ -12,8 +12,8 @@ export interface HouseholdProjectionCompilerRequest {
   readonly cashFlow?: CashFlowCompilerRequest;
   readonly investments?: InvestmentCompilerRequest;
   readonly liabilities?: LiabilityCompilerRequest;
-  /** Mandatory even if the household has no current cross-domain contention. */
-  readonly contentionPolicy: HouseholdContentionPolicy;
+  /** Required only when runtime execution discovers material contention. */
+  readonly contentionPolicy?: HouseholdContentionPolicy;
 }
 
 export interface CompiledHouseholdProjection {
@@ -25,7 +25,7 @@ export interface CompiledHouseholdProjection {
   readonly standaloneAssets: readonly never[];
   readonly scenarioIdentity: string;
   readonly executionMonths: number;
-  readonly contentionPolicy: HouseholdContentionPolicy;
+  readonly contentionPolicy?: HouseholdContentionPolicy;
   readonly diagnostics: readonly CapabilityDiagnostic[];
   /** Binding names are part of the household scenario contract, never request-order slots. */
   readonly scenarioBindings: Readonly<{
@@ -44,14 +44,8 @@ const unsupported = <T>(diagnostics: readonly CapabilityDiagnostic[]): CompileRe
  * aggregate a vertical slice.
  */
 export const compileHouseholdProjection = (model: PortableModelEnvelope, request: HouseholdProjectionCompilerRequest): CompileResult<CompiledHouseholdProjection> => {
-  if (request.contentionPolicy === undefined) return invalid("HOUSEHOLD_CONTENTION_POLICY_INVALID", "Household projections require an explicit contention policy.");
-  // Policy syntax is a pre-execution semantic input. Validate it even when a
-  // particular horizon has no contending work yet; runtime planning adds the
-  // descriptor-specific ambiguity checks later.
   const policyValidation = buildHouseholdScheduledPlan([], request.contentionPolicy);
   if (policyValidation.status === "invalid_model") return policyValidation;
-  const phase = (value: string): number => value.startsWith("cash_") ? 0 : value.startsWith("investment_") ? 1 : 2;
-  if (request.contentionPolicy.rules.some((rule) => phase(rule.before) > phase(rule.after))) return invalid("HOUSEHOLD_CONTENTION_POLICY_ORDER_INVALID", "Household contention policy cannot contradict the PR20 cash-flow, investment, then liability phase order.");
   const results = [
     request.cashFlow === undefined ? undefined : compileCashFlow(model, request.cashFlow),
     request.investments === undefined ? undefined : compileInvestments(model, request.investments),
@@ -92,7 +86,7 @@ export const compileHouseholdProjection = (model: PortableModelEnvelope, request
     standaloneAssets: Object.freeze([]),
     scenarioIdentity: compiled[0]!.scenarioIdentity,
     executionMonths: compiled[0]!.executionMonths,
-    contentionPolicy: Object.freeze({ ...request.contentionPolicy, rules: Object.freeze([...request.contentionPolicy.rules].sort((a, b) => canonicalSerialize(a).localeCompare(canonicalSerialize(b)))) }),
+    ...(request.contentionPolicy === undefined ? {} : { contentionPolicy: Object.freeze({ ...request.contentionPolicy, rules: Object.freeze([...request.contentionPolicy.rules].sort((a, b) => canonicalSerialize(a).localeCompare(canonicalSerialize(b)))) }) }),
     diagnostics: Object.freeze(liabilities?.value.capabilityDiagnostics ?? []),
     scenarioBindings: bindings,
   }) };

@@ -47,8 +47,8 @@ export interface HouseholdWorkDescriptor {
 
 export interface HouseholdScheduledPlan {
   readonly descriptors: readonly HouseholdWorkDescriptor[];
-  readonly policy: HouseholdContentionPolicy;
-  /** predecessor -> successor edges, including translated policy edges. */
+  readonly policy?: HouseholdContentionPolicy;
+  /** Explicit predecessor -> successor edges; runtime may add resolved contention edges later. */
   readonly dependencies: readonly HouseholdPlanDependency[];
 }
 
@@ -70,26 +70,19 @@ const ordered = <T extends { readonly id: string }>(values: readonly T[]): reado
 const canonicalRules = (rules: readonly HouseholdContentionRule[]): readonly HouseholdContentionRule[] =>
   [...new Map(rules.map((rule) => [canonicalRule(rule), rule])).values()].sort((a, b) => canonicalRule(a).localeCompare(canonicalRule(b)));
 
-export const canonicalHouseholdContentionPolicy = (policy: HouseholdContentionPolicy): HouseholdContentionPolicy =>
-  Object.freeze({ id: policy.id, version: policy.version, rules: Object.freeze(canonicalRules(policy.rules)) });
+export const canonicalHouseholdContentionPolicy = (policy: HouseholdContentionPolicy | undefined): HouseholdContentionPolicy | undefined =>
+  policy === undefined ? undefined : Object.freeze({ id: policy.id, version: policy.version, rules: Object.freeze(canonicalRules(policy.rules)) });
 
 /** The canonical semantic form used in fingerprints; unordered plan members are sorted. */
-export const canonicalHouseholdWorkPlan = (descriptors: readonly HouseholdWorkDescriptor[], policy: HouseholdContentionPolicy): unknown => ({
+export const canonicalHouseholdWorkPlan = (descriptors: readonly HouseholdWorkDescriptor[], policy?: HouseholdContentionPolicy): unknown => ({
   descriptors: ordered(descriptors).map((descriptor) => ({
     ...descriptor,
     dependsOn: [...descriptor.dependsOn].sort(),
     resourceAccesses: [...descriptor.resourceAccesses].sort((a, b) => canonicalSerialize(a).localeCompare(canonicalSerialize(b))),
     traceRefs: [...descriptor.traceRefs].sort((a, b) => canonicalSerialize(a).localeCompare(canonicalSerialize(b))),
   })),
-  policy: canonicalHouseholdContentionPolicy(policy),
+  ...(policy === undefined ? {} : { policy: canonicalHouseholdContentionPolicy(policy) }),
 });
-
-const overlaps = (left: HouseholdWorkDescriptor, right: HouseholdWorkDescriptor): readonly string[] => {
-  const resources = new Set<string>();
-  for (const a of left.resourceAccesses) for (const b of right.resourceAccesses)
-    if (a.kind === "account_cash" && b.kind === "account_cash" && a.accountId === b.accountId && !(a.mode === "produce" && b.mode === "produce")) resources.add(String(a.accountId));
-  return [...resources].sort();
-};
 
 const reachable = (from: string, to: string, edges: readonly { readonly before: string; readonly after: string }[]): boolean => {
   const next = new Map<string, string[]>();
@@ -99,15 +92,14 @@ const reachable = (from: string, to: string, edges: readonly { readonly before: 
   return false;
 };
 
-const policyPrecedes = (before: HouseholdOperationClass, after: HouseholdOperationClass, rules: readonly HouseholdContentionRule[]): boolean =>
-  reachable(before, after, rules);
+const policyPrecedes = (before: HouseholdOperationClass, after: HouseholdOperationClass, rules: readonly HouseholdContentionRule[]): boolean => reachable(before, after, rules);
 
 /**
  * Validates and materializes one intraperiod graph.  It intentionally knows no
  * slice priorities: callers must translate their local contracts into dependsOn.
  */
 export const buildHouseholdScheduledPlan = (descriptors: readonly HouseholdWorkDescriptor[], policy: HouseholdContentionPolicy | undefined): HouseholdPlanResult => {
-  if (policy === undefined || policy.version !== "1" || policy.id.trim() === "") return issue("HOUSEHOLD_CONTENTION_POLICY_INVALID", "A non-empty HouseholdContentionPolicy v1 is required.");
+  if (policy !== undefined && (policy.version !== "1" || policy.id.trim() === "")) return issue("HOUSEHOLD_CONTENTION_POLICY_INVALID", "A supplied HouseholdContentionPolicy must be non-empty and use version 1.");
   const ids = new Set<string>();
   for (const descriptor of descriptors) {
     if (descriptor.id.trim() === "" || ids.has(descriptor.id)) return issue("HOUSEHOLD_WORK_PLAN_INVALID", "Household work IDs must be unique and non-empty.", [descriptor.id]);
@@ -115,41 +107,27 @@ export const buildHouseholdScheduledPlan = (descriptors: readonly HouseholdWorkD
     if (descriptor.operationClass !== undefined && domainFor(descriptor.operationClass) !== descriptor.domain) return issue("HOUSEHOLD_WORK_CLASS_DOMAIN_INVALID", `Work ${descriptor.id} declares an operation class outside its domain.`, [descriptor.id]);
     if (descriptor.dependsOn.some((id) => id === descriptor.id || !ids.has(id) && !descriptors.some((other) => other.id === id))) return issue("HOUSEHOLD_WORK_DEPENDENCY_INVALID", `Work ${descriptor.id} has an invalid dependency.`, [descriptor.id, ...descriptor.dependsOn]);
   }
-  const rules = canonicalRules(policy.rules);
+  const rules = canonicalRules(policy?.rules ?? []);
   const ruleKeys = new Set<string>();
   for (const rule of rules) {
-    if (rule.before === rule.after || domainFor(rule.before) === domainFor(rule.after)) return issue("HOUSEHOLD_CONTENTION_POLICY_INVALID", "Policy rules must relate distinct cross-domain operation classes.", [policy.id]);
-    const key = canonicalRule(rule); if (ruleKeys.has(`${rule.after}\u0000${rule.before}`)) return issue("HOUSEHOLD_CONTENTION_POLICY_CONTRADICTION", "Policy contains contradictory precedence rules.", [policy.id]);
+    if (rule.before === rule.after || domainFor(rule.before) === domainFor(rule.after)) return issue("HOUSEHOLD_CONTENTION_POLICY_INVALID", "Policy rules must relate distinct cross-domain operation classes.", policy === undefined ? [] : [policy.id]);
+    const key = canonicalRule(rule); if (ruleKeys.has(`${rule.after}\u0000${rule.before}`)) return issue("HOUSEHOLD_CONTENTION_POLICY_CONTRADICTION", "Policy contains contradictory precedence rules.", policy === undefined ? [] : [policy.id]);
     ruleKeys.add(key);
   }
   const policyClasses: HouseholdOperationClass[] = ["cash_income_settlement", "cash_expense_settlement", "investment_transfer", "investment_purchase", "investment_fee", "liability_required_service", "liability_extra_principal"];
-  if (policyClasses.some((operationClass) => reachable(operationClass, operationClass, rules))) return issue("HOUSEHOLD_CONTENTION_POLICY_CYCLE", "Household contention policy contains a cycle.", [policy.id]);
+  if (policyClasses.some((operationClass) => reachable(operationClass, operationClass, rules))) return issue("HOUSEHOLD_CONTENTION_POLICY_CYCLE", "Household contention policy contains a cycle.", policy === undefined ? [] : [policy.id]);
   const explicit = descriptors.flatMap((descriptor) => descriptor.dependsOn.map((before) => ({ before, after: descriptor.id, source: "explicit" as const })));
   if (descriptors.some((descriptor) => descriptor.dependsOn.some((before) => descriptors.find((item) => item.id === before)!.sequencingInstant > descriptor.sequencingInstant))) return issue("HOUSEHOLD_TEMPORAL_DEPENDENCY_INVALID", "A work item cannot depend on a later sequencing instant.");
   if (descriptors.some((descriptor) => reachable(descriptor.id, descriptor.id, explicit))) return issue("HOUSEHOLD_WORK_CYCLE", "Explicit household work dependencies contain a cycle.");
-  const edges: HouseholdPlanDependency[] = [...explicit];
-  const sameInstant = new Map<string, HouseholdWorkDescriptor[]>();
-  for (const descriptor of descriptors) sameInstant.set(descriptor.sequencingInstant, [...(sameInstant.get(descriptor.sequencingInstant) ?? []), descriptor]);
-  for (const group of sameInstant.values()) for (let i = 0; i < group.length; i++) for (let j = i + 1; j < group.length; j++) {
-    const left = group[i]!; const right = group[j]!; const resources = overlaps(left, right); if (!resources.length) continue;
-    const leftBefore = reachable(left.id, right.id, edges); const rightBefore = reachable(right.id, left.id, edges);
-    if (leftBefore && rightBefore) return issue("HOUSEHOLD_WORK_CYCLE", "Combined household dependencies contain a cycle.", [left.id, right.id]);
-    if (leftBefore || rightBefore) {
-      if (left.domain !== right.domain && left.operationClass !== undefined && right.operationClass !== undefined) {
-        const forward = policyPrecedes(left.operationClass, right.operationClass, rules);
-        const reverse = policyPrecedes(right.operationClass, left.operationClass, rules);
-        if ((leftBefore && reverse) || (rightBefore && forward)) return issue("HOUSEHOLD_POLICY_DEPENDENCY_CONTRADICTION", "Policy precedence contradicts an explicit household dependency.", [left.id, right.id, policy.id]);
-      }
-      continue;
+  for (const edge of explicit) {
+    const before = descriptors.find((descriptor) => descriptor.id === edge.before)!;
+    const after = descriptors.find((descriptor) => descriptor.id === edge.after)!;
+    if (policy !== undefined && before.domain !== after.domain && before.operationClass !== undefined && after.operationClass !== undefined) {
+      const forward = policyPrecedes(before.operationClass, after.operationClass, rules);
+      const reverse = policyPrecedes(after.operationClass, before.operationClass, rules);
+      if (reverse && !forward) return issue("HOUSEHOLD_POLICY_DEPENDENCY_CONTRADICTION", "Policy precedence contradicts an explicit household dependency.", [before.id, after.id, policy.id]);
     }
-    if (left.domain === right.domain) return issue("HOUSEHOLD_LOCAL_CONTENTION_UNRESOLVED", "Same-domain liquidity contention must be resolved by its local slice contract.", [left.id, right.id, ...resources]);
-    if (left.operationClass === undefined || right.operationClass === undefined) return issue("HOUSEHOLD_CONTENTION_UNRESOLVED", "Cross-domain cash contention requires operation classes and explicit precedence.", [left.id, right.id, ...resources, policy.id]);
-    const forward = policyPrecedes(left.operationClass, right.operationClass, rules);
-    const reverse = policyPrecedes(right.operationClass, left.operationClass, rules);
-    if (forward === reverse) return issue("HOUSEHOLD_CONTENTION_UNRESOLVED", "Cross-domain cash contention has no unique policy precedence.", [left.id, right.id, ...resources, policy.id]);
-    const edge: HouseholdPlanDependency = forward ? { before: left.id, after: right.id, source: "policy", policyId: policy.id, policyVersion: policy.version } : { before: right.id, after: left.id, source: "policy", policyId: policy.id, policyVersion: policy.version };
-    if (reachable(edge.after, edge.before, edges)) return issue("HOUSEHOLD_POLICY_DEPENDENCY_CONTRADICTION", "Policy precedence contradicts an explicit household dependency.", [edge.before, edge.after, policy.id]);
-    edges.push(edge);
   }
-  return { status: "compiled", value: Object.freeze({ descriptors: Object.freeze(ordered(descriptors)), policy: Object.freeze({ ...policy, rules: Object.freeze(rules) }), dependencies: Object.freeze(edges.sort((a, b) => a.before.localeCompare(b.before) || a.after.localeCompare(b.after))) }) };
+  const edges: HouseholdPlanDependency[] = [...explicit];
+  return { status: "compiled", value: Object.freeze({ descriptors: Object.freeze(ordered(descriptors)), ...(policy === undefined ? {} : { policy: Object.freeze({ ...policy, rules: Object.freeze(rules) }) }), dependencies: Object.freeze(edges.sort((a, b) => a.before.localeCompare(b.before) || a.after.localeCompare(b.after))) }) };
 };

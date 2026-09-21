@@ -40,13 +40,13 @@ describe("PR20 household boundaries", () => {
     expect(reconcileHouseholdPrimitiveState([same, different])).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_PRIMITIVE_STATE_CONFLICT" }] });
   });
 
-  it("requires policy precedence for cross-domain consumer contention and canonicalizes rule order", () => {
+  it("does not infer contention from static shared-cash overlap and canonicalizes supplied policy rules", () => {
     const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume");
     const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
-    const missing = buildHouseholdScheduledPlan([expense, debt], { id: "household-v1", version: "1", rules: [] });
-    expect(missing).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_CONTENTION_UNRESOLVED" }] });
-    const policy = { id: "household-v1", version: "1" as const, rules: [{ before: "cash_expense_settlement" as const, after: "liability_required_service" as const }] };
-    expect(buildHouseholdScheduledPlan([debt, expense], policy)).toMatchObject({ status: "compiled", value: { dependencies: [{ before: "expense", after: "debt", source: "policy" }] } });
+    expect(buildHouseholdScheduledPlan([], undefined)).toMatchObject({ status: "compiled", value: { descriptors: [], dependencies: [] } });
+    expect(buildHouseholdScheduledPlan([expense, debt], undefined)).toMatchObject({ status: "compiled", value: { dependencies: [] } });
+    const policy = { id: "household-v1", version: "1" as const, rules: [{ before: "liability_required_service" as const, after: "cash_expense_settlement" as const }] };
+    expect(buildHouseholdScheduledPlan([debt, expense], policy)).toMatchObject({ status: "compiled", value: { policy, dependencies: [] } });
     expect(canonicalHouseholdWorkPlan([expense, debt], policy)).toEqual(canonicalHouseholdWorkPlan([debt, expense], { ...policy, rules: [...policy.rules].reverse() }));
   });
 
@@ -64,9 +64,16 @@ describe("PR20 household boundaries", () => {
       { before: "cash_expense_settlement" as const, after: "investment_purchase" as const },
       { before: "investment_purchase" as const, after: "liability_required_service" as const },
     ] };
-    expect(buildHouseholdScheduledPlan([expense, debt], transitive)).toMatchObject({ status: "compiled", value: { dependencies: [{ before: "expense", after: "debt", source: "policy", policyId: "policy-transitive", policyVersion: "1" }] } });
+    expect(buildHouseholdScheduledPlan([expense, debt], transitive)).toMatchObject({ status: "compiled", value: { policy: transitive, dependencies: [] } });
     expect(buildHouseholdScheduledPlan([expense, debt], { ...transitive, rules: [...transitive.rules, { before: "liability_required_service", after: "cash_expense_settlement" }] })).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_CONTENTION_POLICY_CYCLE" }] });
+    expect(buildHouseholdScheduledPlan([], { id: "contradictory", version: "1", rules: [{ before: "cash_expense_settlement", after: "liability_required_service" }, { before: "liability_required_service", after: "cash_expense_settlement" }] })).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_CONTENTION_POLICY_CONTRADICTION" }] });
     expect(buildHouseholdScheduledPlan([{ ...expense, dependsOn: ["debt"] }, debt], { id: "reverse", version: "1", rules: [{ before: "cash_expense_settlement", after: "liability_required_service" }] })).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_POLICY_DEPENDENCY_CONTRADICTION" }] });
+  });
+
+  it("rejects a later-instant explicit dependency", () => {
+    const later = { ...descriptor("later", "cash_flow", "cash_income_settlement", "produce"), sequencingInstant: instant("2026-01-16T00:00:00.000Z") };
+    const earlier = { ...descriptor("earlier", "liabilities", "liability_required_service", "consume"), dependsOn: ["later"] };
+    expect(buildHouseholdScheduledPlan([earlier, later], undefined)).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_TEMPORAL_DEPENDENCY_INVALID" }] });
   });
 
   it("preflights malformed household contention policy before domain compilation", () => {
@@ -98,7 +105,7 @@ describe("PR20 household boundaries", () => {
     expect(run(true)).toMatchObject({ status: "incomplete", stoppedAt: context.simulationStart, state: { accounts: { [account]: { cash: money("10") } } }, periods: [] });
   });
 
-  it("executes policy-derived dependencies, not only descriptor dependencies", () => {
+  it("does not materialize policy-derived dependencies from static overlap", () => {
     const context = createRunContext({ runId: runId("91000000-0000-4000-8000-000000000016"), scenarioId: scenarioId("91000000-0000-4000-8000-000000000017"), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
     const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume");
     const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
@@ -106,7 +113,7 @@ describe("PR20 household boundaries", () => {
       expense: ({ state: candidate }) => { if (!candidate.accounts[account]!.cash.isZero()) candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(money("10")); },
       debt: ({ state: candidate }) => { if (!candidate.accounts[account]!.cash.isZero()) candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(money("10")); },
     } }] });
-    expect(run([{ before: "cash_expense_settlement", after: "liability_required_service" }])).toMatchObject({ status: "completed", periods: [{ executedWorkIds: ["expense", "debt"], orderingLineage: [{ before: "expense", after: "debt", source: "policy", policyId: "ordering", policyVersion: "1" }] }] });
+    expect(run([{ before: "cash_expense_settlement", after: "liability_required_service" }])).toMatchObject({ status: "completed", periods: [{ executedWorkIds: ["debt", "expense"], orderingLineage: [] }] });
     expect(run([{ before: "liability_required_service", after: "cash_expense_settlement" }])).toMatchObject({ status: "completed", periods: [{ executedWorkIds: ["debt", "expense"] }] });
   });
 

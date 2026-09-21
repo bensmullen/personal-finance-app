@@ -40,7 +40,7 @@ export interface ExecutableHouseholdProjection {
   readonly reconciledPrimitiveState: PrimitiveRuntimeStateStore;
   readonly scenarioIdentity: string;
   readonly executionMonths: number;
-  readonly contentionPolicy: HouseholdContentionPolicy;
+  readonly contentionPolicy?: HouseholdContentionPolicy;
   readonly scenarioBindings: unknown;
 }
 export interface CompiledHouseholdProjectionRunInput { readonly runContext: RunContext; readonly compiled: ExecutableHouseholdProjection; }

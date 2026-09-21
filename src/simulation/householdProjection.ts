@@ -53,7 +53,7 @@ export const createHouseholdProjectionFingerprint = (input: {
   readonly openingState: AuthoritativeState;
   readonly primitiveState: PrimitiveRuntimeStateStore;
   readonly descriptors: readonly HouseholdWorkDescriptor[];
-  readonly contentionPolicy: HouseholdContentionPolicy;
+  readonly contentionPolicy?: HouseholdContentionPolicy;
   readonly scenario?: unknown;
   readonly executableInputs?: unknown;
   readonly standaloneAssets?: unknown;
@@ -64,7 +64,7 @@ export const createHouseholdProjectionFingerprint = (input: {
   executionPlan: canonicalHouseholdWorkPlan(input.descriptors, input.contentionPolicy),
   scenario: input.scenario,
   model: input.executableInputs,
-  policyInputs: { contentionPolicy: canonicalHouseholdContentionPolicy(input.contentionPolicy), standaloneAssets: input.standaloneAssets ?? [] },
+  policyInputs: { ...(input.contentionPolicy === undefined ? {} : { contentionPolicy: canonicalHouseholdContentionPolicy(input.contentionPolicy) }), standaloneAssets: input.standaloneAssets ?? [] },
 });
 
 export interface HouseholdClosingMetrics { readonly cash: Money; readonly investmentValue: Money; readonly standaloneAssetValue: Money; readonly totalAssets: Money; readonly totalLiabilities: Money; readonly netWorth: Money; }
