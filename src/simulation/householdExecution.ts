@@ -1,5 +1,4 @@
 import type { AccountingTransaction } from "../accounting/index.js";
-import type { CompiledHouseholdProjection } from "../application/compiler/householdProjection.js";
 import { ValidationError, type ValidationIssue } from "../diagnostics/index.js";
 import type { ConstraintOutcome, LiquidityShortfall } from "../funding/index.js";
 import { mergeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
@@ -8,11 +7,12 @@ import { deriveStatements, type Statements } from "../statements/index.js";
 import { utcMonthlyPeriods, type Instant, type Period } from "../time/index.js";
 import { Money } from "../values/index.js";
 import { deriveHouseholdClosingMetrics } from "./householdProjection.js";
+import type { HouseholdContentionPolicy } from "./intraperiodScheduler.js";
 import { assertPrimitiveRuntimeStateConsistent, createPrimitiveRuntimeStateStore, type PrimitiveRuntimeStateStore } from "./period.js";
 import { assertRunContext, createInputFingerprint, createRunMetadata, type RunContext, type RunMetadata } from "./run.js";
-import { executeVerticalSlice2PeriodCandidate, type VerticalSlice2PeriodResult, type VerticalSlice2RunInput } from "./verticalSlice2.js";
-import { executeVerticalSlice3PeriodCandidate, type VerticalSlice3PeriodResult, type VerticalSlice3RunInput } from "./verticalSlice3.js";
-import { executeVerticalSlice4PeriodCandidate, type VerticalSlice4ConstraintOutcome, type VerticalSlice4LiquidityShortfall, type VerticalSlice4PeriodResult, type VerticalSlice4RunInput } from "./verticalSlice4.js";
+import { executeVerticalSlice2PeriodCandidate, type VerticalSlice2Input, type VerticalSlice2PeriodResult, type VerticalSlice2RunInput } from "./verticalSlice2.js";
+import { executeVerticalSlice3PeriodCandidate, type VerticalSlice3Input, type VerticalSlice3PeriodResult, type VerticalSlice3RunInput } from "./verticalSlice3.js";
+import { executeVerticalSlice4PeriodCandidate, type VerticalSlice4ConstraintOutcome, type VerticalSlice4Input, type VerticalSlice4LiquidityShortfall, type VerticalSlice4PeriodResult, type VerticalSlice4RunInput } from "./verticalSlice4.js";
 
 export interface HouseholdProjectionPeriodResult {
   readonly period: Period;
@@ -31,7 +31,19 @@ export interface HouseholdProjectionPeriodResult {
   readonly liability?: VerticalSlice4PeriodResult;
 }
 
-export interface CompiledHouseholdProjectionRunInput { readonly runContext: RunContext; readonly compiled: CompiledHouseholdProjection; }
+/** Inward-facing structural execution contract; application compilers satisfy it without an engine-to-application dependency. */
+export interface ExecutableHouseholdProjection {
+  readonly cashFlowInput?: VerticalSlice2Input;
+  readonly investmentInput?: VerticalSlice3Input;
+  readonly liabilityInput?: VerticalSlice4Input;
+  readonly reconciledOpeningState: AuthoritativeState;
+  readonly reconciledPrimitiveState: PrimitiveRuntimeStateStore;
+  readonly scenarioIdentity: string;
+  readonly executionMonths: number;
+  readonly contentionPolicy: HouseholdContentionPolicy;
+  readonly scenarioBindings: unknown;
+}
+export interface CompiledHouseholdProjectionRunInput { readonly runContext: RunContext; readonly compiled: ExecutableHouseholdProjection; }
 export interface CompiledHouseholdProjectionRunResult {
   readonly status: "completed" | "incomplete";
   readonly runMetadata: RunMetadata;
