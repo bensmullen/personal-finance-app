@@ -25,8 +25,8 @@ describe("Personal household projection application seam", () => {
 
   it("compares independently executed reconciled household runs", () => {
     const value = model();
-    const result = comparePersonalHouseholdScenarios({ baseline: { name: "Baseline", model: value, request: request("94000000-0000-4000-8000-000000000002") }, alternatives: [{ name: "Equivalent", model: value, request: request("94000000-0000-4000-8000-000000000003"), configurationDifferences: [] }] });
-    expect(result.status).toBe("completed");
+    const result = comparePersonalHouseholdScenarios({ baseline: { name: "Baseline", model: value, request: request("94000000-0000-4000-8000-000000000002") }, alternatives: [{ name: "Equivalent", model: value, request: request("94000000-0000-4000-8000-000000000003") }] });
+    expect(result.status, JSON.stringify(result)).toBe("completed");
     expect(result.alternatives[0]!.points).toHaveLength(3);
     expect(result.alternatives[0]!.points.every((point) => point.deltas.netWorth.amount === "0")).toBe(true);
   });

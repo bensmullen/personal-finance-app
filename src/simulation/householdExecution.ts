@@ -34,9 +34,9 @@ export interface HouseholdProjectionPeriodResult {
 
 /** Inward-facing structural execution contract; application compilers satisfy it without an engine-to-application dependency. */
 export interface ExecutableHouseholdProjection {
-  readonly cashFlowInput?: VerticalSlice2Input;
-  readonly investmentInput?: VerticalSlice3Input;
-  readonly liabilityInput?: VerticalSlice4Input;
+  readonly cashFlowInput?: VerticalSlice2Input | undefined;
+  readonly investmentInput?: VerticalSlice3Input | undefined;
+  readonly liabilityInput?: VerticalSlice4Input | undefined;
   readonly reconciledOpeningState: AuthoritativeState;
   readonly reconciledPrimitiveState: PrimitiveRuntimeStateStore;
   readonly scenarioIdentity: string;

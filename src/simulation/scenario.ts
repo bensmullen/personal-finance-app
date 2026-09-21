@@ -186,7 +186,7 @@ const validateOverlay = <T>(target: string, fieldPath: string, validate: () => T
 };
 const onlyEffectiveChange = (resolved: ResolvedScenario, entry: EffectiveScenarioChange): ResolvedScenario => Object.freeze({ ...resolved, effectiveChanges: Object.freeze({ [scenarioSemanticTarget(entry.change)]: entry }) });
 
-export interface ScenarioRunContextTemplate extends Omit<RunContext, "runId" | "scenarioId"> {}
+export type ScenarioRunContextTemplate = Omit<RunContext, "runId" | "scenarioId" | "versions"> & { readonly versions?: RunContext["versions"] };
 
 export const applyVerticalSlice2Scenario = (base: VerticalSlice2Input, resolved: ResolvedScenario, runContext: ScenarioRunContextTemplate): VerticalSlice2Input => {
   let input: VerticalSlice2Input = Object.freeze({ ...base, incomes: Object.freeze([...base.incomes]), expenses: Object.freeze([...base.expenses]), events: Object.freeze([...base.events]) });
@@ -373,8 +373,33 @@ const differences = (baseline: ResolvedScenario, alternative: ResolvedScenario, 
     const beforeValue = configuredValue(baselineInput, change); const afterValue = configuredValue(alternativeInput, change);
     const configuredRuleIds = change.kind === "fee_rule_binding" ? [...new Set([...(beforeValue as readonly FinancialRuleId[] | null ?? []), ...(afterValue as readonly FinancialRuleId[] | null ?? [])])].sort() : [];
     return [Object.freeze({ differenceId: `scenario-difference:${alternative.scenario.scenarioId}:${target}`, semanticTarget: target, changeKind: change.kind, scenarioLayerId: terminal.layerScenarioId, before: beforeValue, after: afterValue, assumptionIds: Object.freeze("assumptionId" in change ? [change.assumptionId] : []), eventIds: Object.freeze("eventId" in change ? [change.eventId] : []), configuredRuleIds: Object.freeze(configuredRuleIds) })];
-  }));
+}));
 };
+/** Shared scenario provenance derivation for non-vertical-slice adapters. */
+export const deriveScenarioConfigurationDifferences = differences;
+
+export const deriveRelatedScenarioDifferenceIds = (
+  differences: readonly ScenarioConfigurationDifference[],
+  refs: readonly CalculationTraceRef[],
+  hasMetricDelta: boolean,
+): readonly string[] => {
+  if (!hasMetricDelta) return Object.freeze([]);
+  const ids = idsFromRefs(refs);
+  return Object.freeze(differences.filter((difference) =>
+    difference.assumptionIds.some((id) => ids.assumptions.includes(id)) ||
+    difference.eventIds.some((id) => ids.events.includes(id)) ||
+    difference.configuredRuleIds.some((id) => ids.rules.includes(id)) ||
+    refs.some((ref) => ref.traceId.endsWith(`:${difference.semanticTarget}`)),
+  ).map((difference) => difference.differenceId).sort());
+};
+
+export const deriveAppliedRuleDifferences = (
+  baseline: readonly FinancialRuleId[],
+  alternative: readonly FinancialRuleId[],
+): { readonly baselineOnly: readonly FinancialRuleId[]; readonly alternativeOnly: readonly FinancialRuleId[] } => Object.freeze({
+  baselineOnly: Object.freeze(baseline.filter((id) => !alternative.includes(id))),
+  alternativeOnly: Object.freeze(alternative.filter((id) => !baseline.includes(id))),
+});
 const series = <T extends AnyPeriodResult>(scenarioId: ScenarioId, result: AnyRunResult, metric: Metrics<T>): ScenarioSeries => Object.freeze({ scenarioId, status: result.status, metadata: result.runMetadata, points: Object.freeze(result.periods.map((raw) => { const period = raw as T; const refs = mergeTraceRefs(period.traceRefs) ?? Object.freeze([]); return Object.freeze({ period: period.period, metrics: metric(period), traceRefs: refs, ruleIds: Object.freeze(idsFromRefs(refs).rules) }); })), diagnostics: result.diagnostics });
 const actualRules = (value: ScenarioSeries): readonly FinancialRuleId[] => Object.freeze([...new Set(value.points.flatMap((point) => point.ruleIds))].sort());
 const subtractSeries = (baseline: ScenarioSeries, alternative: ScenarioSeries, diffs: readonly ScenarioConfigurationDifference[]): { deltas: readonly ScenarioDeltaPoint[]; comparedThrough?: Instant } => {
@@ -386,7 +411,7 @@ const subtractSeries = (baseline: ScenarioSeries, alternative: ScenarioSeries, d
     if (canonicalSerialize(leftKeys) !== canonicalSerialize(rightKeys)) scenarioFailure(issueCodes.scenarioComparisonIncompatible, "Scenario metric structures do not match", "metrics");
     const metrics = Object.freeze(Object.fromEntries(leftKeys.map((key) => [key, right.metrics[key]!.minus(left.metrics[key]!)]).filter(([, value]) => !(value as Money).isZero())));
     const refs = mergeTraceRefs(left.traceRefs, right.traceRefs) ?? Object.freeze([]); const ids = idsFromRefs(refs);
-    const related = Object.keys(metrics).length === 0 ? [] : diffs.filter((difference) => difference.assumptionIds.some((id) => ids.assumptions.includes(id)) || difference.eventIds.some((id) => ids.events.includes(id)) || difference.configuredRuleIds.some((id) => ids.rules.includes(id)) || refs.some((ref) => ref.traceId.endsWith(`:${difference.semanticTarget}`))).map((difference) => difference.differenceId).sort();
+    const related = deriveRelatedScenarioDifferenceIds(diffs, refs, Object.keys(metrics).length > 0);
     deltas.push(Object.freeze({ period: left.period, metrics, traceRefs: refs, ruleIds: Object.freeze(ids.rules), relatedDifferenceIds: Object.freeze(related) }));
   }
   return Object.freeze({ deltas: Object.freeze(deltas), ...(count === 0 ? {} : { comparedThrough: baseline.points[count - 1]!.period.end }) });
@@ -406,7 +431,7 @@ const compare = <Input, PeriodResult extends AnyPeriodResult>(request: ScenarioC
   };
   const baselineInput = apply(request.input, baselineResolved, request.runContext);
   const baseline = execute(baselineResolved, baselineInput);
-  return Object.freeze({ baseline, alternatives: Object.freeze(alternatives.map((resolved) => { const alternativeInput = apply(request.input, resolved, request.runContext); const alternative = execute(resolved, alternativeInput); const diffs = differences(baselineResolved, resolved, baselineInput, alternativeInput); const delta = subtractSeries(baseline, alternative, diffs); const baselineRules = actualRules(baseline); const alternativeRules = actualRules(alternative); return Object.freeze({ scenario: alternative, differences: diffs, appliedRuleDifferences: Object.freeze({ baselineOnly: Object.freeze(baselineRules.filter((id) => !alternativeRules.includes(id))), alternativeOnly: Object.freeze(alternativeRules.filter((id) => !baselineRules.includes(id))) }), ...delta }); })) });
+  return Object.freeze({ baseline, alternatives: Object.freeze(alternatives.map((resolved) => { const alternativeInput = apply(request.input, resolved, request.runContext); const alternative = execute(resolved, alternativeInput); const diffs = differences(baselineResolved, resolved, baselineInput, alternativeInput); const delta = subtractSeries(baseline, alternative, diffs); const baselineRules = actualRules(baseline); const alternativeRules = actualRules(alternative); return Object.freeze({ scenario: alternative, differences: diffs, appliedRuleDifferences: deriveAppliedRuleDifferences(baselineRules, alternativeRules), ...delta }); })) });
 };
 
 const vs2Metrics = (point: VerticalSlice2PeriodResult): Readonly<Record<string, Money>> => Object.freeze({ recognizedIncome: point.recurringIncomeRecognized, recognizedExpenses: point.recurringExpenseRecognized, expenseCashSettlement: point.expenseCashSettlement, endingCash: point.endingCash, outstandingExpenseObligations: point.outstandingExpenseObligations });
