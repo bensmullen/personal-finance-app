@@ -14,6 +14,7 @@ import { evaluateFixedFee, resolveEffectiveRule, validateRuleBinding, validateRu
 import { createPrimitiveRuntimeStateStore, runPeriod, type PeriodWork, type PrimitiveRuntimeStateStore } from "./period.js";
 import { createInputFingerprint, createRunMetadata, type RunContext, type RunMetadata } from "./run.js";
 import { executeVerticalSlice2PeriodCandidate, type VerticalSlice2Input, type VerticalSlice2PeriodResult, type VerticalSlice2RunInput } from "./verticalSlice2.js";
+import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -50,6 +51,35 @@ export type VerticalSlice3CashFlowPeriodExecutor = (input: {
 export interface VerticalSlice3RunInput { readonly runContext: RunContext; readonly openingState: AuthoritativeState; readonly input: VerticalSlice3Input; readonly months?: number; readonly primitiveState?: PrimitiveRuntimeStateStore; readonly cashFlowPeriodExecutor?: VerticalSlice3CashFlowPeriodExecutor; }
 export interface VerticalSlice3PeriodResult { readonly period: Period; readonly transactions: readonly AccountingTransaction[]; readonly effects: readonly SemanticEffect[]; readonly statements: Statements; readonly accountValues: Readonly<Record<string, Money>>; readonly portfolioValue: Money; readonly contributionPrincipal: Money; readonly fees: Money; readonly unrealizedGain: Money; readonly realizedGain: Money; readonly cashInvestmentIncome: Money; readonly ruleApplications: readonly RuleApplication<Money>[]; readonly traceRefs: readonly CalculationTraceRef[]; readonly cashFlowPeriod?: VerticalSlice2PeriodResult; }
 export interface VerticalSlice3RunResult { readonly status: "completed" | "incomplete"; readonly runMetadata: RunMetadata; readonly requestedHorizon: Period; readonly reachedThrough?: Instant; readonly stoppedAt?: Instant; readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly periods: readonly VerticalSlice3PeriodResult[]; readonly diagnostics: readonly ValidationIssue[]; }
+
+export type PreparedVerticalSlice3Operation =
+  | { readonly kind: "valuation"; readonly descriptor: HouseholdWorkDescriptor; readonly returnConfiguration: DeterministicPositionReturn; readonly closingPrice: Money; readonly marketValue: Money }
+  | { readonly kind: "transfer"; readonly descriptor: HouseholdWorkDescriptor; readonly operation: OwnedCashTransfer }
+  | { readonly kind: "purchase"; readonly descriptor: HouseholdWorkDescriptor; readonly operation: InvestmentPurchase; readonly closingPrice: Money }
+  | { readonly kind: "fee"; readonly descriptor: HouseholdWorkDescriptor; readonly operation: InvestmentFee };
+type PreparedVerticalSlice3ScheduledOperation = Exclude<PreparedVerticalSlice3Operation, { readonly kind: "valuation" }>;
+
+export interface PreparedVerticalSlice3Period {
+  readonly period: Period;
+  /** State and primitive runtime after deterministic return/valuation preparation. */
+  readonly state: AuthoritativeState;
+  readonly primitiveState: PrimitiveRuntimeStateStore;
+  readonly closingPrices: Readonly<Record<string, Money>>;
+  readonly descriptors: readonly HouseholdWorkDescriptor[];
+  readonly operations: readonly PreparedVerticalSlice3Operation[];
+  readonly traceRefs: readonly CalculationTraceRef[];
+}
+
+export interface ExecutedVerticalSlice3Operation {
+  readonly state: AuthoritativeState;
+  readonly primitiveState: PrimitiveRuntimeStateStore;
+  readonly effects: readonly SemanticEffect[];
+  readonly transactions: readonly AccountingTransaction[];
+  readonly contributionPrincipal: Money;
+  readonly fees: Money;
+  readonly ruleApplications: readonly RuleApplication<Money>[];
+  readonly unrealizedGain: Money;
+}
 
 const invalid = (message: string, fieldPath: string): never => failValidation({ severity: "error", code: issueCodes.verticalSlice3InputInvalid, message, entityType: "vertical_slice_3", fieldPath });
 const closeAt = (period: Period): Instant => subtractMilliseconds(period.end, 1);
@@ -123,12 +153,102 @@ const actionWork = (actions: readonly Action[]): readonly PeriodWork[] => {
   for (const target of new Set(actions.flatMap((action) => action.targets))) { const chain = actions.filter((action) => action.targets.includes(target)).sort((a, b) => a.order - b.order || a.id.localeCompare(b.id)); for (let i = 1; i < chain.length; i += 1) deps.get(chain[i]!.id)!.add(chain[i - 1]!.id); }
   return Object.freeze(actions.map((action) => Object.freeze({ id: action.id, kind: "semantic" as const, at: action.at, effect: action.effect, transaction: action.transaction, ...(deps.get(action.id)!.size === 0 ? {} : { dependsOn: Object.freeze([...deps.get(action.id)!].sort()) }) })));
 };
-const operations = (request: VerticalSlice3RunInput, period: Period, state: AuthoritativeState, closing: Readonly<Record<string, Money>>): { readonly work: readonly PeriodWork[]; readonly contributionPrincipal: Money; readonly fees: Money; readonly ruleApplications: readonly RuleApplication<Money>[] } => {
+const householdDescriptor = (value: Omit<HouseholdWorkDescriptor, "dependsOn" | "traceRefs"> & { readonly dependsOn?: readonly string[] }): HouseholdWorkDescriptor =>
+  Object.freeze({ ...value, dependsOn: Object.freeze([...(value.dependsOn ?? [])].sort()), traceRefs: Object.freeze([]) });
+
+const operations = (request: VerticalSlice3RunInput, period: Period, state: AuthoritativeState, closing: Readonly<Record<string, Money>>, selectedId?: string): { readonly work: readonly PeriodWork[]; readonly contributionPrincipal: Money; readonly fees: Money; readonly ruleApplications: readonly RuleApplication<Money>[] } => {
   const actions: Action[] = []; const ruleApplications: RuleApplication<Money>[] = []; let contributionPrincipal = Money.zero(request.input.baseCurrency); let fees = Money.zero(request.input.baseCurrency); const at = closeAt(period);
-  for (const item of request.input.transfers) if (selected(item.eligibilitySchedule, period).length === 1) { const p = generated(request, item.schedulePrimitiveId, at, "internal-account-transfer", item.destinationAccountId); const refs = freezeTraceRefs([calculationTraceRef(calculationTraceId(`vs3:transfer:${item.id}:${at}`))])!; actions.push({ id: `transfer:${item.id}:${at}`, at, order: item.order, targets: targets(item), effect: createSemanticEffect({ id: semanticEffectId(`effect:transfer:${item.id}:${at}`), kind: "flow", category: "internal_account_transfer", amount: item.amount, occurredAt: at, sourceOccurrenceKey: p.generatedOccurrenceKey, provenance: p, traceRefs: refs }), transaction: transaction(`tx:transfer:${item.id}:${at}`, at, "internal_transfer", [{ posting: "debit", type: "cash", amount: item.amount, accountId: item.destinationAccountId, cashFlowClass: "non_cash" }, { posting: "credit", type: "cash", amount: item.amount, accountId: item.sourceAccountId, cashFlowClass: "non_cash" }], refs) }); }
-  for (const item of request.input.purchases) if (selected(item.eligibilitySchedule, period).length === 1) { const price = closing[item.targetPositionId]; const position = state.positions[item.targetPositionId]!; const purchasePrice = price !== undefined && price.isPositive() ? price : invalid("Purchase requires positive P23 closing price", `${item.id}.targetPositionId`); const quantity = new Quantity(item.amount.amount.dividedBy(purchasePrice.amount, item.quantityRounding), position.quantity.unit); if (!purchasePrice.times(quantity.amount).round(RoundingPolicy.currency(request.input.baseCurrency.minorUnitScale, "half_up")).equals(item.amount)) invalid("Purchase quantity rounding does not reconcile to posted amount", `${item.id}.quantityRounding`); const p = generated(request, item.schedulePrimitiveId, at, "investment-purchase", item.targetPositionId); const refs = mergeTraceRefs([calculationTraceRef(calculationTraceId(`vs3:purchase:${item.id}:${at}`))], item.sourceTraceRefs)!; contributionPrincipal = contributionPrincipal.plus(item.amount); actions.push({ id: `purchase:${item.id}:${at}`, at, order: item.order, targets: targets(item), effect: createSemanticEffect({ id: semanticEffectId(`effect:purchase:${item.id}:${at}`), kind: "flow", category: "investment_purchase_principal", amount: item.amount, occurredAt: at, sourceOccurrenceKey: p.generatedOccurrenceKey, provenance: p, traceRefs: refs }), transaction: transaction(`tx:purchase:${item.id}:${at}`, at, "investment_purchase", [{ posting: "debit", type: "asset", amount: item.amount, entityId: item.targetPositionId, quantity }, { posting: "credit", type: "cash", amount: item.amount, accountId: item.sourceCashAccountId, cashFlowClass: "investing" }], refs) }); }
-  for (const item of request.input.fees ?? []) if (selected(item.eligibilitySchedule, period).length === 1) { const resolved = resolveEffectiveRule(request.input.ruleCatalog, item.feeRuleIds, "fixed_fee", { targetType: "account", targetId: item.cashAccountId }, at); const rule = resolved.rule; if (!rule.amount.currency.equals(request.input.baseCurrency) || !rule.amount.amount.fitsScale(request.input.baseCurrency.minorUnitScale)) invalid("Fee rule amount must use posted base-currency precision", `${rule.id}.amount`); const rawApplication = evaluateFixedFee(resolved); const refs = mergeTraceRefs(rawApplication.traceRefs, item.sourceTraceRefs)!; const application = Object.freeze({ ...rawApplication, traceRefs: refs }); ruleApplications.push(application); if (!application.result.isPositive()) continue; const p = generated(request, item.schedulePrimitiveId, at, "investment-fee", item.cashAccountId); fees = fees.plus(application.result); actions.push({ id: `fee:${item.id}:${at}`, at, order: item.order, targets: targets(item), effect: createSemanticEffect({ id: semanticEffectId(`effect:fee:${item.id}:${at}`), kind: "recognition", category: "investment_fee", amount: application.result, occurredAt: at, sourceOccurrenceKey: p.generatedOccurrenceKey, provenance: p, traceRefs: refs }), transaction: transaction(`tx:fee:${item.id}:${at}`, at, "investment_fee", [{ posting: "debit", type: "expense", amount: application.result }, { posting: "credit", type: "cash", amount: application.result, accountId: item.cashAccountId, cashFlowClass: "operating" }], refs) }); }
+  for (const item of request.input.transfers) if (selected(item.eligibilitySchedule, period).length === 1 && (selectedId === undefined || selectedId === `transfer:${item.id}:${at}`)) { const p = generated(request, item.schedulePrimitiveId, at, "internal-account-transfer", item.destinationAccountId); const refs = freezeTraceRefs([calculationTraceRef(calculationTraceId(`vs3:transfer:${item.id}:${at}`))])!; actions.push({ id: `transfer:${item.id}:${at}`, at, order: item.order, targets: targets(item), effect: createSemanticEffect({ id: semanticEffectId(`effect:transfer:${item.id}:${at}`), kind: "flow", category: "internal_account_transfer", amount: item.amount, occurredAt: at, sourceOccurrenceKey: p.generatedOccurrenceKey, provenance: p, traceRefs: refs }), transaction: transaction(`tx:transfer:${item.id}:${at}`, at, "internal_transfer", [{ posting: "debit", type: "cash", amount: item.amount, accountId: item.destinationAccountId, cashFlowClass: "non_cash" }, { posting: "credit", type: "cash", amount: item.amount, accountId: item.sourceAccountId, cashFlowClass: "non_cash" }], refs) }); }
+  for (const item of request.input.purchases) if (selected(item.eligibilitySchedule, period).length === 1 && (selectedId === undefined || selectedId === `purchase:${item.id}:${at}`)) { const price = closing[item.targetPositionId]; const position = state.positions[item.targetPositionId]!; const purchasePrice = price !== undefined && price.isPositive() ? price : invalid("Purchase requires positive P23 closing price", `${item.id}.targetPositionId`); const quantity = new Quantity(item.amount.amount.dividedBy(purchasePrice.amount, item.quantityRounding), position.quantity.unit); if (!purchasePrice.times(quantity.amount).round(RoundingPolicy.currency(request.input.baseCurrency.minorUnitScale, "half_up")).equals(item.amount)) invalid("Purchase quantity rounding does not reconcile to posted amount", `${item.id}.quantityRounding`); const p = generated(request, item.schedulePrimitiveId, at, "investment-purchase", item.targetPositionId); const refs = mergeTraceRefs([calculationTraceRef(calculationTraceId(`vs3:purchase:${item.id}:${at}`))], item.sourceTraceRefs)!; contributionPrincipal = contributionPrincipal.plus(item.amount); actions.push({ id: `purchase:${item.id}:${at}`, at, order: item.order, targets: targets(item), effect: createSemanticEffect({ id: semanticEffectId(`effect:purchase:${item.id}:${at}`), kind: "flow", category: "investment_purchase_principal", amount: item.amount, occurredAt: at, sourceOccurrenceKey: p.generatedOccurrenceKey, provenance: p, traceRefs: refs }), transaction: transaction(`tx:purchase:${item.id}:${at}`, at, "investment_purchase", [{ posting: "debit", type: "asset", amount: item.amount, entityId: item.targetPositionId, quantity }, { posting: "credit", type: "cash", amount: item.amount, accountId: item.sourceCashAccountId, cashFlowClass: "investing" }], refs) }); }
+  for (const item of request.input.fees ?? []) if (selected(item.eligibilitySchedule, period).length === 1 && (selectedId === undefined || selectedId === `fee:${item.id}:${at}`)) { const resolved = resolveEffectiveRule(request.input.ruleCatalog, item.feeRuleIds, "fixed_fee", { targetType: "account", targetId: item.cashAccountId }, at); const rule = resolved.rule; if (!rule.amount.currency.equals(request.input.baseCurrency) || !rule.amount.amount.fitsScale(request.input.baseCurrency.minorUnitScale)) invalid("Fee rule amount must use posted base-currency precision", `${rule.id}.amount`); const rawApplication = evaluateFixedFee(resolved); const refs = mergeTraceRefs(rawApplication.traceRefs, item.sourceTraceRefs)!; const application = Object.freeze({ ...rawApplication, traceRefs: refs }); ruleApplications.push(application); if (!application.result.isPositive()) continue; const p = generated(request, item.schedulePrimitiveId, at, "investment-fee", item.cashAccountId); fees = fees.plus(application.result); actions.push({ id: `fee:${item.id}:${at}`, at, order: item.order, targets: targets(item), effect: createSemanticEffect({ id: semanticEffectId(`effect:fee:${item.id}:${at}`), kind: "recognition", category: "investment_fee", amount: application.result, occurredAt: at, sourceOccurrenceKey: p.generatedOccurrenceKey, provenance: p, traceRefs: refs }), transaction: transaction(`tx:fee:${item.id}:${at}`, at, "investment_fee", [{ posting: "debit", type: "expense", amount: application.result }, { posting: "credit", type: "cash", amount: application.result, accountId: item.cashAccountId, cashFlowClass: "operating" }], refs) }); }
   return Object.freeze({ work: actionWork(actions), contributionPrincipal, fees, ruleApplications: Object.freeze(ruleApplications) });
+};
+
+const operationTarget = (item: OwnedCashTransfer | InvestmentPurchase | InvestmentFee): readonly string[] => targets(item);
+const operationId = (kind: PreparedVerticalSlice3Operation["kind"], id: string, at: Instant): string => `investment-${kind}:${id}:${at}`;
+
+/** Prepares P23/P26 and only the currently eligible end-of-period operations. */
+export const prepareVerticalSlice3Period = (
+  runContext: RunContext,
+  input: VerticalSlice3Input,
+  period: Period,
+  currentState: AuthoritativeState,
+  currentPrimitiveState: PrimitiveRuntimeStateStore = {},
+): PreparedVerticalSlice3Period => {
+  const scopedContext = Object.freeze({ ...runContext, simulationStart: period.start, simulationEnd: period.end });
+  const request: VerticalSlice3RunInput = { runContext: scopedContext, openingState: currentState, input, months: 1, primitiveState: currentPrimitiveState };
+  validate(request, [period]);
+  const p23Work: PeriodWork[] = input.returns.slice().sort((a, b) => a.targetPositionId.localeCompare(b.targetPositionId)).map((item) => ({ id: `return:${item.targetPositionId}`, kind: "primitive", request: { primitiveId: "P23", input: { baseValue: currentState.positions[item.targetPositionId]!.price, rate: item.rate }, parameters: { returnBasis: item.returnBasis, cashFlowTiming: "end_of_period", postingRounding: item.priceRounding }, context: { evaluationInstant: closeAt(period), scenarioId: scopedContext.scenarioId, primitiveInstanceId: item.primitiveIds.compounding, economicTargetId: item.targetPositionId, semanticEffectType: "investment-return", traceRefs: traceRefs(item, period) } } }));
+  const p23 = runPeriod({ period, runContext: scopedContext, openingState: currentState, primitiveState: currentPrimitiveState, work: p23Work });
+  const closingPrices = Object.fromEntries(input.returns.map((item) => [item.targetPositionId, (p23.primitiveOutputs.find((output) => output.primitiveInstanceId === item.primitiveIds.compounding)!.output as { readonly closingValue: Money }).closingValue])) as Readonly<Record<string, Money>>;
+  const p26Work: PeriodWork[] = input.returns.slice().sort((a, b) => a.targetPositionId.localeCompare(b.targetPositionId)).map((item) => ({ id: `valuation:${item.targetPositionId}`, kind: "primitive", request: { primitiveId: "P26", input: { quantity: currentState.positions[item.targetPositionId]!.quantity, price: closingPrices[item.targetPositionId]! }, parameters: { expectedUnit: currentState.positions[item.targetPositionId]!.quantity.unit, expectedCurrency: input.baseCurrency }, context: { evaluationInstant: closeAt(period), scenarioId: scopedContext.scenarioId, primitiveInstanceId: item.primitiveIds.markToMarket, economicTargetId: item.targetPositionId, semanticEffectType: "mark-to-market", traceRefs: traceRefs(item, period) } } }));
+  const p26 = runPeriod({ period, runContext: scopedContext, openingState: currentState, primitiveState: p23.primitiveState, work: p26Work });
+  const valuationDescriptors = input.returns.slice().sort((a, b) => a.targetPositionId.localeCompare(b.targetPositionId)).map((item) => householdDescriptor({ id: operationId("valuation", String(item.targetPositionId), closeAt(period)), domain: "investments", sequencingInstant: closeAt(period), resourceAccesses: [], primitiveInstanceId: item.primitiveIds.markToMarket, occurrenceIdentity: generatedOccurrenceKey({ scenarioId: scopedContext.scenarioId, primitiveInstanceId: item.primitiveIds.markToMarket, scheduledAt: closeAt(period), semanticEffectType: "mark-to-market", economicTargetId: item.targetPositionId }) }));
+  const operationsPrepared: PreparedVerticalSlice3ScheduledOperation[] = [];
+  const operationDescriptors: HouseholdWorkDescriptor[] = [];
+  const valuationByTarget = new Map(valuationDescriptors.map((descriptor) => [String(descriptor.id).split(":")[1], descriptor]));
+  function addOperation(item: OwnedCashTransfer, kind: "transfer"): void;
+  function addOperation(item: InvestmentPurchase, kind: "purchase"): void;
+  function addOperation(item: InvestmentFee, kind: "fee"): void;
+  function addOperation(item: OwnedCashTransfer | InvestmentPurchase | InvestmentFee, kind: "transfer" | "purchase" | "fee"): void {
+    if (selected(item.eligibilitySchedule, period).length !== 1) return;
+    const at = closeAt(period); const target = "targetPositionId" in item ? String(item.targetPositionId) : undefined;
+    const dependsOn = target === undefined ? valuationDescriptors.map((descriptor) => descriptor.id) : [valuationByTarget.get(target)!.id];
+    const resourceAccesses = kind === "transfer"
+      ? [{ kind: "account_cash" as const, accountId: (item as OwnedCashTransfer).sourceAccountId, mode: "consume" as const }, { kind: "account_cash" as const, accountId: (item as OwnedCashTransfer).destinationAccountId, mode: "produce" as const }]
+      : kind === "purchase"
+        ? [{ kind: "account_cash" as const, accountId: (item as InvestmentPurchase).sourceCashAccountId, mode: "consume" as const }]
+        : [{ kind: "account_cash" as const, accountId: (item as InvestmentFee).cashAccountId, mode: "consume" as const }];
+    const descriptor = householdDescriptor({ id: operationId(kind, String(item.id), at), domain: "investments", operationClass: kind === "transfer" ? "investment_transfer" : kind === "purchase" ? "investment_purchase" : "investment_fee", sequencingInstant: at, dependsOn, resourceAccesses, primitiveInstanceId: item.schedulePrimitiveId, occurrenceIdentity: generatedOccurrenceKey({ scenarioId: scopedContext.scenarioId, primitiveInstanceId: item.schedulePrimitiveId, scheduledAt: at, semanticEffectType: `investment-${kind}`, economicTargetId: (target ?? String(item.id)) as DomainId<string> }) });
+    operationDescriptors.push(descriptor);
+    if (kind === "transfer") operationsPrepared.push({ kind, descriptor, operation: item as OwnedCashTransfer });
+    else if (kind === "purchase") operationsPrepared.push({ kind, descriptor, operation: item as InvestmentPurchase, closingPrice: closingPrices[(item as InvestmentPurchase).targetPositionId]! });
+    else operationsPrepared.push({ kind, descriptor, operation: item as InvestmentFee });
+  }
+  for (const item of input.transfers) addOperation(item, "transfer");
+  for (const item of input.purchases) addOperation(item, "purchase");
+  for (const item of input.fees ?? []) addOperation(item, "fee");
+  const byTarget = new Map<string, PreparedVerticalSlice3ScheduledOperation[]>();
+  for (const operation of operationsPrepared) for (const target of operationTarget(operation.operation)) byTarget.set(target, [...(byTarget.get(target) ?? []), operation]);
+  for (const chain of byTarget.values()) {
+    const sorted = chain.slice().sort((left, right) => (left.operation.order - right.operation.order) || left.descriptor.id.localeCompare(right.descriptor.id));
+    for (let index = 1; index < sorted.length; index += 1) {
+      const descriptor = sorted[index]!.descriptor;
+      const replacement = householdDescriptor({ ...descriptor, dependsOn: [...descriptor.dependsOn, sorted[index - 1]!.descriptor.id] });
+      operationDescriptors[operationDescriptors.indexOf(descriptor)] = replacement;
+      const operation = operationsPrepared.find((candidate) => candidate.descriptor.id === descriptor.id)!;
+      operationsPrepared[operationsPrepared.indexOf(operation)] = { ...operation, descriptor: replacement };
+    }
+  }
+  const preparedValuations = input.returns.slice().sort((a, b) => a.targetPositionId.localeCompare(b.targetPositionId)).map((item) => {
+    const descriptor = valuationByTarget.get(String(item.targetPositionId))!;
+    const output = p26.primitiveOutputs.find((value) => value.primitiveInstanceId === item.primitiveIds.markToMarket)!.output as { readonly marketValue: Money };
+    return { kind: "valuation" as const, descriptor, returnConfiguration: item, closingPrice: closingPrices[item.targetPositionId]!, marketValue: output.marketValue };
+  });
+  return Object.freeze({ period: Object.freeze({ ...period }), state: p26.closingState, primitiveState: p26.primitiveState, closingPrices, descriptors: Object.freeze([...valuationDescriptors, ...operationDescriptors].sort((a, b) => a.id.localeCompare(b.id))), operations: Object.freeze([...preparedValuations, ...operationsPrepared]), traceRefs: mergeTraceRefs(p23.primitiveOutputs.flatMap((output) => output.traceRefs ?? []), p26.primitiveOutputs.flatMap((output) => output.traceRefs ?? [])) ?? Object.freeze([]) });
+};
+
+/** Executes one prepared VS3 operation against the supplied shared candidate. */
+export const executePreparedVerticalSlice3Operation = (
+  prepared: PreparedVerticalSlice3Period,
+  operation: PreparedVerticalSlice3Operation,
+  state: AuthoritativeState,
+  primitiveState: PrimitiveRuntimeStateStore,
+  input: VerticalSlice3Input,
+  runContext: RunContext,
+): ExecutedVerticalSlice3Operation => {
+  if (operation.kind === "valuation") {
+    const next = cloneAuthoritativeState(state); const before = positionMarketValue(next.positions[operation.returnConfiguration.targetPositionId]!);
+    const provenance = generated({ runContext, openingState: state, input, months: 1 }, operation.returnConfiguration.primitiveIds.markToMarket, closeAt(prepared.period), "mark-to-market", operation.returnConfiguration.targetPositionId);
+    applyPositionValuationAtomically(next, { positionId: operation.returnConfiguration.targetPositionId, price: operation.closingPrice, generatedOccurrenceKey: provenance.generatedOccurrenceKey });
+    const change = operation.marketValue.minus(before); const effect = createSemanticEffect({ id: semanticEffectId(`effect:valuation:${operation.returnConfiguration.targetPositionId}:${prepared.period.end}`), kind: "valuation", category: change.isNegative() ? "unrealized_investment_loss" : "unrealized_investment_gain", amount: change, occurredAt: closeAt(prepared.period), sourceOccurrenceKey: provenance.generatedOccurrenceKey, provenance, description: "Economic-only non-cash mark-to-market", traceRefs: traceRefs(operation.returnConfiguration, prepared.period) });
+    return Object.freeze({ state: next, primitiveState, effects: Object.freeze([effect]), transactions: Object.freeze([]), contributionPrincipal: Money.zero(input.baseCurrency), fees: Money.zero(input.baseCurrency), ruleApplications: Object.freeze([]), unrealizedGain: change });
+  }
+  const filtered: VerticalSlice3Input = Object.freeze({ ...input, transfers: operation.kind === "transfer" ? [operation.operation] : [], purchases: operation.kind === "purchase" ? [operation.operation] : [], fees: operation.kind === "fee" ? [operation.operation] : [], returns: [] });
+  const request: VerticalSlice3RunInput = { runContext: Object.freeze({ ...runContext, simulationStart: prepared.period.start, simulationEnd: prepared.period.end }), openingState: state, input: filtered, months: 1, primitiveState };
+  const generatedWork = operations(request, prepared.period, state, prepared.closingPrices, operation.descriptor.id.replace("investment-", ""));
+  const result = runPeriod({ period: prepared.period, runContext: request.runContext, openingState: state, primitiveState, work: generatedWork.work });
+  return Object.freeze({ state: result.closingState, primitiveState: result.primitiveState, effects: result.effects, transactions: result.transactions, contributionPrincipal: generatedWork.contributionPrincipal, fees: generatedWork.fees, ruleApplications: generatedWork.ruleApplications, unrealizedGain: Money.zero(input.baseCurrency) });
 };
 
 export const runVerticalSlice3 = (request: VerticalSlice3RunInput): VerticalSlice3RunResult => {
@@ -142,19 +262,21 @@ export const runVerticalSlice3 = (request: VerticalSlice3RunInput): VerticalSlic
       const result = execute({ runContext: request.runContext, input: request.input.cashFlowInput, period, openingState: candidateState, primitiveState: candidatePrimitiveState });
       candidateState = result.state; candidatePrimitiveState = result.primitiveState; cashFlowPeriod = result.period;
     }
-    const p23Work: PeriodWork[] = request.input.returns.slice().sort((a, b) => a.targetPositionId.localeCompare(b.targetPositionId)).map((item) => ({ id: `return:${item.targetPositionId}`, kind: "primitive", request: { primitiveId: "P23", input: { baseValue: candidateState.positions[item.targetPositionId]!.price, rate: item.rate }, parameters: { returnBasis: item.returnBasis, cashFlowTiming: "end_of_period", postingRounding: item.priceRounding }, context: { evaluationInstant: closeAt(period), scenarioId: request.runContext.scenarioId, primitiveInstanceId: item.primitiveIds.compounding, economicTargetId: item.targetPositionId, semanticEffectType: "investment-return", traceRefs: traceRefs(item, period) } } }));
-    const p23 = runPeriod({ period, runContext: request.runContext, openingState: candidateState, primitiveState: candidatePrimitiveState, work: p23Work }); candidatePrimitiveState = p23.primitiveState;
-    const closing = Object.fromEntries(request.input.returns.map((item) => [item.targetPositionId, (p23.primitiveOutputs.find((output) => output.primitiveInstanceId === item.primitiveIds.compounding)!.output as { readonly closingValue: Money }).closingValue])) as Readonly<Record<string, Money>>;
-    const p26Work: PeriodWork[] = request.input.returns.slice().sort((a, b) => a.targetPositionId.localeCompare(b.targetPositionId)).map((item) => ({ id: `valuation:${item.targetPositionId}`, kind: "primitive", request: { primitiveId: "P26", input: { quantity: candidateState.positions[item.targetPositionId]!.quantity, price: closing[item.targetPositionId]! }, parameters: { expectedUnit: candidateState.positions[item.targetPositionId]!.quantity.unit, expectedCurrency: request.input.baseCurrency }, context: { evaluationInstant: closeAt(period), scenarioId: request.runContext.scenarioId, primitiveInstanceId: item.primitiveIds.markToMarket, economicTargetId: item.targetPositionId, semanticEffectType: "mark-to-market", traceRefs: traceRefs(item, period) } } }));
-    const p26 = runPeriod({ period, runContext: request.runContext, openingState: candidateState, primitiveState: candidatePrimitiveState, work: p26Work }); candidatePrimitiveState = p26.primitiveState;
-    const valued = cloneAuthoritativeState(candidateState); const valuationEffects: SemanticEffect[] = []; let unrealizedGain = Money.zero(request.input.baseCurrency);
-    for (const item of request.input.returns.slice().sort((a, b) => a.targetPositionId.localeCompare(b.targetPositionId))) { const before = positionMarketValue(valued.positions[item.targetPositionId]!); const p = generated(request, item.primitiveIds.markToMarket, closeAt(period), "mark-to-market", item.targetPositionId); const marketValue = (p26.primitiveOutputs.find((output) => output.primitiveInstanceId === item.primitiveIds.markToMarket)!.output as { readonly marketValue: Money }).marketValue; applyPositionValuationAtomically(valued, { positionId: item.targetPositionId, price: closing[item.targetPositionId]!, generatedOccurrenceKey: p.generatedOccurrenceKey }); const change = marketValue.minus(before); unrealizedGain = unrealizedGain.plus(change); valuationEffects.push(createSemanticEffect({ id: semanticEffectId(`effect:valuation:${item.targetPositionId}:${period.end}`), kind: "valuation", category: change.isNegative() ? "unrealized_investment_loss" : "unrealized_investment_gain", amount: change, occurredAt: closeAt(period), sourceOccurrenceKey: p.generatedOccurrenceKey, provenance: p, description: "Economic-only non-cash mark-to-market", traceRefs: traceRefs(item, period) })); }
-    const periodOperations = operations(request, period, valued, closing); const semantic = runPeriod({ period, runContext: request.runContext, openingState: valued, primitiveState: candidatePrimitiveState, work: periodOperations.work }); const finalState = semantic.closingState;
-    const allTransactions = Object.freeze([...(cashFlowPeriod?.transactions ?? []), ...semantic.transactions]); const allEffects = Object.freeze([...(cashFlowPeriod?.effects ?? []), ...valuationEffects, ...semantic.effects]); const accountValues = Object.freeze(Object.fromEntries(Object.keys(finalState.accounts).sort().map((id) => [id, accountValueFromState(finalState, id)])));
-    const combinedTraceRefs = mergeTraceRefs(cashFlowPeriod?.traceRefs, request.input.returns.flatMap((item) => traceRefs(item, period)), periodOperations.ruleApplications.flatMap((application) => application.traceRefs), allEffects.flatMap((effect) => effect.traceRefs ?? []))!;
-    committed.push(Object.freeze({ period, transactions: allTransactions, effects: allEffects, statements: deriveStatements(finalState, allTransactions, request.input.baseCurrency), accountValues, portfolioValue: totalPositionMarketValue(Object.values(finalState.positions), request.input.baseCurrency), contributionPrincipal: periodOperations.contributionPrincipal, fees: periodOperations.fees, unrealizedGain, realizedGain: Money.zero(request.input.baseCurrency), cashInvestmentIncome: Money.zero(request.input.baseCurrency), ruleApplications: periodOperations.ruleApplications, traceRefs: combinedTraceRefs, ...(cashFlowPeriod === undefined ? {} : { cashFlowPeriod }) }));
+    const prepared = prepareVerticalSlice3Period(request.runContext, request.input, period, candidateState, candidatePrimitiveState);
+    let finalState = prepared.state; let finalPrimitiveState = prepared.primitiveState;
+    const executed = new Set<string>(); const effects: SemanticEffect[] = []; const transactions: AccountingTransaction[] = []; const ruleApplications: RuleApplication<Money>[] = [];
+    let contributionPrincipal = Money.zero(request.input.baseCurrency); let fees = Money.zero(request.input.baseCurrency); let unrealizedGain = Money.zero(request.input.baseCurrency);
+    while (executed.size < prepared.operations.length) {
+      const next = prepared.operations.filter((operation) => !executed.has(operation.descriptor.id) && operation.descriptor.dependsOn.every((dependency) => executed.has(dependency))).sort((left, right) => left.descriptor.id.localeCompare(right.descriptor.id))[0];
+      if (next === undefined) throw new ValidationError([{ severity: "error", code: issueCodes.verticalSlice3InputInvalid, message: "Prepared VS3 operation dependencies contain a cycle", entityType: "vertical_slice_3", fieldPath: "input" }]);
+      const result = executePreparedVerticalSlice3Operation(prepared, next, finalState, finalPrimitiveState, request.input, request.runContext);
+      finalState = result.state; finalPrimitiveState = result.primitiveState; effects.push(...result.effects); transactions.push(...result.transactions); ruleApplications.push(...result.ruleApplications); contributionPrincipal = contributionPrincipal.plus(result.contributionPrincipal); fees = fees.plus(result.fees); unrealizedGain = unrealizedGain.plus(result.unrealizedGain); executed.add(next.descriptor.id);
+    }
+    const allTransactions = Object.freeze([...(cashFlowPeriod?.transactions ?? []), ...transactions]); const allEffects = Object.freeze([...(cashFlowPeriod?.effects ?? []), ...effects]); const accountValues = Object.freeze(Object.fromEntries(Object.keys(finalState.accounts).sort().map((id) => [id, accountValueFromState(finalState, id)])));
+    const combinedTraceRefs = mergeTraceRefs(cashFlowPeriod?.traceRefs, prepared.traceRefs, ruleApplications.flatMap((application) => application.traceRefs), allEffects.flatMap((effect) => effect.traceRefs ?? []))!;
+    committed.push(Object.freeze({ period, transactions: allTransactions, effects: allEffects, statements: deriveStatements(finalState, allTransactions, request.input.baseCurrency), accountValues, portfolioValue: totalPositionMarketValue(Object.values(finalState.positions), request.input.baseCurrency), contributionPrincipal, fees, unrealizedGain, realizedGain: Money.zero(request.input.baseCurrency), cashInvestmentIncome: Money.zero(request.input.baseCurrency), ruleApplications: Object.freeze(ruleApplications), traceRefs: combinedTraceRefs, ...(cashFlowPeriod === undefined ? {} : { cashFlowPeriod }) }));
     diagnostics.push(...(cashFlowPeriod?.diagnostics ?? []));
-    state = finalState; primitiveState = semantic.primitiveState;
+    state = finalState; primitiveState = finalPrimitiveState;
   } catch (error) { if (!(error instanceof ValidationError)) throw error; diagnostics.push(...error.issues); return Object.freeze({ status: "incomplete", runMetadata, requestedHorizon, stoppedAt: period.start, ...(committed.length === 0 ? {} : { reachedThrough: committed[committed.length - 1]!.period.end }), state, primitiveState, periods: Object.freeze(committed), diagnostics: Object.freeze(diagnostics) }); }
   return Object.freeze({ status: "completed", runMetadata, requestedHorizon, reachedThrough: requestedHorizon.end, state, primitiveState, periods: Object.freeze(committed), diagnostics: Object.freeze(diagnostics) });
 };

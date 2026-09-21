@@ -10,5 +10,5 @@ export * from "./householdRunner.js";
 export * from "./householdExecution.js";
 export * from "./verticalSlice1.js";
 export { runVerticalSlice2, executeVerticalSlice2PeriodCandidate, createVerticalSlice2PrimitiveId } from "./verticalSlice2.js";
-export { runVerticalSlice3, executeVerticalSlice3PeriodCandidate, createVerticalSlice3Id } from "./verticalSlice3.js";
+export { runVerticalSlice3, prepareVerticalSlice3Period, executePreparedVerticalSlice3Operation, executeVerticalSlice3PeriodCandidate, createVerticalSlice3Id } from "./verticalSlice3.js";
 export { runVerticalSlice4, executeVerticalSlice4PeriodCandidate, createVerticalSlice4Id } from "./verticalSlice4.js";
