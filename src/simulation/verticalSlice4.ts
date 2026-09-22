@@ -13,6 +13,7 @@ import { utcMonthDifference, utcMonthlyOccurrences, utcMonthlyPeriods, type Inst
 import { Money, RateBasis, RoundingPolicy, sumMoney, type Currency, type Rate } from "../values/index.js";
 import { createPrimitiveRuntimeStateStore, runPeriod, type PeriodWork, type PrimitiveRuntimeStateStore } from "./period.js";
 import { createInputFingerprint, createRunMetadata, type RunContext, type RunMetadata } from "./run.js";
+import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -39,6 +40,35 @@ export interface VerticalSlice4RunResult { readonly status: "completed" | "incom
 
 interface MutableLiabilityResult { loanId: LoanContractId; occurrenceId: GeneratedOccurrenceKey; scheduledAt: Instant; openingPrincipal: Money; contractualPayment: Money; currentInterest: Money; scheduledPayment: Money; scheduledPrincipalPaid: Money; extraPrincipalPaid: Money; endingPrincipal: Money; outstandingInterest: Money; scheduledFundingStatus: ConstraintOutcome["status"]; extraFundingStatus?: ConstraintOutcome["status"]; traceRefs: readonly CalculationTraceRef[]; }
 interface PendingExtra { readonly loan: FixedAmortizingLoan; readonly instruction: ExtraPrincipalPayment; readonly proposedAmount: Money; readonly traceRefs: readonly CalculationTraceRef[]; readonly result: MutableLiabilityResult; }
+
+export type PreparedVerticalSlice4Operation =
+  | { readonly kind: "required_service"; readonly descriptor: HouseholdWorkDescriptor; readonly loan: FixedAmortizingLoan; readonly scheduledAt: Instant }
+  | { readonly kind: "extra_principal"; readonly descriptor: HouseholdWorkDescriptor; readonly loan: FixedAmortizingLoan; readonly instruction: ExtraPrincipalPayment; readonly scheduledAt: Instant };
+
+export interface PreparedVerticalSlice4Period {
+  readonly period: Period;
+  /** The candidate state/runtime inspected while deciding which debt work exists. */
+  readonly state: AuthoritativeState;
+  readonly primitiveState: PrimitiveRuntimeStateStore;
+  readonly descriptors: readonly HouseholdWorkDescriptor[];
+  readonly operations: readonly PreparedVerticalSlice4Operation[];
+  readonly traceRefs: readonly CalculationTraceRef[];
+}
+
+export interface ExecutedVerticalSlice4Operation {
+  readonly state: AuthoritativeState;
+  readonly primitiveState: PrimitiveRuntimeStateStore;
+  readonly period?: VerticalSlice4PeriodResult;
+  readonly transactions: readonly AccountingTransaction[];
+  readonly recognitions: readonly RecognitionFact[];
+  readonly settlementProposals: readonly SettlementProposal[];
+  readonly settlements: readonly Settlement[];
+  readonly effects: readonly SemanticEffect[];
+  readonly constraintOutcomes: readonly VerticalSlice4ConstraintOutcome[];
+  readonly liquidityShortfalls: readonly VerticalSlice4LiquidityShortfall[];
+  readonly diagnostics: readonly ValidationIssue[];
+  readonly traceRefs: readonly CalculationTraceRef[];
+}
 
 const invalid = (message: string, fieldPath: string, unsupported = false): never => failValidation({ severity: "error", code: unsupported ? issueCodes.liabilityConfigurationUnsupported : issueCodes.verticalSlice4InputInvalid, message, entityType: "vertical_slice_4", fieldPath });
 const periodFailure = (message: string, entityId?: string): never => failValidation({ severity: "error", code: issueCodes.verticalSlice4InputInvalid, message, entityType: "vertical_slice_4_period", ...(entityId === undefined ? {} : { entityId }) });
@@ -104,6 +134,10 @@ const validatePrimitiveResume = (request: VerticalSlice4RunInput, loan: FixedAmo
   const interestPayable = request.openingState.liabilities[loan.interestPayableLiabilityId]!.balance;
   if (principalDue.compare(principal) > 0) invalid("Outstanding required-principal claims cannot exceed authoritative principal", `primitiveState.${loan.primitiveIds.amortization}`);
   if (!interestDue.equals(interestPayable)) invalid("Outstanding interest claims must reconcile to the authoritative interest-payable liability", `primitiveState.${loan.primitiveIds.accrual}`);
+  // A reconciled paid-off loan has no remaining semantic work.  It must not
+  // require invented P22/P24 history merely because its original contract
+  // predates the forecast window.
+  if (!principal.isPositive() && !interestPayable.isPositive() && !principalDue.isPositive() && !interestDue.isPositive()) return;
   const rawAmortizationState = request.primitiveState?.[loan.primitiveIds.amortization];
   const rawAccrualState = request.primitiveState?.[loan.primitiveIds.accrual];
   const amortizationState = rawAmortizationState === undefined ? undefined : rawAmortizationState.primitiveId === "P22" ? rawAmortizationState : invalid("Amortization primitive state has the wrong primitive kind", `primitiveState.${loan.primitiveIds.amortization}`);
@@ -150,9 +184,174 @@ const validate = (request: VerticalSlice4RunInput, periods: readonly Period[]): 
   }
   if (new Set(stableIds).size !== stableIds.length) invalid("Loan, payment, extra-payment, and primitive identities must be unique", "input.loans");
   const liabilityTargets = input.loans.flatMap((loan) => [loan.principalLiabilityId, loan.interestPayableLiabilityId]); if (new Set(liabilityTargets).size !== liabilityTargets.length) invalid("Each loan balance requires distinct authoritative principal and interest-payable targets", "input.loans");
-  for (const period of periods) { const active = input.loans.flatMap((loan) => utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy).map((at) => ({ loan, at }))); for (let left = 0; left < active.length; left += 1) for (let right = left + 1; right < active.length; right += 1) { const a = active[left]!; const b = active[right]!; if (a.at !== b.at) continue; if (policiesShareSource(a.loan.fundingPolicy, b.loan.fundingPolicy) && a.loan.settlementPriority === b.loan.settlementPriority) invalid("Same-instant required debt service sharing liquidity requires distinct priorities", "input.loans.settlementPriority"); const aExtra = (a.loan.extraPrincipalPayments ?? []).find((extra) => extra.scheduledAt === a.at); const bExtra = (b.loan.extraPrincipalPayments ?? []).find((extra) => extra.scheduledAt === b.at); if (aExtra !== undefined && bExtra !== undefined && policiesShareSource(aExtra.fundingPolicy, bExtra.fundingPolicy) && a.loan.settlementPriority === b.loan.settlementPriority) invalid("Same-instant voluntary prepayments sharing liquidity require distinct priorities", "input.loans.settlementPriority"); } }
+  for (const period of periods) { const active = input.loans.flatMap((loan) => utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy).map((at) => ({ loan, at }))).filter(({ loan }) => openingState.liabilities[loan.principalLiabilityId]!.balance.isPositive() || openingState.liabilities[loan.interestPayableLiabilityId]!.balance.isPositive() || claimsFor(openingState, loan.principalLiabilityId, "mortgage_principal_due").length > 0 || claimsFor(openingState, loan.interestPayableLiabilityId, "mortgage_interest_payable").length > 0); for (let left = 0; left < active.length; left += 1) for (let right = left + 1; right < active.length; right += 1) { const a = active[left]!; const b = active[right]!; if (a.at !== b.at) continue; if (policiesShareSource(a.loan.fundingPolicy, b.loan.fundingPolicy) && a.loan.settlementPriority === b.loan.settlementPriority) invalid("Same-instant required debt service sharing liquidity requires distinct priorities", "input.loans.settlementPriority"); const aExtra = (a.loan.extraPrincipalPayments ?? []).find((extra) => extra.scheduledAt === a.at); const bExtra = (b.loan.extraPrincipalPayments ?? []).find((extra) => extra.scheduledAt === b.at); if (aExtra !== undefined && bExtra !== undefined && policiesShareSource(aExtra.fundingPolicy, bExtra.fundingPolicy) && a.loan.settlementPriority === b.loan.settlementPriority) invalid("Same-instant voluntary prepayments sharing liquidity require distinct priorities", "input.loans.settlementPriority"); } }
 };
 const totalLiability = (state: AuthoritativeState, loans: readonly FixedAmortizingLoan[], selector: "principal" | "interest", currency: Currency): Money => sumMoney(loans.map((loan) => state.liabilities[selector === "principal" ? loan.principalLiabilityId : loan.interestPayableLiabilityId]!.balance), currency);
+
+const householdDescriptor = (value: Omit<HouseholdWorkDescriptor, "dependsOn" | "traceRefs"> & { readonly dependsOn?: readonly string[] }): HouseholdWorkDescriptor =>
+  Object.freeze({ ...value, dependsOn: Object.freeze([...(value.dependsOn ?? [])].sort()), traceRefs: Object.freeze([]) });
+
+const cashConsumes = (policy: FundingPolicy): HouseholdWorkDescriptor["resourceAccesses"] =>
+  policy.orderedSources.map((source) => ({ kind: "account_cash", accountId: source.accountId, mode: "consume" }));
+
+const requiredDescriptorId = (context: RunContext, loan: FixedAmortizingLoan, at: Instant): string => {
+  const occurrenceIdentity = generatedOccurrenceKey({ scenarioId: context.scenarioId, primitiveInstanceId: loan.primitiveIds.schedule, scheduledAt: at, semanticEffectType: "liability-payment", economicTargetId: loan.principalLiabilityId });
+  return `liability-required:${loan.id}:${occurrenceIdentity}`;
+};
+
+const extraDescriptorId = (context: RunContext, loan: FixedAmortizingLoan, instruction: ExtraPrincipalPayment, at: Instant): string => {
+  const occurrenceIdentity = generatedOccurrenceKey({ scenarioId: context.scenarioId, primitiveInstanceId: instruction.primitiveInstanceId, scheduledAt: at, semanticEffectType: "extra-principal-payment", economicTargetId: loan.principalLiabilityId });
+  return `liability-extra:${instruction.id}:${occurrenceIdentity}`;
+};
+
+/**
+ * Prepares only debt work that is real for the supplied candidate state.
+ * Preparation is deliberately read-only: accrual, amortization, funding, and
+ * settlement remain in the VS4 executor below and in runVerticalSlice4.
+ */
+export const prepareVerticalSlice4Period = (
+  runContext: RunContext,
+  input: VerticalSlice4Input,
+  period: Period,
+  currentState: AuthoritativeState,
+  currentPrimitiveState: PrimitiveRuntimeStateStore = {},
+): PreparedVerticalSlice4Period => {
+  const scopedContext = Object.freeze({ ...runContext, simulationStart: period.start, simulationEnd: period.end });
+  const request: VerticalSlice4RunInput = { runContext: scopedContext, openingState: currentState, input, months: 1, primitiveState: currentPrimitiveState };
+  const primitiveState = createPrimitiveRuntimeStateStore(currentPrimitiveState);
+  validate({ ...request, primitiveState }, [period]);
+  const operations: PreparedVerticalSlice4Operation[] = [];
+  const traceRefs: CalculationTraceRef[] = [];
+  for (const loan of input.loans) {
+    const principal = currentState.liabilities[loan.principalLiabilityId]!.balance;
+    const interest = currentState.liabilities[loan.interestPayableLiabilityId]!.balance;
+    const hasOutstandingClaims = claimsFor(currentState, loan.principalLiabilityId, "mortgage_principal_due").length > 0 || claimsFor(currentState, loan.interestPayableLiabilityId, "mortgage_interest_payable").length > 0;
+    if (!principal.isPositive() && !interest.isPositive() && !hasOutstandingClaims) continue;
+    for (const at of utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy)) {
+      const occurrenceIdentity = generatedOccurrenceKey({ scenarioId: scopedContext.scenarioId, primitiveInstanceId: loan.primitiveIds.schedule, scheduledAt: at, semanticEffectType: "liability-payment", economicTargetId: loan.principalLiabilityId });
+      const id = requiredDescriptorId(scopedContext, loan, at);
+      const descriptor = householdDescriptor({ id, domain: "liabilities", operationClass: "liability_required_service", sequencingInstant: at, resourceAccesses: cashConsumes(loan.fundingPolicy), primitiveInstanceId: loan.primitiveIds.schedule, occurrenceIdentity });
+      operations.push({ kind: "required_service", descriptor, loan, scheduledAt: at });
+      traceRefs.push(...refs(loan, at));
+      const extra = (loan.extraPrincipalPayments ?? []).find((item) => item.scheduledAt === at);
+      const extraOccurrenceIdentity = extra === undefined ? undefined : generatedOccurrenceKey({ scenarioId: scopedContext.scenarioId, primitiveInstanceId: extra.primitiveInstanceId, scheduledAt: at, semanticEffectType: "extra-principal-payment", economicTargetId: loan.principalLiabilityId });
+      const alreadyApplied = extraOccurrenceIdentity !== undefined && currentState.identities.generatedOccurrenceKeys.includes(extraOccurrenceIdentity);
+      if (extra !== undefined && principal.isPositive() && !alreadyApplied) {
+        const extraDescriptor = householdDescriptor({ id: extraDescriptorId(scopedContext, loan, extra, at), domain: "liabilities", operationClass: "liability_extra_principal", sequencingInstant: at, dependsOn: [id], resourceAccesses: cashConsumes(extra.fundingPolicy), primitiveInstanceId: extra.primitiveInstanceId, occurrenceIdentity: extraOccurrenceIdentity! });
+        operations.push({ kind: "extra_principal", descriptor: extraDescriptor, loan, instruction: extra, scheduledAt: at });
+      }
+    }
+  }
+  const byInstant = new Map<Instant, PreparedVerticalSlice4Operation[]>();
+  for (const operation of operations) byInstant.set(operation.scheduledAt, [...(byInstant.get(operation.scheduledAt) ?? []), operation]);
+  const descriptors = new Map(operations.map((operation) => [operation.descriptor.id, operation.descriptor]));
+  for (const extra of operations.filter((operation): operation is Extract<PreparedVerticalSlice4Operation, { readonly kind: "extra_principal" }> => operation.kind === "extra_principal")) {
+    const requiredIds = operations.filter((operation): operation is Extract<PreparedVerticalSlice4Operation, { readonly kind: "required_service" }> => operation.kind === "required_service" && operation.scheduledAt === extra.scheduledAt).map((operation) => operation.descriptor.id);
+    descriptors.set(extra.descriptor.id, householdDescriptor({ ...descriptors.get(extra.descriptor.id)!, dependsOn: [...descriptors.get(extra.descriptor.id)!.dependsOn, ...requiredIds] }));
+  }
+  for (const instantOperations of byInstant.values()) for (const phase of ["required_service", "extra_principal"] as const) {
+    const phaseOperations = instantOperations.filter((operation) => operation.kind === phase).sort((left, right) => {
+      const priority = right.loan.settlementPriority - left.loan.settlementPriority;
+      return priority || left.descriptor.id.localeCompare(right.descriptor.id);
+    });
+    for (let index = 1; index < phaseOperations.length; index += 1) {
+      const previous = phaseOperations[index - 1]!;
+      const current = phaseOperations[index]!;
+      if (policiesShareSource(previous.kind === "required_service" ? previous.loan.fundingPolicy : previous.instruction.fundingPolicy, current.kind === "required_service" ? current.loan.fundingPolicy : current.instruction.fundingPolicy)) {
+        descriptors.set(current.descriptor.id, householdDescriptor({ ...descriptors.get(current.descriptor.id)!, dependsOn: [...descriptors.get(current.descriptor.id)!.dependsOn, previous.descriptor.id] }));
+      }
+    }
+  }
+  const prepared = operations.map((operation) => Object.freeze({ ...operation, descriptor: descriptors.get(operation.descriptor.id)! }));
+  return Object.freeze({ period: Object.freeze({ ...period }), state: currentState, primitiveState, descriptors: Object.freeze(prepared.map((operation) => operation.descriptor)), operations: Object.freeze(prepared), traceRefs: Object.freeze(mergeTraceRefs(traceRefs) ?? []) });
+};
+
+/** Executes one prepared VS4 operation against a shared household candidate. */
+export const executePreparedVerticalSlice4Operation = (
+  prepared: PreparedVerticalSlice4Period,
+  operation: PreparedVerticalSlice4Operation,
+  state: AuthoritativeState,
+  primitiveState: PrimitiveRuntimeStateStore,
+  input: VerticalSlice4Input,
+  runContext: RunContext,
+): ExecutedVerticalSlice4Operation => {
+  if (operation.kind === "required_service") {
+    const filteredLoan: FixedAmortizingLoan = { ...operation.loan, extraPrincipalPayments: [] };
+    const result = runVerticalSlice4({
+      runContext: Object.freeze({ ...runContext, simulationStart: prepared.period.start, simulationEnd: prepared.period.end }),
+      openingState: state,
+      primitiveState,
+      input: Object.freeze({ ...input, loans: Object.freeze([filteredLoan]) }),
+      months: 1,
+    });
+    if (result.status === "incomplete") throw new ValidationError(result.diagnostics);
+    const period = result.periods[0]!;
+    return Object.freeze({ state: result.state, primitiveState: result.primitiveState, period, transactions: period.transactions, recognitions: period.recognitions, settlementProposals: period.settlementProposals, settlements: period.settlements, effects: period.effects, constraintOutcomes: period.constraintOutcomes, liquidityShortfalls: period.liquidityShortfalls, diagnostics: period.diagnostics, traceRefs: period.traceRefs });
+  }
+
+  const candidateState = cloneAuthoritativeState(state);
+  const traceRefs = refs(operation.loan, operation.scheduledAt);
+  const occurrenceId = operation.descriptor.occurrenceIdentity!;
+  if (candidateState.identities.generatedOccurrenceKeys.includes(occurrenceId)) return Object.freeze({ state: candidateState, primitiveState, transactions: Object.freeze([]), recognitions: Object.freeze([]), settlementProposals: Object.freeze([]), settlements: Object.freeze([]), effects: Object.freeze([]), constraintOutcomes: Object.freeze([]), liquidityShortfalls: Object.freeze([]), diagnostics: Object.freeze([]), traceRefs });
+  const principal = candidateState.liabilities[operation.loan.principalLiabilityId]!.balance;
+  if (!principal.isPositive()) return Object.freeze({ state: candidateState, primitiveState, transactions: Object.freeze([]), recognitions: Object.freeze([]), settlementProposals: Object.freeze([]), settlements: Object.freeze([]), effects: Object.freeze([]), constraintOutcomes: Object.freeze([]), liquidityShortfalls: Object.freeze([]), diagnostics: Object.freeze([]), traceRefs });
+  const amount = operation.instruction.amount.compare(principal) > 0 ? principal : operation.instruction.amount;
+  if (!amount.isPositive()) return Object.freeze({ state: candidateState, primitiveState, transactions: Object.freeze([]), recognitions: Object.freeze([]), settlementProposals: Object.freeze([]), settlements: Object.freeze([]), effects: Object.freeze([]), constraintOutcomes: Object.freeze([]), liquidityShortfalls: Object.freeze([]), diagnostics: Object.freeze([]), traceRefs });
+  const provenanceValue: FactProvenance = createFactProvenance({ factKind: "model_generated", sourceType: "model", sourceId: operation.instruction.primitiveInstanceId, effectiveAt: operation.scheduledAt, generatedOccurrenceKey: occurrenceId });
+  const right = createRight({ id: claimId(`right:extra-principal:${operation.instruction.id}:${operation.scheduledAt}`), category: "mortgage_extra_principal_option", originatingRecognitionId: recognitionId(`recognition:extra-principal-option:${operation.instruction.id}:${operation.scheduledAt}`), economicOwnerId: operation.loan.ownerId, balanceEntityId: operation.loan.principalLiabilityId, originalAmount: amount, recognizedAt: operation.scheduledAt, dueAt: operation.scheduledAt, traceRefs }, Object.values(candidateState.obligations));
+  const proposal = createSettlementProposal({ id: settlementProposalId(`proposal:${right.id}`), claimId: right.id, requestedAmount: amount, requestedAt: operation.scheduledAt, fundingPolicyId: operation.instruction.fundingPolicy.id, provenance: provenanceValue, traceRefs }, right);
+  const funding = resolveAllOrNothingFunding(fundingConstraintId(`mortgage-extra:${operation.instruction.id}:${operation.scheduledAt}`), [{ proposal, claim: right }], operation.instruction.fundingPolicy, balances(candidateState), operation.scheduledAt);
+  const outcomes = [funding.outcome];
+  const shortfalls: VerticalSlice4LiquidityShortfall[] = funding.liquidityShortfall === undefined ? [] : [{ ...funding.liquidityShortfall, origin: "extra_principal" }];
+  const diagnostics: ValidationIssue[] = funding.liquidityShortfall === undefined ? [] : [validationIssue({ severity: "warning", code: issueCodes.liquidityShortfall, message: `Voluntary extra principal could not be funded for instruction ${operation.instruction.id}`, entityType: "funding_constraint", entityId: funding.outcome.constraintId, relatedIds: [operation.instruction.fundingPolicy.id] })];
+  if (funding.liquidityShortfall !== undefined) return Object.freeze({ state: candidateState, primitiveState, transactions: Object.freeze([]), recognitions: Object.freeze([]), settlementProposals: Object.freeze([proposal]), settlements: Object.freeze([]), effects: Object.freeze([]), constraintOutcomes: Object.freeze(outcomes), liquidityShortfalls: Object.freeze(shortfalls), diagnostics: Object.freeze(diagnostics), traceRefs });
+  const resolvedFunding = resolveFunding(proposal, right, operation.instruction.fundingPolicy, balances(candidateState), operation.scheduledAt);
+  const acceptedFunding = isAcceptedFundingResolution(resolvedFunding) ? resolvedFunding : periodFailure("Accepted prepayment constraint did not produce accepted funding", operation.instruction.id);
+  const recognition = createRecognitionFact({ id: recognitionId(`recognition:extra-principal-option:${operation.instruction.id}:${operation.scheduledAt}`), category: "mortgage_extra_principal_option", amount, recognizedAt: operation.scheduledAt, sourceOccurrenceKey: occurrenceId, provenance: provenanceValue, traceRefs }, candidateState.identities.recognitionIds);
+  registerAuthoritativeIdentity(candidateState.identities, "generatedOccurrenceKeys", occurrenceId); registerAuthoritativeIdentity(candidateState.identities, "recognitionIds", recognition.id);
+  candidateState.obligations[right.id] = right;
+  const settlement = createSettlement({ id: settlementId(`settlement:${right.id}`), settledAt: operation.scheduledAt, provenance: provenanceValue, traceRefs }, acceptedFunding, right, candidateState.identities.settlementIds);
+  registerAuthoritativeIdentity(candidateState.identities, "settlementIds", settlement.id); candidateState.obligations[right.id] = applySettlement(right, settlement) as Right;
+  const isAccepted = acceptedFunding;
+  const effects = [createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "mortgage_extra_principal_option", amount, occurredAt: operation.scheduledAt, sourceOccurrenceKey: occurrenceId, recognitionId: recognition.id, provenance: provenanceValue, traceRefs }), createSemanticEffect({ id: semanticEffectId(`effect:${right.id}`), kind: "claim", category: "mortgage_extra_principal_option", amount, occurredAt: operation.scheduledAt, sourceOccurrenceKey: occurrenceId, recognitionId: recognition.id, claimId: right.id, provenance: provenanceValue, traceRefs }), createSemanticEffect({ id: semanticEffectId(`effect:${settlement.id}`), kind: "settlement", category: "mortgage_extra_principal_option", amount: settlement.amount, occurredAt: operation.scheduledAt, sourceOccurrenceKey: occurrenceId, claimId: settlement.claimId, settlementId: settlement.id, provenance: provenanceValue, traceRefs })];
+  const extraTx = transaction(`tx:extra-principal:${operation.instruction.id}:${operation.scheduledAt}`, operation.scheduledAt, "mortgage_extra_principal", [{ posting: "debit", type: "liability", amount: settlement.amount, entityId: operation.loan.principalLiabilityId }, ...isAccepted.fundingAllocations.map((allocation): AccountingLegDraft => ({ posting: "credit", type: "cash", amount: allocation.amount, accountId: allocation.accountId, cashFlowClass: "financing" }))], traceRefs);
+  applyAccountingTransactionAtomically(candidateState, extraTx);
+  return Object.freeze({ state: candidateState, primitiveState, transactions: Object.freeze([extraTx]), recognitions: Object.freeze([recognition]), settlementProposals: Object.freeze([proposal]), settlements: Object.freeze([settlement]), effects: Object.freeze(effects), constraintOutcomes: Object.freeze(outcomes), liquidityShortfalls: Object.freeze([]), diagnostics: Object.freeze([]), traceRefs });
+};
+
+/** Executes every prepared VS4 operation in dependency order for one period. */
+export const executePreparedVerticalSlice4Period = (
+  prepared: PreparedVerticalSlice4Period,
+  state: AuthoritativeState,
+  primitiveState: PrimitiveRuntimeStateStore,
+  input: VerticalSlice4Input,
+  runContext: RunContext,
+): { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly period: VerticalSlice4PeriodResult } => {
+  let finalState = state;
+  let finalPrimitiveState = primitiveState;
+  const executed = new Set<string>();
+  const requiredResults = new Map<string, MutableLiabilityResult>();
+  const transactions: AccountingTransaction[] = []; const recognitions: RecognitionFact[] = []; const proposals: SettlementProposal[] = []; const settlements: Settlement[] = []; const effects: SemanticEffect[] = []; const outcomes: VerticalSlice4ConstraintOutcome[] = []; const shortfalls: VerticalSlice4LiquidityShortfall[] = []; const diagnostics: ValidationIssue[] = []; const traceRefs: CalculationTraceRef[] = [...prepared.traceRefs];
+  let interestExpense = Money.zero(input.baseCurrency); let principalReduction = Money.zero(input.baseCurrency);
+  while (executed.size < prepared.operations.length) {
+    const next = prepared.operations.filter((operation) => !executed.has(operation.descriptor.id) && operation.descriptor.dependsOn.every((dependency) => executed.has(dependency))).sort((left, right) => left.scheduledAt.localeCompare(right.scheduledAt) || (left.kind === right.kind ? left.descriptor.id.localeCompare(right.descriptor.id) : left.kind === "required_service" ? -1 : 1))[0];
+    if (next === undefined) throw new ValidationError([{ severity: "error", code: issueCodes.verticalSlice4InputInvalid, message: "Prepared VS4 operation dependencies contain a cycle", entityType: "vertical_slice_4", fieldPath: "input" }]);
+    if (next.kind === "extra_principal") {
+      const required = prepared.operations.find((operation) => operation.kind === "required_service" && operation.loan.id === next.loan.id && operation.scheduledAt === next.scheduledAt);
+      const requiredResult = required === undefined ? undefined : requiredResults.get(required.descriptor.id);
+      if (requiredResult?.scheduledFundingStatus !== "fully_satisfied") { executed.add(next.descriptor.id); continue; }
+    }
+    const principalBeforeOperation = next.kind === "extra_principal" ? finalState.liabilities[next.loan.principalLiabilityId]!.balance : undefined;
+    const result = executePreparedVerticalSlice4Operation(prepared, next, finalState, finalPrimitiveState, input, runContext);
+    finalState = result.state; finalPrimitiveState = result.primitiveState; transactions.push(...result.transactions); recognitions.push(...result.recognitions); proposals.push(...result.settlementProposals); settlements.push(...result.settlements); effects.push(...result.effects); outcomes.push(...result.constraintOutcomes); shortfalls.push(...result.liquidityShortfalls); diagnostics.push(...result.diagnostics); traceRefs.push(...result.traceRefs);
+    if (result.period !== undefined) { const liability = result.period.liabilities[0]; if (liability !== undefined) { requiredResults.set(next.descriptor.id, { ...liability }); interestExpense = interestExpense.plus(result.period.interestExpense); principalReduction = principalReduction.plus(result.period.principalReduction); } }
+    if (next.kind === "extra_principal") { const required = prepared.operations.find((operation) => operation.kind === "required_service" && operation.loan.id === next.loan.id && operation.scheduledAt === next.scheduledAt); const requiredResult = required === undefined ? undefined : requiredResults.get(required.descriptor.id); const paid = principalBeforeOperation === undefined ? Money.zero(input.baseCurrency) : principalBeforeOperation.minus(finalState.liabilities[next.loan.principalLiabilityId]!.balance); if (requiredResult !== undefined && paid.isPositive()) { requiredResult.extraPrincipalPaid = requiredResult.extraPrincipalPaid.plus(paid); requiredResult.endingPrincipal = finalState.liabilities[next.loan.principalLiabilityId]!.balance; principalReduction = principalReduction.plus(paid); } }
+    executed.add(next.descriptor.id);
+  }
+  const liabilities = [...requiredResults.values()].map((item) => Object.freeze({ ...item }));
+  const period: VerticalSlice4PeriodResult = Object.freeze({ period: Object.freeze({ ...prepared.period }), liabilities: Object.freeze(liabilities), interestExpense, principalReduction, endingPrincipal: totalLiability(finalState, input.loans, "principal", input.baseCurrency), outstandingInterest: totalLiability(finalState, input.loans, "interest", input.baseCurrency), transactions: Object.freeze(transactions), recognitions: Object.freeze(recognitions), settlementProposals: Object.freeze(proposals), settlements: Object.freeze(settlements), effects: Object.freeze(effects), constraintOutcomes: Object.freeze(outcomes), liquidityShortfalls: Object.freeze(shortfalls), statements: deriveStatements(finalState, transactions, input.baseCurrency), diagnostics: Object.freeze(diagnostics), traceRefs: Object.freeze(mergeTraceRefs(traceRefs) ?? []) });
+  return Object.freeze({ state: finalState, primitiveState: finalPrimitiveState, period });
+};
 
 export const runVerticalSlice4 = (request: VerticalSlice4RunInput): VerticalSlice4RunResult => {
   const months = request.months ?? utcMonthDifference(request.runContext.simulationStart, request.runContext.simulationEnd); const periods = utcMonthlyPeriods(request.runContext.simulationStart, months); const initialPrimitiveState = createPrimitiveRuntimeStateStore(request.primitiveState); validate({ ...request, primitiveState: initialPrimitiveState }, periods);
@@ -160,7 +359,8 @@ export const runVerticalSlice4 = (request: VerticalSlice4RunInput): VerticalSlic
   let state = cloneAuthoritativeState(request.openingState); let primitiveState = initialPrimitiveState; const committed: VerticalSlice4PeriodResult[] = []; const runDiagnostics: ValidationIssue[] = [];
   for (const period of periods) try {
     const candidateState = cloneAuthoritativeState(state); let candidatePrimitiveState = createPrimitiveRuntimeStateStore(primitiveState); const loanResults: MutableLiabilityResult[] = []; const transactions: AccountingTransaction[] = []; const recognitions: RecognitionFact[] = []; const proposals: SettlementProposal[] = []; const settlements: Settlement[] = []; const effects: SemanticEffect[] = []; const outcomes: VerticalSlice4ConstraintOutcome[] = []; const shortfalls: VerticalSlice4LiquidityShortfall[] = []; const diagnostics: ValidationIssue[] = []; const periodRefs: CalculationTraceRef[] = []; let interestExpense = Money.zero(request.input.baseCurrency); let principalReduction = Money.zero(request.input.baseCurrency);
-    const active = request.input.loans.flatMap((loan) => utcMonthlyOccurrences(loan.paymentSchedule.anchor, period, loan.paymentSchedule.invalidDayPolicy).map((at) => ({ loan, at }))).filter(({ loan }) => candidateState.liabilities[loan.principalLiabilityId]!.balance.isPositive() || candidateState.liabilities[loan.interestPayableLiabilityId]!.balance.isPositive() || claimsFor(candidateState, loan.principalLiabilityId, "mortgage_principal_due").length > 0 || claimsFor(candidateState, loan.interestPayableLiabilityId, "mortgage_interest_payable").length > 0);
+    const prepared = prepareVerticalSlice4Period(request.runContext, request.input, period, candidateState, candidatePrimitiveState);
+    const active = prepared.operations.filter((operation): operation is Extract<PreparedVerticalSlice4Operation, { readonly kind: "required_service" }> => operation.kind === "required_service").map((operation) => ({ loan: operation.loan, at: operation.scheduledAt }));
     const instants = [...new Set(active.map((item) => item.at))].sort();
     for (const at of instants) {
       const requiredAt = active.filter((item) => item.at === at).sort((left, right) => right.loan.settlementPriority - left.loan.settlementPriority || left.loan.id.localeCompare(right.loan.id)); const pendingExtras: PendingExtra[] = [];
@@ -169,7 +369,7 @@ export const runVerticalSlice4 = (request: VerticalSlice4RunInput): VerticalSlic
         const priorAmortization = candidatePrimitiveState[loan.primitiveIds.amortization]; const evaluations = priorAmortization?.primitiveId === "P22" ? priorAmortization.state.evaluations : 0; let currentInterest = Money.zero(request.input.baseCurrency);
         if (openingPrincipal.isPositive() && evaluations >= loan.totalPayments) invalid("Post-maturity interest/default servicing is unsupported by PR 10", `loans.${loan.id}`, true);
         if (openingPrincipal.isPositive()) { const p24Work: PeriodWork[] = [{ id: `accrual:${loan.id}:${at}`, kind: "primitive", request: { primitiveId: "P24", input: { balance: openingPrincipal, rate: loan.annualRate }, parameters: { temporal: { measurement: "occurrence_based", contractualPeriod: "monthly", rateBasis: "nominal_annual_12", calendar: "utc", stubPeriodPolicy: "reject", dayCountConvention: "none", capitalization: "none" }, postingRounding: loan.postingRounding }, context: { evaluationInstant: at, scenarioId: request.runContext.scenarioId, primitiveInstanceId: loan.primitiveIds.accrual, economicTargetId: loan.principalLiabilityId, semanticEffectType: "interest-accrual", traceRefs } } }]; const p24 = runPeriod({ period, runContext: request.runContext, openingState: candidateState, primitiveState: candidatePrimitiveState, work: p24Work }); candidatePrimitiveState = p24.primitiveState; currentInterest = (p24.primitiveOutputs[0]!.output as { readonly accruedAmount: Money }).accruedAmount; }
-        const extraInstruction = (loan.extraPrincipalPayments ?? []).find((extra) => extra.scheduledAt === at); let contractualPayment = priorAmortization?.primitiveId === "P22" && priorAmortization.state.contractualPayment !== undefined ? priorAmortization.state.contractualPayment : fixedMortgagePayment(loan.originalPrincipal, loan.annualRate, loan.totalPayments, loan.postingRounding); let scheduledPrincipalProposed = Money.zero(request.input.baseCurrency); let extraPrincipalProposed = Money.zero(request.input.baseCurrency);
+        const extraInstruction = (loan.extraPrincipalPayments ?? []).find((extra) => extra.scheduledAt === at && !candidateState.identities.generatedOccurrenceKeys.includes(generatedOccurrenceKey({ scenarioId: request.runContext.scenarioId, primitiveInstanceId: extra.primitiveInstanceId, scheduledAt: at, semanticEffectType: "extra-principal-payment", economicTargetId: loan.principalLiabilityId }))); let contractualPayment = priorAmortization?.primitiveId === "P22" && priorAmortization.state.contractualPayment !== undefined ? priorAmortization.state.contractualPayment : fixedMortgagePayment(loan.originalPrincipal, loan.annualRate, loan.totalPayments, loan.postingRounding); let scheduledPrincipalProposed = Money.zero(request.input.baseCurrency); let extraPrincipalProposed = Money.zero(request.input.baseCurrency);
         if (openingPrincipal.isPositive() && evaluations < loan.totalPayments) { const p22Work: PeriodWork[] = [{ id: `amortization:${loan.id}:${at}`, kind: "primitive", request: { primitiveId: "P22", input: { openingPrincipal, currentInterest, ...(extraInstruction === undefined ? {} : { extraPrincipal: extraInstruction.amount }) }, parameters: { originalPrincipal: loan.originalPrincipal, annualRate: loan.annualRate, totalPayments: loan.totalPayments, postingRounding: loan.postingRounding }, context: { evaluationInstant: at, scenarioId: request.runContext.scenarioId, primitiveInstanceId: loan.primitiveIds.amortization, economicTargetId: loan.principalLiabilityId, semanticEffectType: "amortization", traceRefs } } }]; const p22 = runPeriod({ period, runContext: request.runContext, openingState: candidateState, primitiveState: candidatePrimitiveState, work: p22Work }); candidatePrimitiveState = p22.primitiveState; const proposal = p22.primitiveOutputs[0]!.output as { readonly contractualPayment: Money; readonly scheduledPrincipalProposed: Money; readonly extraPrincipalProposed: Money }; contractualPayment = proposal.contractualPayment; scheduledPrincipalProposed = proposal.scheduledPrincipalProposed; extraPrincipalProposed = proposal.extraPrincipalProposed; }
         if (currentInterest.isPositive()) { const recognition = createRecognitionFact({ id: recognitionId(`recognition:mortgage-interest:${loan.id}:${at}`), category: "mortgage_interest_expense", amount: currentInterest, recognizedAt: at, sourceOccurrenceKey: occurrenceId, provenance: generatedProvenance, traceRefs }, candidateState.identities.recognitionIds); registerAuthoritativeIdentity(candidateState.identities, "recognitionIds", recognition.id); recognitions.push(recognition); const obligation = createObligation({ id: claimId(`obligation:mortgage-interest:${loan.id}:${at}`), category: "mortgage_interest_payable", originatingRecognitionId: recognition.id, economicOwnerId: loan.ownerId, balanceEntityId: loan.interestPayableLiabilityId, originalAmount: currentInterest, recognizedAt: at, dueAt: at, traceRefs }, Object.values(candidateState.obligations)); candidateState.obligations[obligation.id] = obligation; effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "mortgage_interest_expense", amount: currentInterest, occurredAt: at, sourceOccurrenceKey: occurrenceId, recognitionId: recognition.id, provenance: generatedProvenance, traceRefs }), createSemanticEffect({ id: semanticEffectId(`effect:${obligation.id}`), kind: "claim", category: "mortgage_interest_payable", amount: currentInterest, occurredAt: at, sourceOccurrenceKey: occurrenceId, recognitionId: recognition.id, claimId: obligation.id, provenance: generatedProvenance, traceRefs })); const recognitionTx = transaction(`tx:recognition:mortgage-interest:${loan.id}:${at}`, at, "mortgage_interest_recognition", [{ posting: "debit", type: "expense", amount: currentInterest }, { posting: "credit", type: "liability", amount: currentInterest, entityId: loan.interestPayableLiabilityId }], traceRefs); applyAccountingTransactionAtomically(candidateState, recognitionTx); transactions.push(recognitionTx); interestExpense = interestExpense.plus(currentInterest); }
         const priorPrincipalDue = claimTotal(claimsFor(candidateState, loan.principalLiabilityId, "mortgage_principal_due"), request.input.baseCurrency); const unrepresentedPrincipal = openingPrincipal.minus(priorPrincipalDue); const newlyDuePrincipal = scheduledPrincipalProposed.compare(unrepresentedPrincipal) > 0 ? unrepresentedPrincipal : scheduledPrincipalProposed;
@@ -195,5 +395,21 @@ export const runVerticalSlice4 = (request: VerticalSlice4RunInput): VerticalSlic
     const result: VerticalSlice4PeriodResult = Object.freeze({ period: Object.freeze({ ...period }), liabilities: Object.freeze(loanResults.map((item) => Object.freeze({ ...item }))), interestExpense, principalReduction, endingPrincipal: totalLiability(candidateState, request.input.loans, "principal", request.input.baseCurrency), outstandingInterest: totalLiability(candidateState, request.input.loans, "interest", request.input.baseCurrency), transactions: Object.freeze(transactions), recognitions: Object.freeze(recognitions), settlementProposals: Object.freeze(proposals), settlements: Object.freeze(settlements), effects: Object.freeze(effects), constraintOutcomes: Object.freeze(outcomes), liquidityShortfalls: Object.freeze(shortfalls), statements: deriveStatements(candidateState, transactions, request.input.baseCurrency), diagnostics: Object.freeze(diagnostics), traceRefs: mergeTraceRefs(periodRefs)! }); state = candidateState; primitiveState = candidatePrimitiveState; committed.push(result); runDiagnostics.push(...diagnostics);
   } catch (error) { if (!(error instanceof ValidationError)) throw error; runDiagnostics.push(...error.issues); return Object.freeze({ status: "incomplete", runMetadata, requestedHorizon, stoppedAt: period.start, ...(committed.length === 0 ? {} : { reachedThrough: committed[committed.length - 1]!.period.end }), state, primitiveState, periods: Object.freeze(committed), diagnostics: Object.freeze(runDiagnostics) }); }
   return Object.freeze({ status: "completed", runMetadata, requestedHorizon, reachedThrough: requestedHorizon.end, state, primitiveState, periods: Object.freeze(committed), diagnostics: Object.freeze(runDiagnostics) });
+};
+
+/** Executes VS4 mechanics for one household candidate period. */
+export const executeVerticalSlice4PeriodCandidate = (
+  request: VerticalSlice4RunInput,
+  period: Period,
+  openingState: AuthoritativeState,
+  primitiveState: PrimitiveRuntimeStateStore,
+): { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly period: VerticalSlice4PeriodResult } => {
+  if (request.input.loans.length === 0) {
+    const state = cloneAuthoritativeState(openingState); const zero = Money.zero(request.input.baseCurrency); const transactions = Object.freeze([]) as readonly AccountingTransaction[];
+    return Object.freeze({ state, primitiveState: createPrimitiveRuntimeStateStore(primitiveState), period: Object.freeze({ period: Object.freeze({ ...period }), liabilities: Object.freeze([]), interestExpense: zero, principalReduction: zero, endingPrincipal: zero, outstandingInterest: zero, transactions, recognitions: Object.freeze([]), settlementProposals: Object.freeze([]), settlements: Object.freeze([]), effects: Object.freeze([]), constraintOutcomes: Object.freeze([]), liquidityShortfalls: Object.freeze([]), statements: deriveStatements(state, transactions, request.input.baseCurrency), diagnostics: Object.freeze([]), traceRefs: Object.freeze([]) }) });
+  }
+  const scopedContext = Object.freeze({ ...request.runContext, simulationStart: period.start, simulationEnd: period.end });
+  const prepared = prepareVerticalSlice4Period(scopedContext, request.input, period, openingState, primitiveState);
+  return executePreparedVerticalSlice4Period(prepared, openingState, primitiveState, request.input, scopedContext);
 };
 export const createVerticalSlice4Id = <Kind extends string>(kind: Kind, value: string): DomainId<Kind> => domainId(kind, value);

@@ -6,6 +6,7 @@ import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
 import { Money, Rate, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
 import { runVerticalSlice2, type VerticalSlice2Input } from "../src/verticalSlice2.js";
+import { executePreparedVerticalSlice2Occurrence, prepareVerticalSlice2Period } from "../src/simulation/verticalSlice2.js";
 
 const ids = {
   household: domainId("household", "10000000-0000-4000-8000-000000000001"),
@@ -103,6 +104,45 @@ const opening = (cash = "0", generatedOccurrenceKeys: readonly GeneratedOccurren
 });
 
 describe("Vertical Slice 2 growing household cash flow", () => {
+  it("prepares only eligible occurrences and exposes economic local ordering", () => {
+    const terminated = input();
+    const terminatedIncome = { ...terminated.incomes[0]!, terminationEventId: ids.clubStop, primitiveIds: { ...terminated.incomes[0]!.primitiveIds, termination: primitive(11) } };
+    const terminatedInput = { ...terminated, incomes: [terminatedIncome], expenses: [], events: [{ id: ids.clubStop, targetId: ids.salary, kind: "termination" as const, effectiveAt: anchor }] };
+    const preparedTerminated = prepareVerticalSlice2Period(context(1), terminatedInput, utcMonthlyPeriods(start, 1)[0]!, opening(), {});
+    expect(preparedTerminated.occurrences.some((item) => item.streamId === ids.salary)).toBe(false);
+
+    const prepared = prepareVerticalSlice2Period(context(1), input(), utcMonthlyPeriods(start, 1)[0]!, opening(), {});
+    const income = prepared.occurrences.find((item) => item.streamId === ids.salary)!;
+    const rent = prepared.occurrences.find((item) => item.streamId === ids.rent)!;
+    expect(rent.descriptor.dependsOn).toContain(income.descriptor.id);
+    expect(prepared.occurrences.every((item) => item.scheduledAt === anchor)).toBe(true);
+  });
+
+  it("rejects ambiguous same-instant expense ordering during preparation", () => {
+    const base = input();
+    const plainExpenses = base.expenses.map(({ activationEventId: _activationEventId, terminationEventId: _terminationEventId, primitiveIds, ...expense }) => ({ ...expense, primitiveIds: { indexGrowth: primitiveIds.indexGrowth, inflationLink: primitiveIds.inflationLink, recurrence: primitiveIds.recurrence } }));
+    const missing = { ...base, expenses: plainExpenses.map(({ settlementPriority: _priority, ...expense }) => expense) };
+    expect(() => prepareVerticalSlice2Period(context(1), missing, utcMonthlyPeriods(start, 1)[0]!, opening(), {})).toThrow(/distinct settlement priorities/);
+    const equal = { ...base, expenses: plainExpenses.map((expense) => ({ ...expense, settlementPriority: 10 })) };
+    expect(() => prepareVerticalSlice2Period(context(1), equal, utcMonthlyPeriods(start, 1)[0]!, opening(), {})).toThrow(/distinct settlement priorities/);
+  });
+
+  it("executes prepared occurrences through the standalone VS2 mechanics", () => {
+    const period = utcMonthlyPeriods(start, 1)[0]!;
+    const standalone = runVerticalSlice2({ runContext: context(1), openingState: opening(), input: input(), months: 1 });
+    const prepared = prepareVerticalSlice2Period(context(1), input(), period, opening(), {});
+    let state = prepared.state;
+    let primitiveState = prepared.primitiveState;
+    const ordered = [...prepared.occurrences].sort((left, right) => left.descriptor.dependsOn.length - right.descriptor.dependsOn.length || left.descriptor.id.localeCompare(right.descriptor.id));
+    for (const occurrence of ordered) {
+      const executed = executePreparedVerticalSlice2Occurrence(prepared, occurrence, state, primitiveState, input(), context(1));
+      state = executed.state;
+      primitiveState = executed.primitiveState;
+    }
+    expect(state.accounts[ids.cash]!.cash).toEqual(standalone.state.accounts[ids.cash]!.cash);
+    expect(state.liabilities[ids.payable]!.balance).toEqual(standalone.state.liabilities[ids.payable]!.balance);
+  });
+
   it("composes recurring income, inflation-linked expenses, and half-open events", () => {
     const result = runVerticalSlice2({ runContext: context(13), openingState: opening(), input: input("0.05", "0.02"), months: 13 });
     expect(result.status).toBe("completed");

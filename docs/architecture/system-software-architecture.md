@@ -1,6 +1,6 @@
 # Personal Finance App — System / Software Architecture Specification
 
-**Version:** 1.2.1-draft
+**Version:** 1.2.2-draft
 **Status:** Architecture baseline  
 **Namespace:** `pfm`  
 **Applies to:** Prototype → Personal MVP → Private Alpha  
@@ -3156,6 +3156,14 @@ This is **not** a UI aggregation PR.
 Introduce an engine/application orchestration contract that establishes one authoritative household state transition across the applicable cash-flow, investment, and liability mechanics.
 
 The reconciled orchestrator SHALL implement Executable Financial Semantics Sections 3.4–3.5 and 9 as its temporal, ordering, and dependency authority. It SHALL construct one unified intraperiod household work plan and SHALL NOT establish economic precedence by serially executing complete vertical slices. Vertical-slice/module identity is a capability/composition boundary, not a temporal or economic-priority boundary.
+
+Partial compiler opening states merge by entity ID: an entity emitted once is retained; duplicate representations must be canonically exact-equal or the model is invalid. Identity registries are sorted set unions. Primitive runtime stores follow the same exact-equality rule. The merged state is revalidated in full; compiler/request order never selects an economic representation.
+
+`HouseholdContentionPolicy` v1 is an optional, identity-bearing partial-order DAG over cross-domain operation classes. It has no implicit hierarchy. A policy is required only when actually eligible, otherwise-independent same-instant operations can produce different authoritative economic outcomes because of constrained shared state; mere simultaneous or overlapping access is not contention. Missing, cyclic, contradictory, or temporally impossible precedence is `invalid_model` when statically knowable; a later state-dependent failure rolls back its whole candidate period and is `incomplete`.
+
+The scheduling boundary uses serializable work descriptors (stable operation ID, sequencing instant, dependencies, operation class, declared cash accesses, primitive/occurrence identities, and trace references). It contains no executable closures. Slice-local ordering is translated into dependencies before policy is considered; stable IDs may break ties only after all economic contention is resolved.
+
+Household asset totals include account cash, position value, and only identity-preserving supported non-overlap standalone assets. Unsupported or ambiguous in-scope Asset projection semantics capability-gate the household result rather than silently understating net worth. Account containers and already-represented obligations are never added again.
 
 The orchestrator SHALL advance state-interacting work by the canonical applicable sequencing instant. Pure calculations MAY be precomputed only when that does not expose later state early, change eligibility/precedence, or alter an authoritative result. Candidate-state visibility between operations must arise from explicit chronological progression, declared dependencies, or another explicit semantic contract; incidental mutation/call order is not a dependency.
 

@@ -6,7 +6,7 @@ import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { claimId, createObligation, createSettlementProposal, recognitionId, settlementProposalId } from "../src/semantics/index.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
 import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
-import { runVerticalSlice3, type VerticalSlice3Input } from "../src/verticalSlice3.js";
+import { executePreparedVerticalSlice3Operation, prepareVerticalSlice3Period, runVerticalSlice3, type VerticalSlice3Input } from "../src/verticalSlice3.js";
 import { runVerticalSlice2, type VerticalSlice2Input } from "../src/verticalSlice2.js";
 
 const ids = {
@@ -67,6 +67,35 @@ const baseInput = (): VerticalSlice3Input => ({
 });
 
 describe("Vertical Slice 3 savings and investments", () => {
+  it("prepares eligible operation mechanics and executes them against one candidate like standalone VS3", () => {
+    const input = baseInput();
+    const prepared = prepareVerticalSlice3Period(context(), input, utcMonthlyPeriods(start, 1)[0]!, opening());
+    expect(prepared.operations.filter((operation) => operation.kind === "valuation")).toHaveLength(2);
+    expect(prepared.operations.filter((operation) => operation.kind !== "valuation")).toHaveLength(3);
+    const executed = new Set<string>();
+    let state = prepared.state;
+    let primitiveState = prepared.primitiveState;
+    while (executed.size < prepared.operations.length) {
+      const next = prepared.operations.find((operation) => !executed.has(operation.descriptor.id) && operation.descriptor.dependsOn.every((id) => executed.has(id)))!;
+      const result = executePreparedVerticalSlice3Operation(prepared, next, state, primitiveState, input, context());
+      state = result.state;
+      primitiveState = result.primitiveState;
+      executed.add(next.descriptor.id);
+    }
+    const standalone = runVerticalSlice3({ runContext: context(), openingState: opening(), input, months: 1 });
+    expect(state).toEqual(standalone.state);
+    expect(primitiveState).toEqual(standalone.primitiveState);
+    expect(standalone.periods[0]!.transactions).toHaveLength(3);
+  });
+
+  it("prepares no investment operations when schedules are ineligible", () => {
+    const input = baseInput();
+    const period = utcMonthlyPeriods(start, 1)[0]!;
+    const prepared = prepareVerticalSlice3Period(context(), { ...input, transfers: [], purchases: [], fees: [] }, period, opening());
+    expect(prepared.operations.every((operation) => operation.kind === "valuation")).toBe(true);
+    expect(prepared.operations.every((operation) => operation.descriptor.dependsOn.length === 0)).toBe(true);
+  });
+
   it("preserves transfer value, exchanges purchase principal, marks positions once, and separates gains", () => {
     const result = runVerticalSlice3({ runContext: context(), openingState: opening(), input: baseInput(), months: 1 });
     expect(result.status).toBe("completed");

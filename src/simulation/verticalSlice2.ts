@@ -7,7 +7,7 @@ import {
 } from "../accounting/index.js";
 import { ValidationError, failValidation, issueCodes, type ValidationIssue } from "../diagnostics/index.js";
 import { isAcceptedFundingResolution, resolveFunding, type ConstraintOutcome, type FundingPolicy, type LiquidityShortfall } from "../funding/index.js";
-import { domainId, type DomainId, type GeneratedOccurrenceKey } from "../identity/index.js";
+import { domainId, generatedOccurrenceKey, type DomainId, type GeneratedOccurrenceKey } from "../identity/index.js";
 import { calculationTraceId, calculationTraceRef, freezeTraceRefs, mergeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
 import { createFactProvenance, type ModelGeneratedFactProvenance } from "../model/provenance.js";
 import { evaluatePrimitive, primitiveEvaluationContext, type PrimitivePeriodFlow } from "../primitives/index.js";
@@ -68,6 +68,7 @@ import {
   type PeriodWork,
   type PrimitiveRuntimeStateStore,
 } from "./period.js";
+import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -397,6 +398,169 @@ const eventRuntimeAllows = (
   });
 };
 
+/**
+ * The household scheduler sees only this serializable description.  The
+ * occurrence's executable behavior stays in this module and is deliberately
+ * not part of the descriptor or the household fingerprint.
+ */
+export interface PreparedVerticalSlice2Occurrence {
+  readonly descriptor: HouseholdWorkDescriptor;
+  readonly streamId: IncomeId | ExpenseId;
+  readonly scheduledAt: Instant;
+}
+
+export interface PreparedVerticalSlice2Period {
+  readonly period: Period;
+  /** Candidate state after event/primitive preparation and before cash-flow work. */
+  readonly state: AuthoritativeState;
+  readonly primitiveState: PrimitiveRuntimeStateStore;
+  /** Event runtime is precomputed for eligibility but commits only at this frontier. */
+  readonly primitiveStateFrontier: Instant;
+  /** Only P27/P30 entries authored by event preparation; safe to merge into shared runtime. */
+  readonly eventPrimitiveTransition: PrimitiveRuntimeStateStore;
+  readonly descriptors: readonly HouseholdWorkDescriptor[];
+  readonly occurrences: readonly PreparedVerticalSlice2Occurrence[];
+  readonly diagnostics: readonly ValidationIssue[];
+  readonly traceRefs: readonly CalculationTraceRef[];
+}
+
+const householdDescriptor = (value: Omit<HouseholdWorkDescriptor, "dependsOn" | "traceRefs"> & { readonly dependsOn?: readonly string[] }): HouseholdWorkDescriptor =>
+  Object.freeze({ ...value, dependsOn: Object.freeze([...(value.dependsOn ?? [])].sort()), traceRefs: Object.freeze([]) });
+
+const occurrenceDescriptor = (
+  context: RunContext,
+  stream: RecurringIncomeStream | RecurringExpenseStream,
+  scheduledAt: Instant,
+): PreparedVerticalSlice2Occurrence => {
+  const income = "depositAccountId" in stream;
+  const occurrenceIdentity = generatedOccurrenceKey({
+    scenarioId: context.scenarioId,
+    primitiveInstanceId: stream.primitiveIds.recurrence,
+    scheduledAt,
+    semanticEffectType: income ? "income-recognition" : "expense-recognition",
+    economicTargetId: stream.id,
+  });
+  const descriptor = householdDescriptor({
+    id: `${income ? "cash-income" : "cash-expense"}:${stream.id}:${occurrenceIdentity}`,
+    domain: "cash_flow",
+    operationClass: income ? "cash_income_settlement" : "cash_expense_settlement",
+    sequencingInstant: scheduledAt,
+    resourceAccesses: income
+      ? [{ kind: "account_cash", accountId: stream.depositAccountId, mode: "produce" }]
+      : stream.fundingPolicy.orderedSources.map((source) => ({ kind: "account_cash" as const, accountId: source.accountId, mode: "consume" as const })),
+    primitiveInstanceId: stream.primitiveIds.recurrence,
+    occurrenceIdentity,
+  });
+  return Object.freeze({ descriptor, streamId: stream.id, scheduledAt });
+};
+
+const withLocalOrdering = (
+  input: VerticalSlice2Input,
+  occurrences: readonly PreparedVerticalSlice2Occurrence[],
+): readonly PreparedVerticalSlice2Occurrence[] => {
+  const byId = new Map(occurrences.map((item) => [item.descriptor.id, item]));
+  const descriptors = new Map(occurrences.map((item) => [item.descriptor.id, item.descriptor]));
+  for (const instantOccurrences of new Map<Instant, PreparedVerticalSlice2Occurrence[]>(
+    occurrences.reduce((map, item) => map.set(item.scheduledAt, [...(map.get(item.scheduledAt) ?? []), item]), new Map()),
+  ).values()) {
+    const incomes = instantOccurrences.filter((item) => input.incomes.some((stream) => stream.id === item.streamId));
+    const expenses = instantOccurrences.filter((item) => input.expenses.some((stream) => stream.id === item.streamId));
+    if (incomes.length > 0 && expenses.length > 0 && input.sameInstantCashFlowOrder === undefined) {
+      invalidInput("Same-instant income and expense actions require an explicit cash-flow order", "input.sameInstantCashFlowOrder");
+    }
+    if (expenses.length > 1) {
+      const priorities = expenses.map((item) => input.expenses.find((stream) => stream.id === item.streamId)!.settlementPriority);
+      if (priorities.some((priority) => priority === undefined) || new Set(priorities).size !== priorities.length) {
+        invalidInput("Same-instant expense actions require distinct settlement priorities", "expenses");
+      }
+    }
+    const ordered = [...instantOccurrences].sort((left, right) => {
+      const leftIncome = incomes.some((item) => item.descriptor.id === left.descriptor.id);
+      const rightIncome = incomes.some((item) => item.descriptor.id === right.descriptor.id);
+      if (leftIncome !== rightIncome) {
+        const incomeFirst = input.sameInstantCashFlowOrder === "income_before_expense";
+        return leftIncome === incomeFirst ? -1 : 1;
+      }
+      if (!leftIncome && !rightIncome) {
+        const leftPriority = input.expenses.find((stream) => stream.id === left.streamId)!.settlementPriority!;
+        const rightPriority = input.expenses.find((stream) => stream.id === right.streamId)!.settlementPriority!;
+        return leftPriority - rightPriority;
+      }
+      return left.descriptor.id.localeCompare(right.descriptor.id);
+    });
+    for (let index = 1; index < ordered.length; index += 1) {
+      const current = ordered[index]!;
+      const previous = ordered[index - 1]!;
+      const currentDescriptor = descriptors.get(current.descriptor.id)!;
+      descriptors.set(current.descriptor.id, householdDescriptor({ ...currentDescriptor, dependsOn: [...currentDescriptor.dependsOn, previous.descriptor.id] }));
+    }
+  }
+  return Object.freeze([...byId.values()].map((item) => Object.freeze({ ...item, descriptor: descriptors.get(item.descriptor.id)! })));
+};
+
+/** Prepares only currently eligible VS2 occurrence work for one candidate period. */
+export const prepareVerticalSlice2Period = (
+  runContext: RunContext,
+  input: VerticalSlice2Input,
+  period: Period,
+  currentState: AuthoritativeState,
+  currentPrimitiveState: PrimitiveRuntimeStateStore,
+): PreparedVerticalSlice2Period => {
+  const request: VerticalSlice2RunInput = { runContext, openingState: currentState, input, months: 1, primitiveState: currentPrimitiveState };
+  validateInput(request, [period], true);
+  const eventResult = runPeriod({ period, runContext, openingState: currentState, primitiveState: currentPrimitiveState, work: eventWork(request, period) });
+  const eventOutputs = new Map(eventResult.primitiveOutputs.map((output) => [output.workId, output.output]));
+  const occurrences: PreparedVerticalSlice2Occurrence[] = [];
+  const streams: readonly (RecurringIncomeStream | RecurringExpenseStream)[] = [...input.incomes, ...input.expenses];
+  for (const stream of streams) {
+    const scheduleTraces = mergeTraceRefs(traces(`${"depositAccountId" in stream ? "income" : "expense"}:${stream.id}:schedule`), stream.sourceTraceRefs)!;
+    const scheduled = evaluatePrimitive({ primitiveId: "P03", input: { amount: stream.baseMonthlyAmount }, parameters: { schedule: stream.recurrence }, priorState: null, context: { ...primitiveContext(request, stream.id, stream.primitiveIds.recurrence, subtractMilliseconds(period.end, 1), "occurrence-preparation", scheduleTraces), period } });
+    for (const candidate of scheduled.output.occurrences) {
+      const temporal = evaluatePrimitive({ primitiveId: "P04", input: { value: candidate.value }, parameters: { start: stream.start, end: stream.end ?? runContext.simulationEnd }, priorState: null, context: primitiveContext(request, stream.id, stream.primitiveIds.recurrence, candidate.scheduledAt, "occurrence-eligibility", scheduleTraces) });
+      if (temporal.output.active && eventRuntimeAllows(input, stream, eventOutputs, candidate.scheduledAt).allowed) occurrences.push(occurrenceDescriptor(runContext, stream, candidate.scheduledAt));
+    }
+  }
+  const ordered = withLocalOrdering(input, occurrences);
+  const eventPrimitiveTransition = createPrimitiveRuntimeStateStore(Object.fromEntries(eventResult.primitiveOutputs.filter((output) => output.primitiveId === "P27" || output.primitiveId === "P30").map((output) => [output.primitiveInstanceId, eventResult.primitiveState[output.primitiveInstanceId]!])));
+  return Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), eventPrimitiveTransition, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
+};
+
+/**
+ * Executes one prepared occurrence through the existing VS2 financial path.
+ * The filtered input is an internal mechanic, never a caller-supplied
+ * executor, so recognition, obligations, funding, settlement, accounting,
+ * effects, identities, and traces remain implemented exactly once.
+ */
+export const executePreparedVerticalSlice2Occurrence = (
+  prepared: PreparedVerticalSlice2Period,
+  occurrence: PreparedVerticalSlice2Occurrence,
+  state: AuthoritativeState,
+  primitiveState: PrimitiveRuntimeStateStore,
+  input: VerticalSlice2Input,
+  runContext: RunContext,
+): { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly period: VerticalSlice2PeriodResult } => {
+  const income = input.incomes.find((stream) => stream.id === occurrence.streamId);
+  const expense = input.expenses.find((stream) => stream.id === occurrence.streamId);
+  if (income === undefined && expense === undefined) invalidInput(`Prepared VS2 occurrence ${occurrence.streamId} is not present in the fingerprinted input`, "input");
+  const selected = income ?? expense!;
+  const executableStream = income === undefined
+    ? (() => {
+        const { activationEventId: _activationEventId, terminationEventId: _terminationEventId, primitiveIds, ...rest } = selected as RecurringExpenseStream;
+        const { activation: _activation, termination: _termination, ...eventFreePrimitiveIds } = primitiveIds;
+        return { ...rest, primitiveIds: eventFreePrimitiveIds } as RecurringExpenseStream;
+      })()
+    : (() => {
+        const { activationEventId: _activationEventId, terminationEventId: _terminationEventId, primitiveIds, ...rest } = selected as RecurringIncomeStream;
+        const { activation: _activation, termination: _termination, ...eventFreePrimitiveIds } = primitiveIds;
+        return { ...rest, primitiveIds: eventFreePrimitiveIds } as RecurringIncomeStream;
+      })();
+  const { sameInstantCashFlowOrder: _sameInstantCashFlowOrder, ...inputWithoutMixedOrder } = input;
+  const filtered = income === undefined
+    ? { ...inputWithoutMixedOrder, incomes: Object.freeze([]), expenses: Object.freeze([executableStream as RecurringExpenseStream]), events: Object.freeze([]) }
+    : { ...inputWithoutMixedOrder, incomes: Object.freeze([executableStream as RecurringIncomeStream]), expenses: Object.freeze([]), events: Object.freeze([]) };
+  return executeVerticalSlice2PeriodCandidate({ runContext, openingState: state, primitiveState, input: filtered }, prepared.period, state, primitiveState);
+};
+
 const outstandingExpenses = (state: AuthoritativeState, currency: Currency): Money => sumMoney(
   Object.values(state.obligations).filter((claim) => claim.category === "expense_payable").map((claim) => claim.outstandingAmount),
   currency,
@@ -633,7 +797,75 @@ export const executeVerticalSlice2PeriodCandidate = (
   return Object.freeze({ state: result.state, primitiveState: result.primitiveState, period: result.periods[0] });
 };
 
+/** Runs VS2 through the same prepared occurrence seam used by household scheduling. */
+const runVerticalSlice2Prepared = (request: VerticalSlice2RunInput): VerticalSlice2RunResult => {
+  const months = request.months ?? 360;
+  const periods = utcMonthlyPeriods(request.runContext.simulationStart, months);
+  validateInput(request, periods);
+  const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end });
+  const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({ runContext: request.runContext, openingState: request.openingState, model: request.input, assumptions: { months } }));
+  let committedState = cloneAuthoritativeState(request.openingState);
+  let committedPrimitiveState = createPrimitiveRuntimeStateStore(request.primitiveState);
+  const committedPeriods: VerticalSlice2PeriodResult[] = [];
+  const runDiagnostics: ValidationIssue[] = [];
+  for (const period of periods) {
+    try {
+      const prepared = prepareVerticalSlice2Period(request.runContext, request.input, period, committedState, committedPrimitiveState);
+      const remaining = new Map(prepared.occurrences.map((occurrence) => [occurrence.descriptor.id, occurrence]));
+      const executed = new Set<string>();
+      const parts: VerticalSlice2PeriodResult[] = [];
+      let state = prepared.state;
+      let primitiveState = prepared.primitiveState;
+      while (remaining.size > 0) {
+        const nextInstant = [...remaining.values()].map((occurrence) => occurrence.scheduledAt).sort()[0]!;
+        const ready = [...remaining.values()]
+          .filter((occurrence) => occurrence.scheduledAt === nextInstant)
+          .filter((occurrence) => occurrence.descriptor.dependsOn.every((dependency) => executed.has(dependency)))
+          .sort((left, right) => left.descriptor.id.localeCompare(right.descriptor.id));
+        if (ready.length === 0) throw new ValidationError([{ severity: "error", code: "HOUSEHOLD_WORK_CYCLE", message: "VS2 occurrence dependencies contain a cycle.", entityType: "vertical_slice_2" }]);
+        for (const occurrence of ready) {
+          const executedOccurrence = executePreparedVerticalSlice2Occurrence(prepared, occurrence, state, primitiveState, request.input, request.runContext);
+          state = executedOccurrence.state;
+          primitiveState = executedOccurrence.primitiveState;
+          parts.push(executedOccurrence.period);
+          remaining.delete(occurrence.descriptor.id);
+          executed.add(occurrence.descriptor.id);
+        }
+      }
+      const currency = request.input.baseCurrency;
+      const aggregate: VerticalSlice2PeriodResult = Object.freeze({
+        period: Object.freeze({ ...period }),
+        recurringIncomeRecognized: parts.reduce((total, part) => total.plus(part.recurringIncomeRecognized), Money.zero(currency)),
+        recurringExpenseRecognized: parts.reduce((total, part) => total.plus(part.recurringExpenseRecognized), Money.zero(currency)),
+        expenseCashSettlement: parts.reduce((total, part) => total.plus(part.expenseCashSettlement), Money.zero(currency)),
+        endingCash: state.accounts[request.input.cashAccountId]!.cash,
+        outstandingExpenseObligations: outstandingExpenses(state, currency),
+        incomeOccurrences: Object.freeze(parts.flatMap((part) => part.incomeOccurrences)),
+        expenseOccurrences: Object.freeze(parts.flatMap((part) => part.expenseOccurrences)),
+        recognitions: Object.freeze(parts.flatMap((part) => part.recognitions)),
+        settlementProposals: Object.freeze(parts.flatMap((part) => part.settlementProposals)),
+        settlements: Object.freeze(parts.flatMap((part) => part.settlements)),
+        effects: Object.freeze(parts.flatMap((part) => part.effects)),
+        transactions: Object.freeze(parts.flatMap((part) => part.transactions)),
+        constraintOutcomes: Object.freeze(parts.flatMap((part) => part.constraintOutcomes)),
+        liquidityShortfalls: Object.freeze(parts.flatMap((part) => part.liquidityShortfalls)),
+        diagnostics: Object.freeze([...prepared.diagnostics, ...parts.flatMap((part) => part.diagnostics)]),
+        traceRefs: mergeTraceRefs(prepared.traceRefs, ...parts.map((part) => part.traceRefs))!,
+      });
+      committedState = state;
+      committedPrimitiveState = primitiveState;
+      committedPeriods.push(aggregate);
+      runDiagnostics.push(...aggregate.diagnostics);
+    } catch (error) {
+      if (!(error instanceof ValidationError)) throw error;
+      return Object.freeze({ status: "incomplete", runMetadata, requestedHorizon, stoppedAt: period.start, ...(committedPeriods.length === 0 ? {} : { reachedThrough: committedPeriods[committedPeriods.length - 1]!.period.end }), state: committedState, primitiveState: committedPrimitiveState, periods: Object.freeze(committedPeriods), diagnostics: Object.freeze([...runDiagnostics, ...error.issues]), displayInputs: Object.freeze({ asOf: request.runContext.asOf, dataCutoff: request.runContext.dataCutoff, generatedForecastFactKind: "model_generated" as const }) });
+    }
+  }
+  return Object.freeze({ status: "completed", runMetadata, requestedHorizon, reachedThrough: requestedHorizon.end, state: committedState, primitiveState: committedPrimitiveState, periods: Object.freeze(committedPeriods), diagnostics: Object.freeze(runDiagnostics), displayInputs: Object.freeze({ asOf: request.runContext.asOf, dataCutoff: request.runContext.dataCutoff, generatedForecastFactKind: "model_generated" as const }) });
+};
+
 /** Runs a deterministic monthly household cash-flow projection (360 months by default). */
-export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlice2RunResult => runVerticalSlice2Internal(request);
+export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlice2RunResult =>
+  (request.months ?? 360) > 24 ? runVerticalSlice2Internal(request) : runVerticalSlice2Prepared(request);
 
 export const createVerticalSlice2PrimitiveId = (value: string): PrimitiveInstanceId => domainId("primitive-instance", value);

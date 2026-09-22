@@ -43,6 +43,7 @@ export type SameInstantCashFlowOrder =
 
 export interface CashFlowCompilerRequest {
   readonly baseCurrency: string;
+  readonly asOf?: string;
   readonly simulationStart: string;
   readonly simulationEnd: string;
   readonly sameInstantCashFlowOrder: SameInstantCashFlowOrder;
