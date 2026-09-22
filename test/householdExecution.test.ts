@@ -19,6 +19,7 @@ const ids = {
   standaloneAsset: "93000000-0000-4000-8000-000000000012",
   missingPrincipal: domainId("liability", "93000000-0000-4000-8000-000000000009"), missingInterest: domainId("liability", "93000000-0000-4000-8000-000000000010"), loan: domainId("loan-contract", "93000000-0000-4000-8000-000000000011"),
   secondPrincipal: domainId("liability", "93000000-0000-4000-8000-000000000014"), secondInterest: domainId("liability", "93000000-0000-4000-8000-000000000015"), secondLoan: domainId("loan-contract", "93000000-0000-4000-8000-000000000016"),
+  savings: domainId("account", "93000000-0000-4000-8000-000000000019"), transfer: domainId("transfer", "93000000-0000-4000-8000-000000000020"),
 };
 const scenario = "93000000-0000-4000-8000-000000000007";
 const start = instant("2026-01-01T00:00:00.000Z"); const end = instant("2026-02-01T00:00:00.000Z");
@@ -158,6 +159,20 @@ describe("compiled household execution", () => {
     expect(result.periods).toHaveLength(0);
     expect(result.state).toEqual(openingState);
     expect(result.primitiveState).toEqual({});
+  });
+
+  it("does not let an end-of-period investment transfer fund earlier debt service", () => {
+    const funding = createFundingPolicy({ id: fundingPolicyId("household:eop"), orderedSources: [{ kind: "cash_account", accountId: ids.cash }], allowPartial: false, insufficientFundsBehavior: "unfunded" });
+    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: {
+      ...compiled(), cashFlowInput: undefined,
+      reconciledOpeningState: createAuthoritativeState({ ...opening(), accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.owner, cash: money("0") }, [ids.savings]: { id: ids.savings, kind: "savings", ownerId: ids.owner, cash: money("100") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") }, [ids.missingPrincipal]: { id: ids.missingPrincipal, balance: money("100") }, [ids.missingInterest]: { id: ids.missingInterest, balance: money("0") } } }),
+      investmentInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, valuationAccountingPolicy: "economic_only", ruleCatalog: [], purchases: [], fees: [], returns: [], transfers: [{ id: ids.transfer, sourceAccountId: ids.savings, destinationAccountId: ids.cash, amount: money("100"), eligibilitySchedule: { kind: "explicit_instants", instants: [instant("2026-01-05T00:00:00.000Z")] }, executionTiming: "end_of_period", order: 1, schedulePrimitiveId: primitive("97") }] },
+      liabilityInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [{ id: ids.loan, ownerId: ids.owner, principalLiabilityId: ids.missingPrincipal, interestPayableLiabilityId: ids.missingInterest, originalPrincipal: money("100"), annualRate: Rate.fromDecimal("0", rateConvention.nominalAnnual(12)), totalPayments: 1, rateType: "fixed", paymentFrequency: "monthly", interestConvention: "nominal_annual_12", amortization: "fully_amortizing", paymentResetPolicy: "fixed_no_recast", interestCapitalization: "none", partialPaymentPolicy: "all_or_nothing", paymentSchedule: { kind: "utc_monthly", anchor: instant("2026-01-05T00:00:00.000Z"), invalidDayPolicy: "skip" }, fundingPolicy: funding, settlementPriority: 1, extraPrincipalPayments: [], postingRounding: RoundingPolicy.currency(2, "half_up"), primitiveIds: { schedule: primitive("98"), amortization: primitive("99"), accrual: primitive("100") } }] },
+    } });
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.periods[0]!.liability!.principalReduction.isZero()).toBe(true);
+    expect(result.state.accounts[ids.cash]!.cash.equals(money("100"))).toBe(true);
+    expect(result.state.liabilities[ids.missingPrincipal]!.balance.equals(money("100"))).toBe(true);
   });
 
   it("commits a staged termination runtime even when it suppresses every occurrence", () => {
