@@ -234,6 +234,18 @@ describe("compiled household execution", () => {
     expect(result.state.liabilities[ids.missingPrincipal]!.balance.equals(money("100"))).toBe(true);
   });
 
+  it("rejects equal-order end-of-period investment operations sharing an economic target", () => {
+    const transfer = (id: typeof ids.transfer, primitiveId: ReturnType<typeof primitive>) => ({ id, sourceAccountId: ids.cash, destinationAccountId: ids.savings, amount: money("10"), eligibilitySchedule: { kind: "explicit_instants" as const, instants: [instant("2026-01-20T00:00:00.000Z")] }, executionTiming: "end_of_period" as const, order: 1, schedulePrimitiveId: primitiveId });
+    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: {
+      ...compiled(), cashFlowInput: undefined,
+      reconciledOpeningState: createAuthoritativeState({ ...opening(), accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.owner, cash: money("100") }, [ids.savings]: { id: ids.savings, kind: "savings", ownerId: ids.owner, cash: money("0") } } }),
+      investmentInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, valuationAccountingPolicy: "economic_only", ruleCatalog: [], purchases: [], fees: [], returns: [], transfers: [transfer(ids.transfer, primitive("114")), transfer(domainId("transfer", "93000000-0000-4000-8000-000000000024"), primitive("115"))] },
+    } });
+    expect(result.status).toBe("incomplete");
+    expect(result.diagnostics.some((issue) => issue.code === "VERTICAL_SLICE_3_INPUT_INVALID")).toBe(true);
+    expect(result.periods).toHaveLength(0);
+  });
+
   it("commits a staged termination runtime even when it suppresses every occurrence", () => {
     const termination = domainId("event", "93000000-0000-4000-8000-000000000013");
     const terminationPrimitive = primitive("30");
