@@ -203,6 +203,23 @@ describe("compiled household execution", () => {
     expect(result.state.identities.generatedOccurrenceKeys).toHaveLength(2);
   });
 
+  it("rolls a failed later period back to the last committed state, runtime, and identities", () => {
+    const reconciledOpeningState = createAuthoritativeState({ ...opening(), accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.owner, cash: money("0") }, [ids.savings]: { id: ids.savings, kind: "savings", ownerId: ids.owner, cash: money("0") } } });
+    const oneMonth = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...compiled(), reconciledOpeningState } });
+    const twoMonths = runCompiledHouseholdProjection({ runContext: context(2), compiled: {
+      ...compiled(), executionMonths: 2,
+      reconciledOpeningState,
+      investmentInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, valuationAccountingPolicy: "economic_only", ruleCatalog: [], purchases: [], fees: [], returns: [], transfers: [{ id: ids.transfer, sourceAccountId: ids.cash, destinationAccountId: ids.savings, amount: money("300"), eligibilitySchedule: { kind: "explicit_instants", instants: [instant("2026-02-05T00:00:00.000Z")] }, executionTiming: "end_of_period", order: 1, schedulePrimitiveId: primitive("112") }] },
+    } });
+    expect(oneMonth.status).toBe("completed");
+    expect(twoMonths.status).toBe("incomplete");
+    expect(twoMonths.periods).toHaveLength(1);
+    expect(twoMonths.state).toEqual(oneMonth.state);
+    expect(twoMonths.primitiveState).toEqual(oneMonth.primitiveState);
+    expect(twoMonths.state.identities).toEqual(oneMonth.state.identities);
+    expect(twoMonths.stoppedAt).toBe(instant("2026-02-01T00:00:00.000Z"));
+  });
+
   it("does not let an end-of-period investment transfer fund earlier debt service", () => {
     const funding = createFundingPolicy({ id: fundingPolicyId("household:eop"), orderedSources: [{ kind: "cash_account", accountId: ids.cash }], allowPartial: false, insufficientFundsBehavior: "unfunded" });
     const result = runCompiledHouseholdProjection({ runContext: context(), compiled: {
