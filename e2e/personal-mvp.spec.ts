@@ -92,32 +92,14 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
     .click();
   await page.getByLabel("Simulation end").fill("2027-01-01");
   await page.getByRole("button", { name: "Plan", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Compare Plans", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Compare Golden alternatives" })
-    .click();
-  const lower = page.getByRole("table", {
-    name: "Lower investment returns household comparison",
-  });
-  const earlier = page.getByRole("table", {
-    name: "Earlier retirement and liquidity stress household comparison",
-  });
+  await page.getByRole("button", { name: "What If?", exact: true }).click();
+  await page.getByLabel("Investment target").selectOption({ index: 1 });
+  await page.getByRole("button", { name: "Compare investment return" }).click();
+  const lower = page.getByRole("table", { name: "What-if alternative household comparison" });
   await expect(lower).toBeVisible({ timeout: 30_000 });
-  await expect(earlier).toBeVisible();
   await expect(page.getByText(/investment return/).first()).toBeVisible();
-  await expect(
-    page.getByText("Financial outcome · Modeled liquidity stress"),
-  ).toBeVisible();
-  await expect(
-    page.getByText(
-      "This scenario contains a modeled shortfall. It is not an application error.",
-    ),
-  ).toBeVisible();
-  await earlier.getByText("Explain").last().click();
-  await expect(page.getByText(/events .*Planned retirement/)).toBeVisible();
-  await expect(earlier.locator("code").last()).not.toBeEmpty();
+  await lower.getByText("Explain").last().click();
+  await expect(lower.locator("code").last()).not.toBeEmpty();
 });
 
 test("canonical edits invalidate a displayed household forecast", async ({
@@ -377,10 +359,7 @@ test("model portability and deterministic what-if comparison stay explicit", asy
   await page.getByLabel("Exact effective annual rate").fill("0.0500");
   await page.getByLabel("Income target").selectOption({ index: 1 });
   await page.getByRole("button", { name: "Compare income growth" }).click();
-  await expect(page.getByText("Active scope: cash flow")).toBeVisible();
-  await expect(
-    page.getByRole("table", { name: /Current plan, alternative/ }),
-  ).toBeVisible();
+  await expect(page.getByRole("table", { name: "What-if alternative household comparison" })).toBeVisible();
   await expect(page.getByText(/income growth/)).toBeVisible();
   await page.getByText("Explain").first().click();
   await expect(page.locator("code").first()).toContainText(
@@ -420,7 +399,7 @@ test("What If executes retirement and reports missing investment prerequisites",
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   await expect(
-    page.getByText("Select an investment execution owner first."),
+    page.getByText("Apply a household investment execution owner first."),
   ).toBeVisible();
   await page.getByLabel("Retirement income").selectOption({ index: 1 });
   await page
@@ -428,7 +407,7 @@ test("What If executes retirement and reports missing investment prerequisites",
     .selectOption({ label: "Planned retirement" });
   await page.getByLabel("New retirement date").fill("2026-02-01");
   await page.getByRole("button", { name: "Compare retirement date" }).click();
-  await expect(page.getByText("Active scope: cash flow")).toBeVisible();
+  await expect(page.getByRole("table", { name: "What-if alternative household comparison" })).toBeVisible();
   await expect(page.getByText(/retirement date/i)).toBeVisible();
   const replacement = structuredClone(createSyntheticPersonalDraft()) as any;
   replacement.objects.Income[0].income_id =

@@ -6,6 +6,7 @@ import { assumptionId, scenarioId } from "../src/model/index.js";
 import type { ExecutableScenario } from "../src/simulation/scenario.js";
 import { instant } from "../src/time/index.js";
 import { Rate, rateConvention } from "../src/values/index.js";
+import { calculationTraceId, calculationTraceRef, mergeTraceRefs } from "../src/lineage/index.js";
 
 const request = (runIdentity: string): HouseholdForecastRequest => ({
   asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity,
@@ -44,6 +45,14 @@ const liabilityModel = (): ReturnType<typeof createSyntheticPersonalDraft> => {
 };
 
 describe("Personal household projection application seam", () => {
+  it("unions same-id comparison trace metadata deterministically", () => {
+    const trace = calculationTraceId("comparison:shared");
+    const refs = mergeTraceRefs(
+      [calculationTraceRef(trace, ["rule-b" as never], ["assumption-b" as never], ["event-b" as never])],
+      [calculationTraceRef(trace, ["rule-a" as never], ["assumption-a" as never], ["event-a" as never])],
+    )!;
+    expect(refs).toEqual([calculationTraceRef(trace, ["rule-a" as never, "rule-b" as never], ["assumption-a" as never, "assumption-b" as never], ["event-a" as never, "event-b" as never])]);
+  });
   it("compares only a declared projection-start major asset and matching fixed debt", () => {
     const result = comparePersonalHouseholdMajorAssetDebtAddition(
       createGoldenHouseholdDraft(), createGoldenHouseholdForecastRequest("94000000-0000-4000-8000-000000000099"), {
