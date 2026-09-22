@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { comparePersonalHouseholdScenarios, createSyntheticPersonalDraft, runPersonalHouseholdForecast, type HouseholdForecastRequest } from "../src/application/index.js";
+import { assumptionId, scenarioId } from "../src/model/index.js";
+import type { ExecutableScenario } from "../src/simulation/scenario.js";
+import { instant } from "../src/time/index.js";
+import { Rate, rateConvention } from "../src/values/index.js";
 
 const request = (runIdentity: string): HouseholdForecastRequest => ({
   asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity,
@@ -11,6 +15,27 @@ const request = (runIdentity: string): HouseholdForecastRequest => ({
   },
 });
 const model = (): ReturnType<typeof createSyntheticPersonalDraft> => { const value = createSyntheticPersonalDraft(); return { ...value, objects: { ...value.objects, Investment: [], Liability: [] } }; };
+const investmentModel = (): ReturnType<typeof createSyntheticPersonalDraft> => {
+  const value = createSyntheticPersonalDraft();
+  const brokerage = "90000000-0000-4000-8000-000000000013";
+  const primitive = "90000000-0000-4000-8000-000000000024";
+  const marketAssumption = "90000000-0000-4000-8000-000000000025";
+  return {
+    ...value,
+    objects: {
+      ...value.objects,
+      Liability: [],
+      Account: [
+        { ...(value.objects.Account as readonly Record<string, unknown>[])[0]!, transaction_ids: [], return_model_id: null },
+        { ...(value.objects.Account as readonly Record<string, unknown>[])[0]!, account_id: brokerage, name: "Brokerage", account_type: "taxable_brokerage", opening_balance: "0.00", transaction_ids: [], return_model_id: null },
+      ] as never,
+      Investment: [{ ...(value.objects.Investment as readonly Record<string, unknown>[])[0]!, owner_id: "90000000-0000-4000-8000-000000000003", account_id: brokerage, quantity: "10", price: "10", market_value: "100", expected_return: null, volatility: null, contribution_model_id: null, return_model_id: primitive, rebalancing_rule_id: null }] as never,
+      Assumption: [...(value.objects.Assumption as readonly Record<string, unknown>[]), { ...(value.objects.Assumption as readonly Record<string, unknown>[])[0]!, assumption_id: marketAssumption, name: "Market return", category: "market_return", value: "0.12", unit: "effective annual rate" }] as never,
+      Scenario: [{ ...(value.objects.Scenario as readonly Record<string, unknown>[])[0]!, assumption_ids: ["90000000-0000-4000-8000-000000000010", marketAssumption] }] as never,
+      PrimitiveInstance: [...(value.objects.PrimitiveInstance as readonly Record<string, unknown>[]), { primitive_instance_id: primitive, primitive_id: "P23", input_bindings: { rate: marketAssumption }, parameters: {}, scenario_id: "90000000-0000-4000-8000-000000000011", enabled: true }] as never,
+    },
+  };
+};
 
 describe("Personal household projection application seam", () => {
   it("exposes reconciled household metrics and completion boundaries", () => {
@@ -66,5 +91,25 @@ describe("Personal household projection application seam", () => {
     });
     expect(result.status).toBe("unavailable");
     expect(result.diagnostics.some((issue) => issue.code === "HOUSEHOLD_SCENARIO_INCOMPATIBLE")).toBe(true);
+  });
+
+  it("compares the externally supplied investment overlay that household execution actually runs", () => {
+    const root = scenarioId("90000000-0000-4000-8000-000000000011");
+    const leaf = scenarioId("90000000-0000-4000-8000-000000000021");
+    const position = "90000000-0000-4000-8000-000000000009";
+    const assumption = assumptionId("90000000-0000-4000-8000-000000000025");
+    const horizon = { start: instant("2026-01-01T00:00:00.000Z"), end: instant("2026-04-01T00:00:00.000Z") };
+    const scenarios: readonly ExecutableScenario[] = [
+      { scenarioId: root, name: "Root", horizon, timestep: "monthly", enabled: true, stochastic: false, simulationCount: 1, changes: [] },
+      { scenarioId: leaf, baseScenarioId: root, name: "Higher return", horizon, timestep: "monthly", enabled: true, stochastic: false, simulationCount: 1, changes: [{ kind: "investment_return", positionId: position as never, rate: Rate.fromDecimal("0.2", rateConvention.effectiveAnnual()), assumptionId: assumption }] },
+    ];
+    const base = request("94000000-0000-4000-8000-000000000022");
+    const withInvestments: HouseholdForecastRequest = { ...base, compiler: { ...base.compiler, investments: { ...base.compiler.investments!, scenarioId: String(root) } } };
+    const result = comparePersonalHouseholdScenarios({ scenarios, baselineScenarioId: root, baseline: { name: "Base", model: investmentModel(), request: withInvestments }, alternatives: [{ name: "Higher return", model: investmentModel(), request: { ...withInvestments, runIdentity: "94000000-0000-4000-8000-000000000023" }, scenarioId: leaf }] });
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+    const difference = result.alternatives[0]!.configurationDifferences.find((item) => item.changeKind === "investment_return");
+    expect(difference?.before).not.toBeNull();
+    expect(difference?.after).not.toBeNull();
+    expect(difference?.assumptionIds).toContain(assumption);
   });
 });
