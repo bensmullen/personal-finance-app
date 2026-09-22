@@ -162,6 +162,26 @@ describe("compiled household execution", () => {
     expect(result.primitiveState).toEqual({});
   });
 
+  it("uses policy only for material cash contention and selects the stated expense/debt outcome", () => {
+    const funding = createFundingPolicy({ id: fundingPolicyId("household:contention-outcomes"), orderedSources: [{ kind: "cash_account", accountId: ids.cash }], allowPartial: false, insufficientFundsBehavior: "unfunded" });
+    const expenseInput: VerticalSlice2Input = { ...cashFlow, incomes: [], expenses: [{ id: ids.expense, ownerId: ids.household, paymentAccountId: ids.cash, payableLiabilityId: ids.payable, baseMonthlyAmount: money("100"), start, recurrence: { kind: "utc_monthly", anchor: instant("2026-01-15T00:00:00.000Z"), invalidDayPolicy: "skip" }, inflationRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()), inflationBaseAt: instant("2026-01-15T00:00:00.000Z"), fundingPolicy: funding, settlementPriority: 1, primitiveIds: { indexGrowth: primitive("101"), inflationLink: primitive("102"), recurrence: primitive("103") } }] };
+    const loan = { id: ids.loan, ownerId: ids.owner, principalLiabilityId: ids.missingPrincipal, interestPayableLiabilityId: ids.missingInterest, originalPrincipal: money("100"), annualRate: Rate.fromDecimal("0", rateConvention.nominalAnnual(12)), totalPayments: 1, rateType: "fixed" as const, paymentFrequency: "monthly" as const, interestConvention: "nominal_annual_12" as const, amortization: "fully_amortizing" as const, paymentResetPolicy: "fixed_no_recast" as const, interestCapitalization: "none" as const, partialPaymentPolicy: "all_or_nothing" as const, paymentSchedule: { kind: "utc_monthly" as const, anchor: instant("2026-01-15T00:00:00.000Z"), invalidDayPolicy: "skip" as const }, fundingPolicy: funding, settlementPriority: 1, extraPrincipalPayments: [] as const, postingRounding: RoundingPolicy.currency(2, "half_up"), primitiveIds: { schedule: primitive("104"), amortization: primitive("105"), accrual: primitive("106") } };
+    const run = (cash: string, contentionPolicy?: { readonly id: string; readonly version: "1"; readonly rules: readonly { readonly before: "cash_expense_settlement" | "liability_required_service"; readonly after: "cash_expense_settlement" | "liability_required_service" }[] }) => runCompiledHouseholdProjection({ runContext: context(), compiled: { ...compiled(), cashFlowInput: expenseInput, reconciledOpeningState: createAuthoritativeState({ ...opening(), accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.owner, cash: money(cash) } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") }, [ids.missingPrincipal]: { id: ids.missingPrincipal, balance: money("100") }, [ids.missingInterest]: { id: ids.missingInterest, balance: money("0") } } }), liabilityInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [loan] }, ...(contentionPolicy === undefined ? {} : { contentionPolicy }) } });
+    const ample = run("200");
+    expect(ample.status, JSON.stringify(ample.diagnostics)).toBe("completed");
+    expect(ample.periods[0]!.liability!.principalReduction.equals(money("100"))).toBe(true);
+    const unresolved = run("100");
+    expect(unresolved.status).toBe("incomplete");
+    expect(unresolved.diagnostics.some((issue) => issue.code === "HOUSEHOLD_CONTENTION_UNRESOLVED")).toBe(true);
+    expect(unresolved.periods).toHaveLength(0);
+    const expenseFirst = run("100", { id: "expense-first", version: "1", rules: [{ before: "cash_expense_settlement", after: "liability_required_service" }] });
+    expect(expenseFirst.status, JSON.stringify(expenseFirst.diagnostics)).toBe("completed");
+    expect(expenseFirst.periods[0]!.liability!.principalReduction.isZero()).toBe(true);
+    const debtFirst = run("100", { id: "debt-first", version: "1", rules: [{ before: "liability_required_service", after: "cash_expense_settlement" }] });
+    expect(debtFirst.status, JSON.stringify(debtFirst.diagnostics)).toBe("completed");
+    expect(debtFirst.periods[0]!.liability!.principalReduction.equals(money("100"))).toBe(true);
+  });
+
   it("does not let an end-of-period investment transfer fund earlier debt service", () => {
     const funding = createFundingPolicy({ id: fundingPolicyId("household:eop"), orderedSources: [{ kind: "cash_account", accountId: ids.cash }], allowPartial: false, insufficientFundsBehavior: "unfunded" });
     const result = runCompiledHouseholdProjection({ runContext: context(), compiled: {
