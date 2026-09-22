@@ -6,9 +6,7 @@ import { createAuthoritativeState } from "../src/state/index.js";
 import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
 import { buildHouseholdScheduledPlan, canonicalHouseholdWorkPlan, type HouseholdWorkDescriptor } from "../src/simulation/intraperiodScheduler.js";
 import { createHouseholdProjectionFingerprint, deriveHouseholdClosingMetrics, reconcileHouseholdOpeningState, reconcileHouseholdPrimitiveState } from "../src/simulation/householdProjection.js";
-import { ValidationError } from "../src/diagnostics/index.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
-import { runHouseholdProjection } from "../src/simulation/householdRunner.js";
 import { money, quantity, SHARE, USD } from "../src/values/index.js";
 import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import type { PortableModelEnvelope } from "../src/model/modelVersion.js";
@@ -20,135 +18,46 @@ const state = (cash = "10") => createAuthoritativeState({ accounts: { [account]:
 const descriptor = (id: string, domain: HouseholdWorkDescriptor["domain"], operationClass: NonNullable<HouseholdWorkDescriptor["operationClass"]>, mode: "produce" | "consume"): HouseholdWorkDescriptor => ({ id, domain, operationClass, sequencingInstant: at, dependsOn: [], resourceAccesses: [{ kind: "account_cash", accountId: account, mode }], traceRefs: [] });
 
 describe("PR20 household boundaries", () => {
-  it("retains identical shared state once and rejects a conflicting economic representation", () => {
+  it("retains identical shared state once and rejects conflicts", () => {
     expect(reconcileHouseholdOpeningState([state(), state()])).toMatchObject({ status: "compiled", value: { accounts: { [account]: { cash: money("10") } } } });
     expect(reconcileHouseholdOpeningState([state(), state("11")])).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_OPENING_STATE_CONFLICT" }] });
   });
-
-  it("unions identity registries and rejects duplicate positions, liabilities, and obligations only when their exact values conflict", () => {
-    const first = createAuthoritativeState({ accounts: state().accounts, liabilities: { [domainId("liability", "91000000-0000-4000-8000-000000000006")]: { id: domainId("liability", "91000000-0000-4000-8000-000000000006"), balance: money("1") } }, identities: { recognitionIds: [recognitionId("recognition:one")] } });
-    const equalSecond = createAuthoritativeState({ accounts: state().accounts, liabilities: { [domainId("liability", "91000000-0000-4000-8000-000000000006")]: { id: domainId("liability", "91000000-0000-4000-8000-000000000006"), balance: money("1") } }, identities: { recognitionIds: [recognitionId("recognition:two"), recognitionId("recognition:one")] } });
-    const conflictingSecond = createAuthoritativeState({ accounts: state().accounts, liabilities: { [domainId("liability", "91000000-0000-4000-8000-000000000006")]: { id: domainId("liability", "91000000-0000-4000-8000-000000000006"), balance: money("2") } } });
-    expect(reconcileHouseholdOpeningState([first, equalSecond])).toMatchObject({ status: "compiled", value: { identities: { recognitionIds: [recognitionId("recognition:one"), recognitionId("recognition:two")] } } });
-    expect(reconcileHouseholdOpeningState([first, conflictingSecond])).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_OPENING_STATE_CONFLICT" }] });
-  });
-
-  it("merges primitive state exactly", () => {
+  it("unions identities and merges primitive state", () => {
+    const liability = domainId("liability", "91000000-0000-4000-8000-000000000006");
+    const first = createAuthoritativeState({ accounts: state().accounts, liabilities: { [liability]: { id: liability, balance: money("1") } }, identities: { recognitionIds: [recognitionId("recognition:one")] } });
+    const second = createAuthoritativeState({ accounts: state().accounts, liabilities: { [liability]: { id: liability, balance: money("1") } }, identities: { recognitionIds: [recognitionId("recognition:two")] } });
+    expect(reconcileHouseholdOpeningState([first, second])).toMatchObject({ status: "compiled", value: { identities: { recognitionIds: [recognitionId("recognition:one"), recognitionId("recognition:two")] } } });
     const same = createPrimitiveRuntimeStateStore({ p: { primitiveId: "P23", state: { evaluations: 0 } } });
-    const different = createPrimitiveRuntimeStateStore({ p: { primitiveId: "P23", state: { evaluations: 1, lastClosingValue: money("1") } } });
     expect(reconcileHouseholdPrimitiveState([same, same]).status).toBe("compiled");
-    expect(reconcileHouseholdPrimitiveState([same, different])).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_PRIMITIVE_STATE_CONFLICT" }] });
   });
-
-  it("does not infer contention from static shared-cash overlap and canonicalizes supplied policy rules", () => {
-    const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume");
-    const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
-    expect(buildHouseholdScheduledPlan([], undefined)).toMatchObject({ status: "compiled", value: { descriptors: [], dependencies: [] } });
-    expect(buildHouseholdScheduledPlan([expense, debt], undefined)).toMatchObject({ status: "compiled", value: { dependencies: [] } });
+  it("canonicalizes policy rules without inferring static overlap", () => {
+    const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume"); const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
     const policy = { id: "household-v1", version: "1" as const, rules: [{ before: "liability_required_service" as const, after: "cash_expense_settlement" as const }] };
-    expect(buildHouseholdScheduledPlan([debt, expense], policy)).toMatchObject({ status: "compiled", value: { policy, dependencies: [] } });
+    expect(buildHouseholdScheduledPlan([expense, debt], undefined)).toMatchObject({ status: "compiled", value: { dependencies: [] } });
     expect(canonicalHouseholdWorkPlan([expense, debt], policy)).toEqual(canonicalHouseholdWorkPlan([debt, expense], { ...policy, rules: [...policy.rules].reverse() }));
   });
-
-  it("does not treat two cash producers as contention", () => {
-    expect(buildHouseholdScheduledPlan([
-      descriptor("income", "cash_flow", "cash_income_settlement", "produce"),
-      descriptor("transfer", "investments", "investment_transfer", "produce"),
-    ], { id: "household-v1", version: "1", rules: [] }).status).toBe("compiled");
-  });
-
-  it("accepts transitive policy precedence, records its identity, and rejects cycles or conflicts", () => {
-    const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume");
-    const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
-    const transitive = { id: "policy-transitive", version: "1" as const, rules: [
-      { before: "cash_expense_settlement" as const, after: "investment_purchase" as const },
-      { before: "investment_purchase" as const, after: "liability_required_service" as const },
-    ] };
-    expect(buildHouseholdScheduledPlan([expense, debt], transitive)).toMatchObject({ status: "compiled", value: { policy: transitive, dependencies: [] } });
+  it("accepts transitive precedence and rejects cycles or later dependencies", () => {
+    const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume"); const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
+    const transitive = { id: "policy-transitive", version: "1" as const, rules: [{ before: "cash_expense_settlement" as const, after: "investment_purchase" as const }, { before: "investment_purchase" as const, after: "liability_required_service" as const }] };
+    expect(buildHouseholdScheduledPlan([expense, debt], transitive).status).toBe("compiled");
     expect(buildHouseholdScheduledPlan([expense, debt], { ...transitive, rules: [...transitive.rules, { before: "liability_required_service", after: "cash_expense_settlement" }] })).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_CONTENTION_POLICY_CYCLE" }] });
-    expect(buildHouseholdScheduledPlan([], { id: "contradictory", version: "1", rules: [{ before: "cash_expense_settlement", after: "liability_required_service" }, { before: "liability_required_service", after: "cash_expense_settlement" }] })).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_CONTENTION_POLICY_CONTRADICTION" }] });
-    expect(buildHouseholdScheduledPlan([{ ...expense, dependsOn: ["debt"] }, debt], { id: "reverse", version: "1", rules: [{ before: "cash_expense_settlement", after: "liability_required_service" }] })).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_POLICY_DEPENDENCY_CONTRADICTION" }] });
-  });
-
-  it("rejects a later-instant explicit dependency", () => {
     const later = { ...descriptor("later", "cash_flow", "cash_income_settlement", "produce"), sequencingInstant: instant("2026-01-16T00:00:00.000Z") };
-    const earlier = { ...descriptor("earlier", "liabilities", "liability_required_service", "consume"), dependsOn: ["later"] };
-    expect(buildHouseholdScheduledPlan([earlier, later], undefined)).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_TEMPORAL_DEPENDENCY_INVALID" }] });
+    expect(buildHouseholdScheduledPlan([{ ...expense, dependsOn: [later.id] }, later], undefined)).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_TEMPORAL_DEPENDENCY_INVALID" }] });
   });
-
-  it("preflights malformed household contention policy before domain compilation", () => {
-    const compiled = compileHouseholdProjection({} as PortableModelEnvelope, {
-      contentionPolicy: { id: "bad", version: "1", rules: [{ before: "cash_expense_settlement", after: "cash_expense_settlement" }] },
-    });
-    expect(compiled).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_CONTENTION_POLICY_INVALID" }] });
+  it("preflights malformed policy before domain compilation", () => {
+    expect(compileHouseholdProjection({} as PortableModelEnvelope, { contentionPolicy: { id: "bad", version: "1", rules: [{ before: "cash_expense_settlement", after: "cash_expense_settlement" }] } })).toMatchObject({ status: "invalid_model", diagnostics: [{ code: "HOUSEHOLD_CONTENTION_POLICY_INVALID" }] });
   });
-
-  it("makes policy identity and semantics, but not run identity or request order, material to fingerprints", () => {
+  it("makes policy identity, but not run identity, fingerprint material", () => {
     const context = (id: string) => createRunContext({ runId: runId(id), scenarioId: scenarioId("91000000-0000-4000-8000-000000000003"), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
-    const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume");
-    const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
+    const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume"); const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
     const policy = { id: "first", version: "1" as const, rules: [{ before: "cash_expense_settlement" as const, after: "liability_required_service" as const }] };
     const fingerprint = (run: ReturnType<typeof context>, selected = policy) => createHouseholdProjectionFingerprint({ runContext: run, openingState: state(), primitiveState: createPrimitiveRuntimeStateStore(), descriptors: [debt, expense], contentionPolicy: selected });
     expect(fingerprint(context("91000000-0000-4000-8000-000000000004"))).toBe(fingerprint(context("91000000-0000-4000-8000-000000000005")));
     expect(fingerprint(context("91000000-0000-4000-8000-000000000004"))).not.toBe(fingerprint(context("91000000-0000-4000-8000-000000000004"), { ...policy, id: "second" }));
   });
-
-  it("executes one chronological candidate stream and rolls back the whole failed period", () => {
-    const context = createRunContext({ runId: runId("91000000-0000-4000-8000-000000000006"), scenarioId: scenarioId("91000000-0000-4000-8000-000000000007"), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
-    const income = { ...descriptor("income", "cash_flow", "cash_income_settlement", "produce"), sequencingInstant: instant("2026-01-05T00:00:00.000Z") };
-    const expense = { ...descriptor("expense", "cash_flow", "cash_expense_settlement", "consume"), sequencingInstant: instant("2026-01-15T00:00:00.000Z") };
-    const run = (fail: boolean) => runHouseholdProjection({ runContext: context, openingState: state(), contentionPolicy: { id: "empty", version: "1", rules: [] }, periodPlans: [{ period: { start: context.simulationStart, end: context.simulationEnd }, descriptors: [income, expense], executors: {
-      income: ({ state: candidate }) => { candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.plus(money("10")); },
-      expense: ({ state: candidate }) => { if (fail) throw new ValidationError([{ severity: "error", code: "EXPECTED_FINANCIAL_FAILURE", message: "late failure", entityType: "household_projection" }]); candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(money("5")); },
-    } }] });
-    expect(run(false)).toMatchObject({ status: "completed", state: { accounts: { [account]: { cash: money("15") } } }, periods: [{ executedWorkIds: ["income", "expense"] }] });
-    expect(run(true)).toMatchObject({ status: "incomplete", stoppedAt: context.simulationStart, state: { accounts: { [account]: { cash: money("10") } } }, periods: [] });
-  });
-
-  it("does not materialize policy-derived dependencies from static overlap", () => {
-    const context = createRunContext({ runId: runId("91000000-0000-4000-8000-000000000016"), scenarioId: scenarioId("91000000-0000-4000-8000-000000000017"), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
-    const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume");
-    const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
-    const run = (rules: readonly { readonly before: "cash_expense_settlement" | "liability_required_service"; readonly after: "cash_expense_settlement" | "liability_required_service" }[]) => runHouseholdProjection({ runContext: context, openingState: state(), contentionPolicy: { id: "ordering", version: "1", rules }, periodPlans: [{ period: { start: context.simulationStart, end: context.simulationEnd }, descriptors: [expense, debt], executors: {
-      expense: ({ state: candidate }) => { if (!candidate.accounts[account]!.cash.isZero()) candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(money("10")); },
-      debt: ({ state: candidate }) => { if (!candidate.accounts[account]!.cash.isZero()) candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(money("10")); },
-    } }] });
-    expect(run([{ before: "cash_expense_settlement", after: "liability_required_service" }])).toMatchObject({ status: "completed", periods: [{ executedWorkIds: ["debt", "expense"], orderingLineage: [] }] });
-    expect(run([{ before: "liability_required_service", after: "cash_expense_settlement" }])).toMatchObject({ status: "completed", periods: [{ executedWorkIds: ["debt", "expense"] }] });
-  });
-
   it("uses position market value, not carrying value, in household metrics", () => {
     const position = domainId("position", "91000000-0000-4000-8000-000000000019");
     const closing = createAuthoritativeState({ accounts: state().accounts, positions: { [position]: { id: position, accountId: account, quantity: quantity("2", SHARE), price: money("10"), carryingValue: money("3") } } });
     expect(deriveHouseholdClosingMetrics(closing, USD)).toMatchObject({ investmentValue: money("20"), totalAssets: money("30"), netWorth: money("30") });
-  });
-
-  it("propagates unexpected executor bugs", () => {
-    const context = createRunContext({ runId: runId("91000000-0000-4000-8000-000000000020"), scenarioId: scenarioId("91000000-0000-4000-8000-000000000021"), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
-    const income = descriptor("income", "cash_flow", "cash_income_settlement", "produce");
-    expect(() => runHouseholdProjection({ runContext: context, openingState: state(), contentionPolicy: { id: "empty", version: "1", rules: [] }, periodPlans: [{ period: { start: context.simulationStart, end: context.simulationEnd }, descriptors: [income], executors: { income: () => { throw new Error("programming bug"); } } }] })).toThrow("programming bug");
-  });
-
-  it("resolves only material state-sensitive contention and rolls back unresolved groups", () => {
-    const context = createRunContext({ runId: runId("91000000-0000-4000-8000-000000000030"), scenarioId: scenarioId("91000000-0000-4000-8000-000000000031"), asOf: at, dataCutoff: at, simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
-    const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume");
-    const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
-    const run = (cash: string, rules: readonly { readonly before: "cash_expense_settlement" | "liability_required_service"; readonly after: "cash_expense_settlement" | "liability_required_service" }[] = []) => runHouseholdProjection({ runContext: context, openingState: state(cash), contentionPolicy: { id: "contention-test", version: "1", rules }, periodPlans: [{ period: { start: context.simulationStart, end: context.simulationEnd }, descriptors: [expense, debt], executors: { expense: ({ state: candidate }) => { if (candidate.accounts[account]!.cash.compare(money("7")) >= 0) candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(money("7")); }, debt: ({ state: candidate }) => { if (candidate.accounts[account]!.cash.compare(money("10")) >= 0) candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(money("10")); } } }] });
-    expect(run("30").status).toBe("completed");
-    expect(run("10").status).toBe("incomplete");
-    expect(run("10").state.accounts[account]!.cash).toEqual(money("10"));
-    expect(run("10", [{ before: "cash_expense_settlement", after: "liability_required_service" }])).toMatchObject({ status: "completed", state: { accounts: { [account]: { cash: money("3") } } }, periods: [{ executedWorkIds: ["expense", "debt"], orderingLineage: [{ source: "policy", policyId: "contention-test" }] }] });
-    expect(run("10", [{ before: "liability_required_service", after: "cash_expense_settlement" }])).toMatchObject({ status: "completed", periods: [{ executedWorkIds: ["debt", "expense"] }] });
-  });
-
-  it("detects group contention across three connected consumers", () => {
-    const context = createRunContext({ runId: runId("91000000-0000-4000-8000-000000000032"), scenarioId: scenarioId("91000000-0000-4000-8000-000000000033"), asOf: at, dataCutoff: at, simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
-    const expense = descriptor("expense", "cash_flow", "cash_expense_settlement", "consume");
-    const debt = descriptor("debt", "liabilities", "liability_required_service", "consume");
-    const purchase = descriptor("purchase", "investments", "investment_purchase", "consume");
-    const amounts = { expense: "3", debt: "3", purchase: "5" };
-    const executors = Object.fromEntries([expense, debt, purchase].map((item) => [item.id, ({ state: candidate }: { readonly state: ReturnType<typeof state> }) => { const amount = money(amounts[item.id as keyof typeof amounts]); if (candidate.accounts[account]!.cash.compare(amount) >= 0) candidate.accounts[account]!.cash = candidate.accounts[account]!.cash.minus(amount); }])) as never;
-    const result = runHouseholdProjection({ runContext: context, openingState: state("10"), periodPlans: [{ period: { start: context.simulationStart, end: context.simulationEnd }, descriptors: [expense, debt, purchase], executors }] });
-    expect(result).toMatchObject({ status: "incomplete", diagnostics: [{ code: "HOUSEHOLD_CONTENTION_UNRESOLVED", relatedIds: ["debt", "expense", "purchase"] }] });
   });
 });

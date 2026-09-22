@@ -78,7 +78,7 @@ const compileStandaloneAssets = (model: PortableModelEnvelope, baseCurrency: str
   for (const asset of objects(model, "Asset")) {
     const id = canonicalId(asset, "asset_id"); if (!id) continue;
     if (!activeOwner(model, asset, scopeResult.value, "Asset", id)) continue;
-    if (linked.has(id)) { diagnostics.push(capability("ASSET_INVESTMENT_OVERLAP_AMBIGUOUS", `Asset ${id} is represented by an Investment and cannot also be counted as a standalone asset.`, "household_projection", "Asset", id)); continue; }
+    if (linked.has(id)) continue;
     const accountId = canonicalId(asset, "account_id");
     if (asset.account_id !== undefined && asset.account_id !== null && (!accountId || !accounts.has(accountId))) return { status: "invalid_model", diagnostics: Object.freeze([{ severity: "error", code: "ASSET_ACCOUNT_REFERENCE_INVALID", message: `Asset ${id} account_id does not resolve to an Account.`, entityType: "Asset", entityId: id, fieldPath: "account_id" }]) };
     if (accountId) {
@@ -93,7 +93,8 @@ const compileStandaloneAssets = (model: PortableModelEnvelope, baseCurrency: str
     const sold = asset.sale_date == null ? undefined : utcDate(asset.sale_date);
     if ((asset.acquisition_date != null && !acquired) || (asset.sale_date != null && !sold)) return { status: "invalid_model", diagnostics: Object.freeze([{ severity: "error", code: "DATE_INVALID", message: `Asset ${id} has an invalid acquisition or sale date.`, entityType: "Asset", entityId: id }]) };
     if (acquired !== undefined && sold !== undefined && sold < acquired) return { status: "invalid_model", diagnostics: Object.freeze([{ severity: "error", code: "ASSET_TEMPORAL_INTERVAL_INVALID", message: `Asset ${id} sale_date cannot precede acquisition_date.`, entityType: "Asset", entityId: id }]) };
-    if (acquired !== undefined && acquired > start) { diagnostics.push(capability("ASSET_FUTURE_ACQUISITION_UNSUPPORTED", `Asset ${id} requires unsupported acquisition semantics inside the forecast boundary.`, "household_projection", "Asset", id, "acquisition_date")); continue; }
+    if (acquired !== undefined && acquired >= end) continue;
+    if (acquired !== undefined && acquired >= start) { diagnostics.push(capability("ASSET_FUTURE_ACQUISITION_UNSUPPORTED", `Asset ${id} requires unsupported acquisition semantics inside the forecast boundary.`, "household_projection", "Asset", id, "acquisition_date")); continue; }
     if (sold !== undefined && sold > start && sold < end) { diagnostics.push(capability("ASSET_HORIZON_SALE_UNSUPPORTED", `Asset ${id} is disposed during the forecast horizon and its proceeds/accounting are unsupported.`, "household_projection", "Asset", id, "sale_date")); continue; }
     if (sold !== undefined && sold <= start) continue;
     if (!ASSET_VALUATION_METHODS.includes(asset.valuation_method as never) || asset.valuation_method !== "cost") { diagnostics.push(capability("ASSET_VALUATION_UNSUPPORTED", `Asset ${id} does not use the supported static cost valuation.`, "household_projection", "Asset", id, "valuation_method")); continue; }

@@ -8,12 +8,14 @@ import { utcMonthlyPeriods, type Instant, type Period } from "../time/index.js";
 import { Money } from "../values/index.js";
 import { deriveHouseholdClosingMetrics } from "./householdProjection.js";
 import { buildHouseholdScheduledPlan, type HouseholdContentionPolicy, type HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
-import { describeVerticalSlice2PeriodWork, describeVerticalSlice3PeriodWork, describeVerticalSlice4PeriodWork } from "./householdWorkPlan.js";
+import { executePreparedVerticalSlice2Occurrence, prepareVerticalSlice2Period, type PreparedVerticalSlice2Occurrence, type PreparedVerticalSlice2Period } from "./verticalSlice2.js";
+import { executePreparedVerticalSlice3Operation, prepareVerticalSlice3Period, type PreparedVerticalSlice3Operation, type PreparedVerticalSlice3Period } from "./verticalSlice3.js";
+import { executePreparedVerticalSlice4Operation, prepareVerticalSlice4Period, type PreparedVerticalSlice4Operation, type PreparedVerticalSlice4Period } from "./verticalSlice4.js";
 import { assertPrimitiveRuntimeStateConsistent, createPrimitiveRuntimeStateStore, type PrimitiveRuntimeStateStore } from "./period.js";
 import { assertRunContext, canonicalSerialize, createInputFingerprint, createRunMetadata, type RunContext, type RunMetadata } from "./run.js";
-import { executeVerticalSlice2PeriodCandidate, type VerticalSlice2Input, type VerticalSlice2PeriodResult, type VerticalSlice2RunInput } from "./verticalSlice2.js";
-import { executeVerticalSlice3PeriodCandidate, type VerticalSlice3Input, type VerticalSlice3PeriodResult, type VerticalSlice3RunInput } from "./verticalSlice3.js";
-import { executeVerticalSlice4PeriodCandidate, type VerticalSlice4ConstraintOutcome, type VerticalSlice4Input, type VerticalSlice4LiquidityShortfall, type VerticalSlice4PeriodResult, type VerticalSlice4RunInput } from "./verticalSlice4.js";
+import type { VerticalSlice2Input, VerticalSlice2PeriodResult } from "./verticalSlice2.js";
+import type { VerticalSlice3Input, VerticalSlice3PeriodResult } from "./verticalSlice3.js";
+import type { VerticalSlice4ConstraintOutcome, VerticalSlice4Input, VerticalSlice4LiquidityShortfall, VerticalSlice4PeriodResult } from "./verticalSlice4.js";
 
 export interface HouseholdProjectionPeriodResult {
   readonly period: Period;
@@ -67,6 +69,13 @@ type InstantExecution = {
   readonly cashPeriods: readonly VerticalSlice2PeriodResult[];
   readonly investmentPeriods: readonly VerticalSlice3PeriodResult[];
   readonly liabilityPeriods: readonly VerticalSlice4PeriodResult[];
+};
+
+type PreparedHouseholdPeriod = {
+  readonly descriptors: readonly HouseholdWorkDescriptor[];
+  readonly cash: PreparedVerticalSlice2Period | undefined;
+  readonly investments: PreparedVerticalSlice3Period | undefined;
+  readonly liabilities: PreparedVerticalSlice4Period | undefined;
 };
 
 const contentionTrace = (policy: HouseholdContentionPolicy, at: Instant): CalculationTraceRef =>
@@ -131,12 +140,21 @@ export const runCompiledHouseholdProjection = (request: CompiledHouseholdProject
   let primitiveState = createPrimitiveRuntimeStateStore(compiled.reconciledPrimitiveState);
   assertPrimitiveRuntimeStateConsistent(primitiveState, state);
   const requestedHorizon = Object.freeze({ start: runContext.simulationStart, end: runContext.simulationEnd });
-  const descriptorsFor = (period: Period): readonly HouseholdWorkDescriptor[] => [
-    ...(compiled.cashFlowInput === undefined ? [] : describeVerticalSlice2PeriodWork(runContext, compiled.cashFlowInput, period)),
-    ...(compiled.investmentInput === undefined ? [] : describeVerticalSlice3PeriodWork(runContext, compiled.investmentInput, period)),
-    ...(compiled.liabilityInput === undefined || compiled.liabilityInput.loans.some((loan) => loan.paymentSchedule === undefined) ? [] : describeVerticalSlice4PeriodWork(runContext, compiled.liabilityInput, period)),
-  ];
-  const runDescriptors = periods.flatMap(descriptorsFor);
+  const preparePeriod = (period: Period, opening: AuthoritativeState, openingPrimitiveState: PrimitiveRuntimeStateStore): PreparedHouseholdPeriod => {
+    const cash = compiled.cashFlowInput === undefined ? undefined : prepareVerticalSlice2Period(runContext, compiled.cashFlowInput, period, opening, openingPrimitiveState);
+    // VS2 preparation may establish event eligibility/runtime state; VS3 must receive the
+    // complete investment input and the resulting current candidate state.
+    const investmentOpening = cash?.state ?? opening;
+    const investmentPrimitiveOpening = cash?.primitiveState ?? openingPrimitiveState;
+    const investments = compiled.investmentInput === undefined ? undefined : prepareVerticalSlice3Period(runContext, compiled.investmentInput, period, investmentOpening, investmentPrimitiveOpening);
+    const liabilities = compiled.liabilityInput === undefined || compiled.liabilityInput.loans.length === 0 ? undefined : prepareVerticalSlice4Period(runContext, compiled.liabilityInput, period, investmentOpening, investmentPrimitiveOpening);
+    return Object.freeze({ cash, investments, liabilities, descriptors: Object.freeze([...(cash?.descriptors ?? []), ...(investments?.descriptors ?? []), ...(liabilities?.descriptors ?? [])]) });
+  };
+  // The executable inputs and the prepared descriptors are fingerprinted as
+  // part of the run. Preparation is state-sensitive, so it belongs inside the
+  // period transaction and must never fail before rollback is established.
+  let runDescriptors: readonly HouseholdWorkDescriptor[] = [];
+  try { if (periods[0] !== undefined) runDescriptors = preparePeriod(periods[0], state, primitiveState).descriptors; } catch (error) { if (!(error instanceof ValidationError)) throw error; }
   const byId = <T extends { readonly id: string }>(items: readonly T[] | undefined): readonly T[] => Object.freeze([...(items ?? [])].sort((left, right) => left.id.localeCompare(right.id)));
   const canonicalInputs = {
     cashFlowInput: compiled.cashFlowInput === undefined ? undefined : { ...compiled.cashFlowInput, incomes: byId(compiled.cashFlowInput.incomes), expenses: byId(compiled.cashFlowInput.expenses), events: byId(compiled.cashFlowInput.events) },
@@ -154,43 +172,41 @@ export const runCompiledHouseholdProjection = (request: CompiledHouseholdProject
     let candidatePrimitiveState = createPrimitiveRuntimeStateStore(primitiveState);
     let cashFlow: VerticalSlice2PeriodResult | undefined; let investments: VerticalSlice3PeriodResult | undefined; let liability: VerticalSlice4PeriodResult | undefined;
     const cashPeriods: VerticalSlice2PeriodResult[] = []; const investmentPeriods: VerticalSlice3PeriodResult[] = []; const liabilityPeriods: VerticalSlice4PeriodResult[] = [];
-    const descriptors = descriptorsFor(period);
+    const prepared = preparePeriod(period, candidateState, candidatePrimitiveState);
+    const descriptors = prepared.descriptors;
     if (compiled.liabilityInput?.loans.some((loan) => loan.paymentSchedule === undefined)) throw new ValidationError({ severity: "error", code: "HOUSEHOLD_INPUT_INVALID", message: "Every liability loan must provide a payment schedule.", entityType: "household_projection" });
     if (descriptors.some((item) => item.sequencingInstant < period.start || item.sequencingInstant >= period.end)) throw new ValidationError({ severity: "error", code: "HOUSEHOLD_WORK_OUTSIDE_PERIOD", message: "Household work must be sequenced inside its canonical period.", entityType: "household_projection", relatedIds: descriptors.filter((item) => item.sequencingInstant < period.start || item.sequencingInstant >= period.end).map((item) => item.id) });
     const scheduled = buildHouseholdScheduledPlan(descriptors, compiled.contentionPolicy);
     if (scheduled.status === "invalid_model") throw new ValidationError(scheduled.diagnostics);
-    const cashAt = (_at: Instant, ids: ReadonlySet<string>): VerticalSlice2Input | undefined => {
-      if (compiled.cashFlowInput === undefined) return undefined;
-      return { ...compiled.cashFlowInput, incomes: compiled.cashFlowInput.incomes.filter((item) => [...ids].some((id) => id.startsWith(`cash-income:${item.id}:`))), expenses: compiled.cashFlowInput.expenses.filter((item) => [...ids].some((id) => id.startsWith(`cash-expense:${item.id}:`))), events: [] };
-    };
-    const investmentAt = (_at: Instant, ids: ReadonlySet<string>): VerticalSlice3Input | undefined => {
-      if (compiled.investmentInput === undefined) return undefined;
-      return { ...compiled.investmentInput, returns: compiled.investmentInput.returns.filter((item) => [...ids].some((id) => id.startsWith(`investment-valuation:${item.targetPositionId}:`))), transfers: compiled.investmentInput.transfers.filter((item) => [...ids].some((id) => id.startsWith(`investment-transfer:${item.id}:`))), purchases: compiled.investmentInput.purchases.filter((item) => [...ids].some((id) => id.startsWith(`investment-purchase:${item.id}:`))), fees: (compiled.investmentInput.fees ?? []).filter((item) => [...ids].some((id) => id.startsWith(`investment-fee:${item.id}:`))) };
-    };
-    const liabilityAt = (_at: Instant, ids: ReadonlySet<string>): VerticalSlice4Input | undefined => {
-      if (compiled.liabilityInput === undefined) return undefined;
-      return { ...compiled.liabilityInput, loans: compiled.liabilityInput.loans.filter((item) => [...ids].some((id) => id.startsWith(`liability-required:${item.id}:`) || id.includes(`:${item.id}:`) || (item.extraPrincipalPayments ?? []).some((extra) => id.startsWith(`liability-extra:${extra.id}:`)))) };
-    };
     const executeAt = (at: Instant, order: readonly HouseholdWorkDescriptor[], opening: AuthoritativeState, openingPrimitiveState: PrimitiveRuntimeStateStore): InstantExecution => {
       let nextState = cloneAuthoritativeState(opening); let nextPrimitiveState = createPrimitiveRuntimeStateStore(openingPrimitiveState);
       const cashResults: VerticalSlice2PeriodResult[] = []; const investmentResults: VerticalSlice3PeriodResult[] = []; const liabilityResults: VerticalSlice4PeriodResult[] = [];
       const periodContext = Object.freeze({ ...runContext, simulationStart: period.start, simulationEnd: period.end });
+      const requiredStatuses = new Map<string, string>();
       for (const descriptor of order) {
-        const ids = new Set([descriptor.id]);
-        const cashInput = cashAt(at, ids);
-        if (cashInput !== undefined && (cashInput.incomes.length > 0 || cashInput.expenses.length > 0)) {
-          const candidate = executeVerticalSlice2PeriodCandidate({ runContext: periodContext, openingState: nextState, primitiveState: nextPrimitiveState, input: cashInput } as VerticalSlice2RunInput, period, nextState, nextPrimitiveState);
-          nextState = candidate.state; nextPrimitiveState = candidate.primitiveState; cashResults.push(candidate.period);
+        const occurrence = prepared.cash?.occurrences.find((item) => item.descriptor.id === descriptor.id);
+        if (occurrence !== undefined) {
+          const result = executePreparedVerticalSlice2Occurrence(prepared.cash!, occurrence, nextState, nextPrimitiveState, compiled.cashFlowInput!, periodContext);
+          nextState = result.state; nextPrimitiveState = result.primitiveState; cashResults.push(result.period); continue;
         }
-        const investmentInput = investmentAt(at, ids);
-        if (investmentInput !== undefined && (investmentInput.returns.length > 0 || investmentInput.transfers.length > 0 || investmentInput.purchases.length > 0 || (investmentInput.fees?.length ?? 0) > 0)) {
-          const candidate = executeVerticalSlice3PeriodCandidate({ runContext: periodContext, openingState: nextState, primitiveState: nextPrimitiveState, input: investmentInput } as VerticalSlice3RunInput, period, nextState, nextPrimitiveState);
-          nextState = candidate.state; nextPrimitiveState = candidate.primitiveState; investmentResults.push(candidate.period);
+        const investment = prepared.investments?.operations.find((item) => item.descriptor.id === descriptor.id);
+        if (investment !== undefined) {
+          const result = executePreparedVerticalSlice3Operation(prepared.investments!, investment, nextState, nextPrimitiveState, compiled.investmentInput!, periodContext);
+          nextState = result.state; nextPrimitiveState = result.primitiveState;
+          investmentResults.push(Object.freeze({ period: prepared.investments!.period, transactions: result.transactions, effects: result.effects, statements: deriveStatements(nextState, result.transactions, compiled.investmentInput!.baseCurrency), accountValues: Object.freeze({}), portfolioValue: result.state.positions[Object.keys(result.state.positions)[0] ?? ""] === undefined ? Money.zero(compiled.investmentInput!.baseCurrency) : Money.zero(compiled.investmentInput!.baseCurrency), contributionPrincipal: result.contributionPrincipal, fees: result.fees, unrealizedGain: result.unrealizedGain, realizedGain: Money.zero(compiled.investmentInput!.baseCurrency), cashInvestmentIncome: Money.zero(compiled.investmentInput!.baseCurrency), ruleApplications: result.ruleApplications, traceRefs: result.effects.flatMap((effect) => effect.traceRefs ?? []) })); continue;
         }
-        const liabilityInput = liabilityAt(at, ids);
-        if (liabilityInput !== undefined && liabilityInput.loans.length > 0) {
-          const candidate = executeVerticalSlice4PeriodCandidate({ runContext: periodContext, openingState: nextState, primitiveState: nextPrimitiveState, input: liabilityInput } as VerticalSlice4RunInput, period, nextState, nextPrimitiveState);
-          nextState = candidate.state; nextPrimitiveState = candidate.primitiveState; liabilityResults.push(candidate.period);
+        const liability = prepared.liabilities?.operations.find((item) => item.descriptor.id === descriptor.id);
+        if (liability !== undefined) {
+          if (liability.kind === "extra_principal") {
+            const required = prepared.liabilities!.operations.find((item) => item.kind === "required_service" && item.loan.id === liability.loan.id && item.scheduledAt === liability.scheduledAt);
+            if (required !== undefined && requiredStatuses.get(required.descriptor.id) !== "fully_satisfied") continue;
+          }
+          const result = executePreparedVerticalSlice4Operation(prepared.liabilities!, liability, nextState, nextPrimitiveState, compiled.liabilityInput!, periodContext);
+          nextState = result.state; nextPrimitiveState = result.primitiveState;
+          if (liability.kind === "required_service" && result.period !== undefined) {
+            const liabilityResult = result.period.liabilities[0]; if (liabilityResult !== undefined) requiredStatuses.set(descriptor.id, liabilityResult.scheduledFundingStatus);
+            liabilityResults.push(result.period);
+          }
         }
       }
       return Object.freeze({ state: nextState, primitiveState: nextPrimitiveState, cashPeriods: Object.freeze(cashResults), investmentPeriods: Object.freeze(investmentResults), liabilityPeriods: Object.freeze(liabilityResults) });
@@ -235,6 +251,30 @@ export const runCompiledHouseholdProjection = (request: CompiledHouseholdProject
       candidateState = executed.state; candidatePrimitiveState = executed.primitiveState;
       cashPeriods.push(...executed.cashPeriods); investmentPeriods.push(...executed.investmentPeriods); liabilityPeriods.push(...executed.liabilityPeriods);
       cashFlow = cashPeriods[cashPeriods.length - 1]; investments = investmentPeriods[investmentPeriods.length - 1]; liability = liabilityPeriods[liabilityPeriods.length - 1];
+    }
+    if (liabilityPeriods.length > 0) {
+      const zero = Money.zero(runContext.baseCurrency);
+      const rawLiabilities = liabilityPeriods.flatMap((item) => item.liabilities);
+      const consolidatedLiabilities = rawLiabilities.map((item, index) => {
+        const lastForLoan = rawLiabilities.map((candidate, candidateIndex) => candidate.loanId === item.loanId ? candidateIndex : -1).filter((candidateIndex) => candidateIndex >= 0).pop() === index;
+        if (!lastForLoan || compiled.liabilityInput === undefined) return item;
+        const loan = compiled.liabilityInput.loans.find((candidate) => candidate.id === item.loanId);
+        if (loan === undefined) return item;
+        const opening = state.liabilities[loan.principalLiabilityId]?.balance ?? zero;
+        const closing = candidateState.liabilities[loan.principalLiabilityId]?.balance ?? zero;
+        const extraPaid = opening.minus(closing).minus(rawLiabilities.filter((candidate) => candidate.loanId === item.loanId).reduce((total, candidate) => total.plus(candidate.scheduledPrincipalPaid), zero));
+        return Object.freeze({ ...item, endingPrincipal: closing, extraPrincipalPaid: extraPaid.isPositive() ? extraPaid : zero });
+      });
+      const interestExpense = liabilityPeriods.reduce((total, item) => total.plus(item.interestExpense), zero);
+      const principalIds = new Set(compiled.liabilityInput?.loans.map((loan) => loan.principalLiabilityId) ?? []);
+      const interestIds = new Set(compiled.liabilityInput?.loans.map((loan) => loan.interestPayableLiabilityId) ?? []);
+      const principalBefore = [...principalIds].reduce((total, id) => total.plus(state.liabilities[id]?.balance ?? zero), zero);
+      const principalAfter = [...principalIds].reduce((total, id) => total.plus(candidateState.liabilities[id]?.balance ?? zero), zero);
+      const principalReduction = principalBefore.minus(principalAfter);
+      const endingPrincipal = principalAfter;
+      const outstandingInterest = [...interestIds].reduce((total, id) => total.plus(candidateState.liabilities[id]?.balance ?? zero), zero);
+      liability = Object.freeze({ ...liabilityPeriods[liabilityPeriods.length - 1]!, liabilities: Object.freeze(consolidatedLiabilities), interestExpense, principalReduction, endingPrincipal, outstandingInterest,
+        transactions: Object.freeze(liabilityPeriods.flatMap((item) => item.transactions)), recognitions: Object.freeze(liabilityPeriods.flatMap((item) => item.recognitions)), settlementProposals: Object.freeze(liabilityPeriods.flatMap((item) => item.settlementProposals)), settlements: Object.freeze(liabilityPeriods.flatMap((item) => item.settlements)), effects: Object.freeze(liabilityPeriods.flatMap((item) => item.effects)), constraintOutcomes: Object.freeze(liabilityPeriods.flatMap((item) => item.constraintOutcomes)), liquidityShortfalls: Object.freeze(liabilityPeriods.flatMap((item) => item.liquidityShortfalls)), diagnostics: Object.freeze(liabilityPeriods.flatMap((item) => item.diagnostics)), traceRefs: mergeTraceRefs(...liabilityPeriods.map((item) => item.traceRefs)) ?? Object.freeze([]) });
     }
     validateAuthoritativeState(candidateState); assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency); assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
     const transactions = Object.freeze([...cashPeriods.flatMap((item) => item.transactions), ...investmentPeriods.flatMap((item) => item.transactions), ...liabilityPeriods.flatMap((item) => item.transactions)].sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id)));
