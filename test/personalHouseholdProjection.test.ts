@@ -10,7 +10,7 @@ const request = (runIdentity: string): HouseholdForecastRequest => ({
     contentionPolicy: { id: "pr20-application-order", version: "1", rules: [] },
   },
 });
-const model = () => { const value = createSyntheticPersonalDraft(); return { ...value, objects: { ...value.objects, Investment: [], Liability: [] } }; };
+const model = (): ReturnType<typeof createSyntheticPersonalDraft> => { const value = createSyntheticPersonalDraft(); return { ...value, objects: { ...value.objects, Investment: [], Liability: [] } }; };
 
 describe("Personal household projection application seam", () => {
   it("exposes reconciled household metrics and completion boundaries", () => {
@@ -46,6 +46,24 @@ describe("Personal household projection application seam", () => {
     const changed = request("94000000-0000-4000-8000-000000000007");
     const alternative = { ...changed, compiler: { ...changed.compiler, contentionPolicy: { id: "different-policy", version: "1" as const, rules: [] } } };
     const result = comparePersonalHouseholdScenarios({ baseline: { name: "Baseline", model: value, request: baseline }, alternatives: [{ name: "Changed policy", model: value, request: alternative }] });
+    expect(result.status).toBe("unavailable");
+    expect(result.diagnostics.some((issue) => issue.code === "HOUSEHOLD_SCENARIO_INCOMPATIBLE")).toBe(true);
+  });
+
+  it("rejects an ordinary model edit that is not represented by a scenario overlay", () => {
+    const baselineModel = model();
+    const editedModel = {
+      ...baselineModel,
+      objects: {
+        ...baselineModel.objects,
+        Income: (baselineModel.objects.Income as readonly Record<string, unknown>[])
+          .map((income) => ({ ...income, amount: "7000.00" })) as never,
+      },
+    };
+    const result = comparePersonalHouseholdScenarios({
+      baseline: { name: "Baseline", model: baselineModel, request: request("94000000-0000-4000-8000-000000000008") },
+      alternatives: [{ name: "Edited model", model: editedModel, request: request("94000000-0000-4000-8000-000000000009") }],
+    });
     expect(result.status).toBe("unavailable");
     expect(result.diagnostics.some((issue) => issue.code === "HOUSEHOLD_SCENARIO_INCOMPATIBLE")).toBe(true);
   });
