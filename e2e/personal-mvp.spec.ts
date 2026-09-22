@@ -455,6 +455,16 @@ test("What If executes deterministic investment return", async ({ page }) => {
   const draft = structuredClone(createSyntheticPersonalDraft()) as any;
   const assumptionId = "98000000-0000-4000-8000-000000000001";
   const primitiveId = "98000000-0000-4000-8000-000000000002";
+  const brokerageAccountId = "98000000-0000-4000-8000-000000000003";
+  const taylorExamplePersonId = "90000000-0000-4000-8000-000000000003";
+  draft.objects.Account.push({
+    ...draft.objects.Account[0],
+    account_id: brokerageAccountId,
+    name: "Scenario brokerage",
+    account_type: "taxable_brokerage",
+    owner_id: taylorExamplePersonId,
+    opening_balance: "0.00",
+  });
   draft.objects.Assumption.push({
     assumption_id: assumptionId,
     name: "Return",
@@ -473,7 +483,18 @@ test("What If executes deterministic investment return", async ({ page }) => {
     scenario_id: "90000000-0000-4000-8000-000000000011",
     enabled: true,
   });
-  draft.objects.Investment[0].return_model_id = primitiveId;
+  Object.assign(draft.objects.Investment[0], {
+    owner_id: taylorExamplePersonId,
+    account_id: brokerageAccountId,
+    quantity: "10",
+    price: "10.00",
+    market_value: "100.00",
+    expected_return: null,
+    volatility: null,
+    contribution_model_id: null,
+    return_model_id: primitiveId,
+    rebalancing_rule_id: null,
+  });
   await importDraft(page, draft);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
