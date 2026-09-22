@@ -39,4 +39,14 @@ describe("Personal household projection application seam", () => {
     expect(result.status).toBe("unavailable");
     expect(result.diagnostics.some((issue) => issue.code === "HOUSEHOLD_SCENARIO_INCOMPATIBLE")).toBe(true);
   });
+
+  it("rejects contention policy changes that are not scenario overlays", () => {
+    const value = model();
+    const baseline = request("94000000-0000-4000-8000-000000000006");
+    const changed = request("94000000-0000-4000-8000-000000000007");
+    const alternative = { ...changed, compiler: { ...changed.compiler, contentionPolicy: { id: "different-policy", version: "1" as const, rules: [] } } };
+    const result = comparePersonalHouseholdScenarios({ baseline: { name: "Baseline", model: value, request: baseline }, alternatives: [{ name: "Changed policy", model: value, request: alternative }] });
+    expect(result.status).toBe("unavailable");
+    expect(result.diagnostics.some((issue) => issue.code === "HOUSEHOLD_SCENARIO_INCOMPATIBLE")).toBe(true);
+  });
 });
