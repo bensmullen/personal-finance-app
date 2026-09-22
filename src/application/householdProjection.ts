@@ -319,19 +319,6 @@ const execute = (
   readonly read: PersonalHouseholdForecastReadModel;
   readonly context?: ReturnType<typeof createRunContext>;
 } => {
-  resolved =
-    resolved !== undefined &&
-    Array.isArray(model.objects.Scenario) &&
-    model.objects.Scenario.some(
-      (item) =>
-        typeof item === "object" &&
-        item !== null &&
-        !Array.isArray(item) &&
-        (item as Record<string, unknown>).scenario_id ===
-          String(resolved!.rootScenarioId),
-    )
-      ? resolved
-      : undefined;
   try {
     const selected = boundary(request.compiler);
     if (selected === undefined)
@@ -343,8 +330,19 @@ const execute = (
           diagnostics: Object.freeze([]),
         }),
       };
+    const embeddedRoot =
+      resolved !== undefined &&
+      Array.isArray(model.objects.Scenario) &&
+      model.objects.Scenario.some(
+        (item) =>
+          typeof item === "object" &&
+          item !== null &&
+          !Array.isArray(item) &&
+          (item as Record<string, unknown>).scenario_id ===
+            String(resolved.rootScenarioId),
+      );
     const compiler =
-      resolved === undefined
+      resolved === undefined || !embeddedRoot
         ? request.compiler
         : Object.freeze({
             ...request.compiler,

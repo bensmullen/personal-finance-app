@@ -221,6 +221,7 @@ export type PreparedVerticalSlice3Operation =
       readonly returnConfiguration: DeterministicPositionReturn;
       readonly closingPrice: Money;
       readonly marketValue: Money;
+      readonly primitiveTransition: PrimitiveRuntimeStateStore;
     }
   | {
       readonly kind: "transfer";
@@ -1230,6 +1231,10 @@ export const prepareVerticalSlice3Period = (
         returnConfiguration: item,
         closingPrice: closingPrices[item.targetPositionId]!,
         marketValue: output.marketValue,
+        primitiveTransition: createPrimitiveRuntimeStateStore({
+          [item.primitiveIds.compounding]: p23.primitiveState[item.primitiveIds.compounding]!,
+          [item.primitiveIds.markToMarket]: p26.primitiveState[item.primitiveIds.markToMarket]!,
+        }),
       };
     });
   return Object.freeze({
@@ -1297,7 +1302,10 @@ export const executePreparedVerticalSlice3Operation = (
     // Their runtime becomes authoritative only when the valuation executes.
     return Object.freeze({
       state: next,
-      primitiveState: prepared.primitiveState,
+      primitiveState: createPrimitiveRuntimeStateStore({
+        ...primitiveState,
+        ...operation.primitiveTransition,
+      }),
       effects: Object.freeze([effect]),
       transactions: Object.freeze([]),
       contributionPrincipal: Money.zero(input.baseCurrency),

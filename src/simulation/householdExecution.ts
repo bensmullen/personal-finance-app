@@ -161,8 +161,17 @@ type InstantExecution = {
   readonly state: AuthoritativeState;
   readonly primitiveState: PrimitiveRuntimeStateStore;
   readonly cashPeriods: readonly VerticalSlice2PeriodResult[];
-  readonly investmentPeriods: readonly VerticalSlice3PeriodResult[];
+  readonly investmentPeriods: readonly HouseholdInvestmentOperationResult[];
   readonly liabilityPeriods: readonly VerticalSlice4PeriodResult[];
+};
+
+/** Internal operation facts only; never a fabricated standalone VS3 result. */
+type HouseholdInvestmentOperationResult = {
+  readonly transactions: readonly AccountingTransaction[];
+  readonly contributionPrincipal: Money;
+  readonly fees: Money;
+  readonly unrealizedGain: Money;
+  readonly traceRefs: readonly CalculationTraceRef[];
 };
 
 type PreparedHouseholdPeriod = {
@@ -477,22 +486,13 @@ export const runCompiledHouseholdProjection = (
         createPrimitiveRuntimeStateStore(primitiveState);
       let liability: VerticalSlice4PeriodResult | undefined;
       const cashPeriods: VerticalSlice2PeriodResult[] = [];
-      const investmentPeriods: VerticalSlice3PeriodResult[] = [];
+      const investmentPeriods: HouseholdInvestmentOperationResult[] = [];
       const liabilityPeriods: VerticalSlice4PeriodResult[] = [];
       const prepared = preparePeriod(
         period,
         candidateState,
         candidatePrimitiveState,
       );
-      // VS2 event preparation is a real primitive-runtime transition.  It is
-      // staged inside this candidate month, so a failure below restores the
-      // previously committed store exactly.
-      if (prepared.cash !== undefined) {
-        candidateState = cloneAuthoritativeState(prepared.cash.state);
-        candidatePrimitiveState = createPrimitiveRuntimeStateStore(
-          prepared.cash.primitiveState,
-        );
-      }
       const descriptors = prepared.descriptors;
       if (
         compiled.liabilityInput?.loans.some(
@@ -543,7 +543,7 @@ export const runCompiledHouseholdProjection = (
           openingPrimitiveState,
         );
         const cashResults: VerticalSlice2PeriodResult[] = [];
-        const investmentResults: VerticalSlice3PeriodResult[] = [];
+        const investmentResults: HouseholdInvestmentOperationResult[] = [];
         const liabilityResults: VerticalSlice4PeriodResult[] = [];
         const periodContext = Object.freeze({
           ...runContext,
@@ -583,38 +583,13 @@ export const runCompiledHouseholdProjection = (
             );
             nextState = result.state;
             nextPrimitiveState = result.primitiveState;
-            investmentResults.push(
-              Object.freeze({
-                period: prepared.investments!.period,
-                transactions: result.transactions,
-                effects: result.effects,
-                statements: deriveStatements(
-                  nextState,
-                  result.transactions,
-                  compiled.investmentInput!.baseCurrency,
-                ),
-                accountValues: Object.freeze({}),
-                portfolioValue:
-                  result.state.positions[
-                    Object.keys(result.state.positions)[0] ?? ""
-                  ] === undefined
-                    ? Money.zero(compiled.investmentInput!.baseCurrency)
-                    : Money.zero(compiled.investmentInput!.baseCurrency),
-                contributionPrincipal: result.contributionPrincipal,
-                fees: result.fees,
-                unrealizedGain: result.unrealizedGain,
-                realizedGain: Money.zero(
-                  compiled.investmentInput!.baseCurrency,
-                ),
-                cashInvestmentIncome: Money.zero(
-                  compiled.investmentInput!.baseCurrency,
-                ),
-                ruleApplications: result.ruleApplications,
-                traceRefs: result.effects.flatMap(
-                  (effect) => effect.traceRefs ?? [],
-                ),
-              }),
-            );
+            investmentResults.push(Object.freeze({
+              transactions: result.transactions,
+              contributionPrincipal: result.contributionPrincipal,
+              fees: result.fees,
+              unrealizedGain: result.unrealizedGain,
+              traceRefs: mergeTraceRefs(result.effects.flatMap((effect) => effect.traceRefs ?? [])) ?? Object.freeze([]),
+            }));
             continue;
           }
           const liability = prepared.liabilities?.operations.find(
@@ -677,7 +652,17 @@ export const runCompiledHouseholdProjection = (
         ...(prepared.investments?.traceRefs ?? []),
         ...(prepared.liabilities?.traceRefs ?? []),
       ];
+      let eventRuntimeCommitted = prepared.cash === undefined;
       for (const at of allAt) {
+        if (
+          !eventRuntimeCommitted &&
+          at >= prepared.cash!.primitiveStateFrontier
+        ) {
+          candidatePrimitiveState = createPrimitiveRuntimeStateStore(
+            prepared.cash!.primitiveState,
+          );
+          eventRuntimeCommitted = true;
+        }
         const sameInstant = scheduled.value.descriptors.filter(
           (item) => item.sequencingInstant === at,
         );
@@ -861,6 +846,11 @@ export const runCompiledHouseholdProjection = (
         investmentPeriods.push(...executed.investmentPeriods);
         liabilityPeriods.push(...executed.liabilityPeriods);
         liability = liabilityPeriods[liabilityPeriods.length - 1];
+      }
+      if (!eventRuntimeCommitted) {
+        candidatePrimitiveState = createPrimitiveRuntimeStateStore(
+          prepared.cash!.primitiveState,
+        );
       }
       if (liabilityPeriods.length > 0) {
         const zero = Money.zero(runContext.baseCurrency);

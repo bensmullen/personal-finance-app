@@ -414,6 +414,8 @@ export interface PreparedVerticalSlice2Period {
   /** Candidate state after event/primitive preparation and before cash-flow work. */
   readonly state: AuthoritativeState;
   readonly primitiveState: PrimitiveRuntimeStateStore;
+  /** Event runtime is precomputed for eligibility but commits only at this frontier. */
+  readonly primitiveStateFrontier: Instant;
   readonly descriptors: readonly HouseholdWorkDescriptor[];
   readonly occurrences: readonly PreparedVerticalSlice2Occurrence[];
   readonly diagnostics: readonly ValidationIssue[];
@@ -517,7 +519,7 @@ export const prepareVerticalSlice2Period = (
     }
   }
   const ordered = withLocalOrdering(input, occurrences);
-  return Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
+  return Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
 };
 
 /**
