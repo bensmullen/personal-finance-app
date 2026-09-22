@@ -17,6 +17,7 @@ const ids = {
   income: domainId("income", "93000000-0000-4000-8000-000000000005"), position: domainId("position", "93000000-0000-4000-8000-000000000006"),
   standaloneAsset: "93000000-0000-4000-8000-000000000012",
   missingPrincipal: domainId("liability", "93000000-0000-4000-8000-000000000009"), missingInterest: domainId("liability", "93000000-0000-4000-8000-000000000010"), loan: domainId("loan-contract", "93000000-0000-4000-8000-000000000011"),
+  secondPrincipal: domainId("liability", "93000000-0000-4000-8000-000000000014"), secondInterest: domainId("liability", "93000000-0000-4000-8000-000000000015"), secondLoan: domainId("loan-contract", "93000000-0000-4000-8000-000000000016"),
 };
 const scenario = "93000000-0000-4000-8000-000000000007";
 const start = instant("2026-01-01T00:00:00.000Z"); const end = instant("2026-02-01T00:00:00.000Z");
@@ -101,6 +102,28 @@ describe("compiled household execution", () => {
     expect(result.primitiveState[compounding]).toBeUndefined();
     expect(result.primitiveState[markToMarket]).toBeUndefined();
     expect(result.stoppedAt).toBe(start);
+  });
+
+  it("executes each required service once and retains both loans in the consolidated trajectory", () => {
+    const funding = createFundingPolicy({ id: fundingPolicyId("household:two-loans"), orderedSources: [{ kind: "cash_account", accountId: ids.cash }], allowPartial: false, insufficientFundsBehavior: "unfunded" });
+    const loan = (id: typeof ids.loan, principalLiabilityId: typeof ids.missingPrincipal, interestPayableLiabilityId: typeof ids.missingInterest, priority: number, suffix: string) => ({
+      id, ownerId: ids.owner, principalLiabilityId, interestPayableLiabilityId, originalPrincipal: money("100"), annualRate: Rate.fromDecimal("0", rateConvention.nominalAnnual(12)), totalPayments: 1, rateType: "fixed" as const, paymentFrequency: "monthly" as const, interestConvention: "nominal_annual_12" as const, amortization: "fully_amortizing" as const, paymentResetPolicy: "fixed_no_recast" as const, interestCapitalization: "none" as const, partialPaymentPolicy: "all_or_nothing" as const, paymentSchedule: { kind: "utc_monthly" as const, anchor: instant("2026-01-15T00:00:00.000Z"), invalidDayPolicy: "skip" as const }, fundingPolicy: funding, settlementPriority: priority, extraPrincipalPayments: [], postingRounding: RoundingPolicy.currency(2, "half_up"), primitiveIds: { schedule: primitive(`${suffix}1`), amortization: primitive(`${suffix}2`), accrual: primitive(`${suffix}3`) },
+    });
+    const first = loan(ids.loan, ids.missingPrincipal, ids.missingInterest, 2, "6");
+    const second = loan(ids.secondLoan, ids.secondPrincipal, ids.secondInterest, 1, "7");
+    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: {
+      ...compiled(), cashFlowInput: undefined,
+      reconciledOpeningState: createAuthoritativeState({ ...opening(), accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.owner, cash: money("200") } }, liabilities: {
+        [ids.payable]: { id: ids.payable, balance: money("0") }, [ids.missingPrincipal]: { id: ids.missingPrincipal, balance: money("100") }, [ids.missingInterest]: { id: ids.missingInterest, balance: money("0") }, [ids.secondPrincipal]: { id: ids.secondPrincipal, balance: money("100") }, [ids.secondInterest]: { id: ids.secondInterest, balance: money("0") },
+      } }),
+      liabilityInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [first, second] },
+    } });
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.periods[0]!.liability!.liabilities).toHaveLength(2);
+    expect(result.periods[0]!.liability!.liabilities.map((item) => item.loanId).sort()).toEqual([ids.loan, ids.secondLoan].sort());
+    expect(result.periods[0]!.liability!.principalReduction.equals(money("200"))).toBe(true);
+    expect(result.state.liabilities[ids.missingPrincipal]!.balance.isZero()).toBe(true);
+    expect(result.state.liabilities[ids.secondPrincipal]!.balance.isZero()).toBe(true);
   });
 
   it("commits a staged termination runtime even when it suppresses every occurrence", () => {
