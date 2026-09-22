@@ -108,4 +108,14 @@ describe("compiled household execution", () => {
     expect(result.primitiveState[unrelated]?.primitiveId).toBe("P23");
     expect(result.periods[0]!.traceRefs.some((ref) => ref.traceId.includes(`event:${termination}`))).toBe(true);
   });
+
+  it("canonicalizes irrelevant input ordering but fingerprints contention policy identity", () => {
+    const base = compiled();
+    const forward = runCompiledHouseholdProjection({ runContext: context(), compiled: base });
+    const reordered = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...base, cashFlowInput: { ...cashFlow, incomes: [...cashFlow.incomes].reverse(), expenses: [...cashFlow.expenses].reverse(), events: [...cashFlow.events].reverse() } } });
+    expect(reordered.state).toEqual(forward.state);
+    expect(reordered.runMetadata.inputFingerprint).toBe(forward.runMetadata.inputFingerprint);
+    const changedPolicy = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...base, contentionPolicy: { id: "different-policy", version: "1", rules: [] } } });
+    expect(changedPolicy.runMetadata.inputFingerprint).not.toBe(forward.runMetadata.inputFingerprint);
+  });
 });
