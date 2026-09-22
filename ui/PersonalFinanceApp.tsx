@@ -694,7 +694,6 @@ export function PersonalFinanceApp() {
     change: ScenarioChangeIntent,
     retirementBinding?: RetirementTerminationBinding,
   ) => {
-    if (retirementBinding !== undefined) setRetirementBindings([retirementBinding]);
     const configuration = householdExecution;
     if (configuration === undefined) {
       setRunSettingsError(
@@ -747,22 +746,6 @@ export function PersonalFinanceApp() {
       runPersonalHouseholdForecast(
         draft,
         createHouseholdForecastRequest(effectiveHouseholdExecution, randomId()),
-      ),
-    );
-  };
-  const runHouseholdComparison = () => {
-    if (effectiveHouseholdExecution === undefined) {
-      setRunSettingsError(
-        "Household comparison requires explicit session execution configuration.",
-      );
-      return;
-    }
-    setRunSettingsError("");
-    setHouseholdComparison(
-      comparePersonalHouseholdScenarioIntents(
-        draft,
-        createHouseholdForecastRequest(effectiveHouseholdExecution, randomId()),
-        [],
       ),
     );
   };
@@ -941,12 +924,13 @@ export function PersonalFinanceApp() {
                     simulationStart: sessionSettings.simulationStart, simulationEnd: sessionSettings.simulationEnd,
                     sameInstantCashFlowOrder: sessionSettings.sameInstantCashFlowOrder,
                     cashFlowExecutionAccountId, investmentExecutionOwnerId: investmentOwnerId,
-                    investmentTransferInstructions: [], investmentPurchaseInstructions: [],
+                    investmentTransferInstructions: householdExecution?.investmentTransferInstructions ?? [], investmentPurchaseInstructions: householdExecution?.investmentPurchaseInstructions ?? [],
                     liabilityExecutionOwnerId: liabilityConfig.ownerId,
                     liabilityExecutionProfiles: mortgages.map((mortgage) => {
                       const id = objectId("Liability", mortgage); const profile = liabilityConfig.profiles[id]!;
                       return { liabilityId: id, kind: "vs4_fixed_monthly_fully_amortizing" as const, paymentAnchor: profile.paymentAnchor, totalPayments: Number(profile.totalPayments), fundingAccountId: profile.fundingAccountId, settlementPriority: Number(profile.settlementPriority), openingContractStatus: "current" as const };
                     }), retirementBindings,
+                    ...(householdExecution?.contentionPolicy === undefined ? {} : { contentionPolicy: householdExecution.contentionPolicy }),
                   });
                   setRunSettingsError("");
                 }}
@@ -977,7 +961,6 @@ export function PersonalFinanceApp() {
                 effectiveHouseholdExecution?.retirementBindings ??
                 retirementBindings
               }
-              onRun={runHouseholdComparison}
             />
           )}
           {primary === "Settings" && subnav === "Model Settings" && (
@@ -1821,7 +1804,6 @@ function WhatIfStarter({
   const [majorRate, setMajorRate] = useState("");
   const [majorAnchor, setMajorAnchor] = useState("");
   const [majorPayments, setMajorPayments] = useState("");
-  const [majorMaturity, setMajorMaturity] = useState("");
   const [majorFunding, setMajorFunding] = useState("");
   const [majorPriority, setMajorPriority] = useState("");
   const incomes = objectEntries(draft, "Income");
@@ -1936,12 +1918,11 @@ function WhatIfStarter({
             <input aria-label="Major debt annual rate" inputMode="decimal" value={majorRate} onChange={(event) => setMajorRate(event.target.value)} />
             <input aria-label="Major debt payment anchor" type="date" value={majorAnchor} onChange={(event) => setMajorAnchor(event.target.value)} />
             <input aria-label="Major debt total payments" type="number" value={majorPayments} onChange={(event) => setMajorPayments(event.target.value)} />
-            <input aria-label="Major debt maturity date" type="date" value={majorMaturity} onChange={(event) => setMajorMaturity(event.target.value)} />
             <select aria-label="Major debt funding account" value={majorFunding} onChange={(event) => setMajorFunding(event.target.value)}><option value="">Select funding account</option>{accounts.map((item) => <option key={objectId("Account", item)} value={objectId("Account", item)}>{objectLabel("Account", item)}</option>)}</select>
             <input aria-label="Major debt settlement priority" type="number" value={majorPriority} onChange={(event) => setMajorPriority(event.target.value)} />
-            <button className="primary" disabled={!majorOwnerId || !majorName || !majorValue || !majorDebt || !majorRate || !majorAnchor || !majorPayments || !majorMaturity || !majorFunding || !majorPriority} onClick={() => onMajorAssetDebt({
-              asset: { asset_id: runtimeIds.majorAssetId, name: majorName, asset_type: "real_estate", owner_id: majorOwnerId, acquisition_date: majorAnchor, acquisition_cost: majorValue, valuation_method: "cost" },
-              liability: { liability_id: runtimeIds.majorLiabilityId, name: `${majorName} debt`, liability_type: "mortgage", owner_id: majorOwnerId, principal: majorDebt, current_balance: majorDebt, interest_rate: majorRate, origination_date: majorAnchor, maturity_date: majorMaturity, collateral_id: runtimeIds.majorAssetId },
+            <button className="primary" disabled={!majorOwnerId || !majorName || !majorValue || !majorDebt || !majorRate || !majorAnchor || !majorPayments || !majorFunding || !majorPriority} onClick={() => onMajorAssetDebt({
+              asset: { asset_id: runtimeIds.majorAssetId, name: majorName, asset_type: "real_estate", owner_id: majorOwnerId, acquisition_cost: majorValue, current_value: majorValue, valuation_method: "cost", liquidity_class: "illiquid" },
+              liability: { liability_id: runtimeIds.majorLiabilityId, name: `${majorName} debt`, liability_type: "mortgage", owner_id: majorOwnerId, principal: majorDebt, current_balance: majorDebt, interest_rate: majorRate, rate_type: "fixed", payment_frequency: "monthly", origination_date: majorAnchor, collateral_id: runtimeIds.majorAssetId },
               profile: { liabilityId: runtimeIds.majorLiabilityId, kind: "vs4_fixed_monthly_fully_amortizing", paymentAnchor: majorAnchor, totalPayments: Number(majorPayments), fundingAccountId: majorFunding, settlementPriority: Number(majorPriority), openingContractStatus: "current" },
             })}>Compare major asset/debt</button>
           </article>
@@ -2049,8 +2030,7 @@ function WhatIfStarter({
           <article className="object-card">
             <h2>Change investment returns</h2>
             <p>
-              Runs only the selected investment scope, not a household-wide
-              projection.
+              Reruns the authoritative reconciled household projection.
             </p>
             <select
               aria-label="Investment target"
@@ -2345,9 +2325,9 @@ function WhatIfStarter({
           </article>
         </div>
         <p className="muted">
-          Comparisons are deterministic and scope-specific. Investment purchases
-          mean modeled investment-position purchases only. Cross-slice household
-          effects remain capability-gated.
+          Supported comparisons deterministically rerun the authoritative
+          reconciled household projection. Investment purchases mean modeled
+          investment-position purchases only.
         </p>
       </section>
     </>
@@ -2357,13 +2337,11 @@ function WhatIfStarter({
 function ComparePlans({
   comparison,
   legacyComparison,
-  onRun,
   draft,
   retirementBindings,
 }: {
   comparison: PersonalHouseholdScenarioComparisonReadModel | undefined;
   legacyComparison: PersonalScenarioComparisonReadModel | undefined;
-  onRun: () => void;
   draft: PersonalDraft;
   retirementBindings: readonly RetirementTerminationBinding[];
 }) {
@@ -2385,9 +2363,6 @@ function ComparePlans({
               reconciled state.
             </p>
           </div>
-          <button className="primary" onClick={onRun}>
-            Compare configured household alternatives
-          </button>
         </div>
         {comparison?.status === "completed" ||
         comparison?.status === "incomplete" ? (

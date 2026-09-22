@@ -863,12 +863,6 @@ export const runPersonalHouseholdForecast = (
 ): PersonalHouseholdForecastReadModel => execute(model, request).read;
 
 export interface PersonalHouseholdScenarioComparisonRequest {
-  /** Narrow application variant: one projection-start asset with its fixed debt. */
-  readonly declaredMajorAssetDebtAddition?: {
-    readonly assetId: string;
-    readonly liabilityId: string;
-    readonly profile: LiabilityExecutionProfile;
-  };
   readonly scenarios?: readonly ExecutableScenario[];
   readonly baselineScenarioId?: ScenarioId;
   readonly baseline: {
@@ -950,7 +944,7 @@ const commonBoundary = (
   right: ExecutedHousehold,
   leftRoot: ScenarioId,
   rightRoot: ScenarioId,
-  declaredMajorAssetDebtAddition?: PersonalHouseholdScenarioComparisonRequest["declaredMajorAssetDebtAddition"],
+  allowDeclaredOpeningVariant = false,
 ): void => {
   const a = left.context;
   const b = right.context;
@@ -972,7 +966,7 @@ const commonBoundary = (
     a.simulationStart !== b.simulationStart ||
     a.simulationEnd !== b.simulationEnd ||
     household(left) !== household(right) ||
-    (declaredMajorAssetDebtAddition === undefined && economic(left) !== economic(right))
+    (!allowDeclaredOpeningVariant && economic(left) !== economic(right))
   )
     throw new ValidationError({
       severity: "error",
@@ -1001,6 +995,8 @@ export const comparePersonalHouseholdMajorAssetDebtAddition = (
     Object.freeze({ status: "unavailable", baselineName: "Current plan", alternatives: Object.freeze([]), diagnostics: Object.freeze([]), message });
   if (!assetId || !liabilityId || addition.profile.liabilityId !== liabilityId || String(addition.liability.collateral_id) !== assetId)
     return reject("A major asset/debt alternative requires one declared asset, one collateralized liability, and its matching execution profile.");
+  if (addition.asset.acquisition_date !== undefined || addition.asset.current_value === undefined || addition.asset.liquidity_class === undefined || addition.liability.rate_type !== "fixed" || addition.liability.payment_frequency !== "monthly" || addition.liability.maturity_date !== undefined)
+    return reject("The opening-state asset/debt alternative must use a static valued asset and fixed monthly debt without an independent maturity date.");
   const assets = [...(model.objects.Asset ?? []), addition.asset as never];
   const liabilities = [...(model.objects.Liability ?? []), addition.liability as never];
   const alternativeModel = Object.freeze({ ...model, objects: Object.freeze({ ...model.objects, Asset: Object.freeze(assets), Liability: Object.freeze(liabilities) }) });
@@ -1011,8 +1007,7 @@ export const comparePersonalHouseholdMajorAssetDebtAddition = (
     runIdentity: `${request.runIdentity.slice(0, -1)}9`,
     compiler: Object.freeze({ ...request.compiler, liabilities: Object.freeze({ ...liabilitiesRequest, executionProfiles: Object.freeze([...liabilitiesRequest.executionProfiles, addition.profile]) }) }),
   });
-  return comparePersonalHouseholdScenarios({
-    declaredMajorAssetDebtAddition: { assetId, liabilityId, profile: addition.profile },
+  return compareMajorAssetDebtAddition({
     baseline: { name: "Current plan", model, request },
     alternatives: [{ name: "Add major asset financed by fixed debt at projection start", model: alternativeModel, request: alternativeRequest }],
   });
@@ -1020,6 +1015,16 @@ export const comparePersonalHouseholdMajorAssetDebtAddition = (
 
 export const comparePersonalHouseholdScenarios = (
   request: PersonalHouseholdScenarioComparisonRequest,
+): PersonalHouseholdScenarioComparisonReadModel => {
+  return compareHouseholds(request);
+};
+
+const compareMajorAssetDebtAddition = (request: PersonalHouseholdScenarioComparisonRequest): PersonalHouseholdScenarioComparisonReadModel =>
+  compareHouseholds(request, "major_asset_debt_addition");
+
+const compareHouseholds = (
+  request: PersonalHouseholdScenarioComparisonRequest,
+  declaredDifference?: "major_asset_debt_addition",
 ): PersonalHouseholdScenarioComparisonReadModel => {
   const first = boundary(request.baseline.request.compiler);
   if (first === undefined)
@@ -1099,7 +1104,7 @@ export const comparePersonalHouseholdScenarios = (
         alternative as ExecutedHousehold,
         baselineResolved.rootScenarioId,
         resolved.rootScenarioId,
-        request.declaredMajorAssetDebtAddition,
+        declaredDifference === "major_asset_debt_addition",
       );
       const differences = deriveScenarioConfigurationDifferences(
         baselineResolved,
@@ -1188,7 +1193,7 @@ export const comparePersonalHouseholdScenarios = (
       alternatives.push(
         Object.freeze({
           name: item.name,
-          ...(request.declaredMajorAssetDebtAddition === undefined ? {} : { declaredDifference: "major_asset_debt_addition" as const }),
+          ...(declaredDifference === undefined ? {} : { declaredDifference }),
           status: alternative.result.status,
           ...(points.length === 0
             ? {}

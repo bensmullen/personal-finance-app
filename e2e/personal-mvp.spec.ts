@@ -665,7 +665,6 @@ test("PR21 closeout: major asset debt at projection start uses reconciled compar
   await page.getByLabel("Major debt annual rate").fill("0.05");
   await page.getByLabel("Major debt payment anchor").fill("2026-01-01");
   await page.getByLabel("Major debt total payments").fill("360");
-  await page.getByLabel("Major debt maturity date").fill("2056-01-01");
   await page.getByLabel("Major debt funding account").selectOption({ index: 1 });
   await page.getByLabel("Major debt settlement priority").fill("2");
   await page.getByRole("button", { name: "Compare major asset/debt" }).click();

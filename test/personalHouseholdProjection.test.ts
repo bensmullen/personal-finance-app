@@ -47,8 +47,8 @@ describe("Personal household projection application seam", () => {
   it("compares only a declared projection-start major asset and matching fixed debt", () => {
     const result = comparePersonalHouseholdMajorAssetDebtAddition(
       createGoldenHouseholdDraft(), createGoldenHouseholdForecastRequest("94000000-0000-4000-8000-000000000099"), {
-        asset: { asset_id: "94000000-0000-4000-8000-000000000097", name: "Scenario home", asset_type: "real_estate", owner_id: "90000000-0000-4000-8000-000000000002", acquisition_date: "2026-01-01", acquisition_cost: "400000", valuation_method: "cost" },
-        liability: { liability_id: "94000000-0000-4000-8000-000000000098", name: "Scenario mortgage", liability_type: "mortgage", owner_id: "90000000-0000-4000-8000-000000000002", principal: "300000", current_balance: "300000", interest_rate: "0.05", origination_date: "2026-01-01", maturity_date: "2056-01-01", collateral_id: "94000000-0000-4000-8000-000000000097" },
+        asset: { asset_id: "94000000-0000-4000-8000-000000000097", name: "Scenario home", asset_type: "real_estate", owner_id: "90000000-0000-4000-8000-000000000002", acquisition_cost: "400000", current_value: "400000", valuation_method: "cost", liquidity_class: "illiquid" },
+        liability: { liability_id: "94000000-0000-4000-8000-000000000098", name: "Scenario mortgage", liability_type: "mortgage", owner_id: "90000000-0000-4000-8000-000000000002", principal: "300000", current_balance: "300000", interest_rate: "0.05", rate_type: "fixed", payment_frequency: "monthly", origination_date: "2026-01-01", collateral_id: "94000000-0000-4000-8000-000000000097" },
         profile: { liabilityId: "94000000-0000-4000-8000-000000000098", kind: "vs4_fixed_monthly_fully_amortizing", paymentAnchor: "2026-01-01", totalPayments: 360, fundingAccountId: "90000000-0000-4000-8000-000000000004", settlementPriority: 2, openingContractStatus: "current" },
       },
     );
