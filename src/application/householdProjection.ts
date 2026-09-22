@@ -1351,6 +1351,10 @@ export const comparePersonalHouseholdScenarioIntents = (
         [],
         `Scenario ${intent.name} targets an unauthored household domain.`,
       );
+    const boundIntent =
+      intent.baseScenarioId === undefined
+        ? { ...intent, baseScenarioId: rootId }
+        : intent;
     const result = compileExecutableScenario(
       model,
       base as never,
@@ -1358,7 +1362,7 @@ export const comparePersonalHouseholdScenarioIntents = (
         start: `${selected.simulationStart}T00:00:00.000Z`,
         end: `${selected.simulationEnd}T00:00:00.000Z`,
       },
-      intent,
+      boundIntent,
     );
     if (result.status !== "compiled")
       return unavailable(

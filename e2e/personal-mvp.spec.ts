@@ -101,6 +101,8 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   await lower.getByText("Explain").last().click();
   await expect(lower.locator("code").last()).not.toBeEmpty();
 
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "What If?", exact: true }).click();
   await page.getByLabel("Retirement income").selectOption({ index: 1 });
   await page
     .getByLabel("Canonical retirement event")
@@ -492,7 +494,7 @@ test("What If executes deterministic investment return", async ({ page }) => {
   await configuration.getByLabel("Payment anchor").fill("2022-02-01");
   await configuration.getByLabel("Total payment count").fill("360");
   await configuration
-    .getByLabel("Funding account")
+    .getByLabel("Funding account", { exact: true })
     .selectOption({ label: "Everyday checking" });
   await configuration.getByLabel("Settlement priority").fill("1");
   await configuration

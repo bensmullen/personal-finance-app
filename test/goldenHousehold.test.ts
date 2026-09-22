@@ -219,6 +219,26 @@ describe("PR21 Golden Household", () => {
     ).toBe(true);
   }, 120_000);
 
+  it("binds base-less user intents to the supplied household root", () => {
+    const model = createGoldenHouseholdDraft();
+    const [lowerReturns] = createGoldenHouseholdScenarioIntents();
+    const { baseScenarioId: _baseScenarioId, ...baseLessLowerReturns } =
+      lowerReturns!;
+    const result = comparePersonalHouseholdScenarioIntents(
+      model,
+      through("2027-01-01", 12),
+      [baseLessLowerReturns],
+    );
+    expect(result.status).not.toBe("unavailable");
+    if (result.status === "unavailable") return;
+    expect(result.alternatives).toHaveLength(1);
+    expect(
+      result.alternatives[0]!.configurationDifferences.some(
+        (difference) => difference.changeKind === "investment_return",
+      ),
+    ).toBe(true);
+  }, 120_000);
+
   it("resolves carried source, assumption, and event metadata without inventing causality", () => {
     const model = createGoldenHouseholdDraft();
     const result = runPersonalHouseholdForecast(
