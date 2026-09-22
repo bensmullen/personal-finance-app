@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { CompiledHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { domainId } from "../src/identity/index.js";
+import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { runCompiledHouseholdProjection } from "../src/simulation/householdExecution.js";
 import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import type { VerticalSlice2Input } from "../src/simulation/verticalSlice2.js";
 import { createAuthoritativeState } from "../src/state/index.js";
 import { instant } from "../src/time/index.js";
-import { Quantity, Rate, SHARE, USD, money, rateConvention } from "../src/values/index.js";
+import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
 
 const ids = {
   household: domainId("household", "93000000-0000-4000-8000-000000000001"), owner: domainId("person", "93000000-0000-4000-8000-000000000002"),
@@ -40,6 +41,25 @@ describe("compiled household execution", () => {
     expect(result.status).toBe("completed");
     expect(result.periods[0]!.assets.equals(money("167"))).toBe(true);
     expect(result.periods[0]!.netWorth.equals(money("167"))).toBe(true);
+  });
+
+  it("reconciles real VS2, VS3, and VS4 work through one shared closing state", () => {
+    const funding = createFundingPolicy({ id: fundingPolicyId("household:checking"), orderedSources: [{ kind: "cash_account", accountId: ids.cash }], allowPartial: false, insufficientFundsBehavior: "unfunded" });
+    const investmentInput = {
+      householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, valuationAccountingPolicy: "economic_only" as const, ruleCatalog: [], transfers: [], purchases: [], fees: [],
+      returns: [{ targetPositionId: ids.position, accountId: ids.cash, rate: Rate.fromDecimal("0", rateConvention.periodic(ratePeriod("1", "calendar_month"))), returnBasis: { kind: "periodic" as const, period: ratePeriod("1", "calendar_month") }, timing: "end_of_period_on_opening_quantity" as const, priceRounding: RoundingPolicy.currency(2, "half_up"), primitiveIds: { compounding: primitive("40"), markToMarket: primitive("41") } }],
+    };
+    const liabilityInput = {
+      householdId: ids.household, ownerId: ids.owner, baseCurrency: USD,
+      loans: [{ id: ids.loan, ownerId: ids.owner, principalLiabilityId: ids.missingPrincipal, interestPayableLiabilityId: ids.missingInterest, originalPrincipal: money("100"), annualRate: Rate.fromDecimal("0", rateConvention.nominalAnnual(12)), totalPayments: 1, rateType: "fixed" as const, paymentFrequency: "monthly" as const, interestConvention: "nominal_annual_12" as const, amortization: "fully_amortizing" as const, paymentResetPolicy: "fixed_no_recast" as const, interestCapitalization: "none" as const, partialPaymentPolicy: "all_or_nothing" as const, paymentSchedule: { kind: "utc_monthly" as const, anchor: instant("2026-01-15T00:00:00.000Z"), invalidDayPolicy: "skip" as const }, fundingPolicy: funding, settlementPriority: 1, extraPrincipalPayments: [], postingRounding: RoundingPolicy.currency(2, "half_up"), primitiveIds: { schedule: primitive("42"), amortization: primitive("43"), accrual: primitive("44") } }],
+    };
+    const startState = createAuthoritativeState({ ...opening(), liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") }, [ids.missingPrincipal]: { id: ids.missingPrincipal, balance: money("100") }, [ids.missingInterest]: { id: ids.missingInterest, balance: money("0") } } });
+    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...compiled(), reconciledOpeningState: startState, investmentInput, liabilityInput, contentionPolicy: { id: "unified", version: "1", rules: [{ before: "cash_income_settlement", after: "liability_required_service" }] } } });
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.periods[0]!.cash.equals(money("10"))).toBe(true);
+    expect(result.periods[0]!.investmentValue.equals(money("50"))).toBe(true);
+    expect(result.periods[0]!.liability!.principalReduction.equals(money("100"))).toBe(true);
+    expect(result.periods[0]!.netWorth.equals(money("60"))).toBe(true);
   });
 
   it("rolls back cash-flow and identities when a later slice fails", () => {
