@@ -61,6 +61,12 @@ describe("compiled household execution", () => {
     expect(result.periods[0]!.liability!.principalReduction.equals(money("100"))).toBe(true);
     expect(result.periods[0]!.netWorth.equals(money("60"))).toBe(true);
 
+    const unresolved = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...compiled(), reconciledOpeningState: startState, investmentInput, liabilityInput } });
+    expect(unresolved.status).toBe("incomplete");
+    expect(unresolved.diagnostics.some((issue) => issue.code === "HOUSEHOLD_CONTENTION_UNRESOLVED")).toBe(true);
+    expect(unresolved.periods).toHaveLength(0);
+    expect(unresolved.state).toEqual(startState);
+
     const at = (day: string) => instant(`2026-01-${day}T00:00:00.000Z`);
     const runChronology = (incomeAt: string, debtAt: string) => runCompiledHouseholdProjection({ runContext: context(), compiled: {
       ...compiled(), reconciledOpeningState: startState,
