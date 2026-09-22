@@ -64,6 +64,7 @@ describe("compiled household execution", () => {
     expect(result.periods[0]!.investmentValue.equals(money("50"))).toBe(true);
     expect(result.periods[0]!.liability!.principalReduction.equals(money("100"))).toBe(true);
     expect(result.periods[0]!.netWorth.equals(money("60"))).toBe(true);
+    expect(result.periods[0]!.traceRefs.some((ref) => ref.traceId.includes("household:contention-policy:unified:v1"))).toBe(true);
 
     const unresolved = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...compiled(), reconciledOpeningState: startState, investmentInput, liabilityInput } });
     expect(unresolved.status).toBe("incomplete");
