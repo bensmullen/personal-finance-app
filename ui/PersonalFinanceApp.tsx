@@ -923,7 +923,7 @@ export function PersonalFinanceApp() {
                   for (const mortgage of mortgages) {
                     const id = objectId("Liability", mortgage);
                     const profile = liabilityConfig.profiles[id];
-                    if (!profile?.paymentAnchor || !profile.fundingAccountId || !/^\\d+$/.test(profile.totalPayments) || !/^\\d+$/.test(profile.settlementPriority))
+                    if (!profile?.paymentAnchor || !profile.fundingAccountId || !/^\d+$/.test(profile.totalPayments) || !/^\d+$/.test(profile.settlementPriority))
                       return setRunSettingsError(`Household execution configuration is missing an explicit complete profile for ${objectLabel("Liability", mortgage)}.`);
                   }
                   setHouseholdExecution({
