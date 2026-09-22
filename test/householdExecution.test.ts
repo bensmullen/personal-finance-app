@@ -60,9 +60,18 @@ describe("compiled household execution", () => {
       incomes: [{ ...cashFlow.incomes[0]!, terminationEventId: termination, primitiveIds: { ...cashFlow.incomes[0]!.primitiveIds, termination: terminationPrimitive } }],
       events: [{ id: termination, targetId: ids.income, kind: "termination", effectiveAt: start }],
     };
-    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...compiled(), cashFlowInput: input } });
+    const unrelated = primitive("23");
+    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: {
+      ...compiled(),
+      cashFlowInput: input,
+      reconciledPrimitiveState: createPrimitiveRuntimeStateStore({
+        [unrelated]: { primitiveId: "P23", state: { evaluations: 1, lastClosingValue: money("1") } },
+      }),
+    } });
     expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
     expect(result.periods[0]!.transactions).toHaveLength(0);
     expect(result.primitiveState[terminationPrimitive]?.primitiveId).toBe("P30");
+    expect(result.primitiveState[unrelated]?.primitiveId).toBe("P23");
+    expect(result.periods[0]!.traceRefs.some((ref) => ref.traceId.includes(`event:${termination}`))).toBe(true);
   });
 });
