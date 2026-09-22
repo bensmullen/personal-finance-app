@@ -257,6 +257,21 @@ describe("compiled household execution", () => {
     expect(result.periods[0]!.traceRefs.some((ref) => ref.traceId.includes(`event:${termination}`))).toBe(true);
   });
 
+  it("commits activation runtime and lineage before executing the activated occurrence", () => {
+    const activation = domainId("event", "93000000-0000-4000-8000-000000000023");
+    const activationPrimitive = primitive("113");
+    const input: VerticalSlice2Input = {
+      ...cashFlow,
+      incomes: [{ ...cashFlow.incomes[0]!, activationEventId: activation, primitiveIds: { ...cashFlow.incomes[0]!.primitiveIds, activation: activationPrimitive } }],
+      events: [{ id: activation, targetId: ids.income, kind: "activation", effectiveAt: start }],
+    };
+    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...compiled(), cashFlowInput: input } });
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.periods[0]!.transactions).toHaveLength(1);
+    expect(result.primitiveState[activationPrimitive]?.primitiveId).toBe("P27");
+    expect(result.periods[0]!.traceRefs.some((ref) => ref.traceId.includes(`event:${activation}`))).toBe(true);
+  });
+
   it("commits staged P23/P26 runtime only through executed valuations across periods", () => {
     const compounding = primitive("50");
     const markToMarket = primitive("51");
