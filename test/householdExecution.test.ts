@@ -182,6 +182,22 @@ describe("compiled household execution", () => {
     expect(debtFirst.periods[0]!.liability!.principalReduction.equals(money("100"))).toBe(true);
   });
 
+  it("executes one required service and one dependent extra-principal payment exactly once", () => {
+    const funding = createFundingPolicy({ id: fundingPolicyId("household:extra-once"), orderedSources: [{ kind: "cash_account", accountId: ids.cash }], allowPartial: false, insufficientFundsBehavior: "unfunded" });
+    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: {
+      ...compiled(), cashFlowInput: undefined,
+      reconciledOpeningState: createAuthoritativeState({ ...opening(), accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.owner, cash: money("200") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") }, [ids.missingPrincipal]: { id: ids.missingPrincipal, balance: money("200") }, [ids.missingInterest]: { id: ids.missingInterest, balance: money("0") } } }),
+      liabilityInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [{ id: ids.loan, ownerId: ids.owner, principalLiabilityId: ids.missingPrincipal, interestPayableLiabilityId: ids.missingInterest, originalPrincipal: money("200"), annualRate: Rate.fromDecimal("0", rateConvention.nominalAnnual(12)), totalPayments: 2, rateType: "fixed", paymentFrequency: "monthly", interestConvention: "nominal_annual_12", amortization: "fully_amortizing", paymentResetPolicy: "fixed_no_recast", interestCapitalization: "none", partialPaymentPolicy: "all_or_nothing", paymentSchedule: { kind: "utc_monthly", anchor: instant("2026-01-15T00:00:00.000Z"), invalidDayPolicy: "skip" }, fundingPolicy: funding, settlementPriority: 1, extraPrincipalPayments: [{ id: domainId("extra-principal-payment", "93000000-0000-4000-8000-000000000021"), scheduledAt: instant("2026-01-15T00:00:00.000Z"), amount: money("10"), fundingPolicy: funding, primitiveInstanceId: primitive("107") }], postingRounding: RoundingPolicy.currency(2, "half_up"), primitiveIds: { schedule: primitive("108"), amortization: primitive("109"), accrual: primitive("110") } }] },
+    } });
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    const rows = result.periods[0]!.liability!.liabilities;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.scheduledPrincipalPaid.equals(money("100"))).toBe(true);
+    expect(rows[0]!.extraPrincipalPaid.equals(money("10"))).toBe(true);
+    expect(result.state.liabilities[ids.missingPrincipal]!.balance.equals(money("90"))).toBe(true);
+    expect(result.state.identities.generatedOccurrenceKeys).toHaveLength(2);
+  });
+
   it("does not let an end-of-period investment transfer fund earlier debt service", () => {
     const funding = createFundingPolicy({ id: fundingPolicyId("household:eop"), orderedSources: [{ kind: "cash_account", accountId: ids.cash }], allowPartial: false, insufficientFundsBehavior: "unfunded" });
     const result = runCompiledHouseholdProjection({ runContext: context(), compiled: {
