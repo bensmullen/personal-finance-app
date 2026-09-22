@@ -601,12 +601,17 @@ export function PersonalFinanceApp() {
         exportSavedBackup={exportSavedBackup}
         deleteSaved={deleteSavedModel}
         loadExample={() => {
+          const configuration = createGoldenHouseholdSessionConfiguration();
           replaceCanonicalModel(
             createGoldenHouseholdDraft(),
             "Golden Household loaded",
           );
           setSessionSettings(sessionSettingsFromHorizon("2026-01-01", 120));
-          setHouseholdExecution(createGoldenHouseholdSessionConfiguration());
+          setHouseholdExecution(configuration);
+          setCashFlowExecutionAccountId(configuration.cashFlowExecutionAccountId ?? "");
+          setInvestmentOwnerId(configuration.investmentExecutionOwnerId);
+          setLiabilityConfig({ ownerId: configuration.liabilityExecutionOwnerId, profiles: Object.fromEntries(configuration.liabilityExecutionProfiles.map((profile) => [profile.liabilityId, { paymentAnchor: profile.paymentAnchor, totalPayments: String(profile.totalPayments), fundingAccountId: profile.fundingAccountId, settlementPriority: String(profile.settlementPriority) }])) });
+          setRetirementBindings(configuration.retirementBindings);
         }}
       />
     );
@@ -998,8 +1003,7 @@ export function PersonalFinanceApp() {
           {primary === "Plan" && subnav === "What If?" && (
             <WhatIfStarter
               draft={draft}
-              investmentOwnerId={investmentOwnerId}
-              liabilityConfig={liabilityConfig}
+              householdExecution={effectiveHouseholdExecution}
               runtimeIds={whatIfIds}
               onCompare={runComparison}
               onMajorAssetDebt={runMajorAssetDebtComparison}
@@ -1757,15 +1761,13 @@ function DebtExecutionPanel({
 }
 function WhatIfStarter({
   draft,
-  investmentOwnerId,
-  liabilityConfig,
+  householdExecution,
   runtimeIds,
   onCompare,
   onMajorAssetDebt,
 }: {
   draft: PersonalDraft;
-  investmentOwnerId: string;
-  liabilityConfig: LiabilitySessionConfig;
+  householdExecution: PersonalHouseholdSessionExecutionConfiguration | undefined;
   runtimeIds: {
     terminationEventId: string;
     extraPaymentId: string;
@@ -2050,7 +2052,7 @@ function WhatIfStarter({
             </select>
             <button
               className="primary"
-              disabled={!investmentId || !investmentOwnerId || !exactRate}
+              disabled={!investmentId || !householdExecution?.investmentExecutionOwnerId || !exactRate}
               onClick={() =>
                 onCompare("investments", {
                   kind: "investment_return",
@@ -2061,11 +2063,11 @@ function WhatIfStarter({
             >
               Compare investment return
             </button>
-            {(!investmentOwnerId || investments.length === 0) && (
+            {(!householdExecution?.investmentExecutionOwnerId || investments.length === 0) && (
               <p className="capability">
                 {investments.length === 0
                   ? "No executable investment target exists."
-                  : "Select an investment execution owner first."}
+                  : "Apply a household investment execution owner first."}
               </p>
             )}
           </article>
@@ -2129,8 +2131,8 @@ function WhatIfStarter({
                 !exactExtraAmount ||
                 !extraDate ||
                 !extraFundingId ||
-                !liabilityConfig.ownerId ||
-                !liabilityConfig.profiles[liabilityId]
+                !householdExecution?.liabilityExecutionOwnerId ||
+                !householdExecution.liabilityExecutionProfiles.some((profile) => profile.liabilityId === liabilityId)
               }
               onClick={() =>
                 onCompare("liabilities", {
@@ -2149,8 +2151,8 @@ function WhatIfStarter({
             >
               Compare extra principal
             </button>
-            {(!liabilityConfig.ownerId ||
-              !liabilityConfig.profiles[liabilityId]) && (
+            {(!householdExecution?.liabilityExecutionOwnerId ||
+              !householdExecution.liabilityExecutionProfiles.some((profile) => profile.liabilityId === liabilityId)) && (
               <p className="capability">
                 Complete the debt execution profile first.
               </p>
@@ -2340,13 +2342,11 @@ function ComparePlans({
   legacyComparison,
   draft,
   retirementBindings,
-  setRetirementBindings,
 }: {
   comparison: PersonalHouseholdScenarioComparisonReadModel | undefined;
   legacyComparison: PersonalScenarioComparisonReadModel | undefined;
   draft: PersonalDraft;
   retirementBindings: readonly RetirementTerminationBinding[];
-  setRetirementBindings: (value: readonly RetirementTerminationBinding[]) => void;
 }) {
   const canonicalEvents =
     ((draft.objects as Record<string, readonly JsonObject[]>).Event ?? []);
@@ -3072,6 +3072,7 @@ function HouseholdPlan({
   liabilityConfig,
   setLiabilityConfig,
   retirementBindings,
+  setRetirementBindings,
   setHouseholdExecution,
 }: {
   draft: PersonalDraft;
@@ -3085,6 +3086,7 @@ function HouseholdPlan({
   liabilityConfig: LiabilitySessionConfig;
   setLiabilityConfig: React.Dispatch<React.SetStateAction<LiabilitySessionConfig>>;
   retirementBindings: readonly RetirementTerminationBinding[];
+  setRetirementBindings: (value: readonly RetirementTerminationBinding[]) => void;
   setHouseholdExecution: () => void;
 }) {
   const accounts = objectEntries(draft, "Account");
