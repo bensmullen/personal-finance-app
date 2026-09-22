@@ -126,6 +126,19 @@ describe("compiled household execution", () => {
     expect(result.state.liabilities[ids.secondPrincipal]!.balance.isZero()).toBe(true);
   });
 
+  it("does not fabricate debt service for an already paid-off liability", () => {
+    const funding = createFundingPolicy({ id: fundingPolicyId("household:paid-off"), orderedSources: [{ kind: "cash_account", accountId: ids.cash }], allowPartial: false, insufficientFundsBehavior: "unfunded" });
+    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: {
+      ...compiled(), cashFlowInput: undefined,
+      reconciledOpeningState: createAuthoritativeState({ ...opening(), liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") }, [ids.missingPrincipal]: { id: ids.missingPrincipal, balance: money("0") }, [ids.missingInterest]: { id: ids.missingInterest, balance: money("0") } } }),
+      liabilityInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [{ id: ids.loan, ownerId: ids.owner, principalLiabilityId: ids.missingPrincipal, interestPayableLiabilityId: ids.missingInterest, originalPrincipal: money("100"), annualRate: Rate.fromDecimal("0", rateConvention.nominalAnnual(12)), totalPayments: 1, rateType: "fixed", paymentFrequency: "monthly", interestConvention: "nominal_annual_12", amortization: "fully_amortizing", paymentResetPolicy: "fixed_no_recast", interestCapitalization: "none", partialPaymentPolicy: "all_or_nothing", paymentSchedule: { kind: "utc_monthly", anchor: instant("2026-01-15T00:00:00.000Z"), invalidDayPolicy: "skip" }, fundingPolicy: funding, settlementPriority: 1, extraPrincipalPayments: [], postingRounding: RoundingPolicy.currency(2, "half_up"), primitiveIds: { schedule: primitive("80"), amortization: primitive("81"), accrual: primitive("82") } }] },
+    } });
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.periods[0]!.liability).toBeUndefined();
+    expect(result.periods[0]!.transactions).toEqual([]);
+    expect(result.primitiveState[primitive("80")]).toBeUndefined();
+  });
+
   it("commits a staged termination runtime even when it suppresses every occurrence", () => {
     const termination = domainId("event", "93000000-0000-4000-8000-000000000013");
     const terminationPrimitive = primitive("30");

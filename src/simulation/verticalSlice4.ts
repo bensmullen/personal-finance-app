@@ -134,6 +134,10 @@ const validatePrimitiveResume = (request: VerticalSlice4RunInput, loan: FixedAmo
   const interestPayable = request.openingState.liabilities[loan.interestPayableLiabilityId]!.balance;
   if (principalDue.compare(principal) > 0) invalid("Outstanding required-principal claims cannot exceed authoritative principal", `primitiveState.${loan.primitiveIds.amortization}`);
   if (!interestDue.equals(interestPayable)) invalid("Outstanding interest claims must reconcile to the authoritative interest-payable liability", `primitiveState.${loan.primitiveIds.accrual}`);
+  // A reconciled paid-off loan has no remaining semantic work.  It must not
+  // require invented P22/P24 history merely because its original contract
+  // predates the forecast window.
+  if (!principal.isPositive() && !interestPayable.isPositive() && !principalDue.isPositive() && !interestDue.isPositive()) return;
   const rawAmortizationState = request.primitiveState?.[loan.primitiveIds.amortization];
   const rawAccrualState = request.primitiveState?.[loan.primitiveIds.accrual];
   const amortizationState = rawAmortizationState === undefined ? undefined : rawAmortizationState.primitiveId === "P22" ? rawAmortizationState : invalid("Amortization primitive state has the wrong primitive kind", `primitiveState.${loan.primitiveIds.amortization}`);
