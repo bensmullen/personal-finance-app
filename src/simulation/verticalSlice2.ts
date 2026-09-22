@@ -416,6 +416,8 @@ export interface PreparedVerticalSlice2Period {
   readonly primitiveState: PrimitiveRuntimeStateStore;
   /** Event runtime is precomputed for eligibility but commits only at this frontier. */
   readonly primitiveStateFrontier: Instant;
+  /** Only P27/P30 entries authored by event preparation; safe to merge into shared runtime. */
+  readonly eventPrimitiveTransition: PrimitiveRuntimeStateStore;
   readonly descriptors: readonly HouseholdWorkDescriptor[];
   readonly occurrences: readonly PreparedVerticalSlice2Occurrence[];
   readonly diagnostics: readonly ValidationIssue[];
@@ -519,7 +521,8 @@ export const prepareVerticalSlice2Period = (
     }
   }
   const ordered = withLocalOrdering(input, occurrences);
-  return Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
+  const eventPrimitiveTransition = createPrimitiveRuntimeStateStore(Object.fromEntries(eventResult.primitiveOutputs.filter((output) => output.primitiveId === "P27" || output.primitiveId === "P30").map((output) => [output.primitiveInstanceId, eventResult.primitiveState[output.primitiveInstanceId]!])));
+  return Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), eventPrimitiveTransition, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
 };
 
 /**

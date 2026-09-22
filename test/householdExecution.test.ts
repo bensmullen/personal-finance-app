@@ -51,4 +51,18 @@ describe("compiled household execution", () => {
     expect(result.primitiveState).toEqual({});
     expect(result.stoppedAt).toBe(start);
   });
+
+  it("commits a staged termination runtime even when it suppresses every occurrence", () => {
+    const termination = domainId("event", "93000000-0000-4000-8000-000000000013");
+    const terminationPrimitive = primitive("30");
+    const input: VerticalSlice2Input = {
+      ...cashFlow,
+      incomes: [{ ...cashFlow.incomes[0]!, terminationEventId: termination, primitiveIds: { ...cashFlow.incomes[0]!.primitiveIds, termination: terminationPrimitive } }],
+      events: [{ id: termination, targetId: ids.income, kind: "termination", effectiveAt: start }],
+    };
+    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: { ...compiled(), cashFlowInput: input } });
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.periods[0]!.transactions).toHaveLength(0);
+    expect(result.primitiveState[terminationPrimitive]?.primitiveId).toBe("P30");
+  });
 });

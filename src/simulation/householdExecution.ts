@@ -13,6 +13,7 @@ import {
 import {
   assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
+  createAuthoritativeIdentityRegistry,
   validateAuthoritativeState,
   type AuthoritativeState,
 } from "../state/index.js";
@@ -155,6 +156,21 @@ const display = (context: RunContext) =>
     asOf: context.asOf,
     dataCutoff: context.dataCutoff,
     generatedForecastFactKind: "model_generated" as const,
+  });
+
+const mergeEventPreparationIdentities = (
+  state: AuthoritativeState,
+  prepared: PreparedVerticalSlice2Period,
+): AuthoritativeState =>
+  cloneAuthoritativeState({
+    ...state,
+    identities: createAuthoritativeIdentityRegistry({
+      postedTransactionIds: [...state.identities.postedTransactionIds, ...prepared.state.identities.postedTransactionIds],
+      recognitionIds: [...state.identities.recognitionIds, ...prepared.state.identities.recognitionIds],
+      settlementIds: [...state.identities.settlementIds, ...prepared.state.identities.settlementIds],
+      generatedOccurrenceKeys: [...state.identities.generatedOccurrenceKeys, ...prepared.state.identities.generatedOccurrenceKeys],
+      externalIdempotencyKeys: [...state.identities.externalIdempotencyKeys, ...prepared.state.identities.externalIdempotencyKeys],
+    }),
   });
 
 type InstantExecution = {
@@ -659,8 +675,12 @@ export const runCompiledHouseholdProjection = (
           at >= prepared.cash!.primitiveStateFrontier
         ) {
           candidatePrimitiveState = createPrimitiveRuntimeStateStore(
-            prepared.cash!.primitiveState,
+            {
+              ...candidatePrimitiveState,
+              ...prepared.cash!.eventPrimitiveTransition,
+            },
           );
+          candidateState = mergeEventPreparationIdentities(candidateState, prepared.cash!);
           eventRuntimeCommitted = true;
         }
         const sameInstant = scheduled.value.descriptors.filter(
@@ -849,8 +869,12 @@ export const runCompiledHouseholdProjection = (
       }
       if (!eventRuntimeCommitted) {
         candidatePrimitiveState = createPrimitiveRuntimeStateStore(
-          prepared.cash!.primitiveState,
+          {
+            ...candidatePrimitiveState,
+            ...prepared.cash!.eventPrimitiveTransition,
+          },
         );
+        candidateState = mergeEventPreparationIdentities(candidateState, prepared.cash!);
       }
       if (liabilityPeriods.length > 0) {
         const zero = Money.zero(runContext.baseCurrency);
