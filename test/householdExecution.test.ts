@@ -60,6 +60,20 @@ describe("compiled household execution", () => {
     expect(result.periods[0]!.investmentValue.equals(money("50"))).toBe(true);
     expect(result.periods[0]!.liability!.principalReduction.equals(money("100"))).toBe(true);
     expect(result.periods[0]!.netWorth.equals(money("60"))).toBe(true);
+
+    const at = (day: string) => instant(`2026-01-${day}T00:00:00.000Z`);
+    const runChronology = (incomeAt: string, debtAt: string) => runCompiledHouseholdProjection({ runContext: context(), compiled: {
+      ...compiled(), reconciledOpeningState: startState,
+      cashFlowInput: { ...cashFlow, incomes: [{ ...cashFlow.incomes[0]!, recurrence: { kind: "utc_monthly", anchor: at(incomeAt), invalidDayPolicy: "skip" }, growthBaseAt: at(incomeAt) }] },
+      investmentInput,
+      liabilityInput: { ...liabilityInput, loans: [{ ...liabilityInput.loans[0]!, paymentSchedule: { kind: "utc_monthly", anchor: at(debtAt), invalidDayPolicy: "skip" } }] },
+    } });
+    const laterIncome = runChronology("20", "05");
+    expect(laterIncome.status).toBe("completed");
+    expect(laterIncome.periods[0]!.liability!.principalReduction.isZero()).toBe(true);
+    const earlierIncome = runChronology("05", "20");
+    expect(earlierIncome.status).toBe("completed");
+    expect(earlierIncome.periods[0]!.liability!.principalReduction.equals(money("100"))).toBe(true);
   });
 
   it("rolls back cash-flow and identities when a later slice fails", () => {
