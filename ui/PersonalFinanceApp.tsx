@@ -61,6 +61,7 @@ import {
 } from "../src/application/personalMvp.js";
 import {
   comparePersonalHouseholdScenarioIntents,
+  comparePersonalHouseholdMajorAssetDebtAddition,
   createHouseholdForecastRequest,
   resolveHouseholdExplanation,
   runPersonalHouseholdForecast,
@@ -69,7 +70,6 @@ import {
   type PersonalHouseholdSessionExecutionConfiguration,
 } from "../src/application/householdProjection.js";
 import {
-  createGoldenHouseholdScenarioIntents,
   createGoldenHouseholdSessionConfiguration,
 } from "../src/application/goldenHousehold.js";
 import type { ScenarioChangeIntent } from "../src/application/compiler/scenarios.js";
@@ -359,6 +359,8 @@ export function PersonalFinanceApp() {
   const [liabilityConfig, setLiabilityConfig] =
     useState<LiabilitySessionConfig>(emptyLiabilityConfig);
   const [investmentOwnerId, setInvestmentOwnerId] = useState("");
+  const [cashFlowExecutionAccountId, setCashFlowExecutionAccountId] =
+    useState("");
   const [retirementBindings, setRetirementBindings] = useState<
     readonly RetirementTerminationBinding[]
   >([]);
@@ -366,6 +368,8 @@ export function PersonalFinanceApp() {
     terminationEventId: randomId(),
     extraPaymentId: randomId(),
     alternativeScenarioId: randomId(),
+    majorAssetId: randomId(),
+    majorLiabilityId: randomId(),
   }));
   const [fileReport, setFileReport] =
     useState<ReturnType<typeof validatePersonalModelJson>>();
@@ -445,6 +449,7 @@ export function PersonalFinanceApp() {
     updateCanonicalModel(next);
     setLiabilityConfig(emptyLiabilityConfig());
     setInvestmentOwnerId("");
+    setCashFlowExecutionAccountId("");
     setRetirementBindings([]);
     setHouseholdExecution(undefined);
     setNotice(message);
@@ -689,75 +694,23 @@ export function PersonalFinanceApp() {
     change: ScenarioChangeIntent,
     retirementBinding?: RetirementTerminationBinding,
   ) => {
-    const resolved = resolvePersonalSessionSettings(sessionSettings, scope);
-    if (!resolved.request) {
-      setRunSettingsError(resolved.error ?? "Run settings are not valid.");
-      navigate("Settings");
-      setSubnav("Model Settings");
+    if (retirementBinding !== undefined) setRetirementBindings([retirementBinding]);
+    const configuration = householdExecution;
+    if (configuration === undefined) {
+      setRunSettingsError(
+        "Configure cash-flow account, investment owner, liability owner, and each mortgage profile in Current Plan before comparing a household what-if.",
+      );
       return;
     }
-    setRunSettingsError("");
-    const effectiveRetirementBindings =
-      retirementBinding === undefined
-        ? retirementBindings.length > 0
-          ? retirementBindings
-          : (householdExecution?.retirementBindings ?? [])
-        : [retirementBinding];
-    const request =
-      scope === "investments"
-        ? {
-            ...resolved.request,
-            ...(investmentOwnerId
-              ? { executionOwnerId: investmentOwnerId }
-              : {}),
-          }
-        : scope === "liabilities"
-          ? {
-              ...resolved.request,
-              ...(liabilityConfig.ownerId
-                ? { executionOwnerId: liabilityConfig.ownerId }
-                : {}),
-              liabilityExecutionProfiles: (
-                Object.entries(liabilityConfig.profiles) as [
-                  string,
-                  LiabilitySessionProfile,
-                ][]
-              ).map(([liabilityId, profile]) => ({
-                liabilityId,
-                kind: "vs4_fixed_monthly_fully_amortizing" as const,
-                paymentAnchor: profile.paymentAnchor,
-                totalPayments: Number(profile.totalPayments),
-                fundingAccountId: profile.fundingAccountId,
-                settlementPriority: Number(profile.settlementPriority),
-                openingContractStatus: "current" as const,
-              })),
-            }
-          : {
-              ...resolved.request,
-              ...(effectiveRetirementBindings.length === 0
-                ? {}
-                : { retirementBindings: effectiveRetirementBindings }),
-            };
-    const configuredRequest =
-      scope === "cash_flow" && householdExecution?.cashFlowExecutionAccountId
-        ? {
-            ...request,
-            cashFlowExecutionAccountId:
-              householdExecution.cashFlowExecutionAccountId,
-          }
-        : request;
-    setComparison(
-      comparePersonalScenarios(draft, configuredRequest, {
-        scope,
-        alternatives: [
-          {
-            scenarioId: whatIfIds.alternativeScenarioId,
-            name: "What-if alternative",
-            changes: [change],
-          },
-        ],
-      }),
-    );
+    const bindings = retirementBinding === undefined
+      ? configuration.retirementBindings
+      : [retirementBinding];
+    const configured = { ...effectiveHouseholdExecution!, retirementBindings: bindings };
+    setHouseholdComparison(comparePersonalHouseholdScenarioIntents(
+      draft,
+      createHouseholdForecastRequest(configured, randomId()),
+      [{ scenarioId: whatIfIds.alternativeScenarioId, name: "What-if alternative", changes: [change] }],
+    ));
     navigate("Plan");
     setSubnav("Compare Plans");
   };
@@ -809,9 +762,17 @@ export function PersonalFinanceApp() {
       comparePersonalHouseholdScenarioIntents(
         draft,
         createHouseholdForecastRequest(effectiveHouseholdExecution, randomId()),
-        createGoldenHouseholdScenarioIntents(),
+        [],
       ),
     );
+  };
+  const runMajorAssetDebtComparison = (addition: Parameters<typeof comparePersonalHouseholdMajorAssetDebtAddition>[2]) => {
+    if (effectiveHouseholdExecution === undefined) {
+      setRunSettingsError("Configure reconciled household execution in Current Plan before comparing a major asset/debt addition.");
+      return;
+    }
+    setHouseholdComparison(comparePersonalHouseholdMajorAssetDebtAddition(draft, createHouseholdForecastRequest(effectiveHouseholdExecution, randomId()), addition));
+    navigate("Plan"); setSubnav("Compare Plans");
   };
   const exportModel = () => {
     downloadJson(exportPersonalModelJson(draft), "personal-finance-model.json");
@@ -957,6 +918,38 @@ export function PersonalFinanceApp() {
                 forecast={householdForecast}
                 run={runHouseholdForecast}
                 error={runSettingsError}
+                cashFlowExecutionAccountId={cashFlowExecutionAccountId}
+                setCashFlowExecutionAccountId={setCashFlowExecutionAccountId}
+                investmentOwnerId={investmentOwnerId}
+                setInvestmentOwnerId={setInvestmentOwnerId}
+                liabilityConfig={liabilityConfig}
+                setLiabilityConfig={setLiabilityConfig}
+                retirementBindings={retirementBindings}
+                setHouseholdExecution={() => {
+                  const mortgages = objectEntries(draft, "Liability").filter((item) => item.liability_type === "mortgage");
+                  if (!cashFlowExecutionAccountId) return setRunSettingsError("Household execution configuration is missing the cash-flow execution account.");
+                  if (!investmentOwnerId) return setRunSettingsError("Household execution configuration is missing the investment execution owner.");
+                  if (!liabilityConfig.ownerId) return setRunSettingsError("Household execution configuration is missing the liability execution owner.");
+                  for (const mortgage of mortgages) {
+                    const id = objectId("Liability", mortgage);
+                    const profile = liabilityConfig.profiles[id];
+                    if (!profile?.paymentAnchor || !profile.fundingAccountId || !/^\\d+$/.test(profile.totalPayments) || !/^\\d+$/.test(profile.settlementPriority))
+                      return setRunSettingsError(`Household execution configuration is missing an explicit complete profile for ${objectLabel("Liability", mortgage)}.`);
+                  }
+                  setHouseholdExecution({
+                    baseCurrency: sessionSettings.baseCurrency, asOf: sessionSettings.asOf, dataCutoff: sessionSettings.dataCutoff,
+                    simulationStart: sessionSettings.simulationStart, simulationEnd: sessionSettings.simulationEnd,
+                    sameInstantCashFlowOrder: sessionSettings.sameInstantCashFlowOrder,
+                    cashFlowExecutionAccountId, investmentExecutionOwnerId: investmentOwnerId,
+                    investmentTransferInstructions: [], investmentPurchaseInstructions: [],
+                    liabilityExecutionOwnerId: liabilityConfig.ownerId,
+                    liabilityExecutionProfiles: mortgages.map((mortgage) => {
+                      const id = objectId("Liability", mortgage); const profile = liabilityConfig.profiles[id]!;
+                      return { liabilityId: id, kind: "vs4_fixed_monthly_fully_amortizing" as const, paymentAnchor: profile.paymentAnchor, totalPayments: Number(profile.totalPayments), fundingAccountId: profile.fundingAccountId, settlementPriority: Number(profile.settlementPriority), openingContractStatus: "current" as const };
+                    }), retirementBindings,
+                  });
+                  setRunSettingsError("");
+                }}
               />
               <section aria-label="Standalone forecast drill-down">
                 <Plan
@@ -1025,6 +1018,7 @@ export function PersonalFinanceApp() {
               liabilityConfig={liabilityConfig}
               runtimeIds={whatIfIds}
               onCompare={runComparison}
+              onMajorAssetDebt={runMajorAssetDebtComparison}
             />
           )}
           {EDITORS[subnav] &&
@@ -1307,6 +1301,16 @@ function Overview({
           </p>
         </article>
       </section>
+      {opening && (
+        <section className="panel">
+          <h2>Where is my money?</h2>
+          <ul>
+            {opening.accounts.map((item) => <li key={item.accountId}>Account {objectLabel("Account", objectEntries(draft, "Account").find((value) => objectId("Account", value) === item.accountId)!)}: {householdMoney(item.cash)}</li>)}
+            {opening.positions.map((item) => <li key={item.positionId}>Investment {objectLabel("Investment", objectEntries(draft, "Investment").find((value) => objectId("Investment", value) === item.positionId)!)}: {householdMoney(item.value)}</li>)}
+            {opening.debts.map((item) => <li key={item.liabilityId}>Debt {objectLabel("Liability", objectEntries(draft, "Liability").find((value) => objectId("Liability", value) === item.liabilityId)!)}: {householdMoney(item.balance)}</li>)}
+          </ul>
+        </section>
+      )}
     </>
   );
 }
@@ -1773,6 +1777,7 @@ function WhatIfStarter({
   liabilityConfig,
   runtimeIds,
   onCompare,
+  onMajorAssetDebt,
 }: {
   draft: PersonalDraft;
   investmentOwnerId: string;
@@ -1781,12 +1786,15 @@ function WhatIfStarter({
     terminationEventId: string;
     extraPaymentId: string;
     alternativeScenarioId: string;
+    majorAssetId: string;
+    majorLiabilityId: string;
   };
   onCompare: (
     scope: "cash_flow" | "investments" | "liabilities",
     change: ScenarioChangeIntent,
     retirementBinding?: RetirementTerminationBinding,
   ) => void;
+  onMajorAssetDebt: (addition: Parameters<typeof comparePersonalHouseholdMajorAssetDebtAddition>[2]) => void;
 }) {
   const [incomeId, setIncomeId] = useState("");
   const [expenseId, setExpenseId] = useState("");
@@ -1806,6 +1814,16 @@ function WhatIfStarter({
   const [fundingTargetId, setFundingTargetId] = useState("");
   const [fundingAccountIds, setFundingAccountIds] = useState<string[]>([]);
   const [fundingCandidateId, setFundingCandidateId] = useState("");
+  const [majorOwnerId, setMajorOwnerId] = useState("");
+  const [majorName, setMajorName] = useState("");
+  const [majorValue, setMajorValue] = useState("");
+  const [majorDebt, setMajorDebt] = useState("");
+  const [majorRate, setMajorRate] = useState("");
+  const [majorAnchor, setMajorAnchor] = useState("");
+  const [majorPayments, setMajorPayments] = useState("");
+  const [majorMaturity, setMajorMaturity] = useState("");
+  const [majorFunding, setMajorFunding] = useState("");
+  const [majorPriority, setMajorPriority] = useState("");
   const incomes = objectEntries(draft, "Income");
   const expenses = objectEntries(draft, "Expense");
   const investments = objectEntries(draft, "Investment");
@@ -1813,6 +1831,7 @@ function WhatIfStarter({
     (item) => item.liability_type === "mortgage",
   );
   const accounts = objectEntries(draft, "Account");
+  const households = objectEntries(draft, "Household");
   const retirementEvents = (
     (draft.objects as Record<string, readonly JsonObject[]>).Event ?? []
   ).filter(
@@ -1907,6 +1926,25 @@ function WhatIfStarter({
           </p>
         )}
         <div className="object-grid">
+          <article className="object-card">
+            <h2>Add major asset financed by fixed debt</h2>
+            <p>Projection-start alternative only; it does not create a future acquisition event or edit your saved baseline.</p>
+            <select aria-label="Major asset owner" value={majorOwnerId} onChange={(event) => setMajorOwnerId(event.target.value)}><option value="">Select household owner</option>{households.map((item) => <option key={objectId("Household", item)} value={objectId("Household", item)}>{objectLabel("Household", item)}</option>)}</select>
+            <input aria-label="Major asset name" value={majorName} onChange={(event) => setMajorName(event.target.value)} />
+            <input aria-label="Major asset value" inputMode="decimal" value={majorValue} onChange={(event) => setMajorValue(event.target.value)} />
+            <input aria-label="Major debt amount" inputMode="decimal" value={majorDebt} onChange={(event) => setMajorDebt(event.target.value)} />
+            <input aria-label="Major debt annual rate" inputMode="decimal" value={majorRate} onChange={(event) => setMajorRate(event.target.value)} />
+            <input aria-label="Major debt payment anchor" type="date" value={majorAnchor} onChange={(event) => setMajorAnchor(event.target.value)} />
+            <input aria-label="Major debt total payments" type="number" value={majorPayments} onChange={(event) => setMajorPayments(event.target.value)} />
+            <input aria-label="Major debt maturity date" type="date" value={majorMaturity} onChange={(event) => setMajorMaturity(event.target.value)} />
+            <select aria-label="Major debt funding account" value={majorFunding} onChange={(event) => setMajorFunding(event.target.value)}><option value="">Select funding account</option>{accounts.map((item) => <option key={objectId("Account", item)} value={objectId("Account", item)}>{objectLabel("Account", item)}</option>)}</select>
+            <input aria-label="Major debt settlement priority" type="number" value={majorPriority} onChange={(event) => setMajorPriority(event.target.value)} />
+            <button className="primary" disabled={!majorOwnerId || !majorName || !majorValue || !majorDebt || !majorRate || !majorAnchor || !majorPayments || !majorMaturity || !majorFunding || !majorPriority} onClick={() => onMajorAssetDebt({
+              asset: { asset_id: runtimeIds.majorAssetId, name: majorName, asset_type: "real_estate", owner_id: majorOwnerId, acquisition_date: majorAnchor, acquisition_cost: majorValue, valuation_method: "cost" },
+              liability: { liability_id: runtimeIds.majorLiabilityId, name: `${majorName} debt`, liability_type: "mortgage", owner_id: majorOwnerId, principal: majorDebt, current_balance: majorDebt, interest_rate: majorRate, origination_date: majorAnchor, maturity_date: majorMaturity, collateral_id: runtimeIds.majorAssetId },
+              profile: { liabilityId: runtimeIds.majorLiabilityId, kind: "vs4_fixed_monthly_fully_amortizing", paymentAnchor: majorAnchor, totalPayments: Number(majorPayments), fundingAccountId: majorFunding, settlementPriority: Number(majorPriority), openingContractStatus: "current" },
+            })}>Compare major asset/debt</button>
+          </article>
           <article className="object-card">
             <h2>Retire earlier/later</h2>
             <p>Changes only one executable income stop date.</p>
@@ -2336,7 +2374,7 @@ function ComparePlans({
       <PageHead
         eyebrow="Plan · Compare Plans"
         title="Compare household plans"
-        text="Each Golden alternative reruns the authoritative reconciled household projection; scope-specific what-if detail remains available below."
+        text="Each supported alternative reruns the authoritative reconciled household projection; standalone detail remains available below."
       />
       <section className="panel">
         <div className="panel-head">
@@ -2348,7 +2386,7 @@ function ComparePlans({
             </p>
           </div>
           <button className="primary" onClick={onRun}>
-            Compare Golden alternatives
+            Compare configured household alternatives
           </button>
         </div>
         {comparison?.status === "completed" ||
@@ -2359,6 +2397,9 @@ function ComparePlans({
                 <h3>
                   {alternative.name} · {alternative.status}
                 </h3>
+                {alternative.declaredDifference && (
+                  <p className="capability">Declared difference: {alternative.declaredDifference.replaceAll("_", " ")}</p>
+                )}
                 {alternative.points.some(
                   (point) => point.alternative.liquidityShortfalls.length > 0,
                 ) && (
@@ -3046,12 +3087,29 @@ function HouseholdPlan({
   forecast,
   run,
   error,
+  cashFlowExecutionAccountId,
+  setCashFlowExecutionAccountId,
+  investmentOwnerId,
+  setInvestmentOwnerId,
+  liabilityConfig,
+  setLiabilityConfig,
+  retirementBindings,
+  setHouseholdExecution,
 }: {
   draft: PersonalDraft;
   forecast: PersonalHouseholdForecastReadModel | undefined;
   run: () => void;
   error: string;
+  cashFlowExecutionAccountId: string;
+  setCashFlowExecutionAccountId: (value: string) => void;
+  investmentOwnerId: string;
+  setInvestmentOwnerId: (value: string) => void;
+  liabilityConfig: LiabilitySessionConfig;
+  setLiabilityConfig: React.Dispatch<React.SetStateAction<LiabilitySessionConfig>>;
+  retirementBindings: readonly RetirementTerminationBinding[];
+  setHouseholdExecution: () => void;
 }) {
+  const accounts = objectEntries(draft, "Account");
   return (
     <>
       <PageHead
@@ -3059,6 +3117,21 @@ function HouseholdPlan({
         title="Your reconciled household plan"
         text="One execution carries cash flow, investments, debt, property, and retirement through the same state transition."
       />
+      <section className="panel controls" aria-label="Household execution configuration">
+        <h2>Household execution configuration</h2>
+        <p className="muted">Session-only. These explicit choices are not saved with the canonical model.</p>
+        <label>
+          Cash-flow execution account
+          <select value={cashFlowExecutionAccountId} onChange={(event) => setCashFlowExecutionAccountId(event.target.value)}>
+            <option value="">Select funding account</option>
+            {accounts.map((account) => <option key={objectId("Account", account)} value={objectId("Account", account)}>{objectLabel("Account", account)}</option>)}
+          </select>
+        </label>
+        <InvestmentExecutionControls draft={draft} ownerId={investmentOwnerId} setOwnerId={setInvestmentOwnerId} />
+        <LiabilityExecutionControls draft={draft} liabilityConfig={liabilityConfig} setLiabilityConfig={setLiabilityConfig} />
+        <p className="muted">Retirement binding: {retirementBindings.length ? `${retirementBindings.length} explicit binding(s) configured.` : "none configured (optional)."}</p>
+        <button className="primary" onClick={setHouseholdExecution}>Apply household execution configuration</button>
+      </section>
       <section className="panel">
         <div className="panel-head">
           <h2>Authoritative household forecast</h2>
@@ -3130,6 +3203,14 @@ function HouseholdForecastVisual({
           </p>
         </div>
       )}{" "}
+      {forecast.retirementMilestones.length > 0 && (
+        <section className="panel">
+          <h3>Modeled retirement milestone</h3>
+          {forecast.retirementMilestones.map((milestone) => (
+            <p key={milestone.eventId}>{milestone.label} · {milestone.date}</p>
+          ))}
+        </section>
+      )}
       {!cashFlowOnly && (
         <div className="chart">
           <ResponsiveContainer>

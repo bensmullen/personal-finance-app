@@ -652,3 +652,23 @@ test("current and exact saved recovery exports match, and confirmed delete remov
     page.getByRole("button", { name: "Load saved model" }),
   ).toHaveCount(0);
 });
+
+test("PR21 closeout: major asset debt at projection start uses reconciled comparison", async ({ page }) => {
+  test.setTimeout(120_000);
+  await loadExample(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "What If?", exact: true }).click();
+  await page.getByLabel("Major asset owner").selectOption({ index: 1 });
+  await page.getByLabel("Major asset name").fill("Scenario home");
+  await page.getByLabel("Major asset value").fill("400000");
+  await page.getByLabel("Major debt amount").fill("300000");
+  await page.getByLabel("Major debt annual rate").fill("0.05");
+  await page.getByLabel("Major debt payment anchor").fill("2026-01-01");
+  await page.getByLabel("Major debt total payments").fill("360");
+  await page.getByLabel("Major debt maturity date").fill("2056-01-01");
+  await page.getByLabel("Major debt funding account").selectOption({ index: 1 });
+  await page.getByLabel("Major debt settlement priority").fill("2");
+  await page.getByRole("button", { name: "Compare major asset/debt" }).click();
+  await expect(page.getByText("Declared difference: major asset debt addition")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("table", { name: "Add major asset financed by fixed debt at projection start household comparison" })).toBeVisible();
+});

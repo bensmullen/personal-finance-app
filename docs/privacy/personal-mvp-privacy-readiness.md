@@ -2,7 +2,7 @@
 
 - Review date: 2026-09-22
 - Scope: single-user Personal MVP within the trusted-origin boundary defined by ADR-017
-- Result: ready for the developer's single-user Personal-MVP use; **not** Private Alpha or multi-user security readiness
+- Result: the ADR-017 privacy/persistence boundary is ready for the developer's single-user use once the PR 21 functional gate is satisfied; **not** Private Alpha or multi-user security readiness
 
 ## Verified implementation boundary
 
