@@ -30,4 +30,13 @@ describe("Personal household projection application seam", () => {
     expect(result.alternatives[0]!.points).toHaveLength(3);
     expect(result.alternatives[0]!.points.every((point) => point.deltas.netWorth.amount === "0")).toBe(true);
   });
+
+  it("rejects hidden non-scenario execution-boundary differences", () => {
+    const value = model();
+    const baseline = request("94000000-0000-4000-8000-000000000004");
+    const alternative = { ...request("94000000-0000-4000-8000-000000000005"), dataCutoff: "2025-12-30" };
+    const result = comparePersonalHouseholdScenarios({ baseline: { name: "Baseline", model: value, request: baseline }, alternatives: [{ name: "Different cutoff", model: value, request: alternative }] });
+    expect(result.status).toBe("unavailable");
+    expect(result.diagnostics.some((issue) => issue.code === "HOUSEHOLD_SCENARIO_INCOMPATIBLE")).toBe(true);
+  });
 });
