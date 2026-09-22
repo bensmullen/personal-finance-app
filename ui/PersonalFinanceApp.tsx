@@ -908,6 +908,7 @@ export function PersonalFinanceApp() {
                 liabilityConfig={liabilityConfig}
                 setLiabilityConfig={setLiabilityConfig}
                 retirementBindings={retirementBindings}
+                setRetirementBindings={setRetirementBindings}
                 setHouseholdExecution={() => {
                   const mortgages = objectEntries(draft, "Liability").filter((item) => item.liability_type === "mortgage");
                   if (!cashFlowExecutionAccountId) return setRunSettingsError("Household execution configuration is missing the cash-flow execution account.");
@@ -2339,11 +2340,13 @@ function ComparePlans({
   legacyComparison,
   draft,
   retirementBindings,
+  setRetirementBindings,
 }: {
   comparison: PersonalHouseholdScenarioComparisonReadModel | undefined;
   legacyComparison: PersonalScenarioComparisonReadModel | undefined;
   draft: PersonalDraft;
   retirementBindings: readonly RetirementTerminationBinding[];
+  setRetirementBindings: (value: readonly RetirementTerminationBinding[]) => void;
 }) {
   const canonicalEvents =
     ((draft.objects as Record<string, readonly JsonObject[]>).Event ?? []);
@@ -3085,6 +3088,12 @@ function HouseholdPlan({
   setHouseholdExecution: () => void;
 }) {
   const accounts = objectEntries(draft, "Account");
+  const incomes = objectEntries(draft, "Income");
+  const events = ((draft.objects as Record<string, readonly JsonObject[]>).Event ?? []).filter((event) => event.event_type === "retirement" && event.enabled === true && event.trigger_type === "scheduled");
+  const [retirementIncomeId, setRetirementIncomeId] = useState(retirementBindings[0]?.incomeId ?? "");
+  const [retirementEventId, setRetirementEventId] = useState(retirementBindings[0]?.canonicalEventId ?? "");
+  const [retirementDate, setRetirementDate] = useState(retirementBindings[0]?.baselineDate ?? "");
+  const [terminationEventId] = useState(() => retirementBindings[0]?.terminationEventId ?? randomId());
   return (
     <>
       <PageHead
@@ -3104,7 +3113,13 @@ function HouseholdPlan({
         </label>
         <InvestmentExecutionControls draft={draft} ownerId={investmentOwnerId} setOwnerId={setInvestmentOwnerId} />
         <LiabilityExecutionControls draft={draft} liabilityConfig={liabilityConfig} setLiabilityConfig={setLiabilityConfig} />
-        <p className="muted">Retirement binding: {retirementBindings.length ? `${retirementBindings.length} explicit binding(s) configured.` : "none configured (optional)."}</p>
+        <fieldset>
+          <legend>Baseline retirement binding (session-only)</legend>
+          <select aria-label="Baseline retirement income" value={retirementIncomeId} onChange={(event) => setRetirementIncomeId(event.target.value)}><option value="">No retirement binding</option>{incomes.map((income) => <option key={objectId("Income", income)} value={objectId("Income", income)}>{objectLabel("Income", income)}</option>)}</select>
+          <select aria-label="Baseline canonical retirement event" value={retirementEventId} onChange={(event) => { setRetirementEventId(event.target.value); const selected = events.find((item) => String(item.event_id) === event.target.value); if (typeof selected?.start_date === "string") setRetirementDate(selected.start_date); }}><option value="">No canonical event</option>{events.map((event) => <option key={String(event.event_id)} value={String(event.event_id)}>{String(event.name ?? event.event_id)}</option>)}</select>
+          <input aria-label="Baseline retirement date" type="date" value={retirementDate} onChange={(event) => setRetirementDate(event.target.value)} />
+          <button type="button" onClick={() => setRetirementBindings(!retirementIncomeId || !retirementDate ? [] : [{ incomeId: retirementIncomeId, terminationEventId, baselineDate: retirementDate, ...(retirementEventId ? { canonicalEventId: retirementEventId } : {}) }])}>Apply retirement binding</button>
+        </fieldset>
         <button className="primary" onClick={setHouseholdExecution}>Apply household execution configuration</button>
       </section>
       <section className="panel">
