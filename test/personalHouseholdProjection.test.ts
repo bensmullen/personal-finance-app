@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { comparePersonalHouseholdScenarios, createSyntheticPersonalDraft, runPersonalHouseholdForecast, type HouseholdForecastRequest } from "../src/application/index.js";
+import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
+import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { assumptionId, scenarioId } from "../src/model/index.js";
 import type { ExecutableScenario } from "../src/simulation/scenario.js";
 import { instant } from "../src/time/index.js";
@@ -35,6 +37,10 @@ const investmentModel = (): ReturnType<typeof createSyntheticPersonalDraft> => {
       PrimitiveInstance: [...(value.objects.PrimitiveInstance as readonly Record<string, unknown>[]), { primitive_instance_id: primitive, primitive_id: "P23", input_bindings: { rate: marketAssumption }, parameters: {}, scenario_id: "90000000-0000-4000-8000-000000000011", enabled: true }] as never,
     },
   };
+};
+const liabilityModel = (): ReturnType<typeof createSyntheticPersonalDraft> => {
+  const value = createSyntheticPersonalDraft();
+  return { ...value, objects: { ...value.objects, Income: [], Expense: [], Investment: [] } };
 };
 
 describe("Personal household projection application seam", () => {
@@ -111,5 +117,29 @@ describe("Personal household projection application seam", () => {
     expect(difference?.before).not.toBeNull();
     expect(difference?.after).not.toBeNull();
     expect(difference?.assumptionIds).toContain(assumption);
+  });
+
+  it("reports non-null before/after values for an executed liability funding overlay", () => {
+    const root = scenarioId("90000000-0000-4000-8000-000000000011");
+    const leaf = scenarioId("90000000-0000-4000-8000-000000000026");
+    const base = request("94000000-0000-4000-8000-000000000027");
+    const liabilityRequest: HouseholdForecastRequest = { ...base, compiler: { liabilities: { baseCurrency: "USD", asOf: "2026-01-01", simulationStart: "2026-01-01", simulationEnd: "2026-04-01", months: 3, executionOwnerId: "90000000-0000-4000-8000-000000000003", scenarioId: String(root), executionProfiles: [{ liabilityId: "90000000-0000-4000-8000-000000000008", kind: "vs4_fixed_monthly_fully_amortizing", paymentAnchor: "2022-02-01", totalPayments: 360, fundingAccountId: "90000000-0000-4000-8000-000000000004", settlementPriority: 1, openingContractStatus: "current" }] } } };
+    const sourceModel = liabilityModel();
+    const compiled = compileHouseholdProjection(sourceModel, liabilityRequest.compiler);
+    expect(compiled.status, JSON.stringify(compiled)).toBe("compiled");
+    if (compiled.status !== "compiled") return;
+    const loan = compiled.value.liabilityInput!.loans[0]!;
+    const replacementPolicy = createFundingPolicy({ id: fundingPolicyId("scenario:liability-funding"), orderedSources: [...loan.fundingPolicy.orderedSources], allowPartial: false, insufficientFundsBehavior: "unfunded" });
+    const horizon = { start: instant("2026-01-01T00:00:00.000Z"), end: instant("2026-04-01T00:00:00.000Z") };
+    const scenarios: readonly ExecutableScenario[] = [
+      { scenarioId: root, name: "Root", horizon, timestep: "monthly", enabled: true, stochastic: false, simulationCount: 1, changes: [] },
+      { scenarioId: leaf, baseScenarioId: root, name: "Funding policy", horizon, timestep: "monthly", enabled: true, stochastic: false, simulationCount: 1, changes: [{ kind: "loan_funding_policy", loanId: loan.id, fundingPolicy: replacementPolicy, assumptionId: assumptionId("90000000-0000-4000-8000-000000000010") }] },
+    ];
+    const result = comparePersonalHouseholdScenarios({ scenarios, baselineScenarioId: root, baseline: { name: "Base", model: sourceModel, request: liabilityRequest }, alternatives: [{ name: "Funding policy", model: sourceModel, request: { ...liabilityRequest, runIdentity: "94000000-0000-4000-8000-000000000028" }, scenarioId: leaf }] });
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+    const difference = result.alternatives[0]!.configurationDifferences.find((item) => item.changeKind === "loan_funding_policy");
+    expect(difference?.before).not.toBeNull();
+    expect(difference?.after).toMatchObject({ id: "scenario:liability-funding" });
+    expect(difference?.assumptionIds).toContain(assumptionId("90000000-0000-4000-8000-000000000010"));
   });
 });
