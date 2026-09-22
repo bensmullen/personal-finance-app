@@ -15,6 +15,7 @@ const ids = {
   household: domainId("household", "93000000-0000-4000-8000-000000000001"), owner: domainId("person", "93000000-0000-4000-8000-000000000002"),
   cash: domainId("account", "93000000-0000-4000-8000-000000000003"), payable: domainId("liability", "93000000-0000-4000-8000-000000000004"),
   income: domainId("income", "93000000-0000-4000-8000-000000000005"), position: domainId("position", "93000000-0000-4000-8000-000000000006"),
+  expense: domainId("expense", "93000000-0000-4000-8000-000000000017"),
   standaloneAsset: "93000000-0000-4000-8000-000000000012",
   missingPrincipal: domainId("liability", "93000000-0000-4000-8000-000000000009"), missingInterest: domainId("liability", "93000000-0000-4000-8000-000000000010"), loan: domainId("loan-contract", "93000000-0000-4000-8000-000000000011"),
   secondPrincipal: domainId("liability", "93000000-0000-4000-8000-000000000014"), secondInterest: domainId("liability", "93000000-0000-4000-8000-000000000015"), secondLoan: domainId("loan-contract", "93000000-0000-4000-8000-000000000016"),
@@ -137,6 +138,26 @@ describe("compiled household execution", () => {
     expect(result.periods[0]!.liability).toBeUndefined();
     expect(result.periods[0]!.transactions).toEqual([]);
     expect(result.primitiveState[primitive("80")]).toBeUndefined();
+  });
+
+  it("reports a typed, atomic failure when cross-domain policy closes a local dependency cycle", () => {
+    const funding = createFundingPolicy({ id: fundingPolicyId("household:cycle"), orderedSources: [{ kind: "cash_account", accountId: ids.cash }], allowPartial: false, insufficientFundsBehavior: "unfunded" });
+    const expenseInput: VerticalSlice2Input = {
+      ...cashFlow,
+      incomes: [],
+      expenses: [{ id: ids.expense, ownerId: ids.household, paymentAccountId: ids.cash, payableLiabilityId: ids.payable, baseMonthlyAmount: money("100"), start, recurrence: { kind: "utc_monthly", anchor: instant("2026-01-15T00:00:00.000Z"), invalidDayPolicy: "skip" }, inflationRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()), inflationBaseAt: instant("2026-01-15T00:00:00.000Z"), fundingPolicy: funding, settlementPriority: 1, primitiveIds: { indexGrowth: primitive("90"), inflationLink: primitive("91"), recurrence: primitive("92") } }],
+    };
+    const openingState = createAuthoritativeState({ ...opening(), accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.owner, cash: money("100") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") }, [ids.missingPrincipal]: { id: ids.missingPrincipal, balance: money("100") }, [ids.missingInterest]: { id: ids.missingInterest, balance: money("0") } } });
+    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: {
+      ...compiled(), cashFlowInput: expenseInput, reconciledOpeningState: openingState,
+      liabilityInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [{ id: ids.loan, ownerId: ids.owner, principalLiabilityId: ids.missingPrincipal, interestPayableLiabilityId: ids.missingInterest, originalPrincipal: money("100"), annualRate: Rate.fromDecimal("0", rateConvention.nominalAnnual(12)), totalPayments: 1, rateType: "fixed", paymentFrequency: "monthly", interestConvention: "nominal_annual_12", amortization: "fully_amortizing", paymentResetPolicy: "fixed_no_recast", interestCapitalization: "none", partialPaymentPolicy: "all_or_nothing", paymentSchedule: { kind: "utc_monthly", anchor: instant("2026-01-15T00:00:00.000Z"), invalidDayPolicy: "skip" }, fundingPolicy: funding, settlementPriority: 1, extraPrincipalPayments: [{ id: domainId("extra-principal-payment", "93000000-0000-4000-8000-000000000018"), scheduledAt: instant("2026-01-15T00:00:00.000Z"), amount: money("10"), fundingPolicy: funding, primitiveInstanceId: primitive("95") }], postingRounding: RoundingPolicy.currency(2, "half_up"), primitiveIds: { schedule: primitive("93"), amortization: primitive("94"), accrual: primitive("96") } }] },
+      contentionPolicy: { id: "local-cycle", version: "1", rules: [{ before: "cash_expense_settlement", after: "liability_required_service" }, { before: "liability_extra_principal", after: "cash_expense_settlement" }] },
+    } });
+    expect(result.status).toBe("incomplete");
+    expect(result.diagnostics.some((issue) => issue.code === "HOUSEHOLD_CONTENTION_POLICY_CYCLE")).toBe(true);
+    expect(result.periods).toHaveLength(0);
+    expect(result.state).toEqual(openingState);
+    expect(result.primitiveState).toEqual({});
   });
 
   it("commits a staged termination runtime even when it suppresses every occurrence", () => {
