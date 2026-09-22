@@ -2293,8 +2293,10 @@ function WhatIfStarter({
                 !fundingTargetId ||
                 fundingAccountIds.length === 0 ||
                 (fundingScope === "loan" &&
-                  (!liabilityConfig.ownerId ||
-                    !liabilityConfig.profiles[fundingTargetId]))
+                  (!householdExecution?.liabilityExecutionOwnerId ||
+                    !householdExecution.liabilityExecutionProfiles.some(
+                      (profile) => profile.liabilityId === fundingTargetId,
+                    )))
               }
               onClick={() =>
                 onCompare(

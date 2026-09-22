@@ -100,6 +100,23 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   await expect(page.getByText(/investment return/).first()).toBeVisible();
   await lower.getByText("Explain").last().click();
   await expect(lower.locator("code").last()).not.toBeEmpty();
+
+  await page.getByLabel("Retirement income").selectOption({ index: 1 });
+  await page
+    .getByLabel("Canonical retirement event")
+    .selectOption({ label: "Planned retirement" });
+  await page.getByLabel("New retirement date").fill("2026-02-01");
+  await page.getByRole("button", { name: "Compare retirement date" }).click();
+  const retirement = page.getByRole("table", {
+    name: "What-if alternative household comparison",
+  });
+  await expect(retirement).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/retirement date/i).first()).toBeVisible();
+  await expect(
+    page.getByText("Financial outcome · Modeled liquidity stress"),
+  ).toBeVisible();
+  await retirement.getByText("Explain").last().click();
+  await expect(retirement.locator("code").last()).not.toBeEmpty();
 });
 
 test("canonical edits invalidate a displayed household forecast", async ({
@@ -311,13 +328,18 @@ test("Investments execute only after explicit owner selection and owner state cl
   test.setTimeout(60_000);
   await loadExample(page);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
-  await page.getByLabel("Forecast scope").selectOption("investments");
-  await page
+  const standalone = page.getByRole("region", {
+    name: "Standalone forecast drill-down",
+  });
+  await standalone.getByLabel("Forecast scope").selectOption("investments");
+  await standalone
     .getByLabel("Execution owner")
     .selectOption({ label: "Taylor Example" });
-  await page.getByRole("button", { name: "Run investments forecast" }).click();
+  await standalone
+    .getByRole("button", { name: "Run investments forecast" })
+    .click();
   await expect(
-    page.getByRole("table", { name: "Detailed investment forecast" }),
+    standalone.getByRole("table", { name: "Detailed investment forecast" }),
   ).toBeVisible();
   await expect(
     page.getByText("Forecast unavailable for this model"),
@@ -337,8 +359,13 @@ test("Investments execute only after explicit owner selection and owner state cl
     .setInputFiles((await download.path())!);
   await page.getByRole("button", { name: "Import into session" }).click();
   await page.getByRole("button", { name: "Plan", exact: true }).click();
-  await page.getByLabel("Forecast scope").selectOption("investments");
-  await expect(page.getByLabel("Execution owner")).toHaveValue("");
+  const restoredStandalone = page.getByRole("region", {
+    name: "Standalone forecast drill-down",
+  });
+  await restoredStandalone
+    .getByLabel("Forecast scope")
+    .selectOption("investments");
+  await expect(restoredStandalone.getByLabel("Execution owner")).toHaveValue("");
 });
 
 test("model portability and deterministic what-if comparison stay explicit", async ({
@@ -392,15 +419,18 @@ test("model portability and deterministic what-if comparison stay explicit", asy
   ).toBeVisible();
 });
 
-test("What If executes retirement and reports missing investment prerequisites", async ({
+test("What If executes retirement without mutating the baseline binding", async ({
   page,
 }) => {
   await loadExample(page);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  const baselineDate = await page.getByLabel("Baseline retirement date").inputValue();
+  await expect(page.getByLabel("Baseline retirement income")).not.toHaveValue("");
+  await expect(page.getByLabel("Baseline canonical retirement event")).toHaveValue(
+    /.+/,
+  );
   await page.getByRole("button", { name: "What If?", exact: true }).click();
-  await expect(
-    page.getByText("Apply a household investment execution owner first."),
-  ).toBeVisible();
   await page.getByLabel("Retirement income").selectOption({ index: 1 });
   await page
     .getByLabel("Canonical retirement event")
@@ -409,27 +439,14 @@ test("What If executes retirement and reports missing investment prerequisites",
   await page.getByRole("button", { name: "Compare retirement date" }).click();
   await expect(page.getByRole("table", { name: "What-if alternative household comparison" })).toBeVisible();
   await expect(page.getByText(/retirement date/i)).toBeVisible();
-  const replacement = structuredClone(createSyntheticPersonalDraft()) as any;
-  replacement.objects.Income[0].income_id =
-    "98000000-0000-4000-8000-000000000004";
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Import / Export", exact: true })
-    .click();
-  await page.locator('input[type="file"]').setInputFiles({
-    name: "replacement.json",
-    mimeType: "application/json",
-    buffer: Buffer.from(exportPersonalModelJson(replacement)),
-  });
-  await page.getByRole("button", { name: "Import into session" }).click();
-  await page.getByRole("button", { name: "Money", exact: true }).click();
-  await page.getByRole("button", { name: "Cash Flow", exact: true }).click();
-  await page.getByRole("button", { name: "Run cash-flow forecast" }).click();
-  await expect(
-    page.getByText(
-      /requires explicit cash, investment, liability, and retirement session configuration/,
-    ).first(),
-  ).toBeVisible();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  await expect(page.getByLabel("Baseline retirement income")).not.toHaveValue("");
+  await expect(page.getByLabel("Baseline canonical retirement event")).toHaveValue(
+    /.+/,
+  );
+  await expect(page.getByLabel("Baseline retirement date")).toHaveValue(
+    baselineDate,
+  );
 });
 
 test("What If executes deterministic investment return", async ({ page }) => {
@@ -457,15 +474,37 @@ test("What If executes deterministic investment return", async ({ page }) => {
   draft.objects.Investment[0].return_model_id = primitiveId;
   await importDraft(page, draft);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
-  await page.getByLabel("Forecast scope").selectOption("investments");
-  await page
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  const configuration = page.getByRole("region", {
+    name: "Household execution configuration",
+  });
+  await configuration
+    .getByLabel("Cash-flow execution account")
+    .selectOption({ label: "Everyday checking" });
+  await configuration
     .getByLabel("Execution owner")
+    .first()
     .selectOption({ label: "Taylor Example" });
+  await configuration
+    .getByLabel("Execution owner")
+    .last()
+    .selectOption({ label: "Taylor Example" });
+  await configuration.getByLabel("Payment anchor").fill("2022-02-01");
+  await configuration.getByLabel("Total payment count").fill("360");
+  await configuration
+    .getByLabel("Funding account")
+    .selectOption({ label: "Everyday checking" });
+  await configuration.getByLabel("Settlement priority").fill("1");
+  await configuration
+    .getByRole("button", { name: "Apply household execution configuration" })
+    .click();
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   await page.getByLabel("Investment target").selectOption({ index: 1 });
   await page.getByLabel("Exact effective annual rate").fill("0.0700");
   await page.getByRole("button", { name: "Compare investment return" }).click();
-  await expect(page.getByText("Active scope: investments")).toBeVisible();
+  await expect(
+    page.getByRole("table", { name: "What-if alternative household comparison" }),
+  ).toBeVisible();
   await expect(page.getByText(/investment return/i)).toBeVisible();
 });
 
@@ -473,17 +512,6 @@ test("What If executes explicit liability extra principal", async ({
   page,
 }) => {
   await loadExample(page);
-  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
-  await page.getByRole("button", { name: "Debt", exact: true }).click();
-  await page
-    .getByLabel("Execution owner")
-    .selectOption({ label: "Taylor Example" });
-  await page.getByLabel("Payment anchor").fill("2022-02-01");
-  await page.getByLabel("Total payment count").fill("360");
-  await page
-    .getByLabel("Funding account")
-    .selectOption({ label: "Everyday checking" });
-  await page.getByLabel("Settlement priority").fill("1");
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   await page.getByLabel("Liability target").selectOption({ index: 1 });
@@ -500,7 +528,9 @@ test("What If executes explicit liability extra principal", async ({
     .getByLabel("Extra principal funding account")
     .selectOption({ label: "Everyday checking" });
   await page.getByRole("button", { name: "Compare extra principal" }).click();
-  await expect(page.getByText("Active scope: liabilities")).toBeVisible();
+  await expect(
+    page.getByRole("table", { name: "What-if alternative household comparison" }),
+  ).toBeVisible();
   await expect(page.getByText(/extra principal payment/i)).toBeVisible();
 });
 
@@ -553,19 +583,24 @@ test("manual local save survives reload and explicit load without restoring exec
     .selectOption({ label: "Taylor Example" });
   await page.getByLabel("Payment anchor").fill("2022-02-01");
   await page.getByRole("button", { name: "Plan", exact: true }).click();
-  await page.getByLabel("Forecast scope").selectOption("investments");
-  await page
+  const standalone = page.getByRole("region", {
+    name: "Standalone forecast drill-down",
+  });
+  await standalone.getByLabel("Forecast scope").selectOption("investments");
+  await standalone
     .getByLabel("Execution owner")
     .selectOption({ label: "Taylor Example" });
-  await page.getByRole("button", { name: "Run investments forecast" }).click();
+  await standalone
+    .getByRole("button", { name: "Run investments forecast" })
+    .click();
   await expect(
-    page.getByRole("table", { name: "Detailed investment forecast" }),
+    standalone.getByRole("table", { name: "Detailed investment forecast" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   await page.getByLabel("Income target").selectOption({ index: 1 });
   await page.getByRole("button", { name: "Compare income growth" }).click();
   await expect(
-    page.getByRole("table", { name: /Current plan, alternative/ }),
+    page.getByRole("table", { name: "What-if alternative household comparison" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
@@ -580,10 +615,15 @@ test("manual local save survives reload and explicit load without restoring exec
     page.getByRole("button", { name: /Recognizable saved salary/ }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Plan", exact: true }).click();
-  await page.getByLabel("Forecast scope").selectOption("investments");
-  await expect(page.getByLabel("Execution owner")).toHaveValue("");
+  const restoredStandalone = page.getByRole("region", {
+    name: "Standalone forecast drill-down",
+  });
+  await restoredStandalone
+    .getByLabel("Forecast scope")
+    .selectOption("investments");
+  await expect(restoredStandalone.getByLabel("Execution owner")).toHaveValue("");
   await expect(
-    page.getByRole("table", { name: "Detailed investment forecast" }),
+    restoredStandalone.getByRole("table", { name: "Detailed investment forecast" }),
   ).toHaveCount(0);
   await page
     .getByRole("button", { name: "Compare Plans", exact: true })
@@ -656,14 +696,6 @@ test("PR21 closeout: configure save reload reconfigure", async ({ page }) => {
   await loadExample(page);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
-  await page.getByLabel("Cash-flow execution account").selectOption({ index: 1 });
-  await page.getByLabel("Execution owner").first().selectOption({ index: 1 });
-  await page.getByLabel("Execution owner").last().selectOption({ index: 1 });
-  await page.getByLabel("Payment anchor").fill("2022-02-01");
-  await page.getByLabel("Total payment count").fill("360");
-  await page.getByLabel("Funding account").last().selectOption({ index: 1 });
-  await page.getByLabel("Settlement priority").fill("1");
-  await page.getByRole("button", { name: "Apply household execution configuration" }).click();
   await page.getByRole("button", { name: "Run household forecast" }).first().click();
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible({ timeout: 60_000 });
   await page.getByRole("button", { name: "What If?", exact: true }).click();
@@ -676,6 +708,14 @@ test("PR21 closeout: configure save reload reconfigure", async ({ page }) => {
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await expect(page.getByLabel("Cash-flow execution account")).toHaveValue("");
+  await expect(page.getByLabel("Baseline retirement income")).toHaveValue("");
+  await expect(page.getByLabel("Baseline canonical retirement event")).toHaveValue("");
+  await expect(
+    page.getByRole("table", { name: "Reconciled household forecast" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("table", { name: "What-if alternative household comparison" }),
+  ).toHaveCount(0);
   await page.getByLabel("Cash-flow execution account").selectOption({ index: 1 });
   await page.getByLabel("Execution owner").first().selectOption({ index: 1 });
   await page.getByLabel("Execution owner").last().selectOption({ index: 1 });
@@ -683,6 +723,12 @@ test("PR21 closeout: configure save reload reconfigure", async ({ page }) => {
   await page.getByLabel("Total payment count").fill("360");
   await page.getByLabel("Funding account").last().selectOption({ index: 1 });
   await page.getByLabel("Settlement priority").fill("1");
+  await page.getByLabel("Baseline retirement income").selectOption({ index: 1 });
+  await page
+    .getByLabel("Baseline canonical retirement event")
+    .selectOption({ label: "Planned retirement" });
+  await expect(page.getByLabel("Baseline retirement date")).not.toHaveValue("");
+  await page.getByRole("button", { name: "Apply retirement binding" }).click();
   await page.getByRole("button", { name: "Apply household execution configuration" }).click();
   await page.getByRole("button", { name: "Run household forecast" }).first().click();
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible({ timeout: 60_000 });
