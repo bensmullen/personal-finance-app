@@ -224,6 +224,7 @@ export interface ForecastRequest {
   readonly sameInstantCashFlowOrder:
     | "income_before_expense"
     | "expense_before_income";
+  readonly cashFlowExecutionAccountId?: string;
   readonly executionOwnerId?: string;
   readonly liabilityExecutionProfiles?: readonly LiabilityExecutionProfile[];
   readonly investmentTransferInstructions?: readonly InvestmentTransferExecutionInstruction[];
@@ -915,26 +916,51 @@ export const runPersonalForecast = (
             endingPrincipal: moneyDto(value.endingPrincipal),
             outstandingInterest: moneyDto(value.outstandingInterest),
             scheduledFundingStatus: value.scheduledFundingStatus,
-            ...(value.extraFundingStatus === undefined ? {} : { extraFundingStatus: value.extraFundingStatus }),
-            traceIds: Object.freeze(value.traceRefs.map((ref) => ref.traceId).sort()),
+            ...(value.extraFundingStatus === undefined
+              ? {}
+              : { extraFundingStatus: value.extraFundingStatus }),
+            traceIds: Object.freeze(
+              value.traceRefs.map((ref) => ref.traceId).sort(),
+            ),
           };
         }),
       );
       const payoffs = compiled.input.loans.flatMap((loan) => {
-        const point = result.periods.flatMap((period) => period.liabilities).find((value) => value.loanId === loan.id && value.endingPrincipal.isZero() && value.outstandingInterest.isZero());
-        return point === undefined ? [] : [{ liabilityId: loan.principalLiabilityId, loanId: loan.id, scheduledAt: point.scheduledAt }];
+        const point = result.periods
+          .flatMap((period) => period.liabilities)
+          .find(
+            (value) =>
+              value.loanId === loan.id &&
+              value.endingPrincipal.isZero() &&
+              value.outstandingInterest.isZero(),
+          );
+        return point === undefined
+          ? []
+          : [
+              {
+                liabilityId: loan.principalLiabilityId,
+                loanId: loan.id,
+                scheduledAt: point.scheduledAt,
+              },
+            ];
       });
-      const shortfalls = result.periods.flatMap((period) => period.liquidityShortfalls.map((shortfall) => ({
-        period: period.period.start,
-        entityId: "claimId" in shortfall ? shortfall.claimId : shortfall.claimIds.join(","),
-        required: moneyDto(shortfall.requestedAmount),
-        available: moneyDto(shortfall.fundedAmount),
-        unfunded: moneyDto(shortfall.shortfallAmount),
-        origin: shortfall.origin,
-        diagnostic: shortfall.origin === "required_debt_service"
-          ? "Insufficient modeled liquidity; required contractual debt service was not funded."
-          : "Insufficient modeled liquidity; optional extra principal was not funded. This is not a missed contractual payment.",
-      })));
+      const shortfalls = result.periods.flatMap((period) =>
+        period.liquidityShortfalls.map((shortfall) => ({
+          period: period.period.start,
+          entityId:
+            "claimId" in shortfall
+              ? shortfall.claimId
+              : shortfall.claimIds.join(","),
+          required: moneyDto(shortfall.requestedAmount),
+          available: moneyDto(shortfall.fundedAmount),
+          unfunded: moneyDto(shortfall.shortfallAmount),
+          origin: shortfall.origin,
+          diagnostic:
+            shortfall.origin === "required_debt_service"
+              ? "Insufficient modeled liquidity; required contractual debt service was not funded."
+              : "Insufficient modeled liquidity; optional extra principal was not funded. This is not a missed contractual payment.",
+        })),
+      );
       return deepFreeze({
         ...forecastBoundary(request),
         scope: "liabilities" as const,
@@ -978,11 +1004,16 @@ export const runPersonalForecast = (
       simulationStart: request.simulationStart,
       simulationEnd: request.simulationEnd,
       sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
+      ...(request.cashFlowExecutionAccountId === undefined
+        ? {}
+        : { executionAccountId: request.cashFlowExecutionAccountId }),
       months: request.months,
       ...(request.scenarioId === undefined
         ? {}
         : { scenarioId: request.scenarioId }),
-      ...(request.retirementBindings === undefined ? {} : { retirementBindings: request.retirementBindings }),
+      ...(request.retirementBindings === undefined
+        ? {}
+        : { retirementBindings: request.retirementBindings }),
     });
     if (compilation.status !== "compiled") {
       const message = compilation.diagnostics
@@ -1103,7 +1134,8 @@ export const comparePersonalScenarios = (
     let base: Parameters<typeof compileExecutableScenario>[1];
     let comparison: ScenarioComparisonResult;
     let executionMonths: number;
-    let compilerCapabilityDiagnostics: readonly CapabilityDiagnostic[] = Object.freeze([]);
+    let compilerCapabilityDiagnostics: readonly CapabilityDiagnostic[] =
+      Object.freeze([]);
     const horizon = {
       start: iso(request.simulationStart),
       end: iso(request.simulationEnd),
@@ -1124,16 +1156,21 @@ export const comparePersonalScenarios = (
         changes: [],
       });
       if (root.status !== "compiled") return root;
-      const availableParents = new Set([
-        scenarioIdentity,
-        ...comparisonRequest.alternatives.map((item) => item.scenarioId),
-      ].map((id) => id.toLowerCase()));
+      const availableParents = new Set(
+        [
+          scenarioIdentity,
+          ...comparisonRequest.alternatives.map((item) => item.scenarioId),
+        ].map((id) => id.toLowerCase()),
+      );
       const alternatives = comparisonRequest.alternatives.map((alternative) => {
-        const normalizedAlternative = alternative.baseScenarioId === undefined
-          ? { ...alternative, baseScenarioId: scenarioIdentity }
-          : alternative;
+        const normalizedAlternative =
+          alternative.baseScenarioId === undefined
+            ? { ...alternative, baseScenarioId: scenarioIdentity }
+            : alternative;
         if (
-          !availableParents.has(normalizedAlternative.baseScenarioId!.toLowerCase())
+          !availableParents.has(
+            normalizedAlternative.baseScenarioId!.toLowerCase(),
+          )
         )
           return {
             status: "unsupported" as const,
@@ -1148,7 +1185,12 @@ export const comparePersonalScenarios = (
               ),
             ]),
           };
-        return compileExecutableScenario(draft, base, horizon, normalizedAlternative);
+        return compileExecutableScenario(
+          draft,
+          base,
+          horizon,
+          normalizedAlternative,
+        );
       });
       const failed = alternatives.find((item) => item.status !== "compiled");
       return (
@@ -1168,6 +1210,9 @@ export const comparePersonalScenarios = (
       const compiled = compileCashFlow(draft, {
         ...common,
         sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
+        ...(request.cashFlowExecutionAccountId === undefined
+          ? {}
+          : { executionAccountId: request.cashFlowExecutionAccountId }),
         ...(request.retirementBindings === undefined
           ? {}
           : { retirementBindings: request.retirementBindings }),
@@ -1423,12 +1468,48 @@ export const comparePersonalCashFlowPlans = (
   annualIncomeGrowth: string,
   incomeId?: string,
 ): PersonalScenarioComparisonReadModel => {
-  const unavailable = (message: string, diagnostics: readonly CapabilityDiagnostic[] = []): PersonalScenarioComparisonReadModel => deepFreeze({ status: "unavailable", message, scope: "cash_flow", baselineName: "Current plan", alternativeName: "Income growth alternative", points: [], configurationDifferences: [], appliedRuleDifferences: { baselineOnly: [], alternativeOnly: [] }, diagnostics });
-  if (!EXACT_DECIMAL.test(annualIncomeGrowth)) return unavailable("Income growth must be an exact decimal string.");
+  const unavailable = (
+    message: string,
+    diagnostics: readonly CapabilityDiagnostic[] = [],
+  ): PersonalScenarioComparisonReadModel =>
+    deepFreeze({
+      status: "unavailable",
+      message,
+      scope: "cash_flow",
+      baselineName: "Current plan",
+      alternativeName: "Income growth alternative",
+      points: [],
+      configurationDifferences: [],
+      appliedRuleDifferences: { baselineOnly: [], alternativeOnly: [] },
+      diagnostics,
+    });
+  if (!EXACT_DECIMAL.test(annualIncomeGrowth))
+    return unavailable("Income growth must be an exact decimal string.");
   const incomes = entries(draft, "Income");
-  if (incomeId === undefined) return unavailable("Plan comparison requires an explicit Income target.", [capability("SCENARIO_TARGET_MISSING", "Plan comparison requires an explicit Income target.", "cash_flow_comparison", "Income")]);
-  const income = incomes.find((item) => typeof item.income_id === "string" && item.income_id.toLowerCase() === incomeId.toLowerCase());
-  if (!income) return unavailable(`Income ${incomeId} is outside the compiled scope.`, [capability("SCENARIO_TARGET_UNEXECUTABLE", `Income ${incomeId} is outside the compiled scope.`, "cash_flow_comparison", "Income", incomeId)]);
+  if (incomeId === undefined)
+    return unavailable("Plan comparison requires an explicit Income target.", [
+      capability(
+        "SCENARIO_TARGET_MISSING",
+        "Plan comparison requires an explicit Income target.",
+        "cash_flow_comparison",
+        "Income",
+      ),
+    ]);
+  const income = incomes.find(
+    (item) =>
+      typeof item.income_id === "string" &&
+      item.income_id.toLowerCase() === incomeId.toLowerCase(),
+  );
+  if (!income)
+    return unavailable(`Income ${incomeId} is outside the compiled scope.`, [
+      capability(
+        "SCENARIO_TARGET_UNEXECUTABLE",
+        `Income ${incomeId} is outside the compiled scope.`,
+        "cash_flow_comparison",
+        "Income",
+        incomeId,
+      ),
+    ]);
   return comparePersonalScenarios(draft, request, {
     scope: "cash_flow",
     alternatives: [
@@ -1447,7 +1528,7 @@ export const comparePersonalCashFlowPlans = (
   });
 };
 
-export const createSyntheticPersonalDraft = (): PersonalDraft => {
+export const createGoldenHouseholdDraft = (): PersonalDraft => {
   const ids = {
     model: "90000000-0000-4000-8000-000000000001",
     household: "90000000-0000-4000-8000-000000000002",
@@ -1461,6 +1542,17 @@ export const createSyntheticPersonalDraft = (): PersonalDraft => {
     assumption: "90000000-0000-4000-8000-000000000010",
     scenario: "90000000-0000-4000-8000-000000000011",
     primitive: "90000000-0000-4000-8000-000000000012",
+    savings: "90000000-0000-4000-8000-000000000013",
+    retirementAccount: "90000000-0000-4000-8000-000000000014",
+    brokerageAccount: "90000000-0000-4000-8000-000000000015",
+    brokerageInvestment: "90000000-0000-4000-8000-000000000016",
+    expenseAssumption: "90000000-0000-4000-8000-000000000017",
+    retirementReturnAssumption: "90000000-0000-4000-8000-000000000018",
+    brokerageReturnAssumption: "90000000-0000-4000-8000-000000000019",
+    expensePrimitive: "90000000-0000-4000-8000-000000000020",
+    retirementReturnPrimitive: "90000000-0000-4000-8000-000000000021",
+    brokerageReturnPrimitive: "90000000-0000-4000-8000-000000000022",
+    retirementEvent: "90000000-0000-4000-8000-000000000023",
   };
   let draft = createEmptyPersonalDraft(ids.model);
   draft = addPersonalObject(draft, "Household", ids.household, {
@@ -1482,24 +1574,49 @@ export const createSyntheticPersonalDraft = (): PersonalDraft => {
     account_type: "checking",
     owner_id: ids.person,
     opening_date: "2026-01-01",
-    opening_balance: "5000.00",
+    opening_balance: "20000.00",
+  });
+  draft = addPersonalObject(draft, "Account", ids.savings, {
+    name: "Emergency savings",
+    account_type: "savings",
+    owner_id: ids.person,
+    opening_date: "2026-01-01",
+    opening_balance: "15000.00",
+  });
+  draft = addPersonalObject(draft, "Account", ids.retirementAccount, {
+    name: "Workplace retirement",
+    account_type: "traditional_401k",
+    owner_id: ids.person,
+    opening_date: "2020-01-01",
+    opening_balance: "0.00",
+    tax_treatment: "tax_deferred",
+  });
+  draft = addPersonalObject(draft, "Account", ids.brokerageAccount, {
+    name: "Taxable brokerage",
+    account_type: "taxable_brokerage",
+    owner_id: ids.person,
+    opening_date: "2020-01-01",
+    opening_balance: "0.00",
+    tax_treatment: "taxable",
   });
   draft = addPersonalObject(draft, "Income", ids.income, {
     owner_id: ids.person,
     source: "Example salary",
-    amount: "6000.00",
+    amount: "9000.00",
     frequency: "monthly",
-    start_date: "2026-01-01",
+    start_date: "2026-01-02",
     gross_or_net: "gross",
     growth_model_id: ids.primitive,
+    related_event_id: ids.retirementEvent,
   });
   draft = addPersonalObject(draft, "Expense", ids.expense, {
     owner_id: ids.household,
     category: "Living costs",
-    amount: "4200.00",
+    amount: "4800.00",
     frequency: "monthly",
-    start_date: "2026-01-01",
+    start_date: "2026-01-03",
     payment_account_id: ids.account,
+    growth_model_id: ids.expensePrimitive,
   });
   draft = addPersonalObject(draft, "Asset", ids.asset, {
     name: "Example home",
@@ -1522,10 +1639,22 @@ export const createSyntheticPersonalDraft = (): PersonalDraft => {
     collateral_id: ids.asset,
   });
   draft = addPersonalObject(draft, "Investment", ids.investment, {
-    account_id: ids.account,
+    account_id: ids.retirementAccount,
     investment_type: "fund",
-    symbol: "DEMO",
-    quantity: "0.0000",
+    symbol: "RETIREMENT-DEMO",
+    quantity: "1000.0000",
+    price: "100.00",
+    market_value: "100000.00",
+    return_model_id: ids.retirementReturnPrimitive,
+  });
+  draft = addPersonalObject(draft, "Investment", ids.brokerageInvestment, {
+    account_id: ids.brokerageAccount,
+    investment_type: "fund",
+    symbol: "BROKERAGE-DEMO",
+    quantity: "500.0000",
+    price: "100.00",
+    market_value: "50000.00",
+    return_model_id: ids.brokerageReturnPrimitive,
   });
   draft = addPersonalObject(draft, "Scenario", ids.scenario, {
     name: "Current plan",
@@ -1535,8 +1664,13 @@ export const createSyntheticPersonalDraft = (): PersonalDraft => {
     enabled: true,
     stochastic: false,
     simulation_count: 1,
-    assumption_ids: [ids.assumption],
-    event_ids: [],
+    assumption_ids: [
+      ids.assumption,
+      ids.expenseAssumption,
+      ids.retirementReturnAssumption,
+      ids.brokerageReturnAssumption,
+    ],
+    event_ids: [ids.retirementEvent],
   });
   draft = addPersonalObject(draft, "Assumption", ids.assumption, {
     name: "Salary growth",
@@ -1545,8 +1679,68 @@ export const createSyntheticPersonalDraft = (): PersonalDraft => {
     unit: "effective annual rate",
     scenario_id: ids.scenario,
   });
+  draft = addPersonalObject(draft, "Assumption", ids.expenseAssumption, {
+    name: "Living-cost inflation",
+    category: "inflation",
+    value: "0.025",
+    unit: "effective annual rate",
+    scenario_id: ids.scenario,
+  });
+  draft = addPersonalObject(
+    draft,
+    "Assumption",
+    ids.retirementReturnAssumption,
+    {
+      name: "Retirement portfolio return",
+      category: "market_return",
+      value: "0.0600",
+      unit: "effective annual rate",
+      scenario_id: ids.scenario,
+    },
+  );
+  draft = addPersonalObject(
+    draft,
+    "Assumption",
+    ids.brokerageReturnAssumption,
+    {
+      name: "Brokerage return",
+      category: "market_return",
+      value: "0.0550",
+      unit: "effective annual rate",
+      scenario_id: ids.scenario,
+    },
+  );
   return withObjects(draft, {
     ...draft.objects,
+    Investment: Object.freeze(
+      (draft.objects.Investment ?? []).map((value) => {
+        const investment = value as JsonObject;
+        const id = String(investment.investment_id);
+        return Object.freeze({
+          ...investment,
+          owner_id: ids.person,
+          ...(id === ids.investment
+            ? { price: "100.00", market_value: "100000.00" }
+            : id === ids.brokerageInvestment
+              ? { price: "100.00", market_value: "50000.00" }
+              : {}),
+        });
+      }),
+    ),
+    Event: Object.freeze([
+      Object.freeze({
+        event_id: ids.retirementEvent,
+        name: "Planned retirement",
+        event_type: "retirement",
+        start_date: "2035-01-01",
+        trigger_type: "scheduled",
+        effect_ids: Object.freeze([]),
+        dependencies: Object.freeze([]),
+        precedence: 0,
+        scenario_id: ids.scenario,
+        enabled: true,
+      }),
+    ]),
     PrimitiveInstance: Object.freeze([
       Object.freeze({
         primitive_instance_id: ids.primitive,
@@ -1556,6 +1750,83 @@ export const createSyntheticPersonalDraft = (): PersonalDraft => {
         scenario_id: ids.scenario,
         enabled: true,
       }),
+      Object.freeze({
+        primitive_instance_id: ids.expensePrimitive,
+        primitive_id: "P08",
+        input_bindings: Object.freeze({ rate: ids.expenseAssumption }),
+        parameters: Object.freeze({}),
+        scenario_id: ids.scenario,
+        enabled: true,
+      }),
+      Object.freeze({
+        primitive_instance_id: ids.retirementReturnPrimitive,
+        primitive_id: "P23",
+        input_bindings: Object.freeze({ rate: ids.retirementReturnAssumption }),
+        parameters: Object.freeze({}),
+        scenario_id: ids.scenario,
+        enabled: true,
+      }),
+      Object.freeze({
+        primitive_instance_id: ids.brokerageReturnPrimitive,
+        primitive_id: "P23",
+        input_bindings: Object.freeze({ rate: ids.brokerageReturnAssumption }),
+        parameters: Object.freeze({}),
+        scenario_id: ids.scenario,
+        enabled: true,
+      }),
+    ]),
+  });
+};
+
+/** Compatibility fixture retained for scope-specific compiler callers. */
+export const createSyntheticPersonalDraft = (): PersonalDraft => {
+  const golden = createGoldenHouseholdDraft();
+  const first = (collection: string) =>
+    (golden.objects[collection] ?? [])[0] as JsonObject;
+  return withObjects(golden, {
+    ...golden.objects,
+    Account: Object.freeze([
+      { ...first("Account"), opening_balance: "5000.00" },
+    ]),
+    Income: Object.freeze([
+      {
+        ...first("Income"),
+        amount: "6000.00",
+        start_date: "2026-01-01",
+        related_event_id: null,
+      },
+    ]),
+    Expense: Object.freeze([
+      {
+        ...first("Expense"),
+        amount: "4200.00",
+        start_date: "2026-01-01",
+        growth_model_id: null,
+      },
+    ]),
+    Investment: Object.freeze([
+      {
+        ...first("Investment"),
+        owner_id: null,
+        account_id: "90000000-0000-4000-8000-000000000004",
+        quantity: "0.0000",
+        price: "0.0000",
+        market_value: "0.0000",
+        return_model_id: null,
+      },
+    ]),
+    Assumption: Object.freeze([first("Assumption")]),
+    Scenario: Object.freeze([
+      {
+        ...first("Scenario"),
+        end_date: "2036-01-01",
+        assumption_ids: Object.freeze(["90000000-0000-4000-8000-000000000010"]),
+        event_ids: Object.freeze([]),
+      },
+    ]),
+    Event: Object.freeze([]),
+    PrimitiveInstance: Object.freeze([
+      (golden.objects.PrimitiveInstance ?? [])[0]!,
     ]),
   });
 };
