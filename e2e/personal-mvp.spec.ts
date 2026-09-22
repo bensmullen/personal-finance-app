@@ -480,6 +480,9 @@ test("What If executes deterministic investment return", async ({ page }) => {
   const configuration = page.getByRole("region", {
     name: "Household execution configuration",
   });
+  const mortgage = configuration.getByRole("group", {
+    name: "Example mortgage",
+  });
   await configuration
     .getByLabel("Cash-flow execution account")
     .selectOption({ label: "Everyday checking" });
@@ -491,12 +494,12 @@ test("What If executes deterministic investment return", async ({ page }) => {
     .getByLabel("Execution owner")
     .last()
     .selectOption({ label: "Taylor Example" });
-  await configuration.getByLabel("Payment anchor").fill("2022-02-01");
-  await configuration.getByLabel("Total payment count").fill("360");
-  await configuration
-    .getByLabel("Funding account", { exact: true })
+  await mortgage.getByLabel("Payment anchor").fill("2022-02-01");
+  await mortgage.getByLabel("Total payment count").fill("360");
+  await mortgage
+    .getByLabel("Funding account")
     .selectOption({ label: "Everyday checking" });
-  await configuration.getByLabel("Settlement priority").fill("1");
+  await mortgage.getByLabel("Settlement priority").fill("1");
   await configuration
     .getByRole("button", { name: "Apply household execution configuration" })
     .click();
@@ -718,20 +721,51 @@ test("PR21 closeout: configure save reload reconfigure", async ({ page }) => {
   await expect(
     page.getByRole("table", { name: "What-if alternative household comparison" }),
   ).toHaveCount(0);
-  await page.getByLabel("Cash-flow execution account").selectOption({ index: 1 });
-  await page.getByLabel("Execution owner").first().selectOption({ index: 1 });
-  await page.getByLabel("Execution owner").last().selectOption({ index: 1 });
-  await page.getByLabel("Payment anchor").fill("2022-02-01");
-  await page.getByLabel("Total payment count").fill("360");
-  await page.getByLabel("Funding account").last().selectOption({ index: 1 });
-  await page.getByLabel("Settlement priority").fill("1");
-  await page.getByLabel("Baseline retirement income").selectOption({ index: 1 });
-  await page
+  const configuration = page.getByRole("region", {
+    name: "Household execution configuration",
+  });
+  const investmentConfiguration = configuration
+    .getByRole("heading", { name: "Investment execution configuration" })
+    .locator("..");
+  const debtConfiguration = configuration
+    .getByRole("heading", { name: "Debt execution configuration" })
+    .locator("..");
+  const mortgage = configuration.getByRole("group", {
+    name: "Example mortgage",
+  });
+  await configuration
+    .getByLabel("Cash-flow execution account")
+    .selectOption({ label: "Everyday checking" });
+  await investmentConfiguration
+    .getByLabel("Execution owner")
+    .selectOption({ label: "Taylor Example" });
+  await debtConfiguration
+    .getByLabel("Execution owner")
+    .selectOption({ label: "Taylor Example" });
+  await mortgage.getByLabel("Payment anchor").fill("2022-02-01");
+  await mortgage.getByLabel("Total payment count").fill("360");
+  await mortgage
+    .getByLabel("Funding account")
+    .selectOption({ label: "Everyday checking" });
+  await mortgage.getByLabel("Settlement priority").fill("1");
+  await configuration
+    .getByLabel("Baseline retirement income")
+    .selectOption({ label: "Example salary" });
+  await configuration
     .getByLabel("Baseline canonical retirement event")
     .selectOption({ label: "Planned retirement" });
-  await expect(page.getByLabel("Baseline retirement date")).not.toHaveValue("");
-  await page.getByRole("button", { name: "Apply retirement binding" }).click();
-  await page.getByRole("button", { name: "Apply household execution configuration" }).click();
+  await expect(configuration.getByLabel("Baseline retirement date")).toHaveValue(
+    "2035-01-01",
+  );
+  await configuration
+    .getByRole("button", { name: "Apply retirement binding" })
+    .click();
+  await configuration
+    .getByRole("button", { name: "Apply household execution configuration" })
+    .click();
+  await expect(
+    page.getByText(/Household execution configuration is missing/),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "Run household forecast" }).first().click();
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible({ timeout: 60_000 });
 });

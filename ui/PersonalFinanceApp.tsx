@@ -732,7 +732,8 @@ export function PersonalFinanceApp() {
         };
   const runHouseholdForecast = () => {
     if (effectiveHouseholdExecution === undefined) {
-      const message = "The household forecast requires explicit cash, investment, liability, and retirement session configuration.";
+      const message =
+        "The household forecast requires explicit household execution configuration in Current Plan.";
       setRunSettingsError(message);
       setHouseholdForecast({
         scope: "household",
