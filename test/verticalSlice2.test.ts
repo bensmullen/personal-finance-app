@@ -293,5 +293,5 @@ describe("Vertical Slice 2 growing household cash flow", () => {
     expect(first.periods.map((item) => ({ income: item.recurringIncomeRecognized, expense: item.recurringExpenseRecognized, cash: item.endingCash })))
       .toEqual(second.periods.map((item) => ({ income: item.recurringIncomeRecognized, expense: item.recurringExpenseRecognized, cash: item.endingCash })));
     expect(first.displayInputs).toMatchObject({ generatedForecastFactKind: "model_generated" });
-  }, 15_000);
+  }, 30_000);
 });

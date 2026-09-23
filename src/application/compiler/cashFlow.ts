@@ -12,7 +12,10 @@ import {
 import { utcMonthlyHorizonMonths, type Instant } from "../../time/index.js";
 import { Currency, Rate, money, rateConvention } from "../../values/index.js";
 import type { VerticalSlice2Input } from "../../simulation/verticalSlice2.js";
-import { assertGeometricGrowthRate, isPrimitiveId } from "../../primitives/index.js";
+import {
+  assertGeometricGrowthRate,
+  isPrimitiveId,
+} from "../../primitives/index.js";
 import {
   EXACT_DECIMAL,
   ASSUMPTION_CATEGORIES,
@@ -47,15 +50,29 @@ export interface CashFlowCompilerRequest {
   readonly simulationStart: string;
   readonly simulationEnd: string;
   readonly sameInstantCashFlowOrder: SameInstantCashFlowOrder;
+  /** Required when more than one in-scope cash Account exists. Never inferred. */
+  readonly executionAccountId?: string;
   readonly months?: number;
   readonly scenarioId?: string;
   readonly retirementBindings?: readonly RetirementTerminationBinding[];
 }
 
-export interface RetirementTerminationBinding { readonly incomeId: string; readonly terminationEventId: string; readonly baselineDate: string; readonly canonicalEventId?: string; }
+export interface RetirementTerminationBinding {
+  readonly incomeId: string;
+  readonly terminationEventId: string;
+  readonly baselineDate: string;
+  readonly canonicalEventId?: string;
+}
 export interface CashFlowScenarioBindings {
-  readonly incomeIds: Readonly<Record<string, string>>; readonly expenseIds: Readonly<Record<string, string>>; readonly accountIds: Readonly<Record<string, string>>;
-  readonly retirementEvents: Readonly<Record<string, Readonly<{ incomeId: string; eventId: string; baselineDate: string }>>>;
+  readonly incomeIds: Readonly<Record<string, string>>;
+  readonly expenseIds: Readonly<Record<string, string>>;
+  readonly accountIds: Readonly<Record<string, string>>;
+  readonly retirementEvents: Readonly<
+    Record<
+      string,
+      Readonly<{ incomeId: string; eventId: string; baselineDate: string }>
+    >
+  >;
 }
 
 export interface CompiledCashFlow {
@@ -170,14 +187,21 @@ export const resolveGrowth = (
     return invalidResult(
       "GROWTH_PRIMITIVE_ENABLED_INVALID",
       `PrimitiveInstance ${growthId} enabled must be a boolean.`,
-      "PrimitiveInstance", growthId, "enabled",
+      "PrimitiveInstance",
+      growthId,
+      "enabled",
     );
   const primitiveDisabled = primitive.enabled === false;
-  if (typeof primitive.primitive_id !== "string" || !isPrimitiveId(primitive.primitive_id))
+  if (
+    typeof primitive.primitive_id !== "string" ||
+    !isPrimitiveId(primitive.primitive_id)
+  )
     return invalidResult(
       "GROWTH_PRIMITIVE_ID_INVALID",
       `PrimitiveInstance ${growthId} primitive_id must identify a registered primitive.`,
-      "PrimitiveInstance", growthId, "primitive_id",
+      "PrimitiveInstance",
+      growthId,
+      "primitive_id",
     );
   const primitiveUnsupported = primitive.primitive_id !== "P08";
   if (
@@ -210,18 +234,40 @@ export const resolveGrowth = (
   for (const field of ["start_date", "end_date"] as const) {
     const raw = primitive[field];
     if (raw !== undefined && raw !== null && !utcDate(raw))
-      return invalidResult("DATE_INVALID", `PrimitiveInstance ${growthId} ${field} is invalid.`, "PrimitiveInstance", growthId, field);
+      return invalidResult(
+        "DATE_INVALID",
+        `PrimitiveInstance ${growthId} ${field} is invalid.`,
+        "PrimitiveInstance",
+        growthId,
+        field,
+      );
   }
   const primitiveBounded =
     (primitive.start_date !== undefined && primitive.start_date !== null) ||
     (primitive.end_date !== undefined && primitive.end_date !== null);
-  if (primitive.parameters !== undefined && primitive.parameters !== null && (typeof primitive.parameters !== "object" || Array.isArray(primitive.parameters)))
-    return invalidResult("GROWTH_PARAMETERS_INVALID", `P08 PrimitiveInstance ${growthId} parameters must be an object.`, "PrimitiveInstance", growthId, "parameters");
+  if (
+    primitive.parameters !== undefined &&
+    primitive.parameters !== null &&
+    (typeof primitive.parameters !== "object" ||
+      Array.isArray(primitive.parameters))
+  )
+    return invalidResult(
+      "GROWTH_PARAMETERS_INVALID",
+      `P08 PrimitiveInstance ${growthId} parameters must be an object.`,
+      "PrimitiveInstance",
+      growthId,
+      "parameters",
+    );
   const primitiveParametersUnsupported =
-    primitive.parameters !== undefined && primitive.parameters !== null &&
+    primitive.parameters !== undefined &&
+    primitive.parameters !== null &&
     Object.keys(primitive.parameters as CanonicalObject).length > 0;
   const bindings = primitive.input_bindings;
-  if (typeof bindings !== "object" || bindings === null || Array.isArray(bindings))
+  if (
+    typeof bindings !== "object" ||
+    bindings === null ||
+    Array.isArray(bindings)
+  )
     return invalidResult(
       "GROWTH_BINDINGS_INVALID",
       `PrimitiveInstance ${growthId} input_bindings must be an object.`,
@@ -237,8 +283,7 @@ export const resolveGrowth = (
       growthId,
       primitiveDisabled ? "enabled" : "primitive_id",
     );
-  const rateRef =
-    (bindings as CanonicalObject).rate;
+  const rateRef = (bindings as CanonicalObject).rate;
   if (typeof rateRef !== "string" || !UUID.test(rateRef))
     return invalidResult(
       "GROWTH_RATE_BINDING_INVALID",
@@ -247,9 +292,9 @@ export const resolveGrowth = (
       growthId,
       "input_bindings.rate",
     );
-  const primitiveBindingsUnsupported = Object.keys(bindings as CanonicalObject).some(
-    (key) => key !== "rate",
-  );
+  const primitiveBindingsUnsupported = Object.keys(
+    bindings as CanonicalObject,
+  ).some((key) => key !== "rate");
   const assumptionId = rateRef.toLowerCase();
   const assumptions = objects(model, "Assumption");
   if (
@@ -306,7 +351,8 @@ export const resolveGrowth = (
   const assumptionMembershipMissing =
     selected.object !== undefined &&
     !((selected.object.assumption_ids ?? []) as readonly unknown[]).some(
-      (value) => typeof value === "string" && value.toLowerCase() === assumptionId,
+      (value) =>
+        typeof value === "string" && value.toLowerCase() === assumptionId,
     );
   const assumptionStart =
     assumption.start_date === undefined || assumption.start_date === null
@@ -317,45 +363,110 @@ export const resolveGrowth = (
       ? undefined
       : utcDate(assumption.end_date);
   if (
-    (assumption.start_date !== undefined && assumption.start_date !== null && !assumptionStart) ||
-    (assumption.end_date !== undefined && assumption.end_date !== null && !assumptionEnd) ||
-    (assumptionStart !== undefined && assumptionEnd !== undefined && assumptionEnd < assumptionStart)
+    (assumption.start_date !== undefined &&
+      assumption.start_date !== null &&
+      !assumptionStart) ||
+    (assumption.end_date !== undefined &&
+      assumption.end_date !== null &&
+      !assumptionEnd) ||
+    (assumptionStart !== undefined &&
+      assumptionEnd !== undefined &&
+      assumptionEnd < assumptionStart)
   )
     return invalidResult(
       "ASSUMPTION_TEMPORAL_INVALID",
       `Assumption ${assumptionId} has invalid ordered date bounds.`,
-      "Assumption", assumptionId, "start_date",
+      "Assumption",
+      assumptionId,
+      "start_date",
     );
-  const distributionTypes = ["normal", "lognormal", "uniform", "triangular", "discrete", "empirical", "mixture", "custom"] as const;
+  const distributionTypes = [
+    "normal",
+    "lognormal",
+    "uniform",
+    "triangular",
+    "discrete",
+    "empirical",
+    "mixture",
+    "custom",
+  ] as const;
   if (
-    assumption.distribution_type !== undefined && assumption.distribution_type !== null &&
-    (typeof assumption.distribution_type !== "string" || !distributionTypes.includes(assumption.distribution_type as never))
+    assumption.distribution_type !== undefined &&
+    assumption.distribution_type !== null &&
+    (typeof assumption.distribution_type !== "string" ||
+      !distributionTypes.includes(assumption.distribution_type as never))
   )
-    return invalidResult("ASSUMPTION_DISTRIBUTION_INVALID", `Assumption ${assumptionId} distribution_type is not canonical.`, "Assumption", assumptionId, "distribution_type");
+    return invalidResult(
+      "ASSUMPTION_DISTRIBUTION_INVALID",
+      `Assumption ${assumptionId} distribution_type is not canonical.`,
+      "Assumption",
+      assumptionId,
+      "distribution_type",
+    );
   if (
-    assumption.distribution_parameters !== undefined && assumption.distribution_parameters !== null &&
-    (typeof assumption.distribution_parameters !== "object" || Array.isArray(assumption.distribution_parameters))
+    assumption.distribution_parameters !== undefined &&
+    assumption.distribution_parameters !== null &&
+    (typeof assumption.distribution_parameters !== "object" ||
+      Array.isArray(assumption.distribution_parameters))
   )
-    return invalidResult("ASSUMPTION_DISTRIBUTION_PARAMETERS_INVALID", `Assumption ${assumptionId} distribution_parameters must be an object.`, "Assumption", assumptionId, "distribution_parameters");
+    return invalidResult(
+      "ASSUMPTION_DISTRIBUTION_PARAMETERS_INVALID",
+      `Assumption ${assumptionId} distribution_parameters must be an object.`,
+      "Assumption",
+      assumptionId,
+      "distribution_parameters",
+    );
   if (
-    assumption.correlation_group !== undefined && assumption.correlation_group !== null &&
+    assumption.correlation_group !== undefined &&
+    assumption.correlation_group !== null &&
     typeof assumption.correlation_group !== "string"
   )
-    return invalidResult("ASSUMPTION_CORRELATION_GROUP_INVALID", `Assumption ${assumptionId} correlation_group must be a string.`, "Assumption", assumptionId, "correlation_group");
+    return invalidResult(
+      "ASSUMPTION_CORRELATION_GROUP_INVALID",
+      `Assumption ${assumptionId} correlation_group must be a string.`,
+      "Assumption",
+      assumptionId,
+      "correlation_group",
+    );
   if (
     typeof assumption.category !== "string" ||
     !ASSUMPTION_CATEGORIES.includes(assumption.category as never)
   )
-    return invalidResult("ASSUMPTION_CATEGORY_INVALID", `Assumption ${assumptionId} category is not canonical.`, "Assumption", assumptionId, "category");
+    return invalidResult(
+      "ASSUMPTION_CATEGORY_INVALID",
+      `Assumption ${assumptionId} category is not canonical.`,
+      "Assumption",
+      assumptionId,
+      "category",
+    );
   if (typeof assumption.unit !== "string")
-    return invalidResult("RATE_UNIT_INVALID", `Assumption ${assumptionId} unit must be a string.`, "Assumption", assumptionId, "unit");
-  if (typeof assumption.value !== "string" || !EXACT_DECIMAL.test(assumption.value))
-    return invalidResult("EXACT_DECIMAL_INVALID", `Assumption ${assumptionId} value must be an exact decimal string.`, "Assumption", assumptionId, "value");
+    return invalidResult(
+      "RATE_UNIT_INVALID",
+      `Assumption ${assumptionId} unit must be a string.`,
+      "Assumption",
+      assumptionId,
+      "unit",
+    );
   if (
-    assumptionStart !== undefined || assumptionEnd !== undefined ||
-    (assumption.distribution_type !== undefined && assumption.distribution_type !== null) ||
-    (assumption.distribution_parameters !== undefined && assumption.distribution_parameters !== null) ||
-    (assumption.correlation_group !== undefined && assumption.correlation_group !== null)
+    typeof assumption.value !== "string" ||
+    !EXACT_DECIMAL.test(assumption.value)
+  )
+    return invalidResult(
+      "EXACT_DECIMAL_INVALID",
+      `Assumption ${assumptionId} value must be an exact decimal string.`,
+      "Assumption",
+      assumptionId,
+      "value",
+    );
+  if (
+    assumptionStart !== undefined ||
+    assumptionEnd !== undefined ||
+    (assumption.distribution_type !== undefined &&
+      assumption.distribution_type !== null) ||
+    (assumption.distribution_parameters !== undefined &&
+      assumption.distribution_parameters !== null) ||
+    (assumption.correlation_group !== undefined &&
+      assumption.correlation_group !== null)
   )
     return unsupportedResult(
       "STOCHASTIC_OR_BOUNDED_ASSUMPTION_UNSUPPORTED",
@@ -388,17 +499,55 @@ export const resolveGrowth = (
     );
     assertGeometricGrowthRate(rate);
     if (primitiveScenarioMismatch)
-      return unsupportedResult("GROWTH_SCENARIO_MISMATCH_UNSUPPORTED", `PrimitiveInstance ${growthId} belongs to a different valid Scenario.`, "PrimitiveInstance", growthId, "scenario_id", [selected.id, primitiveScenarioId]);
+      return unsupportedResult(
+        "GROWTH_SCENARIO_MISMATCH_UNSUPPORTED",
+        `PrimitiveInstance ${growthId} belongs to a different valid Scenario.`,
+        "PrimitiveInstance",
+        growthId,
+        "scenario_id",
+        [selected.id, primitiveScenarioId],
+      );
     if (primitiveBounded)
-      return unsupportedResult("BOUNDED_GROWTH_UNSUPPORTED", `Bounded P08 PrimitiveInstance ${growthId} is not supported in PR 15.`, "PrimitiveInstance", growthId);
+      return unsupportedResult(
+        "BOUNDED_GROWTH_UNSUPPORTED",
+        `Bounded P08 PrimitiveInstance ${growthId} is not supported in PR 15.`,
+        "PrimitiveInstance",
+        growthId,
+      );
     if (primitiveParametersUnsupported)
-      return unsupportedResult("GROWTH_PARAMETERS_UNSUPPORTED", `P08 PrimitiveInstance ${growthId} must not contain parameters.`, "PrimitiveInstance", growthId, "parameters");
+      return unsupportedResult(
+        "GROWTH_PARAMETERS_UNSUPPORTED",
+        `P08 PrimitiveInstance ${growthId} must not contain parameters.`,
+        "PrimitiveInstance",
+        growthId,
+        "parameters",
+      );
     if (primitiveBindingsUnsupported)
-      return unsupportedResult("GROWTH_BINDING_UNSUPPORTED", `P08 PrimitiveInstance ${growthId} contains unsupported input bindings.`, "PrimitiveInstance", growthId, "input_bindings");
+      return unsupportedResult(
+        "GROWTH_BINDING_UNSUPPORTED",
+        `P08 PrimitiveInstance ${growthId} contains unsupported input bindings.`,
+        "PrimitiveInstance",
+        growthId,
+        "input_bindings",
+      );
     if (assumptionScenarioMismatch)
-      return unsupportedResult("ASSUMPTION_SCENARIO_MISMATCH_UNSUPPORTED", `Assumption ${assumptionId} belongs to a different valid Scenario.`, "Assumption", assumptionId, "scenario_id", [selected.id, assumptionScenarioId]);
+      return unsupportedResult(
+        "ASSUMPTION_SCENARIO_MISMATCH_UNSUPPORTED",
+        `Assumption ${assumptionId} belongs to a different valid Scenario.`,
+        "Assumption",
+        assumptionId,
+        "scenario_id",
+        [selected.id, assumptionScenarioId],
+      );
     if (assumptionMembershipMissing)
-      return unsupportedResult("SCENARIO_ASSUMPTION_MEMBERSHIP_UNSUPPORTED", `Selected Scenario does not list bound Assumption ${assumptionId}.`, "Scenario", selected.id, "assumption_ids", [assumptionId]);
+      return unsupportedResult(
+        "SCENARIO_ASSUMPTION_MEMBERSHIP_UNSUPPORTED",
+        `Selected Scenario does not list bound Assumption ${assumptionId}.`,
+        "Scenario",
+        selected.id,
+        "assumption_ids",
+        [assumptionId],
+      );
     return {
       status: "compiled",
       value: Object.freeze({
@@ -456,7 +605,15 @@ const validateEventReference = (
         field,
         [value.toLowerCase()],
       );
-    if (field === "related_event_id" && retirementBindings.some((binding) => binding.incomeId.toLowerCase() === id && binding.canonicalEventId?.toLowerCase() === value.toLowerCase())) continue;
+    if (
+      field === "related_event_id" &&
+      retirementBindings.some(
+        (binding) =>
+          binding.incomeId.toLowerCase() === id &&
+          binding.canonicalEventId?.toLowerCase() === value.toLowerCase(),
+      )
+    )
+      continue;
     return unsupportedResult(
       "EVENT_BINDING_UNSUPPORTED",
       `${type} ${id} has authored ${field} behavior not supported in PR 15.`,
@@ -509,7 +666,10 @@ export const compileCashFlow = (
       undefined,
       "simulationStart",
     );
-  const executionMonths = utcMonthlyHorizonMonths(simulationStart, simulationEnd);
+  const executionMonths = utcMonthlyHorizonMonths(
+    simulationStart,
+    simulationEnd,
+  );
   if (executionMonths === undefined)
     return invalidResult(
       "FORECAST_HORIZON_MONTHLY_INVALID",
@@ -560,24 +720,124 @@ export const compileCashFlow = (
         "account_id",
       );
     accountIds.add(id);
-    const owner = resolveOwnerScope(model, account.owner_id, scope, "Account", id);
+    const owner = resolveOwnerScope(
+      model,
+      account.owner_id,
+      scope,
+      "Account",
+      id,
+    );
     if (owner.status !== "compiled") return owner;
-    if (!(["checking", "savings", "cash", "taxable_brokerage", "traditional_401k", "roth_401k", "traditional_ira", "roth_ira", "hsa", "hsa_investment", "529", "403b", "457b", "sep_ira", "simple_ira", "pension", "cash_value_insurance", "other"] as const).includes(account.account_type as never))
-      return invalidResult("ACCOUNT_TYPE_INVALID", `Account ${id} account_type is not canonical.`, "Account", id, "account_type");
+    if (
+      !(
+        [
+          "checking",
+          "savings",
+          "cash",
+          "taxable_brokerage",
+          "traditional_401k",
+          "roth_401k",
+          "traditional_ira",
+          "roth_ira",
+          "hsa",
+          "hsa_investment",
+          "529",
+          "403b",
+          "457b",
+          "sep_ira",
+          "simple_ira",
+          "pension",
+          "cash_value_insurance",
+          "other",
+        ] as const
+      ).includes(account.account_type as never)
+    )
+      return invalidResult(
+        "ACCOUNT_TYPE_INVALID",
+        `Account ${id} account_type is not canonical.`,
+        "Account",
+        id,
+        "account_type",
+      );
   }
-  const accounts = allAccounts.filter((account) => ownerInScope(account.owner_id, scope));
+  const accounts = allAccounts.filter((account) =>
+    ownerInScope(account.owner_id, scope),
+  );
   /** Validate executable cash-account structure before ambiguity/FX/timing gates. */
-  for (const candidate of accounts.filter((item) => CASH_TYPES.has(String(item.account_type)))) {
+  for (const candidate of accounts.filter((item) =>
+    CASH_TYPES.has(String(item.account_type)),
+  )) {
     const candidateId = canonicalId(candidate, "account_id")!;
-    if (typeof candidate.currency !== "string" || !/^[A-Z]{3}$/.test(candidate.currency)) return invalidResult("ACCOUNT_CURRENCY_INVALID", `Account ${candidateId} currency must be a canonical ISO currency.`, "Account", candidateId, "currency");
-    if (typeof candidate.opening_balance !== "string" || !EXACT_DECIMAL.test(candidate.opening_balance)) return invalidResult("EXACT_DECIMAL_INVALID", `Account ${candidateId} opening_balance must be an exact decimal string.`, "Account", candidateId, "opening_balance");
-    try { if (money(candidate.opening_balance, currency).isNegative()) return invalidResult("DOMAIN_VALUE_INVALID", `Account ${candidateId} opening_balance must be non-negative.`, "Account", candidateId, "opening_balance"); } catch { return invalidResult("DOMAIN_VALUE_INVALID", `Account ${candidateId} opening_balance is invalid.`, "Account", candidateId, "opening_balance"); }
+    if (
+      typeof candidate.currency !== "string" ||
+      !/^[A-Z]{3}$/.test(candidate.currency)
+    )
+      return invalidResult(
+        "ACCOUNT_CURRENCY_INVALID",
+        `Account ${candidateId} currency must be a canonical ISO currency.`,
+        "Account",
+        candidateId,
+        "currency",
+      );
+    if (
+      typeof candidate.opening_balance !== "string" ||
+      !EXACT_DECIMAL.test(candidate.opening_balance)
+    )
+      return invalidResult(
+        "EXACT_DECIMAL_INVALID",
+        `Account ${candidateId} opening_balance must be an exact decimal string.`,
+        "Account",
+        candidateId,
+        "opening_balance",
+      );
+    try {
+      if (money(candidate.opening_balance, currency).isNegative())
+        return invalidResult(
+          "DOMAIN_VALUE_INVALID",
+          `Account ${candidateId} opening_balance must be non-negative.`,
+          "Account",
+          candidateId,
+          "opening_balance",
+        );
+    } catch {
+      return invalidResult(
+        "DOMAIN_VALUE_INVALID",
+        `Account ${candidateId} opening_balance is invalid.`,
+        "Account",
+        candidateId,
+        "opening_balance",
+      );
+    }
     const opening = utcDate(candidate.opening_date);
-    if (!opening) return invalidResult("DATE_INVALID", `Account ${candidateId} opening_date must be a valid date-only value.`, "Account", candidateId, "opening_date");
-    if (candidate.closing_date !== undefined && candidate.closing_date !== null) {
+    if (!opening)
+      return invalidResult(
+        "DATE_INVALID",
+        `Account ${candidateId} opening_date must be a valid date-only value.`,
+        "Account",
+        candidateId,
+        "opening_date",
+      );
+    if (
+      candidate.closing_date !== undefined &&
+      candidate.closing_date !== null
+    ) {
       const closing = utcDate(candidate.closing_date);
-      if (!closing) return invalidResult("DATE_INVALID", `Account ${candidateId} closing_date is invalid.`, "Account", candidateId, "closing_date");
-      if (closing < opening) return invalidResult("TEMPORAL_INTERVAL_INVALID", `Account ${candidateId} closing_date cannot precede opening_date.`, "Account", candidateId, "closing_date");
+      if (!closing)
+        return invalidResult(
+          "DATE_INVALID",
+          `Account ${candidateId} closing_date is invalid.`,
+          "Account",
+          candidateId,
+          "closing_date",
+        );
+      if (closing < opening)
+        return invalidResult(
+          "TEMPORAL_INTERVAL_INVALID",
+          `Account ${candidateId} closing_date cannot precede opening_date.`,
+          "Account",
+          candidateId,
+          "closing_date",
+        );
     }
     const behavior = inspectAccountBalanceBehavior(model, candidate);
     if (behavior.status === "invalid_model") return behavior;
@@ -590,25 +850,103 @@ export const compileCashFlow = (
     entityType: "Income" | "Expense",
     entityId: string,
     fieldPath: string,
-  ): Extract<CompileResult<never>, { readonly status: "invalid_model" }> | undefined => {
+  ):
+    | Extract<CompileResult<never>, { readonly status: "invalid_model" }>
+    | undefined => {
     const primitive = objects(model, "PrimitiveInstance").find(
       (item) => canonicalId(item, "primitive_instance_id") === primitiveId,
     );
-    if (!primitive) return invalidResult("GROWTH_MODEL_REFERENCE_NOT_FOUND", `${entityType} ${entityId} ${fieldPath} does not resolve to a PrimitiveInstance.`, entityType, entityId, fieldPath, [primitiveId]);
-    if (typeof primitive.enabled !== "boolean") return invalidResult("GROWTH_PRIMITIVE_ENABLED_INVALID", `PrimitiveInstance ${primitiveId} enabled must be a boolean.`, "PrimitiveInstance", primitiveId, "enabled");
-    if (typeof primitive.primitive_id !== "string" || !isPrimitiveId(primitive.primitive_id)) return invalidResult("GROWTH_PRIMITIVE_ID_INVALID", `PrimitiveInstance ${primitiveId} primitive_id must identify a registered primitive.`, "PrimitiveInstance", primitiveId, "primitive_id");
+    if (!primitive)
+      return invalidResult(
+        "GROWTH_MODEL_REFERENCE_NOT_FOUND",
+        `${entityType} ${entityId} ${fieldPath} does not resolve to a PrimitiveInstance.`,
+        entityType,
+        entityId,
+        fieldPath,
+        [primitiveId],
+      );
+    if (typeof primitive.enabled !== "boolean")
+      return invalidResult(
+        "GROWTH_PRIMITIVE_ENABLED_INVALID",
+        `PrimitiveInstance ${primitiveId} enabled must be a boolean.`,
+        "PrimitiveInstance",
+        primitiveId,
+        "enabled",
+      );
+    if (
+      typeof primitive.primitive_id !== "string" ||
+      !isPrimitiveId(primitive.primitive_id)
+    )
+      return invalidResult(
+        "GROWTH_PRIMITIVE_ID_INVALID",
+        `PrimitiveInstance ${primitiveId} primitive_id must identify a registered primitive.`,
+        "PrimitiveInstance",
+        primitiveId,
+        "primitive_id",
+      );
     const primitiveScenario = primitive.scenario_id;
-    if (typeof primitiveScenario !== "string" || !UUID.test(primitiveScenario) || !objects(model, "Scenario").some((scenario) => canonicalId(scenario, "scenario_id") === primitiveScenario.toLowerCase())) return invalidResult("GROWTH_SCENARIO_BINDING_INVALID", `PrimitiveInstance ${primitiveId} scenario_id must resolve to a Scenario UUID.`, "PrimitiveInstance", primitiveId, "scenario_id");
-    if (typeof primitive.input_bindings !== "object" || primitive.input_bindings === null || Array.isArray(primitive.input_bindings)) return invalidResult("GROWTH_BINDINGS_INVALID", `PrimitiveInstance ${primitiveId} input_bindings must be an object.`, "PrimitiveInstance", primitiveId, "input_bindings");
-    if (primitive.parameters !== undefined && primitive.parameters !== null && (typeof primitive.parameters !== "object" || Array.isArray(primitive.parameters))) return invalidResult("GROWTH_PARAMETERS_INVALID", `PrimitiveInstance ${primitiveId} parameters must be an object.`, "PrimitiveInstance", primitiveId, "parameters");
+    if (
+      typeof primitiveScenario !== "string" ||
+      !UUID.test(primitiveScenario) ||
+      !objects(model, "Scenario").some(
+        (scenario) =>
+          canonicalId(scenario, "scenario_id") ===
+          primitiveScenario.toLowerCase(),
+      )
+    )
+      return invalidResult(
+        "GROWTH_SCENARIO_BINDING_INVALID",
+        `PrimitiveInstance ${primitiveId} scenario_id must resolve to a Scenario UUID.`,
+        "PrimitiveInstance",
+        primitiveId,
+        "scenario_id",
+      );
+    if (
+      typeof primitive.input_bindings !== "object" ||
+      primitive.input_bindings === null ||
+      Array.isArray(primitive.input_bindings)
+    )
+      return invalidResult(
+        "GROWTH_BINDINGS_INVALID",
+        `PrimitiveInstance ${primitiveId} input_bindings must be an object.`,
+        "PrimitiveInstance",
+        primitiveId,
+        "input_bindings",
+      );
+    if (
+      primitive.parameters !== undefined &&
+      primitive.parameters !== null &&
+      (typeof primitive.parameters !== "object" ||
+        Array.isArray(primitive.parameters))
+    )
+      return invalidResult(
+        "GROWTH_PARAMETERS_INVALID",
+        `PrimitiveInstance ${primitiveId} parameters must be an object.`,
+        "PrimitiveInstance",
+        primitiveId,
+        "parameters",
+      );
     for (const dateField of ["start_date", "end_date"] as const)
-      if (primitive[dateField] !== undefined && primitive[dateField] !== null && !utcDate(primitive[dateField])) return invalidResult("DATE_INVALID", `PrimitiveInstance ${primitiveId} ${dateField} is invalid.`, "PrimitiveInstance", primitiveId, dateField);
+      if (
+        primitive[dateField] !== undefined &&
+        primitive[dateField] !== null &&
+        !utcDate(primitive[dateField])
+      )
+        return invalidResult(
+          "DATE_INVALID",
+          `PrimitiveInstance ${primitiveId} ${dateField} is invalid.`,
+          "PrimitiveInstance",
+          primitiveId,
+          dateField,
+        );
     return undefined;
   };
   const preflightStreams = (
     type: "Income" | "Expense",
     streams: readonly CanonicalObject[],
-  ): Extract<CompileResult<never>, { readonly status: "invalid_model" }> | undefined => {
+  ):
+    | Extract<CompileResult<never>, { readonly status: "invalid_model" }>
+    | undefined => {
     for (const stream of streams) {
       const id = canonicalId(stream, `${type.toLowerCase()}_id`)!;
       const owner = resolveOwnerScope(model, stream.owner_id, scope, type, id);
@@ -617,29 +955,136 @@ export const compileCashFlow = (
         continue;
       }
       if (owner.value === "out_of_scope") continue;
-      if (typeof stream.amount !== "string" || !EXACT_DECIMAL.test(stream.amount)) return invalidResult("EXACT_DECIMAL_INVALID", `${type} ${id} amount must be an exact decimal string.`, type, id, "amount");
-      try { if (money(stream.amount, currency).isNegative()) return invalidResult("DOMAIN_VALUE_INVALID", `${type} ${id} amount cannot be negative.`, type, id, "amount"); } catch { return invalidResult("DOMAIN_VALUE_INVALID", `${type} ${id} amount is invalid.`, type, id, "amount"); }
-      if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never)) return invalidResult("RECURRENCE_INVALID", `${type} ${id} frequency is not canonical.`, type, id, "frequency");
+      if (
+        typeof stream.amount !== "string" ||
+        !EXACT_DECIMAL.test(stream.amount)
+      )
+        return invalidResult(
+          "EXACT_DECIMAL_INVALID",
+          `${type} ${id} amount must be an exact decimal string.`,
+          type,
+          id,
+          "amount",
+        );
+      try {
+        if (money(stream.amount, currency).isNegative())
+          return invalidResult(
+            "DOMAIN_VALUE_INVALID",
+            `${type} ${id} amount cannot be negative.`,
+            type,
+            id,
+            "amount",
+          );
+      } catch {
+        return invalidResult(
+          "DOMAIN_VALUE_INVALID",
+          `${type} ${id} amount is invalid.`,
+          type,
+          id,
+          "amount",
+        );
+      }
+      if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never))
+        return invalidResult(
+          "RECURRENCE_INVALID",
+          `${type} ${id} frequency is not canonical.`,
+          type,
+          id,
+          "frequency",
+        );
       const start = utcDate(stream.start_date);
-      const end = stream.end_date === undefined || stream.end_date === null ? undefined : nextUtcDate(typeof stream.end_date === "string" ? stream.end_date : "");
-      if (!start || (stream.end_date !== undefined && stream.end_date !== null && !end)) return invalidResult("DATE_INVALID", `${type} ${id} has invalid dates.`, type, id, "start_date");
-      if (end !== undefined && end <= start) return invalidResult("TEMPORAL_INTERVAL_INVALID", `${type} ${id} inclusive end_date precedes start_date.`, type, id, "end_date");
+      const end =
+        stream.end_date === undefined || stream.end_date === null
+          ? undefined
+          : nextUtcDate(
+              typeof stream.end_date === "string" ? stream.end_date : "",
+            );
+      if (
+        !start ||
+        (stream.end_date !== undefined && stream.end_date !== null && !end)
+      )
+        return invalidResult(
+          "DATE_INVALID",
+          `${type} ${id} has invalid dates.`,
+          type,
+          id,
+          "start_date",
+        );
+      if (end !== undefined && end <= start)
+        return invalidResult(
+          "TEMPORAL_INTERVAL_INVALID",
+          `${type} ${id} inclusive end_date precedes start_date.`,
+          type,
+          id,
+          "end_date",
+        );
       const growth = stream.growth_model_id;
       if (growth !== undefined && growth !== null) {
-        if (typeof growth !== "string" || !UUID.test(growth)) return invalidResult("GROWTH_MODEL_REFERENCE_INVALID", `${type} ${id} growth_model_id must be a UUID.`, type, id, "growth_model_id");
-        const invalidPrimitive = validateGenericPrimitive(growth.toLowerCase(), type, id, "growth_model_id");
+        if (typeof growth !== "string" || !UUID.test(growth))
+          return invalidResult(
+            "GROWTH_MODEL_REFERENCE_INVALID",
+            `${type} ${id} growth_model_id must be a UUID.`,
+            type,
+            id,
+            "growth_model_id",
+          );
+        const invalidPrimitive = validateGenericPrimitive(
+          growth.toLowerCase(),
+          type,
+          id,
+          "growth_model_id",
+        );
         if (invalidPrimitive) return invalidPrimitive;
       }
-      for (const field of type === "Income" ? ["probability_model_id", "related_event_id"] as const : ["event_trigger_id"] as const) {
+      for (const field of type === "Income"
+        ? (["probability_model_id", "related_event_id"] as const)
+        : (["event_trigger_id"] as const)) {
         const raw = stream[field];
         if (raw === undefined || raw === null) continue;
-        if (typeof raw !== "string" || !UUID.test(raw)) return invalidResult("EVENT_BINDING_INVALID", `${type} ${id} ${field} must be a UUID.`, type, id, field);
-        const collection = field === "probability_model_id" ? "PrimitiveInstance" : "Event";
-        const idField = field === "probability_model_id" ? "primitive_instance_id" : "event_id";
-        if (!objects(model, collection).some((item) => canonicalId(item, idField) === raw.toLowerCase())) return invalidResult("EVENT_BINDING_REFERENCE_NOT_FOUND", `${type} ${id} ${field} does not resolve.`, type, id, field);
+        if (typeof raw !== "string" || !UUID.test(raw))
+          return invalidResult(
+            "EVENT_BINDING_INVALID",
+            `${type} ${id} ${field} must be a UUID.`,
+            type,
+            id,
+            field,
+          );
+        const collection =
+          field === "probability_model_id" ? "PrimitiveInstance" : "Event";
+        const idField =
+          field === "probability_model_id"
+            ? "primitive_instance_id"
+            : "event_id";
+        if (
+          !objects(model, collection).some(
+            (item) => canonicalId(item, idField) === raw.toLowerCase(),
+          )
+        )
+          return invalidResult(
+            "EVENT_BINDING_REFERENCE_NOT_FOUND",
+            `${type} ${id} ${field} does not resolve.`,
+            type,
+            id,
+            field,
+          );
       }
-      if (type === "Expense" && stream.payment_account_id !== undefined && stream.payment_account_id !== null) {
-        if (typeof stream.payment_account_id !== "string" || !UUID.test(stream.payment_account_id) || !accountIds.has(stream.payment_account_id.toLowerCase())) return invalidResult("PAYMENT_ACCOUNT_REFERENCE_INVALID", `Expense ${id} payment_account_id must resolve to an Account UUID.`, type, id, "payment_account_id");
+      if (
+        type === "Expense" &&
+        stream.payment_account_id !== undefined &&
+        stream.payment_account_id !== null
+      ) {
+        if (
+          typeof stream.payment_account_id !== "string" ||
+          !UUID.test(stream.payment_account_id) ||
+          !accountIds.has(stream.payment_account_id.toLowerCase())
+        )
+          return invalidResult(
+            "PAYMENT_ACCOUNT_REFERENCE_INVALID",
+            `Expense ${id} payment_account_id must resolve to an Account UUID.`,
+            type,
+            id,
+            "payment_account_id",
+          );
       }
     }
     return undefined;
@@ -648,30 +1093,128 @@ export const compileCashFlow = (
   if (incomePreflight) return incomePreflight;
   const expensePreflight = preflightStreams("Expense", allExpenses);
   if (expensePreflight) return expensePreflight;
-  const scenarioResult = selectScenario(model, { capabilityName: "cash_flow_forecast", executionLabel: "Cash-flow", ...(request.scenarioId === undefined ? {} : { scenarioId: request.scenarioId }), simulationStart: request.simulationStart, simulationEnd: request.simulationEnd });
+  const scenarioResult = selectScenario(model, {
+    capabilityName: "cash_flow_forecast",
+    executionLabel: "Cash-flow",
+    ...(request.scenarioId === undefined
+      ? {}
+      : { scenarioId: request.scenarioId }),
+    simulationStart: request.simulationStart,
+    simulationEnd: request.simulationEnd,
+  });
   if (scenarioResult.status !== "compiled") return scenarioResult;
   const selected = scenarioResult.value;
   const retirementByIncome = new Map<string, RetirementTerminationBinding>();
   const retirementEventIds = new Set<string>();
-  const authoredIdentityIds = new Set(Object.values(model.objects).flatMap((collection) => collection.flatMap((entry) =>
-    typeof entry === "object" && entry !== null && !Array.isArray(entry)
-      ? Object.entries(entry).filter(([key, value]) => key.endsWith("_id") && typeof value === "string" && UUID.test(value)).map(([, value]) => String(value).toLowerCase())
-      : [])));
+  const authoredIdentityIds = new Set(
+    Object.values(model.objects).flatMap((collection) =>
+      collection.flatMap((entry) =>
+        typeof entry === "object" && entry !== null && !Array.isArray(entry)
+          ? Object.entries(entry)
+              .filter(
+                ([key, value]) =>
+                  key.endsWith("_id") &&
+                  typeof value === "string" &&
+                  UUID.test(value),
+              )
+              .map(([, value]) => String(value).toLowerCase())
+          : [],
+      ),
+    ),
+  );
   for (const binding of request.retirementBindings ?? []) {
-    const incomeId = binding.incomeId.toLowerCase(); const eventId = binding.terminationEventId.toLowerCase();
-    if (!UUID.test(binding.incomeId) || !UUID.test(binding.terminationEventId) || !utcDate(binding.baselineDate)) return invalidResult("RETIREMENT_BINDING_INVALID", "Retirement bindings require UUID income/event identities and a date-only baselineDate.", "retirement_binding", eventId);
-    if (retirementByIncome.has(incomeId) || retirementEventIds.has(eventId)) return unsupportedResult("RETIREMENT_BINDING_AMBIGUOUS", "Each retirement binding must identify one distinct Income and termination event.", "retirement_binding", eventId);
-    if (!objects(model, "Income").some((item) => canonicalId(item, "income_id") === incomeId)) return invalidResult("RETIREMENT_BINDING_INCOME_NOT_FOUND", `Retirement binding Income ${incomeId} does not resolve.`, "Income", incomeId);
-    if (authoredIdentityIds.has(eventId)) return invalidResult("RETIREMENT_BINDING_ID_COLLISION", `Runtime termination Event ${eventId} must not collide with an authored canonical identity.`, "retirement_binding", eventId);
+    const incomeId = binding.incomeId.toLowerCase();
+    const eventId = binding.terminationEventId.toLowerCase();
+    if (
+      !UUID.test(binding.incomeId) ||
+      !UUID.test(binding.terminationEventId) ||
+      !utcDate(binding.baselineDate)
+    )
+      return invalidResult(
+        "RETIREMENT_BINDING_INVALID",
+        "Retirement bindings require UUID income/event identities and a date-only baselineDate.",
+        "retirement_binding",
+        eventId,
+      );
+    if (retirementByIncome.has(incomeId) || retirementEventIds.has(eventId))
+      return unsupportedResult(
+        "RETIREMENT_BINDING_AMBIGUOUS",
+        "Each retirement binding must identify one distinct Income and termination event.",
+        "retirement_binding",
+        eventId,
+      );
+    if (
+      !objects(model, "Income").some(
+        (item) => canonicalId(item, "income_id") === incomeId,
+      )
+    )
+      return invalidResult(
+        "RETIREMENT_BINDING_INCOME_NOT_FOUND",
+        `Retirement binding Income ${incomeId} does not resolve.`,
+        "Income",
+        incomeId,
+      );
+    if (authoredIdentityIds.has(eventId))
+      return invalidResult(
+        "RETIREMENT_BINDING_ID_COLLISION",
+        `Runtime termination Event ${eventId} must not collide with an authored canonical identity.`,
+        "retirement_binding",
+        eventId,
+      );
     if (binding.canonicalEventId !== undefined) {
-      const canonicalEventId = binding.canonicalEventId.toLowerCase(); const event = objects(model, "Event").find((item) => canonicalId(item, "event_id") === canonicalEventId);
-      if (!event) return invalidResult("RETIREMENT_BINDING_EVENT_NOT_FOUND", `Retirement Event ${canonicalEventId} does not resolve.`, "Event", canonicalEventId);
-      const listed = Array.isArray(selected.object?.event_ids) && (selected.object!.event_ids as readonly unknown[]).some((value) => typeof value === "string" && value.toLowerCase() === canonicalEventId);
-      if (event.enabled !== true || event.event_type !== "retirement" || event.trigger_type !== "scheduled" || String(event.scenario_id).toLowerCase() !== selected.id || !listed || event.start_date !== binding.baselineDate) return unsupportedResult("RETIREMENT_BINDING_MISMATCH", `Event ${canonicalEventId} is not an enabled scheduled retirement Event in the selected root Scenario at ${binding.baselineDate}.`, "Event", canonicalEventId);
-      if (event.probability_model_id != null || event.trigger_condition != null || (Array.isArray(event.effect_ids) && event.effect_ids.length > 0) || (Array.isArray(event.dependencies) && event.dependencies.length > 0) || event.duration_days != null || event.end_date != null || (event.precedence != null && event.precedence !== 0))
-        return unsupportedResult("RETIREMENT_BINDING_EVENT_SEMANTICS_UNSUPPORTED", `Retirement Event ${canonicalEventId} contains semantics the income-termination binding cannot execute.`, "Event", canonicalEventId);
+      const canonicalEventId = binding.canonicalEventId.toLowerCase();
+      const event = objects(model, "Event").find(
+        (item) => canonicalId(item, "event_id") === canonicalEventId,
+      );
+      if (!event)
+        return invalidResult(
+          "RETIREMENT_BINDING_EVENT_NOT_FOUND",
+          `Retirement Event ${canonicalEventId} does not resolve.`,
+          "Event",
+          canonicalEventId,
+        );
+      const listed =
+        Array.isArray(selected.object?.event_ids) &&
+        (selected.object!.event_ids as readonly unknown[]).some(
+          (value) =>
+            typeof value === "string" &&
+            value.toLowerCase() === canonicalEventId,
+        );
+      if (
+        event.enabled !== true ||
+        event.event_type !== "retirement" ||
+        event.trigger_type !== "scheduled" ||
+        String(event.scenario_id).toLowerCase() !== selected.id ||
+        !listed ||
+        event.start_date !== binding.baselineDate
+      )
+        return unsupportedResult(
+          "RETIREMENT_BINDING_MISMATCH",
+          `Event ${canonicalEventId} is not an enabled scheduled retirement Event in the selected root Scenario at ${binding.baselineDate}.`,
+          "Event",
+          canonicalEventId,
+        );
+      if (
+        event.probability_model_id != null ||
+        event.trigger_condition != null ||
+        (Array.isArray(event.effect_ids) && event.effect_ids.length > 0) ||
+        (Array.isArray(event.dependencies) && event.dependencies.length > 0) ||
+        event.duration_days != null ||
+        event.end_date != null ||
+        (event.precedence != null && event.precedence !== 0)
+      )
+        return unsupportedResult(
+          "RETIREMENT_BINDING_EVENT_SEMANTICS_UNSUPPORTED",
+          `Retirement Event ${canonicalEventId} contains semantics the income-termination binding cannot execute.`,
+          "Event",
+          canonicalEventId,
+        );
     }
-    retirementByIncome.set(incomeId, Object.freeze({ ...binding, incomeId, terminationEventId: eventId })); retirementEventIds.add(eventId);
+    retirementByIncome.set(
+      incomeId,
+      Object.freeze({ ...binding, incomeId, terminationEventId: eventId }),
+    );
+    retirementEventIds.add(eventId);
   }
   if (scope.memberIds.length !== 1)
     return unsupportedResult(
@@ -683,7 +1226,13 @@ export const compileCashFlow = (
     );
   for (const expense of objects(model, "Expense")) {
     const expenseId = canonicalId(expense, "expense_id")!;
-    const expenseOwner = resolveOwnerScope(model, expense.owner_id, scope, "Expense", expenseId);
+    const expenseOwner = resolveOwnerScope(
+      model,
+      expense.owner_id,
+      scope,
+      "Expense",
+      expenseId,
+    );
     if (expenseOwner.status !== "compiled") return expenseOwner;
     if (expenseOwner.value === "out_of_scope") continue;
     const rawPayment = expense.payment_account_id;
@@ -716,7 +1265,13 @@ export const compileCashFlow = (
         "payment_account_id",
         [paymentId],
       );
-    const paymentOwner = resolveOwnerScope(model, paymentAccount.owner_id, scope, "Account", paymentId);
+    const paymentOwner = resolveOwnerScope(
+      model,
+      paymentAccount.owner_id,
+      scope,
+      "Account",
+      paymentId,
+    );
     if (paymentOwner.status !== "compiled") return paymentOwner;
     if (paymentOwner.value === "out_of_scope")
       return invalidResult(
@@ -742,16 +1297,50 @@ export const compileCashFlow = (
       ownerInScope(account.owner_id, scope) &&
       CASH_TYPES.has(String(account.account_type)),
   );
-  if (eligibleAccounts.length !== 1)
+  const requestedAccountId = request.executionAccountId?.toLowerCase();
+  if (requestedAccountId !== undefined && !UUID.test(requestedAccountId))
+    return invalidResult(
+      "CASH_EXECUTION_ACCOUNT_INVALID",
+      "Cash-flow executionAccountId must be a UUID.",
+      "CashFlowCompilerRequest",
+      undefined,
+      "executionAccountId",
+    );
+  if (eligibleAccounts.length !== 1 && requestedAccountId === undefined)
     return unsupportedResult(
       "CASH_ACCOUNT_AMBIGUOUS",
-      `Cash-flow compilation requires exactly one eligible in-scope cash Account; found ${eligibleAccounts.length}.`,
+      `Cash-flow compilation found ${eligibleAccounts.length} eligible in-scope cash Accounts and requires an explicit executionAccountId.`,
       "Account",
+      undefined,
+      "executionAccountId",
     );
-  const account = eligibleAccounts[0]!;
+  const account =
+    requestedAccountId === undefined
+      ? eligibleAccounts[0]
+      : eligibleAccounts.find(
+          (candidate) =>
+            canonicalId(candidate, "account_id") === requestedAccountId,
+        );
+  if (account === undefined)
+    return invalidResult(
+      "CASH_EXECUTION_ACCOUNT_NOT_FOUND",
+      `Cash-flow execution Account ${requestedAccountId ?? "(missing)"} is not an eligible in-scope cash Account.`,
+      "Account",
+      requestedAccountId,
+      "executionAccountId",
+    );
   const accountId = canonicalId(account, "account_id")!;
-  if (typeof account.currency !== "string" || !/^[A-Z]{3}$/.test(account.currency))
-    return invalidResult("ACCOUNT_CURRENCY_INVALID", `Account ${accountId} currency must be a canonical ISO currency.`, "Account", accountId, "currency");
+  if (
+    typeof account.currency !== "string" ||
+    !/^[A-Z]{3}$/.test(account.currency)
+  )
+    return invalidResult(
+      "ACCOUNT_CURRENCY_INVALID",
+      `Account ${accountId} currency must be a canonical ISO currency.`,
+      "Account",
+      accountId,
+      "currency",
+    );
   if (account.currency !== currency.code)
     return unsupportedResult(
       "FX_UNSUPPORTED",
@@ -799,7 +1388,13 @@ export const compileCashFlow = (
         "closing_date",
       );
     if (closing < openingDate)
-      return invalidResult("TEMPORAL_INTERVAL_INVALID", `Account ${accountId} closing_date cannot precede opening_date.`, "Account", accountId, "closing_date");
+      return invalidResult(
+        "TEMPORAL_INTERVAL_INVALID",
+        `Account ${accountId} closing_date cannot precede opening_date.`,
+        "Account",
+        accountId,
+        "closing_date",
+      );
     if (closing < simulationEnd)
       return unsupportedResult(
         "ACCOUNT_CLOSING_TIMING_UNSUPPORTED",
@@ -826,37 +1421,110 @@ export const compileCashFlow = (
     ownerInScope(stream.owner_id, scope),
   );
   for (const incomeId of retirementByIncome.keys())
-    if (!incomes.some((income) => canonicalId(income, "income_id") === incomeId))
-      return unsupportedResult("RETIREMENT_BINDING_TARGET_UNEXECUTABLE", `Retirement binding Income ${incomeId} is outside the executable VS2 scope.`, "Income", incomeId);
+    if (
+      !incomes.some((income) => canonicalId(income, "income_id") === incomeId)
+    )
+      return unsupportedResult(
+        "RETIREMENT_BINDING_TARGET_UNEXECUTABLE",
+        `Retirement binding Income ${incomeId} is outside the executable VS2 scope.`,
+        "Income",
+        incomeId,
+      );
   /** Structural validation precedes capability gates so stream order is immaterial. */
   const validateInScopeStreams = (
     type: "Income" | "Expense",
     collection: readonly CanonicalObject[],
-  ): Extract<CompileResult<never>, { readonly status: "invalid_model" }> | undefined => {
+  ):
+    | Extract<CompileResult<never>, { readonly status: "invalid_model" }>
+    | undefined => {
     for (const stream of collection) {
       const id = canonicalId(stream, `${type.toLowerCase()}_id`)!;
-      const event = validateEventReference(model, stream, type, request.retirementBindings ?? []);
+      const event = validateEventReference(
+        model,
+        stream,
+        type,
+        request.retirementBindings ?? [],
+      );
       if (event?.status === "invalid_model") return event;
       if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never))
-        return invalidResult("RECURRENCE_INVALID", `${type} ${id} frequency is not canonical.`, type, id, "frequency");
+        return invalidResult(
+          "RECURRENCE_INVALID",
+          `${type} ${id} frequency is not canonical.`,
+          type,
+          id,
+          "frequency",
+        );
       const start = utcDate(stream.start_date);
       if (!start)
-        return invalidResult("DATE_INVALID", `${type} ${id} start_date is invalid.`, type, id, "start_date");
+        return invalidResult(
+          "DATE_INVALID",
+          `${type} ${id} start_date is invalid.`,
+          type,
+          id,
+          "start_date",
+        );
       if (stream.end_date !== undefined && stream.end_date !== null) {
-        const end = nextUtcDate(typeof stream.end_date === "string" ? stream.end_date : "");
-        if (!end) return invalidResult("DATE_INVALID", `${type} ${id} end_date is invalid.`, type, id, "end_date");
-        if (end <= start) return invalidResult("TEMPORAL_INTERVAL_INVALID", `${type} ${id} inclusive end_date precedes start_date.`, type, id, "end_date");
+        const end = nextUtcDate(
+          typeof stream.end_date === "string" ? stream.end_date : "",
+        );
+        if (!end)
+          return invalidResult(
+            "DATE_INVALID",
+            `${type} ${id} end_date is invalid.`,
+            type,
+            id,
+            "end_date",
+          );
+        if (end <= start)
+          return invalidResult(
+            "TEMPORAL_INTERVAL_INVALID",
+            `${type} ${id} inclusive end_date precedes start_date.`,
+            type,
+            id,
+            "end_date",
+          );
       }
-      if (typeof stream.amount !== "string" || !EXACT_DECIMAL.test(stream.amount))
-        return invalidResult("EXACT_DECIMAL_INVALID", `${type} ${id} amount must be an exact decimal string.`, type, id, "amount");
+      if (
+        typeof stream.amount !== "string" ||
+        !EXACT_DECIMAL.test(stream.amount)
+      )
+        return invalidResult(
+          "EXACT_DECIMAL_INVALID",
+          `${type} ${id} amount must be an exact decimal string.`,
+          type,
+          id,
+          "amount",
+        );
       try {
         if (money(stream.amount, currency).isNegative())
-          return invalidResult("DOMAIN_VALUE_INVALID", `${type} ${id} amount cannot be negative.`, type, id, "amount");
+          return invalidResult(
+            "DOMAIN_VALUE_INVALID",
+            `${type} ${id} amount cannot be negative.`,
+            type,
+            id,
+            "amount",
+          );
       } catch (error) {
-        return invalidResult("DOMAIN_VALUE_INVALID", error instanceof Error ? error.message : `${type} amount is invalid.`, type, id, "amount");
+        return invalidResult(
+          "DOMAIN_VALUE_INVALID",
+          error instanceof Error ? error.message : `${type} amount is invalid.`,
+          type,
+          id,
+          "amount",
+        );
       }
-      if (type === "Expense" && String(stream.payment_account_id).toLowerCase() !== accountId)
-        return invalidResult("PAYMENT_ACCOUNT_REFERENCE_INVALID", `Expense ${id} payment_account_id must resolve to the one executable cash Account.`, type, id, "payment_account_id", [accountId]);
+      if (
+        type === "Expense" &&
+        String(stream.payment_account_id).toLowerCase() !== accountId
+      )
+        return invalidResult(
+          "PAYMENT_ACCOUNT_REFERENCE_INVALID",
+          `Expense ${id} payment_account_id must resolve to the one executable cash Account.`,
+          type,
+          id,
+          "payment_account_id",
+          [accountId],
+        );
       const growth = resolveGrowth(model, stream, type, selected);
       if (growth.status === "invalid_model") return growth;
     }
@@ -906,10 +1574,21 @@ export const compileCashFlow = (
           undefined,
           idField,
         );
-      const event = validateEventReference(model, stream, type, request.retirementBindings ?? []);
+      const event = validateEventReference(
+        model,
+        stream,
+        type,
+        request.retirementBindings ?? [],
+      );
       if (event) return event;
       if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never))
-        return invalidResult("RECURRENCE_INVALID", `${type} ${id} frequency is not canonical.`, type, id, "frequency");
+        return invalidResult(
+          "RECURRENCE_INVALID",
+          `${type} ${id} frequency is not canonical.`,
+          type,
+          id,
+          "frequency",
+        );
       if (stream.frequency !== "monthly")
         return unsupportedResult(
           "RECURRENCE_UNSUPPORTED",
@@ -1049,7 +1728,14 @@ export const compileCashFlow = (
         }),
         growthRate: growth.value.rate,
         growthBaseAt: start,
-        ...(retirementByIncome.has(id) ? { terminationEventId: domainId("event", retirementByIncome.get(id)!.terminationEventId) } : {}),
+        ...(retirementByIncome.has(id)
+          ? {
+              terminationEventId: domainId(
+                "event",
+                retirementByIncome.get(id)!.terminationEventId,
+              ),
+            }
+          : {}),
         primitiveIds: Object.freeze({
           growth: domainId(
             "primitive-instance",
@@ -1097,7 +1783,9 @@ export const compileCashFlow = (
       id,
       money(String(stream.amount), currency).amount.isZero()
         ? new Set()
-        : new Set(monthlyOccurrences(start, end, simulationStart, simulationEnd)),
+        : new Set(
+            monthlyOccurrences(start, end, simulationStart, simulationEnd),
+          ),
     );
     const assumptionIds = growth.value.assumptionId
       ? [domainId("assumption", growth.value.assumptionId)]
@@ -1192,14 +1880,22 @@ export const compileCashFlow = (
 
   try {
     const ownerId = domainId("person", scope.memberIds[0]!);
-    const accountOwnerId = domainId(
-      String(account.owner_id).toLowerCase() === scope.householdId
-        ? "household"
-        : "person",
-      String(account.owner_id).toLowerCase(),
-    );
     const cashAccountId = domainId("account", accountId);
-    const retirementEvents = [...retirementByIncome.values()].map((binding) => Object.freeze({ id: domainId("event", binding.terminationEventId), targetId: domainId("income", binding.incomeId), kind: "termination" as const, effectiveAt: utcDate(binding.baselineDate)!, sourceTraceRefs: Object.freeze([calculationTraceRef(calculationTraceId(`compiler:retirement-binding:${binding.terminationEventId}`))]) }));
+    const retirementEvents = [...retirementByIncome.values()].map((binding) =>
+      Object.freeze({
+        id: domainId("event", binding.terminationEventId),
+        targetId: domainId("income", binding.incomeId),
+        kind: "termination" as const,
+        effectiveAt: utcDate(binding.baselineDate)!,
+        sourceTraceRefs: Object.freeze([
+          calculationTraceRef(
+            calculationTraceId(
+              `compiler:retirement-binding:${binding.terminationEventId}`,
+            ),
+          ),
+        ]),
+      }),
+    );
     const input: VerticalSlice2Input = Object.freeze({
       householdId: domainId("household", scope.householdId),
       ownerId,
@@ -1212,14 +1908,30 @@ export const compileCashFlow = (
       expenses: Object.freeze(compiledExpenses),
     });
     const openingState = createAuthoritativeState({
-      accounts: {
-        [cashAccountId]: {
-          id: cashAccountId,
-          kind: String(account.account_type) as "checking" | "savings" | "cash",
-          ownerId: accountOwnerId,
-          cash: money(String(account.opening_balance), currency),
-        },
-      },
+      accounts: Object.fromEntries(
+        eligibleAccounts.map((candidate) => {
+          const candidateId = domainId(
+            "account",
+            canonicalId(candidate, "account_id")!,
+          );
+          const candidateOwner = String(candidate.owner_id).toLowerCase();
+          return [
+            candidateId,
+            {
+              id: candidateId,
+              kind: String(candidate.account_type) as
+                | "checking"
+                | "savings"
+                | "cash",
+              ownerId: domainId(
+                candidateOwner === scope.householdId ? "household" : "person",
+                candidateOwner,
+              ),
+              cash: money(String(candidate.opening_balance), currency),
+            },
+          ];
+        }),
+      ),
       liabilities: {
         [payableId]: { id: payableId, balance: money("0", currency) },
       },
@@ -1232,8 +1944,35 @@ export const compileCashFlow = (
         scenarioIdentity: selected.id,
         executionMonths,
         scenarioBindings: Object.freeze({
-          incomeIds: Object.freeze(Object.fromEntries(compiledIncomes.map((item) => [String(item.id), String(item.id)]))), expenseIds: Object.freeze(Object.fromEntries(compiledExpenses.map((item) => [String(item.id), String(item.id)]))), accountIds: Object.freeze({ [accountId]: String(cashAccountId) }),
-          retirementEvents: Object.freeze(Object.fromEntries(retirementEvents.map((item) => [String(item.id), Object.freeze({ incomeId: String(item.targetId), eventId: String(item.id), baselineDate: item.effectiveAt.slice(0, 10) })]))),
+          incomeIds: Object.freeze(
+            Object.fromEntries(
+              compiledIncomes.map((item) => [String(item.id), String(item.id)]),
+            ),
+          ),
+          expenseIds: Object.freeze(
+            Object.fromEntries(
+              compiledExpenses.map((item) => [
+                String(item.id),
+                String(item.id),
+              ]),
+            ),
+          ),
+          accountIds: Object.freeze({ [accountId]: String(cashAccountId) }),
+          retirementEvents: Object.freeze(
+            Object.fromEntries(
+              retirementEvents.flatMap((item) => {
+                const binding = retirementByIncome.get(String(item.targetId))!;
+                const value = Object.freeze({
+                    incomeId: String(item.targetId),
+                    eventId: String(item.id),
+                    baselineDate: item.effectiveAt.slice(0, 10),
+                  });
+                return binding.canonicalEventId === undefined
+                  ? [[String(item.id), value]]
+                  : [[String(item.id), value], [binding.canonicalEventId.toLowerCase(), value]];
+              }),
+            ),
+          ),
         }),
       }),
       diagnostics: Object.freeze([]),

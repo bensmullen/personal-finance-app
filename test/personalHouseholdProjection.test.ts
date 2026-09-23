@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { comparePersonalHouseholdScenarios, createSyntheticPersonalDraft, runPersonalHouseholdForecast, type HouseholdForecastRequest } from "../src/application/index.js";
+import { comparePersonalHouseholdMajorAssetDebtAddition, comparePersonalHouseholdScenarios, createGoldenHouseholdDraft, createGoldenHouseholdForecastRequest, createSyntheticPersonalDraft, runPersonalHouseholdForecast, type HouseholdForecastRequest } from "../src/application/index.js";
 import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { assumptionId, scenarioId } from "../src/model/index.js";
 import type { ExecutableScenario } from "../src/simulation/scenario.js";
 import { instant } from "../src/time/index.js";
 import { Rate, rateConvention } from "../src/values/index.js";
+import { calculationTraceId, calculationTraceRef, mergeTraceRefs } from "../src/lineage/index.js";
 
 const request = (runIdentity: string): HouseholdForecastRequest => ({
   asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity,
@@ -44,6 +45,27 @@ const liabilityModel = (): ReturnType<typeof createSyntheticPersonalDraft> => {
 };
 
 describe("Personal household projection application seam", () => {
+  it("unions same-id comparison trace metadata deterministically", () => {
+    const trace = calculationTraceId("comparison:shared");
+    const refs = mergeTraceRefs(
+      [calculationTraceRef(trace, ["rule-b" as never], ["assumption-b" as never], ["event-b" as never])],
+      [calculationTraceRef(trace, ["rule-a" as never], ["assumption-a" as never], ["event-a" as never])],
+    )!;
+    expect(refs).toEqual([calculationTraceRef(trace, ["rule-a" as never, "rule-b" as never], ["assumption-a" as never, "assumption-b" as never], ["event-a" as never, "event-b" as never])]);
+  });
+  it("compares only a declared projection-start major asset and matching fixed debt", () => {
+    const result = comparePersonalHouseholdMajorAssetDebtAddition(
+      createGoldenHouseholdDraft(), createGoldenHouseholdForecastRequest("94000000-0000-4000-8000-000000000099"), {
+        asset: { asset_id: "94000000-0000-4000-8000-000000000097", name: "Scenario home", asset_type: "real_estate", owner_id: "90000000-0000-4000-8000-000000000002", acquisition_cost: "400000", current_value: "400000", valuation_method: "cost", liquidity_class: "illiquid" },
+        liability: { liability_id: "94000000-0000-4000-8000-000000000098", name: "Scenario mortgage", liability_type: "mortgage", owner_id: "90000000-0000-4000-8000-000000000002", principal: "300000", current_balance: "300000", interest_rate: "0.05", rate_type: "fixed", payment_frequency: "monthly", origination_date: "2026-01-01", collateral_id: "94000000-0000-4000-8000-000000000097" },
+        profile: { liabilityId: "94000000-0000-4000-8000-000000000098", kind: "vs4_fixed_monthly_fully_amortizing", paymentAnchor: "2026-01-01", totalPayments: 360, fundingAccountId: "90000000-0000-4000-8000-000000000004", settlementPriority: 2, openingContractStatus: "current" },
+      },
+    );
+    expect(result.status, JSON.stringify(result)).toBe("completed");
+    if (result.status === "unavailable") return;
+    expect(result.alternatives[0]!.declaredDifference).toBe("major_asset_debt_addition");
+    expect(result.alternatives[0]!.points[0]!.deltas.netWorth.amount).not.toBe("0");
+  }, 60_000);
   it("exposes reconciled household metrics and completion boundaries", () => {
     const result = runPersonalHouseholdForecast(model(), request("94000000-0000-4000-8000-000000000001"));
     expect(result.status).toBe("completed");
