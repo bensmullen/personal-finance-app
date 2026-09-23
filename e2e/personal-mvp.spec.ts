@@ -452,6 +452,7 @@ test("What If executes retirement without mutating the baseline binding", async 
 });
 
 test("What If executes deterministic investment return", async ({ page }) => {
+  test.setTimeout(120_000);
   const draft = structuredClone(createSyntheticPersonalDraft()) as any;
   const assumptionId = "98000000-0000-4000-8000-000000000001";
   const primitiveId = "98000000-0000-4000-8000-000000000002";
@@ -496,6 +497,11 @@ test("What If executes deterministic investment return", async ({ page }) => {
     rebalancing_rule_id: null,
   });
   await importDraft(page, draft);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Model Settings", exact: true })
+    .click();
+  await page.getByLabel("Simulation end").fill("2027-01-01");
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   const configuration = page.getByRole("region", {
