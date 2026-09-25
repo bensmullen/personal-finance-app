@@ -1,14 +1,14 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.1.0-draft
+**Version:** 0.1.1-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
 ## 1. Purpose
 
-This roadmap controls the stabilization and forecasting work after PR21 and before private-alpha infrastructure. Milestone IDs are stable planning identities; GitHub PR numbers may differ.
+This roadmap controls stabilization and forecasting work after PR21 and before private-alpha infrastructure. Milestone IDs are planning identities; GitHub PR numbers may differ.
 
-The sequence intentionally measures and improves the current deterministic path before multiplying it through stochastic simulation.
+The sequence intentionally measures and improves the current deterministic path before multiplying it through stochastic simulation. It also separates engineering enablement from user-facing completeness: stochastic infrastructure may be developed against synthetic calibration and a narrow tax subset, while affected user-facing outputs remain capability-gated until their required calibration/tax semantics are ready.
 
 ## 2. Dependency sequence
 
@@ -17,52 +17,61 @@ R0  Specification decomposition and traceability  [this change]
  |
 R1  Performance instrumentation + benchmark fixtures
  |
-R2  Interactive execution foundation
- |   fast current snapshot, worker execution, forecast lifecycle,
- |   cache/supersession, bounded rendering
- |
-R3  Profile-driven deterministic engine optimization
- |   + reusable compiled-plan seam
- |
- +--------------------------+
- |                          |
-R4  UX/editor cleanup       T1  Tax-engine maturation may proceed in parallel
- |                          |   once deterministic execution seams are stable
- +-------------+------------+
-               |
-R5  Stochastic runtime foundation
- |
-R6  Monte Carlo orchestration + streaming aggregation/convergence
- |
-R7  Baseline probabilistic household model
- |
-R8  Market/economic calibration adapters
- |
-R9  Concentrated issuer + equity-compensation modeling
- |
-R10 Probabilistic decision UX and scenario comparison refinement
- |
-R11 Personal-use stabilization gate
- |
-Private-alpha infrastructure sequence
+R2  Interactive deterministic execution foundation
+ | | +--> R4  UX/editor cleanup -----------------------------+
+ |                                                       |
+ +--> R3  Profile-driven deterministic optimization       |
+      |    + reusable compiled-plan seam                  |
+      |                                                   |
+      +--> C1  Provider-neutral calibration contract      |
+      |        + synthetic/internal baseline calibration  |
+      |                                                   |
+      +--> R5  Stochastic runtime foundation <------------+
+      |        |
+      |        v
+      |     R6  Monte Carlo orchestration
+      |        |
+      |        v
+      |     R7  Baseline probabilistic household engine
+      |        |
+      |        v
+      |     R8  Institutional market/sector calibration adapters
+      |        |
+      |        +--> R10 Probabilistic decision UX
+      |                         |
+      +--> T1A Target-cohort tax floor (parallel) --------+
+      |                         |
+      +--> A1  Private-alpha concentration safeguard -----+
+                                |
+                     R11 Private-alpha readiness /
+                         stabilization-exit gate
+
+R9  Full issuer/RSU/employer-risk stochastic modeling is conditional
+    before private alpha: required if the target cohort needs it; otherwise
+    it remains an explicit tracked post-alpha capability.
+
+T1B Advanced/specialized tax domains progress with the capabilities that need
+    them and gate only affected outputs.
 ~~~
 
 ## 3. R1 — Performance instrumentation and baselines
 
-Implement PFA-PERF-001 through PFA-PERF-004 first.
+Implement PFA-PERF-001 through PFA-PERF-004 and PFA-PERF-013 foundations first.
 
 Deliver:
 
 - phase timers across application/engine/UI boundaries;
-- a developer performance dashboard with live latest/rolling measurements;
+- a developer performance dashboard with latest/rolling measurements;
 - Golden, realistic-large, and stress synthetic performance fixtures;
 - repeatable benchmark capture;
-- explicit attribution of engine, worker/application, serialization, React, chart, and explanation/render cost;
+- explicit attribution of engine, application/worker, serialization, React/chart, and explanation/render cost;
 - baseline measurements before optimization.
 
-Do not set hard latency budgets until the baseline data exists.
+Do not set hard latency budgets until baseline data exists.
 
-## 4. R2 — Interactive execution foundation
+**User validation:** not normally required. Objective timing and correctness are automated/engineering verification.
+
+## 4. R2 — Interactive deterministic execution foundation
 
 Deliver the highest-value UAT responsiveness fixes:
 
@@ -71,13 +80,15 @@ Deliver the highest-value UAT responsiveness fixes:
 - Web Worker or equivalent off-main-thread long forecast execution;
 - request identity and stale-response suppression;
 - meaningful edit commit/debounce behavior rather than heavy work on each keystroke;
-- automatic baseline forecast when valid execution configuration exists;
+- automatic deterministic baseline forecast when valid execution configuration exists;
 - in-memory deterministic result cache using an application-owned calculation fingerprint;
 - lazy explanation resolution;
 - bounded/virtualized/collapsed detailed tables;
 - summary-first chart rendering.
 
 Persistent derived caching may be added later behind a discardable/versioned cache boundary.
+
+**User validation:** required at milestone closeout. Closeout instructions SHALL ask the user to verify current-state responsiveness, edit/recalculate behavior, running/stale/error states, and preservation of the last valid result while a replacement is executing.
 
 ## 5. R3 — Deterministic engine optimization
 
@@ -90,13 +101,29 @@ Use R1 measurements to rank work. Likely candidates include:
 - trace materialization;
 - recompilation of invariant schedules/dependency metadata.
 
-Do not optimize semantic ordering by assumption. Scheduler or execution changes must demonstrate equivalence against the current authoritative semantics with reference/property tests.
+Do not optimize semantic ordering by assumption. Scheduler/execution changes must demonstrate equivalence against authoritative semantics with reference/property tests.
 
-R3 SHALL create the immutable compiled-plan/reusable execution boundary required by PFA-PERF-011 before R6 high-count orchestration.
+R3 SHALL create the immutable compiled-plan/reusable execution boundary required by PFA-PERF-011 before high-count orchestration.
 
-## 6. R4 — UX/editor cleanup
+**User validation:** not normally required unless a user-visible behavior changes. Financial/result equivalence and performance improvement are primarily automated/engineering verification.
 
-May overlap R2/R3 because it is independently valuable for UAT.
+## 6. C1 — Calibration contract before stochastic implementation
+
+Before stochastic runtime code hard-codes any distribution/provider shape:
+
+- define the provider-neutral normalized CalibrationSet boundary;
+- define immutable normalized calibration snapshots/content fingerprints;
+- provide a synthetic/internal baseline calibration for tests and engineering development;
+- ensure the same calibration snapshot can be reused across many forecast runs;
+- ensure a forecast references the calibration fingerprint rather than duplicating calibration data per run.
+
+C1 is the early contract half of the former R8 work. It prevents rework without prematurely choosing external providers.
+
+**User validation:** not required.
+
+## 7. R4 — UX/editor cleanup
+
+R4 may overlap R2/R3.
 
 Implement PFA-UX with emphasis on:
 
@@ -105,43 +132,68 @@ Implement PFA-UX with emphasis on:
 - no primary raw UUID display;
 - removal/replacement of Choose-only unsupported reference controls;
 - domain-oriented editing instead of primitive/rule IDs;
-- structured advanced/expert/technical drill-down;
+- structured additional/expert/technical drill-down;
 - improved charts/status states and novice-first information hierarchy;
 - component decomposition where it reduces rerender coupling.
 
-## 7. R5 — Stochastic runtime foundation
+**User validation:** required. Milestone closeout SHALL provide a concise walkthrough covering novice comprehension, entity editing, advanced-detail discoverability, chart readability, and any remaining confusing/dead controls.
 
-Implement the existing higher-authority stochastic semantics before Monte Carlo orchestration:
+## 8. T1A/T1B — Tax development track
+
+### T1A — Target-cohort/common-household tax floor
+
+Begin after R2 and develop in parallel with R3/C1/R5/R6.
+
+T1A is not “all tax law.” It is the deterministic per-realization tax coverage materially required by the households and outputs targeted for personal use/private alpha. Tax-affected stochastic outputs remain blocked/scoped until their required tax semantics are covered.
+
+Examples of tax-independent results may continue to display in accordance with PFA-TAX-008. Objective output validity SHALL be driven by dependencies/capability diagnostics rather than a global all-or-nothing tax switch.
+
+### T1B — Advanced/specialized tax domains
+
+Add specialized capital-gains, retirement, equity-compensation, and other jurisdiction/product mechanics alongside the capabilities that require them. Missing T1B behavior gates only materially affected outputs.
+
+**User validation:** required only when a tax milestone changes user-facing workflows/results. Automated rule/invariant tests remain the correctness authority; user validation checks understandable presentation and expected real-world workflow.
+
+## 9. R5 — Stochastic runtime foundation
+
+Implement the higher-authority stochastic semantics before Monte Carlo orchestration:
 
 - seeded RandomSource/RandomStream implementation;
+- distinct stochastic cohort identity and scenario identity;
 - stable process identities/substreams;
 - P31 probabilistic and P33 correlated-process executable support needed by the initial model;
-- immutable stochastic run configuration;
+- immutable stochastic run configuration referencing C1 calibration;
 - one reproducible stochastic household realization;
 - explicit rejection of unsupported distributions/dependencies.
 
 Do not add high realization counts until one realization is semantically complete and reproducible.
 
-## 8. R6 — Monte Carlo orchestration
+**User validation:** not required.
+
+## 10. R6 — Monte Carlo orchestration
 
 Add:
 
 - compile-once/many-realization execution;
 - worker pool or bounded parallel batches;
 - deterministic realization identity independent of scheduling;
+- common-random-number cohorts for paired scenario comparison;
 - streaming/online distribution aggregation;
 - bounded memory;
-- progressive refinement;
-- convergence/sampling metadata;
+- progressive refinement/convergence metadata;
 - representative-path capture;
-- paired realization IDs for scenario comparison where valid;
-- stochastic performance telemetry.
+- stochastic performance/resource-cost telemetry;
+- cancellation/supersession.
+
+Persistence at this stage SHALL be bounded: do not retain every path or every rerun. Persist only the latest successful aggregate result needed for a saved scenario/configuration, plus its reproducibility metadata; keep the previous successful result until the replacement completes. Calibration snapshots are content-addressed/deduplicated separately.
 
 Initial path counts and convergence budgets shall be established empirically.
 
-## 9. R7 — Baseline probabilistic household model
+**User validation:** not normally required; orchestration correctness/reproducibility is automated.
 
-Introduce uncertainty incrementally:
+## 11. R7 — Baseline probabilistic household engine
+
+Introduce uncertainty incrementally against C1's synthetic/internal calibration:
 
 1. broad asset-class returns and correlations;
 2. inflation;
@@ -152,56 +204,95 @@ Introduce uncertainty incrementally:
 
 User decisions remain explicit scenario controls unless behavioral uncertainty is intentionally enabled.
 
-## 10. R8 — Market/economic calibration
+R7 may expose engineering/developer results before T1A is complete, but a tax-affected result SHALL NOT be presented to a normal user as a complete household probability until PFA-TAX-008/009 are satisfied.
 
-Implement the normalized CalibrationSet boundary and one or more provider adapters.
+**User validation:** limited/developer validation may occur, but normal-user UAT waits for tax/calibration completeness appropriate to the output.
 
-Prefer established market/sector/asset-class assumptions with explicit provenance, horizon, volatility/dependence, and version pinning. Do not silently blend institutions.
+## 12. R8 — Institutional market/economic calibration adapters
+
+R8 is now only the provider-adapter/data half of calibration work because C1 defined the internal contract earlier.
+
+Implement one or more institution/provider adapters using explicit provenance, horizon, return basis, volatility/dependence, mapping methodology, licensing, version pinning, and immutable normalized content fingerprints. Do not silently blend providers.
 
 Company-specific data is added only where exposure is material or explicitly requested.
 
-## 11. R9 — Concentration and equity compensation
+**User validation:** required before institutional calibration becomes the default basis for user-facing stochastic results. The user should verify source/date disclosure, refresh behavior, and understandable distinction between assumptions and guarantees; numerical ingestion/mapping correctness should be automated.
+
+## 13. A1/R9 — Concentrated positions and equity compensation
+
+### A1 — Private-alpha concentration safeguard
+
+A1 is required before private alpha even if full R9 is deferred:
+
+- detect or allow declaration of material single-issuer concentration;
+- show the concentration clearly;
+- never silently treat a concentrated individual stock as diversified;
+- provide explicit capability diagnostics;
+- optionally provide deterministic hold/sell/diversify or price-shock stress scenarios without pretending those shocks are issuer-specific probabilities.
+
+If an intended alpha participant needs concentrated-stock/RSU planning, implement the necessary safe subset or full R9 before onboarding that participant.
+
+### R9 — Full concentrated issuer/equity-compensation model
 
 Resolve the canonical representation of equity awards, then add:
 
-- material issuer-concentration detection;
-- sector/issuer factor refinement;
+- issuer/sector stochastic refinement;
 - RSU vesting/forfeiture/withholding lifecycle;
 - employer-stock and human-capital correlation;
-- concentrated-tail outputs and hold/sell/diversify scenario support.
+- concentrated-tail outputs;
+- hold/sell/diversify probabilistic comparisons.
 
-Do not model unvested RSUs as ordinary liquid investments.
+Unvested RSUs remain contingent compensation until an actual modeled vesting event satisfies the conditions and posts the owned shares/cash.
 
-## 12. R10 — Probabilistic decision UX
+If R9 is not completed before private alpha because the cohort does not require it, it SHALL remain explicitly listed as an unresolved required capability in this roadmap/TODO register. It must not disappear from planning merely because alpha begins.
 
-Make probability/distribution outputs the primary future-outlook experience:
+**User validation:** required if A1/R9 is used by an alpha participant.
 
+## 14. R10 — Probabilistic decision UX
+
+Implement PFA-UX-010 and make probability/distribution outputs understandable:
+
+- deterministic and stochastic views of the same material metrics;
+- deterministic preview auto-refresh after validated committed/debounced edits;
+- stochastic rerun only after explicit user action on confirmed/saved changes;
 - percentile fan/range charts;
 - threshold probabilities;
 - liquidity-shortfall probability;
 - scenario probability deltas;
 - calibration/model-assumption disclosure;
-- drill-down to deterministic representative paths/explanations.
+- explicit stale status when model inputs changed after the last stochastic run;
+- drill-down to representative deterministic paths/explanations.
 
-Retain deterministic baseline views for audit and explanation, but do not present them as the single expected future.
+Retain deterministic views for immediacy, audit, and explanation; do not present them as the single expected future.
 
-## 13. T1 — Tax parallel track
+**User validation:** required. Closeout instructions SHALL cover comprehension of deterministic versus stochastic views, stale/rerun behavior, probability language, scenario comparison, and whether the result supports an actual planning decision.
 
-After R2/R3 execution seams are stable, comprehensive tax work may progress in parallel with R5-R9.
+## 15. R11 — Private-alpha readiness / stabilization-exit gate
 
-The tax engine remains deterministic per realization, effective-dated, explainable, and instrumented. Stochastic simulation may initially use the currently supported tax subset, with capability diagnostics for unsupported tax semantics.
-
-## 14. R11 — Personal-use stabilization gate
+This is the exit gate from the post-PR21 personal-use stabilization period, not the beginning of stabilization.
 
 Before private-alpha infrastructure:
 
 - performance budgets are documented and met for supported realistic use;
 - current-state UI is responsive;
 - deterministic forecasts do not block the UI;
-- probabilistic forecasts are reproducible and convergence metadata is interpretable;
+- stochastic forecasts are reproducible and convergence metadata is interpretable;
+- common-random-number scenario comparison works where applicable;
+- user-facing stochastic outputs have applicable tax/calibration completeness;
 - major UAT editor/UX defects are resolved;
-- caching cannot make stale results look current;
-- supported equity concentration/equity-comp cases are financially coherent;
+- caching/persistence cannot make stale results look current or destroy the last successful result on failed rerun;
+- A1 concentration safeguards exist;
+- full R9 is completed if the initial alpha cohort requires it, otherwise it remains an explicit tracked TODO;
 - privacy/persistence boundaries remain suitable for personal use.
 
+**User validation:** required. The milestone closeout SHALL provide a focused end-to-end private-alpha readiness checklist. Automated CI/financial verification SHALL pass before asking the user to perform UAT.
+
 Private-alpha PR A-H remains governed by the system/software architecture and begins after this gate.
+
+## 16. Explicit deferred-capability/TODO register
+
+The following item SHALL remain visible until closed:
+
+- **Full concentrated issuer + RSU/employer-risk stochastic modeling (R9):** conditional pre-alpha, but mandatory future capability if not completed before alpha. Trigger earlier if an intended participant has material concentrated stock or equity compensation.
+
+Additional deferred capabilities may be added here only with an owner/trigger or planned milestone; deferral SHALL NOT silently erase a requirement.
