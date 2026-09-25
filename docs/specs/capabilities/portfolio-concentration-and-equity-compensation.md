@@ -1,6 +1,6 @@
 # Portfolio Concentration & Equity Compensation
 
-**Version:** 0.1.0-draft
+**Version:** 0.1.1-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-EQ
 
@@ -24,7 +24,7 @@ When the same issuer materially drives investment wealth and employment compensa
 
 ### PFA-EQ-004 — Unvested awards are not ordinary liquid investments
 
-Unvested RSUs or similar contingent awards SHALL NOT be treated as ordinary liquid Investment positions or silently included in current liquid net worth. Their contingent/economic value, if shown, SHALL be separately classified and governed by explicit vesting/forfeiture assumptions.
+Unvested RSUs or similar contingent awards SHALL NOT be treated as owned assets, ordinary Investment positions, current owned net worth, or liquid assets. Before vesting they MAY be shown separately as contingent future compensation/economic exposure governed by explicit vesting/forfeiture assumptions. When a modeled vesting event actually occurs and its conditions are satisfied, the resulting shares/cash and compensation/tax effects enter owned household state through the normal recognition/settlement/posting semantics.
 
 ### PFA-EQ-005 — Equity-award domain decision before schema mutation
 
@@ -41,6 +41,12 @@ Vesting, compensation recognition, withholding/tax, share receipt, and later sal
 ### PFA-EQ-008 — Concentrated probabilistic outputs
 
 Probabilistic results for materially concentrated households SHOULD expose the effect of issuer concentration on distribution/tail outcomes and scenario alternatives such as hold/sell/diversify, without presenting company-specific forecasts as certain predictions.
+
+### PFA-EQ-009 — Private-alpha safe degradation
+
+Full issuer-specific stochastic/RSU modeling is not an unconditional private-alpha gate. Before private alpha, the application SHALL nevertheless detect or accept declared material concentration, SHALL NOT silently model a materially concentrated individual security as if it were a diversified holding, and SHALL expose a clear capability diagnostic when full issuer/employer-risk modeling is unavailable.
+
+A limited private-alpha mode MAY provide deterministic concentration totals and explicit price/stress scenarios without claiming issuer-specific probability calibration. If a planned alpha participant requires concentrated-stock or RSU planning, the applicable support SHALL be implemented or the affected outputs SHALL be capability-gated before that participant is onboarded. Full correlated issuer/employer-risk modeling remains a tracked required capability if deferred.
 
 ## 3. Modeling hierarchy
 
