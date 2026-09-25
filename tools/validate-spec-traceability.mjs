@@ -6,6 +6,7 @@ const scriptPath = fileURLToPath(import.meta.url);
 const root = path.resolve(path.dirname(scriptPath), "..");
 const manifestPath = path.join(root, "docs/spec-manifest.json");
 const allowedVerificationMethods = new Set(["inspection", "analysis", "test", "benchmark", "demonstration"]);
+const allowedVerificationOwners = new Set(["automated", "engineering-review", "user-uat"]);
 
 const readJson = async (p) => JSON.parse(await readFile(p, "utf8"));
 const isRecord = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -14,7 +15,7 @@ const fail = (message) => errors.push(message);
 
 const manifest = await readJson(manifestPath);
 
-if (manifest.manifest_version !== "1.1.0") fail("traceability validator requires manifest_version 1.1.0");
+if (manifest.manifest_version !== "1.2.0") fail("traceability validator requires manifest_version 1.2.0");
 if (typeof manifest.traceability_index_path !== "string" || manifest.traceability_index_path.length === 0) {
   fail("manifest.traceability_index_path must be a non-empty string");
 }
@@ -28,7 +29,11 @@ for (const spec of specs) {
   if (byId.has(spec.id)) fail(`duplicate specification id: ${spec.id}`);
   byId.set(spec.id, spec);
   const parents = Array.isArray(spec.parent_spec_ids) ? spec.parent_spec_ids : [];
+  const dependencies = Array.isArray(spec.depends_on_spec_ids) ? spec.depends_on_spec_ids : [];
   if (parents.includes(spec.id)) fail(`specification cannot parent itself: ${spec.id}`);
+  if (dependencies.includes(spec.id)) fail(`specification cannot depend on itself: ${spec.id}`);
+  if (!Array.isArray(spec.parent_spec_ids)) fail(`specification ${spec.id} parent_spec_ids must be an array`);
+  if (!Array.isArray(spec.depends_on_spec_ids)) fail(`specification ${spec.id} depends_on_spec_ids must be an array`);
   if (spec.requirement_id_policy === "required") {
     if (typeof spec.requirement_prefix !== "string" || !/^PFA-[A-Z]+$/.test(spec.requirement_prefix)) {
       fail(`invalid/missing requirement_prefix for ${spec.id}`);
@@ -44,6 +49,9 @@ for (const spec of specs) {
   if (!isRecord(spec) || typeof spec.id !== "string") continue;
   for (const parent of Array.isArray(spec.parent_spec_ids) ? spec.parent_spec_ids : []) {
     if (!byId.has(parent)) fail(`unknown parent specification ${parent} for ${spec.id}`);
+  }
+  for (const dependency of Array.isArray(spec.depends_on_spec_ids) ? spec.depends_on_spec_ids : []) {
+    if (!byId.has(dependency)) fail(`unknown dependency specification ${dependency} for ${spec.id}`);
   }
 }
 
@@ -92,10 +100,22 @@ for (const entry of entries) {
   if (typeof spec.requirement_prefix === "string" && !entry.id.startsWith(`${spec.requirement_prefix}-`)) {
     fail(`traceability requirement ${entry.id} does not match prefix ${spec.requirement_prefix}`);
   }
-  if (!allowedVerificationMethods.has(entry.verification_method)) {
-    fail(`traceability requirement ${entry.id} has invalid verification_method ${entry.verification_method}`);
-  }
   if (!Array.isArray(entry.parent_requirement_ids)) fail(`traceability requirement ${entry.id} parent_requirement_ids must be an array`);
+  if (!Array.isArray(entry.depends_on_requirement_ids)) fail(`traceability requirement ${entry.id} depends_on_requirement_ids must be an array`);
+  if (!Array.isArray(entry.verification_methods) || entry.verification_methods.length === 0) {
+    fail(`traceability requirement ${entry.id} verification_methods must be a non-empty array`);
+  } else {
+    for (const method of entry.verification_methods) {
+      if (!allowedVerificationMethods.has(method)) fail(`traceability requirement ${entry.id} has invalid verification method ${method}`);
+    }
+  }
+  if (!Array.isArray(entry.verification_owners) || entry.verification_owners.length === 0) {
+    fail(`traceability requirement ${entry.id} verification_owners must be a non-empty array`);
+  } else {
+    for (const owner of entry.verification_owners) {
+      if (!allowedVerificationOwners.has(owner)) fail(`traceability requirement ${entry.id} has invalid verification owner ${owner}`);
+    }
+  }
   if (!Array.isArray(entry.verification_refs)) fail(`traceability requirement ${entry.id} verification_refs must be an array`);
   if (!Array.isArray(entry.implementation_scope)) fail(`traceability requirement ${entry.id} implementation_scope must be an array`);
 }
@@ -103,6 +123,11 @@ for (const entry of entries) {
 for (const entry of entries) {
   for (const parent of Array.isArray(entry.parent_requirement_ids) ? entry.parent_requirement_ids : []) {
     if (!entryById.has(parent)) fail(`unknown parent requirement ${parent} for ${entry.id}`);
+    if (parent === entry.id) fail(`requirement cannot parent itself: ${entry.id}`);
+  }
+  for (const dependency of Array.isArray(entry.depends_on_requirement_ids) ? entry.depends_on_requirement_ids : []) {
+    if (!entryById.has(dependency)) fail(`unknown dependency requirement ${dependency} for ${entry.id}`);
+    if (dependency === entry.id) fail(`requirement cannot depend on itself: ${entry.id}`);
   }
 }
 
