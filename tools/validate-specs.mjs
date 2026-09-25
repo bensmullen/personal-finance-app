@@ -158,7 +158,7 @@ export async function validateRepository(root = defaultRoot) {
       addError(`manifest.${key} must be a non-empty string`);
     }
   }
-  if (manifest.manifest_version !== "1.1.0") {
+  if (manifest.manifest_version !== "1.2.0") {
     addError(`unsupported manifest_version: ${manifest.manifest_version ?? "missing"}`);
   }
 
