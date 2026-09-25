@@ -1,6 +1,6 @@
 # Application UX & Financial Comprehension
 
-**Version:** 0.1.0-draft
+**Version:** 0.1.1-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-UX
 
@@ -32,7 +32,7 @@ Current net worth, cash, liabilities, and other supported opening metrics SHALL 
 
 ### PFA-UX-006 — Forecast lifecycle visibility
 
-When valid execution configuration exists, baseline forecasts SHOULD load automatically and refresh after meaningful changes using debounce/supersession/caching. The UI SHALL visibly indicate running/recalculating state and SHOULD retain the previous valid result marked stale while a replacement is computed.
+When valid execution configuration exists, the deterministic baseline forecast SHOULD load automatically and refresh after validated meaningful changes using debounce/supersession/caching. The UI SHALL visibly indicate running/recalculating state and SHOULD retain the previous valid result marked stale while a replacement is computed.
 
 ### PFA-UX-007 — Bounded detailed rendering
 
@@ -45,6 +45,12 @@ Once probabilistic forecasting is supported, the primary long-term outlook SHALL
 ### PFA-UX-009 — Accessible and responsive presentation
 
 Financial charts, tables, forms, status messages, and drill-down interactions SHALL be keyboard-accessible, semantically labeled, responsive across supported layouts, and understandable without relying solely on color.
+
+### PFA-UX-010 — Separate deterministic and stochastic refresh lifecycles
+
+The product SHALL distinguish a fast deterministic preview from the higher-cost stochastic forecast. Deterministic results SHOULD refresh automatically after validated committed/debounced edits. A stochastic rerun SHALL require an explicit user action against the confirmed/saved model state rather than firing on every field edit.
+
+The forecast visualization SHALL allow the user to inspect deterministic and probabilistic views of the same material metrics, whether as separate modes, overlays, or another comparably clear presentation. If model inputs have changed since the last stochastic run, that stochastic result MAY remain visible only with an explicit stale/out-of-date state and its source model/calibration metadata. The last successful result SHALL remain visible while a replacement run executes and SHALL be replaced only after successful completion.
 
 ## 3. Near-term cleanup scope
 
