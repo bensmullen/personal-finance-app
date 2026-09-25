@@ -185,7 +185,7 @@ Add:
 - stochastic performance/resource-cost telemetry;
 - cancellation/supersession.
 
-Persistence at this stage SHALL be bounded: do not retain every path or every rerun. Persist only the latest successful aggregate result needed for a saved scenario/configuration, plus its reproducibility metadata; keep the previous successful result until the replacement completes. Calibration snapshots are content-addressed/deduplicated separately.
+Persistence at this stage SHALL be bounded: do not retain every path or every rerun. Persist the current successful aggregate result plus at most one immediately preceding successful aggregate per saved scenario/configuration, together with reproducibility metadata. Keep the last good result current until a replacement completes successfully; failed/cancelled runs never evict it. Older unpinned aggregates are discarded. Calibration snapshots are content-addressed/deduplicated separately and retained only while referenced or otherwise required by retention policy.
 
 Initial path counts and convergence budgets shall be established empirically.
 
