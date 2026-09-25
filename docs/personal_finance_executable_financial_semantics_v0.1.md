@@ -1,6 +1,6 @@
 # Personal Finance App — Executable Financial Semantics Specification
 
-**Version:** 0.1.10-draft
+**Version:** 0.1.11-draft
 **Status:** Draft implementation contract  
 **Namespace:** `pfm`  
 **Depends on:** `personal_finance_canonical_schema_v1.0.json`, `personal_finance_model.schema.json`, `personal_finance_simulation_interfaces_v1.0.ts`
@@ -996,9 +996,13 @@ A metric MUST specify whether transfers are excluded and whether employer/non-ca
 
 A stochastic realization is conceptually:
 
-`ω = RandomStream(seed, scenarioId, realizationId)`
+`ω = RandomStream(masterSeed, stochasticCohortId, realizationId, processId)`
 
-Random streams are isolated by named process identity. Draws MUST be stable under insertion/removal of unrelated processes.
+`scenarioId` identifies the economic scenario being executed. `stochasticCohortId` identifies the random-realization cohort. These identities are deliberately distinct so compared economic scenarios MAY share the same stochastic cohort for common-random-number comparison without sharing scenario identity.
+
+Random streams are isolated by named process identity. For the same master seed, stochastic cohort, realization identity, and process identity, draws MUST be stable under insertion/removal/reordering of unrelated processes and MUST NOT depend on worker/batch scheduling.
+
+When compared scenarios intentionally use common random numbers, they MUST share `masterSeed`, `stochasticCohortId`, realization identities, and applicable stochastic-process/calibration definitions while retaining distinct `scenarioId` values. A scenario change that intentionally changes the stochastic model/calibration MUST use an explicitly distinct cohort/configuration identity or otherwise make the comparison semantics explicit.
 
 For P33 Gaussian-copula processes, both the copula specification and marginal distributions are part of the immutable run configuration.
 
@@ -1337,7 +1341,7 @@ The semantic kernel should expose implementation contracts such as:
 
 These are implementation concepts and need not become canonical persisted domain objects.
 
-## 20. Deterministic scenario overlays and comparison
+## 20. Scenario overlays and comparison
 
 A runtime scenario defines an immutable alternate future configuration. It does
 not mutate authoritative opening state, observed facts, history, or another
@@ -1354,13 +1358,13 @@ purchases and extra-principal payments use explicit add, replace, or remove
 operations: add requires absence, while replace and remove require existence.
 No implicit deletion is permitted.
 
-This version supports deterministic monthly scenarios only. Stochastic
-scenarios and requests for multiple realizations are rejected, never silently
-treated as deterministic. A comparison baseline is a root scenario, every
-alternative must inherit from that root, and all horizons and period
-structures must exactly match the common run horizon. Each execution has its
-own scenario identity and non-economic run identity; generated occurrences
-therefore remain replay-safe per scenario while repeated execution is stable.
+The currently implemented comparison path MAY support deterministic monthly scenarios only until stochastic execution is implemented. A runtime that does not implement stochastic scenarios or multiple realizations MUST reject those requests explicitly and MUST NOT silently treat them as deterministic.
+
+This semantic contract permits stochastic scenario execution only through explicit P31/P33/random-process configuration satisfying Section 13. Multi-realization orchestration is a higher-level execution capability: each realization remains an individually conforming household execution under the same financial semantics and atomicity rules.
+
+A comparison baseline is a root scenario, every alternative must inherit from that root, and all compared horizons and period structures must exactly match the common run horizon. Each execution has its own scenario identity and non-economic run identity; generated occurrences therefore remain replay-safe per scenario while repeated execution is stable.
+
+For stochastic paired comparisons, baseline and alternative scenarios MAY deliberately share one stochastic cohort and realization identities so that common random numbers isolate the effect of the scenario decision. Scenario identity MUST remain distinct and MUST continue to govern scenario-specific occurrences, overrides, lineage, and result identity.
 
 Supported overlays are limited to existing executable mechanics:
 
