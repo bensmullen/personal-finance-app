@@ -1,6 +1,6 @@
 # Personal Finance App — System / Software Architecture Specification
 
-**Version:** 1.3.0-draft
+**Version:** 1.3.1-draft
 **Status:** Architecture baseline  
 **Namespace:** `pfm`  
 **Applies to:** Prototype → Personal MVP → Private Alpha  
@@ -158,6 +158,7 @@ version
 status
 authority
 parent_spec_ids
+depends_on_spec_ids
 requirement_id_policy
 requirement_prefix
 domains
@@ -175,19 +176,19 @@ Legacy specifications are not required to receive a wholesale requirement-ID ret
 
 ### 4.1.2 Traceability index
 
-The repository SHALL maintain a machine-readable requirement index mapping each controlled requirement to its owning specification, parent requirements where applicable, verification method/state, verification references, and planned/actual implementation scope.
+The repository SHALL maintain a machine-readable requirement index mapping each controlled requirement to its owning specification, structural parent requirements where applicable, cross-requirement dependencies, verification methods/state/owners, verification references, and planned/actual implementation scope.
 
-The index is a retrieval and verification aid; it does not outrank the owning normative specification.
+Parent relationships SHALL mean decomposition/allocation. Cross-capability prerequisites SHALL use dependency relationships instead of parentage. The index is a retrieval and verification aid; it does not outrank the owning normative specification.
 
 ### 4.1.3 Agent retrieval
 
 Agents SHALL use the manifest and traceability index to locate the smallest applicable specification set. Routine implementation SHALL NOT preload the full architecture or every financial specification merely for reassurance.
 
-Cross-cutting or semantic work SHALL expand scope only along explicit parent specifications, requirement links, and concrete dependencies.
+Cross-cutting or semantic work SHALL expand scope only along explicit structural parents, dependency links, requirement links, and concrete implementation dependencies. Parentage SHALL NOT be used as a synonym for dependency.
 
 ### 4.1.4 Automated consistency
 
-CI SHALL validate at minimum that registered specification paths and versions exist, parent specification IDs resolve without cycles, requirement prefixes are unique where required, traceability entries resolve to registered specifications, and controlled requirement IDs are neither missing from nor orphaned by the traceability index.
+CI SHALL validate at minimum that registered specification paths and versions exist, structural parent and dependency specification IDs resolve, parent relationships are acyclic, requirement prefixes are unique where required, traceability parent/dependency IDs resolve, verification metadata is structurally valid, and controlled requirement IDs are neither missing from nor orphaned by the traceability index.
 
 ## 4.2 Derived-artifact status
 
