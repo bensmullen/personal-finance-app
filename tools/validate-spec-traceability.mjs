@@ -114,7 +114,8 @@ for (const spec of specs.filter((s) => s?.requirement_id_policy === "required"))
     fail(`controlled spec unreadable ${spec.id}: ${error.message}`);
     continue;
   }
-  const ids = new Set(content.match(/\bPFA-[A-Z]+-\d{3}\b/g) ?? []);
+  const ownRequirementPattern = new RegExp("\\b" + spec.requirement_prefix + "-\\d{3}\\b", "g");
+  const ids = new Set(content.match(ownRequirementPattern) ?? []);
   for (const id of ids) {
     const entry = entryById.get(id);
     if (!entry) fail(`controlled requirement missing from traceability index: ${id}`);
