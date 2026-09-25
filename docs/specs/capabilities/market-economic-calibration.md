@@ -1,6 +1,6 @@
 # Market & Economic Calibration
 
-**Version:** 0.1.0-draft
+**Version:** 0.1.1-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-CAL
 
@@ -42,9 +42,17 @@ A forecast SHALL identify the calibration version used. Updating external foreca
 
 External forecast data SHALL be acquired through permitted public/licensed interfaces and SHALL preserve terms/provenance needed for lawful reuse. The system SHALL NOT depend on brittle scraping of research content or imply an institutional source supplied a statistic it did not publish.
 
+### PFA-CAL-009 — Immutable normalized calibration snapshot
+
+Every calibration actually used by a stochastic run SHALL resolve to an immutable normalized calibration snapshot with a deterministic content fingerprint over the normalized economic inputs and transformation/mapping version. A new forecast SHALL reuse an existing identical snapshot rather than create a duplicate.
+
+A new calibration snapshot is created only when source content, normalization/mapping logic, or another economically relevant calibration input changes—not when a user merely reruns a forecast. Forecast results SHALL reference the fingerprint. Unreferenced calibration snapshots MAY be garbage-collected under a bounded retention policy; any snapshot still referenced by a retained/pinned result SHALL remain available for that result's reproducibility.
+
 ## 3. Initial provider strategy
 
-Early work should support interchangeable profiles sourced from established institutions when their published/licensed data is suitable. Asset-class and sector assumptions are preferred before company-specific forecasts.
+Before stochastic runtime work depends on calibration, the project SHALL define the provider-neutral CalibrationSet boundary and a synthetic/internal baseline calibration suitable for deterministic testing and development. This prevents stochastic code from hard-coding a provider shape.
+
+Later provider-adapter work should support interchangeable profiles sourced from established institutions when their published/licensed data is suitable. Asset-class and sector assumptions are preferred before company-specific forecasts.
 
 Issuer-specific analyst estimates, price targets, earnings forecasts, or fundamentals are not automatically stock-return distributions. If used, their transformation into an issuer-return process belongs to an explicit calibrated model with provenance.
 
