@@ -9,6 +9,6 @@ export interface RunVersionMetadata {
 export const CURRENT_RUN_VERSIONS: RunVersionMetadata = Object.freeze({
   engineVersion: "0.1.0",
   resultSchemaVersion: "0.1.0",
-  financialSpecificationVersion: "0.1.10-draft",
+  financialSpecificationVersion: "0.1.11-draft",
   modelFormatVersion: "0.2.0-draft",
 });
