@@ -1,6 +1,6 @@
 # Personal Finance App — System / Software Architecture Specification
 
-**Version:** 1.2.2-draft
+**Version:** 1.3.0-draft
 **Status:** Architecture baseline  
 **Namespace:** `pfm`  
 **Applies to:** Prototype → Personal MVP → Private Alpha  
@@ -10,7 +10,9 @@
 
 # 1. Purpose
 
-This document defines the software architecture, repository organization, technology direction, engineering standards, validation strategy, data-boundary rules, and implementation sequence for the Personal Finance App.
+This document defines the top-level software architecture, repository organization, technology direction, engineering standards, validation strategy, data-boundary rules, and maturity gates for the Personal Finance App.
+
+Detailed capability requirements SHALL be decomposed into the specification tree rooted at docs/specs/. This document is the architecture/governance parent, not the normative home for every lower-level capability. New detailed requirements SHOULD be placed in the narrowest applicable child specification and referenced here rather than expanding this document indefinitely.
 
 The architecture is explicitly built upon the existing:
 
@@ -62,82 +64,67 @@ The project SHALL optimize the current stage for correctness, explainability, an
 
 # 3. Source-of-truth hierarchy
 
-The project currently contains several representations of overlapping financial concepts. They SHALL have an explicit authority hierarchy.
+The project contains several representations of overlapping financial concepts. They SHALL have an explicit authority hierarchy plus a separate governance plane for specification organization.
 
-## 3.1 Normative authority
+## 3.1 Governance plane
+
+The system/software architecture and the Specification Architecture & Traceability specification define:
+
+- specification decomposition and parent/child relationships;
+- requirement identity and traceability rules;
+- agent retrieval rules;
+- software dependency direction;
+- maturity gates and implementation sequencing.
+
+Governance documents SHALL NOT redefine financial meaning owned by the canonical financial specification or executable financial semantics.
+
+## 3.2 Normative financial and implementation authority
 
 Highest to lowest:
 
 ### Level 1 — Canonical financial specification
 
-Defines:
-
-- domain vocabulary;
-- objects;
-- attributes;
-- enum membership;
-- relationships;
-- primitive identities;
-- financial-variable mappings;
-- canonical invariants.
+Defines domain vocabulary, objects, attributes, enum membership, relationships, primitive identities, financial-variable mappings, and canonical invariants.
 
 The canonical schema is authoritative for **what the financial model means**.
 
 ### Level 2 — Executable financial semantics
 
-Defines:
-
-- temporal semantics;
-- financial state;
-- flows;
-- recognition;
-- obligations/rights;
-- settlements;
-- transactions;
-- accounting behavior;
-- dependency semantics;
-- semantic barriers;
-- valuation;
-- statement derivation;
-- determinism;
-- period atomicity.
+Defines temporal semantics, financial state, flows, recognition, obligations/rights, settlements, transactions, accounting behavior, dependency semantics, semantic barriers, valuation, statement derivation, determinism, period atomicity, and stochastic semantic invariants.
 
 This specification is authoritative for **how the model behaves during execution**.
 
-### Level 3 — Vertical-slice specifications
+### Level 3 — Capability specifications
 
-Define implementation contracts for individual end-to-end capabilities.
+Define bounded system/capability requirements such as household projection, performance/observability, probabilistic forecasting, market/economic calibration, tax, equity compensation, persistence, security, and application UX.
 
-A slice may specialize the canonical model but SHALL NOT contradict Levels 1–2.
+Capability specifications MAY allocate or refine requirements from Levels 1–2 but SHALL NOT contradict or silently redefine them. A concept SHALL have one normative home; sibling specifications SHALL reference that home instead of duplicating its semantics.
 
-### Level 4 — Architecture Decision Records
+### Level 4 — Vertical-slice / milestone specifications
 
-Define software choices such as:
+Define implementation contracts for individual end-to-end increments. A slice SHALL cite the capability and higher-level requirements it implements.
 
-- runtime representation;
-- repository structure;
-- database technology;
-- UI framework;
-- persistence strategy;
-- authentication strategy.
+### Level 5 — Architecture Decision Records
 
-ADRs SHALL NOT redefine financial semantics.
+Define implementation choices such as runtime representation, repository structure, database technology, UI framework, persistence strategy, authentication strategy, worker architecture, or provider selection.
 
-### Level 5 — Executable implementation
+ADRs SHALL NOT redefine financial semantics or bypass capability requirements.
 
-Production code SHALL conform to Levels 1–4.
+### Level 6 — Executable implementation
 
-### Level 6 — Generated artifacts
+Production code SHALL conform to the applicable Levels 1–5 requirements.
 
-Examples:
+### Level 7 — Generated artifacts
 
-- TypeScript interfaces;
-- JSON Schema;
-- SQL DDL;
-- API schemas;
-- documentation tables.
+Examples include TypeScript interfaces, JSON Schema, SQL DDL, API schemas, and documentation tables.
 
 Generated artifacts are derived outputs and SHALL NOT independently become authoritative.
+
+## 3.3 Decomposition rule
+
+Parent specifications define intent, boundaries, and allocated requirements. Child specifications add detail only within that allocation. If a child appears to conflict with a parent or with a higher financial authority, implementation SHALL stop and the specifications SHALL be reconciled before code chooses an interpretation.
+
+Existing large specifications MAY remain in place while decomposition proceeds incrementally. Files SHALL NOT be moved solely for aesthetic consistency when doing so would create reference churn without clarifying authority.
 
 ---
 
@@ -160,19 +147,47 @@ Where automatic generation is impractical, CI SHALL verify that manually maintai
 
 ## 4.1 Specification manifest
 
-The repository SHALL introduce a machine-readable specification manifest during architecture consolidation.
+The repository SHALL maintain docs/spec-manifest.json as the machine-readable entry point for specification discovery.
 
-It SHOULD identify at minimum:
+It SHALL identify the top-level compatibility versions already required by the runtime and, for registered specifications, SHOULD identify:
 
-```text
-canonical_schema_version
-model_format_version
-executable_semantics_version
-engine_contract_version
-generated_artifact_versions
-```
+~~~text
+id
+path
+version
+status
+authority
+parent_spec_ids
+requirement_id_policy
+requirement_prefix
+domains
+keywords
+applies_to
+~~~
 
-The manifest SHALL define which artifact versions are intended to be mutually compatible.
+The manifest SHALL define which artifact versions are intended to be mutually compatible and SHALL point to the machine-readable requirements traceability index.
+
+### 4.1.1 Stable requirement identity
+
+New decomposed normative requirements SHALL use stable IDs in the PFA-<DOMAIN>-NNN form. IDs SHALL survive wording changes when the requirement identity is unchanged. Retired IDs SHALL NOT be silently reused for different requirements.
+
+Legacy specifications are not required to receive a wholesale requirement-ID retrofit. IDs become mandatory when requirements are newly created in decomposed capability specifications or when a legacy section is materially decomposed into a child specification.
+
+### 4.1.2 Traceability index
+
+The repository SHALL maintain a machine-readable requirement index mapping each controlled requirement to its owning specification, parent requirements where applicable, verification method/state, verification references, and planned/actual implementation scope.
+
+The index is a retrieval and verification aid; it does not outrank the owning normative specification.
+
+### 4.1.3 Agent retrieval
+
+Agents SHALL use the manifest and traceability index to locate the smallest applicable specification set. Routine implementation SHALL NOT preload the full architecture or every financial specification merely for reassurance.
+
+Cross-cutting or semantic work SHALL expand scope only along explicit parent specifications, requirement links, and concrete dependencies.
+
+### 4.1.4 Automated consistency
+
+CI SHALL validate at minimum that registered specification paths and versions exist, parent specification IDs resolve without cycles, requirement prefixes are unique where required, traceability entries resolve to registered specifications, and controlled requirement IDs are neither missing from nor orphaned by the traceability index.
 
 ## 4.2 Derived-artifact status
 
@@ -3257,6 +3272,10 @@ During this period:
 - keep regular portable exports/backups;
 - record unsupported real-world cases and explanation gaps;
 - distinguish missing financial semantics from UX inconvenience;
+- instrument performance before scaling deterministic work into stochastic multi-realization execution;
+- separate fast current-state answers from long-horizon forecast execution;
+- remove avoidable main-thread blocking, eager recomputation, and unbounded forecast rendering before Monte Carlo work;
+- improve novice-first UX while preserving expert drill-down and technical diagnostics;
 - prioritize bugs affecting financial correctness or recoverability before feature breadth.
 
 Record at minimum:
@@ -3268,10 +3287,14 @@ Record at minimum:
 - scenario limitations;
 - unexplained material outputs;
 - persistence/migration/recovery friction;
-- performance at realistic horizons;
-- confusing workflows.
+- component-level performance at realistic and stress horizons;
+- engine versus application versus UI latency;
+- confusing workflows;
+- stochastic-model gaps, including correlated market, issuer, compensation, and life uncertainty.
 
-Private-alpha infrastructure begins only after this usage demonstrates that the Personal MVP is genuinely useful.
+The controlled post-PR21 sequence is defined in docs/specs/roadmap/post-pr21-implementation-roadmap.md. Performance instrumentation and critical deterministic responsiveness work are prerequisites for production-scale stochastic simulation.
+
+Private-alpha infrastructure begins only after this usage demonstrates that the Personal MVP is genuinely useful and the applicable stabilization gates are satisfied.
 
 ---
 
