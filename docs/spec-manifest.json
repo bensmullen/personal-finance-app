@@ -1,5 +1,5 @@
 {
-  "manifest_version": "1.0.0",
+  "manifest_version": "1.1.0",
   "canonical_schema_version": "1.0.0",
   "model_format_version": "0.2.0-draft",
   "executable_semantics_version": "0.1.10-draft",
@@ -10,30 +10,362 @@
     {
       "id": "system-software-architecture",
       "path": "docs/architecture/system-software-architecture.md",
-      "version": "1.2.2-draft",
+      "version": "1.3.0-draft",
       "authority": "governance",
-      "version_source": "markdown-version-header"
+      "version_source": "markdown-version-header",
+      "status": "architecture-baseline",
+      "parent_spec_ids": [],
+      "requirement_id_policy": "legacy",
+      "domains": [
+        "architecture",
+        "governance",
+        "roadmap"
+      ],
+      "keywords": [
+        "architecture",
+        "dependency",
+        "implementation sequence",
+        "maturity gate",
+        "specification hierarchy"
+      ],
+      "applies_to": [
+        "prototype",
+        "personal-mvp",
+        "private-alpha"
+      ]
     },
     {
       "id": "canonical-financial-schema",
       "path": "docs/personal_finance_canonical_schema_v1.0.json",
       "version": "1.0.0",
       "authority": "level-1",
-      "version_source": "json-specification-version"
+      "version_source": "json-specification-version",
+      "status": "active",
+      "parent_spec_ids": [],
+      "requirement_id_policy": "legacy",
+      "domains": [
+        "domain-model",
+        "canonical-schema"
+      ],
+      "keywords": [
+        "objects",
+        "attributes",
+        "relationships",
+        "primitives",
+        "financial variables"
+      ],
+      "applies_to": [
+        "all"
+      ]
     },
     {
       "id": "executable-financial-semantics",
       "path": "docs/personal_finance_executable_financial_semantics_v0.1.md",
       "version": "0.1.10-draft",
       "authority": "level-2",
-      "version_source": "markdown-version-header"
+      "version_source": "markdown-version-header",
+      "status": "active-draft",
+      "parent_spec_ids": [
+        "canonical-financial-schema"
+      ],
+      "requirement_id_policy": "legacy",
+      "domains": [
+        "financial-semantics",
+        "simulation"
+      ],
+      "keywords": [
+        "state",
+        "flows",
+        "accounting",
+        "stochastic",
+        "P31",
+        "P33",
+        "ordering",
+        "settlement"
+      ],
+      "applies_to": [
+        "engine",
+        "simulation"
+      ]
     },
     {
       "id": "vertical-slice-1",
       "path": "docs/vertical-slice-1-specification.md",
       "version": "1.0.5-draft",
+      "authority": "level-4",
+      "version_source": "markdown-version-header",
+      "status": "legacy-active",
+      "parent_spec_ids": [
+        "canonical-financial-schema",
+        "executable-financial-semantics"
+      ],
+      "requirement_id_policy": "legacy",
+      "domains": [
+        "vertical-slice"
+      ],
+      "keywords": [
+        "vertical slice 1",
+        "golden"
+      ],
+      "applies_to": [
+        "prototype"
+      ]
+    },
+    {
+      "id": "specification-architecture-traceability",
+      "path": "docs/specs/system/specification-architecture-and-traceability.md",
+      "version": "1.0.0-draft",
+      "authority": "governance",
+      "version_source": "markdown-version-header",
+      "status": "architecture-baseline",
+      "parent_spec_ids": [
+        "system-software-architecture"
+      ],
+      "requirement_id_policy": "required",
+      "requirement_prefix": "PFA-SPEC",
+      "domains": [
+        "governance",
+        "traceability",
+        "agent-retrieval"
+      ],
+      "keywords": [
+        "spec tree",
+        "requirements",
+        "traceability",
+        "VCRM",
+        "RVTM",
+        "Codex",
+        "manifest"
+      ],
+      "applies_to": [
+        "all"
+      ]
+    },
+    {
+      "id": "performance-and-execution",
+      "path": "docs/specs/capabilities/performance-and-execution.md",
+      "version": "0.1.0-draft",
       "authority": "level-3",
-      "version_source": "markdown-version-header"
+      "version_source": "markdown-version-header",
+      "status": "post-pr21-outline",
+      "parent_spec_ids": [
+        "system-software-architecture",
+        "executable-financial-semantics"
+      ],
+      "requirement_id_policy": "required",
+      "requirement_prefix": "PFA-PERF",
+      "domains": [
+        "performance",
+        "observability",
+        "deterministic-execution"
+      ],
+      "keywords": [
+        "latency",
+        "benchmark",
+        "worker",
+        "cache",
+        "scheduler",
+        "render",
+        "current snapshot",
+        "Monte Carlo prerequisite"
+      ],
+      "applies_to": [
+        "personal-mvp",
+        "stochastic-readiness"
+      ]
+    },
+    {
+      "id": "probabilistic-forecasting",
+      "path": "docs/specs/capabilities/probabilistic-forecasting.md",
+      "version": "0.1.0-draft",
+      "authority": "level-3",
+      "version_source": "markdown-version-header",
+      "status": "post-pr21-outline",
+      "parent_spec_ids": [
+        "system-software-architecture",
+        "executable-financial-semantics",
+        "performance-and-execution"
+      ],
+      "requirement_id_policy": "required",
+      "requirement_prefix": "PFA-PROB",
+      "domains": [
+        "forecasting",
+        "stochastic",
+        "simulation"
+      ],
+      "keywords": [
+        "probability",
+        "Monte Carlo",
+        "P31",
+        "P33",
+        "distribution",
+        "quantile",
+        "convergence",
+        "random stream"
+      ],
+      "applies_to": [
+        "personal-mvp",
+        "future"
+      ]
+    },
+    {
+      "id": "market-economic-calibration",
+      "path": "docs/specs/capabilities/market-economic-calibration.md",
+      "version": "0.1.0-draft",
+      "authority": "level-3",
+      "version_source": "markdown-version-header",
+      "status": "post-pr21-outline",
+      "parent_spec_ids": [
+        "system-software-architecture",
+        "probabilistic-forecasting"
+      ],
+      "requirement_id_policy": "required",
+      "requirement_prefix": "PFA-CAL",
+      "domains": [
+        "forecasting",
+        "external-data",
+        "calibration"
+      ],
+      "keywords": [
+        "market forecast",
+        "sector",
+        "asset class",
+        "institutional forecast",
+        "correlation",
+        "volatility",
+        "provider"
+      ],
+      "applies_to": [
+        "probabilistic-forecasting"
+      ]
+    },
+    {
+      "id": "portfolio-concentration-equity-compensation",
+      "path": "docs/specs/capabilities/portfolio-concentration-and-equity-compensation.md",
+      "version": "0.1.0-draft",
+      "authority": "level-3",
+      "version_source": "markdown-version-header",
+      "status": "post-pr21-outline",
+      "parent_spec_ids": [
+        "system-software-architecture",
+        "canonical-financial-schema",
+        "executable-financial-semantics",
+        "probabilistic-forecasting"
+      ],
+      "requirement_id_policy": "required",
+      "requirement_prefix": "PFA-EQ",
+      "domains": [
+        "investments",
+        "equity-compensation",
+        "concentration-risk"
+      ],
+      "keywords": [
+        "RSU",
+        "employer stock",
+        "issuer",
+        "vesting",
+        "equity compensation",
+        "concentration",
+        "human capital"
+      ],
+      "applies_to": [
+        "personal-mvp",
+        "future"
+      ]
+    },
+    {
+      "id": "application-ux",
+      "path": "docs/specs/capabilities/application-ux.md",
+      "version": "0.1.0-draft",
+      "authority": "level-3",
+      "version_source": "markdown-version-header",
+      "status": "post-pr21-outline",
+      "parent_spec_ids": [
+        "system-software-architecture",
+        "performance-and-execution"
+      ],
+      "requirement_id_policy": "required",
+      "requirement_prefix": "PFA-UX",
+      "domains": [
+        "ui",
+        "ux",
+        "read-models"
+      ],
+      "keywords": [
+        "progressive disclosure",
+        "UUID",
+        "entity card",
+        "forecast status",
+        "charts",
+        "advanced",
+        "editor"
+      ],
+      "applies_to": [
+        "personal-mvp"
+      ]
+    },
+    {
+      "id": "tax-engine",
+      "path": "docs/specs/capabilities/tax-engine.md",
+      "version": "0.1.0-draft",
+      "authority": "level-3",
+      "version_source": "markdown-version-header",
+      "status": "post-pr21-outline",
+      "parent_spec_ids": [
+        "system-software-architecture",
+        "executable-financial-semantics",
+        "performance-and-execution"
+      ],
+      "requirement_id_policy": "required",
+      "requirement_prefix": "PFA-TAX",
+      "domains": [
+        "tax",
+        "rules",
+        "forecasting"
+      ],
+      "keywords": [
+        "tax engine",
+        "TaxRule",
+        "withholding",
+        "jurisdiction",
+        "equity compensation"
+      ],
+      "applies_to": [
+        "future"
+      ]
+    },
+    {
+      "id": "post-pr21-implementation-roadmap",
+      "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
+      "version": "0.1.0-draft",
+      "authority": "planning",
+      "version_source": "markdown-version-header",
+      "status": "controlled-plan",
+      "parent_spec_ids": [
+        "system-software-architecture",
+        "performance-and-execution",
+        "probabilistic-forecasting",
+        "application-ux"
+      ],
+      "requirement_id_policy": "none",
+      "domains": [
+        "roadmap",
+        "planning"
+      ],
+      "keywords": [
+        "post-PR21",
+        "performance",
+        "stochastic",
+        "Monte Carlo",
+        "UI",
+        "RSU",
+        "tax",
+        "private alpha"
+      ],
+      "applies_to": [
+        "personal-mvp",
+        "stochastic-readiness"
+      ]
     }
   ],
   "generated_artifact_versions": {
@@ -81,5 +413,7 @@
         "schema-mappings-not-reconciled"
       ]
     }
-  ]
+  ],
+  "traceability_index_path": "docs/specs/verification/requirements-index.json",
+  "spec_tree_root": "docs/specs"
 }
