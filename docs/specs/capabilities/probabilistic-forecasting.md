@@ -54,9 +54,9 @@ User-facing probabilities SHALL be presented as modeled estimates conditional on
 
 ### PFA-PROB-011 — Bounded stochastic-result persistence
 
-A persisted stochastic forecast SHALL reference the exact canonical/model calculation fingerprint, stochastic configuration, and immutable calibration content fingerprint that produced it. By default, the application SHALL persist only bounded aggregate/summary results needed to restore the latest successful forecast for a saved scenario/configuration; it SHALL NOT persist every Monte Carlo path or every intermediate rerun.
+A persisted stochastic forecast SHALL reference the exact canonical/model calculation fingerprint, stochastic configuration, and immutable calibration content fingerprint that produced it. By default, the application SHALL persist only bounded aggregate/summary results needed to restore the latest successful forecast for a saved scenario/configuration plus, at most, one immediately preceding successful aggregate for change explanation/comparison. It SHALL NOT persist every Monte Carlo path or every intermediate rerun. Older unpinned aggregates SHALL be eligible for deletion.
 
-When inputs change, the prior successful stochastic result MAY remain visible only as explicitly stale. Triggering a replacement run SHALL NOT destroy the last successful result. The prior result is replaced atomically only after the new run completes successfully. Failed, cancelled, or superseded runs SHALL NOT replace the last successful result. The product MAY later support user-pinned historical forecast snapshots as an explicit feature.
+When inputs change, the latest successful stochastic result MAY remain visible only as explicitly stale. Triggering a replacement run SHALL NOT destroy the last successful result. The new result becomes current atomically only after successful completion; failed, cancelled, or superseded runs SHALL NOT replace it. After success, the former current result MAY become the one bounded predecessor. The product MAY support user-pinned historical forecast snapshots as an explicit feature; pinned results are outside the automatic two-generation retention limit.
 
 ## 3. Initial modeling scope
 
