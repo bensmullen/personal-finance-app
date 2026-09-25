@@ -27,7 +27,8 @@ Do not silently change financial meaning to simplify implementation.
 Authoritative documents are sources to consult, not context to preload.
 Start with docs/spec-manifest.json and, when requirement-level traceability is
 needed, docs/specs/verification/requirements-index.json. Use domains, keywords,
-parent_spec_ids, and requirement IDs to locate the narrowest applicable spec set.
+parent_spec_ids for decomposition, depends_on_spec_ids for cross-capability
+prerequisites, and requirement IDs to locate the narrowest applicable spec set.
 Search for the relevant concept first and read only the smallest sections
 needed to resolve the task. Do not read an entire large specification for a
 routine patch unless the task explicitly requires a whole-document review.
