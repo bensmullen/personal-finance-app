@@ -1,6 +1,6 @@
 # Probabilistic Forecasting
 
-**Version:** 0.1.0-draft
+**Version:** 0.1.1-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-PROB
 
@@ -18,7 +18,7 @@ A stochastic realization SHALL use the same authoritative accounting, funding, t
 
 ### PFA-PROB-002 — Reproducible random streams
 
-Every realization SHALL be reproducible from immutable run configuration including seed, scenario identity, realization identity, stochastic-process identities, calibration identity/version, and applicable specification/engine versions. Unrelated process insertion SHALL NOT perturb existing named random streams.
+Every realization SHALL be reproducible from immutable run configuration including master seed, stochastic cohort identity, scenario identity, realization identity, stochastic-process identities, immutable calibration identity/content fingerprint, and applicable specification/engine versions. Scenario identity and stochastic cohort identity SHALL remain distinct. Unrelated process insertion or worker/batch ordering SHALL NOT perturb existing named random streams.
 
 ### PFA-PROB-003 — Choices versus uncertainty
 
@@ -46,11 +46,17 @@ A probabilistic result SHALL record realization count, seed/configuration identi
 
 ### PFA-PROB-009 — Paired scenario comparison
 
-When two scenarios differ in decisions rather than stochastic-model identity, comparisons SHOULD use the same realization identities/random streams where semantically valid so that scenario deltas are not dominated by unrelated sampling variation.
+When two scenarios differ in decisions rather than stochastic-model identity, the comparison SHALL use the same master seed, stochastic cohort, realization identities, and applicable stochastic-process/calibration configuration so the scenarios see the same modeled futures. Scenario identities remain distinct. If a scenario intentionally changes the stochastic model/calibration itself, the result SHALL identify that difference and SHALL NOT claim an apples-to-apples common-random-number comparison.
 
 ### PFA-PROB-010 — Conditional probability language
 
 User-facing probabilities SHALL be presented as modeled estimates conditional on the stated assumptions/calibration, not as certain physical probabilities. The system SHALL expose the calibration source/version and material model limitations needed to interpret the result.
+
+### PFA-PROB-011 — Bounded stochastic-result persistence
+
+A persisted stochastic forecast SHALL reference the exact canonical/model calculation fingerprint, stochastic configuration, and immutable calibration content fingerprint that produced it. By default, the application SHALL persist only bounded aggregate/summary results needed to restore the latest successful forecast for a saved scenario/configuration; it SHALL NOT persist every Monte Carlo path or every intermediate rerun.
+
+When inputs change, the prior successful stochastic result MAY remain visible only as explicitly stale. Triggering a replacement run SHALL NOT destroy the last successful result. The prior result is replaced atomically only after the new run completes successfully. Failed, cancelled, or superseded runs SHALL NOT replace the last successful result. The product MAY later support user-pinned historical forecast snapshots as an explicit feature.
 
 ## 3. Initial modeling scope
 
@@ -85,4 +91,4 @@ Before implementation reaches production use, define:
 - representative-path selection;
 - permitted variance-reduction/quasi-random techniques;
 - incomplete/invalid realization aggregation rules;
-- stochastic cache identity and storage policy.
+- exact bounded-retention/garbage-collection policy for superseded unpinned result summaries.
