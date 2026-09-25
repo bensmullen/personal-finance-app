@@ -395,7 +395,9 @@
       "id": "PFA-PROB-005",
       "spec_id": "probabilistic-forecasting",
       "requirement_status": "draft",
-      "parent_requirement_ids": [],
+      "parent_requirement_ids": [
+        "PFA-PERF-011"
+      ],
       "verification_method": "test",
       "verification_state": "planned",
       "verification_refs": [],
@@ -511,7 +513,9 @@
       "id": "PFA-CAL-003",
       "spec_id": "market-economic-calibration",
       "requirement_status": "draft",
-      "parent_requirement_ids": [],
+      "parent_requirement_ids": [
+        "PFA-PROB-007"
+      ],
       "verification_method": "analysis",
       "verification_state": "planned",
       "verification_refs": [],
@@ -563,7 +567,9 @@
       "id": "PFA-CAL-007",
       "spec_id": "market-economic-calibration",
       "requirement_status": "draft",
-      "parent_requirement_ids": [],
+      "parent_requirement_ids": [
+        "PFA-PROB-002"
+      ],
       "verification_method": "analysis",
       "verification_state": "planned",
       "verification_refs": [],
@@ -619,7 +625,9 @@
       "id": "PFA-EQ-003",
       "spec_id": "portfolio-concentration-equity-compensation",
       "requirement_status": "draft",
-      "parent_requirement_ids": [],
+      "parent_requirement_ids": [
+        "PFA-PROB-004"
+      ],
       "verification_method": "test",
       "verification_state": "planned",
       "verification_refs": [],
@@ -765,7 +773,9 @@
       "id": "PFA-UX-005",
       "spec_id": "application-ux",
       "requirement_status": "draft",
-      "parent_requirement_ids": [],
+      "parent_requirement_ids": [
+        "PFA-PERF-005"
+      ],
       "verification_method": "demonstration",
       "verification_state": "planned",
       "verification_refs": [],
@@ -779,7 +789,11 @@
       "id": "PFA-UX-006",
       "spec_id": "application-ux",
       "requirement_status": "draft",
-      "parent_requirement_ids": [],
+      "parent_requirement_ids": [
+        "PFA-PERF-006",
+        "PFA-PERF-007",
+        "PFA-PERF-009"
+      ],
       "verification_method": "demonstration",
       "verification_state": "planned",
       "verification_refs": [],
@@ -793,7 +807,9 @@
       "id": "PFA-UX-007",
       "spec_id": "application-ux",
       "requirement_status": "draft",
-      "parent_requirement_ids": [],
+      "parent_requirement_ids": [
+        "PFA-PERF-008"
+      ],
       "verification_method": "demonstration",
       "verification_state": "planned",
       "verification_refs": [],
@@ -895,7 +911,10 @@
       "id": "PFA-TAX-005",
       "spec_id": "tax-engine",
       "requirement_status": "draft",
-      "parent_requirement_ids": [],
+      "parent_requirement_ids": [
+        "PFA-PERF-001",
+        "PFA-PERF-003"
+      ],
       "verification_method": "test",
       "verification_state": "planned",
       "verification_refs": [],
