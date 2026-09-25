@@ -1,0 +1,940 @@
+{
+  "index_version": "1.0.0",
+  "status": "controlled",
+  "owning_manifest": "docs/spec-manifest.json",
+  "requirements": [
+    {
+      "id": "PFA-SPEC-001",
+      "spec_id": "specification-architecture-traceability",
+      "requirement_status": "active",
+      "parent_requirement_ids": [],
+      "verification_method": "inspection",
+      "verification_state": "implemented",
+      "verification_refs": [
+        "npm run spec:validate"
+      ],
+      "implementation_scope": [
+        "docs/spec-manifest.json",
+        "docs/specs/verification/requirements-index.json",
+        "AGENTS.md",
+        "tools/validate-spec-traceability.mjs"
+      ]
+    },
+    {
+      "id": "PFA-SPEC-002",
+      "spec_id": "specification-architecture-traceability",
+      "requirement_status": "active",
+      "parent_requirement_ids": [],
+      "verification_method": "inspection",
+      "verification_state": "implemented",
+      "verification_refs": [
+        "npm run spec:validate"
+      ],
+      "implementation_scope": [
+        "docs/spec-manifest.json",
+        "docs/specs/verification/requirements-index.json",
+        "AGENTS.md",
+        "tools/validate-spec-traceability.mjs"
+      ]
+    },
+    {
+      "id": "PFA-SPEC-003",
+      "spec_id": "specification-architecture-traceability",
+      "requirement_status": "active",
+      "parent_requirement_ids": [],
+      "verification_method": "inspection",
+      "verification_state": "implemented",
+      "verification_refs": [
+        "npm run spec:validate"
+      ],
+      "implementation_scope": [
+        "docs/spec-manifest.json",
+        "docs/specs/verification/requirements-index.json",
+        "AGENTS.md",
+        "tools/validate-spec-traceability.mjs"
+      ]
+    },
+    {
+      "id": "PFA-SPEC-004",
+      "spec_id": "specification-architecture-traceability",
+      "requirement_status": "active",
+      "parent_requirement_ids": [],
+      "verification_method": "inspection",
+      "verification_state": "implemented",
+      "verification_refs": [
+        "npm run spec:validate"
+      ],
+      "implementation_scope": [
+        "docs/spec-manifest.json",
+        "docs/specs/verification/requirements-index.json",
+        "AGENTS.md",
+        "tools/validate-spec-traceability.mjs"
+      ]
+    },
+    {
+      "id": "PFA-SPEC-005",
+      "spec_id": "specification-architecture-traceability",
+      "requirement_status": "active",
+      "parent_requirement_ids": [],
+      "verification_method": "inspection",
+      "verification_state": "implemented",
+      "verification_refs": [
+        "npm run spec:validate"
+      ],
+      "implementation_scope": [
+        "docs/spec-manifest.json",
+        "docs/specs/verification/requirements-index.json",
+        "AGENTS.md",
+        "tools/validate-spec-traceability.mjs"
+      ]
+    },
+    {
+      "id": "PFA-SPEC-006",
+      "spec_id": "specification-architecture-traceability",
+      "requirement_status": "active",
+      "parent_requirement_ids": [],
+      "verification_method": "inspection",
+      "verification_state": "implemented",
+      "verification_refs": [
+        "npm run spec:validate"
+      ],
+      "implementation_scope": [
+        "docs/spec-manifest.json",
+        "docs/specs/verification/requirements-index.json",
+        "AGENTS.md",
+        "tools/validate-spec-traceability.mjs"
+      ]
+    },
+    {
+      "id": "PFA-SPEC-007",
+      "spec_id": "specification-architecture-traceability",
+      "requirement_status": "active",
+      "parent_requirement_ids": [],
+      "verification_method": "inspection",
+      "verification_state": "implemented",
+      "verification_refs": [
+        "npm run spec:validate"
+      ],
+      "implementation_scope": [
+        "docs/spec-manifest.json",
+        "docs/specs/verification/requirements-index.json",
+        "AGENTS.md",
+        "tools/validate-spec-traceability.mjs"
+      ]
+    },
+    {
+      "id": "PFA-SPEC-008",
+      "spec_id": "specification-architecture-traceability",
+      "requirement_status": "active",
+      "parent_requirement_ids": [],
+      "verification_method": "inspection",
+      "verification_state": "implemented",
+      "verification_refs": [
+        "npm run spec:validate"
+      ],
+      "implementation_scope": [
+        "docs/spec-manifest.json",
+        "docs/specs/verification/requirements-index.json",
+        "AGENTS.md",
+        "tools/validate-spec-traceability.mjs"
+      ]
+    },
+    {
+      "id": "PFA-PERF-001",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "benchmark",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "ui/",
+        "e2e/",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-PERF-002",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "benchmark",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "ui/",
+        "e2e/",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-PERF-003",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "benchmark",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "ui/",
+        "e2e/",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-PERF-004",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "benchmark",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "ui/",
+        "e2e/",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-PERF-005",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "benchmark",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "ui/",
+        "e2e/",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-PERF-006",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "benchmark",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "ui/",
+        "e2e/",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-PERF-007",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "benchmark",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "ui/",
+        "e2e/",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-PERF-008",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "benchmark",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "ui/",
+        "e2e/",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-PERF-009",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "benchmark",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "ui/",
+        "e2e/",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-PERF-010",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "benchmark",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "ui/",
+        "e2e/",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-PERF-011",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "benchmark",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "ui/",
+        "e2e/",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-PERF-012",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "benchmark",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "ui/",
+        "e2e/",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-PROB-001",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/primitives/",
+        "src/simulation/",
+        "src/application/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-PROB-002",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/primitives/",
+        "src/simulation/",
+        "src/application/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-PROB-003",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/primitives/",
+        "src/simulation/",
+        "src/application/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-PROB-004",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/primitives/",
+        "src/simulation/",
+        "src/application/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-PROB-005",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/primitives/",
+        "src/simulation/",
+        "src/application/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-PROB-006",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/primitives/",
+        "src/simulation/",
+        "src/application/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-PROB-007",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/primitives/",
+        "src/simulation/",
+        "src/application/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-PROB-008",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/primitives/",
+        "src/simulation/",
+        "src/application/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-PROB-009",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/primitives/",
+        "src/simulation/",
+        "src/application/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-PROB-010",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/primitives/",
+        "src/simulation/",
+        "src/application/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-CAL-001",
+      "spec_id": "market-economic-calibration",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "analysis",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future external-data adapters"
+      ]
+    },
+    {
+      "id": "PFA-CAL-002",
+      "spec_id": "market-economic-calibration",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "analysis",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future external-data adapters"
+      ]
+    },
+    {
+      "id": "PFA-CAL-003",
+      "spec_id": "market-economic-calibration",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "analysis",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future external-data adapters"
+      ]
+    },
+    {
+      "id": "PFA-CAL-004",
+      "spec_id": "market-economic-calibration",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "analysis",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future external-data adapters"
+      ]
+    },
+    {
+      "id": "PFA-CAL-005",
+      "spec_id": "market-economic-calibration",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "analysis",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future external-data adapters"
+      ]
+    },
+    {
+      "id": "PFA-CAL-006",
+      "spec_id": "market-economic-calibration",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "analysis",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future external-data adapters"
+      ]
+    },
+    {
+      "id": "PFA-CAL-007",
+      "spec_id": "market-economic-calibration",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "analysis",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future external-data adapters"
+      ]
+    },
+    {
+      "id": "PFA-CAL-008",
+      "spec_id": "market-economic-calibration",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "analysis",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future external-data adapters"
+      ]
+    },
+    {
+      "id": "PFA-EQ-001",
+      "spec_id": "portfolio-concentration-equity-compensation",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "docs/personal_finance_canonical_schema_v1.0.json",
+        "src/application/",
+        "src/simulation/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-EQ-002",
+      "spec_id": "portfolio-concentration-equity-compensation",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "docs/personal_finance_canonical_schema_v1.0.json",
+        "src/application/",
+        "src/simulation/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-EQ-003",
+      "spec_id": "portfolio-concentration-equity-compensation",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "docs/personal_finance_canonical_schema_v1.0.json",
+        "src/application/",
+        "src/simulation/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-EQ-004",
+      "spec_id": "portfolio-concentration-equity-compensation",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "docs/personal_finance_canonical_schema_v1.0.json",
+        "src/application/",
+        "src/simulation/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-EQ-005",
+      "spec_id": "portfolio-concentration-equity-compensation",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "docs/personal_finance_canonical_schema_v1.0.json",
+        "src/application/",
+        "src/simulation/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-EQ-006",
+      "spec_id": "portfolio-concentration-equity-compensation",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "docs/personal_finance_canonical_schema_v1.0.json",
+        "src/application/",
+        "src/simulation/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-EQ-007",
+      "spec_id": "portfolio-concentration-equity-compensation",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "docs/personal_finance_canonical_schema_v1.0.json",
+        "src/application/",
+        "src/simulation/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-EQ-008",
+      "spec_id": "portfolio-concentration-equity-compensation",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "docs/personal_finance_canonical_schema_v1.0.json",
+        "src/application/",
+        "src/simulation/",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-UX-001",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "demonstration",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "ui/",
+        "app/",
+        "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-UX-002",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "demonstration",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "ui/",
+        "app/",
+        "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-UX-003",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "demonstration",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "ui/",
+        "app/",
+        "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-UX-004",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "demonstration",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "ui/",
+        "app/",
+        "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-UX-005",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "demonstration",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "ui/",
+        "app/",
+        "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-UX-006",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "demonstration",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "ui/",
+        "app/",
+        "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-UX-007",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "demonstration",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "ui/",
+        "app/",
+        "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-UX-008",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "demonstration",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "ui/",
+        "app/",
+        "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-UX-009",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "demonstration",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "ui/",
+        "app/",
+        "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-TAX-001",
+      "spec_id": "tax-engine",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/rules/",
+        "src/accounting/",
+        "src/application/",
+        "src/simulation/"
+      ]
+    },
+    {
+      "id": "PFA-TAX-002",
+      "spec_id": "tax-engine",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/rules/",
+        "src/accounting/",
+        "src/application/",
+        "src/simulation/"
+      ]
+    },
+    {
+      "id": "PFA-TAX-003",
+      "spec_id": "tax-engine",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/rules/",
+        "src/accounting/",
+        "src/application/",
+        "src/simulation/"
+      ]
+    },
+    {
+      "id": "PFA-TAX-004",
+      "spec_id": "tax-engine",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/rules/",
+        "src/accounting/",
+        "src/application/",
+        "src/simulation/"
+      ]
+    },
+    {
+      "id": "PFA-TAX-005",
+      "spec_id": "tax-engine",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/rules/",
+        "src/accounting/",
+        "src/application/",
+        "src/simulation/"
+      ]
+    },
+    {
+      "id": "PFA-TAX-006",
+      "spec_id": "tax-engine",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/rules/",
+        "src/accounting/",
+        "src/application/",
+        "src/simulation/"
+      ]
+    },
+    {
+      "id": "PFA-TAX-007",
+      "spec_id": "tax-engine",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_method": "test",
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/rules/",
+        "src/accounting/",
+        "src/application/",
+        "src/simulation/"
+      ]
+    }
+  ]
+}
