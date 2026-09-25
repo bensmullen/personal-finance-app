@@ -1,6 +1,6 @@
 # Performance, Observability & Deterministic Execution
 
-**Version:** 0.1.0-draft
+**Version:** 0.1.1-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-PERF
 
@@ -59,6 +59,10 @@ Before high-count stochastic orchestration, the architecture SHALL provide a reu
 ### PFA-PERF-012 — Stochastic readiness gate
 
 Production-scale stochastic simulation SHALL NOT be layered directly on the current unmeasured synchronous path. Before multi-realization implementation is treated as interactive-product ready, PFA-PERF-001 through PFA-PERF-011 applicable foundations SHALL exist, baseline timings SHALL be recorded, and stochastic timing SHALL separately report sampling, realization execution, aggregation, transfer/serialization, and rendering.
+
+### PFA-PERF-013 — Stochastic resource-cost accounting
+
+Stochastic benchmarks SHALL record realization count, wall-clock duration, aggregate CPU/execution time where measurable, worker concurrency, paths per second, peak/representative memory where measurable, and execution location (browser/local/server). If execution later incurs metered service cost, the benchmark/result telemetry SHOULD expose the provider-neutral billing units needed to calculate per-run cost without embedding a provider price in financial semantics.
 
 ## 3. Initial performance dashboard
 
