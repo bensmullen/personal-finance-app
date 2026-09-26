@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.1.4-draft
+**Version:** 0.1.5-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -21,6 +21,8 @@ R1  Performance instrumentation + benchmark fixtures
  |
 R2  Interactive deterministic execution foundation
  | | +--> R4  UX/editor cleanup -----------------------------+
+ | |       |
+ | |       +--> O1  Assisted onboarding/import foundation ---+
  |                                                       |
  +--> R3  Profile-driven deterministic optimization       |
       |    + reusable compiled-plan seam                  |
@@ -44,6 +46,8 @@ R2  Interactive deterministic execution foundation
       +--> T1A Target-cohort tax floor (parallel) --------+
       |                         |
       +--> A1  Private-alpha concentration safeguard -----+
+      |                         |
+      +-------------------------+--> O1 dry-run target/coverage gate
                                 |
                      R11 Private-alpha readiness /
                          stabilization-exit gate
@@ -146,7 +150,30 @@ Implement PFA-UX with emphasis on:
 
 **User validation:** required. Milestone closeout SHALL provide a concise walkthrough covering novice comprehension, entity editing, advanced-detail discoverability, chart readability, and any remaining confusing/dead controls.
 
-## 8. T1A/T1B — Tax development track
+## 8. O1 — Assisted onboarding and import foundation
+
+O1 begins after the R2/R4 interaction foundations are stable enough to support a guided workflow and may proceed in parallel with R3/C1/R5-R10.
+
+Implement PFA-ONB with emphasis on:
+
+- a minimum viable household model that reaches useful current-state and forecast outputs before optional detail is requested;
+- privacy-safe instrumentation for time to first useful forecast, manual-entry burden, completion/abandonment, corrections, import success, unsupported formats, and source-path mix;
+- a typed candidate-fact boundary for document/CSV/conversational extraction;
+- deterministic validation, provenance, approximate-versus-exact preservation, conflict detection, and user confirmation before authoritative model mutation;
+- guided structured onboarding plus at least one bulk/file import or extraction path appropriate to the intended alpha cohort;
+- deliberate separation of current snapshot facts, transaction history, and forward-looking planning inputs;
+- optional guarded text/voice conversational intake for goals, rough spending, household facts, and high-value missing fields where prototype evidence shows it reduces effort;
+- supported-format detection and safe failure rather than partial silent imports;
+- synthetic fixtures/documents/conversations for automated testing, with real personal data used only inside the approved privacy boundary;
+- progressive completeness guidance that tells the user which missing inputs materially improve supported outputs.
+
+O1 SHALL run representative onboarding dry runs before R11 and use the results to set an explicit time/manual-effort target rather than inventing one in advance. The dry runs should measure whether users can reach a meaningful forecast without transcribing their entire financial life manually.
+
+A production Plaid/bank-aggregation integration is not required for O1 or private alpha if the measured assisted workflow meets the target.
+
+**User validation:** required. Closeout should observe actual onboarding behavior rather than only reviewing screens. The user should verify that the workflow feels substantially faster than manual field-by-field setup and that extracted information is easy to review/correct.
+
+## 9. T1A/T1B — Tax development track
 
 ### T1A — Target-cohort/common-household tax floor
 
@@ -168,7 +195,7 @@ Add specialized capital-gains, retirement, equity-compensation, and other jurisd
 
 **User validation:** required only when a tax milestone changes user-facing workflows/results. Automated rule/invariant tests remain the correctness authority; user validation checks understandable presentation and expected real-world workflow.
 
-## 9. R5 — Stochastic runtime foundation
+## 10. R5 — Stochastic runtime foundation
 
 Implement the higher-authority stochastic semantics before Monte Carlo orchestration:
 
@@ -184,7 +211,7 @@ Do not add high realization counts until one realization is semantically complet
 
 **User validation:** not required.
 
-## 10. R6 — Monte Carlo orchestration
+## 11. R6 — Monte Carlo orchestration
 
 Add:
 
@@ -212,7 +239,7 @@ Initial path counts, convergence thresholds, and compute/cost budgets shall be e
 
 **User validation:** not normally required; orchestration correctness/reproducibility is automated.
 
-## 11. R7 — Baseline probabilistic household engine
+## 12. R7 — Baseline probabilistic household engine
 
 Introduce uncertainty incrementally against C1's synthetic/internal calibration:
 
@@ -229,7 +256,7 @@ R7 may expose engineering/developer results before T1A is complete, but a tax-af
 
 **User validation:** limited/developer validation may occur, but normal-user UAT waits for tax/calibration completeness appropriate to the output.
 
-## 12. R8 — Institutional market/economic calibration adapters
+## 13. R8 — Institutional market/economic calibration adapters
 
 R8 is now only the provider-adapter/data half of calibration work because C1 defined the internal contract earlier.
 
@@ -239,7 +266,7 @@ Company-specific data is added only where exposure is material or explicitly req
 
 **User validation:** required before institutional calibration becomes the default basis for user-facing stochastic results. The user should verify source/date disclosure, refresh behavior, and understandable distinction between assumptions and guarantees; numerical ingestion/mapping correctness should be automated.
 
-## 13. A1/R9 — Concentrated positions and equity compensation
+## 14. A1/R9 — Concentrated positions and equity compensation
 
 ### A1 — Private-alpha concentration safeguard
 
@@ -269,7 +296,7 @@ If R9 is not completed before private alpha because the cohort does not require 
 
 **User validation:** required if A1/R9 is used by an alpha participant.
 
-## 14. R10 — Probabilistic decision UX
+## 15. R10 — Probabilistic decision UX
 
 Implement PFA-UX-010 through PFA-UX-012 and make probability/distribution outputs understandable:
 
@@ -292,12 +319,14 @@ Retain deterministic views for immediacy, audit, and explanation; do not present
 
 **User validation:** required. Closeout instructions SHALL cover comprehension of deterministic versus stochastic views, stale/rerun behavior, probability language, scenario comparison, and whether the result supports an actual planning decision.
 
-## 15. R11 — Private-alpha readiness / stabilization-exit gate
+## 16. R11 — Private-alpha readiness / stabilization-exit gate
 
 This is the exit gate from the post-PR21 personal-use stabilization period, not the beginning of stabilization.
 
 Before private-alpha infrastructure:
 
+- O1 onboarding dry runs establish and meet an explicit pre-infrastructure time-to-first-useful-forecast/manual-effort target using the intended onboarding paths, and the workflow does not require burdensome field-by-field transcription of the household;
+- the assisted-input architecture preserves candidate-fact review, provenance, ambiguity handling, idempotency, and the privacy boundary required by PFA-ONB;
 - performance, convergence, memory, and per-run compute-cost budgets are documented and met for supported realistic use, with explicit cost-per-rerun measurement/estimation for every enabled stochastic execution placement;
 - Golden, realistic-household, and computationally complex/stress fixtures pass their applicable correctness/performance checks and their coverage inventories show the supported product is exercised materially beyond the simple Golden Household;
 - current-state UI is responsive;
@@ -313,9 +342,9 @@ Before private-alpha infrastructure:
 
 **User validation:** required. The milestone closeout SHALL provide a focused end-to-end private-alpha readiness checklist. Automated CI/financial verification SHALL pass before asking the user to perform UAT.
 
-Private-alpha PR A-H remains governed by the system/software architecture and begins after this gate.
+Private-alpha infrastructure remains governed by the system/software architecture and begins after this gate. The private-alpha launch itself remains blocked until the O1 onboarding pipeline is wired through the secured shared-service authentication/persistence/privacy boundary and an end-to-end onboarding dry run confirms that the launch target still holds with the deployed architecture.
 
-## 16. Explicit deferred-capability/TODO register
+## 17. Explicit deferred-capability/TODO register
 
 The following item SHALL remain visible until closed:
 
