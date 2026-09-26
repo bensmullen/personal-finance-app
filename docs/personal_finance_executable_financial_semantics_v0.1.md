@@ -1105,7 +1105,17 @@ previously valid explicit ordering policy. A runtime conforming to
 the current runtime contract, and any execution plan whose same-instant
 resource contention is semantically ambiguous MUST be rejected rather than
 assigned a new implicit order. This compatibility statement applies only to
-`0.1.9-draft` → `0.1.10-draft` and does not generalize to other versions.
+`0.1.9-draft` → `0.1.10-draft` and does not generalize implicitly to other versions.
+
+Version `0.1.11-draft` is separately declared backward-compatible with
+`0.1.10-draft` and `0.1.9-draft` for portable-model interpretation. This
+revision adds future stochastic/multi-realization capability framing and
+specification decomposition/traceability without changing canonical authored
+deterministic model fields or deterministic execution meaning. A runtime
+conforming to `0.1.11-draft` MAY therefore classify `0.1.9-draft`,
+`0.1.10-draft`, and `0.1.11-draft` as `supported_directly`. This is an
+explicit compatibility declaration for those versions only and does not
+generalize to later revisions.
 
 The former `0.1.0-draft` root used `specification_version` without
 unambiguously identifying whether that value represented financial semantics or
