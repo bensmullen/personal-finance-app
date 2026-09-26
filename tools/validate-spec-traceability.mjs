@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const scriptPath = fileURLToPath(import.meta.url);
 const root = path.resolve(path.dirname(scriptPath), "..");
 const manifestPath = path.join(root, "docs/spec-manifest.json");
-const allowedVerificationMethods = new Set(["inspection", "analysis", "test", "benchmark", "demonstration"]);
+const allowedVerificationMethods = new Set(["inspection", "analysis", "test", "benchmark", "measurement", "demonstration"]);
 const allowedVerificationOwners = new Set(["automated", "engineering-review", "user-uat"]);
 
 const readJson = async (p) => JSON.parse(await readFile(p, "utf8"));
