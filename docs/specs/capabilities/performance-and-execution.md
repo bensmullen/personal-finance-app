@@ -1,6 +1,6 @@
 # Performance, Observability & Deterministic Execution
 
-**Version:** 0.1.2-draft
+**Version:** 0.1.3-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-PERF
 
@@ -76,6 +76,30 @@ The stochastic execution contract SHALL remain provider-neutral and capable of r
 
 The financial engine SHALL NOT require a cloud-only dependency merely to execute stochastic mathematics. Local execution SHOULD be preferred when it meets the applicable latency, memory, thermal/battery, and convergence budgets; cloud execution MAY be used when local execution would violate those budgets or product service requirements.
 
+### PFA-PERF-016 — Private-alpha cost-per-rerun measurement
+
+Before private alpha, every supported stochastic execution placement SHALL have a measured or defensible estimated marginal cost per successful rerun for the representative forecast fixtures and supported convergence/quality levels.
+
+For any metered server/cloud execution path, telemetry SHALL translate attributable consumed billing units into currency cost using the deployed provider/pricing configuration and SHALL retain representative and p50/p95 per-rerun cost measurements where sample volume permits. The estimate SHOULD include materially attributable compute, worker/serverless invocation, orchestration, and data-transfer charges; fixed/shared platform costs SHALL be reported separately rather than misleadingly attributed as marginal rerun cost.
+
+For local execution, the system MAY report zero marginal cloud cost but SHALL still record the resource/time measurements required by PFA-PERF-013 through PFA-PERF-015.
+
+Private-alpha readiness SHALL fail if an enabled ordinary stochastic rerun path lacks cost-per-rerun measurement/estimation or cannot demonstrate compliance with the approved routine-run compute budget.
+
+### PFA-PERF-017 — Representative and computationally complex household fixtures
+
+Forecast verification SHALL maintain three distinct synthetic fixture classes:
+
+1. the Golden Household, optimized for understandable financial correctness and stable checkpoints;
+2. a realistic household forecast fixture, optimized for representative end-to-end product behavior and broad supported financial-mechanics coverage; and
+3. a computationally complex/stress household fixture, optimized for exercising scale, dependency/scheduling complexity, many supported primitives/mechanics, long horizons, scenario execution, and stochastic throughput.
+
+The realistic household SHALL expand as capabilities become supported and SHOULD include multiple people, multiple income/expense streams, cash and retirement/taxable accounts, diversified investments, at least one non-financial asset, debt/mortgage, applicable taxes, funding behavior, material life/retirement events, and multiple scenarios. It SHALL exercise a materially broader set of supported primitives and bindings than the Golden Household rather than being merely a larger copy of it.
+
+The computationally complex fixture SHALL remain financially coherent while deliberately stressing supported execution paths, including many entities/positions/flows/events/dependencies, long horizons, multiple scenarios, tax execution, and stochastic processes/realizations when available. Artificial scale MAY be used, but invalid or economically nonsensical data SHALL NOT be used merely to manufacture load.
+
+Each representative/stress fixture SHALL maintain a lightweight coverage manifest or equivalent machine-readable inventory identifying the important canonical objects, primitives, rules, events, scenarios, and major engine mechanics it exercises. Unsupported future capabilities need not be faked; the inventory SHALL make coverage gaps explicit so they can be expanded as the product grows.
+
 ## 3. Initial performance dashboard
 
 A developer/advanced performance surface should report the latest run and rolling p50/p95/max where meaningful for:
@@ -89,13 +113,13 @@ A developer/advanced performance surface should report the latest run and rollin
 - UI commit/render and chart render;
 - cache hit/miss;
 - future tax calculation;
-- future stochastic sampling, paths-per-second, aggregation, and convergence.
+- future stochastic sampling, paths-per-second, aggregation, convergence, and marginal cost per rerun where metered.
 
 The dashboard is a diagnostic surface, not part of normal novice navigation.
 
 ## 4. Budget policy
 
-Absolute performance and compute-cost budgets SHALL be set after baseline instrumentation on representative hardware/runtime rather than invented before measurement. The first implementation milestones SHALL record baselines and propose explicit current-snapshot, interactive-forecast, render, stochastic-throughput, memory, and provider-neutral compute-unit budgets in a revision of this specification. For metered execution, the later deployment layer SHALL translate those provider-neutral units into observed currency cost per run and track p50/p95 cost alongside latency and convergence.
+Absolute performance and compute-cost budgets SHALL be set after baseline instrumentation on representative hardware/runtime rather than invented before measurement. The first implementation milestones SHALL record baselines and propose explicit current-snapshot, interactive-forecast, render, stochastic-throughput, memory, and provider-neutral compute-unit budgets in a revision of this specification. Before private alpha, any enabled metered execution path SHALL translate those provider-neutral units into observed/estimated currency cost per rerun and track representative/p50/p95 cost alongside latency and convergence in accordance with PFA-PERF-016.
 
 ## 5. Verification intent
 
