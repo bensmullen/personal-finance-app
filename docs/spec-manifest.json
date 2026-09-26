@@ -10,7 +10,7 @@
     {
       "id": "system-software-architecture",
       "path": "docs/architecture/system-software-architecture.md",
-      "version": "1.3.1-draft",
+      "version": "1.3.2-draft",
       "authority": "governance",
       "version_source": "markdown-version-header",
       "status": "architecture-baseline",
@@ -149,7 +149,7 @@
     {
       "id": "performance-and-execution",
       "path": "docs/specs/capabilities/performance-and-execution.md",
-      "version": "0.1.1-draft",
+      "version": "0.1.2-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -171,7 +171,11 @@
         "scheduler",
         "render",
         "current snapshot",
-        "Monte Carlo prerequisite"
+        "Monte Carlo prerequisite",
+        "compute budget",
+        "cloud cost",
+        "local execution",
+        "execution placement"
       ],
       "applies_to": [
         "personal-mvp",
@@ -184,7 +188,7 @@
     {
       "id": "probabilistic-forecasting",
       "path": "docs/specs/capabilities/probabilistic-forecasting.md",
-      "version": "0.1.1-draft",
+      "version": "0.1.2-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -206,7 +210,12 @@
         "distribution",
         "quantile",
         "convergence",
-        "random stream"
+        "random stream",
+        "Forecast Basis",
+        "scenario comparability",
+        "saved forecast",
+        "recovery",
+        "aggregate persistence"
       ],
       "applies_to": [
         "personal-mvp",
@@ -289,7 +298,7 @@
     {
       "id": "application-ux",
       "path": "docs/specs/capabilities/application-ux.md",
-      "version": "0.1.1-draft",
+      "version": "0.1.2-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -310,7 +319,10 @@
         "forecast status",
         "charts",
         "advanced",
-        "editor"
+        "editor",
+        "Forecast Basis",
+        "historical comparison",
+        "saved forecast"
       ],
       "applies_to": [
         "personal-mvp"
@@ -323,7 +335,7 @@
     {
       "id": "tax-engine",
       "path": "docs/specs/capabilities/tax-engine.md",
-      "version": "0.1.1-draft",
+      "version": "0.1.2-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -342,9 +354,15 @@
         "TaxRule",
         "withholding",
         "jurisdiction",
-        "equity compensation"
+        "equity compensation",
+        "private alpha",
+        "tax rule catalog",
+        "tax floor",
+        "rule fingerprint"
       ],
       "applies_to": [
+        "personal-mvp",
+        "private-alpha",
         "future"
       ],
       "depends_on_spec_ids": [
@@ -355,7 +373,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.1.1-draft",
+      "version": "0.1.2-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -375,7 +393,11 @@
         "UI",
         "RSU",
         "tax",
-        "private alpha"
+        "private alpha",
+        "compute budget",
+        "Forecast Basis",
+        "forecast persistence",
+        "tax floor"
       ],
       "applies_to": [
         "personal-mvp",
