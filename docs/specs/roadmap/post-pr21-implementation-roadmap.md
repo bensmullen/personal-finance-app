@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.1.2-draft
+**Version:** 0.1.3-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -58,20 +58,22 @@ T1B Advanced/specialized tax domains progress with the capabilities that need
 
 ## 3. R1 — Performance instrumentation and baselines
 
-Implement PFA-PERF-001 through PFA-PERF-004 and PFA-PERF-013 through PFA-PERF-015 foundations first.
+Implement PFA-PERF-001 through PFA-PERF-004 and PFA-PERF-013 through PFA-PERF-017 foundations first.
 
 Deliver:
 
 - phase timers across application/engine/UI boundaries;
 - a developer performance dashboard with latest/rolling measurements;
-- Golden, realistic-large, and stress synthetic performance fixtures;
+- three maintained synthetic fixture classes: Golden Household, realistic household forecast, and computationally complex/stress household;
+- a lightweight coverage inventory for the realistic and complex fixtures showing which important canonical objects, primitives, rules, events, scenarios, and execution mechanics are exercised;
 - repeatable benchmark capture;
 - explicit attribution of engine, application/worker, serialization, React/chart, and explanation/render cost;
 - baseline measurements before optimization;
 - provider-neutral CPU/worker/memory/throughput accounting suitable for estimating local or cloud execution cost;
+- cost-per-rerun measurement/estimation plumbing that can translate metered provider units into currency once a deployed provider exists;
 - initial comparison of feasible local/browser execution versus server/cloud execution on representative devices.
 
-Do not set hard latency or currency-cost budgets until baseline data exists. After R1/R6 measurements exist, define explicit p50/p95 latency, convergence, memory, and per-run compute-cost budgets.
+Do not set hard latency or currency-cost budgets until baseline data exists. After R1/R6 measurements exist, define explicit p50/p95 latency, convergence, memory, and per-run compute-cost budgets. Before private alpha, every enabled stochastic execution placement must have measured or defensible estimated marginal currency cost per rerun for the representative fixtures/quality levels, and metered paths must report representative/p50/p95 cost where sample volume permits.
 
 **User validation:** not normally required. Objective timing and correctness are automated/engineering verification.
 
@@ -294,7 +296,8 @@ This is the exit gate from the post-PR21 personal-use stabilization period, not 
 
 Before private-alpha infrastructure:
 
-- performance, convergence, memory, and per-run compute-cost budgets are documented and met for supported realistic use;
+- performance, convergence, memory, and per-run compute-cost budgets are documented and met for supported realistic use, with explicit cost-per-rerun measurement/estimation for every enabled stochastic execution placement;
+- Golden, realistic-household, and computationally complex/stress fixtures pass their applicable correctness/performance checks and their coverage inventories show the supported product is exercised materially beyond the simple Golden Household;
 - current-state UI is responsive;
 - deterministic forecasts do not block the UI;
 - stochastic forecasts are reproducible and convergence metadata is interpretable;
