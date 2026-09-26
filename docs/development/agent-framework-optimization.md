@@ -323,7 +323,7 @@ docs/development/agent-framework-optimization.md section 10.
 EXPECTED_SURFACE:
 AGENTS.md; docs/AGENTS.md; ui/AGENTS.md; .agents/skills/pfm-pr-task/;
 .codex/config.toml; .codex/hooks/quiet-test.mjs; tools/codex/; package.json;
-.github/workflows/test.yml; this framework document.
+playwright.config.ts; .github/workflows/test.yml; this framework document.
 
 OUT_OF_SCOPE:
 Financial runtime behavior, product UX changes, new dependencies, cloud/API
