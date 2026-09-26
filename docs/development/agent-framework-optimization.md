@@ -139,7 +139,7 @@ The workflow starts these jobs independently:
 - TypeScript typecheck;
 - unit tests;
 - web build;
-- Playwright E2E.
+- Playwright E2E (with CI-only intra-file parallelism for isolated tests).
 
 A final lightweight job named `test` requires every parallel gate to succeed.
 Keeping the aggregate `test` name preserves a stable branch-protection target.
@@ -262,6 +262,9 @@ browser/performance debugging needs DevTools-level access.
     state-receipt mismatch behavior, and compact Vitest tooling.
 - `package.json`
   - expose `codex:state` and `codex:e2e`.
+- `playwright.config.ts`
+  - enable Playwright intra-file parallelism only in CI so the repository's single
+    E2E spec can use multiple workers without making local debugging noisier.
 - `.github/workflows/test.yml`
   - run spec, architecture, tooling, typecheck, unit, build, and E2E in parallel;
   - retain aggregate required gate named `test`;
@@ -279,8 +282,8 @@ browser/performance debugging needs DevTools-level access.
 4. Focused raw Vitest/Playwright commands rewrite to compact wrappers.
 5. Broad verification remains blocked without explicit override.
 6. Codex tooling self-test passes.
-7. CI broad gates start independently and aggregate `test` fails if any gate
-   fails.
+7. CI broad gates start independently, Playwright can parallelize independent
+   tests within the single E2E spec, and aggregate `test` fails if any gate fails.
 8. Successful unit/E2E jobs emit compact output; failure diagnostics remain
    available as workflow artifacts.
 9. Main deployment semantics remain unchanged: deploy only after all gates and
