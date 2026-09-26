@@ -149,7 +149,7 @@
     {
       "id": "performance-and-execution",
       "path": "docs/specs/capabilities/performance-and-execution.md",
-      "version": "0.1.3-draft",
+      "version": "0.1.4-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -179,7 +179,9 @@
         "cost per rerun",
         "representative household",
         "stress household",
-        "primitive coverage"
+        "primitive coverage",
+        "cloud execution review",
+        "hybrid execution"
       ],
       "applies_to": [
         "personal-mvp",
@@ -377,7 +379,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.1.3-draft",
+      "version": "0.1.4-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -404,7 +406,9 @@
         "tax floor",
         "cost per rerun",
         "realistic household",
-        "stress fixture"
+        "stress fixture",
+        "cloud execution review",
+        "hybrid execution"
       ],
       "applies_to": [
         "personal-mvp",
