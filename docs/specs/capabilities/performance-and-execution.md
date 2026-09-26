@@ -1,6 +1,6 @@
 # Performance, Observability & Deterministic Execution
 
-**Version:** 0.1.3-draft
+**Version:** 0.1.4-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-PERF
 
@@ -75,6 +75,8 @@ Exact time, CPU, memory, and metered-cost budgets SHALL be established from R1/R
 The stochastic execution contract SHALL remain provider-neutral and capable of running on a supported local/browser/desktop execution environment or on server/cloud workers without changing financial semantics, realization identity, or aggregate-result meaning. Execution placement MAY be selected using device capability, forecast size, latency target, concurrency, privacy, and measured cost.
 
 The financial engine SHALL NOT require a cloud-only dependency merely to execute stochastic mathematics. Local execution SHOULD be preferred when it meets the applicable latency, memory, thermal/battery, and convergence budgets; cloud execution MAY be used when local execution would violate those budgets or product service requirements.
+
+If the realistic household and/or computationally complex/stress household cannot meet the approved local execution budgets on representative supported hardware, the applicable milestone closeout SHALL trigger an explicit execution-placement design review before private-alpha architecture is frozen. That review SHALL compare continued local optimization with server/cloud execution, including measured latency, concurrency, marginal cost per rerun, privacy/data-transfer implications, operational complexity, and whether a hybrid local/cloud policy is warranted. A slow stress fixture is evidence for the review, not by itself a mandate that ordinary forecasts move to the cloud.
 
 ### PFA-PERF-016 — Private-alpha cost-per-rerun measurement
 
