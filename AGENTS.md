@@ -1,16 +1,12 @@
 # Personal Finance App — Agent Rules
 
-## Purpose
+## Purpose and authority
 
 This repository implements a deterministic, explainable personal-finance
-modeling engine and applications around it.
+engine and applications around it. Financial correctness, specification
+conformance, determinism, and explainability take priority over convenience.
 
-Financial correctness, specification conformance, determinism, and
-explainability take priority over implementation convenience.
-
-## Authority
-
-Authority order for financial/implementation meaning:
+Authority for financial/implementation meaning:
 
 1. Canonical financial specification
 2. Executable financial semantics
@@ -20,189 +16,107 @@ Authority order for financial/implementation meaning:
 6. Executable implementation
 7. Generated artifacts
 
-The system/software architecture and Specification Architecture & Traceability specification govern decomposition, retrieval, dependency direction, and maturity gates. They do not outrank Levels 1–2 on financial meaning.
+Do not silently change financial meaning to simplify implementation. When a
+normative rule is unclear, use `$pfm-spec-scope` to locate the smallest
+authoritative section needed; do not preload large specifications for routine
+work.
 
-Do not silently change financial meaning to simplify implementation.
-
-Authoritative documents are sources to consult, not context to preload.
-Start with docs/spec-manifest.json and, when requirement-level traceability is
-needed, docs/specs/verification/requirements-index.json. Use domains, keywords,
-parent_spec_ids for decomposition, depends_on_spec_ids for cross-capability
-prerequisites, and requirement IDs to locate the narrowest applicable spec set.
-Search for the relevant concept first and read only the smallest sections
-needed to resolve the task. Do not read an entire large specification for a
-routine patch unless the task explicitly requires a whole-document review.
-Do not copy a requirement into another spec merely for convenience; reference
-its owning requirement ID and keep one normative home per concept.
-
-When normative interpretation is required, use `$pfm-spec-scope`.
-
-## Architecture
+## Architecture and financial invariants
 
 Dependencies point inward:
 
 UI → application/slice → simulation → engine modules → values/time/identity
 
-Engine modules must not depend on UI/browser, database, authentication,
-hosting, or external-service code.
-
-Lower engine modules must not import `simulation/`.
-
-Root compatibility facades are external/legacy re-export surfaces. They must
-not contain independent runtime logic, and engine implementation files must
-not use them as dependency shortcuts.
-
-Financial formulas belong in the engine, never the UI.
-
-Primitive evaluation may produce values, state proposals, semantic effects,
-diagnostics, and lineage references. It must not directly post transactions
-or mutate authoritative financial state.
-
-## Financial invariants
-
+- Engine modules must not depend on UI/browser, database, authentication,
+  hosting, or external-service code.
+- Lower engine modules must not import `simulation/`.
+- Root compatibility facades are re-export surfaces only; engine
+  implementation must not use them as dependency shortcuts.
+- Financial formulas belong in the engine, never the UI.
+- Primitive evaluation must not directly post transactions or mutate
+  authoritative financial state.
 - Do not use JavaScript floating point for authoritative money calculations.
-- Do not introduce bare number-based financial rates.
-- Currency, units, rate basis, and rounding must remain explicit.
-- Internal periods are half-open: `[start, end)`.
-- Do not infer timezone, day-count basis, proration basis, or rate basis.
-- Identical deterministic inputs must produce identical observable results.
-- Financial primitives must not call `Math.random()`.
+- Do not introduce bare number-based financial rates; keep currency, units,
+  rate basis, and rounding explicit.
+- Internal periods are half-open: `[start, end)`. Never infer timezone,
+  day-count basis, proration basis, or rate basis.
+- Identical deterministic inputs must produce identical observable results;
+  financial primitives must not call `Math.random()`.
 - Failed or uncommitted execution must not mutate committed opening state.
-- Do not infer economic precedence from vertical-slice/module order, request-array order, object iteration order, or function-call order.
-- Stable tie-breaking is non-economic only; same-instant constrained-resource contention that can change authoritative outcomes requires explicit dependency/contention semantics or must fail validation.
+- Never infer economic precedence from module order, request-array order,
+  object iteration order, or function-call order.
+- Stable tie-breaking is non-economic only. Same-instant constrained-resource
+  contention that can change authoritative outcomes requires explicit
+  dependency/contention semantics or must fail validation.
 - Do not invent funding, borrowing, transfers, sales, or overdraft behavior.
 - Every posted transaction must balance by currency.
 - Settlement must not re-recognize the underlying income or expense.
 - Internal owned-account transfers must preserve consolidated net worth.
 - Do not double-count account containers and underlying positions/assets.
 
-## Identity, provenance, and data
+Preserve stable domain identity, deterministic occurrence/idempotency identity,
+provenance, and the observed-versus-modeled data boundary. Never commit real
+personal financial data, secrets, or logs/screenshots containing financial
+information. Test fixtures must remain synthetic. Do not silently reinterpret
+old portable-model versions.
 
-Preserve stable domain identity, deterministic occurrence/idempotency
-identity, provenance, and the observed-versus-modeled data boundary.
+## Implementation workflow
 
-Never commit real personal financial data, secrets, or logs/screenshots
-containing financial information. Test fixtures must remain synthetic.
+Implement only the requested milestone or patch and prefer the smallest
+defensible diff that fully completes it. If financial behavior is undefined,
+surface the ambiguity rather than inventing semantics. Never change golden
+expectations merely to make a test pass.
 
-Do not silently reinterpret old portable-model versions.
+For PR handoffs using the standard `MODE:/PR:/EXPECTED_HEAD:` envelope, use
+`$pfm-pr-task`. Treat resolved architecture/semantics in that handoff as
+authoritative unless repository evidence directly contradicts them.
 
-## Change discipline
+Search before opening broad files. Prefer symbols, changed files, targeted
+`rg`, and narrow ranges. Do not reread PR history or large specifications for
+reassurance. Do not spawn subagents for routine implementation; use at most one
+for a clearly separable read-only/mechanical task.
 
-Implement only the requested milestone or patch, and complete that requested
-scope before treating the task as done.
+## Verification budget
 
-Prefer the smallest defensible diff that fully completes the requested scope.
-Do not treat partial implementation of a larger requested feature as completion
-merely because one local change passes its focused tests. Do not combine
-architectural restructuring, financial semantic changes, UI redesign, and
-persistence work unless explicitly required.
+During implementation run only the smallest directly relevant check. Prefer
+`npm run codex:test -- <target>` or `npm run codex:e2e -- <target>` so passing
+output stays compact. Do not rerun a passing check unless relevant code changed.
 
-If required financial behavior is undefined, do not invent it. Locate the
-governing specification or surface the ambiguity.
+GitHub CI is the authoritative broad pre-merge verification gate. Full suites,
+full E2E, build, typecheck, architecture validation, and specification
+validation are not routine local completion rituals. Use `$pfm-verify` only
+when explicitly requested, CI is unavailable/failing and needs local
+reproduction, or a broad change cannot be established with focused checks.
 
-Never change golden expectations merely to make a test pass.
+Repository hooks block broad verification unless a concrete reason is stated
+and the single command is prefixed with `CODEX_ALLOW_BROAD_VERIFY=1`.
 
-## Context discipline
+## Loop breaker and repository state
 
-Search before opening broad files.
+Repository state is a machine fact, not conversational memory. When a handoff
+supplies `EXPECTED_HEAD`, run:
 
-Prefer symbols, changed files, targeted `rg` searches, and narrow file ranges
-over repository-wide reading.
+`npm run codex:state -- --expected-head <sha> --require-clean`
 
-Do not inspect PR history or reread large specifications unless the current
-task requires them.
+before editing. Stop instead of guessing if the expected head does not match or
+the working tree is unexpectedly dirty.
 
-Do not spawn subagents for routine implementation. Use at most one subagent at
-a time, and only for a clearly separable read-only or mechanical task.
+For one PR/failure lineage, perform at most two autonomous repair rounds. Stop
+and notify the user before a third repair attempt, or immediately when:
 
-## Task sizing and context budget
+- the same CI gate fails again for the same underlying reason after two repairs;
+- no new commit/SHA progress was produced;
+- local/remote branch provenance cannot be reconciled;
+- the required fix crosses the stated architectural scope;
+- the governing specification is genuinely ambiguous; or
+- roadmap-defined user acceptance validation is required.
 
-A task is **surgical** when its prompt supplies a concrete diagnosis, expected
-behavior, and narrow implementation surface. Treat that contract as
-authoritative: inspect the named symbol/file and nearest tests first; normally
-start with no more than two production files and one relevant test file. Do
-not inspect architecture/specification documents, PR history, or invoke
-`$pfm-semantic-review`, `$pfm-architecture-review`, or `$pfm-spec-scope` for
-reassurance. Do not spawn a subagent. Stop discovery when the requested change
-is clear and run only focused verification.
+## Code Review Rules
 
-A **local** task affects one subsystem but needs discovery. Start with targeted
-symbol/search queries, then read only directly relevant implementation and
-tests. Use `$pfm-spec-scope` only for an unclear governing semantic rule;
-expand into adjacent files only for a concrete dependency. Do not automatically
-perform architecture or semantic audits.
-
-A task is **cross-cutting** only when it crosses architectural boundaries,
-changes financial semantics, or has unresolved normative questions. Only then
-do broader specification lookup or architecture/semantic review routinely fit.
-
-Fresh threads should use committed repository state, `AGENTS.md`, skills, and
-specifications as durable context rather than reconstructing chat history.
-User-provided handoffs may supply resolved intent and design decisions; validate
-only what is necessary to continue implementation rather than re-deriving
-already-resolved decisions. In an existing thread, the current explicit task
-supersedes stale exploratory plans. Reread a file only when the task needs it or
-it changed. Before expanding scope, identify the missing fact and perform the
-smallest lookup that answers it. Prefer symbols and narrow ranges; do not
-restate large architecture/specification sections in notes or final responses.
-When architecture or semantics are resolved in the prompt, implement them
-rather than re-deriving them.
-
-## Verification discipline
-
-Verification must be proportional to the change. Token and context cost are
-part of the engineering constraint: do not run broad checks merely because a
-task is ending.
-
-During implementation:
-
-- Run the smallest directly relevant test or check for the changed behavior.
-- Prefer one focused Vitest file/test name over a suite. Prefer one focused
-  Playwright file/test name only when browser behavior cannot be established
-  more cheaply.
-- Do not rerun a passing check unless code relevant to that check changed
-  afterward.
-- Documentation, agent-instruction, and configuration-only changes normally do
-  not require application tests. If Codex tooling itself changes, run only its
-  tooling self-test.
-- Run typecheck only when TypeScript APIs/types/import relationships changed or
-  a focused test exposes a type problem.
-- Run architecture/spec validation only when the relevant architecture/spec
-  surface changed.
-- Run a web build only when build configuration, exports, framework
-  integration, or compile-time UI integration changed.
-- Stop additional verification after one successful focused verification
-  command unless a concrete remaining risk justifies another check. This limits
-  verification work only; it does not mean the implementation task is complete.
-  Continue implementing until the user's requested scope and acceptance criteria
-  are fully satisfied.
-
-Do not invoke `$pfm-verify`, the full Vitest suite, full Playwright, build,
-typecheck, architecture validation, or specification validation as a routine
-completion ritual.
-
-GitHub CI is the authoritative broad pre-merge verification gate after push.
-Leave full-suite and full-E2E verification to CI unless:
-
-- the user explicitly requests full local verification;
-- CI is unavailable;
-- CI failed and the failing gate must be reproduced locally; or
-- the change is broad/cross-cutting enough that focused verification cannot
-  establish basic correctness.
-
-Repository hooks guard broad verification commands. Before running a guarded
-broad command, state the concrete reason in the working notes and prefix that
-single command with `CODEX_ALLOW_BROAD_VERIFY=1`. Never use the override merely
-to satisfy task completion.
-
-Examples of preferred focused commands:
-
-- `npm run codex:test -- test/scenarioCompilerBridge.test.ts`
-- `npx vitest run test/scenarioCompilerBridge.test.ts -t "specific behavior"`
-- `npm run test:e2e -- e2e/personal-mvp.spec.ts`
-
-Use `$pfm-verify` only as the explicit full-local-verification escalation
-path described by that skill.
-
-Keep the final report concise: changed files, material decisions, and
-verification status.
+- Flag changes that silently alter authoritative financial meaning, introduce
+  floating-point money/rates, invent funding behavior, or permit partial
+  committed-state mutation.
+- Flag outcome-affecting ordering that relies on incidental iteration/module
+  order instead of explicit dependency/contention semantics.
+- Flag UI/cache behavior that can present a stale derived forecast as current
+  after authoritative inputs change.

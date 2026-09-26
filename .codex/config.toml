@@ -1,22 +1,23 @@
 #:schema https://developers.openai.com/codex/config-schema.json
 
-# Strong default for financial-engine implementation. A per-session model
-# selection can still explicitly choose a cheaper model for simpler work.
+# Default for first-pass financial-engine implementation. Per-session model
+# selection should route surgical/mechanical patches to cheaper models.
 model = "gpt-5.6"
 model_reasoning_effort = "medium"
 plan_mode_reasoning_effort = "low"
 model_reasoning_summary = "none"
 model_verbosity = "low"
 
-# Guard against accidentally growing always-loaded repository instructions.
-project_doc_max_bytes = 16384
+# Keep always-loaded repository guidance bounded; specialized workflows live
+# in skills and directory-local AGENTS.md files.
+project_doc_max_bytes = 12288
 
 # Version-controlled specifications are the durable project memory.
 [memories]
 use_memories = false
 generate_memories = false
 
-# Keep delegation available without allowing token-expensive fan-out.
+# Keep delegation available without token-expensive fan-out.
 [agents]
 enabled = true
 max_concurrent_threads_per_session = 1
@@ -24,8 +25,8 @@ default_subagent_model = "gpt-5.6-luna"
 default_subagent_reasoning_effort = "low"
 interrupt_message = false
 
-# Rewrite only the broad, noisy repository test command. Targeted Vitest
-# commands remain untouched during implementation.
+# Enforce the repository verification budget and route focused Vitest/
+# Playwright commands through compact-output wrappers.
 [[hooks.PreToolUse]]
 matcher = "^Bash$"
 
