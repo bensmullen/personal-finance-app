@@ -10,7 +10,7 @@
     {
       "id": "system-software-architecture",
       "path": "docs/architecture/system-software-architecture.md",
-      "version": "1.3.3-draft",
+      "version": "1.3.4-draft",
       "authority": "governance",
       "version_source": "markdown-version-header",
       "status": "architecture-baseline",
@@ -377,9 +377,52 @@
       ]
     },
     {
+      "id": "data-onboarding-and-import",
+      "path": "docs/specs/capabilities/data-onboarding-and-import.md",
+      "version": "0.1.0-draft",
+      "authority": "level-3",
+      "version_source": "markdown-version-header",
+      "status": "post-pr21-outline",
+      "parent_spec_ids": [
+        "system-software-architecture"
+      ],
+      "requirement_id_policy": "required",
+      "requirement_prefix": "PFA-ONB",
+      "domains": [
+        "onboarding",
+        "import",
+        "data-entry",
+        "ai-assistance",
+        "private-alpha"
+      ],
+      "keywords": [
+        "onboarding",
+        "import",
+        "CSV",
+        "statement",
+        "document extraction",
+        "voice",
+        "conversation",
+        "candidate fact",
+        "provenance",
+        "time to first useful forecast",
+        "manual entry",
+        "private alpha"
+      ],
+      "applies_to": [
+        "personal-mvp",
+        "private-alpha"
+      ],
+      "depends_on_spec_ids": [
+        "canonical-financial-schema",
+        "executable-financial-semantics",
+        "application-ux"
+      ]
+    },
+    {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.1.4-draft",
+      "version": "0.1.5-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -408,7 +451,11 @@
         "realistic household",
         "stress fixture",
         "cloud execution review",
-        "hybrid execution"
+        "hybrid execution",
+        "onboarding",
+        "assisted import",
+        "time to first useful forecast",
+        "voice intake"
       ],
       "applies_to": [
         "personal-mvp",
@@ -420,7 +467,8 @@
         "probabilistic-forecasting",
         "application-ux",
         "tax-engine",
-        "portfolio-concentration-equity-compensation"
+        "portfolio-concentration-equity-compensation",
+        "data-onboarding-and-import"
       ]
     }
   ],
