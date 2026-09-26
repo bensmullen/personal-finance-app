@@ -1,6 +1,6 @@
 # Performance, Observability & Deterministic Execution
 
-**Version:** 0.1.1-draft
+**Version:** 0.1.2-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-PERF
 
@@ -64,6 +64,18 @@ Production-scale stochastic simulation SHALL NOT be layered directly on the curr
 
 Stochastic benchmarks SHALL record realization count, wall-clock duration, aggregate CPU/execution time where measurable, worker concurrency, paths per second, peak/representative memory where measurable, and execution location (browser/local/server). If execution later incurs metered service cost, the benchmark/result telemetry SHOULD expose the provider-neutral billing units needed to calculate per-run cost without embedding a provider price in financial semantics.
 
+### PFA-PERF-014 — Accuracy-constrained compute budget
+
+A routine stochastic forecast SHALL be treated as a budgeted computation: it must satisfy both an explicitly defined statistical/convergence target and an explicitly defined resource/cost budget. The orchestration layer SHALL support stopping, progressive refinement, or additional sampling based on convergence evidence rather than relying on a fixed high realization count by default.
+
+Exact time, CPU, memory, and metered-cost budgets SHALL be established from R1/R6 benchmark data before production/private-alpha stochastic execution is declared ready. The product architecture SHALL reject a design in which an ordinary user forecast routinely requires multi-dollar cloud compute. Exceptional high-cost analyses, if ever supported, SHALL be explicit opt-in operations rather than the normal refresh path.
+
+### PFA-PERF-015 — Execution-placement portability
+
+The stochastic execution contract SHALL remain provider-neutral and capable of running on a supported local/browser/desktop execution environment or on server/cloud workers without changing financial semantics, realization identity, or aggregate-result meaning. Execution placement MAY be selected using device capability, forecast size, latency target, concurrency, privacy, and measured cost.
+
+The financial engine SHALL NOT require a cloud-only dependency merely to execute stochastic mathematics. Local execution SHOULD be preferred when it meets the applicable latency, memory, thermal/battery, and convergence budgets; cloud execution MAY be used when local execution would violate those budgets or product service requirements.
+
 ## 3. Initial performance dashboard
 
 A developer/advanced performance surface should report the latest run and rolling p50/p95/max where meaningful for:
@@ -83,7 +95,7 @@ The dashboard is a diagnostic surface, not part of normal novice navigation.
 
 ## 4. Budget policy
 
-Absolute performance budgets SHALL be set after baseline instrumentation on representative hardware/runtime rather than invented before measurement. The first implementation milestone SHALL record baselines and propose explicit current-snapshot, interactive-forecast, render, and stochastic-throughput budgets in a revision of this specification.
+Absolute performance and compute-cost budgets SHALL be set after baseline instrumentation on representative hardware/runtime rather than invented before measurement. The first implementation milestones SHALL record baselines and propose explicit current-snapshot, interactive-forecast, render, stochastic-throughput, memory, and provider-neutral compute-unit budgets in a revision of this specification. For metered execution, the later deployment layer SHALL translate those provider-neutral units into observed currency cost per run and track p50/p95 cost alongside latency and convergence.
 
 ## 5. Verification intent
 
