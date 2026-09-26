@@ -1,6 +1,6 @@
 # Application UX & Financial Comprehension
 
-**Version:** 0.1.1-draft
+**Version:** 0.1.2-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-UX
 
@@ -51,6 +51,18 @@ Financial charts, tables, forms, status messages, and drill-down interactions SH
 The product SHALL distinguish a fast deterministic preview from the higher-cost stochastic forecast. Deterministic results SHOULD refresh automatically after validated committed/debounced edits. A stochastic rerun SHALL require an explicit user action against the confirmed/saved model state rather than firing on every field edit.
 
 The forecast visualization SHALL allow the user to inspect deterministic and probabilistic views of the same material metrics, whether as separate modes, overlays, or another comparably clear presentation. If model inputs have changed since the last stochastic run, that stochastic result MAY remain visible only with an explicit stale/out-of-date state and its source model/calibration metadata. The last successful result SHALL remain visible while a replacement run executes and SHALL be replaced only after successful completion.
+
+### PFA-UX-011 — Forecast Basis comparability
+
+The product SHALL visibly distinguish controlled apples-to-apples scenario comparisons from historical snapshots calculated under different assumptions. When compared results do not share the required Forecast Basis, the UI SHALL identify the material basis differences (for example calibration date/version, tax-rule set, data cutoff, or horizon) and SHALL NOT present the raw delta as though only the user's decision changed.
+
+For decision comparison, the product SHOULD offer an action to rerun selected saved plan/scenario definitions under one common current or explicitly selected Forecast Basis. Historical "what did my forecast show then?" views MAY remain available but SHALL be labeled as historical/non-normalized comparisons.
+
+### PFA-UX-012 — Saved forecast management
+
+The UI SHALL distinguish saved plan/scenario definitions from saved stochastic forecast snapshots. A plan may remain saved even when its derived forecast expires or is deleted.
+
+User-facing forecast-snapshot quotas SHOULD be expressed as a simple saved-snapshot count. Recovery-window results SHALL be distinguishable from explicitly pinned/saved snapshots, and the UI SHOULD provide a straightforward restore action during the recovery period. Storage-byte quotas and deduplication are backend safeguards and SHOULD NOT be exposed as the primary user mental model unless a product plan later requires it.
 
 ## 3. Near-term cleanup scope
 
