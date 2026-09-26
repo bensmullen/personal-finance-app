@@ -1,6 +1,6 @@
 # Probabilistic Forecasting
 
-**Version:** 0.1.1-draft
+**Version:** 0.1.2-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-PROB
 
@@ -58,6 +58,38 @@ A persisted stochastic forecast SHALL reference the exact canonical/model calcul
 
 When inputs change, the latest successful stochastic result MAY remain visible only as explicitly stale. Triggering a replacement run SHALL NOT destroy the last successful result. The new result becomes current atomically only after successful completion; failed, cancelled, or superseded runs SHALL NOT replace it. After success, the former current result MAY become the one bounded predecessor. The product MAY support user-pinned historical forecast snapshots as an explicit feature; pinned results are outside the automatic two-generation retention limit.
 
+### PFA-PROB-012 — Forecast Basis identity
+
+Every retained or compared forecast SHALL identify a deterministic Forecast Basis fingerprint representing the common exogenous/modeling basis under which scenario decisions are evaluated. The Forecast Basis SHALL include, where applicable: opening authoritative-state/model snapshot identity, asOf/data cutoff, horizon/period structure, base currency, immutable market/economic calibration fingerprint, tax-rule-set fingerprints, non-scenario assumptions/policies, stochastic-process configuration, master seed, stochastic cohort/realization-set identity, and engine/spec/model-format versions.
+
+Scenario decision overlays SHALL remain separate from the Forecast Basis. A change to retirement date, contribution rate, purchase decision, debt-payment decision, or another user-controlled scenario choice does not by itself create a different Forecast Basis.
+
+### PFA-PROB-013 — Comparable versus historical scenario comparisons
+
+A scenario comparison SHALL be labeled apples-to-apples only when the compared runs share the required Forecast Basis and, for stochastic comparisons, the common-random-number cohort required by PFA-PROB-009. If retained historical results use different calibration, tax rules, data cutoffs, horizons, or other Forecast Basis inputs, the product MAY display them as historical snapshots but SHALL NOT present their raw delta as a controlled decision comparison.
+
+To compare two saved plan/scenario definitions under current assumptions, the application SHALL support rerunning both definitions against one selected common Forecast Basis. The resulting normalized comparison is distinct from a historical "what did the system show then versus now" comparison.
+
+### PFA-PROB-014 — Recovery window and retained-result quotas
+
+Superseded unpinned stochastic aggregate results SHOULD remain recoverable for a short grace period before garbage collection. The initial product policy SHOULD use a seven-day grace period, configurable without changing financial semantics. Failed, cancelled, or superseded-in-flight runs do not become retained successful results.
+
+User-facing limits on explicitly saved/pinned stochastic forecast snapshots SHOULD be expressed primarily as a simple count rather than storage bytes. The persistence layer SHALL also enforce a backend byte/storage quota as a safety/abuse bound and SHALL deduplicate identical retained artifacts by deterministic content/result fingerprints where practical. Exact count and byte quotas are deployment/product policy and remain TBD until representative result sizes are measured.
+
+### PFA-PROB-015 — Persist aggregates, not the realization warehouse
+
+A retained stochastic result SHALL normally store only the information needed to reconstruct the user-facing forecast and prove/reproduce its basis: per-period aggregate distributions/percentiles for supported metrics, threshold/event probabilities, liquidity-shortfall statistics, selected decision metrics, realization count, convergence/sampling metadata, stochastic configuration/cohort identities, Forecast Basis fingerprint, calculation/model fingerprint, calibration/tax-rule fingerprints, scenario identity, and engine/spec versions.
+
+The system SHALL NOT persist every realization's full monthly state, transactions, accounting postings, or calculation traces by default. Full realization data is ephemeral working data and SHOULD be discarded after bounded aggregation unless an explicit diagnostic workflow requires temporary retention.
+
+The system MAY retain identities and compact summaries for a small number of representative realizations (for example downside/central/upside paths). When the compatible engine, referenced Forecast Basis, and calibration/rule artifacts remain available, detailed representative paths SHOULD be regenerated on demand from their deterministic realization identities rather than permanently storing all details. A pinned long-lived result MAY retain a compact representative-path summary when needed to remain understandable after an old engine version is no longer executable.
+
+### PFA-PROB-016 — Plan definitions are durable; forecast results are derived
+
+A saved plan/scenario definition SHALL be persisted independently from any stochastic result produced from it. Deleting, expiring, or replacing a derived forecast result SHALL NOT delete the user's plan/scenario definition.
+
+This separation SHALL allow a saved plan to be rerun later under a new common Forecast Basis without mutating the historical plan definition, and SHALL allow multiple retained forecast snapshots to reference the same plan definition without duplicating the plan configuration.
+
 ## 3. Initial modeling scope
 
 The first useful probabilistic layer should prioritize:
@@ -91,4 +123,5 @@ Before implementation reaches production use, define:
 - representative-path selection;
 - permitted variance-reduction/quasi-random techniques;
 - incomplete/invalid realization aggregation rules;
-- exact bounded-retention/garbage-collection policy for superseded unpinned result summaries.
+- final production recovery-window duration and saved-snapshot count/byte quotas after representative storage measurements;
+- representative-path selection and long-lived pinned-summary policy when historical engine versions are no longer executable.
