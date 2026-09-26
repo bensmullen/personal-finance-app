@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.1.3-draft
+**Version:** 0.1.4-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -74,6 +74,8 @@ Deliver:
 - initial comparison of feasible local/browser execution versus server/cloud execution on representative devices.
 
 Do not set hard latency or currency-cost budgets until baseline data exists. After R1/R6 measurements exist, define explicit p50/p95 latency, convergence, memory, and per-run compute-cost budgets. Before private alpha, every enabled stochastic execution placement must have measured or defensible estimated marginal currency cost per rerun for the representative fixtures/quality levels, and metered paths must report representative/p50/p95 cost where sample volume permits.
+
+If the realistic and/or computationally complex/stress household materially miss the approved local execution budgets on representative supported hardware, R1/R6 closeout SHALL explicitly review whether further local optimization, cloud/server execution, or a hybrid placement policy is appropriate. The review must include cost-per-rerun and privacy/operational tradeoffs; it must not assume cloud execution is automatically the answer.
 
 **User validation:** not normally required. Objective timing and correctness are automated/engineering verification.
 
