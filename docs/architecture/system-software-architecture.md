@@ -1,6 +1,6 @@
 # Personal Finance App — System / Software Architecture Specification
 
-**Version:** 1.3.3-draft
+**Version:** 1.3.4-draft
 **Status:** Architecture baseline  
 **Namespace:** `pfm`  
 **Applies to:** Prototype → Personal MVP → Private Alpha  
@@ -1617,16 +1617,18 @@ Bank aggregation SHALL NOT be implemented in the current engine stage.
 Recommended sequence:
 
 ```text
-Manual input
+Guided structured/manual input + validated model import/export
     ↓
-Validated model import/export
+Assisted file/document/conversational intake with candidate-fact review
     ↓
-CSV transaction import
+Targeted CSV/holdings/statement adapters for actual alpha needs
     ↓
-Personal usefulness validation
+Measured private-alpha onboarding usefulness validation
     ↓
-Bank aggregation
+Bank aggregation only if/when its incremental value justifies the complexity
 ```
+
+Field-by-field manual entry is a fallback, not the intended private-alpha onboarding experience. Before private alpha, the project SHALL provide a measured assisted-input path that can reach a useful forecast without requiring users to transcribe their entire financial life.
 
 Bank integrations introduce an independent complexity domain:
 
@@ -1676,13 +1678,35 @@ AI MAY assist with:
 
 - categorization;
 - model entry;
+- document/CSV interpretation;
+- text or voice onboarding conversations;
 - natural-language queries;
 - scenario creation;
 - result explanation.
 
+For onboarding/import, AI SHALL operate through a candidate-fact boundary:
+
+```text
+document / CSV / voice / text
+        ↓
+parser and/or AI interpretation
+        ↓
+typed candidate facts + provenance + ambiguity
+        ↓
+deterministic validation / conflict checks
+        ↓
+user confirmation where required
+        ↓
+canonical model mutation
+```
+
+AI or other probabilistic extraction SHALL NOT directly write authoritative financial state or guess missing material facts merely to complete a model. Approximate user statements SHALL remain distinguishable from exact observed/imported values.
+
 AI SHALL NOT become the source of authoritative financial arithmetic.
 
 Where AI explains a numeric result, the explanation SHOULD be grounded in deterministic engine outputs and available calculation lineage.
+
+Any third-party AI/extraction path receiving real private-alpha financial documents, transcripts, or facts SHALL undergo the applicable privacy/data-handling review before use.
 
 ---
 
@@ -1724,6 +1748,9 @@ Add npm workspaces only when module boundaries have stabilized enough to justify
 - migration tooling
 - managed authentication
 - server-side application layer
+- secure onboarding/import upload and processing boundary
+- productionized supported adapters from the pre-alpha assisted-onboarding workstream
+- privacy-safe onboarding instrumentation
 - comprehensive end-to-end testing
 - error monitoring
 - structured logging with financial-data redaction
@@ -2336,11 +2363,11 @@ Authentication is optional if the app remains strictly local/private and not sha
 
 ## Stage 3 — Private alpha
 
-Unchanged: authentication, server persistence, household authorization, backups, privacy controls, and monitoring are required before friends/family use a shared service.
+Authentication, server persistence, household authorization, backups, privacy controls, monitoring, and an efficient assisted-onboarding path are required before friends/family use the shared service.
 
 Goal:
 
-> Friends and family can each safely maintain their own financial model.
+> Friends and family can safely and efficiently create, maintain, and use their own financial model without burdensome manual transcription.
 
 Required:
 
@@ -2352,7 +2379,14 @@ Required:
 - server-side persistence;
 - auditability;
 - privacy controls;
-- basic monitoring.
+- basic monitoring;
+- guided progressive onboarding built around a minimum viable household model;
+- at least one accelerated bulk/file import or extraction path suitable for the initial alpha cohort;
+- candidate-fact validation/review for document, CSV, or conversational extraction;
+- privacy-safe onboarding telemetry;
+- a measured time-to-first-useful-forecast/manual-effort target established in pre-alpha dry runs and reconfirmed end-to-end on the secured deployed service before invitations are sent.
+
+Production bank aggregation is not required for Stage 3 if the measured assisted workflow meets the approved onboarding target.
 
 ## Stage 4 — Public production
 
@@ -3316,11 +3350,14 @@ Record at minimum:
 - component-level performance at realistic and stress horizons;
 - engine versus application versus UI latency;
 - confusing workflows;
+- onboarding time to first useful forecast and manual-entry burden;
+- unsupported or fragile import/document formats;
+- extraction corrections, conflicts, and high-value missing inputs;
 - stochastic-model gaps, including correlated market, issuer, compensation, and life uncertainty.
 
-The controlled post-PR21 sequence is defined in docs/specs/roadmap/post-pr21-implementation-roadmap.md. Performance instrumentation and critical deterministic responsiveness work are prerequisites for production-scale stochastic simulation.
+The controlled post-PR21 sequence is defined in docs/specs/roadmap/post-pr21-implementation-roadmap.md. Performance instrumentation and critical deterministic responsiveness work are prerequisites for production-scale stochastic simulation. The O1 onboarding/import workstream SHALL also run before the stabilization-exit gate so assisted intake is measured and improved before secure multi-user infrastructure is finalized.
 
-Private-alpha infrastructure begins only after this usage demonstrates that the Personal MVP is genuinely useful and the applicable stabilization gates are satisfied.
+Private-alpha infrastructure begins only after this usage demonstrates that the Personal MVP is genuinely useful, intended users can reach a useful forecast without burdensome manual transcription in representative dry runs, and the applicable stabilization gates are satisfied.
 
 ---
 
@@ -3336,7 +3373,7 @@ PR D  HouseholdMembership authorization and tenant isolation
 PR E  Security/privacy/redaction integration tests
 PR F  Server deployment
 PR G  Backup/export/delete lifecycle
-PR H  CSV actual-transaction import
+PR H  Assisted onboarding/import productionization
 ```
 
 ## PR A — Reconciled/versioned PostgreSQL migrations
@@ -3369,11 +3406,17 @@ Deploy web/application/database services.
 
 Operational data lifecycle.
 
-## PR H — CSV transaction import
+## PR H — Assisted onboarding/import productionization
 
-Automate actual-data ingestion incrementally using source identity/idempotency and provenance contracts already established by the engine architecture.
+Wire the approved pre-alpha O1 onboarding flow through the authenticated, household-authorized, server-persistence, privacy, and deletion/recovery boundaries.
 
-Bank aggregation remains after CSV/manual actual-data validation unless a later ADR changes that order.
+Productionize the smallest set of accelerated adapters that the intended alpha cohort actually needs. This MAY include generic transaction CSV, holdings/balance exports, supported financial statements, paystubs, mortgage/loan statements, portable model import, and guarded text/voice conversational intake.
+
+All probabilistic extraction remains candidate-fact generation: deterministic validation, provenance, duplicate/conflict handling, and user review/confirmation occur before authoritative model mutation. Imported actual-data ingestion SHALL reuse the source identity/idempotency contracts already established by the engine architecture.
+
+Before private-alpha invitations are sent, run an end-to-end onboarding dry run through the deployed service and confirm that the approved time-to-first-useful-forecast/manual-effort target still holds with the secure productionized path.
+
+Bank aggregation remains after assisted/file import validation unless a later ADR shows that it is necessary to meet the onboarding target or otherwise provides sufficient incremental value to justify its complexity.
 
 ---
 
