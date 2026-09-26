@@ -1,6 +1,6 @@
 # Personal Finance App — System / Software Architecture Specification
 
-**Version:** 1.3.2-draft
+**Version:** 1.3.3-draft
 **Status:** Architecture baseline  
 **Namespace:** `pfm`  
 **Applies to:** Prototype → Personal MVP → Private Alpha  
@@ -2066,11 +2066,13 @@ Before private alpha:
 
 ---
 
-# 42. Golden Household strategy
+# 42. Synthetic household fixture strategy
 
-Maintain deterministic synthetic fixtures under a dedicated testing area.
+Maintain distinct deterministic/synthetic fixtures under a dedicated testing area. One fixture SHALL NOT be expected to serve every correctness, realism, and performance purpose.
 
-The principal Golden Household SHALL eventually include:
+## 42.1 Golden Household
+
+The principal Golden Household remains intentionally understandable and checkpoint-oriented. It SHALL eventually include:
 
 ```text
 2 people
@@ -2100,9 +2102,25 @@ Long-term horizon
 
 Golden files SHALL test economic outcomes, not incidental internal implementation shape.
 
-Golden households SHALL never contain real personal financial data.
-
 At least one golden scenario SHALL intentionally encounter insufficient liquidity and assert the declared funding/constraint semantics.
+
+## 42.2 Realistic household forecast fixture
+
+Maintain a separate realistic synthetic household whose purpose is end-to-end forecasting realism and broad capability coverage. As capabilities become supported, it SHOULD include multiple people; multiple income and expense streams; cash, taxable, and retirement accounts; diversified investments; a non-financial asset; debt/mortgage; applicable taxes; funding policies; meaningful life/retirement events; and multiple decision scenarios.
+
+This fixture SHALL deliberately exercise a materially broader set of supported primitives, rule bindings, event mechanics, scenario overlays, and forecast outputs than the Golden Household. It is not merely the Golden Household with larger balances.
+
+## 42.3 Computationally complex / stress household
+
+Maintain a financially coherent synthetic household intended to stress execution complexity. It SHOULD exercise high supported counts of entities, positions, flows, events, dependencies, rules, scenarios, long forecast horizons, tax calculations, and stochastic processes/realizations when those capabilities exist.
+
+The stress fixture MAY use artificial scale but SHALL remain semantically valid. It SHALL be suitable for scheduler/contention profiling, worker parallelism, memory/aggregation measurements, convergence testing, and cost-per-rerun benchmarking.
+
+## 42.4 Coverage inventory and privacy
+
+The realistic and stress fixtures SHALL expose a lightweight machine-readable coverage inventory, or equivalent generated report, showing the important canonical objects, primitives, rules, events, scenarios, and major engine mechanics exercised. Coverage gaps SHALL remain visible as capabilities evolve.
+
+All synthetic household fixtures SHALL contain no real personal financial data.
 
 ---
 
