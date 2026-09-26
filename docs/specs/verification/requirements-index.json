@@ -780,6 +780,61 @@
       ]
     },
     {
+      "id": "PFA-PERF-016",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-013",
+        "PFA-PERF-014",
+        "PFA-PERF-015"
+      ],
+      "verification_methods": [
+        "benchmark",
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future deployment/runtime adapters",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-PERF-017",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-003",
+        "PFA-PERF-004"
+      ],
+      "verification_methods": [
+        "test",
+        "benchmark",
+        "inspection"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "test/",
+        "e2e/",
+        "synthetic fixtures",
+        "benchmark fixtures"
+      ]
+    },
+    {
       "id": "PFA-PROB-001",
       "spec_id": "probabilistic-forecasting",
       "requirement_status": "draft",
