@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.1.1-draft
+**Version:** 0.1.2-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -9,6 +9,8 @@
 This roadmap controls stabilization and forecasting work after PR21 and before private-alpha infrastructure. Milestone IDs are planning identities; GitHub PR numbers may differ.
 
 The sequence intentionally measures and improves the current deterministic path before multiplying it through stochastic simulation. It also separates engineering enablement from user-facing completeness: stochastic infrastructure may be developed against synthetic calibration and a narrow tax subset, while affected user-facing outputs remain capability-gated until their required calibration/tax semantics are ready.
+
+A routine stochastic forecast is a budgeted computation product. Accuracy/convergence and compute cost are joint requirements. The implementation SHALL preserve local execution where it is efficient enough and SHALL remain portable to server/cloud workers when local execution cannot meet latency, memory, device, or product-service constraints. Routine forecasts that require multi-dollar cloud compute per user rerun are not an acceptable steady-state design; exact budgets are established from measured R1/R6 data.
 
 ## 2. Dependency sequence
 
@@ -56,7 +58,7 @@ T1B Advanced/specialized tax domains progress with the capabilities that need
 
 ## 3. R1 — Performance instrumentation and baselines
 
-Implement PFA-PERF-001 through PFA-PERF-004 and PFA-PERF-013 foundations first.
+Implement PFA-PERF-001 through PFA-PERF-004 and PFA-PERF-013 through PFA-PERF-015 foundations first.
 
 Deliver:
 
@@ -65,9 +67,11 @@ Deliver:
 - Golden, realistic-large, and stress synthetic performance fixtures;
 - repeatable benchmark capture;
 - explicit attribution of engine, application/worker, serialization, React/chart, and explanation/render cost;
-- baseline measurements before optimization.
+- baseline measurements before optimization;
+- provider-neutral CPU/worker/memory/throughput accounting suitable for estimating local or cloud execution cost;
+- initial comparison of feasible local/browser execution versus server/cloud execution on representative devices.
 
-Do not set hard latency budgets until baseline data exists.
+Do not set hard latency or currency-cost budgets until baseline data exists. After R1/R6 measurements exist, define explicit p50/p95 latency, convergence, memory, and per-run compute-cost budgets.
 
 **User validation:** not normally required. Objective timing and correctness are automated/engineering verification.
 
@@ -146,6 +150,12 @@ Begin after R2 and develop in parallel with R3/C1/R5/R6.
 
 T1A is not “all tax law.” It is the deterministic per-realization tax coverage materially required by the households and outputs targeted for personal use/private alpha. Tax-affected stochastic outputs remain blocked/scoped until their required tax semantics are covered.
 
+For the actual private-alpha cohort, implement the materially applicable subset of PFA-TAX-010: federal ordinary income tax with filing status/progressive brackets, standard/basic deductions, employee payroll taxes, applicable state/local income taxes, taxable interest/dividends including qualified-dividend treatment, realized short/long-term capital gains, basic traditional/Roth retirement tax treatment, NIIT where material, cash-flow-relevant withholding/settlement, and RMD/retirement-distribution mechanics when the age/horizon makes them material.
+
+Property tax may remain a modeled household expense and sales tax may remain embedded in spending assumptions when no separate tax-engine interaction is required. Self-employment/business, AMT, complex credits/phaseouts, rental/pass-through, foreign, estate/gift, and equity-compensation-specific taxation remain T1B unless an alpha participant requires them.
+
+Create the reusable tax-rule catalog boundary from PFA-TAX-011. During personal/local development the catalog may be version-controlled app data. Before/within shared private-alpha persistence, common effective-dated rule definitions should be stored once per version/content fingerprint, while household models store facts/elections/references rather than duplicate copies of tax law. Executable tax algorithms remain in the rules engine.
+
 Examples of tax-independent results may continue to display in accordance with PFA-TAX-008. Objective output validity SHALL be driven by dependencies/capability diagnostics rather than a global all-or-nothing tax switch.
 
 ### T1B — Advanced/specialized tax domains
@@ -180,14 +190,21 @@ Add:
 - common-random-number cohorts for paired scenario comparison;
 - streaming/online distribution aggregation;
 - bounded memory;
-- progressive refinement/convergence metadata;
-- representative-path capture;
+- progressive refinement and stopping based on convergence evidence rather than a permanently fixed high realization count;
+- representative-path identity/summary capture;
 - stochastic performance/resource-cost telemetry;
-- cancellation/supersession.
+- cancellation/supersession;
+- provider-neutral execution placement so the same stochastic contract can run locally when practical or on cloud/server workers when required.
 
-Persistence at this stage SHALL be bounded: do not retain every path or every rerun. Persist the current successful aggregate result plus at most one immediately preceding successful aggregate per saved scenario/configuration, together with reproducibility metadata. Keep the last good result current until a replacement completes successfully; failed/cancelled runs never evict it. Older unpinned aggregates are discarded. Calibration snapshots are content-addressed/deduplicated separately and retained only while referenced or otherwise required by retention policy.
+Persistence at this stage SHALL be bounded: do not retain every path or every rerun. Persist the current successful aggregate result plus, at most, one immediately preceding successful aggregate per saved scenario/configuration, together with reproducibility metadata. Keep the last good result current until a replacement completes successfully; failed/cancelled runs never evict it.
 
-Initial path counts and convergence budgets shall be established empirically.
+Superseded unpinned successful aggregates SHOULD enter an initial seven-day recovery grace period before garbage collection. Exact production duration remains configurable. Explicitly pinned/saved stochastic snapshots are retained separately and SHALL be subject to a simple user-facing saved-snapshot count limit plus a backend byte quota. Exact count/byte limits are set after representative storage measurements. Identical artifacts SHOULD be deduplicated by deterministic fingerprints.
+
+Retained stochastic results SHALL store aggregate distributions/percentiles, threshold and liquidity-shortfall probabilities, decision metrics, convergence/sample metadata, and exact model/Forecast Basis/calibration/tax/stochastic/version identities. They SHALL NOT store the full transaction/state/trace history for every realization by default. Detailed representative paths SHOULD be regenerated on demand from retained realization identities when compatible engine/rule/calibration artifacts remain available; pinned long-lived results may additionally retain compact representative-path summaries.
+
+Calibration and tax-rule artifacts are content-addressed/deduplicated separately and retained while referenced or required by retention policy. Saved plan/scenario definitions are durable configuration and SHALL be stored independently of derived forecast results.
+
+Initial path counts, convergence thresholds, and compute/cost budgets shall be established empirically. A routine forecast that cannot meet both statistical and compute budgets SHALL be optimized, progressively refined, narrowed, or capability-gated rather than normalized as an expensive cloud operation.
 
 **User validation:** not normally required; orchestration correctness/reproducibility is automated.
 
@@ -250,7 +267,7 @@ If R9 is not completed before private alpha because the cohort does not require 
 
 ## 14. R10 — Probabilistic decision UX
 
-Implement PFA-UX-010 and make probability/distribution outputs understandable:
+Implement PFA-UX-010 through PFA-UX-012 and make probability/distribution outputs understandable:
 
 - deterministic and stochastic views of the same material metrics;
 - deterministic preview auto-refresh after validated committed/debounced edits;
@@ -261,7 +278,11 @@ Implement PFA-UX-010 and make probability/distribution outputs understandable:
 - scenario probability deltas;
 - calibration/model-assumption disclosure;
 - explicit stale status when model inputs changed after the last stochastic run;
-- drill-down to representative deterministic paths/explanations.
+- Forecast Basis visibility sufficient to distinguish apples-to-apples comparisons from historical snapshots;
+- ability to rerun two saved plan/scenario definitions under one selected common Forecast Basis for normalized decision comparison;
+- clear distinction between a durable saved plan definition and a pinned stochastic forecast snapshot;
+- saved-snapshot/recovery management using a count-oriented user model rather than exposing backend byte accounting;
+- drill-down to regenerated or retained representative deterministic paths/explanations.
 
 Retain deterministic views for immediacy, audit, and explanation; do not present them as the single expected future.
 
@@ -273,14 +294,14 @@ This is the exit gate from the post-PR21 personal-use stabilization period, not 
 
 Before private-alpha infrastructure:
 
-- performance budgets are documented and met for supported realistic use;
+- performance, convergence, memory, and per-run compute-cost budgets are documented and met for supported realistic use;
 - current-state UI is responsive;
 - deterministic forecasts do not block the UI;
 - stochastic forecasts are reproducible and convergence metadata is interpretable;
-- common-random-number scenario comparison works where applicable;
+- common-random-number scenario comparison works where applicable and comparison UX distinguishes shared-Forecast-Basis decision comparisons from non-normalized historical snapshots;
 - user-facing stochastic outputs have applicable tax/calibration completeness;
 - major UAT editor/UX defects are resolved;
-- caching/persistence cannot make stale results look current or destroy the last successful result on failed rerun;
+- caching/persistence cannot make stale results look current or destroy the last successful result on failed rerun; saved plans are independent from derived results; recovery/grace-period behavior, snapshot limits, deduplication, and aggregate-only stochastic storage are exercised;
 - A1 concentration safeguards exist;
 - full R9 is completed if the initial alpha cohort requires it, otherwise it remains an explicit tracked TODO;
 - privacy/persistence boundaries remain suitable for personal use.
