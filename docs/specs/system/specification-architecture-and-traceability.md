@@ -95,7 +95,7 @@ The traceability index is intentionally lightweight. It is not a hand-maintained
 
 Parent requirement IDs are reserved for true requirement decomposition/allocation. Cross-capability prerequisites use depends_on_requirement_ids and SHALL NOT be represented as parentage.
 
-Verification methods are inspection, analysis, test, benchmark, or demonstration and MAY be multiple per requirement. Verification owners distinguish automated checks, agent/human engineering review, and user acceptance validation. Verification state distinguishes planned, partial, and implemented coverage.
+Verification methods are inspection, analysis, test, benchmark, measurement, or demonstration and MAY be multiple per requirement. Use measurement when the verification is an observed product/operational metric rather than a controlled performance benchmark. Verification owners distinguish automated checks, agent/human engineering review, and user acceptance validation. Verification state distinguishes planned, partial, and implemented coverage.
 
 A requirement may have multiple implementation surfaces and verification references. Automated checks SHALL be credited only for the behavior they actually establish.
 
