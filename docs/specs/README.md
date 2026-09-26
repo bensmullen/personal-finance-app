@@ -27,6 +27,7 @@ The architecture/governance documents control decomposition and retrieval but do
 - capabilities/portfolio-concentration-and-equity-compensation.md
 - capabilities/application-ux.md
 - capabilities/tax-engine.md
+- capabilities/data-onboarding-and-import.md
 
 ## Planning and verification
 
