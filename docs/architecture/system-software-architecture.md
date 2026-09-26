@@ -1,6 +1,6 @@
 # Personal Finance App — System / Software Architecture Specification
 
-**Version:** 1.2.2-draft
+**Version:** 1.3.4-draft
 **Status:** Architecture baseline  
 **Namespace:** `pfm`  
 **Applies to:** Prototype → Personal MVP → Private Alpha  
@@ -10,7 +10,9 @@
 
 # 1. Purpose
 
-This document defines the software architecture, repository organization, technology direction, engineering standards, validation strategy, data-boundary rules, and implementation sequence for the Personal Finance App.
+This document defines the top-level software architecture, repository organization, technology direction, engineering standards, validation strategy, data-boundary rules, and maturity gates for the Personal Finance App.
+
+Detailed capability requirements SHALL be decomposed into the specification tree rooted at docs/specs/. This document is the architecture/governance parent, not the normative home for every lower-level capability. New detailed requirements SHOULD be placed in the narrowest applicable child specification and referenced here rather than expanding this document indefinitely.
 
 The architecture is explicitly built upon the existing:
 
@@ -62,82 +64,67 @@ The project SHALL optimize the current stage for correctness, explainability, an
 
 # 3. Source-of-truth hierarchy
 
-The project currently contains several representations of overlapping financial concepts. They SHALL have an explicit authority hierarchy.
+The project contains several representations of overlapping financial concepts. They SHALL have an explicit authority hierarchy plus a separate governance plane for specification organization.
 
-## 3.1 Normative authority
+## 3.1 Governance plane
+
+The system/software architecture and the Specification Architecture & Traceability specification define:
+
+- specification decomposition and parent/child relationships;
+- requirement identity and traceability rules;
+- agent retrieval rules;
+- software dependency direction;
+- maturity gates and implementation sequencing.
+
+Governance documents SHALL NOT redefine financial meaning owned by the canonical financial specification or executable financial semantics.
+
+## 3.2 Normative financial and implementation authority
 
 Highest to lowest:
 
 ### Level 1 — Canonical financial specification
 
-Defines:
-
-- domain vocabulary;
-- objects;
-- attributes;
-- enum membership;
-- relationships;
-- primitive identities;
-- financial-variable mappings;
-- canonical invariants.
+Defines domain vocabulary, objects, attributes, enum membership, relationships, primitive identities, financial-variable mappings, and canonical invariants.
 
 The canonical schema is authoritative for **what the financial model means**.
 
 ### Level 2 — Executable financial semantics
 
-Defines:
-
-- temporal semantics;
-- financial state;
-- flows;
-- recognition;
-- obligations/rights;
-- settlements;
-- transactions;
-- accounting behavior;
-- dependency semantics;
-- semantic barriers;
-- valuation;
-- statement derivation;
-- determinism;
-- period atomicity.
+Defines temporal semantics, financial state, flows, recognition, obligations/rights, settlements, transactions, accounting behavior, dependency semantics, semantic barriers, valuation, statement derivation, determinism, period atomicity, and stochastic semantic invariants.
 
 This specification is authoritative for **how the model behaves during execution**.
 
-### Level 3 — Vertical-slice specifications
+### Level 3 — Capability specifications
 
-Define implementation contracts for individual end-to-end capabilities.
+Define bounded system/capability requirements such as household projection, performance/observability, probabilistic forecasting, market/economic calibration, tax, equity compensation, persistence, security, and application UX.
 
-A slice may specialize the canonical model but SHALL NOT contradict Levels 1–2.
+Capability specifications MAY allocate or refine requirements from Levels 1–2 but SHALL NOT contradict or silently redefine them. A concept SHALL have one normative home; sibling specifications SHALL reference that home instead of duplicating its semantics.
 
-### Level 4 — Architecture Decision Records
+### Level 4 — Vertical-slice / milestone specifications
 
-Define software choices such as:
+Define implementation contracts for individual end-to-end increments. A slice SHALL cite the capability and higher-level requirements it implements.
 
-- runtime representation;
-- repository structure;
-- database technology;
-- UI framework;
-- persistence strategy;
-- authentication strategy.
+### Level 5 — Architecture Decision Records
 
-ADRs SHALL NOT redefine financial semantics.
+Define implementation choices such as runtime representation, repository structure, database technology, UI framework, persistence strategy, authentication strategy, worker architecture, or provider selection.
 
-### Level 5 — Executable implementation
+ADRs SHALL NOT redefine financial semantics or bypass capability requirements.
 
-Production code SHALL conform to Levels 1–4.
+### Level 6 — Executable implementation
 
-### Level 6 — Generated artifacts
+Production code SHALL conform to the applicable Levels 1–5 requirements.
 
-Examples:
+### Level 7 — Generated artifacts
 
-- TypeScript interfaces;
-- JSON Schema;
-- SQL DDL;
-- API schemas;
-- documentation tables.
+Examples include TypeScript interfaces, JSON Schema, SQL DDL, API schemas, and documentation tables.
 
 Generated artifacts are derived outputs and SHALL NOT independently become authoritative.
+
+## 3.3 Decomposition rule
+
+Parent specifications define intent, boundaries, and allocated requirements. Child specifications add detail only within that allocation. If a child appears to conflict with a parent or with a higher financial authority, implementation SHALL stop and the specifications SHALL be reconciled before code chooses an interpretation.
+
+Existing large specifications MAY remain in place while decomposition proceeds incrementally. Files SHALL NOT be moved solely for aesthetic consistency when doing so would create reference churn without clarifying authority.
 
 ---
 
@@ -160,19 +147,48 @@ Where automatic generation is impractical, CI SHALL verify that manually maintai
 
 ## 4.1 Specification manifest
 
-The repository SHALL introduce a machine-readable specification manifest during architecture consolidation.
+The repository SHALL maintain docs/spec-manifest.json as the machine-readable entry point for specification discovery.
 
-It SHOULD identify at minimum:
+It SHALL identify the top-level compatibility versions already required by the runtime and, for registered specifications, SHOULD identify:
 
-```text
-canonical_schema_version
-model_format_version
-executable_semantics_version
-engine_contract_version
-generated_artifact_versions
-```
+~~~text
+id
+path
+version
+status
+authority
+parent_spec_ids
+depends_on_spec_ids
+requirement_id_policy
+requirement_prefix
+domains
+keywords
+applies_to
+~~~
 
-The manifest SHALL define which artifact versions are intended to be mutually compatible.
+The manifest SHALL define which artifact versions are intended to be mutually compatible and SHALL point to the machine-readable requirements traceability index.
+
+### 4.1.1 Stable requirement identity
+
+New decomposed normative requirements SHALL use stable IDs in the PFA-<DOMAIN>-NNN form. IDs SHALL survive wording changes when the requirement identity is unchanged. Retired IDs SHALL NOT be silently reused for different requirements.
+
+Legacy specifications are not required to receive a wholesale requirement-ID retrofit. IDs become mandatory when requirements are newly created in decomposed capability specifications or when a legacy section is materially decomposed into a child specification.
+
+### 4.1.2 Traceability index
+
+The repository SHALL maintain a machine-readable requirement index mapping each controlled requirement to its owning specification, structural parent requirements where applicable, cross-requirement dependencies, verification methods/state/owners, verification references, and planned/actual implementation scope.
+
+Parent relationships SHALL mean decomposition/allocation. Cross-capability prerequisites SHALL use dependency relationships instead of parentage. The index is a retrieval and verification aid; it does not outrank the owning normative specification.
+
+### 4.1.3 Agent retrieval
+
+Agents SHALL use the manifest and traceability index to locate the smallest applicable specification set. Routine implementation SHALL NOT preload the full architecture or every financial specification merely for reassurance.
+
+Cross-cutting or semantic work SHALL expand scope only along explicit structural parents, dependency links, requirement links, and concrete implementation dependencies. Parentage SHALL NOT be used as a synonym for dependency.
+
+### 4.1.4 Automated consistency
+
+CI SHALL validate at minimum that registered specification paths and versions exist, structural parent and dependency specification IDs resolve, parent relationships are acyclic, requirement prefixes are unique where required, traceability parent/dependency IDs resolve, verification metadata is structurally valid, and controlled requirement IDs are neither missing from nor orphaned by the traceability index.
 
 ## 4.2 Derived-artifact status
 
@@ -1470,7 +1486,9 @@ Examples:
 - liabilities;
 - assumptions;
 - planned events;
-- tax rules.
+- household/scenario tax facts, elections, overrides, and references to effective tax rules.
+
+Common jurisdiction tax-law definitions SHOULD live in a shared, versioned, effective-dated rule catalog rather than being duplicated into every household. During the local/personal stage the catalog MAY be version-controlled application data; shared private-alpha persistence SHOULD store each common rule version/content fingerprint once. Executable tax algorithms remain in the rules engine. Forecast reproducibility SHALL identify the resolved tax-rule-set fingerprints actually used.
 
 ## 28.2 Actual historical facts
 
@@ -1491,14 +1509,19 @@ Posted transactions and legs.
 
 Scenario and primitive instances.
 
-## 28.5 Simulation results
+## 28.5 Simulation results and forecast artifacts
 
-Simulation runs MAY be stored for:
+Saved plan/scenario definitions are durable model configuration and SHALL be persisted independently from derived forecast results.
 
-- reproducibility;
-- comparison;
-- performance;
-- audit/debugging.
+A retained stochastic result SHOULD store bounded aggregate distributions/decision metrics and the identities needed to interpret or reproduce them, including its model/calculation fingerprint, Forecast Basis fingerprint, calibration and tax-rule fingerprints, stochastic configuration/cohort, and engine/spec versions. The system SHOULD NOT persist every realization's complete state, transaction history, or trace by default.
+
+Forecast comparison semantics distinguish:
+- historical snapshot comparison, where retained results may use different Forecast Bases and are labeled non-normalized; and
+- controlled decision comparison, where selected plan/scenario definitions are rerun against one common Forecast Basis and common stochastic cohort where applicable.
+
+Representative detailed paths MAY be regenerated from deterministic realization identities when compatible execution artifacts remain available. Pinned long-lived results MAY retain compact representative-path summaries when regeneration of an old engine version is no longer practical.
+
+Current/superseded unpinned result retention SHALL be bounded and may use a short recovery grace period. Explicitly pinned forecast snapshots SHALL be subject to product-level count limits plus backend storage safeguards. Identical retained artifacts SHOULD be deduplicated.
 
 Derived statements SHOULD generally remain reproducible and cacheable rather than canonical.
 
@@ -1594,16 +1617,18 @@ Bank aggregation SHALL NOT be implemented in the current engine stage.
 Recommended sequence:
 
 ```text
-Manual input
+Guided structured/manual input + validated model import/export
     ↓
-Validated model import/export
+Assisted file/document/conversational intake with candidate-fact review
     ↓
-CSV transaction import
+Targeted CSV/holdings/statement adapters for actual alpha needs
     ↓
-Personal usefulness validation
+Measured private-alpha onboarding usefulness validation
     ↓
-Bank aggregation
+Bank aggregation only if/when its incremental value justifies the complexity
 ```
+
+Field-by-field manual entry is a fallback, not the intended private-alpha onboarding experience. Before private alpha, the project SHALL provide a measured assisted-input path that can reach a useful forecast without requiring users to transcribe their entire financial life.
 
 Bank integrations introduce an independent complexity domain:
 
@@ -1653,13 +1678,35 @@ AI MAY assist with:
 
 - categorization;
 - model entry;
+- document/CSV interpretation;
+- text or voice onboarding conversations;
 - natural-language queries;
 - scenario creation;
 - result explanation.
 
+For onboarding/import, AI SHALL operate through a candidate-fact boundary:
+
+```text
+document / CSV / voice / text
+        ↓
+parser and/or AI interpretation
+        ↓
+typed candidate facts + provenance + ambiguity
+        ↓
+deterministic validation / conflict checks
+        ↓
+user confirmation where required
+        ↓
+canonical model mutation
+```
+
+AI or other probabilistic extraction SHALL NOT directly write authoritative financial state or guess missing material facts merely to complete a model. Approximate user statements SHALL remain distinguishable from exact observed/imported values.
+
 AI SHALL NOT become the source of authoritative financial arithmetic.
 
 Where AI explains a numeric result, the explanation SHOULD be grounded in deterministic engine outputs and available calculation lineage.
+
+Any third-party AI/extraction path receiving real private-alpha financial documents, transcripts, or facts SHALL undergo the applicable privacy/data-handling review before use.
 
 ---
 
@@ -1701,6 +1748,9 @@ Add npm workspaces only when module boundaries have stabilized enough to justify
 - migration tooling
 - managed authentication
 - server-side application layer
+- secure onboarding/import upload and processing boundary
+- productionized supported adapters from the pre-alpha assisted-onboarding workstream
+- privacy-safe onboarding instrumentation
 - comprehensive end-to-end testing
 - error monitoring
 - structured logging with financial-data redaction
@@ -2043,11 +2093,13 @@ Before private alpha:
 
 ---
 
-# 42. Golden Household strategy
+# 42. Synthetic household fixture strategy
 
-Maintain deterministic synthetic fixtures under a dedicated testing area.
+Maintain distinct deterministic/synthetic fixtures under a dedicated testing area. One fixture SHALL NOT be expected to serve every correctness, realism, and performance purpose.
 
-The principal Golden Household SHALL eventually include:
+## 42.1 Golden Household
+
+The principal Golden Household remains intentionally understandable and checkpoint-oriented. It SHALL eventually include:
 
 ```text
 2 people
@@ -2077,9 +2129,25 @@ Long-term horizon
 
 Golden files SHALL test economic outcomes, not incidental internal implementation shape.
 
-Golden households SHALL never contain real personal financial data.
-
 At least one golden scenario SHALL intentionally encounter insufficient liquidity and assert the declared funding/constraint semantics.
+
+## 42.2 Realistic household forecast fixture
+
+Maintain a separate realistic synthetic household whose purpose is end-to-end forecasting realism and broad capability coverage. As capabilities become supported, it SHOULD include multiple people; multiple income and expense streams; cash, taxable, and retirement accounts; diversified investments; a non-financial asset; debt/mortgage; applicable taxes; funding policies; meaningful life/retirement events; and multiple decision scenarios.
+
+This fixture SHALL deliberately exercise a materially broader set of supported primitives, rule bindings, event mechanics, scenario overlays, and forecast outputs than the Golden Household. It is not merely the Golden Household with larger balances.
+
+## 42.3 Computationally complex / stress household
+
+Maintain a financially coherent synthetic household intended to stress execution complexity. It SHOULD exercise high supported counts of entities, positions, flows, events, dependencies, rules, scenarios, long forecast horizons, tax calculations, and stochastic processes/realizations when those capabilities exist.
+
+The stress fixture MAY use artificial scale but SHALL remain semantically valid. It SHALL be suitable for scheduler/contention profiling, worker parallelism, memory/aggregation measurements, convergence testing, and cost-per-rerun benchmarking.
+
+## 42.4 Coverage inventory and privacy
+
+The realistic and stress fixtures SHALL expose a lightweight machine-readable coverage inventory, or equivalent generated report, showing the important canonical objects, primitives, rules, events, scenarios, and major engine mechanics exercised. Coverage gaps SHALL remain visible as capabilities evolve.
+
+All synthetic household fixtures SHALL contain no real personal financial data.
 
 ---
 
@@ -2295,11 +2363,11 @@ Authentication is optional if the app remains strictly local/private and not sha
 
 ## Stage 3 — Private alpha
 
-Unchanged: authentication, server persistence, household authorization, backups, privacy controls, and monitoring are required before friends/family use a shared service.
+Authentication, server persistence, household authorization, backups, privacy controls, monitoring, and an efficient assisted-onboarding path are required before friends/family use the shared service.
 
 Goal:
 
-> Friends and family can each safely maintain their own financial model.
+> Friends and family can safely and efficiently create, maintain, and use their own financial model without burdensome manual transcription.
 
 Required:
 
@@ -2311,7 +2379,14 @@ Required:
 - server-side persistence;
 - auditability;
 - privacy controls;
-- basic monitoring.
+- basic monitoring;
+- guided progressive onboarding built around a minimum viable household model;
+- at least one accelerated bulk/file import or extraction path suitable for the initial alpha cohort;
+- candidate-fact validation/review for document, CSV, or conversational extraction;
+- privacy-safe onboarding telemetry;
+- a measured time-to-first-useful-forecast/manual-effort target established in pre-alpha dry runs and reconfirmed end-to-end on the secured deployed service before invitations are sent.
+
+Production bank aggregation is not required for Stage 3 if the measured assisted workflow meets the approved onboarding target.
 
 ## Stage 4 — Public production
 
@@ -3257,6 +3332,10 @@ During this period:
 - keep regular portable exports/backups;
 - record unsupported real-world cases and explanation gaps;
 - distinguish missing financial semantics from UX inconvenience;
+- instrument performance before scaling deterministic work into stochastic multi-realization execution;
+- separate fast current-state answers from long-horizon forecast execution;
+- remove avoidable main-thread blocking, eager recomputation, and unbounded forecast rendering before Monte Carlo work;
+- improve novice-first UX while preserving expert drill-down and technical diagnostics;
 - prioritize bugs affecting financial correctness or recoverability before feature breadth.
 
 Record at minimum:
@@ -3268,10 +3347,17 @@ Record at minimum:
 - scenario limitations;
 - unexplained material outputs;
 - persistence/migration/recovery friction;
-- performance at realistic horizons;
-- confusing workflows.
+- component-level performance at realistic and stress horizons;
+- engine versus application versus UI latency;
+- confusing workflows;
+- onboarding time to first useful forecast and manual-entry burden;
+- unsupported or fragile import/document formats;
+- extraction corrections, conflicts, and high-value missing inputs;
+- stochastic-model gaps, including correlated market, issuer, compensation, and life uncertainty.
 
-Private-alpha infrastructure begins only after this usage demonstrates that the Personal MVP is genuinely useful.
+The controlled post-PR21 sequence is defined in docs/specs/roadmap/post-pr21-implementation-roadmap.md. Performance instrumentation and critical deterministic responsiveness work are prerequisites for production-scale stochastic simulation. The O1 onboarding/import workstream SHALL also run before the stabilization-exit gate so assisted intake is measured and improved before secure multi-user infrastructure is finalized.
+
+Private-alpha infrastructure begins only after this usage demonstrates that the Personal MVP is genuinely useful, intended users can reach a useful forecast without burdensome manual transcription in representative dry runs, and the applicable stabilization gates are satisfied.
 
 ---
 
@@ -3287,7 +3373,7 @@ PR D  HouseholdMembership authorization and tenant isolation
 PR E  Security/privacy/redaction integration tests
 PR F  Server deployment
 PR G  Backup/export/delete lifecycle
-PR H  CSV actual-transaction import
+PR H  Assisted onboarding/import productionization
 ```
 
 ## PR A — Reconciled/versioned PostgreSQL migrations
@@ -3320,11 +3406,17 @@ Deploy web/application/database services.
 
 Operational data lifecycle.
 
-## PR H — CSV transaction import
+## PR H — Assisted onboarding/import productionization
 
-Automate actual-data ingestion incrementally using source identity/idempotency and provenance contracts already established by the engine architecture.
+Wire the approved pre-alpha O1 onboarding flow through the authenticated, household-authorized, server-persistence, privacy, and deletion/recovery boundaries.
 
-Bank aggregation remains after CSV/manual actual-data validation unless a later ADR changes that order.
+Productionize the smallest set of accelerated adapters that the intended alpha cohort actually needs. This MAY include generic transaction CSV, holdings/balance exports, supported financial statements, paystubs, mortgage/loan statements, portable model import, and guarded text/voice conversational intake.
+
+All probabilistic extraction remains candidate-fact generation: deterministic validation, provenance, duplicate/conflict handling, and user review/confirmation occur before authoritative model mutation. Imported actual-data ingestion SHALL reuse the source identity/idempotency contracts already established by the engine architecture.
+
+Before private-alpha invitations are sent, run an end-to-end onboarding dry run through the deployed service and confirm that the approved time-to-first-useful-forecast/manual-effort target still holds with the secure productionized path.
+
+Bank aggregation remains after assisted/file import validation unless a later ADR shows that it is necessary to meet the onboarding target or otherwise provides sufficient incremental value to justify its complexity.
 
 ---
 

@@ -10,21 +10,30 @@ explainability take priority over implementation convenience.
 
 ## Authority
 
-Authority order:
+Authority order for financial/implementation meaning:
 
 1. Canonical financial specification
 2. Executable financial semantics
-3. Relevant vertical-slice specification
-4. Architecture Decision Records
-5. Executable implementation
-6. Generated artifacts
+3. Relevant capability specification
+4. Relevant vertical-slice / milestone specification
+5. Architecture Decision Records
+6. Executable implementation
+7. Generated artifacts
+
+The system/software architecture and Specification Architecture & Traceability specification govern decomposition, retrieval, dependency direction, and maturity gates. They do not outrank Levels 1–2 on financial meaning.
 
 Do not silently change financial meaning to simplify implementation.
 
 Authoritative documents are sources to consult, not context to preload.
+Start with docs/spec-manifest.json and, when requirement-level traceability is
+needed, docs/specs/verification/requirements-index.json. Use domains, keywords,
+parent_spec_ids for decomposition, depends_on_spec_ids for cross-capability
+prerequisites, and requirement IDs to locate the narrowest applicable spec set.
 Search for the relevant concept first and read only the smallest sections
 needed to resolve the task. Do not read an entire large specification for a
 routine patch unless the task explicitly requires a whole-document review.
+Do not copy a requirement into another spec merely for convenience; reference
+its owning requirement ID and keep one normative home per concept.
 
 When normative interpretation is required, use `$pfm-spec-scope`.
 
