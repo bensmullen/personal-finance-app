@@ -72,9 +72,13 @@ For PR handoffs using the standard `MODE:/PR:/EXPECTED_HEAD:` envelope, use
 authoritative unless repository evidence directly contradicts them.
 
 Search before opening broad files. Prefer symbols, changed files, targeted
-`rg`, and narrow ranges. Do not reread PR history or large specifications for
-reassurance. Do not spawn subagents for routine implementation; use at most one
-for a clearly separable read-only/mechanical task.
+`rg`, and narrow ranges. When the task is primarily scoped to a subtree that has
+its own `AGENTS.md`, read that one nearest scoped instruction file before
+editing; a session started at repository root does not otherwise inherit nested
+instructions. Do not scan unrelated scoped instruction files. Do not reread PR
+history or large specifications for reassurance. Do not spawn subagents for
+routine implementation; use at most one for a clearly separable read-only or
+mechanical task.
 
 ## Verification budget
 

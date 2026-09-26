@@ -28,6 +28,9 @@ The handoff should provide as many of these fields as apply:
 - `STOP`
 
 Do not expand a precise handoff into a repository-wide rediscovery exercise.
+If `EXPECTED_SURFACE` is primarily inside a subtree with a nested `AGENTS.md`,
+read that one nearest scoped instruction file before editing. Do not load
+unrelated nested instruction files.
 
 ## 1. Preflight repository state
 

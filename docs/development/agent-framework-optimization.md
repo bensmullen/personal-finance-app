@@ -179,20 +179,24 @@ repository.
   explicitly when starting the chat.
 - Trust the project so `.codex/config.toml`, hooks, and project skills load.
 - Confirm `/status` shows the intended model, reasoning effort, workspace root,
-  and permission mode.
+  and permission mode; use `/debug-config` if the active config source is unclear.
 - Confirm `/debug-config` shows this repository's `.codex/config.toml`.
 - Keep memories off for this project; specifications/Git are durable context.
 - Keep IDE context off unless currently open editor files materially help.
 - Use `/plan` only for genuinely multi-step/cross-cutting tasks, not surgical
   patches.
-- Do not enable Fast mode merely for implementation efficiency unless its
-  usage/cost tradeoff has been measured for the plan.
+- Keep Fast mode off by default for this project; enable it only when lower
+  latency is worth its higher usage multiplier.
 
 ### Permissions
 
-Use the normal version-controlled-folder default: workspace write with
-on-request approvals. Do not use Full Access/dangerous bypass as a standing
-default. Grant broader access only for a specific justified operation.
+For lowest usage, use **Ask for approval** (workspace-write + on-request).
+For lowest interruption, **Approve for me** can route eligible boundary
+approvals to Auto-review, but that adds reviewer-model calls and therefore can
+consume additional Codex usage. Do not use Full Access/dangerous bypass as a
+standing default. If you intentionally enable workspace network access to avoid
+routine network prompts, treat that as a security tradeoff rather than a token
+optimization.
 
 ### Local Environment
 
@@ -205,7 +209,9 @@ Do not put build, unit, E2E, or typecheck in the setup script.
 ### Git / review
 
 - Keep force-push disabled unless intentionally rewriting history.
-- In Settings > Git, use detached review delivery if you want `/review` not to
+- Install/authenticate GitHub CLI (`gh auth login`) so the desktop review pane
+  can load PR context and comments.
+- In Settings > Git, use detached review delivery so `/review` does not
   consume/perturb the implementation thread's context.
 - Connect the repository to Codex cloud and enable GitHub Code Review if you
   want automatic P0/P1 review on every PR.
@@ -225,7 +231,9 @@ browser/performance debugging needs DevTools-level access.
   - keep universal authority, financial invariants, scope discipline,
     verification budget, state receipt, loop-breaker, and high-signal review
     rules;
-  - route reusable workflow detail to skills instead of always-loaded context.
+  - route reusable workflow detail to skills instead of always-loaded context;
+  - require one targeted read of the nearest nested `AGENTS.md` when a root-started
+    session is scoped to that subtree.
 - `docs/AGENTS.md`
   - localize specification/traceability editing rules.
 - `ui/AGENTS.md`
