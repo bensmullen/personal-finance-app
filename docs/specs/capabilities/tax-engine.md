@@ -1,6 +1,6 @@
 # Tax Engine Capability
 
-**Version:** 0.1.1-draft
+**Version:** 0.1.2-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-TAX
 
@@ -48,6 +48,38 @@ Outputs whose dependency/lineage is demonstrably unaffected by the missing tax c
 
 Before a probabilistic result is exposed as a complete user-facing household forecast, the implemented tax subset SHALL cover the tax semantics materially relevant to that target household and output. The application MAY develop/test stochastic infrastructure against a narrower synthetic tax subset, but production/alpha results SHALL remain capability-gated until the applicable tax floor is satisfied.
 
+### PFA-TAX-010 — Private-alpha core tax coverage
+
+The private-alpha tax floor SHALL target ordinary salaried/investor households rather than exhaustive tax-law coverage. For an alpha household/output, the supported floor SHALL include every materially applicable item from the following set:
+
+- federal ordinary income tax with filing status and progressive brackets;
+- the standard deduction and basic deduction mechanics required by the target household;
+- employee payroll taxes, including Social Security and Medicare where applicable;
+- state income tax for jurisdictions represented by the alpha cohort;
+- local income tax where materially applicable to an alpha household;
+- taxable interest and ordinary dividends;
+- qualified-dividend treatment where modeled;
+- short-term and long-term capital gains for modeled realized sales/liquidations;
+- basic traditional retirement-account contribution/withdrawal tax treatment;
+- basic Roth contribution/withdrawal tax treatment;
+- NIIT where the target household/output can materially encounter it;
+- withholding/estimated-payment/settlement behavior sufficient for the supported after-tax cash-flow outputs; and
+- RMD or other retirement-distribution tax mechanics when the person's age/horizon makes them material to the output.
+
+Property tax MAY remain an explicit household expense when no tax-rule interaction is needed. Sales tax MAY remain embedded in spending assumptions unless separately modeled.
+
+Self-employment/business taxation, AMT, complex credits/phaseouts, rental/pass-through taxation, foreign tax, estate/gift tax, and equity-compensation-specific taxation MAY remain T1B capability-gated unless an intended alpha household requires them. If such a household is admitted, the applicable mechanic becomes part of that household's required tax floor before affected outputs are presented as complete.
+
+### PFA-TAX-011 — Shared versioned tax-rule catalog
+
+Canonical TaxRule remains the semantic shape for an effective-dated tax rule, but common tax-law definitions SHALL be stored as a reusable versioned rule catalog rather than duplicated into each household. The catalog SHALL support immutable rule/version/content identities, jurisdiction/effective dates, provenance/source metadata, and deterministic content fingerprints sufficient to reproduce a forecast basis.
+
+During the personal/local stage, the rule catalog MAY be version-controlled application data shipped with the app. Before/within private-alpha shared persistence, common rule definitions SHOULD be stored once per effective rule version/content fingerprint in shared persistence. Household/scenario data SHALL store the facts, elections, overrides, and rule references needed to resolve applicable rules, not full duplicate copies of common law data.
+
+Executable algorithms belong in the rules engine and SHALL remain separate from the versioned rule data they evaluate. Forecast results and Forecast Basis metadata SHALL reference the exact resolved tax-rule-set fingerprints used.
+
+Portable export/import SHALL preserve enough rule identity/fingerprint information to detect whether the referenced rule set is available and compatible. Whether exports embed a referenced rule bundle or rely on a resolvable catalog is a later transport/persistence decision; silent substitution with a newer rule set is forbidden.
+
 ## 3. Planned decomposition
 
 Later tax specifications may be split by federal, state/local, payroll, investment/capital-gains, retirement, equity-compensation, and estate/gift domains when actual implementation breadth justifies that decomposition.
@@ -62,6 +94,6 @@ These are examples, not a hard-coded list. Runtime output validity SHOULD be dri
 
 ## 5. Sequencing
 
-Comprehensive tax implementation need not block the stochastic runtime foundation, but stochastic architecture SHALL leave a deterministic per-realization tax seam. A common-household/target-cohort tax floor (T1A in the roadmap) SHALL mature in parallel with deterministic optimization and stochastic infrastructure and SHALL be complete before tax-affected probabilistic outputs are presented as complete. Advanced tax domains (T1B), including specialized capital-gains, retirement, and equity-compensation cases, gate only the outputs that depend on them.
+Comprehensive tax implementation need not block the stochastic runtime foundation, but stochastic architecture SHALL leave a deterministic per-realization tax seam. A common-household/target-cohort tax floor (T1A in the roadmap) SHALL mature in parallel with deterministic optimization and stochastic infrastructure and SHALL be complete before tax-affected probabilistic outputs are presented as complete. T1A SHALL implement PFA-TAX-010 for the actual private-alpha cohort and PFA-TAX-011's reusable catalog boundary. Advanced tax domains (T1B), including specialized business, retirement, equity-compensation, estate/gift, foreign, and other complex cases, gate only the outputs that depend on them.
 
 Tax performance must be measured before high-realization-count production forecasts rely on it.
