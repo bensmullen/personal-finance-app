@@ -1,6 +1,6 @@
 # Personal Finance App — System / Software Architecture Specification
 
-**Version:** 1.3.1-draft
+**Version:** 1.3.2-draft
 **Status:** Architecture baseline  
 **Namespace:** `pfm`  
 **Applies to:** Prototype → Personal MVP → Private Alpha  
@@ -1486,7 +1486,9 @@ Examples:
 - liabilities;
 - assumptions;
 - planned events;
-- tax rules.
+- household/scenario tax facts, elections, overrides, and references to effective tax rules.
+
+Common jurisdiction tax-law definitions SHOULD live in a shared, versioned, effective-dated rule catalog rather than being duplicated into every household. During the local/personal stage the catalog MAY be version-controlled application data; shared private-alpha persistence SHOULD store each common rule version/content fingerprint once. Executable tax algorithms remain in the rules engine. Forecast reproducibility SHALL identify the resolved tax-rule-set fingerprints actually used.
 
 ## 28.2 Actual historical facts
 
@@ -1507,14 +1509,19 @@ Posted transactions and legs.
 
 Scenario and primitive instances.
 
-## 28.5 Simulation results
+## 28.5 Simulation results and forecast artifacts
 
-Simulation runs MAY be stored for:
+Saved plan/scenario definitions are durable model configuration and SHALL be persisted independently from derived forecast results.
 
-- reproducibility;
-- comparison;
-- performance;
-- audit/debugging.
+A retained stochastic result SHOULD store bounded aggregate distributions/decision metrics and the identities needed to interpret or reproduce them, including its model/calculation fingerprint, Forecast Basis fingerprint, calibration and tax-rule fingerprints, stochastic configuration/cohort, and engine/spec versions. The system SHOULD NOT persist every realization's complete state, transaction history, or trace by default.
+
+Forecast comparison semantics distinguish:
+- historical snapshot comparison, where retained results may use different Forecast Bases and are labeled non-normalized; and
+- controlled decision comparison, where selected plan/scenario definitions are rerun against one common Forecast Basis and common stochastic cohort where applicable.
+
+Representative detailed paths MAY be regenerated from deterministic realization identities when compatible execution artifacts remain available. Pinned long-lived results MAY retain compact representative-path summaries when regeneration of an old engine version is no longer practical.
+
+Current/superseded unpinned result retention SHALL be bounded and may use a short recovery grace period. Explicitly pinned forecast snapshots SHALL be subject to product-level count limits plus backend storage safeguards. Identical retained artifacts SHOULD be deduplicated.
 
 Derived statements SHOULD generally remain reproducible and cacheable rather than canonical.
 
