@@ -407,6 +407,319 @@
       ]
     },
     {
+      "id": "PFA-ONB-001",
+      "spec_id": "data-onboarding-and-import",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "measurement",
+        "demonstration",
+        "analysis"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "ui/",
+        "e2e/",
+        "onboarding telemetry"
+      ]
+    },
+    {
+      "id": "PFA-ONB-002",
+      "spec_id": "data-onboarding-and-import",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [
+        "PFA-UX-001"
+      ],
+      "verification_methods": [
+        "test",
+        "demonstration",
+        "analysis"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "ui/",
+        "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-ONB-003",
+      "spec_id": "data-onboarding-and-import",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [
+        "PFA-ONB-001",
+        "PFA-ONB-002"
+      ],
+      "verification_methods": [
+        "demonstration",
+        "test",
+        "analysis"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "ui/",
+        "future import adapters",
+        "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-ONB-004",
+      "spec_id": "data-onboarding-and-import",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [
+        "PFA-ONB-002"
+      ],
+      "verification_methods": [
+        "test",
+        "analysis"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future import adapters",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-ONB-005",
+      "spec_id": "data-onboarding-and-import",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "test",
+        "analysis",
+        "inspection"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future AI/import adapters",
+        "ui/"
+      ]
+    },
+    {
+      "id": "PFA-ONB-006",
+      "spec_id": "data-onboarding-and-import",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [
+        "PFA-ONB-005"
+      ],
+      "verification_methods": [
+        "test",
+        "analysis"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future import adapters",
+        "model provenance"
+      ]
+    },
+    {
+      "id": "PFA-ONB-007",
+      "spec_id": "data-onboarding-and-import",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [
+        "PFA-ONB-005",
+        "PFA-ONB-006"
+      ],
+      "verification_methods": [
+        "test",
+        "demonstration"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "ui/",
+        "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-ONB-008",
+      "spec_id": "data-onboarding-and-import",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [
+        "PFA-ONB-006"
+      ],
+      "verification_methods": [
+        "test",
+        "analysis"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future import adapters",
+        "future persistence adapters",
+        "test/"
+      ]
+    },
+    {
+      "id": "PFA-ONB-009",
+      "spec_id": "data-onboarding-and-import",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [
+        "PFA-ONB-005"
+      ],
+      "verification_methods": [
+        "inspection",
+        "test",
+        "analysis"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future upload/import services",
+        "future AI/extraction adapters",
+        "security tests"
+      ]
+    },
+    {
+      "id": "PFA-ONB-010",
+      "spec_id": "data-onboarding-and-import",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [
+        "PFA-ONB-001",
+        "PFA-ONB-009"
+      ],
+      "verification_methods": [
+        "test",
+        "inspection",
+        "analysis"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "ui/",
+        "future telemetry adapters",
+        "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-ONB-011",
+      "spec_id": "data-onboarding-and-import",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [
+        "PFA-ONB-001",
+        "PFA-ONB-003",
+        "PFA-ONB-007",
+        "PFA-ONB-009",
+        "PFA-ONB-010"
+      ],
+      "verification_methods": [
+        "demonstration",
+        "measurement",
+        "analysis"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
+        "ui/",
+        "e2e/",
+        "future deployed private-alpha service"
+      ]
+    },
+    {
+      "id": "PFA-ONB-012",
+      "spec_id": "data-onboarding-and-import",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [
+        "PFA-ONB-003",
+        "PFA-ONB-007"
+      ],
+      "verification_methods": [
+        "test",
+        "analysis",
+        "demonstration"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future import adapters",
+        "ui/",
+        "e2e/"
+      ]
+    },
+    {
       "id": "PFA-PERF-001",
       "spec_id": "performance-and-execution",
       "requirement_status": "draft",
