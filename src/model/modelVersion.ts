@@ -157,9 +157,11 @@ export const classifyModelFormatVersion = (
 };
 
 const directlySupportedFinancialSpecificationVersions = (targetVersion: string): readonly string[] =>
-  targetVersion === "0.1.10-draft"
-    ? Object.freeze(["0.1.9-draft", "0.1.10-draft"])
-    : Object.freeze([targetVersion]);
+  targetVersion === "0.1.11-draft"
+    ? Object.freeze(["0.1.9-draft", "0.1.10-draft", "0.1.11-draft"])
+    : targetVersion === "0.1.10-draft"
+      ? Object.freeze(["0.1.9-draft", "0.1.10-draft"])
+      : Object.freeze([targetVersion]);
 
 export const classifyFinancialSpecificationVersion = (sourceVersion: string): ModelCompatibilityResult => {
   const targetVersion = CURRENT_RUN_VERSIONS.financialSpecificationVersion;
