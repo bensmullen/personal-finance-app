@@ -1,197 +1,210 @@
 import { spawnSync } from "node:child_process";
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const scriptPath = fileURLToPath(import.meta.url);
-const root = path.resolve(path.dirname(scriptPath), "../..");
-const hookPath = path.join(root, ".codex", "hooks", "quiet-test.mjs");
-const quietVitestPath = path.join(root, "tools", "codex", "quiet-vitest.mjs");
-const quietPlaywrightPath = path.join(root, "tools", "codex", "quiet-playwright.mjs");
-const statePath = path.join(root, "tools", "codex", "state.mjs");
-const smokeTestPath = path.join(root, "test", ".codex-quiet-smoke.test.ts");
-const logsDirectory = path.join(root, ".codex", "logs");
-const git = process.platform === "win32" ? "git.exe" : "git";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const policy = path.join(root, ".codex", "hooks", "pfm-policy.py");
+const stateShell = path.join(root, "tools", "codex", "state.sh");
+const envDoctor = path.join(root, "tools", "codex", "env-doctor.sh");
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
 };
 
-const runNode = (script, args = [], input = "") => spawnSync(
-  process.execPath,
-  [script, ...args],
-  {
-    cwd: root,
-    encoding: "utf8",
-    input,
-    env: process.env,
-    maxBuffer: 20 * 1024 * 1024,
-  },
-);
-
-const hookPayload = (command) => JSON.stringify({
-  hook_event_name: "PreToolUse",
-  tool_name: "Bash",
-  tool_input: { command, timeout: 123 },
+const run = (command, args = [], options = {}) => spawnSync(command, args, {
+  cwd: root,
+  encoding: "utf8",
+  env: { ...process.env, ...options.env },
+  input: options.input ?? "",
 });
 
-const hookResult = (input) => {
-  const result = runNode(hookPath, [], input);
-  assert(result.status === 0, `hook exited ${result.status}: ${result.stderr}`);
+for (const [command, args] of [
+  ["python3", ["-c", 'import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())', policy]],
+  ["bash", ["-n", stateShell]],
+  ["bash", ["-n", envDoctor]],
+  ["bash", [envDoctor]],
+]) {
+  const result = run(command, args);
+  assert(result.status === 0, `${command} ${args.join(" ")} failed: ${result.stderr}`);
+}
+
+const head = run("git", ["rev-parse", "HEAD"]).stdout.trim();
+assert(/^[0-9a-f]{40}$/.test(head), "unable to resolve HEAD");
+
+const sessionId = "policy-self-test";
+const turnId = "turn-1";
+const hook = (event, extra = {}, env = {}) => {
+  const payload = JSON.stringify({
+    session_id: sessionId,
+    turn_id: turnId,
+    cwd: root,
+    hook_event_name: event,
+    permission_mode: "default",
+    ...extra,
+  });
+  const result = run("python3", [policy], { input: payload, env });
+  assert(result.status === 0, `${event} hook failed: ${result.stderr}`);
   return JSON.parse(result.stdout || "{}");
 };
 
-const broadCommands = [
-  "npm test",
-  "npm run test",
-  "npm run codex:test",
-  "npm run codex:e2e",
-  "npm run test:e2e",
-  "npm run codex:verify",
-  "npm run typecheck",
-  "npm run build:web",
-  "npm run architecture:validate",
-  "npm run spec:validate",
-  "npx vitest run",
-  "npx playwright test",
-];
+const malformed = hook("UserPromptSubmit", { prompt: "PFM_TASK_V2\nMODE: local" });
+assert(malformed.decision === "block", "malformed V2 prompt should be blocked");
 
-for (const command of broadCommands) {
-  const output = hookResult(hookPayload(command));
-  const decision = output?.hookSpecificOutput;
-  assert(decision?.permissionDecision === "deny", `${command} was not blocked`);
-  assert(
-    String(decision?.permissionDecisionReason ?? "").includes("CODEX_ALLOW_BROAD_VERIFY=1"),
-    `${command} denial did not explain the explicit broad-verification override`,
-  );
-}
+const prompt = `PFM_TASK_V2
+TASK_KIND: framework
+MODE: local
+SEMANTICS: resolved
+REPAIR_ROUND: 0
+EXPECTED_HEAD: ${head}
+DEPENDENCY_POLICY: manifest_edit
+DISCOVERY_POLICY: implementation_only
+LOCAL_EXECUTION_POLICY: no_tests
+CI_PROFILE: tooling
+HEAVY_VALIDATION_PROFILE: none
+UAT: not_required
 
-const unchangedFocused = [
-  "npm run codex:test -- test/state.test.ts",
-  "npm run codex:e2e -- e2e/personal-mvp.spec.ts",
-  "npm run codex:tooling-test",
-];
-for (const command of unchangedFocused) {
-  assert(
-    JSON.stringify(hookResult(hookPayload(command))) === "{}",
-    `focused compact command should remain unchanged: ${command}`,
-  );
-}
+READ_PATHS:
+- package.json
+- tools/codex/**
+- .codex/**
+- tools/ci/**
 
-const rewrites = new Map([
-  ["npm run test -- test/state.test.ts", "npm run codex:test -- test/state.test.ts"],
-  ["npx vitest run test/state.test.ts", "npm run codex:test -- test/state.test.ts"],
-  ["vitest run test/state.test.ts -t state", "npm run codex:test -- test/state.test.ts -t state"],
-  ["npm run test:e2e -- e2e/personal-mvp.spec.ts", "npm run codex:e2e -- e2e/personal-mvp.spec.ts"],
-  [
-    'npx playwright test e2e/personal-mvp.spec.ts -g "retirement"',
-    'npm run codex:e2e -- e2e/personal-mvp.spec.ts -g "retirement"',
-  ],
-]);
-for (const [command, expected] of rewrites) {
-  const output = hookResult(hookPayload(command));
-  assert(
-    output?.hookSpecificOutput?.updatedInput?.command === expected,
-    `${command} did not rewrite to ${expected}`,
-  );
-}
+ALLOWED_PATHS:
+- tools/codex/**
+- .codex/**
+- tools/ci/**
 
-const overriddenTests = hookResult(
-  hookPayload("CODEX_ALLOW_BROAD_VERIFY=1 npm test"),
-);
+OBJECTIVE:
+Exercise the repository policy hook without modifying the tree.
+
+RESOLVED_DECISIONS:
+The hook contract is already resolved.
+
+REQUIREMENT_MAP:
+- POLICY-V2 -> validate task envelope and resource guardrails -> codex-tooling self-test
+
+FAILURE_MODES:
+- Malformed envelopes and unsafe actions are blocked before repository mutation.
+
+CLAIMS_AND_GAPS:
+CLAIMS: The self-test covers the guarded V2 lifecycle.
+KNOWN_GAPS: It does not prove application financial behavior.
+EVIDENCE: codex-tooling CI executes the policy self-test.
+
+PROFILE_CONTRACT:
+POLICY_BOUNDARY: Project-local Codex implementation and publication behavior only.
+FAIL_CLOSED: Unsafe mutation/publication and malformed contracts are denied.
+SELF_TEST: The codex-tooling job exercises the policy decisions.
+
+EVIDENCE_PLAN:
+CI: codex-tooling plus conservative routed framework gates.
+HEAVY: none.
+UAT: not_required.
+
+ACCEPTANCE:
+Policy events return the expected decisions.
+
+OUT_OF_SCOPE:
+Application changes.
+
+STOP:
+Stop on any policy mismatch.
+`;
+
+const accepted = hook("UserPromptSubmit", { prompt });
 assert(
-  overriddenTests?.hookSpecificOutput?.updatedInput?.command ===
-    "CODEX_ALLOW_BROAD_VERIFY=1 npm run codex:test",
-  "explicit full-unit override was not rewritten to quiet Vitest",
-);
-assert(
-  overriddenTests?.hookSpecificOutput?.permissionDecision === "allow",
-  "explicit full-unit override was not allowed",
+  accepted?.hookSpecificOutput?.hookEventName === "UserPromptSubmit",
+  "valid V2 prompt was not accepted",
 );
 
-const overriddenE2e = hookResult(
-  hookPayload("CODEX_ALLOW_BROAD_VERIFY=1 npm run test:e2e"),
-);
+const performancePrompt = prompt
+  .replace("CI_PROFILE: tooling", "CI_PROFILE: deterministic")
+  .replace("HEAVY_VALIDATION_PROFILE: none", "HEAVY_VALIDATION_PROFILE: performance")
+  .replace(/PROFILE_CONTRACT:\n[\s\S]*?\nEVIDENCE_PLAN:/, `PROFILE_CONTRACT:
+BOUNDARIES: sibling measurements are explicitly non-overlapping.
+APPLICABILITY: unavailable transport is not_applicable, never a surrogate duration.
+SUCCESS_STATUS: only completed representative runs are valid baseline evidence.
+CONTEXT_RETENTION: artifact/UI preserve horizon, versions, runtime, location, cache state, and model counts.
+RESOURCE_SEMANTICS: memory/cost fields state absolute/delta/metering semantics.
+CONTROLLED_EVIDENCE: full capture runs in engineering-validation, never under Codex.
+
+EVIDENCE_PLAN:`);
+const performanceAccepted = hook("UserPromptSubmit", { prompt: performancePrompt });
 assert(
-  overriddenE2e?.hookSpecificOutput?.updatedInput?.command ===
-    "CODEX_ALLOW_BROAD_VERIFY=1 npm run codex:e2e",
-  "explicit full-E2E override was not rewritten to quiet Playwright",
-);
-assert(
-  overriddenE2e?.hookSpecificOutput?.permissionDecision === "allow",
-  "explicit full-E2E override was not allowed",
+  performanceAccepted?.hookSpecificOutput?.hookEventName === "UserPromptSubmit",
+  "complete performance profile contract should be accepted",
 );
 
-assert(
-  JSON.stringify(
-    hookResult(
-      hookPayload("CODEX_ALLOW_BROAD_VERIFY=1 npm run codex:verify"),
-    ),
-  ) === "{}",
-  "explicit full-verification override should pass through unchanged",
+const incompletePerformance = performancePrompt.replace(
+  "CONTROLLED_EVIDENCE: full capture runs in engineering-validation, never under Codex.",
+  "CONTROLLED EVIDENCE omitted.",
 );
+const performanceBlocked = hook("UserPromptSubmit", { prompt: incompletePerformance });
+assert(performanceBlocked.decision === "block", "incomplete performance profile contract should be blocked");
 
-assert(JSON.stringify(hookResult("not-json")) === "{}", "malformed hook input should fail open quietly");
-
-const syntaxCheck = spawnSync(process.execPath, ["--check", quietPlaywrightPath], {
-  cwd: root,
-  encoding: "utf8",
-  env: process.env,
+const pre = (command) => hook("PreToolUse", {
+  tool_name: "Bash",
+  tool_use_id: "tool-1",
+  tool_input: { command },
 });
-assert(syntaxCheck.status === 0, `quiet Playwright syntax check failed: ${syntaxCheck.stderr}`);
 
-const head = spawnSync(git, ["rev-parse", "HEAD"], {
-  cwd: root,
-  encoding: "utf8",
-  env: process.env,
-}).stdout.trim();
-assert(/^[0-9a-f]{40}$/i.test(head), "could not resolve git HEAD for state receipt test");
-
-const stateOk = runNode(statePath, ["--expected-head", head]);
-assert(stateOk.status === 0, `state receipt failed: ${stateOk.stderr}`);
-assert(
-  new RegExp(`^STATE branch=\\S+ head=${head} upstream=\\S+ ahead=\\S+ behind=\\S+ dirty=\\d+\\s*$`).test(stateOk.stdout),
-  `unexpected state receipt: ${stateOk.stdout}`,
-);
-
-const stateMismatch = runNode(statePath, ["--expected-head", "0000000"]);
-assert(stateMismatch.status === 2, `state mismatch should exit 2, got ${stateMismatch.status}`);
-assert(stateMismatch.stderr.startsWith("STATE_MISMATCH "), "state mismatch did not emit compact receipt");
-
-await mkdir(path.dirname(smokeTestPath), { recursive: true });
-
-try {
-  await writeFile(
-    smokeTestPath,
-    'import { expect, test } from "vitest";\ntest("quiet pass", () => expect(2 + 2).toBe(4));\n',
-    "utf8",
-  );
-  const passing = runNode(quietVitestPath, ["test/.codex-quiet-smoke.test.ts"]);
-  assert(passing.status === 0, `quiet Vitest pass case failed: ${passing.stderr}`);
-  assert(/^PASS vitest — \d+\/\d+ tests \/ \d+ files\s*$/.test(passing.stdout), "quiet pass output was not compact");
-  assert(!passing.stderr.trim(), "quiet pass unexpectedly wrote stderr");
-
-  await writeFile(
-    smokeTestPath,
-    'import { expect, test } from "vitest";\ntest("quiet failure", () => expect("actual").toBe("expected"));\n',
-    "utf8",
-  );
-  const failing = runNode(quietVitestPath, ["test/.codex-quiet-smoke.test.ts"]);
-  assert(failing.status !== 0, "quiet Vitest failure case unexpectedly passed");
-  assert(failing.stderr.startsWith("FAIL vitest — "), "quiet failure did not emit the compact failure header");
-  assert(failing.stderr.includes("Full report: .codex/logs/"), "quiet failure did not retain a report path");
-  assert(failing.stderr.includes("Full log: .codex/logs/"), "quiet failure did not retain a log path");
-  assert(failing.stderr.length <= 12 * 1024, `quiet failure output exceeded bound: ${failing.stderr.length} bytes`);
-
-  for (const prefix of ["Full report: ", "Full log: "]) {
-    const line = failing.stderr.split(/\r?\n/).find((entry) => entry.startsWith(prefix));
-    const relativePath = line?.slice(prefix.length).trim();
-    assert(relativePath, `missing retained path for ${prefix.trim()}`);
-    await access(path.join(root, relativePath));
-  }
-} finally {
-  await rm(smokeTestPath, { force: true });
-  await rm(logsDirectory, { recursive: true, force: true });
+for (const command of [
+  "npm test",
+  "npm run typecheck",
+  "npx vitest run test/state.test.ts",
+  "npm ci",
+]) {
+  const output = pre(command);
+  assert(output?.hookSpecificOutput?.permissionDecision === "deny", `${command} should be denied`);
 }
 
-console.log("PASS codex tooling — state receipt, verification hook rewrites, and quiet Vitest paths");
+const normative = pre("cat docs/specs/roadmap/post-pr21-implementation-roadmap.md");
+assert(normative?.hookSpecificOutput?.permissionDecision === "deny", "resolved task should block normative reread");
+
+const outside = pre("cat docs/development/agent-framework-optimization.md");
+assert(outside?.hookSpecificOutput?.permissionDecision === "deny", "read outside READ_PATHS should be denied");
+
+assert(JSON.stringify(pre("cat package.json")) === "{}", "allowed read should pass");
+
+const badPatch = hook("PreToolUse", {
+  tool_name: "apply_patch",
+  tool_use_id: "tool-2",
+  tool_input: { command: "*** Begin Patch\n*** Update File: src/index.ts\n*** End Patch" },
+});
+assert(badPatch?.hookSpecificOutput?.permissionDecision === "deny", "out-of-scope patch should be denied");
+
+const testEnv = {
+  PFM_POLICY_TEST_BRANCH: "codex/policy-self-test",
+  PFM_POLICY_TEST_ORIGIN: "https://github.com/bensmullen/personal-finance-app.git",
+};
+const safePush = hook("PermissionRequest", {
+  tool_name: "Bash",
+  tool_input: { command: "git push -u origin codex/policy-self-test" },
+}, testEnv);
+assert(
+  safePush?.hookSpecificOutput?.decision?.behavior === "allow",
+  "approved feature-branch push should be auto-allowed",
+);
+
+const safePr = hook("PermissionRequest", {
+  tool_name: "Bash",
+  tool_input: { command: 'gh pr create --repo bensmullen/personal-finance-app --base main --head codex/policy-self-test --title "Policy test" --body "Test"' },
+}, testEnv);
+assert(
+  safePr?.hookSpecificOutput?.decision?.behavior === "allow",
+  "approved feature-branch PR creation should be auto-allowed",
+);
+
+const unsafePush = hook("PermissionRequest", {
+  tool_name: "Bash",
+  tool_input: { command: "git push --force origin main" },
+}, testEnv);
+assert(
+  unsafePush?.hookSpecificOutput?.decision?.behavior === "deny",
+  "force/main push should be denied",
+);
+
+const compact = hook("PreCompact", { trigger: "auto" });
+assert(compact.continue === false, "automatic compaction should stop an active PFM task");
+
+console.log("PASS codex tooling — V2 envelope, environment, execution, read/scope, push, and compaction guards");

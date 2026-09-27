@@ -1,155 +1,123 @@
 # Personal Finance App — Agent Rules
 
-## Purpose and authority
+## Authority and invariants
 
-This repository implements a deterministic, explainable personal-finance
-engine and applications around it. Financial correctness, specification
-conformance, determinism, and explainability take priority over convenience.
+Financial correctness, specification conformance, determinism, explainability,
+and privacy outrank implementation convenience.
 
-Authority for financial/implementation meaning:
-
+Authority order:
 1. Canonical financial specification
 2. Executable financial semantics
 3. Relevant capability specification
-4. Relevant vertical-slice / milestone specification
-5. Architecture Decision Records
+4. Relevant milestone/vertical-slice specification
+5. ADRs
 6. Executable implementation
 7. Generated artifacts
-
-The system/software architecture and Specification Architecture & Traceability
-specification govern decomposition, retrieval, dependency direction, and
-maturity gates. They do not outrank Levels 1–2 on financial meaning.
-
-Do not silently change financial meaning to simplify implementation.
-
-Authoritative documents are sources to consult, not context to preload. Start
-with `docs/spec-manifest.json` and, when requirement-level traceability is
-needed, `docs/specs/verification/requirements-index.json`. Use domains,
-keywords, `parent_spec_ids` for decomposition, `depends_on_spec_ids` for
-cross-capability prerequisites, and requirement IDs to locate the narrowest
-applicable spec set. Keep one normative home per concept; reference owning
-requirement IDs instead of copying requirements across specs.
-
-When normative interpretation is required, use `$pfm-spec-scope` and read only
-the smallest authoritative sections needed.
-
-## Architecture and financial invariants
 
 Dependencies point inward:
 
 UI → application/slice → simulation → engine modules → values/time/identity
 
-- Engine modules must not depend on UI/browser, database, authentication,
-  hosting, or external-service code.
-- Lower engine modules must not import `simulation/`.
-- Root compatibility facades are external/legacy re-export surfaces only. They
-  must not contain independent runtime logic, and engine implementation must
-  not use them as dependency shortcuts.
-- Financial formulas belong in the engine, never the UI.
-- Primitive evaluation may produce values, state proposals, semantic effects,
-  diagnostics, and lineage references. It must not directly post transactions
-  or mutate authoritative financial state.
-- Do not use JavaScript floating point for authoritative money calculations.
-- Do not introduce bare number-based financial rates; keep currency, units,
-  rate basis, and rounding explicit.
-- Internal periods are half-open: `[start, end)`. Never infer timezone,
-  day-count basis, proration basis, or rate basis.
-- Identical deterministic inputs must produce identical observable results;
-  financial primitives must not call `Math.random()`.
-- Failed or uncommitted execution must not mutate committed opening state.
-- Never infer economic precedence from vertical-slice/module order,
-  request-array order, object iteration order, or function-call order.
-- Stable tie-breaking is non-economic only. Same-instant constrained-resource
-  contention that can change authoritative outcomes requires explicit
-  dependency/contention semantics or must fail validation.
-- Do not invent funding, borrowing, transfers, sales, or overdraft behavior.
-- Every posted transaction must balance by currency.
-- Settlement must not re-recognize the underlying income or expense.
-- Internal owned-account transfers must preserve consolidated net worth.
-- Do not double-count account containers and underlying positions/assets.
+Universal financial constraints:
+- never use JavaScript floating point for authoritative money;
+- keep rates, units, bases, periods, and rounding explicit;
+- internal periods are half-open `[start, end)`;
+- identical deterministic inputs produce identical observable results;
+- primitives must not invent funding, borrowing, transfers, sales, or overdrafts;
+- failed/uncommitted execution cannot mutate committed state;
+- economic precedence cannot come from incidental iteration/module/call order;
+- every posted transaction balances by currency;
+- settlement cannot re-recognize underlying income/expense;
+- internal owned-account transfers preserve consolidated net worth;
+- do not double-count account containers and their underlying holdings;
+- preserve stable identity, idempotency, provenance, and observed-vs-modeled boundaries;
+- never commit real personal financial data, secrets, or diagnostic artifacts containing them.
 
-Preserve stable domain identity, deterministic occurrence/idempotency identity,
-provenance, and the observed-versus-modeled data boundary. Never commit real
-personal financial data, secrets, or logs/screenshots containing financial
-information. Test fixtures must remain synthetic. Do not silently reinterpret
-old portable-model versions.
+## PFM_TASK_V2 is mandatory for repository mutation
 
-## Implementation workflow
+Any Codex implementation/repair turn that edits, commits, or pushes repository
+content MUST begin with a valid `PFM_TASK_V2` envelope. Read-only questions may
+run without one. Repository hooks enforce this.
 
-Implement only the requested milestone or patch and complete that requested
-scope before treating the task as done. Prefer the smallest defensible diff
-that fully completes it. Do not treat partial implementation of a larger
-requested feature as completion merely because one focused check passes, and
-do not combine unrelated architectural, semantic, UI, or persistence work
-unless explicitly required.
+The envelope separates:
+- implementation breadth (`MODE`);
+- semantic uncertainty (`SEMANTICS`);
+- read scope (`READ_PATHS`);
+- edit scope (`ALLOWED_PATHS`);
+- dependency authority;
+- CI/heavy-verification profile;
+- UAT requirement;
+- externally assigned repair round.
 
-If financial behavior is undefined, surface the ambiguity rather than inventing
-semantics. Never change golden expectations merely to make a test pass.
+When `SEMANTICS: resolved`, the handoff is the implementation contract. Do not
+reread normative specs, architecture, PR history, or broad resources for
+reassurance. Do not expand beyond `READ_PATHS`. If a missing fact prevents
+correct implementation, STOP with `LOOKUP_REQUIRED: <exact missing fact>`.
 
-For PR handoffs using the standard `MODE:/PR:/EXPECTED_HEAD:` envelope, use
-`$pfm-pr-task`. Treat resolved architecture/semantics in that handoff as
-authoritative unless repository evidence directly contradicts them.
+Only a new external handoff may advance `REPAIR_ROUND`. Codex must never
+self-declare another repair round.
 
-Search before opening broad files. Prefer symbols, changed files, targeted
-`rg`, and narrow ranges. When the task is primarily scoped to a subtree that
-has its own `AGENTS.md`, read that one nearest scoped instruction file before
-editing; a session started at repository root does not otherwise inherit nested
-instructions. Do not scan unrelated scoped instruction files. Do not reread PR
-history or large specifications for reassurance. The current explicit task
-supersedes stale exploratory plans. Do not spawn subagents for routine
-implementation; use at most one for a clearly separable read-only or mechanical
-task.
+## Implementation discipline
 
-## Verification budget
+Implement only the requested scope. Prefer the smallest defensible diff that
+fully satisfies acceptance. Do not mix cleanup or redesign into a milestone.
+Never weaken a financial/golden expectation merely to pass verification.
 
-During implementation run only the smallest directly relevant check. Prefer
-`npm run codex:test -- <target>` or `npm run codex:e2e -- <target>` so passing
-output stays compact. Do not rerun a passing check unless relevant code changed.
+Product and repair tasks may not edit agent-control surfaces:
+`AGENTS.md`, `.agents/`, `.codex/`, `.github/workflows/`,
+`tools/codex/`, or `tools/ci/`. Those require `TASK_KIND: framework`.
 
-Documentation, agent-instruction, and configuration-only changes normally do
-not require application tests. If Codex tooling changes, run only its tooling
-self-test unless a concrete risk justifies more. Run typecheck, architecture or
-spec validation, or a web build only when the changed surface makes that check
-materially relevant.
+Subagents are disabled by default. Do not delegate routine work.
 
-GitHub CI is the authoritative broad pre-merge verification gate. Full suites,
-full E2E, build, typecheck, architecture validation, and specification
-validation are not routine local completion rituals. Use `$pfm-verify` only
-when explicitly requested, CI is unavailable/failing and needs local
-reproduction, or a broad change cannot be established with focused checks.
+## No local verification in Codex product turns
 
-Repository hooks block broad verification unless a concrete reason is stated
-and the single command is prefixed with `CODEX_ALLOW_BROAD_VERIFY=1`.
+Codex implementation/repair turns do not run tests, typecheck, builds,
+architecture/spec validators, Playwright, benchmarks, performance captures,
+stochastic convergence runs, onboarding dry runs, or dev servers.
 
-## Loop breaker and repository state
+Codex also does not install dependencies or switch package managers during the
+agent phase. If Node/npm/dependencies are not ready, STOP with `ENV_NOT_READY`.
+The desktop Local Environment owns dependency setup before inference begins.
 
-Repository state is a machine fact, not conversational memory. When a handoff
-supplies `EXPECTED_HEAD`, run:
+GitHub Actions owns ordinary verification. Separate manually triggered
+engineering-validation workflows own expensive performance, stochastic,
+onboarding, and provider-integration evidence. Test selection is risk/surface
+driven; never choose arbitrary test counts merely to satisfy a ritual.
 
-`npm run codex:state -- --expected-head <sha> --require-clean`
+## Repository state, scope, and loop breakers
 
-before editing. Stop instead of guessing if the expected head does not match or
-the working tree is unexpectedly dirty.
+A valid V2 prompt is accepted only when:
+- `EXPECTED_HEAD` exactly matches the checkout;
+- the working tree is clean;
+- required policy fields are valid.
 
-For one PR/failure lineage, perform at most two autonomous repair rounds. Stop
-and notify the user before a third repair attempt, or immediately when:
+Hooks stop the turn on:
+- an out-of-scope edit;
+- a locked dependency-manifest change;
+- an unauthorized agent-control edit;
+- automatic context compaction;
+- unsafe push behavior;
+- policy-hook failure.
 
-- the same CI gate fails again for the same underlying reason after two repairs;
-- no new commit/SHA progress was produced;
-- local/remote branch provenance cannot be reconciled;
-- the required fix crosses the stated architectural scope;
-- the governing specification is genuinely ambiguous; or
-- roadmap-defined user acceptance validation is required.
+Automatic context compaction during a bounded PFM implementation/repair turn is
+a failure signal. Stop instead of compacting and continuing.
 
-Keep completion reports concise: changed files, material decisions, verification
-status, and any STOP/UAT condition.
+## Git publication
 
-## Code Review Rules
+Built-in Codex web search is disabled for this project. If an audited resolved handoff lacks external information, STOP with `LOOKUP_REQUIRED` and let ChatGPT resolve it outside the implementation turn.
 
-- Flag changes that silently alter authoritative financial meaning, introduce
-  floating-point money/rates, invent funding behavior, or permit partial
-  committed-state mutation.
-- Flag outcome-affecting ordering that relies on incidental iteration/module
-  order instead of explicit dependency/contention semantics.
-- Flag UI/cache behavior that can present a stale derived forecast as current
-  after authoritative inputs change.
+Feature-branch push is allowed only to the configured
+`bensmullen/personal-finance-app` origin, from an approved `codex/` or
+`agent/` branch, without force/delete semantics and without targeting
+`main`. Direct-main push is forbidden. PR creation is auto-approved only for
+`gh pr create` against this repository with explicit `--base main` and the
+current approved feature branch as `--head`.
+
+Keep completion reports concise: branch/head, changed files, material decisions,
+CI status if already available, and any STOP/UAT condition.
+
+## Scoped guidance
+
+When the task targets a subtree with a nested `AGENTS.md`, read only the
+nearest scoped instruction file if it is included in `READ_PATHS`. Do not
+scan unrelated instruction files.

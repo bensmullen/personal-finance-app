@@ -1,140 +1,177 @@
 ---
 name: pfm-pr-task
-description: Execute a standardized Personal Finance App PR implementation or repair handoff with deterministic repository-state preflight, bounded discovery, focused verification, and a two-round repair loop breaker.
+description: Execute a machine-guarded PFM_TASK_V2 implementation or repair handoff. Repository mutation requires a valid V2 envelope; Codex edits code but does not run local verification.
 ---
 
-# PFM PR Task Execution
+# PFM PR Task V2
 
-Use this skill when the task is supplied as a PR handoff envelope or explicitly
-asks to implement/repair one PR.
+Use this skill for every repository implementation or repair.
 
-## Expected envelope
+## Required envelope
 
-The handoff should provide as many of these fields as apply:
+```text
+PFM_TASK_V2
+TASK_KIND: product | framework | repair
+MODE: surgical | local | cross-cutting
+SEMANTICS: resolved | lookup_required
+REPAIR_ROUND: 0 | 1 | 2
+EXPECTED_HEAD: <full 40-char SHA>
+DEPENDENCY_POLICY: locked | manifest_edit
+DISCOVERY_POLICY: implementation_only | targeted_lookup
+LOCAL_EXECUTION_POLICY: no_tests
+CI_PROFILE: <risk/surface profile>
+HEAVY_VALIDATION_PROFILE: none | performance | stochastic | onboarding | provider
+UAT: required | not_required
 
-- `MODE`: `surgical`, `local`, or `cross-cutting`
-- `REPO`
-- `PR`
-- `EXPECTED_HEAD`
-- `REPAIR_ROUND`: `0` for initial implementation; `1` or `2` for repairs
-- `OBJECTIVE`
-- `AUTHORITATIVE_REQUIREMENTS`
-- `EVIDENCE`
-- `ACCEPTANCE`
-- `EXPECTED_SURFACE`
-- `OUT_OF_SCOPE`
-- `VERIFY`
-- `DONE`
-- `STOP`
+READ_PATHS:
+- <exact file or bounded subtree Codex may inspect>
 
-Do not expand a precise handoff into a repository-wide rediscovery exercise.
-If `EXPECTED_SURFACE` is primarily inside a subtree with a nested `AGENTS.md`,
-read that one nearest scoped instruction file before editing. Do not load
-unrelated nested instruction files.
+ALLOWED_PATHS:
+- <exact file or bounded subtree Codex may modify>
 
-## 1. Preflight repository state
+OBJECTIVE:
+<one implementation outcome>
 
-If `EXPECTED_HEAD` is supplied, run:
+RESOLVED_DECISIONS:
+<implementation/semantic decisions already resolved by ChatGPT>
 
-`npm run codex:state -- --expected-head <EXPECTED_HEAD> --require-clean`
+REQUIREMENT_MAP:
+- <requirement ID/contract> -> <implementation obligation> -> <CI/heavy/UAT evidence>
 
-before editing.
+FAILURE_MODES:
+- <material failure/partial/unsupported/stale/cancelled/error case and required behavior>
 
-- If the expected head mismatches, stop. Fetch/reconcile only when the handoff
-  explicitly authorizes it; never assume a different local tree is equivalent.
-- If the tree is unexpectedly dirty, stop and report the receipt.
-- If the repository/PR identity is inconsistent with the handoff, stop.
+CLAIMS_AND_GAPS:
+CLAIMS: <support/coverage/performance/compatibility claims Codex may make>
+KNOWN_GAPS: <explicit unsupported/deferred/not-applicable areas>
+EVIDENCE: <how every claim is proven; never infer coverage from names or counts alone>
 
-Repository state output is authoritative over conversational recollection.
+PROFILE_CONTRACT:
+<compact profile-specific markers from the Handoff Authoring Policy; use N/A only when the selected profile has no required markers>
 
-## 2. Bound discovery by MODE
+EVIDENCE_PLAN:
+CI: <ordinary GitHub gates/failure classes>
+HEAVY: <manual engineering-validation profile or none>
+UAT: <required walkthrough/decision or not_required>
 
-### surgical
+ACCEPTANCE:
+<observable implementation conditions>
 
-The handoff already supplies the diagnosis and expected behavior.
+OUT_OF_SCOPE:
+<explicit exclusions>
 
-- Start with the named file/symbol and nearest relevant test.
-- Normally inspect no more than two production files plus one test file before
-  editing.
-- Do not read architecture/specification documents or PR history for
-  reassurance.
-- Do not invoke architecture/semantic review skills or spawn subagents.
+STOP:
+<task-specific stop conditions>
+```
 
-### local
+Hooks validate this envelope before the model may mutate the repository.
 
-The task affects one subsystem but needs discovery.
+## Semantic status
 
-- Start with targeted symbol/search queries and directly relevant tests.
-- Expand only for a concrete dependency or missing fact.
-- Use `$pfm-spec-scope` only when a governing semantic rule is actually unclear.
+### resolved
 
-### cross-cutting
+The handoff is sufficient implementation authority.
 
-Broader reading is justified only when the task crosses architectural
-boundaries, changes financial semantics, or has unresolved normative questions.
+- Do not reopen normative specifications, architecture, PR history, or broad
+  repository resources.
+- Stay within `READ_PATHS`.
+- If a missing fact blocks correctness, STOP exactly with
+  `LOOKUP_REQUIRED: <missing fact>`.
+- Do not silently expand discovery.
 
-- Use `$pfm-spec-scope` for the smallest authoritative rules.
-- Use architecture/semantic review only when the handoff or risk warrants it.
-- Still prefer changed files and targeted sections over whole-document reading.
+### lookup_required
 
-## 3. Implement the resolved contract
+Only use the explicitly authorized narrow lookup surface. The task should
+normally return to ChatGPT for semantic resolution rather than turning Codex
+into the architecture/research agent.
 
-Treat `AUTHORITATIVE_REQUIREMENTS`, `ACCEPTANCE`, and resolved design decisions
-in the handoff as the implementation contract unless repository evidence
-directly contradicts them.
+## Implementation scope
 
-- Make the smallest defensible diff that fully satisfies the objective.
-- Stay inside `EXPECTED_SURFACE` and `OUT_OF_SCOPE`.
-- Never invent undefined financial behavior.
-- Never change golden expectations solely to make tests pass.
-- Do not mix unrelated cleanup into the PR.
+- `ALLOWED_PATHS` is a hard edit boundary.
+- Product/repair tasks cannot modify agent-control files.
+- `DEPENDENCY_POLICY=locked` permits package scripts/config edits when
+  authorized, but dependency/version declarations must remain unchanged.
+- `DEPENDENCY_POLICY=manifest_edit` must be explicit before dependency
+  declarations change.
+- Make no unrelated cleanup changes.
 
-## 4. Verification budget
+## Verification
 
-Follow `VERIFY` when supplied. Otherwise run one smallest directly relevant
-check.
+Codex performs **no local verification** in implementation or repair turns.
 
-Preferred commands:
+Do not run:
+- unit/property/E2E tests;
+- typecheck/build;
+- architecture/spec validators;
+- benchmarks/performance capture;
+- stochastic/convergence validation;
+- onboarding dry runs;
+- dev servers;
+- package installation.
 
-- `npm run codex:test -- <vitest-target> [-- -t ...]`
-- `npm run codex:e2e -- <playwright-target> [-- -g ...]`
-- a single targeted validator/tooling check when only docs/tooling changed
+Commit and push the implementation. GitHub CI chooses ordinary verification
+gates from the changed surface. Heavy engineering evidence runs in the manual
+engineering-validation workflow after ordinary CI is green.
 
-Do not run a full suite, full E2E, build, typecheck, architecture validation, or
-specification validation as a generic completion ritual. GitHub CI owns broad
-pre-merge verification.
+If CI later fails, ChatGPT supplies a new bounded repair envelope with the exact
+failure evidence. Codex does not self-repair from locally generated failures.
 
-If CI failed, use its failing gate and concise diagnostic as evidence. Reproduce
-locally only when the CI diagnostic is insufficient to patch confidently.
+## Repair rounds
 
-## 5. Repair loop breaker
+- Initial implementation: `REPAIR_ROUND: 0`.
+- First external repair: `REPAIR_ROUND: 1`.
+- Second external repair: `REPAIR_ROUND: 2`.
+- There is no autonomous round 3.
 
-`REPAIR_ROUND=0` is initial implementation. Autonomous repair rounds are capped
-at `1` and `2`.
+Codex may not increment the round itself. A new user/ChatGPT handoff is required
+for every repair round.
 
-Stop before attempting a third repair round, and stop immediately if any of the
-following occurs:
+## Environment and state
 
-- the same gate fails again for the same underlying reason after two repairs;
-- the attempted repair produces no new commit/SHA progress;
-- branch/head provenance cannot be reconciled;
-- the fix requires crossing the handoff's architectural scope;
-- the authoritative specification is ambiguous or contradictory;
-- user acceptance validation is required to determine correctness.
+Environment readiness is checked at session start. Missing/wrong Node/npm or
+missing dependencies is `ENV_NOT_READY`; do not troubleshoot or install
+packages.
 
-Do not spend additional model/context budget trying variants after a stop
-condition. Report the blocker and the exact evidence needed from the user.
+The V2 prompt validator itself checks the clean tree and `EXPECTED_HEAD`;
+Codex should not spend tool calls rediscovering repository provenance.
 
-## 6. Completion receipt
+## Completion
 
-After the requested changes are committed/pushed, run `npm run codex:state`
-again and report only:
+Commit, push to an approved feature branch, and open the PR with an explicit safe command of the form:
 
-- new HEAD SHA and branch;
+`gh pr create --repo bensmullen/personal-finance-app --base main --head <current-branch> --title "<title>" --body "<body>"`
+
+The repository permission hook can auto-approve only that bounded PR creation and the corresponding safe feature-branch push.
+
+Report:
+- branch and new HEAD;
 - changed files;
-- material implementation decisions;
-- focused verification performed and result;
-- CI status if already available;
-- any STOP/UAT condition.
+- material decisions;
+- CI status if available;
+- STOP/UAT requirement.
 
-Do not restate large specifications or verbose test logs.
+Do not claim verification that GitHub CI has not completed.
+
+
+## Handoff semantic audit
+
+Before a V2 handoff is issued, ChatGPT must follow
+`docs/development/handoff-authoring-policy.md`. The hook checks the compact
+results of that audit; Codex is not asked to redo it.
+
+The purpose is to prevent a detailed prompt from still being semantically
+under-specified. In particular:
+- support/coverage claims require executable evidence and explicit known gaps;
+- measurement/phase ownership must define what is included and excluded;
+- partial/incomplete/unsupported/cancelled/error states need explicit validity
+  semantics;
+- persisted artifacts/UI summaries must retain the context needed to interpret
+  a result;
+- defined-but-inapplicable concepts are N/A/not_applicable, never measured using
+  a convenient surrogate;
+- resource metrics must say what they mean (for example absolute memory versus
+  signed delta);
+- diagnostics/telemetry/caches remain observational and cannot leak stale
+  global context into unrelated operations;
+- controlled evidence/history required by a specification must have an external
+  workflow/artifact owner rather than an implicit local Codex step.
