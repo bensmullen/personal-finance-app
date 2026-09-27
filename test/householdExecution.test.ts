@@ -98,6 +98,14 @@ describe("compiled household execution", () => {
         returns: [{ targetPositionId: ids.position, accountId: ids.cash, rate: Rate.fromDecimal("0.1", rateConvention.periodic(ratePeriod("1", "calendar_month"))), returnBasis: { kind: "periodic", period: ratePeriod("1", "calendar_month") }, timing: "end_of_period_on_opening_quantity", priceRounding: RoundingPolicy.currency(2, "half_up"), primitiveIds: { compounding, markToMarket } }],
       },
     } });
+    const observed = runCompiledHouseholdProjection({ runContext: context(), compiled: {
+      ...compiled(true),
+      investmentInput: {
+        householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, valuationAccountingPolicy: "economic_only", ruleCatalog: [], transfers: [], purchases: [], fees: [],
+        returns: [{ targetPositionId: ids.position, accountId: ids.cash, rate: Rate.fromDecimal("0.1", rateConvention.periodic(ratePeriod("1", "calendar_month"))), returnBasis: { kind: "periodic", period: ratePeriod("1", "calendar_month") }, timing: "end_of_period_on_opening_quantity", priceRounding: RoundingPolicy.currency(2, "half_up"), primitiveIds: { compounding, markToMarket } }],
+      },
+    } }, { clock: { now: () => { throw new Error("diagnostic clock"); } }, sink: { record: () => { throw new Error("diagnostic sink"); } }, context: { runId: "incomplete-observer-test", dataClassification: "synthetic", modelCounts: {}, executionLocation: "local_node", cacheState: "not_applicable" } });
+    expect(observed).toEqual(result);
     expect(result.status).toBe("incomplete");
     expect(result.periods).toHaveLength(0);
     expect(result.state.accounts[ids.cash]!.cash.equals(money("10"))).toBe(true);

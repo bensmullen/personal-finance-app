@@ -1,5 +1,5 @@
 import type { AccountingTransaction } from "../accounting/index.js";
-import { ValidationError, type ValidationIssue } from "../diagnostics/index.js";
+import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../diagnostics/index.js";
 import type {
   ConstraintOutcome,
   LiquidityShortfall,
@@ -330,8 +330,9 @@ const outcomeSignature = (execution: InstantExecution): string =>
   });
 
 /** The authoritative PR20 execution path: one state/runtime stream and one commit per month. */
-export const runCompiledHouseholdProjection = (
+const runCompiledHouseholdProjectionInternal = (
   request: CompiledHouseholdProjectionRunInput,
+  performance: PerformanceSession,
 ): CompiledHouseholdProjectionRunResult => {
   const { runContext, compiled } = request;
   assertRunContext(runContext);
@@ -428,11 +429,11 @@ export const runCompiledHouseholdProjection = (
   let runDescriptors: readonly HouseholdWorkDescriptor[] = [];
   try {
     if (periods[0] !== undefined)
-      runDescriptors = preparePeriod(
-        periods[0],
+      runDescriptors = performance.measure("engine.prepare", () => preparePeriod(
+        periods[0]!,
         state,
         primitiveState,
-      ).descriptors;
+      ).descriptors);
   } catch (error) {
     if (!(error instanceof ValidationError)) throw error;
   }
@@ -504,11 +505,11 @@ export const runCompiledHouseholdProjection = (
       const cashPeriods: VerticalSlice2PeriodResult[] = [];
       const investmentPeriods: HouseholdInvestmentOperationResult[] = [];
       const liabilityPeriods: VerticalSlice4PeriodResult[] = [];
-      const prepared = preparePeriod(
+      const prepared = performance.measure("engine.prepare", () => preparePeriod(
         period,
         candidateState,
         candidatePrimitiveState,
-      );
+      ));
       const descriptors = prepared.descriptors;
       if (
         compiled.liabilityInput?.loans.some(
@@ -542,10 +543,10 @@ export const runCompiledHouseholdProjection = (
             )
             .map((item) => item.id),
         });
-      const scheduled = buildHouseholdScheduledPlan(
+      const scheduled = performance.measure("engine.schedule_contention", () => buildHouseholdScheduledPlan(
         descriptors,
         compiled.contentionPolicy,
-      );
+      ));
       if (scheduled.status === "invalid_model")
         throw new ValidationError(scheduled.diagnostics);
       const executeAt = (
@@ -739,8 +740,8 @@ export const runCompiledHouseholdProjection = (
               group.some((item) => item.id === edge.before) &&
               group.some((item) => item.id === edge.after),
           );
-          const candidates = linearizations(group, groupEdges);
-          const previews = candidates.map((candidate) =>
+          const candidates = performance.measure("engine.schedule_contention", () => linearizations(group, groupEdges));
+          const previews = performance.measure("engine.schedule_contention", () => candidates.map((candidate) =>
             executeAt(
               at,
               [
@@ -754,7 +755,7 @@ export const runCompiledHouseholdProjection = (
               candidateState,
               candidatePrimitiveState,
             ),
-          );
+          ));
           const signatures = [...new Set(previews.map(outcomeSignature))];
           if (signatures.length > 1) {
             const policy = scheduled.value.policy;
@@ -770,10 +771,10 @@ export const runCompiledHouseholdProjection = (
                       )
                       .map((after) => ({ before: before.id, after: after.id })),
                   );
-            const constrained = linearizations(group, [
+            const constrained = performance.measure("engine.schedule_contention", () => linearizations(group, [
               ...groupEdges,
               ...policyEdges,
-            ]);
+            ]));
             if (constrained.length === 0)
               throw new ValidationError({
                 severity: "error",
@@ -788,7 +789,7 @@ export const runCompiledHouseholdProjection = (
                   ...(policy === undefined ? [] : [policy.id]),
                 ],
               });
-            const constrainedPreviews = constrained.map((candidate) =>
+            const constrainedPreviews = performance.measure("engine.schedule_contention", () => constrained.map((candidate) =>
               executeAt(
                 at,
                 [
@@ -802,7 +803,7 @@ export const runCompiledHouseholdProjection = (
                 candidateState,
                 candidatePrimitiveState,
               ),
-            );
+            ));
             if (
               policy === undefined ||
               new Set(constrainedPreviews.map(outcomeSignature)).size > 1
@@ -838,14 +839,14 @@ export const runCompiledHouseholdProjection = (
               });
           }
         }
-        const finalOrder = linearizations(
+        const finalOrder = performance.measure("engine.schedule_contention", () => linearizations(
           sameInstant,
           resolvedEdges.filter(
             (edge) =>
               sameInstant.some((item) => item.id === edge.before) &&
               sameInstant.some((item) => item.id === edge.after),
           ),
-        )[0];
+        ))[0];
         if (finalOrder === undefined)
           throw new ValidationError({
             severity: "error",
@@ -854,12 +855,12 @@ export const runCompiledHouseholdProjection = (
             entityType: "household_projection",
             relatedIds: sameInstant.map((item) => item.id),
           });
-        const executed = executeAt(
+        const executed = performance.measure("engine.execute", () => executeAt(
           at,
           finalOrder,
           candidateState,
           candidatePrimitiveState,
-        );
+        ));
         candidateState = executed.state;
         candidatePrimitiveState = executed.primitiveState;
         cashPeriods.push(...executed.cashPeriods);
@@ -1000,16 +1001,16 @@ export const runCompiledHouseholdProjection = (
             left.id.localeCompare(right.id),
         ),
       );
-      const statements = deriveStatements(
+      const statements = performance.measure("engine.statements_metrics", () => deriveStatements(
         candidateState,
         transactions,
         runContext.baseCurrency,
-      );
-      const metrics = deriveHouseholdClosingMetrics(
+      ));
+      const metrics = performance.measure("engine.statements_metrics", () => deriveHouseholdClosingMetrics(
         candidateState,
         runContext.baseCurrency,
         compiled.standaloneAssets,
-      );
+      ));
       const cashFlow =
         cashPeriods.length === 0
           ? undefined
@@ -1074,7 +1075,7 @@ export const runCompiledHouseholdProjection = (
                   ...investmentPeriods.map((item) => item.traceRefs),
                 ) ?? Object.freeze([]),
             });
-      const periodResult: HouseholdProjectionPeriodResult = Object.freeze({
+      const periodResult: HouseholdProjectionPeriodResult = performance.measure("engine.trace_result", () => Object.freeze({
         period: Object.freeze({ ...period }),
         statements,
         cash: metrics.cash,
@@ -1101,7 +1102,7 @@ export const runCompiledHouseholdProjection = (
         ...(cashFlow === undefined ? {} : { cashFlow }),
         ...(investments === undefined ? {} : { investments }),
         ...(liability === undefined ? {} : { liability }),
-      });
+      }));
       diagnostics.push(
         ...(prepared.cash?.diagnostics ?? []),
         ...cashPeriods.flatMap((item) => item.diagnostics),
@@ -1139,4 +1140,16 @@ export const runCompiledHouseholdProjection = (
     diagnostics: Object.freeze(diagnostics),
     displayInputs: display(runContext),
   });
+};
+
+export const runCompiledHouseholdProjection = (
+  request: CompiledHouseholdProjectionRunInput,
+  observer?: PerformanceObserver,
+): CompiledHouseholdProjectionRunResult => {
+  const performance = createPerformanceSession(observer);
+  try {
+    return runCompiledHouseholdProjectionInternal(request, performance);
+  } finally {
+    performance.finish();
+  }
 };

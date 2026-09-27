@@ -1,4 +1,4 @@
-import { ValidationError, type ValidationIssue } from "../diagnostics/index.js";
+import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../diagnostics/index.js";
 import type {
   LiquidityShortfall,
   AllOrNothingLiquidityShortfall,
@@ -691,10 +691,12 @@ interface ExecutedHousehold {
   >;
   readonly context: ReturnType<typeof createRunContext>;
 }
-const execute = (
+const executeInternal = (
   model: PortableModelEnvelope,
   request: HouseholdForecastRequest,
   resolved?: ResolvedScenario,
+  observer?: PerformanceObserver,
+  performance?: PerformanceSession,
 ): {
   readonly compiled?: CompiledHouseholdProjection;
   readonly executable?: ExecutableHouseholdProjection;
@@ -754,7 +756,7 @@ const execute = (
                   },
                 }),
           });
-    const compiledResult = compileHouseholdProjection(model, compiler);
+    const compiledResult = compileHouseholdProjection(model, compiler, observer);
     if (compiledResult.status !== "compiled")
       return {
         read: Object.freeze({
@@ -826,20 +828,20 @@ const execute = (
     const result = runCompiledHouseholdProjection({
       runContext: context,
       compiled: executable,
-    });
+    }, observer);
     return {
       compiled,
       executable,
       result,
       context,
-      read: toReadModel(
+      read: (performance ?? createPerformanceSession()).measure("application.read_model", () => toReadModel(
         result,
         compiled,
         model,
         context.baseCurrency,
         context.asOf,
         context.dataCutoff,
-      ),
+      )),
     };
   } catch (error) {
     const diagnostics =
@@ -857,10 +859,25 @@ const execute = (
     };
   }
 };
+
+const execute = (
+  model: PortableModelEnvelope,
+  request: HouseholdForecastRequest,
+  resolved?: ResolvedScenario,
+  observer?: PerformanceObserver,
+): ReturnType<typeof executeInternal> => {
+  const performance = createPerformanceSession(observer);
+  try {
+    return performance.measure("forecast.total", () => executeInternal(model, request, resolved, observer, performance));
+  } finally {
+    performance.finish();
+  }
+};
 export const runPersonalHouseholdForecast = (
   model: PortableModelEnvelope,
   request: HouseholdForecastRequest,
-): PersonalHouseholdForecastReadModel => execute(model, request).read;
+  observer?: PerformanceObserver,
+): PersonalHouseholdForecastReadModel => execute(model, request, undefined, observer).read;
 
 export interface PersonalHouseholdScenarioComparisonRequest {
   readonly scenarios?: readonly ExecutableScenario[];

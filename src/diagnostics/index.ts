@@ -1,5 +1,7 @@
 export type ValidationSeverity = "error" | "warning" | "info";
 
+export * from "./performance.js";
+
 export interface ValidationIssue {
   readonly severity: ValidationSeverity;
   readonly code: string;
