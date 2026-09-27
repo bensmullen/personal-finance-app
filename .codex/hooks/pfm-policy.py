@@ -365,6 +365,10 @@ def pre_tool(payload, root):
         if re.search(r"(^|\s)(rg|grep)(\s|$)", command) and not bash_paths(command, root):
             deny("Search commands must name an explicit path within READ_PATHS; repository-wide implicit search is blocked.")
             return
+        for path in bash_paths(command, root):
+            if not allowed(path, state["READ_PATHS"]) and not allowed(path, state["ALLOWED_PATHS"]):
+                deny(f"Read/execute outside READ_PATHS blocked: {path}")
+                return
     if tool == "apply_patch":
         for path in patch_paths(command):
             if not allowed(path, state["ALLOWED_PATHS"]):
