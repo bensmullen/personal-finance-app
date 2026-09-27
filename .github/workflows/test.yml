@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, spec/post-pr21-architecture-roadmap]
 
 permissions:
   contents: read
@@ -15,34 +15,145 @@ concurrency:
   group: pages-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  NODE_VERSION: 22
+
 jobs:
-  test:
+  spec:
+    name: spec
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run spec:validate
       - run: npm run editor:check
+
+  architecture:
+    name: architecture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run architecture:validate
+
+  tooling:
+    name: codex-tooling
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run codex:tooling-test
+
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run typecheck
-      - run: npm test
+
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: npm run codex:test
+      - name: Upload unit diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-diagnostics
+          path: .codex/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run build:web
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
       - name: Upload web build
         if: github.event_name == 'push'
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: npm run codex:e2e
+      - name: Upload E2E diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-diagnostics
+          path: |
+            .codex/logs/
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  test:
+    name: test
+    if: always()
+    needs: [spec, architecture, tooling, typecheck, unit, build, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all parallel gates
+        env:
+          SPEC: ${{ needs.spec.result }}
+          ARCHITECTURE: ${{ needs.architecture.result }}
+          TOOLING: ${{ needs.tooling.result }}
+          TYPECHECK: ${{ needs.typecheck.result }}
+          UNIT: ${{ needs.unit.result }}
+          BUILD: ${{ needs.build.result }}
+          E2E: ${{ needs.e2e.result }}
+        run: |
+          printf 'spec=%s architecture=%s tooling=%s typecheck=%s unit=%s build=%s e2e=%s\n' \
+            "$SPEC" "$ARCHITECTURE" "$TOOLING" "$TYPECHECK" "$UNIT" "$BUILD" "$E2E"
+          for result in "$SPEC" "$ARCHITECTURE" "$TOOLING" "$TYPECHECK" "$UNIT" "$BUILD" "$E2E"; do
+            test "$result" = "success"
+          done
+
   deploy:
     if: github.event_name == 'push'
-    needs: test
+    needs: [test, build]
     runs-on: ubuntu-latest
     environment:
       name: github-pages

@@ -35,6 +35,8 @@ const broadReason = (value) => {
   if (value === "npm test" || value === "npm run test") return "full unit-test suite";
   if (value.startsWith("npm run codex:test") && !targetedNpmScript(value, "codex:test"))
     return "full unit-test suite";
+  if (value.startsWith("npm run codex:e2e") && !targetedNpmScript(value, "codex:e2e"))
+    return "full Playwright suite";
   if (value.startsWith("npm run test:e2e") && !targetedNpmScript(value, "test:e2e"))
     return "full Playwright suite";
   if (/^npm run (?:codex:verify|typecheck|build:web|architecture:validate|spec:validate)(?:\s|$)/.test(value))
@@ -50,19 +52,52 @@ const broadReason = (value) => {
   return undefined;
 };
 
+const compactRewrite = (value) => {
+  if (targetedNpmScript(value, "test")) {
+    return `npm run codex:test -- ${value.slice("npm run test -- ".length).trim()}`;
+  }
+  if (targetedNpmScript(value, "test:e2e")) {
+    return `npm run codex:e2e -- ${value.slice("npm run test:e2e -- ".length).trim()}`;
+  }
+  for (const prefix of ["npx vitest run ", "vitest run "]) {
+    if (targetedRunner(value, prefix)) {
+      return `npm run codex:test -- ${value.slice(prefix.length).trim()}`;
+    }
+  }
+  for (const prefix of ["npx playwright test ", "playwright test "]) {
+    if (targetedRunner(value, prefix)) {
+      return `npm run codex:e2e -- ${value.slice(prefix.length).trim()}`;
+    }
+  }
+  return value;
+};
+
+const emitUpdated = (updatedCommand, decision = undefined) => {
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      ...(decision ? { permissionDecision: decision } : {}),
+      updatedInput: {
+        ...toolInput,
+        command: updatedCommand,
+      },
+    },
+  }));
+};
+
 if (command.startsWith(overridePrefix)) {
   const unwrapped = command.slice(overridePrefix.length).trim();
   if (unwrapped === "npm test" || unwrapped === "npm run test") {
-    process.stdout.write(JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "allow",
-        updatedInput: {
-          ...toolInput,
-          command: `${overridePrefix}npm run codex:test`,
-        },
-      },
-    }));
+    emitUpdated(`${overridePrefix}npm run codex:test`, "allow");
+    process.exit(0);
+  }
+  if (unwrapped === "npm run test:e2e") {
+    emitUpdated(`${overridePrefix}npm run codex:e2e`, "allow");
+    process.exit(0);
+  }
+  const compact = compactRewrite(unwrapped);
+  if (compact !== unwrapped) {
+    emitUpdated(`${overridePrefix}${compact}`, "allow");
     process.exit(0);
   }
   process.stdout.write("{}");
@@ -88,6 +123,14 @@ if (blocked) {
     },
   }));
   process.exit(0);
+}
+
+if (segments.length === 1) {
+  const compact = compactRewrite(command);
+  if (compact !== command) {
+    emitUpdated(compact);
+    process.exit(0);
+  }
 }
 
 process.stdout.write("{}");

@@ -2,7 +2,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  fullyParallel: false,
+  // Keep local runs predictable, but let independent tests within the single
+  // E2E spec file use multiple workers in CI to reduce wall-clock time.
+  fullyParallel: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? "github" : "list",
   use: {

@@ -7,8 +7,11 @@ const scriptPath = fileURLToPath(import.meta.url);
 const root = path.resolve(path.dirname(scriptPath), "../..");
 const hookPath = path.join(root, ".codex", "hooks", "quiet-test.mjs");
 const quietVitestPath = path.join(root, "tools", "codex", "quiet-vitest.mjs");
+const quietPlaywrightPath = path.join(root, "tools", "codex", "quiet-playwright.mjs");
+const statePath = path.join(root, "tools", "codex", "state.mjs");
 const smokeTestPath = path.join(root, "test", ".codex-quiet-smoke.test.ts");
 const logsDirectory = path.join(root, ".codex", "logs");
+const git = process.platform === "win32" ? "git.exe" : "git";
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -42,8 +45,9 @@ const broadCommands = [
   "npm test",
   "npm run test",
   "npm run codex:test",
-  "npm run codex:verify",
+  "npm run codex:e2e",
   "npm run test:e2e",
+  "npm run codex:verify",
   "npm run typecheck",
   "npm run build:web",
   "npm run architecture:validate",
@@ -62,16 +66,33 @@ for (const command of broadCommands) {
   );
 }
 
-for (const command of [
+const unchangedFocused = [
   "npm run codex:test -- test/state.test.ts",
-  "npx vitest run test/state.test.ts",
-  "npm run test:e2e -- e2e/personal-mvp.spec.ts",
-  'npx playwright test e2e/personal-mvp.spec.ts -g "retirement"',
+  "npm run codex:e2e -- e2e/personal-mvp.spec.ts",
   "npm run codex:tooling-test",
-]) {
+];
+for (const command of unchangedFocused) {
   assert(
     JSON.stringify(hookResult(hookPayload(command))) === "{}",
-    `focused command should remain unchanged: ${command}`,
+    `focused compact command should remain unchanged: ${command}`,
+  );
+}
+
+const rewrites = new Map([
+  ["npm run test -- test/state.test.ts", "npm run codex:test -- test/state.test.ts"],
+  ["npx vitest run test/state.test.ts", "npm run codex:test -- test/state.test.ts"],
+  ["vitest run test/state.test.ts -t state", "npm run codex:test -- test/state.test.ts -t state"],
+  ["npm run test:e2e -- e2e/personal-mvp.spec.ts", "npm run codex:e2e -- e2e/personal-mvp.spec.ts"],
+  [
+    'npx playwright test e2e/personal-mvp.spec.ts -g "retirement"',
+    'npm run codex:e2e -- e2e/personal-mvp.spec.ts -g "retirement"',
+  ],
+]);
+for (const [command, expected] of rewrites) {
+  const output = hookResult(hookPayload(command));
+  assert(
+    output?.hookSpecificOutput?.updatedInput?.command === expected,
+    `${command} did not rewrite to ${expected}`,
   );
 }
 
@@ -87,6 +108,20 @@ assert(
   overriddenTests?.hookSpecificOutput?.permissionDecision === "allow",
   "explicit full-unit override was not allowed",
 );
+
+const overriddenE2e = hookResult(
+  hookPayload("CODEX_ALLOW_BROAD_VERIFY=1 npm run test:e2e"),
+);
+assert(
+  overriddenE2e?.hookSpecificOutput?.updatedInput?.command ===
+    "CODEX_ALLOW_BROAD_VERIFY=1 npm run codex:e2e",
+  "explicit full-E2E override was not rewritten to quiet Playwright",
+);
+assert(
+  overriddenE2e?.hookSpecificOutput?.permissionDecision === "allow",
+  "explicit full-E2E override was not allowed",
+);
+
 assert(
   JSON.stringify(
     hookResult(
@@ -97,6 +132,31 @@ assert(
 );
 
 assert(JSON.stringify(hookResult("not-json")) === "{}", "malformed hook input should fail open quietly");
+
+const syntaxCheck = spawnSync(process.execPath, ["--check", quietPlaywrightPath], {
+  cwd: root,
+  encoding: "utf8",
+  env: process.env,
+});
+assert(syntaxCheck.status === 0, `quiet Playwright syntax check failed: ${syntaxCheck.stderr}`);
+
+const head = spawnSync(git, ["rev-parse", "HEAD"], {
+  cwd: root,
+  encoding: "utf8",
+  env: process.env,
+}).stdout.trim();
+assert(/^[0-9a-f]{40}$/i.test(head), "could not resolve git HEAD for state receipt test");
+
+const stateOk = runNode(statePath, ["--expected-head", head]);
+assert(stateOk.status === 0, `state receipt failed: ${stateOk.stderr}`);
+assert(
+  new RegExp(`^STATE branch=\\S+ head=${head} upstream=\\S+ ahead=\\S+ behind=\\S+ dirty=\\d+\\s*$`).test(stateOk.stdout),
+  `unexpected state receipt: ${stateOk.stdout}`,
+);
+
+const stateMismatch = runNode(statePath, ["--expected-head", "0000000"]);
+assert(stateMismatch.status === 2, `state mismatch should exit 2, got ${stateMismatch.status}`);
+assert(stateMismatch.stderr.startsWith("STATE_MISMATCH "), "state mismatch did not emit compact receipt");
 
 await mkdir(path.dirname(smokeTestPath), { recursive: true });
 
@@ -134,4 +194,4 @@ try {
   await rm(logsDirectory, { recursive: true, force: true });
 }
 
-console.log("PASS codex tooling — hook rewrite and quiet Vitest pass/fail paths");
+console.log("PASS codex tooling — state receipt, verification hook rewrites, and quiet Vitest paths");
