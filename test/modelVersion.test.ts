@@ -169,6 +169,11 @@ describe("portable model format compatibility", () => {
       sourceVersion: "0.1.9-draft",
       targetVersion: CURRENT_RUN_VERSIONS.financialSpecificationVersion,
     }));
+    expect(classifyFinancialSpecificationVersion("0.1.10-draft")).toEqual(expect.objectContaining({
+      classification: "supported_directly",
+      sourceVersion: "0.1.10-draft",
+      targetVersion: CURRENT_RUN_VERSIONS.financialSpecificationVersion,
+    }));
     const compatiblePrior = deserializePortableModelEnvelope({
       model_format_version: CURRENT_MODEL_FORMAT_VERSION,
       financial_specification_version: "0.1.9-draft",
