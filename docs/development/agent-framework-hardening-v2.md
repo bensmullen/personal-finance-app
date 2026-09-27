@@ -54,11 +54,14 @@ protection/rulesets and CI remain required.
 
 ## 4. Environment contract
 
-Repository runtime is Node 22 with npm 10. The desktop Local Environment must run only:
+Repository runtime is Node 22 with npm 10. The checked-in desktop Local Environment at
+`.codex/environments/environment.toml` runs only:
 
 `npm ci --prefer-offline --no-audit --no-fund`
 
-before Codex begins. Tests/builds are deliberately absent from setup.
+before Codex begins. Tests/builds are deliberately absent from setup. In the
+desktop app, select the checked-in **Personal Finance App** environment when
+starting a Worktree chat.
 
 `.node-version` pins the expected major. `.npmrc` keeps installs
 noninteractive and engine-policy friendly. `tools/codex/env-doctor.sh` is the
@@ -103,8 +106,7 @@ turn rather than allowing an unbounded implementation session.
 Before the next Codex implementation:
 1. install/activate Node 22 so the desktop integrated terminal sees `node` and
    `npm`;
-2. configure/select the repository Local Environment with the exact setup
-   command above;
+2. select the checked-in **Personal Finance App** Local Environment;
 3. trust the repository and the updated hooks;
 4. authenticate GitHub CLI/Git;
 5. enable a GitHub main-branch ruleset requiring PRs and the aggregate `test`
