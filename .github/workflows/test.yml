@@ -52,7 +52,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run spec:validate
       - run: npm run editor:check
@@ -65,7 +67,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run architecture:validate
 
@@ -77,7 +81,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run codex:tooling-test
 
@@ -89,7 +95,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run typecheck
 
@@ -101,7 +109,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run codex:test
       - name: Upload unit diagnostics
@@ -121,7 +131,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run build:web
       - name: Upload web build
@@ -138,7 +150,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
       - run: npm run codex:e2e
