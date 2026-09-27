@@ -33,7 +33,10 @@ The aggregate job remains named `test` for branch protection.
 ## 3. Task CI profiles
 
 The audited ChatGPT handoff selects the closest semantic profile. This describes
-expected failure classes; CI remains independently conservative.
+expected failure classes; CI remains independently conservative. The handoff
+must also carry the corresponding compact `PROFILE_CONTRACT` markers defined
+by `docs/development/handoff-authoring-policy.md`; these capture semantic risks
+that path-based CI routing cannot infer.
 
 - `docs-only`: non-normative documentation.
 - `tooling`: hooks/skills/agent/CI tooling.

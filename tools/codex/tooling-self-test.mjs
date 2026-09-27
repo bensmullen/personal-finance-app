@@ -80,6 +80,27 @@ Exercise the repository policy hook without modifying the tree.
 RESOLVED_DECISIONS:
 The hook contract is already resolved.
 
+REQUIREMENT_MAP:
+- POLICY-V2 -> validate task envelope and resource guardrails -> codex-tooling self-test
+
+FAILURE_MODES:
+- Malformed envelopes and unsafe actions are blocked before repository mutation.
+
+CLAIMS_AND_GAPS:
+CLAIMS: The self-test covers the guarded V2 lifecycle.
+KNOWN_GAPS: It does not prove application financial behavior.
+EVIDENCE: codex-tooling CI executes the policy self-test.
+
+PROFILE_CONTRACT:
+POLICY_BOUNDARY: Project-local Codex implementation and publication behavior only.
+FAIL_CLOSED: Unsafe mutation/publication and malformed contracts are denied.
+SELF_TEST: The codex-tooling job exercises the policy decisions.
+
+EVIDENCE_PLAN:
+CI: codex-tooling plus conservative routed framework gates.
+HEAVY: none.
+UAT: not_required.
+
 ACCEPTANCE:
 Policy events return the expected decisions.
 
@@ -95,6 +116,31 @@ assert(
   accepted?.hookSpecificOutput?.hookEventName === "UserPromptSubmit",
   "valid V2 prompt was not accepted",
 );
+
+const performancePrompt = prompt
+  .replace("CI_PROFILE: tooling", "CI_PROFILE: deterministic")
+  .replace("HEAVY_VALIDATION_PROFILE: none", "HEAVY_VALIDATION_PROFILE: performance")
+  .replace(/PROFILE_CONTRACT:\n[\s\S]*?\nEVIDENCE_PLAN:/, `PROFILE_CONTRACT:
+BOUNDARIES: sibling measurements are explicitly non-overlapping.
+APPLICABILITY: unavailable transport is not_applicable, never a surrogate duration.
+SUCCESS_STATUS: only completed representative runs are valid baseline evidence.
+CONTEXT_RETENTION: artifact/UI preserve horizon, versions, runtime, location, cache state, and model counts.
+RESOURCE_SEMANTICS: memory/cost fields state absolute/delta/metering semantics.
+CONTROLLED_EVIDENCE: full capture runs in engineering-validation, never under Codex.
+
+EVIDENCE_PLAN:`);
+const performanceAccepted = hook("UserPromptSubmit", { prompt: performancePrompt });
+assert(
+  performanceAccepted?.hookSpecificOutput?.hookEventName === "UserPromptSubmit",
+  "complete performance profile contract should be accepted",
+);
+
+const incompletePerformance = performancePrompt.replace(
+  "CONTROLLED_EVIDENCE: full capture runs in engineering-validation, never under Codex.",
+  "CONTROLLED EVIDENCE omitted.",
+);
+const performanceBlocked = hook("UserPromptSubmit", { prompt: incompletePerformance });
+assert(performanceBlocked.decision === "block", "incomplete performance profile contract should be blocked");
 
 const pre = (command) => hook("PreToolUse", {
   tool_name: "Bash",

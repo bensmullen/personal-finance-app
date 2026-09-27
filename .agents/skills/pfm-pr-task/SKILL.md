@@ -35,6 +35,25 @@ OBJECTIVE:
 RESOLVED_DECISIONS:
 <implementation/semantic decisions already resolved by ChatGPT>
 
+REQUIREMENT_MAP:
+- <requirement ID/contract> -> <implementation obligation> -> <CI/heavy/UAT evidence>
+
+FAILURE_MODES:
+- <material failure/partial/unsupported/stale/cancelled/error case and required behavior>
+
+CLAIMS_AND_GAPS:
+CLAIMS: <support/coverage/performance/compatibility claims Codex may make>
+KNOWN_GAPS: <explicit unsupported/deferred/not-applicable areas>
+EVIDENCE: <how every claim is proven; never infer coverage from names or counts alone>
+
+PROFILE_CONTRACT:
+<compact profile-specific markers from the Handoff Authoring Policy; use N/A only when the selected profile has no required markers>
+
+EVIDENCE_PLAN:
+CI: <ordinary GitHub gates/failure classes>
+HEAVY: <manual engineering-validation profile or none>
+UAT: <required walkthrough/decision or not_required>
+
 ACCEPTANCE:
 <observable implementation conditions>
 
@@ -132,3 +151,27 @@ Report:
 - STOP/UAT requirement.
 
 Do not claim verification that GitHub CI has not completed.
+
+
+## Handoff semantic audit
+
+Before a V2 handoff is issued, ChatGPT must follow
+`docs/development/handoff-authoring-policy.md`. The hook checks the compact
+results of that audit; Codex is not asked to redo it.
+
+The purpose is to prevent a detailed prompt from still being semantically
+under-specified. In particular:
+- support/coverage claims require executable evidence and explicit known gaps;
+- measurement/phase ownership must define what is included and excluded;
+- partial/incomplete/unsupported/cancelled/error states need explicit validity
+  semantics;
+- persisted artifacts/UI summaries must retain the context needed to interpret
+  a result;
+- defined-but-inapplicable concepts are N/A/not_applicable, never measured using
+  a convenient surrogate;
+- resource metrics must say what they mean (for example absolute memory versus
+  signed delta);
+- diagnostics/telemetry/caches remain observational and cannot leak stale
+  global context into unrelated operations;
+- controlled evidence/history required by a specification must have an external
+  workflow/artifact owner rather than an implicit local Codex step.

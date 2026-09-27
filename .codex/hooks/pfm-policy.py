@@ -12,7 +12,27 @@ APPROVED_BRANCH_PREFIXES = ("codex/", "agent/")
 CONTROL_PATHS = ("AGENTS.md", ".codex/", ".agents/", ".github/workflows/", "tools/codex/", "tools/ci/")
 NORMATIVE_MARKERS = ("docs/specs/", "docs/architecture/", "docs/spec-manifest.json", "requirements-index.json", "system-software-architecture")
 REQUIRED_SCALARS = ("TASK_KIND", "MODE", "SEMANTICS", "REPAIR_ROUND", "EXPECTED_HEAD", "DEPENDENCY_POLICY", "DISCOVERY_POLICY", "LOCAL_EXECUTION_POLICY", "CI_PROFILE", "HEAVY_VALIDATION_PROFILE", "UAT")
-REQUIRED_SECTIONS = ("READ_PATHS", "ALLOWED_PATHS", "OBJECTIVE", "ACCEPTANCE", "OUT_OF_SCOPE", "STOP")
+REQUIRED_SECTIONS = ("READ_PATHS", "ALLOWED_PATHS", "OBJECTIVE", "RESOLVED_DECISIONS", "REQUIREMENT_MAP", "FAILURE_MODES", "CLAIMS_AND_GAPS", "PROFILE_CONTRACT", "EVIDENCE_PLAN", "ACCEPTANCE", "OUT_OF_SCOPE", "STOP")
+
+PROFILE_MARKERS = {
+    "tooling": ("POLICY_BOUNDARY:", "FAIL_CLOSED:", "SELF_TEST:"),
+    "spec": ("NORMATIVE_HOME:", "TRACEABILITY:", "COMPATIBILITY:"),
+    "deterministic-interactive": ("ASYNC_STATE:", "REQUEST_IDENTITY:", "STALE_SUPPRESSION:", "CACHE_VALIDITY:", "LAST_GOOD_RESULT:"),
+    "engine-equivalence": ("REFERENCE_BEHAVIOR:", "ALLOWED_INTERNAL_CHANGE:", "EQUIVALENCE_EVIDENCE:", "PERFORMANCE_EVIDENCE:"),
+    "tax": ("EFFECTIVE_DATES:", "JURISDICTION:", "ROUNDING:", "UNSUPPORTED_COVERAGE:"),
+    "stochastic-foundation": ("SEEDING:", "IDENTITIES:", "SUBSTREAMS:", "UNSUPPORTED_DISTRIBUTIONS:", "REPRODUCIBILITY:"),
+    "stochastic-orchestration": ("SCHEDULING_INDEPENDENCE:", "BOUNDED_MEMORY:", "CANCELLATION:", "CONVERGENCE:", "PERSISTENCE:"),
+    "onboarding": ("CANDIDATE_FACTS:", "PROVENANCE:", "AMBIGUITY:", "CONFIRMATION:", "PRIVACY:"),
+    "provider-adapter": ("PROVENANCE:", "VERSION_PINNING:", "NORMALIZATION:", "LICENSING:", "FAILURE_MODE:"),
+    "probabilistic-ux": ("FORECAST_BASIS:", "FRESHNESS:", "RERUN_POLICY:", "PROBABILITY_LANGUAGE:", "COMPARISON_BASIS:"),
+}
+
+HEAVY_PROFILE_MARKERS = {
+    "performance": ("BOUNDARIES:", "APPLICABILITY:", "SUCCESS_STATUS:", "CONTEXT_RETENTION:", "RESOURCE_SEMANTICS:", "CONTROLLED_EVIDENCE:"),
+    "stochastic": ("CONVERGENCE_CRITERION:", "RESOURCE_BUDGET:", "SAMPLE_RULE:", "ARTIFACT_CONTEXT:", "CONTROLLED_EVIDENCE:"),
+    "onboarding": ("TARGET_METRIC:", "DATA_BOUNDARY:", "ABANDONMENT_OR_ERROR:", "ARTIFACT_CONTEXT:", "CONTROLLED_EVIDENCE:"),
+    "provider": ("SECRET_BOUNDARY:", "LIVE_VS_FIXTURE:", "PROVENANCE:", "RETRY_FAILURE:", "ARTIFACT_CONTEXT:"),
+}
 
 def emit(value):
     sys.stdout.write(json.dumps(value, separators=(",", ":")))
@@ -113,6 +133,24 @@ def validate_envelope(prompt):
         errors.append("CI_PROFILE is not a recognized verification profile")
     if values.get("HEAVY_VALIDATION_PROFILE") not in {"none", "performance", "stochastic", "onboarding", "provider"}:
         errors.append("HEAVY_VALIDATION_PROFILE is not recognized")
+    requirement_map = section(prompt, "REQUIREMENT_MAP")
+    if "->" not in requirement_map:
+        errors.append("REQUIREMENT_MAP must map requirement -> implementation -> evidence")
+    claims = section(prompt, "CLAIMS_AND_GAPS")
+    for marker in ("CLAIMS:", "KNOWN_GAPS:", "EVIDENCE:"):
+        if marker not in claims:
+            errors.append(f"CLAIMS_AND_GAPS missing {marker}")
+    evidence_plan = section(prompt, "EVIDENCE_PLAN")
+    for marker in ("CI:", "HEAVY:", "UAT:"):
+        if marker not in evidence_plan:
+            errors.append(f"EVIDENCE_PLAN missing {marker}")
+    profile_contract = section(prompt, "PROFILE_CONTRACT")
+    for marker in PROFILE_MARKERS.get(values.get("CI_PROFILE"), ()):
+        if marker not in profile_contract:
+            errors.append(f"PROFILE_CONTRACT for {values.get('CI_PROFILE')} missing {marker}")
+    for marker in HEAVY_PROFILE_MARKERS.get(values.get("HEAVY_VALIDATION_PROFILE"), ()):
+        if marker not in profile_contract:
+            errors.append(f"PROFILE_CONTRACT for heavy {values.get('HEAVY_VALIDATION_PROFILE')} missing {marker}")
     if values.get("SEMANTICS") == "resolved" and values.get("DISCOVERY_POLICY") != "implementation_only":
         errors.append("resolved semantics require DISCOVERY_POLICY=implementation_only")
     if values.get("SEMANTICS") == "lookup_required" and values.get("DISCOVERY_POLICY") != "targeted_lookup":

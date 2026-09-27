@@ -28,7 +28,12 @@ Repository mutation requires:
 - heavy-validation profile;
 - UAT status;
 - `READ_PATHS` and `ALLOWED_PATHS`;
-- objective, acceptance, exclusions, and stop conditions.
+- objective, resolved decisions, acceptance, exclusions, and stop conditions;
+- a requirement → implementation → evidence map;
+- material failure/partial-state semantics;
+- explicit claims, known gaps, and evidence for those claims;
+- a profile-specific semantic contract;
+- a CI/heavy/UAT evidence plan.
 
 Read-only prompts remain possible without an envelope, but mutation is blocked.
 
@@ -93,6 +98,13 @@ to the full matrix.
 Expensive performance/stochastic/onboarding/provider evidence lives in the
 manual engineering-validation workflow. No LLM remains active while those jobs
 run.
+
+Before ChatGPT emits a handoff it follows
+`docs/development/handoff-authoring-policy.md`. This is intentionally separate
+from Codex execution: ChatGPT resolves requirement ownership, claims/evidence,
+partial-state semantics, boundary/applicability rules, persistence/context
+requirements, and the selected roadmap profile's risk contract before Codex
+sees the prompt.
 
 ## 7. Repair contract
 
