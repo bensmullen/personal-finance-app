@@ -16,10 +16,22 @@ Authority for financial/implementation meaning:
 6. Executable implementation
 7. Generated artifacts
 
-Do not silently change financial meaning to simplify implementation. When a
-normative rule is unclear, use `$pfm-spec-scope` to locate the smallest
-authoritative section needed; do not preload large specifications for routine
-work.
+The system/software architecture and Specification Architecture & Traceability
+specification govern decomposition, retrieval, dependency direction, and
+maturity gates. They do not outrank Levels 1–2 on financial meaning.
+
+Do not silently change financial meaning to simplify implementation.
+
+Authoritative documents are sources to consult, not context to preload. Start
+with `docs/spec-manifest.json` and, when requirement-level traceability is
+needed, `docs/specs/verification/requirements-index.json`. Use domains,
+keywords, `parent_spec_ids` for decomposition, `depends_on_spec_ids` for
+cross-capability prerequisites, and requirement IDs to locate the narrowest
+applicable spec set. Keep one normative home per concept; reference owning
+requirement IDs instead of copying requirements across specs.
+
+When normative interpretation is required, use `$pfm-spec-scope` and read only
+the smallest authoritative sections needed.
 
 ## Architecture and financial invariants
 
@@ -30,11 +42,13 @@ UI → application/slice → simulation → engine modules → values/time/ident
 - Engine modules must not depend on UI/browser, database, authentication,
   hosting, or external-service code.
 - Lower engine modules must not import `simulation/`.
-- Root compatibility facades are re-export surfaces only; engine
-  implementation must not use them as dependency shortcuts.
+- Root compatibility facades are external/legacy re-export surfaces only. They
+  must not contain independent runtime logic, and engine implementation must
+  not use them as dependency shortcuts.
 - Financial formulas belong in the engine, never the UI.
-- Primitive evaluation must not directly post transactions or mutate
-  authoritative financial state.
+- Primitive evaluation may produce values, state proposals, semantic effects,
+  diagnostics, and lineage references. It must not directly post transactions
+  or mutate authoritative financial state.
 - Do not use JavaScript floating point for authoritative money calculations.
 - Do not introduce bare number-based financial rates; keep currency, units,
   rate basis, and rounding explicit.
@@ -43,8 +57,8 @@ UI → application/slice → simulation → engine modules → values/time/ident
 - Identical deterministic inputs must produce identical observable results;
   financial primitives must not call `Math.random()`.
 - Failed or uncommitted execution must not mutate committed opening state.
-- Never infer economic precedence from module order, request-array order,
-  object iteration order, or function-call order.
+- Never infer economic precedence from vertical-slice/module order,
+  request-array order, object iteration order, or function-call order.
 - Stable tie-breaking is non-economic only. Same-instant constrained-resource
   contention that can change authoritative outcomes requires explicit
   dependency/contention semantics or must fail validation.
@@ -62,29 +76,41 @@ old portable-model versions.
 
 ## Implementation workflow
 
-Implement only the requested milestone or patch and prefer the smallest
-defensible diff that fully completes it. If financial behavior is undefined,
-surface the ambiguity rather than inventing semantics. Never change golden
-expectations merely to make a test pass.
+Implement only the requested milestone or patch and complete that requested
+scope before treating the task as done. Prefer the smallest defensible diff
+that fully completes it. Do not treat partial implementation of a larger
+requested feature as completion merely because one focused check passes, and
+do not combine unrelated architectural, semantic, UI, or persistence work
+unless explicitly required.
+
+If financial behavior is undefined, surface the ambiguity rather than inventing
+semantics. Never change golden expectations merely to make a test pass.
 
 For PR handoffs using the standard `MODE:/PR:/EXPECTED_HEAD:` envelope, use
 `$pfm-pr-task`. Treat resolved architecture/semantics in that handoff as
 authoritative unless repository evidence directly contradicts them.
 
 Search before opening broad files. Prefer symbols, changed files, targeted
-`rg`, and narrow ranges. When the task is primarily scoped to a subtree that has
-its own `AGENTS.md`, read that one nearest scoped instruction file before
+`rg`, and narrow ranges. When the task is primarily scoped to a subtree that
+has its own `AGENTS.md`, read that one nearest scoped instruction file before
 editing; a session started at repository root does not otherwise inherit nested
 instructions. Do not scan unrelated scoped instruction files. Do not reread PR
-history or large specifications for reassurance. Do not spawn subagents for
-routine implementation; use at most one for a clearly separable read-only or
-mechanical task.
+history or large specifications for reassurance. The current explicit task
+supersedes stale exploratory plans. Do not spawn subagents for routine
+implementation; use at most one for a clearly separable read-only or mechanical
+task.
 
 ## Verification budget
 
 During implementation run only the smallest directly relevant check. Prefer
 `npm run codex:test -- <target>` or `npm run codex:e2e -- <target>` so passing
 output stays compact. Do not rerun a passing check unless relevant code changed.
+
+Documentation, agent-instruction, and configuration-only changes normally do
+not require application tests. If Codex tooling changes, run only its tooling
+self-test unless a concrete risk justifies more. Run typecheck, architecture or
+spec validation, or a web build only when the changed surface makes that check
+materially relevant.
 
 GitHub CI is the authoritative broad pre-merge verification gate. Full suites,
 full E2E, build, typecheck, architecture validation, and specification
@@ -114,6 +140,9 @@ and notify the user before a third repair attempt, or immediately when:
 - the required fix crosses the stated architectural scope;
 - the governing specification is genuinely ambiguous; or
 - roadmap-defined user acceptance validation is required.
+
+Keep completion reports concise: changed files, material decisions, verification
+status, and any STOP/UAT condition.
 
 ## Code Review Rules
 
