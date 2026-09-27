@@ -25,9 +25,14 @@ interrupt_message = false
 
 [features]
 hooks = true
+apps = false
+goals = false
+fast_mode = false
+multi_agent = false
+remote_plugin = false
 
 [[hooks.SessionStart]]
-matcher = "^(startup|resume|clear)$"
+matcher = "^(startup|resume|clear|compact)$"
 [[hooks.SessionStart.hooks]]
 type = "command"
 command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'
@@ -68,7 +73,7 @@ timeout = 10
 statusMessage = "Checking PFM edit scope"
 
 [[hooks.PreCompact]]
-matcher = "^auto$"
+matcher = "^(manual|auto)$"
 [[hooks.PreCompact.hooks]]
 type = "command"
 command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'

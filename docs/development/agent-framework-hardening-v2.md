@@ -54,7 +54,7 @@ protection/rulesets and CI remain required.
 
 ## 4. Environment contract
 
-Repository runtime is Node 22. The desktop Local Environment must run only:
+Repository runtime is Node 22 with npm 10. The desktop Local Environment must run only:
 
 `npm ci --prefer-offline --no-audit --no-fund`
 
@@ -65,7 +65,9 @@ noninteractive and engine-policy friendly. `tools/codex/env-doctor.sh` is the
 human-readable readiness check.
 
 Codex must never improvise with pnpm/yarn/bun/internal runtime paths when this
-contract fails.
+contract fails. Built-in web search, apps/plugins, subagents, Fast mode, and
+Codex goal auto-continuation are disabled for project implementation sessions;
+missing external information returns to ChatGPT via `LOOKUP_REQUIRED`.
 
 ## 5. Publication contract
 

@@ -28,6 +28,13 @@ if command -v node >/dev/null 2>&1; then
     *) printf 'ENV_FAIL Node 22 required; found %s\n' "${version:-unknown}" >&2; fail=1 ;;
   esac
 fi
+if command -v npm >/dev/null 2>&1; then
+  npm_version="$(npm --version 2>/dev/null || true)"
+  case "$npm_version" in
+    10.*) ;;
+    *) printf 'ENV_FAIL npm 10 required; found %s\n' "${npm_version:-unknown}" >&2; fail=1 ;;
+  esac
+fi
 
 if [ ! -d node_modules ] || [ ! -x node_modules/.bin/tsc ]; then
   printf 'ENV_FAIL dependencies missing; configure/select the desktop Local Environment so npm ci runs before Codex\n' >&2

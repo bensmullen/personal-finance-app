@@ -282,6 +282,10 @@ def session_start(payload, root):
     version = node.stdout.strip()
     if node.returncode == 0 and not version.startswith("22."):
         problems.append(f"Node 22 required; found {version or 'unknown'}")
+    npm = subprocess.run(["/usr/bin/env", "bash", "-lc", "npm --version"], cwd=root, text=True, capture_output=True)
+    npm_version = npm.stdout.strip()
+    if npm.returncode == 0 and not npm_version.startswith("10."):
+        problems.append(f"npm 10 required; found {npm_version or 'unknown'}")
     if not (root / "node_modules").is_dir() or not (root / "node_modules" / ".bin" / "tsc").exists():
         problems.append("dependencies are not installed; select the repository Local Environment so setup runs before Codex")
     if not os.environ.get("CI"):
@@ -430,8 +434,9 @@ def post_tool(payload, root):
     emit({})
 
 def pre_compact(payload, root):
-    if load_state(root, payload) is not None and payload.get("trigger") == "auto":
-        emit({"continue":False,"stopReason":"CONTEXT_BUDGET_EXCEEDED: automatic compaction is forbidden inside a bounded PFM implementation/repair turn.","systemMessage":"Stop and return a partial receipt; do not compact and continue."})
+    if load_state(root, payload) is not None:
+        trigger = payload.get("trigger") or "unknown"
+        emit({"continue":False,"stopReason":f"CONTEXT_BUDGET_EXCEEDED: {trigger} compaction is forbidden inside a bounded PFM implementation/repair turn.","systemMessage":"Stop and return a partial receipt; do not compact and continue."})
         return
     emit({"continue":True})
 

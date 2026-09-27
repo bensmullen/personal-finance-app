@@ -37,5 +37,9 @@
     "fast-check": "^4.9.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": "22.x",
+    "npm": "10.x"
   }
 }
