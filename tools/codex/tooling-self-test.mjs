@@ -19,7 +19,7 @@ const run = (command, args = [], options = {}) => spawnSync(command, args, {
 });
 
 for (const [command, args] of [
-  ["python3", ["-m", "py_compile", policy]],
+  ["python3", ["-c", 'import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())', policy]],
   ["bash", ["-n", stateShell]],
   ["bash", ["-n", envDoctor]],
   ["bash", [envDoctor]],
@@ -138,6 +138,15 @@ const safePush = hook("PermissionRequest", {
 assert(
   safePush?.hookSpecificOutput?.decision?.behavior === "allow",
   "approved feature-branch push should be auto-allowed",
+);
+
+const safePr = hook("PermissionRequest", {
+  tool_name: "Bash",
+  tool_input: { command: 'gh pr create --repo bensmullen/personal-finance-app --base main --head codex/policy-self-test --title "Policy test" --body "Test"' },
+}, testEnv);
+assert(
+  safePr?.hookSpecificOutput?.decision?.behavior === "allow",
+  "approved feature-branch PR creation should be auto-allowed",
 );
 
 const unsafePush = hook("PermissionRequest", {

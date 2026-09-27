@@ -104,10 +104,14 @@ a failure signal. Stop instead of compacting and continuing.
 
 ## Git publication
 
+Built-in Codex web search is disabled for this project. If an audited resolved handoff lacks external information, STOP with `LOOKUP_REQUIRED` and let ChatGPT resolve it outside the implementation turn.
+
 Feature-branch push is allowed only to the configured
 `bensmullen/personal-finance-app` origin, from an approved `codex/` or
 `agent/` branch, without force/delete semantics and without targeting
-`main`. Direct-main push is forbidden.
+`main`. Direct-main push is forbidden. PR creation is auto-approved only for
+`gh pr create` against this repository with explicit `--base main` and the
+current approved feature branch as `--head`.
 
 Keep completion reports concise: branch/head, changed files, material decisions,
 CI status if already available, and any STOP/UAT condition.

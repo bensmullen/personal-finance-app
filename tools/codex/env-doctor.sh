@@ -12,6 +12,14 @@ check() {
 check command -v git
 check command -v node
 check command -v npm
+check command -v python3
+if [ -z "${CI:-}" ]; then
+  check command -v gh
+  if command -v gh >/dev/null 2>&1 && ! gh auth status >/dev/null 2>&1; then
+    printf 'ENV_FAIL GitHub CLI is not authenticated; run gh auth login and gh auth setup-git\n' >&2
+    fail=1
+  fi
+fi
 
 if command -v node >/dev/null 2>&1; then
   version="$(node -p 'process.versions.node' 2>/dev/null || true)"

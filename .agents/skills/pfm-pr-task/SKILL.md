@@ -118,7 +118,13 @@ Codex should not spend tool calls rediscovering repository provenance.
 
 ## Completion
 
-Commit and push to an approved feature branch. Report:
+Commit, push to an approved feature branch, and open the PR with an explicit safe command of the form:
+
+`gh pr create --repo bensmullen/personal-finance-app --base main --head <current-branch> --title "<title>" --body "<body>"`
+
+The repository permission hook can auto-approve only that bounded PR creation and the corresponding safe feature-branch push.
+
+Report:
 - branch and new HEAD;
 - changed files;
 - material decisions;

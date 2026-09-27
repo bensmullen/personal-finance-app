@@ -162,6 +162,8 @@ def tokens(command):
 def is_local_verification(command):
     patterns = (
         r"(^|\s)(npm|pnpm|yarn|bun)\s+(run\s+)?(test|test:e2e|codex:test|codex:e2e|codex:verify|typecheck|build:web|architecture:validate|spec:validate|perf:capture|benchmark|stochastic:validate|onboarding:dry-run)(\s|$)",
+        r"(^|\s)(node|tsx|vite-node|python3?)\s+[^;&|]*(test|spec|benchmark|benchmarks/|capture|validate)(\.|/|\s|$)",
+        r"(^|\s)(bash|sh)\s+[^;&|]*(test|benchmark|capture|validate)(\.|/|\s|$)",
         r"(^|\s)(npx\s+)?(vitest|playwright|jest|mocha|vite-node|tsc)(\s|$)",
         r"(^|\s)\.?/?node_modules/\.bin/(vitest|playwright|tsc|vite-node)(\s|$)",
         r"(^|\s)node\s+tools/(validate|codex/verify)",
@@ -176,6 +178,32 @@ def is_install(command):
         r"(^|\s)(corepack|npx\s+npm)(\s|$)",
     )
     return any(re.search(pattern, command.strip()) for pattern in patterns)
+
+def safe_pr_create(command, root):
+    parts = tokens(command)
+    if len(parts) < 3 or parts[0:3] != ["gh", "pr", "create"]:
+        return False, "not a gh pr create command"
+    branch = os.environ.get("PFM_POLICY_TEST_BRANCH") or git_value(["symbolic-ref", "--quiet", "--short", "HEAD"], root)
+    if not branch or branch in {"main", "master"} or not branch.startswith(APPROVED_BRANCH_PREFIXES):
+        return False, f"branch {branch or 'DETACHED'} is not an approved feature branch"
+    origin = os.environ.get("PFM_POLICY_TEST_ORIGIN") or git_value(["remote", "get-url", "origin"], root)
+    if "bensmullen/personal-finance-app" not in origin:
+        return False, "origin is not the approved repository"
+    def option(name):
+        if name not in parts:
+            return None
+        index = parts.index(name)
+        return parts[index + 1] if index + 1 < len(parts) else ""
+    repo = option("--repo")
+    base = option("--base")
+    head = option("--head")
+    if repo not in {None, "bensmullen/personal-finance-app"}:
+        return False, "PR repository is not approved"
+    if base != "main":
+        return False, "PR creation must explicitly target --base main"
+    if head != branch:
+        return False, f"PR creation must explicitly use --head {branch}"
+    return True, branch
 
 def safe_push(command, root):
     parts = tokens(command)
@@ -256,6 +284,10 @@ def session_start(payload, root):
         problems.append(f"Node 22 required; found {version or 'unknown'}")
     if not (root / "node_modules").is_dir() or not (root / "node_modules" / ".bin" / "tsc").exists():
         problems.append("dependencies are not installed; select the repository Local Environment so setup runs before Codex")
+    if not os.environ.get("CI"):
+        gh = subprocess.run(["/usr/bin/env", "bash", "-lc", "command -v gh && gh auth status"], cwd=root, text=True, capture_output=True)
+        if gh.returncode != 0:
+            problems.append("GitHub CLI is missing or unauthenticated; run gh auth login and gh auth setup-git")
     origin = git_value(["remote", "get-url", "origin"], root)
     if origin and "bensmullen/personal-finance-app" not in origin:
         problems.append("origin is not bensmullen/personal-finance-app")
@@ -316,9 +348,22 @@ def pre_tool(payload, root):
             if not ok:
                 deny("Unsafe git push blocked: " + reason)
                 return
+        if re.search(r"(^|\s)gh\s+pr\s+create(\s|$)", command):
+            ok, reason = safe_pr_create(command, root)
+            if not ok:
+                deny("Unsafe PR creation blocked: " + reason)
+                return
         normalized = command.replace("\\", "/")
-        if state["SEMANTICS"] == "resolved" and (any(marker in normalized for marker in NORMATIVE_MARKERS) or re.search(r"(^|\s)(git\s+log|gh\s+(pr|api))(\s|$)", command)):
+        if state["SEMANTICS"] == "resolved" and (
+            any(marker in normalized for marker in NORMATIVE_MARKERS)
+            or re.search(r"(^|\s)git\s+log(\s|$)", command)
+            or re.search(r"(^|\s)gh\s+api(\s|$)", command)
+            or (re.search(r"(^|\s)gh\s+pr(\s|$)", command) and not re.search(r"(^|\s)gh\s+pr\s+create(\s|$)", command))
+        ):
             deny("Resolved task: normative specs/architecture/PR history may not be reread. Stop with LOOKUP_REQUIRED if the handoff is insufficient.")
+            return
+        if re.search(r"(^|\s)(rg|grep)(\s|$)", command) and not bash_paths(command, root):
+            deny("Search commands must name an explicit path within READ_PATHS; repository-wide implicit search is blocked.")
             return
     if tool == "apply_patch":
         for path in patch_paths(command):
@@ -348,14 +393,17 @@ def permission_request(payload, root):
         emit({})
         return
     command = str((payload.get("tool_input") or {}).get("command") or "")
-    if not re.search(r"(^|\s)git\s+push(\s|$)", command):
+    is_push = bool(re.search(r"(^|\s)git\s+push(\s|$)", command))
+    is_pr_create = bool(re.search(r"(^|\s)gh\s+pr\s+create(\s|$)", command))
+    if not is_push and not is_pr_create:
         emit({})
         return
     if load_state(root, payload) is None:
         emit({"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"No active PFM_TASK_V2 task."}}})
         return
-    ok, reason = safe_push(command, root)
-    decision = {"behavior":"allow"} if ok else {"behavior":"deny","message":"Unsafe push blocked: " + reason}
+    ok, reason = safe_push(command, root) if is_push else safe_pr_create(command, root)
+    label = "push" if is_push else "PR creation"
+    decision = {"behavior":"allow"} if ok else {"behavior":"deny","message":f"Unsafe {label} blocked: " + reason}
     emit({"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":decision}})
 
 def post_tool(payload, root):
