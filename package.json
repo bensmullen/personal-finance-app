@@ -10,6 +10,7 @@
     "codex:test": "node tools/codex/quiet-vitest.mjs",
     "codex:e2e": "node tools/codex/quiet-playwright.mjs",
     "codex:state": "node tools/codex/state.mjs",
+    "codex:env-doctor": "bash tools/codex/env-doctor.sh",
     "codex:tooling-test": "node tools/codex/tooling-self-test.mjs",
     "codex:verify": "node tools/codex/verify.mjs",
     "editor:generate": "node tools/generate-editor-descriptor.mjs",

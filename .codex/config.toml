@@ -1,37 +1,82 @@
 #:schema https://developers.openai.com/codex/config-schema.json
 
-# Default for first-pass financial-engine implementation. Per-session model
-# selection should route surgical/mechanical patches to cheaper models.
+# Default first-pass implementation model. Surgical repairs should explicitly
+# select a cheaper model when appropriate.
 model = "gpt-5.6"
 model_reasoning_effort = "medium"
 plan_mode_reasoning_effort = "low"
 model_reasoning_summary = "none"
 model_verbosity = "low"
-
-# Keep always-loaded repository guidance bounded; specialized workflows live
-# in skills and directory-local AGENTS.md files.
 project_doc_max_bytes = 12288
 
-# Version-controlled specifications are the durable project memory.
 [memories]
 use_memories = false
 generate_memories = false
 
-# Keep delegation available without token-expensive fan-out.
+# PFM tasks stay in one bounded main thread. Subagent fan-out is disabled by
+# default because it adds context/usage and complicates scope enforcement.
 [agents]
-enabled = true
+enabled = false
 max_concurrent_threads_per_session = 1
 default_subagent_model = "gpt-5.6-luna"
 default_subagent_reasoning_effort = "low"
 interrupt_message = false
 
-# Enforce the repository verification budget and route focused Vitest/
-# Playwright commands through compact-output wrappers.
-[[hooks.PreToolUse]]
-matcher = "^Bash$"
+[features]
+hooks = true
 
+[[hooks.SessionStart]]
+matcher = "^(startup|resume|clear)$"
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'
+timeout = 10
+statusMessage = "Checking Personal Finance App environment"
+additionalContextLimit = 600
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'
+timeout = 10
+statusMessage = "Validating PFM task contract"
+additionalContextLimit = 800
+
+[[hooks.PreToolUse]]
+matcher = "*"
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = 'node "$(git rev-parse --show-toplevel)/.codex/hooks/quiet-test.mjs"'
-timeout = 5
-statusMessage = "Applying verification budget policy"
+command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'
+timeout = 10
+statusMessage = "Applying PFM scope and execution policy"
+
+[[hooks.PermissionRequest]]
+matcher = "^Bash$"
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'
+timeout = 10
+statusMessage = "Checking safe feature-branch push"
+
+[[hooks.PostToolUse]]
+matcher = "*"
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'
+timeout = 10
+statusMessage = "Checking PFM edit scope"
+
+[[hooks.PreCompact]]
+matcher = "^auto$"
+[[hooks.PreCompact.hooks]]
+type = "command"
+command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'
+timeout = 10
+statusMessage = "Enforcing PFM context budget"
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'
+timeout = 10
+statusMessage = "Checking PFM completion state"

@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, spec/post-pr21-architecture-roadmap]
+    branches: [main]
 
 permissions:
   contents: read
@@ -12,71 +12,96 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   NODE_VERSION: 22
 
 jobs:
+  plan:
+    name: verification-plan
+    runs-on: ubuntu-latest
+    outputs:
+      profile: ${{ steps.plan.outputs.profile }}
+      spec: ${{ steps.plan.outputs.spec }}
+      architecture: ${{ steps.plan.outputs.architecture }}
+      tooling: ${{ steps.plan.outputs.tooling }}
+      typecheck: ${{ steps.plan.outputs.typecheck }}
+      unit: ${{ steps.plan.outputs.unit }}
+      build: ${{ steps.plan.outputs.build }}
+      e2e: ${{ steps.plan.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Select verification gates from changed surface
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: node tools/ci/verification-plan.mjs --base "$BASE_SHA" --head "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT"
+
   spec:
     name: spec
+    needs: plan
+    if: needs.plan.outputs.spec == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run spec:validate
       - run: npm run editor:check
 
   architecture:
     name: architecture
+    needs: plan
+    if: needs.plan.outputs.architecture == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run architecture:validate
 
   tooling:
     name: codex-tooling
+    needs: plan
+    if: needs.plan.outputs.tooling == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run codex:tooling-test
 
   typecheck:
     name: typecheck
+    needs: plan
+    if: needs.plan.outputs.typecheck == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run typecheck
 
   unit:
     name: unit
+    needs: plan
+    if: needs.plan.outputs.unit == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run codex:test
       - name: Upload unit diagnostics
@@ -90,13 +115,13 @@ jobs:
 
   build:
     name: build
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run build:web
       - name: Upload web build
@@ -107,13 +132,13 @@ jobs:
 
   e2e:
     name: e2e
+    needs: plan
+    if: needs.plan.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+        with: { node-version: ${{ env.NODE_VERSION }}, cache: npm }
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
       - run: npm run codex:e2e
@@ -132,35 +157,49 @@ jobs:
   test:
     name: test
     if: always()
-    needs: [spec, architecture, tooling, typecheck, unit, build, e2e]
+    needs: [plan, spec, architecture, tooling, typecheck, unit, build, e2e]
     runs-on: ubuntu-latest
     steps:
-      - name: Require all parallel gates
+      - name: Require every selected gate
         env:
+          PLAN: ${{ needs.plan.result }}
+          SPEC_ENABLED: ${{ needs.plan.outputs.spec }}
           SPEC: ${{ needs.spec.result }}
-          ARCHITECTURE: ${{ needs.architecture.result }}
+          ARCH_ENABLED: ${{ needs.plan.outputs.architecture }}
+          ARCH: ${{ needs.architecture.result }}
+          TOOLING_ENABLED: ${{ needs.plan.outputs.tooling }}
           TOOLING: ${{ needs.tooling.result }}
+          TYPECHECK_ENABLED: ${{ needs.plan.outputs.typecheck }}
           TYPECHECK: ${{ needs.typecheck.result }}
+          UNIT_ENABLED: ${{ needs.plan.outputs.unit }}
           UNIT: ${{ needs.unit.result }}
+          BUILD_ENABLED: ${{ needs.plan.outputs.build }}
           BUILD: ${{ needs.build.result }}
+          E2E_ENABLED: ${{ needs.plan.outputs.e2e }}
           E2E: ${{ needs.e2e.result }}
         run: |
-          printf 'spec=%s architecture=%s tooling=%s typecheck=%s unit=%s build=%s e2e=%s\n' \
-            "$SPEC" "$ARCHITECTURE" "$TOOLING" "$TYPECHECK" "$UNIT" "$BUILD" "$E2E"
-          for result in "$SPEC" "$ARCHITECTURE" "$TOOLING" "$TYPECHECK" "$UNIT" "$BUILD" "$E2E"; do
-            test "$result" = "success"
-          done
+          test "$PLAN" = success
+          require_gate() {
+            name="$1"; enabled="$2"; result="$3"
+            printf '%s enabled=%s result=%s\n' "$name" "$enabled" "$result"
+            if [ "$enabled" = true ]; then test "$result" = success; fi
+          }
+          require_gate spec "$SPEC_ENABLED" "$SPEC"
+          require_gate architecture "$ARCH_ENABLED" "$ARCH"
+          require_gate tooling "$TOOLING_ENABLED" "$TOOLING"
+          require_gate typecheck "$TYPECHECK_ENABLED" "$TYPECHECK"
+          require_gate unit "$UNIT_ENABLED" "$UNIT"
+          require_gate build "$BUILD_ENABLED" "$BUILD"
+          require_gate e2e "$E2E_ENABLED" "$E2E"
 
   deploy:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && needs.build.result == 'success'
     needs: [test, build]
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-      - name: Deploy to GitHub Pages
-        id: deployment
+      - uses: actions/configure-pages@v5
+      - id: deployment
         uses: actions/deploy-pages@v5
