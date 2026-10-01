@@ -62,8 +62,9 @@ R2  Interactive deterministic execution foundation
                          stabilization-exit gate
 
 P3  Integrated cross-domain optimization (tax + portfolio + insurance +
-    retirement/debt/liquidity as supported) follows P1/P2 and the applicable
-    domain capabilities. It is not a blanket private-alpha prerequisite.
+    retirement/debt/liquidity as supported) follows P1 and the applicable
+    domain capabilities; stochastic automated optimization additionally
+    requires P2. It is not a blanket private-alpha prerequisite.
 
 R9  Full issuer/RSU/employer-risk stochastic modeling is conditional
     before private alpha: required if the target cohort needs it; otherwise
@@ -75,7 +76,7 @@ T1B Advanced/specialized tax domains progress with the capabilities that need
 
 ## 3. R1 — Performance instrumentation and baselines
 
-Implement PFA-PERF-001 through PFA-PERF-004 and PFA-PERF-013 through PFA-PERF-017 foundations first.
+Implement PFA-PERF-001 through PFA-PERF-004 and PFA-PERF-013 through PFA-PERF-018 foundations first.
 
 Deliver:
 
@@ -146,7 +147,7 @@ R3 SHALL:
 
 Do not optimize semantic ordering by assumption. Scheduler/execution changes must demonstrate equivalence against authoritative semantics with reference/property tests. Do not move an inefficient engine to cloud/server execution merely to hide local latency; execution placement is evaluated after measured algorithmic/data-structure optimization.
 
-R3 SHALL satisfy the reusable execution requirements before high-count stochastic orchestration or automated strategy search is treated as production-capable.
+R3 SHALL implement PFA-PERF-019 through PFA-PERF-023 and satisfy the reusable execution requirements before high-count stochastic orchestration or automated strategy search is treated as production-capable.
 
 
 
@@ -312,7 +313,7 @@ R7 may expose engineering/developer results before T1A is complete, but a tax-af
 
 ## 14. P2 — Stochastic strategy evaluation and progressive optimization
 
-After P1 and the required R7 probabilistic semantics exist, add strategy-set stochastic evaluation using PFA-PLAN and PFA-PROB:
+After P1 and the required R7 probabilistic semantics exist, add strategy-set stochastic evaluation using PFA-PLAN, PFA-PROB, and PFA-PERF-024:
 
 - common Forecast Basis and common-random-number cohorts for materially comparable candidates;
 - bounded lower-cost stochastic screening followed by higher-confidence evaluation of survivors;
