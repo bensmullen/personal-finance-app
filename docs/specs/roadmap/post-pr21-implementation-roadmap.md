@@ -148,7 +148,11 @@ Do not optimize semantic ordering by assumption. Scheduler/execution changes mus
 
 R3 SHALL satisfy the reusable execution requirements before high-count stochastic orchestration or automated strategy search is treated as production-capable.
 
-### P1 — Deterministic planning / strategy-evaluation foundation
+
+
+**User validation:** not normally required unless a user-visible behavior changes. Financial/result equivalence and performance improvement are primarily automated/engineering verification.
+
+## 6. P1 — Deterministic planning / strategy-evaluation foundation
 
 P1 begins after the R3 reusable compiled-plan/decision-overlay seam exists and may progress in parallel with C1/R5-R7.
 
@@ -167,9 +171,7 @@ P1 does not require automated search, Monte Carlo optimization, a new canonical 
 
 **User validation:** P1 requires focused user validation of whether a supported strategy comparison is understandable and decision-relevant. Financial equivalence and reproducibility remain automated/engineering verification.
 
-**R3 user validation:** not normally required unless a user-visible behavior changes. Financial/result equivalence and performance improvement are primarily automated/engineering verification.
-
-## 6. C1 — Calibration contract before stochastic implementation
+## 7. C1 — Calibration contract before stochastic implementation
 
 Before stochastic runtime code hard-codes any distribution/provider shape:
 
@@ -183,7 +185,7 @@ C1 is the early contract half of the former R8 work. It prevents rework without 
 
 **User validation:** not required.
 
-## 7. R4 — UX/editor cleanup
+## 8. R4 — UX/editor cleanup
 
 R4 may overlap R2/R3.
 
@@ -200,7 +202,7 @@ Implement PFA-UX with emphasis on:
 
 **User validation:** required. Milestone closeout SHALL provide a concise walkthrough covering novice comprehension, entity editing, advanced-detail discoverability, chart readability, and any remaining confusing/dead controls.
 
-## 8. O1 — Assisted onboarding and import foundation
+## 9. O1 — Assisted onboarding and import foundation
 
 O1 begins after the R2/R4 interaction foundations are stable enough to support a guided workflow and may proceed in parallel with R3/C1/R5-R10.
 
@@ -223,7 +225,7 @@ A production Plaid/bank-aggregation integration is not required for O1 or privat
 
 **User validation:** required. Closeout should observe actual onboarding behavior rather than only reviewing screens. The user should verify that the workflow feels substantially faster than manual field-by-field setup and that extracted information is easy to review/correct.
 
-## 9. T1A/T1B — Tax development track
+## 10. T1A/T1B — Tax development track
 
 ### T1A — Target-cohort/common-household tax floor
 
@@ -245,7 +247,7 @@ Add specialized capital-gains, retirement, equity-compensation, and other jurisd
 
 **User validation:** required only when a tax milestone changes user-facing workflows/results. Automated rule/invariant tests remain the correctness authority; user validation checks understandable presentation and expected real-world workflow.
 
-## 10. R5 — Stochastic runtime foundation
+## 11. R5 — Stochastic runtime foundation
 
 Implement the higher-authority stochastic semantics before Monte Carlo orchestration:
 
@@ -261,7 +263,7 @@ Do not add high realization counts until one realization is semantically complet
 
 **User validation:** not required.
 
-## 11. R6 — Monte Carlo orchestration
+## 12. R6 — Monte Carlo orchestration
 
 Add:
 
@@ -289,7 +291,7 @@ Initial path counts, convergence thresholds, and compute/cost budgets shall be e
 
 **User validation:** not normally required; orchestration correctness/reproducibility is automated.
 
-## 12. R7 — Baseline probabilistic household engine
+## 13. R7 — Baseline probabilistic household engine
 
 Introduce uncertainty incrementally against C1's synthetic/internal calibration:
 
@@ -306,7 +308,9 @@ R7 may expose engineering/developer results before T1A is complete, but a tax-af
 
 **User validation:** limited/developer validation may occur, but normal-user UAT waits for tax/calibration completeness appropriate to the output.
 
-### P2 — Stochastic strategy evaluation and progressive optimization
+
+
+## 14. P2 — Stochastic strategy evaluation and progressive optimization
 
 After P1 and the required R7 probabilistic semantics exist, add strategy-set stochastic evaluation using PFA-PLAN and PFA-PROB:
 
@@ -322,7 +326,7 @@ P2 may remain post-alpha if the private-alpha product does not claim automated s
 
 **User validation:** required before automated stochastic strategy recommendations become a normal-user feature.
 
-## 13. R8 — Institutional market/economic calibration adapters
+## 15. R8 — Institutional market/economic calibration adapters
 
 R8 is now only the provider-adapter/data half of calibration work because C1 defined the internal contract earlier.
 
@@ -332,7 +336,7 @@ Company-specific data is added only where exposure is material or explicitly req
 
 **User validation:** required before institutional calibration becomes the default basis for user-facing stochastic results. The user should verify source/date disclosure, refresh behavior, and understandable distinction between assumptions and guarantees; numerical ingestion/mapping correctness should be automated.
 
-## 14. A1/R9 — Concentrated positions and equity compensation
+## 16. A1/R9 — Concentrated positions and equity compensation
 
 ### A1 — Private-alpha concentration safeguard
 
@@ -362,9 +366,9 @@ If R9 is not completed before private alpha because the cohort does not require 
 
 **User validation:** required if A1/R9 is used by an alpha participant.
 
-## 15. R10 — Probabilistic and planning decision UX
+## 17. R10 — Probabilistic and planning decision UX
 
-Implement PFA-UX-010 through PFA-UX-013 and make probability/distribution and strategy-comparison outputs understandable:
+Implement PFA-UX-010 through PFA-UX-013 and make probability/distribution and strategy-comparison outputs understandable. Planning comparison surfaces in R10 require P1 for the enabled decision set; P2 is required only for an enabled automated stochastic optimization/recommendation surface:
 
 - deterministic and stochastic views of the same material metrics;
 - deterministic preview auto-refresh after validated committed/debounced edits;
@@ -385,35 +389,11 @@ Implement PFA-UX-010 through PFA-UX-013 and make probability/distribution and st
 
 Retain deterministic views for immediacy, audit, and explanation; do not present them as the single expected future.
 
-### P3 — Integrated cross-domain financial planning and optimization
 
-P3 is the long-term integration track after P1/P2 and the applicable domain capabilities mature. It combines supported planning decisions across portfolio/investments, taxes, insurance, retirement, debt, liquidity, and other future domains without moving their financial formulas into the optimizer.
-
-P3 SHALL use progressive evaluation rather than brute-force high-fidelity Monte Carlo across every possible combination:
-
-```text
-feasibility/rule screening
-        ↓
-fast deterministic evaluation
-        ↓
-candidate generation/search
-        ↓
-bounded stochastic evaluation
-        ↓
-eliminate dominated/unpromising candidates
-        ↓
-higher-confidence finalist evaluation
-        ↓
-explain material tradeoffs and limitations
-```
-
-The portfolio capability (PFA-INV) and insurance capability (PFA-INS) may be implemented incrementally as real planning use cases require them. Full P3 is not a blanket R11/private-alpha prerequisite; however, the product SHALL NOT market or present an unsupported domain as part of a comprehensive recommendation.
-
-**User validation:** required for each integrated planning surface introduced to normal users.
 
 **R10 user validation:** required. Closeout instructions SHALL cover comprehension of deterministic versus stochastic views, stale/rerun behavior, probability language, scenario/strategy comparison, recommendation limitations, and whether the result supports an actual planning decision.
 
-## 16. R11 — Private-alpha readiness / stabilization-exit gate
+## 18. R11 — Private-alpha readiness / stabilization-exit gate
 
 This is the exit gate from the post-PR21 personal-use stabilization period, not the beginning of stabilization.
 
@@ -440,7 +420,33 @@ Before private-alpha infrastructure:
 
 Private-alpha infrastructure remains governed by the system/software architecture and begins after this gate. The private-alpha launch itself remains blocked until the O1 onboarding pipeline is wired through the secured shared-service authentication/persistence/privacy boundary and an end-to-end onboarding dry run confirms that the launch target still holds with the deployed architecture.
 
-## 17. Explicit deferred-capability/TODO register
+## 19. P3 — Integrated cross-domain financial planning and optimization
+
+P3 is the long-term integration track after P1 and the applicable domain capabilities mature; it additionally depends on P2 for stochastic automated optimization. It combines supported planning decisions across portfolio/investments, taxes, insurance, retirement, debt, liquidity, and other future domains without moving their financial formulas into the optimizer.
+
+P3 SHALL use progressive evaluation rather than brute-force high-fidelity Monte Carlo across every possible combination:
+
+```text
+feasibility/rule screening
+        ↓
+fast deterministic evaluation
+        ↓
+candidate generation/search
+        ↓
+bounded stochastic evaluation
+        ↓
+eliminate dominated/unpromising candidates
+        ↓
+higher-confidence finalist evaluation
+        ↓
+explain material tradeoffs and limitations
+```
+
+The portfolio capability (PFA-INV) and insurance capability (PFA-INS) may be implemented incrementally as real planning use cases require them. Full P3 is not a blanket R11/private-alpha prerequisite; however, the product SHALL NOT market or present an unsupported domain as part of a comprehensive recommendation.
+
+**User validation:** required for each integrated planning surface introduced to normal users.
+
+## 20. Explicit deferred-capability/TODO register
 
 The following items SHALL remain visible until closed:
 
