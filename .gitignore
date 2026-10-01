@@ -15,8 +15,9 @@ playwright-report/
 test-results/
 *.tsbuildinfo
 
-# Local Codex execution logs
+# Local Codex execution logs/runtime policy state
 .codex/logs/
+.codex/runtime/
 
 # Local environment and secrets
 .env

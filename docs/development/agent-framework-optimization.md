@@ -1,8 +1,8 @@
 # Hybrid ChatGPT + Codex Development Framework
 
-**Status:** implemented framework specification  
-**Scope:** pre-private-alpha development efficiency and accuracy  
-**Last reviewed:** 2026-09-26
+**Status:** superseded by `docs/development/agent-framework-hardening-v2.md`  
+**Scope:** historical V1 framework reference  
+**Last reviewed:** 2026-09-27
 
 ## 1. Goal
 

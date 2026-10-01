@@ -1,34 +1,46 @@
 ---
 name: pfm-verify
-description: Full local repository verification for the Personal Finance App. Use only when explicitly requested, when CI is unavailable or failing, or when a broad/cross-cutting change cannot be adequately checked with focused verification. Do not invoke for routine localized patches.
+description: Interpret GitHub CI/heavy-validation evidence for the Personal Finance App. Local Codex implementation turns do not run verification.
 ---
 
 # PFM Verification
 
-This is an escalation skill, not a normal completion step.
+Verification is external to Codex implementation turns.
 
-Before invoking it, identify the concrete reason full local verification is
-necessary. Routine patch completion is not sufficient; GitHub CI is the
-authoritative broad pre-merge gate.
+## Ordinary verification
 
-During implementation, prefer the smallest relevant Vitest or Playwright
-target and do not rerun a passing check unless relevant code changed.
+GitHub Actions determines required gates from changed paths using the
+repository verification planner. It may run:
+- specification/traceability/editor checks;
+- architecture validation;
+- Codex-tooling policy tests;
+- TypeScript typecheck;
+- unit/property tests;
+- web build;
+- Playwright E2E.
 
-When full local verification is justified:
+The aggregate `test` gate is authoritative for ordinary pre-merge verification.
 
-1. Do not rerun a check already proven by an identical final tree unless there
-   is a concrete reason.
-2. Run `CODEX_ALLOW_BROAD_VERIFY=1 npm run codex:verify`.
-3. If it passes, do not inspect stored test logs.
-4. If it fails, inspect only the reported failing checks/tests first.
-5. Open a full stored log only when the concise failure output is insufficient
-   to diagnose the problem.
-6. Never modify golden expectations solely to obtain a passing result.
-7. Do not repeatedly run the full suite while iterating.
+## Heavy engineering validation
 
-Report only:
+Use the manually triggered engineering-validation workflow for expensive work:
+- performance/baseline capture;
+- stochastic/convergence/resource validation;
+- onboarding dry-run instrumentation;
+- provider/live-adapter integration when the corresponding script and approved
+  secret boundary exist.
 
-- why full local verification was necessary;
-- PASS/FAIL for each verification gate;
-- failed tests or diagnostics if any;
-- whether the final tree was fully verified.
+Heavy validation never runs inside a Codex coding turn and does not use an LLM
+to supervise long-running computation.
+
+## Failure handling
+
+When a gate fails:
+1. inspect the concise CI diagnostic;
+2. identify the exact failure class and changed surface;
+3. have ChatGPT produce a new `PFM_TASK_V2` repair handoff;
+4. increment `REPAIR_ROUND` externally;
+5. do not ask Codex to reproduce the failure locally unless repository policy is
+   intentionally changed in a dedicated framework PR.
+
+Never change golden/financial expectations merely to make a gate pass.

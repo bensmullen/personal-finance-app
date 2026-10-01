@@ -1,6 +1,6 @@
 # Portfolio Concentration & Equity Compensation
 
-**Version:** 0.1.1-draft
+**Version:** 0.1.2-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-EQ
 

@@ -1,6 +1,6 @@
 # Application UX & Financial Comprehension
 
-**Version:** 0.1.2-draft
+**Version:** 0.1.3-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-UX
 
@@ -63,6 +63,10 @@ For decision comparison, the product SHOULD offer an action to rerun selected sa
 The UI SHALL distinguish saved plan/scenario definitions from saved stochastic forecast snapshots. A plan may remain saved even when its derived forecast expires or is deleted.
 
 User-facing forecast-snapshot quotas SHOULD be expressed as a simple saved-snapshot count. Recovery-window results SHALL be distinguishable from explicitly pinned/saved snapshots, and the UI SHOULD provide a straightforward restore action during the recovery period. Storage-byte quotas and deduplication are backend safeguards and SHOULD NOT be exposed as the primary user mental model unless a product plan later requires it.
+
+### PFA-UX-013 — Strategy tradeoffs and recommendation transparency
+
+When planning strategies or modeled recommendations are shown, the UI SHALL identify the material decision differences, relevant goals/constraints, Forecast Basis/evaluation fidelity, and materially important capability limitations. It SHALL present tradeoffs rather than an unexplained universal score and SHALL distinguish a bounded modeled recommendation from a guarantee or exhaustive proof of optimality.
 
 ## 3. Near-term cleanup scope
 
