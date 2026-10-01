@@ -6,7 +6,7 @@
 
 ## 1. Purpose
 
-This roadmap controls stabilization, forecasting, and the foundations of financial-planning/decision support after PR21 and before private-alpha infrastructure. Milestone IDs are planning identities; GitHub PR numbers may differ.
+This roadmap controls stabilization, forecasting, and the foundations of financial-planning/decision support after PR21. R11 is the gate before private-alpha infrastructure; explicitly identified planning/optimization tracks may continue beyond that gate. Milestone IDs are planning identities; GitHub PR numbers may differ.
 
 The sequence intentionally measures and improves the current deterministic path before multiplying it through stochastic simulation or strategy search. It also separates engineering enablement from user-facing completeness: stochastic infrastructure and planning infrastructure may develop against synthetic calibration and bounded domain coverage, while affected user-facing outputs remain capability-gated until their required tax, investment, insurance, calibration, and other semantics are ready.
 
