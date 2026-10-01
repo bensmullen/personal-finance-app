@@ -22,7 +22,7 @@ Performance instrumentation SHALL be observational only. Timing, telemetry, samp
 
 ### PFA-PERF-003 — Measurement context
 
-Each benchmark/performance record SHALL identify enough context to interpret the number, including fixture/model identity, entity counts or model-size summary, horizon, engine/spec versions, runtime/browser where applicable, cache state, and stochastic realization count when applicable. A baseline promoted from engineering reference to an approved performance budget SHALL be captured on the repository-supported runtime/toolchain unless it is explicitly labeled non-authoritative/reference-only.
+Each benchmark/performance record SHALL identify enough context to interpret the number, including fixture/model identity, entity counts or model-size summary, horizon, engine/spec versions, runtime/browser where applicable, cache state, stochastic realization count when applicable, and planning candidate count/evaluation fidelity when applicable. A baseline promoted from engineering reference to an approved performance budget SHALL be captured on the repository-supported runtime/toolchain unless it is explicitly labeled non-authoritative/reference-only.
 
 ### PFA-PERF-004 — Controlled fixtures and regression history
 
@@ -126,6 +126,12 @@ High-throughput deterministic, stochastic, and planning evaluation SHALL NOT req
 
 The compiled-plan and simulation-execution contracts SHALL remain implementation-neutral enough that measured hotspots may later use WebAssembly/native/server acceleration without changing canonical financial meaning, result schemas, reproducibility, or planning semantics. A language/runtime migration SHALL be justified by measurements after algorithmic and data-structure optimization rather than used to conceal inefficient scaling.
 
+### PFA-PERF-024 — Planning resource and cost accounting
+
+Automated strategy evaluation/optimization SHALL measure enough work to establish bounded compute budgets, including candidate counts by evaluation fidelity, deterministic evaluation count, stochastic realization count where applicable, elapsed/CPU time, concurrency, representative memory, execution placement, and metered marginal cost where applicable. Progressive screening SHALL reduce expensive finalist evaluation rather than normalize exhaustive high-fidelity simulation of an unbounded strategy space.
+
+Before an automated optimization feature is enabled for normal users, representative planning workloads SHALL have explicit latency/resource/cost budgets and a documented strategy for cases that exceed them.
+
 ## 3. Initial performance dashboard
 
 A developer/advanced performance surface should report the latest run and rolling p50/p95/max where meaningful for:
@@ -139,13 +145,14 @@ A developer/advanced performance surface should report the latest run and rollin
 - UI commit/render and chart render;
 - cache hit/miss;
 - future tax calculation;
-- future stochastic sampling, paths-per-second, aggregation, convergence, and marginal cost per rerun where metered.
+- future stochastic sampling, paths-per-second, aggregation, convergence, and marginal cost per rerun where metered;
+- future planning candidate counts by fidelity, candidate throughput, finalist count, and marginal cost per strategy-analysis run where metered.
 
 The dashboard is a diagnostic surface, not part of normal novice navigation.
 
 ## 4. Budget policy
 
-Absolute performance and compute-cost budgets SHALL be set after baseline instrumentation on representative hardware/runtime rather than invented before measurement. The first implementation milestones SHALL record baselines and propose explicit current-snapshot, interactive-forecast, render, stochastic-throughput, memory, and provider-neutral compute-unit budgets in a revision of this specification. Before private alpha, any enabled metered execution path SHALL translate those provider-neutral units into observed/estimated currency cost per rerun and track representative/p50/p95 cost alongside latency and convergence in accordance with PFA-PERF-016.
+Absolute performance and compute-cost budgets SHALL be set after baseline instrumentation on representative hardware/runtime rather than invented before measurement. The first implementation milestones SHALL record baselines and propose explicit current-snapshot, interactive-forecast, render, stochastic-throughput, planning-candidate throughput, memory, and provider-neutral compute-unit budgets in a revision of this specification. Before private alpha, any enabled metered execution path SHALL translate those provider-neutral units into observed/estimated currency cost per rerun and track representative/p50/p95 cost alongside latency and convergence in accordance with PFA-PERF-016.
 
 ## 5. Verification intent
 
