@@ -3512,8 +3512,7 @@
         "future planning modules"
       ],
       "depends_on_requirement_ids": [
-        "PFA-PERF-013",
-        "PFA-PERF-014",
+        "PFA-PERF-011",
         "PFA-PERF-018"
       ],
       "verification_methods": [
