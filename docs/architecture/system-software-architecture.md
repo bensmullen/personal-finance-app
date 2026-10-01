@@ -2412,7 +2412,7 @@ In particular, a visually present UI surface SHALL NOT be counted as implemented
 
 Goal:
 
-> The developer can model their actual household, preserve/export the model, run a useful long-term projection, inspect/explain results, and compare scenarios.
+> The developer can model their actual household, preserve/export the model, run a useful long-term projection, inspect/explain results, compare scenarios, and compare at least a small supported set of explicit financial strategies.
 
 Required:
 
@@ -2423,6 +2423,7 @@ Required:
 - save/load/export;
 - charts;
 - scenario comparison;
+- basic deterministic strategy comparison for the supported P1 decision set;
 - actual-versus-forecast boundary;
 - visible liquidity-shortfall handling;
 - model-version compatibility.
@@ -2512,6 +2513,18 @@ The project SHALL not be considered a usable personal MVP until a household can 
 - What if retirement occurs earlier?
 - What if a major asset/debt is added?
 
+## Planning decisions
+
+For the initial supported planning set, the application SHOULD be able to answer:
+
+- Which inputs are facts, assumptions, and household-controlled decisions?
+- How do two supported strategies compare under the same relevant basis?
+- Which goals or constraints make a strategy attractive or unacceptable?
+- What material tradeoffs change across the strategies?
+- Which unsupported tax, investment, insurance, or other capability could materially change the comparison?
+
+This gate requires useful deterministic strategy comparison, not exhaustive automated optimization.
+
 ## Explainability
 
 For material outputs, the application SHOULD be able to answer:
@@ -2519,7 +2532,7 @@ For material outputs, the application SHOULD be able to answer:
 - Which assumptions produced this value?
 - Which rules were applied?
 - Which source facts were used?
-- Which scenario difference changed the result?
+- Which scenario or strategy difference changed the result?
 
 ---
 
@@ -2537,6 +2550,9 @@ The current project SHALL avoid premature introduction of:
 - exhaustive tax-law implementation;
 - full bank aggregation;
 - machine-learning systems;
+- brute-force full-fidelity Monte Carlo across unbounded strategy combinations;
+- a wholesale native-language engine rewrite without profiler/scaling evidence;
+- production-grade implementation of every future planning domain before a supported use case requires it;
 - elaborate DevOps;
 - data warehouses.
 
