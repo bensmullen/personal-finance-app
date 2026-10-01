@@ -1,6 +1,6 @@
 # Tax Engine Capability
 
-**Version:** 0.1.2-draft
+**Version:** 0.1.3-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-TAX
 
@@ -79,6 +79,14 @@ During the personal/local stage, the rule catalog MAY be version-controlled appl
 Executable algorithms belong in the rules engine and SHALL remain separate from the versioned rule data they evaluate. Forecast results and Forecast Basis metadata SHALL reference the exact resolved tax-rule-set fingerprints used.
 
 Portable export/import SHALL preserve enough rule identity/fingerprint information to detect whether the referenced rule set is available and compatible. Whether exports embed a referenced rule bundle or rely on a resolvable catalog is a later transport/persistence decision; silent substitution with a newer rule set is forbidden.
+
+### PFA-TAX-012 — Tax-sensitive planning decisions
+
+Supported tax-sensitive decisions such as contribution type, withdrawal ordering, conversions, realized gains/losses, or other elections SHALL enter the tax engine as explicit supported decisions/events/policies rather than as optimizer-owned tax arithmetic. Their tax consequences SHALL retain the same rule identity, effective dates, lineage, and completeness diagnostics as ordinary forecast calculations.
+
+### PFA-TAX-013 — Authoritative finalist tax evaluation
+
+A planning/search layer MAY use explicitly labeled lower-fidelity tax estimates for candidate screening only when a specification permits it. Any user-facing finalist strategy whose conclusion materially depends on tax SHALL be reevaluated through the authoritative tax engine at the required tax-completeness level before being presented as an integrated planning result.
 
 ## 3. Planned decomposition
 
