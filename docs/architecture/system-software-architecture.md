@@ -1,9 +1,9 @@
 # Personal Finance App — System / Software Architecture Specification
 
-**Version:** 1.3.4-draft
+**Version:** 1.4.0-draft
 **Status:** Architecture baseline  
 **Namespace:** `pfm`  
-**Applies to:** Prototype → Personal MVP → Private Alpha  
+**Applies to:** Prototype → Commercial service  
 **Primary repository:** `bensmullen/personal-finance-app`
 
 ---
@@ -30,6 +30,8 @@ The immediate objective is **not** to build the final commercial platform.
 
 The immediate objective is to evolve the existing walking skeleton into a deterministic, explainable, comprehensively tested financial-modeling engine and then into a useful personal finance application for the developer's own use.
 
+The long-term product direction is broader than forecasting. The architecture SHALL support a comprehensive financial-planning system that can model a household, forecast uncertain futures, evaluate alternative decisions, and help the user understand tradeoffs across investments, taxes, debt, retirement, insurance, liquidity, and other supported planning domains. Forecasting is the authoritative evaluation foundation for planning and optimization, not the final product boundary.
+
 The system SHALL evolve through controlled maturity stages:
 
 1. executable financial-model prototype;
@@ -50,15 +52,17 @@ Priorities, in order:
 2. **Determinism and reproducibility**
 3. **Semantic clarity**
 4. **Explainability and auditability**
-5. **Testability**
-6. **User usefulness**
-7. **Security and privacy**
-8. **Maintainability**
-9. **Developer velocity**
-10. **Performance**
+5. **Computational efficiency and bounded execution cost**
+6. **Testability**
+7. **User usefulness**
+8. **Security and privacy**
+9. **Maintainability**
+10. **Developer velocity**
 11. **Infrastructure scalability**
 
-The project SHALL optimize the current stage for correctness, explainability, and iteration rather than speculative scale.
+Computational efficiency is now a first-class engine constraint because long-term forecasting, stochastic simulation, and financial decision optimization require repeated execution of the same household model. Correctness, determinism, and explainability SHALL NOT be sacrificed for speed, but financial semantics SHALL be implemented through execution structures capable of efficient reuse and repeated simulation.
+
+The project SHALL optimize the current stage for correctness, explainability, iteration, and measured computational efficiency rather than speculative infrastructure scale. Cloud/server execution, native acceleration, or additional infrastructure SHALL be justified by measured workload needs after avoidable algorithmic and data-structure inefficiency is addressed.
 
 ---
 
@@ -96,7 +100,7 @@ This specification is authoritative for **how the model behaves during execution
 
 ### Level 3 — Capability specifications
 
-Define bounded system/capability requirements such as household projection, performance/observability, probabilistic forecasting, market/economic calibration, tax, equity compensation, persistence, security, and application UX.
+Define bounded system/capability requirements such as household projection, performance/observability, probabilistic forecasting, financial planning/decision optimization, portfolio planning, insurance planning, market/economic calibration, tax, equity compensation, persistence, security, and application UX.
 
 Capability specifications MAY allocate or refine requirements from Levels 1–2 but SHALL NOT contradict or silently redefine them. A concept SHALL have one normative home; sibling specifications SHALL reference that home instead of duplicating its semantics.
 
@@ -995,6 +999,26 @@ Historical actual facts SHALL not be rewritten merely because a forecast scenari
 
 Scenario comparison SHALL preserve enough metadata to identify which assumptions/events/rules differ between compared runs.
 
+## 17.1 Planning and decision architecture
+
+Forecast scenarios are inputs to planning, but planning introduces additional concepts that SHALL remain distinct:
+
+```text
+Facts        What is authoritative/current or historical?
+Assumptions  What future condition is modeled but not controlled?
+Decisions    What action or policy can the household choose?
+Goals        What outcomes matter?
+Constraints  What is infeasible or unacceptable?
+Strategies   What combination of decisions is being evaluated?
+Outcomes     What does the authoritative engine say happens?
+```
+
+The planning layer MAY construct, screen, and compare strategy candidates. It SHALL NOT become a second financial engine. Tax, accounting, funding, investment, insurance, liability, and other financial consequences remain owned by their authoritative specifications and executable engine paths.
+
+Optimization SHALL support explicit multi-objective tradeoffs rather than assume a universal hidden objective such as maximizing terminal net worth. A bounded or heuristic search SHALL NOT be presented as exhaustive global optimality.
+
+The Level-1 representation of Goal, Strategy, Recommendation, OptimizationProblem, or similar planning concepts SHALL be decided explicitly before canonical-schema mutation. Planning configuration and derived recommendation artifacts SHALL not become authoritative financial facts merely because the application persists them.
+
 ---
 
 # 18. Determinism and randomness
@@ -1032,6 +1056,30 @@ Math.random()
 Stochastic simulations SHALL accept a seed.
 
 Independent stochastic processes SHOULD have stable process identities to prevent unrelated implementation-order changes from altering random streams.
+
+## 18.3 Repeated-simulation architecture
+
+The execution architecture SHALL assume that a compiled household may be evaluated many times across scenarios, stochastic realizations, and planning strategies.
+
+Conceptually:
+
+```text
+Canonical household + rules
+          ↓
+Compile invariant structure once
+          ↓
+Reusable compiled financial plan
+          ↓
+Apply scenario / decision / realization overlays
+          ↓
+High-throughput authoritative simulation
+          ↓
+Forecast aggregates / strategy outcomes / explanations
+```
+
+Where semantics permit, invariant schedules, relationships, rule bindings, dependency metadata, and lookup structures SHOULD be reused. High-throughput execution MAY use specialized runtime representations and bounded trace materialization provided canonical results, ordering, identity, reproducibility, and explanation semantics remain equivalent.
+
+The compiled-plan/simulation boundary SHALL remain implementation-neutral enough to permit later WebAssembly, native, server, or hybrid acceleration for measured hotspots without requiring financial-semantic rewrites.
 
 ---
 
@@ -1357,6 +1405,26 @@ The compiler is an **application-layer adapter**, not a second financial engine.
 The governing rule is:
 
 > **Compile faithfully or capability-gate. Never guess, silently discard authored semantics, or fabricate defaults.**
+
+The application layer also owns planning orchestration above the financial engine. Planning use cases MAY define goals/constraints, construct strategy overlays, request deterministic or stochastic evaluation, and compare returned outcomes. They SHALL call the authoritative compiler/execution boundaries rather than implementing independent financial calculations.
+
+Conceptually:
+
+```text
+Planning request
+      ↓
+Goals + constraints + candidate decisions
+      ↓
+Reusable compiled household + decision/scenario overlay
+      ↓
+Authoritative deterministic/stochastic engine
+      ↓
+Comparable outcomes + capability diagnostics + lineage
+      ↓
+Planning comparison / explanation
+```
+
+The planning layer MAY use progressive fidelity to reduce computation, but user-facing finalist results SHALL satisfy the applicable authoritative financial, tax, investment, insurance, and probabilistic requirements.
 
 The UI SHALL continue to depend only on application use cases. The compiler MAY depend on canonical model/value/time/rule contracts and public engine/simulation contracts. Engine modules SHALL NOT depend on the compiler or UI.
 
@@ -2338,13 +2406,13 @@ No production database required.
 
 ## Stage 2 — Personal MVP
 
-PR 14 supplies the application shell/editor, but Stage 2 is **not complete** until PRs 15–21 satisfy the Personal-MVP functional gate.
+PR 14 supplied the application shell/editor and PRs 15–21 established the integrated deterministic forecast baseline, but the expanded Stage 2 product goal is **not complete** until the applicable post-PR21 responsiveness, simulation-kernel, and P1 deterministic planning foundations satisfy the current Personal-MVP functional gate.
 
-In particular, a visually present UI surface SHALL NOT be counted as implemented when its canonical model cannot execute the corresponding engine capability.
+In particular, a visually present UI surface SHALL NOT be counted as implemented when its canonical model cannot execute the corresponding engine capability, and a planning surface SHALL NOT be counted as implemented when it cannot evaluate supported decisions through the authoritative engine.
 
 Goal:
 
-> The developer can model their actual household, preserve/export the model, run a useful long-term projection, inspect/explain results, and compare scenarios.
+> The developer can model their actual household, preserve/export the model, run a useful long-term projection, inspect/explain results, compare scenarios, and compare at least a small supported set of explicit financial strategies.
 
 Required:
 
@@ -2355,6 +2423,7 @@ Required:
 - save/load/export;
 - charts;
 - scenario comparison;
+- basic deterministic strategy comparison for the supported P1 decision set;
 - actual-versus-forecast boundary;
 - visible liquidity-shortfall handling;
 - model-version compatibility.
@@ -2384,9 +2453,10 @@ Required:
 - at least one accelerated bulk/file import or extraction path suitable for the initial alpha cohort;
 - candidate-fact validation/review for document, CSV, or conversational extraction;
 - privacy-safe onboarding telemetry;
-- a measured time-to-first-useful-forecast/manual-effort target established in pre-alpha dry runs and reconfirmed end-to-end on the secured deployed service before invitations are sent.
+- a measured time-to-first-useful-forecast/manual-effort target established in pre-alpha dry runs and reconfirmed end-to-end on the secured deployed service before invitations are sent;
+- a supported deterministic strategy-comparison foundation with explicit goals/constraints/tradeoffs and capability diagnostics for the alpha decision set.
 
-Production bank aggregation is not required for Stage 3 if the measured assisted workflow meets the approved onboarding target.
+Production bank aggregation is not required for Stage 3 if the measured assisted workflow meets the approved onboarding target. Automated stochastic optimization and complete cross-domain planning are not blanket Stage 3 prerequisites unless an enabled alpha feature depends on them.
 
 ## Stage 4 — Public production
 
@@ -2444,6 +2514,18 @@ The project SHALL not be considered a usable personal MVP until a household can 
 - What if retirement occurs earlier?
 - What if a major asset/debt is added?
 
+## Planning decisions
+
+For the initial supported planning set, the application SHOULD be able to answer:
+
+- Which inputs are facts, assumptions, and household-controlled decisions?
+- How do two supported strategies compare under the same relevant basis?
+- Which goals or constraints make a strategy attractive or unacceptable?
+- What material tradeoffs change across the strategies?
+- Which unsupported tax, investment, insurance, or other capability could materially change the comparison?
+
+This gate requires useful deterministic strategy comparison, not exhaustive automated optimization.
+
 ## Explainability
 
 For material outputs, the application SHOULD be able to answer:
@@ -2451,7 +2533,7 @@ For material outputs, the application SHOULD be able to answer:
 - Which assumptions produced this value?
 - Which rules were applied?
 - Which source facts were used?
-- Which scenario difference changed the result?
+- Which scenario or strategy difference changed the result?
 
 ---
 
@@ -2469,6 +2551,9 @@ The current project SHALL avoid premature introduction of:
 - exhaustive tax-law implementation;
 - full bank aggregation;
 - machine-learning systems;
+- brute-force full-fidelity Monte Carlo across unbounded strategy combinations;
+- a wholesale native-language engine rewrite without profiler/scaling evidence;
+- production-grade implementation of every future planning domain before a supported use case requires it;
 - elaborate DevOps;
 - data warehouses.
 
@@ -3784,15 +3869,23 @@ discover semantics afterward
 
 ---
 
-# 62. Next recommended milestone
+# 62. Current implementation sequence
 
-The immediate next milestone after PR 14 is:
+PRs 15–21 are historical completed architecture milestones. Current post-PR21 work SHALL follow the controlled roadmap in `docs/specs/roadmap/post-pr21-implementation-roadmap.md` rather than treating this historical PR list as the active queue.
 
-> **PR 15 — Executable-model compiler foundation.**
+The current sequence is:
 
-Do not make PostgreSQL, authentication, bank connectivity, another UI redesign, or the reconciled household orchestrator the next change.
+```text
+R1  measure the deterministic engine and establish supported-runtime baselines
+ ↓
+R2  make deterministic execution responsive/non-blocking
+ ↓
+R3  build the high-throughput compiled simulation kernel
+ ↓
+P1  establish deterministic strategy evaluation
+```
 
-First establish the canonical model → engine boundary so subsequent liability, investment, persistence, scenario, and orchestration work builds on one stable application contract.
+Calibration, tax, onboarding, stochastic forecasting, portfolio/insurance planning, and later optimization then proceed according to the dependency gates in that roadmap. Infrastructure SHALL not be used to bypass unresolved engine inefficiency or financial-semantic gaps.
 
 ---
 
@@ -3841,6 +3934,8 @@ More generally, the architecture is succeeding when a new financial capability c
 9. exposing it through an application use case;
 10. adding UI without duplicating financial logic.
 
+For forecasting and planning, the architecture is additionally succeeding when one compiled household can be reused efficiently across many scenarios, stochastic realizations, and candidate strategies without changing financial meaning, and when a strategy comparison can explain both the decision differences and the resulting financial tradeoffs.
+
 The architecture is failing if each new feature requires:
 
 - special-case calculations in the UI;
@@ -3860,7 +3955,8 @@ The architecture is failing if each new feature requires:
 # 64. Governing principle
 
 > Build the financial model as a deterministic, explainable product in its own right.  
-> Build the personal application around that engine.  
-> Preserve identity, provenance, model compatibility, and privacy before real personal data becomes valuable.  
+> Build a reusable high-throughput simulation engine around those authoritative semantics.  
+> Build forecasting, stochastic analysis, and financial-planning/decision optimization on that shared engine rather than creating parallel financial logic.  
+> Preserve identity, provenance, model compatibility, explainability, computational discipline, and privacy before real personal data becomes valuable.  
 > Add multi-user infrastructure only after the personal application is useful.  
 > Add commercial infrastructure only after the multi-user product is safe and validated.

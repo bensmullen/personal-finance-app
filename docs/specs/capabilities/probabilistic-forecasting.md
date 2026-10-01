@@ -1,6 +1,6 @@
 # Probabilistic Forecasting
 
-**Version:** 0.1.2-draft
+**Version:** 0.1.3-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-PROB
 
@@ -89,6 +89,18 @@ The system MAY retain identities and compact summaries for a small number of rep
 A saved plan/scenario definition SHALL be persisted independently from any stochastic result produced from it. Deleting, expiring, or replacing a derived forecast result SHALL NOT delete the user's plan/scenario definition.
 
 This separation SHALL allow a saved plan to be rerun later under a new common Forecast Basis without mutating the historical plan definition, and SHALL allow multiple retained forecast snapshots to reference the same plan definition without duplicating the plan configuration.
+
+### PFA-PROB-017 — Multi-strategy cohort comparability
+
+When multiple planning strategies are evaluated stochastically for the same decision problem, materially comparable candidates SHALL use the same Forecast Basis and SHOULD reuse the same realization cohort/common random streams where applicable. Strategy identity SHALL remain distinct from stochastic realization identity.
+
+### PFA-PROB-018 — Progressive stochastic fidelity
+
+The stochastic runtime SHALL support bounded lower-cost evaluation for candidate screening and higher-confidence evaluation for surviving/finalist strategies without changing the financial meaning of a realization. Sample count, convergence evidence, and evaluation fidelity SHALL remain explicit in results so lower-fidelity screening cannot be mistaken for a final probability estimate.
+
+### PFA-PROB-019 — Planning evaluation remains reproducible
+
+Stochastic strategy evaluation SHALL remain reproducible independent of worker scheduling, candidate ordering, or optimizer implementation. Changing the search algorithm SHALL NOT by itself alter an already-defined candidate's stochastic process identities or Forecast Basis.
 
 ## 3. Initial modeling scope
 

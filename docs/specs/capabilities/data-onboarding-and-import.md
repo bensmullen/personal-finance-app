@@ -1,6 +1,6 @@
 # Data Onboarding, Import & Assisted Intake
 
-**Version:** 0.1.0-draft
+**Version:** 0.1.1-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-ONB
 
@@ -44,19 +44,21 @@ The onboarding architecture SHALL distinguish at least:
 
 - current authoritative financial snapshot data such as balances, holdings, liabilities, compensation facts, and household attributes;
 - historical/actual activity such as transactions and observed payments; and
-- forward-looking planning inputs such as retirement goals, planned events, spending assumptions, contribution policies, and scenarios.
+- forward-looking planning inputs, preserving the distinction among goals, constraints, assumptions, decisions/policies, planned events, and scenarios.
+
+Planning goals, constraints, assumptions, and proposed decisions SHALL NOT be silently promoted into current/historical financial facts merely because they were collected during onboarding.
 
 Historical transaction import MAY improve spending estimation, actual-versus-forecast analysis, and provenance, but a long transaction history SHALL NOT be a prerequisite for an initial useful forecast when a sufficiently reliable current snapshot and forward assumptions are available.
 
-### PFA-ONB-005 — AI/import extraction produces candidate facts, not authoritative model writes
+### PFA-ONB-005 — AI/import extraction produces typed candidates, not authoritative writes
 
-Document parsers, OCR/extraction systems, LLMs, conversational assistants, voice systems, classifiers, and other probabilistic import tools SHALL NOT directly mutate authoritative financial state.
+Document parsers, OCR/extraction systems, LLMs, conversational assistants, voice systems, classifiers, and other probabilistic import tools SHALL NOT directly mutate authoritative financial state or silently write planning configuration.
 
-They MAY produce typed candidate facts or proposed model operations containing the extracted/interpreted value, source/provenance reference, exact-versus-approximate status, confidence/ambiguity metadata where meaningful, and unresolved questions.
+They MAY produce typed candidate facts, candidate planning inputs, or proposed operations containing the extracted/interpreted value, semantic category, source/provenance reference, exact-versus-approximate status, confidence/ambiguity metadata where meaningful, and unresolved questions.
 
-Candidate facts SHALL pass deterministic schema/domain validation and the applicable confirmation/review policy before being committed to the canonical household model.
+Candidate facts SHALL pass deterministic schema/domain validation and the applicable confirmation/review policy before being committed to the canonical household model. Candidate goals, constraints, assumptions, decisions, and scenarios SHALL be routed to the applicable planning/scenario configuration boundary and SHALL preserve their semantic category rather than entering the model as factual observations.
 
-The system SHALL NOT invent a missing interest rate, balance, tax status, account type, date, or other material fact merely to complete onboarding.
+The system SHALL NOT invent a missing interest rate, balance, tax status, account type, date, planning preference, constraint, or other material input merely to complete onboarding.
 
 ### PFA-ONB-006 — Preserve provenance, precision, and uncertainty
 
@@ -134,15 +136,15 @@ optional transaction history import
         +
 text/voice follow-up for missing assumptions and goals
         ↓
-typed candidate facts
+typed candidate facts + typed planning inputs
         ↓
-deterministic validation + conflict detection
+deterministic validation + conflict/category checks
         ↓
 consolidated user review / confirmation
         ↓
-canonical household model
+canonical household facts + planning/scenario configuration
         ↓
-first useful forecast
+first useful forecast / supported planning comparison
         ↓
 progressive requests for high-value missing data
 ```
@@ -171,15 +173,15 @@ source document / CSV / user statement / conversation
         ↓
 deterministic parser and/or AI extraction
         ↓
-candidate structured facts
+typed factual candidates + typed planning candidates
         ↓
-validation / provenance / conflict checks
+validation / provenance / conflict / semantic-category checks
         ↓
 user confirmation where required
         ↓
-canonical model mutation
+canonical factual model mutation and/or planning/scenario configuration
         ↓
-deterministic/stochastic financial engine
+deterministic/stochastic financial engine + planning evaluation
 ```
 
 This capability SHALL reuse the existing provenance, model-version, migration, identity/idempotency, privacy, and authorization contracts rather than creating a parallel financial-data model.

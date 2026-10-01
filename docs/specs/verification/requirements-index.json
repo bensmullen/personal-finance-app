@@ -1,5 +1,5 @@
 {
-  "index_version": "1.1.0",
+  "index_version": "1.2.0",
   "status": "controlled",
   "owning_manifest": "docs/spec-manifest.json",
   "requirements": [
@@ -2307,6 +2307,1222 @@
         "ui/",
         "app/",
         "e2e/"
+      ]
+    },
+    {
+      "id": "PFA-INS-001",
+      "spec_id": "insurance-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future insurance modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INS-002",
+      "spec_id": "insurance-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future insurance modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INS-003",
+      "spec_id": "insurance-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future insurance modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INS-004",
+      "spec_id": "insurance-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future insurance modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INS-005",
+      "spec_id": "insurance-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future insurance modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INS-006",
+      "spec_id": "insurance-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future insurance modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PLAN-003"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-INS-007",
+      "spec_id": "insurance-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future insurance modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PLAN-002"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INS-008",
+      "spec_id": "insurance-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future insurance modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PROB-002"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INS-009",
+      "spec_id": "insurance-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future insurance modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-TAX-012"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INS-010",
+      "spec_id": "insurance-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future insurance modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INS-006",
+        "PFA-INS-007"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-INS-011",
+      "spec_id": "insurance-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future insurance modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-001",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-002",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-INV-003",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-004",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PLAN-001"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-005",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PLAN-001"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-006",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-TAX-012"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-007",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-008",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-009",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PROB-001"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-010",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-011",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-PERF-018",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/simulation/",
+        "src/application/",
+        "benchmarks/",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-003",
+        "PFA-PERF-004"
+      ],
+      "verification_methods": [
+        "benchmark",
+        "analysis"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PERF-019",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/simulation/",
+        "src/application/",
+        "benchmarks/",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-010",
+        "PFA-PERF-011"
+      ],
+      "verification_methods": [
+        "test",
+        "benchmark",
+        "analysis"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PERF-020",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/simulation/",
+        "src/application/",
+        "benchmarks/",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-011"
+      ],
+      "verification_methods": [
+        "test",
+        "benchmark",
+        "analysis"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PERF-021",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/simulation/",
+        "src/application/",
+        "benchmarks/",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-010"
+      ],
+      "verification_methods": [
+        "test",
+        "benchmark",
+        "analysis"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PERF-022",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/simulation/",
+        "src/lineage/",
+        "src/application/",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-011"
+      ],
+      "verification_methods": [
+        "test",
+        "benchmark",
+        "analysis"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PERF-023",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/simulation/",
+        "src/application/",
+        "future acceleration adapters"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-011",
+        "PFA-PERF-015"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-001",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-002",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-019"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-003",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-004",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PLAN-003"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-005",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PLAN-001",
+        "PFA-PROB-012"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-006",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-019"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-007",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PROB-017"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-008",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-019",
+        "PFA-PROB-018",
+        "PFA-TAX-013"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "benchmark"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-009",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PLAN-008"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-010",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-020"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "benchmark"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-011",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PLAN-005"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-012",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-013",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PLAN-011",
+        "PFA-PLAN-012"
+      ],
+      "verification_methods": [
+        "analysis",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-014",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "future planning modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-023"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PROB-017",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/simulation/",
+        "src/application/",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PROB-009",
+        "PFA-PROB-012",
+        "PFA-PERF-011"
+      ],
+      "verification_methods": [
+        "test",
+        "analysis"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PROB-018",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/simulation/",
+        "src/application/",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PROB-008",
+        "PFA-PERF-014"
+      ],
+      "verification_methods": [
+        "test",
+        "benchmark",
+        "analysis"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PROB-019",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/simulation/",
+        "src/application/",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PROB-002",
+        "PFA-PROB-005"
+      ],
+      "verification_methods": [
+        "test",
+        "analysis"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-TAX-012",
+      "spec_id": "tax-engine",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/rules/",
+        "src/application/",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-TAX-001",
+        "PFA-TAX-002",
+        "PFA-TAX-004"
+      ],
+      "verification_methods": [
+        "test",
+        "analysis"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-TAX-013",
+      "spec_id": "tax-engine",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/rules/",
+        "src/application/",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-TAX-008",
+        "PFA-TAX-012"
+      ],
+      "verification_methods": [
+        "test",
+        "analysis"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-UX-013",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "ui/",
+        "app/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PLAN-004",
+        "PFA-PLAN-009",
+        "PFA-PLAN-011",
+        "PFA-PLAN-012"
+      ],
+      "verification_methods": [
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-PERF-024",
+      "spec_id": "performance-and-execution",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "benchmarks/",
+        "future planning modules"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PERF-011",
+        "PFA-PERF-018"
+      ],
+      "verification_methods": [
+        "benchmark",
+        "measurement",
+        "analysis"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
       ]
     }
   ]
