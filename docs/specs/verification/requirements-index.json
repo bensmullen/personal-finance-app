@@ -637,7 +637,8 @@
         "test/"
       ],
       "depends_on_requirement_ids": [
-        "PFA-PLAN-012"
+        "PFA-INS-006",
+        "PFA-INS-007"
       ],
       "verification_methods": [
         "analysis",
