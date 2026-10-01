@@ -1,14 +1,14 @@
 # Performance, Observability & Deterministic Execution
 
-**Version:** 0.1.4-draft
+**Version:** 0.2.0-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-PERF
 
 ## 1. Purpose
 
-This specification governs measurement and improvement of deterministic execution and interactive responsiveness, and defines the performance gate that must be satisfied before stochastic multi-realization simulation is scaled.
+This specification governs measurement and improvement of deterministic execution and interactive responsiveness, and defines the performance architecture required before deterministic forecasts are multiplied across stochastic realizations or planning/optimization candidates.
 
-Financial correctness, deterministic ordering, accounting authority, and executable financial semantics remain higher authority than optimization.
+Financial correctness, deterministic ordering, accounting authority, and executable financial semantics remain higher authority than optimization. Computational efficiency is nevertheless a first-class engine constraint: repeated forecasting, stochastic simulation, and planning SHALL reuse invariant work and avoid unnecessary cost growth with horizon, historical state, realization count, or strategy count.
 
 ## 2. Normative requirements
 
@@ -22,7 +22,7 @@ Performance instrumentation SHALL be observational only. Timing, telemetry, samp
 
 ### PFA-PERF-003 — Measurement context
 
-Each benchmark/performance record SHALL identify enough context to interpret the number, including fixture/model identity, entity counts or model-size summary, horizon, engine/spec versions, runtime/browser where applicable, cache state, and stochastic realization count when applicable.
+Each benchmark/performance record SHALL identify enough context to interpret the number, including fixture/model identity, entity counts or model-size summary, horizon, engine/spec versions, runtime/browser where applicable, cache state, and stochastic realization count when applicable. A baseline promoted from engineering reference to an approved performance budget SHALL be captured on the repository-supported runtime/toolchain unless it is explicitly labeled non-authoritative/reference-only.
 
 ### PFA-PERF-004 — Controlled fixtures and regression history
 
@@ -101,6 +101,30 @@ The realistic household SHALL expand as capabilities become supported and SHOULD
 The computationally complex fixture SHALL remain financially coherent while deliberately stressing supported execution paths, including many entities/positions/flows/events/dependencies, long horizons, multiple scenarios, tax execution, and stochastic processes/realizations when available. Artificial scale MAY be used, but invalid or economically nonsensical data SHALL NOT be used merely to manufacture load.
 
 Each representative/stress fixture SHALL maintain a lightweight coverage manifest or equivalent machine-readable inventory identifying the important canonical objects, primitives, rules, events, scenarios, and major engine mechanics it exercises. Unsupported future capabilities need not be faked; the inventory SHALL make coverage gaps explicit so they can be expanded as the product grows.
+
+### PFA-PERF-018 — Scaling-shape benchmarks
+
+Performance verification SHALL measure scaling behavior, not only isolated wall-clock totals. Controlled measurements SHALL cover relevant changes in forecast horizon, financial-object/operation counts, accumulated state/history, simultaneous work, stochastic realization count, and planning candidate count as those dimensions become supported. Material superlinear or combinatorial growth SHALL be investigated before it is multiplied through stochastic or optimization workloads.
+
+### PFA-PERF-019 — High-throughput simulation kernel boundary
+
+R3 SHALL establish a reusable execution boundary suitable for deterministic forecasting, stochastic realizations, and planning-candidate evaluation. Domain modules may retain separate financial responsibilities, but repeated simulation SHALL use lightweight shared operation/execution kernels rather than repeatedly invoking complete standalone sub-simulations when equivalent lower-overhead execution is semantically valid.
+
+### PFA-PERF-020 — Decision-local recompilation
+
+The compiled execution architecture SHALL separate invariant household structure from scenario/decision overlays where the authoritative semantics permit. Changing one planning decision SHALL NOT require rebuilding unrelated schedules, relationships, dependency metadata, rule bindings, or lookup structures solely because the execution API lacks a reusable boundary.
+
+### PFA-PERF-021 — Bounded hot-path state growth
+
+Runtime representations and algorithms SHALL avoid unnecessary repeated full-state/history copying, linear rescans, sorting, or canonical serialization in hot execution paths when indexed, structurally shared, incremental, or otherwise bounded representations can preserve identical financial semantics. Canonical immutable snapshots and serializations remain authoritative at the boundaries that require them.
+
+### PFA-PERF-022 — Tiered trace materialization
+
+High-throughput deterministic, stochastic, and planning evaluation SHALL NOT require eager construction of every user-facing explanation artifact for every path/candidate. The engine MAY use bounded execution-level lineage/identities and regenerate or materialize richer explanations for selected results, provided reproducibility and authoritative explanation semantics are preserved.
+
+### PFA-PERF-023 — Acceleration seam
+
+The compiled-plan and simulation-execution contracts SHALL remain implementation-neutral enough that measured hotspots may later use WebAssembly/native/server acceleration without changing canonical financial meaning, result schemas, reproducibility, or planning semantics. A language/runtime migration SHALL be justified by measurements after algorithmic and data-structure optimization rather than used to conceal inefficient scaling.
 
 ## 3. Initial performance dashboard
 
