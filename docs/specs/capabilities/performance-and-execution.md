@@ -108,7 +108,7 @@ Performance verification SHALL measure scaling behavior, not only isolated wall-
 
 ### PFA-PERF-019 — High-throughput simulation kernel boundary
 
-R3 SHALL establish a reusable execution boundary suitable for deterministic forecasting, stochastic realizations, and planning-candidate evaluation. Domain modules may retain separate financial responsibilities, but repeated simulation SHALL use lightweight shared operation/execution kernels rather than repeatedly invoking complete standalone sub-simulations when equivalent lower-overhead execution is semantically valid.
+The execution architecture SHALL establish a reusable execution boundary suitable for deterministic forecasting, stochastic realizations, and planning-candidate evaluation. Domain modules may retain separate financial responsibilities, but repeated simulation SHALL use lightweight shared operation/execution kernels rather than repeatedly invoking complete standalone sub-simulations when equivalent lower-overhead execution is semantically valid.
 
 ### PFA-PERF-020 — Decision-local recompilation
 
