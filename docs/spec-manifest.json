@@ -460,7 +460,8 @@
       ],
       "depends_on_spec_ids": [
         "performance-and-execution",
-        "probabilistic-forecasting"
+        "probabilistic-forecasting",
+        "financial-planning-and-optimization"
       ]
     },
     {
