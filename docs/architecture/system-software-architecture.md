@@ -3,7 +3,7 @@
 **Version:** 1.4.0-draft
 **Status:** Architecture baseline  
 **Namespace:** `pfm`  
-**Applies to:** Prototype → Personal MVP → Private Alpha  
+**Applies to:** Prototype → Commercial service  
 **Primary repository:** `bensmullen/personal-finance-app`
 
 ---
