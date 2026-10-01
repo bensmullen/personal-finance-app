@@ -735,9 +735,7 @@
         "future portfolio modules",
         "test/"
       ],
-      "depends_on_requirement_ids": [
-        "PFA-EQ-002"
-      ],
+      "depends_on_requirement_ids": [],
       "verification_methods": [
         "analysis",
         "test"
@@ -929,9 +927,7 @@
         "future portfolio modules",
         "test/"
       ],
-      "depends_on_requirement_ids": [
-        "PFA-PLAN-011"
-      ],
+      "depends_on_requirement_ids": [],
       "verification_methods": [
         "analysis",
         "test",
@@ -2125,11 +2121,7 @@
         "future planning modules",
         "test/"
       ],
-      "depends_on_requirement_ids": [
-        "PFA-TAX-013",
-        "PFA-INV-011",
-        "PFA-INS-010"
-      ],
+      "depends_on_requirement_ids": [],
       "verification_methods": [
         "analysis",
         "test"
