@@ -211,7 +211,7 @@ Implement PFA-ONB with emphasis on:
 
 - a minimum viable household model that reaches useful current-state and forecast outputs before optional detail is requested;
 - privacy-safe instrumentation for time to first useful forecast, manual-entry burden, completion/abandonment, corrections, import success, unsupported formats, and source-path mix;
-- a typed candidate-fact boundary for document/CSV/conversational extraction;
+- a typed candidate boundary for document/CSV/conversational extraction that distinguishes factual candidates from goals, constraints, assumptions, decisions, and other planning inputs;
 - deterministic validation, provenance, approximate-versus-exact preservation, conflict detection, and user confirmation before authoritative model mutation;
 - guided structured onboarding plus at least one bulk/file import or extraction path appropriate to the intended alpha cohort;
 - deliberate separation of current snapshot facts, transaction history, and forward-looking planning inputs;
@@ -401,7 +401,7 @@ This is the exit gate from the post-PR21 personal-use stabilization period, not 
 Before private-alpha infrastructure:
 
 - O1 onboarding dry runs establish and meet an explicit pre-infrastructure time-to-first-useful-forecast/manual-effort target using the intended onboarding paths, and the workflow does not require burdensome field-by-field transcription of the household;
-- the assisted-input architecture preserves candidate-fact review, provenance, ambiguity handling, idempotency, and the privacy boundary required by PFA-ONB;
+- the assisted-input architecture preserves factual-versus-planning semantic categories, candidate review, provenance, ambiguity handling, idempotency, and the privacy boundary required by PFA-ONB;
 - performance, convergence, memory, and per-run compute-cost budgets are documented and met for supported realistic use, with explicit cost-per-rerun measurement/estimation for every enabled stochastic execution placement;
 - Golden, realistic-household, and computationally complex/stress fixtures pass their applicable correctness/performance checks and their coverage inventories show the supported product is exercised materially beyond the simple Golden Household;
 - current-state UI is responsive;
