@@ -36,7 +36,8 @@
       "applies_to": [
         "prototype",
         "personal-mvp",
-        "private-alpha"
+        "private-alpha",
+        "future"
       ],
       "depends_on_spec_ids": []
     },
@@ -596,7 +597,8 @@
       ],
       "applies_to": [
         "personal-mvp",
-        "stochastic-readiness"
+        "stochastic-readiness",
+        "future"
       ],
       "depends_on_spec_ids": [
         "performance-and-execution",
