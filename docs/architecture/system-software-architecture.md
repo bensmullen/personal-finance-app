@@ -2406,9 +2406,9 @@ No production database required.
 
 ## Stage 2 — Personal MVP
 
-PR 14 supplies the application shell/editor, but Stage 2 is **not complete** until PRs 15–21 satisfy the Personal-MVP functional gate.
+PR 14 supplied the application shell/editor and PRs 15–21 established the integrated deterministic forecast baseline, but the expanded Stage 2 product goal is **not complete** until the applicable post-PR21 responsiveness, simulation-kernel, and P1 deterministic planning foundations satisfy the current Personal-MVP functional gate.
 
-In particular, a visually present UI surface SHALL NOT be counted as implemented when its canonical model cannot execute the corresponding engine capability.
+In particular, a visually present UI surface SHALL NOT be counted as implemented when its canonical model cannot execute the corresponding engine capability, and a planning surface SHALL NOT be counted as implemented when it cannot evaluate supported decisions through the authoritative engine.
 
 Goal:
 
@@ -2453,9 +2453,10 @@ Required:
 - at least one accelerated bulk/file import or extraction path suitable for the initial alpha cohort;
 - candidate-fact validation/review for document, CSV, or conversational extraction;
 - privacy-safe onboarding telemetry;
-- a measured time-to-first-useful-forecast/manual-effort target established in pre-alpha dry runs and reconfirmed end-to-end on the secured deployed service before invitations are sent.
+- a measured time-to-first-useful-forecast/manual-effort target established in pre-alpha dry runs and reconfirmed end-to-end on the secured deployed service before invitations are sent;
+- a supported deterministic strategy-comparison foundation with explicit goals/constraints/tradeoffs and capability diagnostics for the alpha decision set.
 
-Production bank aggregation is not required for Stage 3 if the measured assisted workflow meets the approved onboarding target.
+Production bank aggregation is not required for Stage 3 if the measured assisted workflow meets the approved onboarding target. Automated stochastic optimization and complete cross-domain planning are not blanket Stage 3 prerequisites unless an enabled alpha feature depends on them.
 
 ## Stage 4 — Public production
 
@@ -3868,15 +3869,23 @@ discover semantics afterward
 
 ---
 
-# 62. Next recommended milestone
+# 62. Current implementation sequence
 
-The immediate next milestone after PR 14 is:
+PRs 15–21 are historical completed architecture milestones. Current post-PR21 work SHALL follow the controlled roadmap in `docs/specs/roadmap/post-pr21-implementation-roadmap.md` rather than treating this historical PR list as the active queue.
 
-> **PR 15 — Executable-model compiler foundation.**
+The current sequence is:
 
-Do not make PostgreSQL, authentication, bank connectivity, another UI redesign, or the reconciled household orchestrator the next change.
+```text
+R1  measure the deterministic engine and establish supported-runtime baselines
+ ↓
+R2  make deterministic execution responsive/non-blocking
+ ↓
+R3  build the high-throughput compiled simulation kernel
+ ↓
+P1  establish deterministic strategy evaluation
+```
 
-First establish the canonical model → engine boundary so subsequent liability, investment, persistence, scenario, and orchestration work builds on one stable application contract.
+Calibration, tax, onboarding, stochastic forecasting, portfolio/insurance planning, and later optimization then proceed according to the dependency gates in that roadmap. Infrastructure SHALL not be used to bypass unresolved engine inefficiency or financial-semantic gaps.
 
 ---
 
