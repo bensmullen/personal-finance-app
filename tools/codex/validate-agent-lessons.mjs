@@ -10,7 +10,7 @@ try { data = JSON.parse(fs.readFileSync(ledgerPath, "utf8")); }
 catch (error) { fail(`unable_to_parse ${error instanceof Error ? error.message : String(error)}`); }
 if (data.schema_version !== 1 || !Array.isArray(data.lessons)) fail("invalid_root");
 const ids = new Set();
-const validStatuses = new Set(["candidate", "active", "retired"]);
+const validStatuses = new Set(["active", "retired"]);
 const validSeverities = new Set(["low", "medium", "high", "critical"]);
 const selectorKeys = ["task_kinds", "ci_profiles", "heavy_validation_profiles", "task_continuities"];
 for (const lesson of data.lessons) {
