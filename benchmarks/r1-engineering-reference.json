@@ -1,0 +1,1428 @@
+{
+  "schemaVersion": "r1-performance-baseline-v1",
+  "classification": "historical-reference-only",
+  "evidenceStatus": "older-head Node 24; superseded instrumentation; not current-head Node 22 evidence or an approved budget/R3 comparison baseline",
+  "budgetStatus": "non-budget-non-SLA",
+  "optimizationStatus": "pre-optimization",
+  "baseSha": "a7af3607be620eb346440485f289a5aaac17e72a",
+  "generatedAt": "2026-09-27T16:58:51.563Z",
+  "environment": {
+    "runtime": "v24.19.0",
+    "platform": "darwin",
+    "architecture": "x64"
+  },
+  "capture": {
+    "warmups": 2,
+    "measuredRuns": 5
+  },
+  "placement": {
+    "localNode": "measured",
+    "browserMain": "measured interactively in Settings > Advanced",
+    "serverCloud": "not_implemented/not_measured",
+    "recommendation": "deferred_until_approved_budgets"
+  },
+  "fixtures": [
+    {
+      "fixtureId": "golden-household",
+      "context": {
+        "modelCounts": {
+          "Household": 1,
+          "Person": 1,
+          "Account": 4,
+          "Income": 1,
+          "Expense": 1,
+          "Asset": 1,
+          "Liability": 1,
+          "Investment": 2,
+          "Assumption": 4,
+          "Scenario": 1,
+          "Event": 1,
+          "PrimitiveInstance": 4
+        },
+        "coverage": {
+          "class": "golden",
+          "unsupportedGaps": [
+            "multi-member",
+            "tax execution",
+            "stochastic execution",
+            "worker execution"
+          ]
+        }
+      },
+      "runs": [
+        {
+          "run": 1,
+          "totalMs": 23346.669155000003,
+          "phases": {
+            "forecast.total": {
+              "latest": 23346.669155000003,
+              "p50": 23346.669155000003,
+              "p95": 23346.669155000003,
+              "max": 23346.669155000003,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 15.604731999999785,
+              "p50": 15.604731999999785,
+              "p95": 15.604731999999785,
+              "max": 15.604731999999785,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.1622780000034254,
+              "p50": 0.1622780000034254,
+              "p95": 0.1622780000034254,
+              "max": 0.1622780000034254,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 1802.3062909999717,
+              "p50": 1802.3062909999717,
+              "p95": 1802.3062909999717,
+              "max": 1802.3062909999717,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 7.84744500011584,
+              "p50": 7.84744500011584,
+              "p95": 7.84744500011584,
+              "max": 7.84744500011584,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 21035.294138000085,
+              "p50": 21035.294138000085,
+              "p95": 21035.294138000085,
+              "max": 21035.294138000085,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 11.315621000016108,
+              "p50": 11.315621000016108,
+              "p95": 11.315621000016108,
+              "max": 11.315621000016108,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 4.620330999998259,
+              "p50": 4.620330999998259,
+              "p95": 4.620330999998259,
+              "max": 4.620330999998259,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 1.2324419999931706,
+              "p50": 1.2324419999931706,
+              "p95": 1.2324419999931706,
+              "max": 1.2324419999931706,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.8842420000000857,
+              "p50": 0.8842420000000857,
+              "p95": 0.8842420000000857,
+              "max": 0.8842420000000857,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 20211.106,
+            "memoryDeltaBytes": -87238824,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        },
+        {
+          "run": 2,
+          "totalMs": 23174.45326000001,
+          "phases": {
+            "forecast.total": {
+              "latest": 23174.45326000001,
+              "p50": 23174.45326000001,
+              "p95": 23174.45326000001,
+              "max": 23174.45326000001,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 15.551267000002554,
+              "p50": 15.551267000002554,
+              "p95": 15.551267000002554,
+              "max": 15.551267000002554,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.12653200000931975,
+              "p50": 0.12653200000931975,
+              "p95": 0.12653200000931975,
+              "max": 0.12653200000931975,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 1847.4578089998831,
+              "p50": 1847.4578089998831,
+              "p95": 1847.4578089998831,
+              "max": 1847.4578089998831,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 9.703829999867594,
+              "p50": 9.703829999867594,
+              "p95": 9.703829999867594,
+              "max": 9.703829999867594,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 20776.400296000007,
+              "p50": 20776.400296000007,
+              "p95": 20776.400296000007,
+              "max": 20776.400296000007,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 9.177721999891219,
+              "p50": 9.177721999891219,
+              "p95": 9.177721999891219,
+              "max": 9.177721999891219,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 3.9033619999536313,
+              "p50": 3.9033619999536313,
+              "p95": 3.9033619999536313,
+              "max": 3.9033619999536313,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 4.2401670000108425,
+              "p50": 4.2401670000108425,
+              "p95": 4.2401670000108425,
+              "max": 4.2401670000108425,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.3296989999944344,
+              "p50": 0.3296989999944344,
+              "p95": 0.3296989999944344,
+              "max": 0.3296989999944344,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 20262.933,
+            "memoryDeltaBytes": -27240376,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        },
+        {
+          "run": 3,
+          "totalMs": 23274.763552000004,
+          "phases": {
+            "forecast.total": {
+              "latest": 23274.763552000004,
+              "p50": 23274.763552000004,
+              "p95": 23274.763552000004,
+              "max": 23274.763552000004,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 10.807159999996657,
+              "p50": 10.807159999996657,
+              "p95": 10.807159999996657,
+              "max": 10.807159999996657,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.07917800001450814,
+              "p50": 0.07917800001450814,
+              "p95": 0.07917800001450814,
+              "max": 0.07917800001450814,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 1848.1931990000594,
+              "p50": 1848.1931990000594,
+              "p95": 1848.1931990000594,
+              "max": 1848.1931990000594,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 8.050108000068576,
+              "p50": 8.050108000068576,
+              "p95": 8.050108000068576,
+              "max": 8.050108000068576,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 20881.605543000027,
+              "p50": 20881.605543000027,
+              "p95": 20881.605543000027,
+              "max": 20881.605543000027,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 8.970318999970914,
+              "p50": 8.970318999970914,
+              "p95": 8.970318999970914,
+              "max": 8.970318999970914,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 6.554424999994808,
+              "p50": 6.554424999994808,
+              "p95": 6.554424999994808,
+              "max": 6.554424999994808,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 1.1701219999958994,
+              "p50": 1.1701219999958994,
+              "p95": 1.1701219999958994,
+              "max": 1.1701219999958994,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.2756599999993341,
+              "p50": 0.2756599999993341,
+              "p95": 0.2756599999993341,
+              "max": 0.2756599999993341,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 20215.881,
+            "memoryDeltaBytes": 30075064,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        },
+        {
+          "run": 4,
+          "totalMs": 23918.51286999999,
+          "phases": {
+            "forecast.total": {
+              "latest": 23918.51286999999,
+              "p50": 23918.51286999999,
+              "p95": 23918.51286999999,
+              "max": 23918.51286999999,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 14.247078000000329,
+              "p50": 14.247078000000329,
+              "p95": 14.247078000000329,
+              "max": 14.247078000000329,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.07845700001053046,
+              "p50": 0.07845700001053046,
+              "p95": 0.07845700001053046,
+              "max": 0.07845700001053046,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 1901.7154690000752,
+              "p50": 1901.7154690000752,
+              "p95": 1901.7154690000752,
+              "max": 1901.7154690000752,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 8.01433600008022,
+              "p50": 8.01433600008022,
+              "p95": 8.01433600008022,
+              "max": 8.01433600008022,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 21294.835708000086,
+              "p50": 21294.835708000086,
+              "p95": 21294.835708000086,
+              "max": 21294.835708000086,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 10.212875000026543,
+              "p50": 10.212875000026543,
+              "p95": 10.212875000026543,
+              "max": 10.212875000026543,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 4.425054999868735,
+              "p50": 4.425054999868735,
+              "p95": 4.425054999868735,
+              "max": 4.425054999868735,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 1.4653110000072047,
+              "p50": 1.4653110000072047,
+              "p95": 1.4653110000072047,
+              "max": 1.4653110000072047,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.2286149999999907,
+              "p50": 0.2286149999999907,
+              "p95": 0.2286149999999907,
+              "max": 0.2286149999999907,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 20346.298,
+            "memoryDeltaBytes": 46495648,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        },
+        {
+          "run": 5,
+          "totalMs": 23151.380875000003,
+          "phases": {
+            "forecast.total": {
+              "latest": 23151.380875000003,
+              "p50": 23151.380875000003,
+              "p95": 23151.380875000003,
+              "max": 23151.380875000003,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 15.393851999979233,
+              "p50": 15.393851999979233,
+              "p95": 15.393851999979233,
+              "max": 15.393851999979233,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.07805300003383309,
+              "p50": 0.07805300003383309,
+              "p95": 0.07805300003383309,
+              "max": 0.07805300003383309,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 1795.884738999739,
+              "p50": 1795.884738999739,
+              "p95": 1795.884738999739,
+              "max": 1795.884738999739,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 6.784398999938276,
+              "p50": 6.784398999938276,
+              "p95": 6.784398999938276,
+              "max": 6.784398999938276,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 20833.487389999587,
+              "p50": 20833.487389999587,
+              "p95": 20833.487389999587,
+              "max": 20833.487389999587,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 8.236846000305377,
+              "p50": 8.236846000305377,
+              "p95": 8.236846000305377,
+              "max": 8.236846000305377,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 7.1305409998458344,
+              "p50": 7.1305409998458344,
+              "p95": 7.1305409998458344,
+              "max": 7.1305409998458344,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 1.2255349999759346,
+              "p50": 1.2255349999759346,
+              "p95": 1.2255349999759346,
+              "max": 1.2255349999759346,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.485052000003634,
+              "p50": 0.485052000003634,
+              "p95": 0.485052000003634,
+              "max": 0.485052000003634,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 19954.34,
+            "memoryDeltaBytes": -5637536,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        }
+      ]
+    },
+    {
+      "fixtureId": "realistic-household",
+      "context": {
+        "modelCounts": {
+          "Household": 1,
+          "Person": 1,
+          "Account": 4,
+          "Income": 2,
+          "Expense": 3,
+          "Asset": 3,
+          "Liability": 1,
+          "Investment": 2,
+          "Assumption": 4,
+          "Scenario": 1,
+          "Event": 1,
+          "PrimitiveInstance": 7
+        },
+        "coverage": {
+          "canonicalObjectCounts": {
+            "Household": 1,
+            "Person": 1,
+            "Account": 4,
+            "Income": 2,
+            "Expense": 3,
+            "Asset": 3,
+            "Liability": 1,
+            "Investment": 2,
+            "Assumption": 4,
+            "Scenario": 1,
+            "Event": 1,
+            "PrimitiveInstance": 7
+          },
+          "primitives": [
+            "P08 indexed recurring cash flow",
+            "P23 periodic investment return",
+            "VS4 fixed amortizing liability"
+          ],
+          "rules": [
+            "salary growth",
+            "expense inflation",
+            "investment return",
+            "explicit contention policy"
+          ],
+          "events": [
+            "scheduled retirement/income termination"
+          ],
+          "scenarios": [
+            "current plan",
+            "lower-return comparison",
+            "earlier-retirement comparison"
+          ],
+          "executionMechanics": [
+            "opening reconciliation",
+            "monthly recurrence",
+            "funding/settlement",
+            "investment purchase",
+            "mark-to-market",
+            "debt amortization"
+          ],
+          "unsupportedGaps": [
+            "multi-member household (HOUSEHOLD_MULTI_MEMBER_UNSUPPORTED)",
+            "tax execution",
+            "stochastic execution",
+            "worker execution"
+          ]
+        }
+      },
+      "runs": [
+        {
+          "run": 1,
+          "totalMs": 3163.6462410000095,
+          "phases": {
+            "forecast.total": {
+              "latest": 3163.6462410000095,
+              "p50": 3163.6462410000095,
+              "p95": 3163.6462410000095,
+              "max": 3163.6462410000095,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 13.181458999984898,
+              "p50": 13.181458999984898,
+              "p95": 13.181458999984898,
+              "max": 13.181458999984898,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.06854400003794581,
+              "p50": 0.06854400003794581,
+              "p95": 0.06854400003794581,
+              "max": 0.06854400003794581,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 168.34035800001584,
+              "p50": 168.34035800001584,
+              "p95": 168.34035800001584,
+              "max": 168.34035800001584,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 5.3078440001118,
+              "p50": 5.3078440001118,
+              "p95": 5.3078440001118,
+              "max": 5.3078440001118,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 2930.4530610000074,
+              "p50": 2930.4530610000074,
+              "p95": 2930.4530610000074,
+              "max": 2930.4530610000074,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 1.9676129998988472,
+              "p50": 1.9676129998988472,
+              "p95": 1.9676129998988472,
+              "max": 1.9676129998988472,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 1.1444100000080653,
+              "p50": 1.1444100000080653,
+              "p95": 1.1444100000080653,
+              "max": 1.1444100000080653,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 0.30643500000587665,
+              "p50": 0.30643500000587665,
+              "p95": 0.30643500000587665,
+              "max": 0.30643500000587665,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.27875899997889064,
+              "p50": 0.27875899997889064,
+              "p95": 0.27875899997889064,
+              "max": 0.27875899997889064,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 2693.279,
+            "memoryDeltaBytes": 22859568,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        },
+        {
+          "run": 2,
+          "totalMs": 3177.926493999985,
+          "phases": {
+            "forecast.total": {
+              "latest": 3177.926493999985,
+              "p50": 3177.926493999985,
+              "p95": 3177.926493999985,
+              "max": 3177.926493999985,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 11.343560000008438,
+              "p50": 11.343560000008438,
+              "p95": 11.343560000008438,
+              "max": 11.343560000008438,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.15034899997408502,
+              "p50": 0.15034899997408502,
+              "p95": 0.15034899997408502,
+              "max": 0.15034899997408502,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 160.82395800002269,
+              "p50": 160.82395800002269,
+              "p95": 160.82395800002269,
+              "max": 160.82395800002269,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 1.9732240000448655,
+              "p50": 1.9732240000448655,
+              "p95": 1.9732240000448655,
+              "max": 1.9732240000448655,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 2957.846942999953,
+              "p50": 2957.846942999953,
+              "p95": 2957.846942999953,
+              "max": 2957.846942999953,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 2.8429959999630228,
+              "p50": 2.8429959999630228,
+              "p95": 2.8429959999630228,
+              "max": 2.8429959999630228,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 2.0141639999928884,
+              "p50": 2.0141639999928884,
+              "p95": 2.0141639999928884,
+              "max": 2.0141639999928884,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 0.24914800000260584,
+              "p50": 0.24914800000260584,
+              "p95": 0.24914800000260584,
+              "max": 0.24914800000260584,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.2069269999919925,
+              "p50": 0.2069269999919925,
+              "p95": 0.2069269999919925,
+              "max": 0.2069269999919925,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 2690.689,
+            "memoryDeltaBytes": -44051400,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        },
+        {
+          "run": 3,
+          "totalMs": 3184.874154000019,
+          "phases": {
+            "forecast.total": {
+              "latest": 3184.874154000019,
+              "p50": 3184.874154000019,
+              "p95": 3184.874154000019,
+              "max": 3184.874154000019,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 8.306379999994533,
+              "p50": 8.306379999994533,
+              "p95": 8.306379999994533,
+              "max": 8.306379999994533,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.05561199999647215,
+              "p50": 0.05561199999647215,
+              "p95": 0.05561199999647215,
+              "max": 0.05561199999647215,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 173.07476499993936,
+              "p50": 173.07476499993936,
+              "p95": 173.07476499993936,
+              "max": 173.07476499993936,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 1.9011900000623427,
+              "p50": 1.9011900000623427,
+              "p95": 1.9011900000623427,
+              "max": 1.9011900000623427,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 2961.4673440000915,
+              "p50": 2961.4673440000915,
+              "p95": 2961.4673440000915,
+              "max": 2961.4673440000915,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 2.334523000055924,
+              "p50": 2.334523000055924,
+              "p95": 2.334523000055924,
+              "max": 2.334523000055924,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 1.1827169999887701,
+              "p50": 1.1827169999887701,
+              "p95": 1.1827169999887701,
+              "max": 1.1827169999887701,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 0.25307899998733774,
+              "p50": 0.25307899998733774,
+              "p95": 0.25307899998733774,
+              "max": 0.25307899998733774,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.2758210000174586,
+              "p50": 0.2758210000174586,
+              "p95": 0.2758210000174586,
+              "max": 0.2758210000174586,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 2714.429,
+            "memoryDeltaBytes": 23650456,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        },
+        {
+          "run": 4,
+          "totalMs": 3130.4638609999965,
+          "phases": {
+            "forecast.total": {
+              "latest": 3130.4638609999965,
+              "p50": 3130.4638609999965,
+              "p95": 3130.4638609999965,
+              "max": 3130.4638609999965,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 10.833262999978615,
+              "p50": 10.833262999978615,
+              "p95": 10.833262999978615,
+              "max": 10.833262999978615,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.10947999998461455,
+              "p50": 0.10947999998461455,
+              "p95": 0.10947999998461455,
+              "max": 0.10947999998461455,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 150.784971999994,
+              "p50": 150.784971999994,
+              "p95": 150.784971999994,
+              "max": 150.784971999994,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 4.950163000030443,
+              "p50": 4.950163000030443,
+              "p95": 4.950163000030443,
+              "max": 4.950163000030443,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 2924.3148389999697,
+              "p50": 2924.3148389999697,
+              "p95": 2924.3148389999697,
+              "max": 2924.3148389999697,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 2.0185530000017025,
+              "p50": 2.0185530000017025,
+              "p95": 2.0185530000017025,
+              "max": 2.0185530000017025,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 1.2704940000839997,
+              "p50": 1.2704940000839997,
+              "p95": 1.2704940000839997,
+              "max": 1.2704940000839997,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 0.24955400000908412,
+              "p50": 0.24955400000908412,
+              "p95": 0.24955400000908412,
+              "max": 0.24955400000908412,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.220707999978913,
+              "p50": 0.220707999978913,
+              "p95": 0.220707999978913,
+              "max": 0.220707999978913,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 2720.95,
+            "memoryDeltaBytes": 23094712,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        },
+        {
+          "run": 5,
+          "totalMs": 3058.8085629999987,
+          "phases": {
+            "forecast.total": {
+              "latest": 3058.8085629999987,
+              "p50": 3058.8085629999987,
+              "p95": 3058.8085629999987,
+              "max": 3058.8085629999987,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 8.17673300000024,
+              "p50": 8.17673300000024,
+              "p95": 8.17673300000024,
+              "max": 8.17673300000024,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.054367999982787296,
+              "p50": 0.054367999982787296,
+              "p95": 0.054367999982787296,
+              "max": 0.054367999982787296,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 153.26355000009062,
+              "p50": 153.26355000009062,
+              "p95": 153.26355000009062,
+              "max": 153.26355000009062,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 3.390829000098165,
+              "p50": 3.390829000098165,
+              "p95": 3.390829000098165,
+              "max": 3.390829000098165,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 2845.8945750003622,
+              "p50": 2845.8945750003622,
+              "p95": 2845.8945750003622,
+              "max": 2845.8945750003622,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 1.8705960000806954,
+              "p50": 1.8705960000806954,
+              "p95": 1.8705960000806954,
+              "max": 1.8705960000806954,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 1.2156100000138395,
+              "p50": 1.2156100000138395,
+              "p95": 1.2156100000138395,
+              "max": 1.2156100000138395,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 0.2992599999997765,
+              "p50": 0.2992599999997765,
+              "p95": 0.2992599999997765,
+              "max": 0.2992599999997765,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.22791200000210665,
+              "p50": 0.22791200000210665,
+              "p95": 0.22791200000210665,
+              "max": 0.22791200000210665,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 2725.219,
+            "memoryDeltaBytes": 25970448,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        }
+      ]
+    },
+    {
+      "fixtureId": "stress-household",
+      "context": {
+        "modelCounts": {
+          "Household": 1,
+          "Person": 1,
+          "Account": 4,
+          "Income": 3,
+          "Expense": 5,
+          "Asset": 13,
+          "Liability": 1,
+          "Investment": 2,
+          "Assumption": 4,
+          "Scenario": 1,
+          "Event": 1,
+          "PrimitiveInstance": 10
+        },
+        "coverage": {
+          "canonicalObjectCounts": {
+            "Household": 1,
+            "Person": 1,
+            "Account": 4,
+            "Income": 3,
+            "Expense": 5,
+            "Asset": 13,
+            "Liability": 1,
+            "Investment": 2,
+            "Assumption": 4,
+            "Scenario": 1,
+            "Event": 1,
+            "PrimitiveInstance": 10
+          },
+          "primitives": [
+            "P08 indexed recurring cash flow",
+            "P23 periodic investment return",
+            "VS4 fixed amortizing liability"
+          ],
+          "rules": [
+            "salary growth",
+            "expense inflation",
+            "investment return",
+            "explicit contention policy"
+          ],
+          "events": [
+            "scheduled retirement/income termination"
+          ],
+          "scenarios": [
+            "current plan",
+            "lower-return comparison",
+            "earlier-retirement comparison"
+          ],
+          "executionMechanics": [
+            "opening reconciliation",
+            "monthly recurrence",
+            "funding/settlement",
+            "investment purchase",
+            "mark-to-market",
+            "debt amortization",
+            "long horizon",
+            "high recurring-flow count"
+          ],
+          "unsupportedGaps": [
+            "multi-member household (HOUSEHOLD_MULTI_MEMBER_UNSUPPORTED)",
+            "tax execution",
+            "stochastic execution",
+            "worker execution"
+          ]
+        }
+      },
+      "runs": [
+        {
+          "run": 1,
+          "totalMs": 38584.80812599999,
+          "phases": {
+            "forecast.total": {
+              "latest": 38584.80812599999,
+              "p50": 38584.80812599999,
+              "p95": 38584.80812599999,
+              "max": 38584.80812599999,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 14.983097999996971,
+              "p50": 14.983097999996971,
+              "p95": 14.983097999996971,
+              "max": 14.983097999996971,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.10392800002591684,
+              "p50": 0.10392800002591684,
+              "p95": 0.10392800002591684,
+              "max": 0.10392800002591684,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 1118.3628440000466,
+              "p50": 1118.3628440000466,
+              "p95": 1118.3628440000466,
+              "max": 1118.3628440000466,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 7.86337599955732,
+              "p50": 7.86337599955732,
+              "p95": 7.86337599955732,
+              "max": 7.86337599955732,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 37111.63170999987,
+              "p50": 37111.63170999987,
+              "p95": 37111.63170999987,
+              "max": 37111.63170999987,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 6.816297999757808,
+              "p50": 6.816297999757808,
+              "p95": 6.816297999757808,
+              "max": 6.816297999757808,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 7.098443000228144,
+              "p50": 7.098443000228144,
+              "p95": 7.098443000228144,
+              "max": 7.098443000228144,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 0.9450230000074953,
+              "p50": 0.9450230000074953,
+              "p95": 0.9450230000074953,
+              "max": 0.9450230000074953,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.662949999968987,
+              "p50": 0.662949999968987,
+              "p95": 0.662949999968987,
+              "max": 0.662949999968987,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 32535.074,
+            "memoryDeltaBytes": 25665864,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        },
+        {
+          "run": 2,
+          "totalMs": 38955.98170200002,
+          "phases": {
+            "forecast.total": {
+              "latest": 38955.98170200002,
+              "p50": 38955.98170200002,
+              "p95": 38955.98170200002,
+              "max": 38955.98170200002,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 14.809689000016078,
+              "p50": 14.809689000016078,
+              "p95": 14.809689000016078,
+              "max": 14.809689000016078,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.07946900004753843,
+              "p50": 0.07946900004753843,
+              "p95": 0.07946900004753843,
+              "max": 0.07946900004753843,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 1126.5866790000582,
+              "p50": 1126.5866790000582,
+              "p95": 1126.5866790000582,
+              "max": 1126.5866790000582,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 9.604289000038989,
+              "p50": 9.604289000038989,
+              "p95": 9.604289000038989,
+              "max": 9.604289000038989,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 37407.96252200025,
+              "p50": 37407.96252200025,
+              "p95": 37407.96252200025,
+              "max": 37407.96252200025,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 7.20507199986605,
+              "p50": 7.20507199986605,
+              "p95": 7.20507199986605,
+              "max": 7.20507199986605,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 4.270039000024553,
+              "p50": 4.270039000024553,
+              "p95": 4.270039000024553,
+              "max": 4.270039000024553,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 0.7719030000152998,
+              "p50": 0.7719030000152998,
+              "p95": 0.7719030000152998,
+              "max": 0.7719030000152998,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.2968150000087917,
+              "p50": 0.2968150000087917,
+              "p95": 0.2968150000087917,
+              "max": 0.2968150000087917,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 32664.144,
+            "memoryDeltaBytes": -24255016,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        },
+        {
+          "run": 3,
+          "totalMs": 38352.85452700005,
+          "phases": {
+            "forecast.total": {
+              "latest": 38352.85452700005,
+              "p50": 38352.85452700005,
+              "p95": 38352.85452700005,
+              "max": 38352.85452700005,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 10.663918000005651,
+              "p50": 10.663918000005651,
+              "p95": 10.663918000005651,
+              "max": 10.663918000005651,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.08124799997312948,
+              "p50": 0.08124799997312948,
+              "p95": 0.08124799997312948,
+              "max": 0.08124799997312948,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 1100.6297009999398,
+              "p50": 1100.6297009999398,
+              "p95": 1100.6297009999398,
+              "max": 1100.6297009999398,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 9.435283000813797,
+              "p50": 9.435283000813797,
+              "p95": 9.435283000813797,
+              "max": 9.435283000813797,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 36891.56704200007,
+              "p50": 36891.56704200007,
+              "p95": 36891.56704200007,
+              "max": 36891.56704200007,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 7.882630999898538,
+              "p50": 7.882630999898538,
+              "p95": 7.882630999898538,
+              "max": 7.882630999898538,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 4.073037999914959,
+              "p50": 4.073037999914959,
+              "p95": 4.073037999914959,
+              "max": 4.073037999914959,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 1.367130000027828,
+              "p50": 1.367130000027828,
+              "p95": 1.367130000027828,
+              "max": 1.367130000027828,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.32193100004224107,
+              "p50": 0.32193100004224107,
+              "p95": 0.32193100004224107,
+              "max": 0.32193100004224107,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 32543.548,
+            "memoryDeltaBytes": 22676656,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        },
+        {
+          "run": 4,
+          "totalMs": 38678.89887199999,
+          "phases": {
+            "forecast.total": {
+              "latest": 38678.89887199999,
+              "p50": 38678.89887199999,
+              "p95": 38678.89887199999,
+              "max": 38678.89887199999,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 15.994707000034396,
+              "p50": 15.994707000034396,
+              "p95": 15.994707000034396,
+              "max": 15.994707000034396,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.0809109999681823,
+              "p50": 0.0809109999681823,
+              "p95": 0.0809109999681823,
+              "max": 0.0809109999681823,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 1141.9348439997993,
+              "p50": 1141.9348439997993,
+              "p95": 1141.9348439997993,
+              "max": 1141.9348439997993,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 8.472359000123106,
+              "p50": 8.472359000123106,
+              "p95": 8.472359000123106,
+              "max": 8.472359000123106,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 37154.883079000865,
+              "p50": 37154.883079000865,
+              "p95": 37154.883079000865,
+              "max": 37154.883079000865,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 7.577304999693297,
+              "p50": 7.577304999693297,
+              "p95": 7.577304999693297,
+              "max": 7.577304999693297,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 5.886953999754041,
+              "p50": 5.886953999754041,
+              "p95": 5.886953999754041,
+              "max": 5.886953999754041,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 0.9895109999924898,
+              "p50": 0.9895109999924898,
+              "p95": 0.9895109999924898,
+              "max": 0.9895109999924898,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.32978100003674626,
+              "p50": 0.32978100003674626,
+              "p95": 0.32978100003674626,
+              "max": 0.32978100003674626,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 32695.019,
+            "memoryDeltaBytes": 14262024,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        },
+        {
+          "run": 5,
+          "totalMs": 39172.40068399999,
+          "phases": {
+            "forecast.total": {
+              "latest": 39172.40068399999,
+              "p50": 39172.40068399999,
+              "p95": 39172.40068399999,
+              "max": 39172.40068399999,
+              "count": 1
+            },
+            "compile.model_and_slices": {
+              "latest": 10.34220200002892,
+              "p50": 10.34220200002892,
+              "p95": 10.34220200002892,
+              "max": 10.34220200002892,
+              "count": 1
+            },
+            "compile.opening_reconciliation": {
+              "latest": 0.07506000006105751,
+              "p50": 0.07506000006105751,
+              "p95": 0.07506000006105751,
+              "max": 0.07506000006105751,
+              "count": 1
+            },
+            "engine.prepare": {
+              "latest": 1097.6366049998906,
+              "p50": 1097.6366049998906,
+              "p95": 1097.6366049998906,
+              "max": 1097.6366049998906,
+              "count": 1
+            },
+            "engine.schedule_contention": {
+              "latest": 11.42537599883508,
+              "p50": 11.42537599883508,
+              "p95": 11.42537599883508,
+              "max": 11.42537599883508,
+              "count": 1
+            },
+            "engine.execute": {
+              "latest": 37717.7485589991,
+              "p50": 37717.7485589991,
+              "p95": 37717.7485589991,
+              "max": 37717.7485589991,
+              "count": 1
+            },
+            "engine.statements_metrics": {
+              "latest": 7.165221000148449,
+              "p50": 7.165221000148449,
+              "p95": 7.165221000148449,
+              "max": 7.165221000148449,
+              "count": 1
+            },
+            "engine.trace_result": {
+              "latest": 4.537716000049841,
+              "p50": 4.537716000049841,
+              "p95": 4.537716000049841,
+              "max": 4.537716000049841,
+              "count": 1
+            },
+            "application.read_model": {
+              "latest": 0.695413000008557,
+              "p50": 0.695413000008557,
+              "p95": 0.695413000008557,
+              "max": 0.695413000008557,
+              "count": 1
+            },
+            "transport.serialization": {
+              "latest": 0.2702200000057928,
+              "p50": 0.2702200000057928,
+              "p95": 0.2702200000057928,
+              "max": 0.2702200000057928,
+              "count": 1
+            }
+          },
+          "resources": {
+            "cpuTimeMs": 32805.42,
+            "memoryDeltaBytes": 28187520,
+            "executionLocation": "local_node",
+            "metering": "not_metered"
+          }
+        }
+      ]
+    }
+  ]
+}

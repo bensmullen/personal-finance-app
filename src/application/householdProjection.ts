@@ -1,4 +1,4 @@
-import { ValidationError, type ValidationIssue } from "../diagnostics/index.js";
+import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../diagnostics/index.js";
 import type {
   LiquidityShortfall,
   AllOrNothingLiquidityShortfall,
@@ -691,10 +691,12 @@ interface ExecutedHousehold {
   >;
   readonly context: ReturnType<typeof createRunContext>;
 }
-const execute = (
+const executeInternal = (
   model: PortableModelEnvelope,
   request: HouseholdForecastRequest,
   resolved?: ResolvedScenario,
+  observer?: PerformanceObserver,
+  performance?: PerformanceSession,
 ): {
   readonly compiled?: CompiledHouseholdProjection;
   readonly executable?: ExecutableHouseholdProjection;
@@ -754,7 +756,7 @@ const execute = (
                   },
                 }),
           });
-    const compiledResult = compileHouseholdProjection(model, compiler);
+    const compiledResult = compileHouseholdProjection(model, compiler, observer);
     if (compiledResult.status !== "compiled")
       return {
         read: Object.freeze({
@@ -826,20 +828,20 @@ const execute = (
     const result = runCompiledHouseholdProjection({
       runContext: context,
       compiled: executable,
-    });
+    }, observer);
     return {
       compiled,
       executable,
       result,
       context,
-      read: toReadModel(
+      read: (performance ?? createPerformanceSession()).measure("application.read_model", () => toReadModel(
         result,
         compiled,
         model,
         context.baseCurrency,
         context.asOf,
         context.dataCutoff,
-      ),
+      )),
     };
   } catch (error) {
     const diagnostics =
@@ -857,10 +859,45 @@ const execute = (
     };
   }
 };
+
+const execute = (
+  model: PortableModelEnvelope,
+  request: HouseholdForecastRequest,
+  resolved?: ResolvedScenario,
+  observer?: PerformanceObserver,
+): ReturnType<typeof executeInternal> => {
+  const records: Parameters<PerformanceObserver["sink"]["record"]>[0][] = [];
+  const scopedObserver = observer === undefined ? undefined : {
+    clock: observer.clock, context: observer.context,
+    sink: { record: (record: Parameters<PerformanceObserver["sink"]["record"]>[0]) => { records.push(record); } },
+  };
+  const performance = createPerformanceSession(scopedObserver);
+  let execution: ReturnType<typeof executeInternal> | undefined;
+  try {
+    execution = performance.measure("forecast.total", () => executeInternal(model, request, resolved, scopedObserver, performance));
+    return execution;
+  } finally {
+    performance.finish();
+    if (observer !== undefined) {
+      try {
+        const context = Object.freeze({ ...observer.context,
+          status: execution?.read.status ?? "error",
+          ...(execution?.read.status === "completed" || execution?.read.status === "incomplete"
+            ? { reachedThrough: execution.read.reachedThrough } : {}),
+        });
+        records.push({ phase: "transport.serialization", availability: "not_applicable", context });
+        for (const record of records) {
+          try { observer.sink.record(Object.freeze({ ...record, context })); } catch { /* Diagnostic-only. */ }
+        }
+      } catch { /* Diagnostic transformation cannot affect the forecast. */ }
+    }
+  }
+};
 export const runPersonalHouseholdForecast = (
   model: PortableModelEnvelope,
   request: HouseholdForecastRequest,
-): PersonalHouseholdForecastReadModel => execute(model, request).read;
+  observer?: PerformanceObserver,
+): PersonalHouseholdForecastReadModel => execute(model, request, undefined, observer).read;
 
 export interface PersonalHouseholdScenarioComparisonRequest {
   readonly scenarios?: readonly ExecutableScenario[];
