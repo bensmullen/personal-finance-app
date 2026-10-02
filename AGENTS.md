@@ -40,12 +40,15 @@ content MUST begin with a valid `PFM_TASK_V2` envelope. Read-only questions may
 run without one. Repository hooks enforce this.
 
 The envelope separates:
+- task continuity (`new_pr` versus `existing_pr`) and exact target branch;
+- worktree policy and exact starting commit;
 - implementation breadth (`MODE`);
 - semantic uncertainty (`SEMANTICS`);
 - read scope (`READ_PATHS`);
 - edit scope (`ALLOWED_PATHS`);
 - dependency authority;
 - CI/heavy-verification profile;
+- applicable active process lessons;
 - UAT requirement;
 - externally assigned repair round.
 
@@ -65,7 +68,9 @@ Never weaken a financial/golden expectation merely to pass verification.
 
 Product and repair tasks may not edit agent-control surfaces:
 `AGENTS.md`, `.agents/`, `.codex/`, `.github/workflows/`,
-`tools/codex/`, or `tools/ci/`. Those require `TASK_KIND: framework`.
+`tools/codex/`, `tools/ci/`, `docs/development/handoff-authoring-policy.md`,
+`docs/development/verification-policy.md`, or `docs/development/agent-*`.
+Those require `TASK_KIND: framework`.
 
 Subagents are disabled by default. Do not delegate routine work.
 
@@ -89,7 +94,15 @@ driven; never choose arbitrary test counts merely to satisfy a ritual.
 A valid V2 prompt is accepted only when:
 - `EXPECTED_HEAD` exactly matches the checkout;
 - the working tree is clean;
+- `TARGET_BRANCH`, `TASK_CONTINUITY`, and `WORKTREE_POLICY` are valid;
+- every deterministically applicable active lesson is declared and its required prompt markers are present;
 - required policy fields are valid.
+
+For `TASK_CONTINUITY: new_pr`, use a new Codex thread with Worktree enabled.
+The accepted task may perform one exact guarded branch bootstrap before any
+repository mutation. For `existing_pr`, resume the PR's existing thread/worktree;
+a mismatched checkout fails with `WRONG_WORKTREE` rather than asking the user to
+manually switch branches.
 
 Hooks stop the turn on:
 - an out-of-scope edit;
@@ -114,7 +127,10 @@ Feature-branch push is allowed only to the configured
 current approved feature branch as `--head`.
 
 Keep completion reports concise: branch/head, changed files, material decisions,
-CI status if already available, and any STOP/UAT condition.
+CI status if already available, any STOP/UAT condition, and a one-line process
+signal when the turn produced evidence that should be reviewed for the learning
+loop. Active lessons are applied automatically; Codex never promotes or edits
+lessons during product/repair work.
 
 ## Scoped guidance
 
