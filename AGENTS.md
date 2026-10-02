@@ -81,8 +81,10 @@ architecture/spec validators, Playwright, benchmarks, performance captures,
 stochastic convergence runs, onboarding dry runs, or dev servers.
 
 Codex also does not install dependencies or switch package managers during the
-agent phase. If Node/npm/dependencies are not ready, STOP with `ENV_NOT_READY`.
-The desktop Local Environment owns dependency setup before inference begins.
+agent phase. Node/npm and `node_modules` are therefore not implementation-start
+requirements; GitHub CI owns verification. A configured desktop Local
+Environment may prepare dependencies for developer convenience, but failure to
+bind that environment must not block a no-tests implementation turn.
 
 GitHub Actions owns ordinary verification. Separate manually triggered
 engineering-validation workflows own expensive performance, stochastic,
@@ -98,11 +100,13 @@ A valid V2 prompt is accepted only when:
 - every deterministically applicable active lesson is declared and its required prompt markers are present;
 - required policy fields are valid.
 
-For `TASK_CONTINUITY: new_pr`, use a new Codex thread with Worktree enabled.
-The accepted task may perform one exact guarded branch bootstrap before any
-repository mutation. For `existing_pr`, resume the PR's existing thread/worktree;
-a mismatched checkout fails with `WRONG_WORKTREE` rather than asking the user to
-manually switch branches.
+For `TASK_CONTINUITY: new_pr`, use an isolated linked Git worktree at the exact
+`EXPECTED_HEAD`. A Codex-managed worktree is convenient but not authoritative;
+a manually created linked worktree is equally valid. The accepted task may
+perform one exact guarded branch bootstrap before any repository mutation. For
+`existing_pr`, resume the PR's existing thread/worktree; a mismatched checkout
+fails with `WRONG_WORKTREE` rather than asking the user to manually switch
+branches.
 
 Hooks stop the turn on:
 - an out-of-scope edit;
@@ -124,7 +128,11 @@ Feature-branch push is allowed only to the configured
 `agent/` branch, without force/delete semantics and without targeting
 `main`. Direct-main push is forbidden. PR creation is auto-approved only for
 `gh pr create` against this repository with explicit `--base main` and the
-current approved feature branch as `--head`.
+current approved feature branch as `--head`. GitHub CLI is a publication-only
+tool, not an implementation-start dependency. If `gh` is unavailable after a
+successful feature-branch push, stop publication with
+`PUBLICATION_PENDING: GH_UNAVAILABLE`; ChatGPT may create the PR through the
+GitHub connector without rerunning implementation.
 
 Keep completion reports concise: branch/head, changed files, material decisions,
 CI status if already available, any STOP/UAT condition, and a one-line process
