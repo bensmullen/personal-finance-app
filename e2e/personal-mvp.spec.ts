@@ -66,8 +66,33 @@ test("Advanced exposes in-memory performance diagnostics", async ({ page }) => {
   const diagnostics = page.getByRole("table", { name: "Performance diagnostics" });
   await expect(diagnostics).toBeVisible();
   await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).not.toContainText("N/A");
+  await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).toContainText("browser_main");
+  await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).toContainText("completed");
+  await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).toContainText("modelCounts");
+  await expect(diagnostics.getByRole("row", { name: /transport\.serialization/ })).toContainText("not_applicable");
+  await expect(diagnostics.getByRole("row", { name: /transport\.serialization/ })).toContainText("N/A");
+  const uiRows = diagnostics.getByRole("row").filter({ hasText: /ui\.(react_commit|chart_render|explanation_resolution)/ });
+  const previousUiRecords = await uiRows.allTextContents();
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Advanced", exact: true }).click();
+  expect(await uiRows.allTextContents()).toEqual(previousUiRecords);
   await expect(page.getByText(/No telemetry is persisted or transmitted/)).toBeVisible();
   await expect(page.getByText(/server\/cloud is not implemented and not measured/)).toBeVisible();
+});
+
+test("throwing browser diagnostic timing does not change a household forecast", async ({ page }) => {
+  await loadExample(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Model Settings", exact: true }).click();
+  await page.getByLabel("Simulation end").fill("2026-02-01");
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.getByRole("button", { name: "Run household forecast" }).click();
+  const forecast = page.getByRole("table", { name: "Reconciled household forecast" });
+  const original = await forecast.textContent();
+  await page.evaluate(() => { Object.defineProperty(performance, "now", { configurable: true, value: () => { throw new Error("diagnostic clock unavailable"); } }); });
+  await page.getByRole("button", { name: "Run household forecast" }).click();
+  await expect(forecast).toHaveText(original!);
 });
 
 test("Golden household runs, compares, explains, and distinguishes modeled liquidity stress", async ({

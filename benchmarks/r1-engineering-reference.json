@@ -1,6 +1,7 @@
 {
   "schemaVersion": "r1-performance-baseline-v1",
-  "classification": "engineering-reference",
+  "classification": "historical-reference-only",
+  "evidenceStatus": "older-head Node 24; superseded instrumentation; not current-head Node 22 evidence or an approved budget/R3 comparison baseline",
   "budgetStatus": "non-budget-non-SLA",
   "optimizationStatus": "pre-optimization",
   "baseSha": "a7af3607be620eb346440485f289a5aaac17e72a",

@@ -3,6 +3,8 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Profiler,
+  createContext,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -82,17 +84,27 @@ import {
 } from "./persistence/indexedDbPersonalModelStore.js";
 
 type Primary = "Overview" | "Money" | "Net Worth" | "Plan" | "Settings";
-let browserPerformanceContext: PerformanceContext | undefined;
-const recordBrowserDuration = (phase: PerformancePhase, durationMs: number) => {
-  if (browserPerformanceContext === undefined || !Number.isFinite(durationMs) || durationMs < 0) return;
-  try { applicationPerformanceRegistry.record({ phase, availability: "measured", durationMs, context: browserPerformanceContext }); } catch { /* Diagnostic-only. */ }
+interface BrowserPerformanceRequest {
+  active: boolean;
+  readonly context: PerformanceContext;
+  readonly model: PersonalDraft;
+  readonly forecast: PersonalHouseholdForecastReadModel;
+}
+const BrowserPerformanceScope = createContext<BrowserPerformanceRequest | undefined>(undefined);
+const browserNow = (): number | undefined => {
+  try { const value = performance.now(); return Number.isFinite(value) ? value : undefined; } catch { return undefined; }
 };
-const recordReactCommit = (_id: string, _phase: string, actualDuration: number) => recordBrowserDuration("ui.react_commit", actualDuration);
-const recordChartRender = (_id: string, _phase: string, actualDuration: number) => recordBrowserDuration("ui.chart_render", actualDuration);
-const resolveExplanationMeasured = (...args: Parameters<typeof resolveHouseholdExplanation>) => {
-  const started = typeof performance === "undefined" ? undefined : performance.now();
+const recordBrowserDuration = (phase: PerformancePhase, durationMs: number, context?: PerformanceContext) => {
+  if (context === undefined || !Number.isFinite(durationMs) || durationMs < 0) return;
+  try { applicationPerformanceRegistry.record({ phase, availability: "measured", durationMs, context }); } catch { /* Diagnostic-only. */ }
+};
+const resolveExplanationMeasured = (scope: BrowserPerformanceRequest | undefined, ...args: Parameters<typeof resolveHouseholdExplanation>) => {
+  const started = scope?.active ? browserNow() : undefined;
   try { return resolveHouseholdExplanation(...args); }
-  finally { if (started !== undefined) recordBrowserDuration("ui.explanation_resolution", performance.now() - started); }
+  finally {
+    const ended = started === undefined ? undefined : browserNow();
+    if (scope?.active && started !== undefined && ended !== undefined) recordBrowserDuration("ui.explanation_resolution", ended - started, scope.context);
+  }
 };
 const NAV: readonly Primary[] = [
   "Overview",
@@ -351,6 +363,8 @@ const emptyLiabilityConfig = (): LiabilitySessionConfig => ({
 
 export function PersonalFinanceApp() {
   const [draft, setDraft] = useState<PersonalDraft | undefined>();
+  const browserRequest = useRef<BrowserPerformanceRequest | undefined>(undefined);
+  useEffect(() => { if (browserRequest.current !== undefined) browserRequest.current.active = false; });
   const [primary, setPrimary] = useState<Primary>("Overview");
   const [subnav, setSubnav] = useState("How am I doing?");
   const [setupStep, setSetupStep] = useState(0);
@@ -414,10 +428,10 @@ export function PersonalFinanceApp() {
   const position = useMemo(
     () => {
       if (!draft) return undefined;
-      browserPerformanceContext = Object.freeze({ runId: `current:${draft.modelId}:${sessionSettings.asOf}`, dataClassification: "user", modelCounts: Object.freeze(Object.fromEntries(Object.entries(draft.objects).map(([name, values]) => [name, values.length]))), modelVersion: draft.modelFormatVersion, specificationVersion: draft.financialSpecificationVersion, engineVersion: "0.1.0", executionLocation: "browser_main", cacheState: "not_applicable" });
-      const started = performance.now();
+      const context: PerformanceContext = Object.freeze({ runId: `current:${draft.modelId}:${sessionSettings.asOf}`, dataClassification: "user", modelCounts: Object.freeze(Object.fromEntries(Object.entries(draft.objects).map(([name, values]) => [name, values.length]))), modelVersion: draft.modelFormatVersion, specificationVersion: draft.financialSpecificationVersion, engineVersion: "0.1.0", executionLocation: "browser_main", runtime: "browser", browser: typeof navigator === "undefined" ? "unavailable" : navigator.userAgent, cacheState: "not_applicable" });
+      const started = browserNow();
       try { return getCurrentPosition(draft, { baseCurrency: sessionSettings.baseCurrency, asOf: sessionSettings.asOf }); }
-      finally { recordBrowserDuration("current_snapshot.total", performance.now() - started); }
+      finally { const ended = browserNow(); if (started !== undefined && ended !== undefined) recordBrowserDuration("current_snapshot.total", ended - started, context); }
     },
     [draft, sessionSettings.baseCurrency, sessionSettings.asOf],
   );
@@ -763,7 +777,7 @@ export function PersonalFinanceApp() {
     }
     setRunSettingsError("");
     const runIdentity = randomId();
-    browserPerformanceContext = Object.freeze({
+    const context: PerformanceContext = Object.freeze({
       runId: runIdentity,
       dataClassification: "user",
       modelCounts: Object.freeze(Object.fromEntries(Object.entries(draft.objects).map(([name, values]) => [name, values.length]))),
@@ -772,17 +786,24 @@ export function PersonalFinanceApp() {
       specificationVersion: draft.financialSpecificationVersion,
       engineVersion: "0.1.0",
       executionLocation: "browser_main",
-      runtime: typeof navigator === "undefined" ? undefined : navigator.userAgent,
+      runtime: "browser",
+      browser: typeof navigator === "undefined" ? "unavailable" : navigator.userAgent,
       cacheState: "not_applicable",
     });
-    const observer = createApplicationPerformanceObserver({ now: () => performance.now() }, browserPerformanceContext);
-    setHouseholdForecast(
-      runPersonalHouseholdForecast(
+    const observer = createApplicationPerformanceObserver({ now: () => browserNow() ?? Number.NaN }, context);
+    const result = runPersonalHouseholdForecast(
         draft,
         createHouseholdForecastRequest(effectiveHouseholdExecution, runIdentity),
         observer,
-      ),
-    );
+      );
+    const completedContext: PerformanceContext = Object.freeze({ ...context, status: result.status,
+      ...(result.status === "completed" || result.status === "incomplete" ? { reachedThrough: result.reachedThrough } : {}),
+    });
+    browserRequest.current = { active: true, context: completedContext, model: draft, forecast: result };
+    for (const phase of ["ui.react_commit", "ui.chart_render", "ui.explanation_resolution"] as const) {
+      try { applicationPerformanceRegistry.record({ phase, availability: "not_measured", context: completedContext }); } catch { /* Diagnostic-only. */ }
+    }
+    setHouseholdForecast(result);
   };
   const runMajorAssetDebtComparison = (addition: Parameters<typeof comparePersonalHouseholdMajorAssetDebtAddition>[2]) => {
     if (effectiveHouseholdExecution === undefined) {
@@ -793,11 +814,8 @@ export function PersonalFinanceApp() {
     navigate("Plan"); setSubnav("Compare Plans");
   };
   const exportModel = () => {
-    const started = performance.now();
-    let json: string;
-    try { json = exportPersonalModelJson(draft); }
-    finally { recordBrowserDuration("transport.serialization", performance.now() - started); }
-    downloadJson(json!, "personal-finance-model.json");
+    const json = exportPersonalModelJson(draft);
+    downloadJson(json, "personal-finance-model.json");
     setNotice("Model exported to a local file");
   };
   const readImport = async (file: File) => {
@@ -822,7 +840,11 @@ export function PersonalFinanceApp() {
   };
 
   return (
-    <Profiler id="personal-finance-app" onRender={recordReactCommit}>
+    <BrowserPerformanceScope.Provider value={browserRequest.current?.model === draft && browserRequest.current?.forecast === householdForecast ? browserRequest.current : undefined}>
+    <Profiler id="personal-finance-app" onRender={(_id, _phase, duration) => {
+      const request = browserRequest.current;
+      if (request?.active && request.model === draft && request.forecast === householdForecast) recordBrowserDuration("ui.react_commit", duration, request.context);
+    }}>
     <div className="app-shell">
       <header className="topbar">
         <button className="brand" onClick={() => navigate("Overview")}>
@@ -1066,6 +1088,7 @@ export function PersonalFinanceApp() {
       </div>
     </div>
     </Profiler>
+    </BrowserPerformanceScope.Provider>
   );
 }
 
@@ -1443,7 +1466,7 @@ function NetWorthOverview({
         <h2>Current assets vs liabilities</h2>
         {data.length ? (
           <div className="chart">
-            <Profiler id="net-worth-chart" onRender={recordChartRender}><ResponsiveContainer>
+            <ResponsiveContainer>
               <BarChart data={data}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" />
@@ -1451,7 +1474,7 @@ function NetWorthOverview({
                 <Tooltip />
                 <Bar dataKey="value" fill="#3d7d6b" radius={[8, 8, 0, 0]} />
               </BarChart>
-            </ResponsiveContainer></Profiler>
+            </ResponsiveContainer>
           </div>
         ) : (
           <div className="capability">
@@ -2487,7 +2510,7 @@ function ComparePlans({
                     </thead>
                     <tbody>
                       {alternative.points.map((point) => {
-                        const explanation = resolveExplanationMeasured(
+                        const explanation = resolveHouseholdExplanation(
                           draft,
                           point.traceRefs,
                         );
@@ -3202,6 +3225,8 @@ function HouseholdForecastVisual({
   draft: PersonalDraft;
   cashFlowOnly?: boolean;
 }) {
+  const request = useContext(BrowserPerformanceScope);
+  const scope = request?.model === draft && request.forecast === forecast ? request : undefined;
   const chart = forecast.points.map((point) => ({
     period: point.periodStart.slice(0, 7),
     netWorth: chartNumber(point.netWorth.amount),
@@ -3243,7 +3268,9 @@ function HouseholdForecastVisual({
       )}
       {!cashFlowOnly && (
         <div className="chart">
-          <Profiler id="forecast-chart" onRender={recordChartRender}><ResponsiveContainer>
+          <Profiler id="forecast-chart" onRender={(_id, _phase, duration) => {
+            if (scope?.active) recordBrowserDuration("ui.chart_render", duration, scope.context);
+          }}><ResponsiveContainer>
             <LineChart data={chart}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="period" />
@@ -3276,6 +3303,7 @@ function HouseholdForecastVisual({
           <tbody>
             {forecast.points.map((point) => {
               const explanation = resolveExplanationMeasured(
+                scope,
                 draft,
                 point.traceRefs,
               );
@@ -3556,7 +3584,7 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
         </div>
       )}
       <div className="chart">
-        <Profiler id="cash-flow-chart" onRender={recordChartRender}><ResponsiveContainer>
+        <ResponsiveContainer>
           <LineChart data={data}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="period" />
@@ -3585,7 +3613,7 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
               strokeWidth={2}
             />
           </LineChart>
-        </ResponsiveContainer></Profiler>
+        </ResponsiveContainer>
       </div>
       <div className="table-scroll">
         <table>
@@ -3810,14 +3838,15 @@ function Advanced({
           <dd>{draft.financialSpecificationVersion}</dd>
         </dl>
         <h2>Performance diagnostics</h2>
-        <p>In-memory measurements only. No telemetry is persisted or transmitted; unavailable phases are shown as N/A.</p>
+        <p>In-memory measurements only. No telemetry is persisted or transmitted; unavailable phases are shown as N/A. Percentiles pool up to 100 measured records; each sample's interpretation context is retained.</p>
         <table aria-label="Performance diagnostics">
-          <thead><tr><th>Phase</th><th>Latest</th><th>p50</th><th>p95</th><th>Max</th><th>Samples</th></tr></thead>
+          <thead><tr><th>Phase</th><th>Latest</th><th>p50</th><th>p95</th><th>Max</th><th>Samples</th><th>Availability</th><th>Interpretation context</th></tr></thead>
           <tbody>
             {PERFORMANCE_PHASES.map((phase) => {
               const summary = applicationPerformanceRegistry.summary(phase);
+              const latest = applicationPerformanceRegistry.latest(phase);
               const value = (amount: number | undefined) => amount === undefined ? "N/A" : `${amount.toFixed(2)} ms`;
-              return <tr key={phase}><th>{phase}</th><td>{value(summary?.latest)}</td><td>{value(summary?.p50)}</td><td>{value(summary?.p95)}</td><td>{value(summary?.max)}</td><td>{summary?.count ?? 0}</td></tr>;
+              return <tr key={phase}><th>{phase}</th><td>{value(latest?.availability === "measured" ? latest.durationMs : undefined)}</td><td>{value(summary?.p50)}</td><td>{value(summary?.p95)}</td><td>{value(summary?.max)}</td><td>{summary?.count ?? 0}</td><td>{latest?.availability ?? "not_measured"}</td><td>{latest === undefined ? "unavailable" : <details><summary>{latest.context.executionLocation} · {latest.context.status ?? "unavailable"}</summary><pre>{JSON.stringify({ ...latest.context, fixtureId: latest.context.fixtureId ?? "not_applicable", horizon: latest.context.horizon ?? "not_applicable", status: latest.context.status ?? "unavailable", reachedThrough: latest.context.reachedThrough ?? "unavailable", runtime: latest.context.runtime ?? "unavailable", browser: latest.context.browser ?? "not_applicable", sampleContexts: summary?.contexts ?? [] }, null, 2)}</pre></details>}</td></tr>;
             })}
           </tbody>
         </table>

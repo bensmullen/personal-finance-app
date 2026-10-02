@@ -866,11 +866,31 @@ const execute = (
   resolved?: ResolvedScenario,
   observer?: PerformanceObserver,
 ): ReturnType<typeof executeInternal> => {
-  const performance = createPerformanceSession(observer);
+  const records: Parameters<PerformanceObserver["sink"]["record"]>[0][] = [];
+  const scopedObserver = observer === undefined ? undefined : {
+    clock: observer.clock, context: observer.context,
+    sink: { record: (record: Parameters<PerformanceObserver["sink"]["record"]>[0]) => { records.push(record); } },
+  };
+  const performance = createPerformanceSession(scopedObserver);
+  let execution: ReturnType<typeof executeInternal> | undefined;
   try {
-    return performance.measure("forecast.total", () => executeInternal(model, request, resolved, observer, performance));
+    execution = performance.measure("forecast.total", () => executeInternal(model, request, resolved, scopedObserver, performance));
+    return execution;
   } finally {
     performance.finish();
+    if (observer !== undefined) {
+      try {
+        const context = Object.freeze({ ...observer.context,
+          status: execution?.read.status ?? "error",
+          ...(execution?.read.status === "completed" || execution?.read.status === "incomplete"
+            ? { reachedThrough: execution.read.reachedThrough } : {}),
+        });
+        records.push({ phase: "transport.serialization", availability: "not_applicable", context });
+        for (const record of records) {
+          try { observer.sink.record(Object.freeze({ ...record, context })); } catch { /* Diagnostic-only. */ }
+        }
+      } catch { /* Diagnostic transformation cannot affect the forecast. */ }
+    }
   }
 };
 export const runPersonalHouseholdForecast = (

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PerformanceRegistry, type PerformanceObserver } from "../src/diagnostics/performance.js";
 import type { CompiledHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { domainId } from "../src/identity/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
@@ -72,6 +73,26 @@ describe("compiled household execution", () => {
     expect(unresolved.diagnostics.some((issue) => issue.code === "HOUSEHOLD_CONTENTION_UNRESOLVED")).toBe(true);
     expect(unresolved.periods).toHaveLength(0);
     expect(unresolved.state).toEqual(startState);
+    const registry = new PerformanceRegistry();
+    let tick = 0;
+    const observer: PerformanceObserver = { clock: { now: () => ++tick }, sink: registry,
+      context: { runId: "household-observation", dataClassification: "synthetic", modelCounts: {}, executionLocation: "local_node", cacheState: "not_applicable" },
+    };
+    const completedInput = { runContext: context(), compiled: { ...compiled(), reconciledOpeningState: startState, investmentInput, liabilityInput, contentionPolicy: { id: "unified", version: "1" as const, rules: [{ before: "cash_income_settlement" as const, after: "liability_required_service" as const }] } } };
+    expect(runCompiledHouseholdProjection(completedInput, observer)).toEqual(result);
+    // Preview permutations are scheduler work, never nested execution measurements.
+    expect(registry.summary("engine.execute")?.count).toBe(1);
+    expect(registry.summary("engine.schedule_contention")!.latest).toBeGreaterThan(registry.summary("engine.execute")!.latest);
+    expect(registry.summary("engine.trace_result")!.latest).toBeGreaterThan(1);
+    const failedObserver: PerformanceObserver = { ...observer, clock: { now: () => { throw new Error("diagnostic clock"); } }, sink: { record: () => { throw new Error("diagnostic sink"); } } };
+    expect(runCompiledHouseholdProjection(completedInput, failedObserver)).toEqual(result);
+    expect(runCompiledHouseholdProjection({ runContext: context(), compiled: { ...compiled(), reconciledOpeningState: startState, investmentInput, liabilityInput } }, failedObserver)).toEqual(unresolved);
+    const invalidInput = { ...completedInput, compiled: { ...completedInput.compiled, executionMonths: 2 } };
+    let originalFailure: unknown;
+    try { runCompiledHouseholdProjection(invalidInput); } catch (error) { originalFailure = error; }
+    expect(originalFailure).toBeDefined();
+    try { runCompiledHouseholdProjection(invalidInput, failedObserver); throw new Error("Expected authoritative failure."); }
+    catch (error) { expect(error).toEqual(originalFailure); }
 
     const at = (day: string) => instant(`2026-01-${day}T00:00:00.000Z`);
     const runChronology = (incomeAt: string, debtAt: string) => runCompiledHouseholdProjection({ runContext: context(), compiled: {

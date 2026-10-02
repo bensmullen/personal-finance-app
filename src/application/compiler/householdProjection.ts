@@ -115,6 +115,7 @@ const compileStandaloneAssets = (model: PortableModelEnvelope, baseCurrency: str
  * aggregate a vertical slice.
  */
 const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, request: HouseholdProjectionCompilerRequest, performance: PerformanceSession): CompileResult<CompiledHouseholdProjection> => {
+  const stage = performance.measure("compile.model_and_slices", (): CompileResult<CompiledHouseholdProjection> | (() => CompileResult<CompiledHouseholdProjection>) => {
   const policyValidation = buildHouseholdScheduledPlan([], request.contentionPolicy);
   if (policyValidation.status === "invalid_model") return policyValidation;
   const scope = resolveHouseholdScope(model);
@@ -157,6 +158,7 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   if (scenarios.size !== 1 || horizons.size !== 1 || currencies.size !== 1 || households.size !== 1 || owners.size !== 1 || starts.size !== 1 || ends.size !== 1 || asOfs.size > 1) return invalid("HOUSEHOLD_COMPILER_DISAGREEMENT", "Participating compilers must agree on Household, execution owner, currency, scenario, as-of boundary, and exact horizon.");
   const standalone = compileStandaloneAssets(model, firstBoundary.baseCurrency, firstBoundary.simulationStart, firstBoundary.simulationEnd);
   if (standalone.status !== "compiled") return standalone;
+  return () => {
   const opening = performance.measure("compile.opening_reconciliation", () => reconcileHouseholdOpeningState(compiled.map((value) => value.openingState)));
   if (opening.status === "invalid_model") return opening;
   const primitive = performance.measure("compile.opening_reconciliation", () => reconcileHouseholdPrimitiveState(compiled.map((value) => "primitiveState" in value ? value.primitiveState : undefined)));
@@ -179,6 +181,9 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
     diagnostics: Object.freeze(liabilities?.value.capabilityDiagnostics ?? []),
     scenarioBindings: bindings,
   }) };
+  };
+  });
+  return typeof stage === "function" ? stage() : stage;
 };
 
 export const compileHouseholdProjection = (
@@ -188,7 +193,7 @@ export const compileHouseholdProjection = (
 ): CompileResult<CompiledHouseholdProjection> => {
   const performance = createPerformanceSession(observer);
   try {
-    return performance.measure("compile.model_and_slices", () => compileHouseholdProjectionInternal(model, request, performance));
+    return compileHouseholdProjectionInternal(model, request, performance);
   } finally {
     performance.finish();
   }

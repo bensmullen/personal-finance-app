@@ -659,16 +659,16 @@ const runCompiledHouseholdProjectionInternal = (
           liabilityPeriods: Object.freeze(liabilityResults),
         });
       };
-      const allAt = [
+      const allAt = performance.measure("engine.schedule_contention", () => [
         ...new Set(
           scheduled.value.descriptors.map((item) => item.sequencingInstant),
         ),
-      ].sort();
-      const periodTraceRefs: CalculationTraceRef[] = [
+      ].sort());
+      const periodTraceRefs: CalculationTraceRef[] = performance.measure("engine.trace_result", () => [
         ...(prepared.cash?.traceRefs ?? []),
         ...(prepared.investments?.traceRefs ?? []),
         ...(prepared.liabilities?.traceRefs ?? []),
-      ];
+      ]);
       let eventRuntimeCommitted = prepared.cash === undefined;
       for (const at of allAt) {
         if (
@@ -877,6 +877,7 @@ const runCompiledHouseholdProjectionInternal = (
         );
         candidateState = mergeEventPreparationIdentities(candidateState, prepared.cash!);
       }
+      performance.measure("engine.trace_result", () => {
       if (liabilityPeriods.length > 0) {
         const zero = Money.zero(runContext.baseCurrency);
         const rawLiabilities = liabilityPeriods.flatMap(
@@ -984,13 +985,14 @@ const runCompiledHouseholdProjectionInternal = (
             Object.freeze([]),
         });
       }
+      });
       validateAuthoritativeState(candidateState);
       assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
       assertPrimitiveRuntimeStateConsistent(
         candidatePrimitiveState,
         candidateState,
       );
-      const transactions = Object.freeze(
+      const transactions = performance.measure("engine.trace_result", () => Object.freeze(
         [
           ...cashPeriods.flatMap((item) => item.transactions),
           ...investmentPeriods.flatMap((item) => item.transactions),
@@ -1000,7 +1002,7 @@ const runCompiledHouseholdProjectionInternal = (
             left.date.localeCompare(right.date) ||
             left.id.localeCompare(right.id),
         ),
-      );
+      ));
       const statements = performance.measure("engine.statements_metrics", () => deriveStatements(
         candidateState,
         transactions,
@@ -1011,6 +1013,7 @@ const runCompiledHouseholdProjectionInternal = (
         runContext.baseCurrency,
         compiled.standaloneAssets,
       ));
+      const periodResult: HouseholdProjectionPeriodResult = performance.measure("engine.trace_result", () => {
       const cashFlow =
         cashPeriods.length === 0
           ? undefined
@@ -1075,7 +1078,7 @@ const runCompiledHouseholdProjectionInternal = (
                   ...investmentPeriods.map((item) => item.traceRefs),
                 ) ?? Object.freeze([]),
             });
-      const periodResult: HouseholdProjectionPeriodResult = performance.measure("engine.trace_result", () => Object.freeze({
+      return Object.freeze({
         period: Object.freeze({ ...period }),
         statements,
         cash: metrics.cash,
@@ -1102,7 +1105,8 @@ const runCompiledHouseholdProjectionInternal = (
         ...(cashFlow === undefined ? {} : { cashFlow }),
         ...(investments === undefined ? {} : { investments }),
         ...(liability === undefined ? {} : { liability }),
-      }));
+      });
+      });
       diagnostics.push(
         ...(prepared.cash?.diagnostics ?? []),
         ...cashPeriods.flatMap((item) => item.diagnostics),
@@ -1114,7 +1118,7 @@ const runCompiledHouseholdProjectionInternal = (
     } catch (error) {
       if (!(error instanceof ValidationError)) throw error;
       diagnostics.push(...error.issues);
-      return Object.freeze({
+      return performance.measure("engine.trace_result", () => Object.freeze({
         status: "incomplete",
         runMetadata,
         requestedHorizon,
@@ -1127,9 +1131,9 @@ const runCompiledHouseholdProjectionInternal = (
         periods: Object.freeze(committed),
         diagnostics: Object.freeze(diagnostics),
         displayInputs: display(runContext),
-      });
+      }));
     }
-  return Object.freeze({
+  return performance.measure("engine.trace_result", () => Object.freeze({
     status: "completed",
     runMetadata,
     requestedHorizon,
@@ -1139,7 +1143,7 @@ const runCompiledHouseholdProjectionInternal = (
     periods: Object.freeze(committed),
     diagnostics: Object.freeze(diagnostics),
     displayInputs: display(runContext),
-  });
+  }));
 };
 
 export const runCompiledHouseholdProjection = (

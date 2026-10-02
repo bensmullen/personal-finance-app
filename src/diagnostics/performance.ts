@@ -34,11 +34,17 @@ export interface PerformanceContext {
   readonly cacheState: "not_applicable" | "hit" | "miss";
   readonly workerConcurrency?: number;
   readonly stochasticRealizations?: number;
+  readonly status?: "completed" | "incomplete" | "unavailable" | "error";
+  readonly reachedThrough?: string;
+  readonly scalingDimensions?: Readonly<{ horizonMonths: number; recurringOperationCount: number; modelEntityCount: number }>;
 }
 
 export interface PerformanceResources {
+  /** Aggregate diagnostic execution CPU where measurable, never authoritative. */
   readonly cpuTimeMs?: number;
+  /** Absolute representative/sampled heap; a signed delta belongs in memoryDeltaBytes. */
   readonly memoryBytes?: number;
+  readonly memoryDeltaBytes?: number;
   readonly concurrency?: number;
   readonly throughputPerSecond?: number;
   readonly billingUnits?: Readonly<Record<string, string>>;
@@ -77,31 +83,38 @@ const safeNow = (clock: PerformanceClock): number | undefined => {
 
 export const createPerformanceSession = (observer?: PerformanceObserver): PerformanceSession => {
   const totals = new Map<PerformancePhase, number>();
+  const attempted = new Set<PerformancePhase>();
+  const unavailable = new Set<PerformancePhase>();
   let finished = false;
   const add = (phase: PerformancePhase, durationMs: number): void => {
     if (!Number.isFinite(durationMs) || durationMs < 0) return;
-    totals.set(phase, (totals.get(phase) ?? 0) + durationMs);
+    const total = (totals.get(phase) ?? 0) + durationMs;
+    if (Number.isFinite(total)) totals.set(phase, total);
+    else unavailable.add(phase);
   };
   return Object.freeze({
     measure<T>(phase: PerformancePhase, operation: () => T): T {
       if (observer === undefined) return operation();
+      attempted.add(phase);
       const started = safeNow(observer.clock);
       try { return operation(); }
       finally {
         const ended = safeNow(observer.clock);
         if (started !== undefined && ended !== undefined && ended >= started) add(phase, ended - started);
+        else unavailable.add(phase);
       }
     },
     add,
     finish(resources?: PerformanceResources): void {
       if (finished || observer === undefined) return;
       finished = true;
-      for (const [phase, durationMs] of totals) {
+      for (const phase of new Set([...attempted, ...totals.keys()])) {
+        const durationMs = unavailable.has(phase) ? undefined : totals.get(phase);
         try {
           observer.sink.record(Object.freeze({
             phase,
-            availability: "measured",
-            durationMs,
+            availability: durationMs === undefined ? "unavailable" : "measured",
+            ...(durationMs === undefined ? {} : { durationMs }),
             context: observer.context,
             ...(resources === undefined ? {} : { resources }),
           }));
@@ -117,6 +130,8 @@ export interface PerformanceSummary {
   readonly p95: number;
   readonly max: number;
   readonly count: number;
+  readonly context: PerformanceContext;
+  readonly contexts: readonly PerformanceContext[];
 }
 
 export class PerformanceRegistry implements PerformanceSink {
@@ -139,11 +154,12 @@ export class PerformanceRegistry implements PerformanceSink {
     return Object.freeze([...(this.#records.get(phase) ?? [])]);
   }
   summary(phase: PerformancePhase): PerformanceSummary | undefined {
-    const values = (this.#records.get(phase) ?? []).flatMap((record) => record.durationMs === undefined ? [] : [record.durationMs]);
+    const measured = (this.#records.get(phase) ?? []).filter((record) => record.availability === "measured" && record.durationMs !== undefined && Number.isFinite(record.durationMs) && record.durationMs >= 0);
+    const values = measured.map((record) => record.durationMs!);
     if (values.length === 0) return undefined;
     const sorted = [...values].sort((a, b) => a - b);
     const percentile = (ratio: number) => sorted[Math.max(0, Math.ceil(sorted.length * ratio) - 1)]!;
-    return Object.freeze({ latest: values.at(-1)!, p50: percentile(0.5), p95: percentile(0.95), max: sorted.at(-1)!, count: values.length });
+    return Object.freeze({ latest: values.at(-1)!, p50: percentile(0.5), p95: percentile(0.95), max: sorted.at(-1)!, count: values.length, context: measured.at(-1)!.context, contexts: Object.freeze(measured.map((record) => record.context)) });
   }
   clear(): void { this.#records.clear(); }
 }
