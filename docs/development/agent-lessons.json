@@ -35,69 +35,6 @@
       "counterevidence": "Repeated tasks may show that a specific bounded workload is cheap and correctness-critical enough for ordinary CI; that is handled by an explicit task boundary, not by weakening this lesson.",
       "review_criteria": "Retire as codified when the base handoff and verification contracts plus self-tests make omission impossible without relying on the lesson entry.",
       "superseded_by": null
-    },
-    {
-      "id": "AL-002",
-      "title": "Prefer application-owned injection seams over shared platform fault injection",
-      "status": "candidate",
-      "severity": "medium",
-      "source_evidence": [
-        "PR #32 E2E diagnostic-clock test replaced global browser performance.now and timed out"
-      ],
-      "applicability": {
-        "task_kinds": [
-          "product",
-          "repair"
-        ],
-        "ci_profiles": [
-          "deterministic-interactive",
-          "probabilistic-ux"
-        ],
-        "heavy_validation_profiles": [
-          "*"
-        ],
-        "task_continuities": [
-          "*"
-        ]
-      },
-      "required_markers": [],
-      "rule": "When an application-owned diagnostic/test seam exists, inject failures through that seam instead of corrupting shared browser/runtime primitives used by frameworks or schedulers.",
-      "do_not_generalize_to": "Do not ban platform-level fault injection when the platform boundary itself is the subject under test and the test environment isolates it safely.",
-      "promotion_reason": null,
-      "counterevidence": "A later isolated platform-boundary test may be correct and should not be rejected merely because this candidate exists.",
-      "review_criteria": "Promote only after recurrence or when a specific profile contract can express the boundary deterministically.",
-      "superseded_by": null
-    },
-    {
-      "id": "AL-003",
-      "title": "Keep hook runtime features within declared environment compatibility",
-      "status": "candidate",
-      "severity": "medium",
-      "source_evidence": [
-        "PFM push policy raised 'str' object has no attribute 'removeprefix' during PR #32 publication"
-      ],
-      "applicability": {
-        "task_kinds": [
-          "framework"
-        ],
-        "ci_profiles": [
-          "tooling",
-          "full"
-        ],
-        "heavy_validation_profiles": [
-          "*"
-        ],
-        "task_continuities": [
-          "*"
-        ]
-      },
-      "required_markers": [],
-      "rule": "Agent-control code should use language/runtime features guaranteed by the declared hook environment, with self-tests for publication-critical paths.",
-      "do_not_generalize_to": "Do not freeze application/runtime language features to the hook interpreter's compatibility floor.",
-      "promotion_reason": null,
-      "counterevidence": "If the hook interpreter becomes explicitly version-pinned and verified, newer features within that pin are acceptable.",
-      "review_criteria": "Promote if another compatibility failure occurs or the framework adopts an explicit Python version contract.",
-      "superseded_by": null
     }
   ]
 }
