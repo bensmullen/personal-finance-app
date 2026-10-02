@@ -70,6 +70,30 @@ STOP:
 
 Hooks validate this envelope before the model may mutate the repository.
 
+### Long pasted handoffs
+
+Codex Desktop may convert a long pasted request into an auto-generated text
+attachment instead of leaving the full text in the prompt field. The policy
+hook supports that transport only when all of these conditions hold:
+
+- the user-prompt wrapper references exactly one generated task file named
+  `pasted-text.txt` or `writing-block.md`;
+- the canonical file is a regular UTF-8 file beneath
+  `$CODEX_HOME/attachments`, or `~/.codex/attachments` when `CODEX_HOME`
+  is unset;
+- the file is no larger than 256 KiB and its path contains no symlink escape;
+- the file itself contains the complete `PFM_TASK_V2` envelope.
+
+The attachment contents are validated with the same V2 validator used for an
+inline handoff. Inline and attachment fields are never merged. A valid inline
+envelope remains authoritative. When an attachment-backed task is accepted, the
+hook binds the active task to that file's SHA-256 digest and fails closed before
+repository mutation or publication if the file changes or disappears.
+
+Arbitrary attachments, transcript scraping, multiple candidate task files, and
+files outside the trusted Codex attachment root are not accepted as task
+authority.
+
 ## Semantic status
 
 ### resolved
