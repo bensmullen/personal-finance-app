@@ -49,7 +49,7 @@ def git_value(args, cwd):
     return result.stdout.strip() if result.returncode == 0 else ""
 
 def current_branch(root):
-    return current_branch(root)
+    return os.environ.get("PFM_POLICY_TEST_BRANCH") or git_value(["symbolic-ref", "--quiet", "--short", "HEAD"], root)
 
 def is_linked_worktree(root):
     override = os.environ.get("PFM_POLICY_TEST_LINKED_WORKTREE")
