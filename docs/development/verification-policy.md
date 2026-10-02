@@ -7,7 +7,10 @@
 
 Codex implementation and repair turns edit code only. They do not run tests,
 typecheck, builds, validators, benchmarks, dev servers, stochastic/convergence
-runs, onboarding dry runs, or package installation.
+runs, onboarding dry runs, or package installation. Consequently Node/npm and
+installed dependencies are not implementation-start prerequisites. A desktop
+Local Environment may prepare them for developer convenience, but GitHub Actions
+remains the verification authority.
 
 GitHub Actions owns ordinary verification. The manually triggered
 `engineering-validation` workflow owns expensive evidence. User acceptance
@@ -103,8 +106,11 @@ reaches that job. Heavy-validation failures write the same evidence shape into
 
 An incident is evidence only. CI, Codex, and hooks MUST NOT modify or promote
 `docs/development/agent-lessons.json`. ChatGPT reviews the evidence under
-`docs/development/agent-learning-policy.md`; lesson promotion/retirement is a
-separate framework decision.
+`docs/development/agent-learning-policy.md`. When that review classifies a
+plausibly generalizable candidate, it automatically persists the candidate to
+the GitHub candidate registry; candidate persistence still has no effect on task
+routing until a separate framework change promotes it to the active lesson
+ledger.
 
 ## 7. UAT
 
