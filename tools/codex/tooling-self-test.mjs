@@ -41,6 +41,45 @@ for (const [command, args] of [
 const head = run("git", ["rev-parse", "HEAD"]).stdout.trim();
 assert(/^[0-9a-f]{40}$/.test(head), "unable to resolve HEAD");
 
+const worktreeGuardHome = fs.mkdtempSync(path.join(os.tmpdir(), "pfm-worktree-guard-"));
+const worktreeGuardRepo = path.join(worktreeGuardHome, "repo");
+const worktreeGuardTarget = path.join(worktreeGuardHome, "target");
+fs.mkdirSync(worktreeGuardRepo, { recursive: true });
+for (const [command, args] of [
+  ["git", ["init", "-b", "main", worktreeGuardRepo]],
+  ["git", ["-C", worktreeGuardRepo, "config", "user.email", "pfm-self-test@example.invalid"]],
+  ["git", ["-C", worktreeGuardRepo, "config", "user.name", "PFM Self Test"]],
+]) {
+  const result = spawnSync(command, args, { encoding: "utf8" });
+  assert(result.status === 0, `worktree guard setup failed: ${result.stderr}`);
+}
+fs.writeFileSync(path.join(worktreeGuardRepo, "fixture.txt"), "fixture\n");
+for (const args of [
+  ["-C", worktreeGuardRepo, "add", "fixture.txt"],
+  ["-C", worktreeGuardRepo, "commit", "-m", "fixture"],
+  ["-C", worktreeGuardRepo, "worktree", "add", "--detach", worktreeGuardTarget, "HEAD"],
+]) {
+  const result = spawnSync("git", args, { encoding: "utf8" });
+  assert(result.status === 0, `worktree guard setup failed: ${result.stderr}`);
+}
+const worktreeGuardHead = spawnSync("git", ["-C", worktreeGuardTarget, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+const selfRemoval = spawnSync("bash", [prepareLinkedWorktree, worktreeGuardTarget, worktreeGuardHead], {
+  cwd: worktreeGuardTarget,
+  encoding: "utf8",
+});
+assert(
+  selfRemoval.status !== 0
+    && selfRemoval.stderr.includes("target worktree is the current/source checkout"),
+  "prepare-linked-worktree must fail closed instead of removing its current worktree",
+);
+assert(
+  fs.existsSync(worktreeGuardTarget)
+    && spawnSync("git", ["-C", worktreeGuardTarget, "rev-parse", "HEAD"], { encoding: "utf8" }).status === 0,
+  "self-protection failure must leave the current worktree intact",
+);
+spawnSync("git", ["-C", worktreeGuardRepo, "worktree", "remove", worktreeGuardTarget], { encoding: "utf8" });
+fs.rmSync(worktreeGuardHome, { recursive: true, force: true });
+
 const sessionId = "policy-self-test";
 const turnId = "turn-1";
 const hook = (event, extra = {}, env = {}) => {
