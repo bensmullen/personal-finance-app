@@ -54,17 +54,6 @@ jobs:
           esac
           node -e 'const p=require("./package.json"); const s=process.argv[1]; if(!p.scripts?.[s]){console.error("Profile script is not implemented on this branch:",s);process.exit(3)}' "$SCRIPT"
           npm run "$SCRIPT"
-      - name: Record agent process incident
-        if: failure()
-        env:
-          INCIDENT_SURFACE: heavy_validation
-          INCIDENT_PROFILE: ${{ inputs.profile }}
-          INCIDENT_HEAD: ${{ github.sha }}
-          INCIDENT_RUN_ID: ${{ github.run_id }}
-          INCIDENT_EVENT: ${{ github.event_name }}
-          INCIDENT_REPOSITORY: ${{ github.repository }}
-          INCIDENT_GATE_VALIDATE: failure
-        run: node tools/ci/write-agent-incident.mjs
       - name: Upload heavy-validation evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -75,4 +64,32 @@ jobs:
             engineering-validation-artifacts/**
             .codex/logs/**
           if-no-files-found: ignore
+          retention-days: 30
+
+  incident:
+    name: agent-incident
+    needs: validate
+    if: always() && needs.validate.result != 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Record agent process incident
+        env:
+          INCIDENT_SURFACE: heavy_validation
+          INCIDENT_PROFILE: ${{ inputs.profile }}
+          INCIDENT_HEAD: ${{ github.sha }}
+          INCIDENT_RUN_ID: ${{ github.run_id }}
+          INCIDENT_EVENT: ${{ github.event_name }}
+          INCIDENT_REPOSITORY: ${{ github.repository }}
+          INCIDENT_GATE_VALIDATE: ${{ needs.validate.result }}
+        run: node tools/ci/write-agent-incident.mjs
+      - name: Upload agent process incident
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-incident-${{ github.run_id }}
+          path: engineering-validation-artifacts/agent-incident.json
+          if-no-files-found: error
           retention-days: 30
