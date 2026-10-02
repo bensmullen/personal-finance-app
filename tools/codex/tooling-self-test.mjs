@@ -10,6 +10,7 @@ const policy = path.join(root, ".codex", "hooks", "pfm-policy.py");
 const stateShell = path.join(root, "tools", "codex", "state.sh");
 const envDoctor = path.join(root, "tools", "codex", "env-doctor.sh");
 const setupLocalEnvironment = path.join(root, "tools", "codex", "setup-local-environment.sh");
+const prepareLinkedWorktree = path.join(root, "tools", "codex", "prepare-linked-worktree.sh");
 const lessonsValidator = path.join(root, "tools", "codex", "validate-agent-lessons.mjs");
 
 const assert = (condition, message) => {
@@ -28,6 +29,7 @@ for (const [command, args] of [
   ["bash", ["-n", stateShell]],
   ["bash", ["-n", envDoctor]],
   ["bash", ["-n", setupLocalEnvironment]],
+  ["bash", ["-n", prepareLinkedWorktree]],
   ["bash", [envDoctor]],
   ["bash", [envDoctor, "--verification"]],
   ["node", [lessonsValidator]],
