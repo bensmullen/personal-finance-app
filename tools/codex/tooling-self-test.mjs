@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -123,10 +125,163 @@ const policyTestEnv = {
   PFM_POLICY_TEST_LINKED_WORKTREE: "1",
 };
 
+const attachmentHome = fs.mkdtempSync(path.join(os.tmpdir(), "pfm-policy-attachments-"));
+const attachmentRoot = path.join(attachmentHome, "attachments", "self-test");
+fs.mkdirSync(attachmentRoot, { recursive: true });
+const attachmentEnv = { ...policyTestEnv, CODEX_HOME: attachmentHome };
+const attachmentWrapper = (entries) => "# Files mentioned by the user:\n\n"
+  + entries.map(({ label, file }) => "## " + label + ": " + file).join("\n\n")
+  + "\n\nThe attached pasted text file(s) contain the user's request. Read and act on that content.\n\n## My request for Codex:\n";
+const writeAttachment = (directory, name, content) => {
+  const targetDir = path.join(attachmentRoot, directory);
+  fs.mkdirSync(targetDir, { recursive: true });
+  const target = path.join(targetDir, name);
+  fs.writeFileSync(target, content);
+  return target;
+};
+
 const accepted = hook("UserPromptSubmit", { prompt }, policyTestEnv);
 assert(
   accepted?.hookSpecificOutput?.hookEventName === "UserPromptSubmit",
   "valid V2 prompt was not accepted",
+);
+
+const pastedTextPath = writeAttachment("valid-pasted", "pasted-text.txt", prompt);
+const pastedAccepted = hook("UserPromptSubmit", {
+  prompt: attachmentWrapper([{ label: "Pasted task", file: pastedTextPath }]),
+}, attachmentEnv);
+assert(
+  pastedAccepted?.hookSpecificOutput?.additionalContext?.includes("trusted Codex long-paste attachment"),
+  "valid pasted-text.txt V2 envelope was not accepted",
+);
+
+const writingBlockPath = writeAttachment("valid-writing", "writing-block.md", prompt);
+const writingAccepted = hook("UserPromptSubmit", {
+  prompt: attachmentWrapper([{ label: "Writing block", file: writingBlockPath }]),
+}, attachmentEnv);
+assert(
+  writingAccepted?.hookSpecificOutput?.additionalContext?.includes("trusted Codex long-paste attachment"),
+  "valid writing-block.md V2 envelope was not accepted",
+);
+
+const inlinePrefixAccepted = hook("UserPromptSubmit", {
+  prompt: attachmentWrapper([{ label: "PFM_TASK_V2", file: pastedTextPath }]),
+}, attachmentEnv);
+assert(
+  inlinePrefixAccepted?.hookSpecificOutput?.additionalContext?.includes("trusted Codex long-paste attachment"),
+  "inline PFM_TASK_V2 prefix plus attachment should fall back to the complete attachment",
+);
+
+const ambiguous = hook("UserPromptSubmit", {
+  prompt: attachmentWrapper([
+    { label: "First pasted task", file: pastedTextPath },
+    { label: "Second pasted task", file: writingBlockPath },
+  ]),
+}, attachmentEnv);
+assert(
+  ambiguous.decision === "block" && String(ambiguous.reason).includes("TASK_ATTACHMENT_AMBIGUOUS"),
+  "multiple generated task attachments should be blocked",
+);
+
+const outsideDir = path.join(attachmentHome, "outside");
+fs.mkdirSync(outsideDir, { recursive: true });
+const outsideFile = path.join(outsideDir, "pasted-text.txt");
+fs.writeFileSync(outsideFile, prompt);
+const traversalPath = attachmentRoot + path.sep + ".." + path.sep + ".." + path.sep + "outside" + path.sep + "pasted-text.txt";
+const outsideAttachment = hook("UserPromptSubmit", {
+  prompt: attachmentWrapper([{ label: "PFM_TASK_V2", file: traversalPath }]),
+}, attachmentEnv);
+assert(
+  outsideAttachment.decision === "block" && String(outsideAttachment.reason).includes("TASK_ATTACHMENT_OUTSIDE_ROOT"),
+  "traversal/outside-root task attachment should be blocked",
+);
+
+const symlinkTarget = writeAttachment("symlink-target", "target.txt", prompt);
+const symlinkDir = path.join(attachmentRoot, "symlink-case");
+fs.mkdirSync(symlinkDir, { recursive: true });
+const symlinkPath = path.join(symlinkDir, "pasted-text.txt");
+fs.symlinkSync(symlinkTarget, symlinkPath);
+const symlinked = hook("UserPromptSubmit", {
+  prompt: attachmentWrapper([{ label: "PFM_TASK_V2", file: symlinkPath }]),
+}, attachmentEnv);
+assert(
+  symlinked.decision === "block" && String(symlinked.reason).includes("TASK_ATTACHMENT_SYMLINK"),
+  "symlinked task attachment should be blocked",
+);
+
+const missingPath = path.join(attachmentRoot, "missing", "pasted-text.txt");
+const missing = hook("UserPromptSubmit", {
+  prompt: attachmentWrapper([{ label: "PFM_TASK_V2", file: missingPath }]),
+}, attachmentEnv);
+assert(
+  missing.decision === "block" && String(missing.reason).includes("TASK_ATTACHMENT_MISSING"),
+  "missing task attachment should be blocked",
+);
+
+const nonUtf8Path = writeAttachment("non-utf8", "pasted-text.txt", Buffer.from([0xff, 0xfe, 0xfd]));
+const nonUtf8 = hook("UserPromptSubmit", {
+  prompt: attachmentWrapper([{ label: "PFM_TASK_V2", file: nonUtf8Path }]),
+}, attachmentEnv);
+assert(
+  nonUtf8.decision === "block" && String(nonUtf8.reason).includes("TASK_ATTACHMENT_ENCODING"),
+  "non-UTF8 task attachment should be blocked",
+);
+
+const oversizePath = writeAttachment("oversize", "pasted-text.txt", Buffer.alloc(256 * 1024 + 1, 0x61));
+const oversize = hook("UserPromptSubmit", {
+  prompt: attachmentWrapper([{ label: "PFM_TASK_V2", file: oversizePath }]),
+}, attachmentEnv);
+assert(
+  oversize.decision === "block" && String(oversize.reason).includes("TASK_ATTACHMENT_TOO_LARGE"),
+  "oversized task attachment should be blocked",
+);
+
+const malformedPath = writeAttachment("malformed", "pasted-text.txt", "PFM_TASK_V2\nMODE: local\n");
+const malformedAttachment = hook("UserPromptSubmit", {
+  prompt: attachmentWrapper([{ label: "Pasted task", file: malformedPath }]),
+}, attachmentEnv);
+assert(
+  malformedAttachment.decision === "block" && String(malformedAttachment.reason).includes("Invalid attachment-backed PFM_TASK_V2 envelope"),
+  "malformed attachment-backed envelope should be blocked by normal V2 validation",
+);
+
+const mutablePath = writeAttachment("mutable", "pasted-text.txt", prompt);
+const mutableAccepted = hook("UserPromptSubmit", {
+  prompt: attachmentWrapper([{ label: "Pasted task", file: mutablePath }]),
+}, attachmentEnv);
+assert(
+  mutableAccepted?.hookSpecificOutput?.additionalContext?.includes("trusted Codex long-paste attachment"),
+  "mutable attachment fixture should initially be accepted",
+);
+fs.appendFileSync(mutablePath, "\n# changed after validation\n");
+const mutatedPreTool = hook("PreToolUse", {
+  tool_name: "apply_patch",
+  tool_use_id: "attachment-integrity",
+  tool_input: { command: "*** Begin Patch\n*** Update File: tools/codex/state.sh\n*** End Patch" },
+}, attachmentEnv);
+assert(
+  mutatedPreTool?.hookSpecificOutput?.permissionDecision === "deny"
+    && String(mutatedPreTool?.hookSpecificOutput?.permissionDecisionReason ?? "").includes("TASK_ATTACHMENT_INTEGRITY"),
+  "changed task attachment should be denied before repository mutation",
+);
+
+const publishPath = writeAttachment("publish-mutable", "pasted-text.txt", prompt);
+const publishAccepted = hook("UserPromptSubmit", {
+  prompt: attachmentWrapper([{ label: "Pasted task", file: publishPath }]),
+}, attachmentEnv);
+assert(
+  publishAccepted?.hookSpecificOutput?.additionalContext?.includes("trusted Codex long-paste attachment"),
+  "publication integrity fixture should initially be accepted",
+);
+fs.appendFileSync(publishPath, "\n# changed before publication\n");
+const mutatedPublication = hook("PermissionRequest", {
+  tool_name: "Bash",
+  tool_input: { command: "git push -u origin agent/policy-self-test" },
+}, attachmentEnv);
+assert(
+  mutatedPublication?.hookSpecificOutput?.decision?.behavior === "deny"
+    && String(mutatedPublication?.hookSpecificOutput?.decision?.message ?? "").includes("TASK_ATTACHMENT_INTEGRITY"),
+  "changed task attachment should be denied before publication",
 );
 
 const performancePrompt = prompt
@@ -290,4 +445,5 @@ assert(
 const compact = hook("PreCompact", { trigger: "auto" });
 assert(compact.continue === false, "automatic compaction should stop an active PFM task");
 
-console.log("PASS codex tooling — V2 envelope, environment, execution, read/scope, push, and compaction guards");
+fs.rmSync(attachmentHome, { recursive: true, force: true });
+console.log("PASS codex tooling — V2 envelope, trusted long-paste attachments, environment, execution, read/scope, push, and compaction guards");
