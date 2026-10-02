@@ -30,6 +30,12 @@ case "$target" in
   *) target_abs="$(cd "$(dirname "$target")" 2>/dev/null && pwd -P)/$(basename "$target")" ;;
 esac
 
+root_abs="$(cd "$root" && pwd -P)"
+if [ "$target_abs" = "$root_abs" ]; then
+  printf 'WORKTREE_PREP_FAIL target worktree is the current/source checkout; run this helper from another stable checkout\n' >&2
+  exit 1
+fi
+
 registered=""
 while IFS= read -r line; do
   case "$line" in
