@@ -35,6 +35,25 @@ A handoff is not "resolved" merely because it is long. It is resolved only when
 the implementation can satisfy every mapped requirement without inventing a
 semantic decision.
 
+### Long-paste transport
+
+A long handoff may be transported by Codex Desktop as an auto-generated
+`pasted-text.txt` or `writing-block.md` attachment. This is a transport
+detail, not a relaxation of the handoff contract.
+
+The repository hook may treat such a file as task authority only when the
+user-prompt wrapper identifies exactly one candidate under the trusted Codex
+attachments root, the file is regular UTF-8 text no larger than 256 KiB, and
+the file itself contains the complete V2 envelope. The same V2 validation,
+active-lesson selection, branch/head/worktree checks, and read/write scope
+rules apply. Inline and attachment fragments are never combined to manufacture
+a valid envelope.
+
+A valid inline V2 envelope takes precedence. Accepted attachment-backed
+handoffs are content-hash bound for the active turn so a changed or missing file
+cannot retain mutation or publication authority. Arbitrary attachments and
+transcript parsing are outside this contract.
+
 ## 2. Universal compact sections
 
 ### REQUIREMENT_MAP
