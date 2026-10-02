@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -17,6 +18,10 @@ CONTROL_PATHS = (
 NORMATIVE_MARKERS = ("docs/specs/", "docs/architecture/", "docs/spec-manifest.json", "requirements-index.json", "system-software-architecture")
 REQUIRED_SCALARS = ("TASK_KIND", "MODE", "SEMANTICS", "REPAIR_ROUND", "TASK_CONTINUITY", "TARGET_BRANCH", "WORKTREE_POLICY", "EXPECTED_HEAD", "DEPENDENCY_POLICY", "DISCOVERY_POLICY", "LOCAL_EXECUTION_POLICY", "CI_PROFILE", "HEAVY_VALIDATION_PROFILE", "UAT", "LESSONS_APPLIED")
 REQUIRED_SECTIONS = ("READ_PATHS", "ALLOWED_PATHS", "OBJECTIVE", "RESOLVED_DECISIONS", "REQUIREMENT_MAP", "FAILURE_MODES", "CLAIMS_AND_GAPS", "PROFILE_CONTRACT", "EVIDENCE_PLAN", "ACCEPTANCE", "OUT_OF_SCOPE", "STOP")
+TASK_ATTACHMENT_NAMES = {"pasted-text.txt", "writing-block.md"}
+TASK_ATTACHMENT_MAX_BYTES = 256 * 1024
+FILES_MENTIONED_HEADING = "# Files mentioned by the user:"
+REQUEST_HEADING = "## My request for Codex:"
 
 PROFILE_MARKERS = {
     "tooling": ("POLICY_BOUNDARY:", "FAIL_CLOSED:", "SELF_TEST:"),
@@ -129,6 +134,133 @@ def load_state(root, payload):
         return json.loads(path.read_text())
     except Exception:
         return None
+
+class TaskAttachmentError(ValueError):
+    pass
+
+def codex_attachments_root():
+    home = Path(os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")).expanduser()
+    return home / "attachments"
+
+def generated_task_attachment_paths(prompt):
+    if FILES_MENTIONED_HEADING not in prompt:
+        return []
+    block = prompt.split(FILES_MENTIONED_HEADING, 1)[1]
+    if REQUEST_HEADING in block:
+        block = block.split(REQUEST_HEADING, 1)[0]
+    paths = []
+    for line in block.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("## "):
+            continue
+        entry = stripped[3:]
+        if ": " not in entry:
+            continue
+        _, raw_path = entry.rsplit(": ", 1)
+        raw_path = raw_path.strip().strip(chr(96)).strip('"').strip("'")
+        if not raw_path:
+            continue
+        if Path(raw_path).name.lower() in TASK_ATTACHMENT_NAMES:
+            paths.append(raw_path)
+    return paths
+
+def read_generated_task_attachment(prompt):
+    paths = generated_task_attachment_paths(prompt)
+    if not paths:
+        return None, None
+    if len(paths) != 1:
+        raise TaskAttachmentError(
+            f"TASK_ATTACHMENT_AMBIGUOUS: expected exactly one generated pasted-text task attachment, found {len(paths)}."
+        )
+    raw = Path(paths[0]).expanduser()
+    if not raw.is_absolute():
+        raise TaskAttachmentError("TASK_ATTACHMENT_PATH_INVALID: generated task attachment path must be absolute.")
+    root_path = codex_attachments_root()
+    if root_path.is_symlink():
+        raise TaskAttachmentError("TASK_ATTACHMENT_ROOT_INVALID: Codex attachments root may not be a symlink.")
+    try:
+        root = root_path.resolve(strict=True)
+    except Exception:
+        raise TaskAttachmentError("TASK_ATTACHMENT_ROOT_UNAVAILABLE: Codex attachments root does not exist.")
+    try:
+        resolved = raw.resolve(strict=True)
+    except Exception:
+        raise TaskAttachmentError("TASK_ATTACHMENT_MISSING: generated task attachment does not exist.")
+    try:
+        if os.path.commonpath([str(root), str(resolved)]) != str(root):
+            raise TaskAttachmentError("TASK_ATTACHMENT_OUTSIDE_ROOT: generated task attachment is outside the Codex attachments root.")
+    except ValueError:
+        raise TaskAttachmentError("TASK_ATTACHMENT_OUTSIDE_ROOT: generated task attachment is outside the Codex attachments root.")
+    current = raw
+    while True:
+        if current.is_symlink():
+            raise TaskAttachmentError("TASK_ATTACHMENT_SYMLINK: generated task attachment path may not contain symlinks.")
+        if current == root or current == current.parent:
+            break
+        current = current.parent
+    if not resolved.is_file():
+        raise TaskAttachmentError("TASK_ATTACHMENT_NOT_FILE: generated task attachment must be a regular file.")
+    try:
+        size = resolved.stat().st_size
+    except Exception:
+        raise TaskAttachmentError("TASK_ATTACHMENT_UNREADABLE: generated task attachment metadata could not be read.")
+    if size > TASK_ATTACHMENT_MAX_BYTES:
+        raise TaskAttachmentError(
+            f"TASK_ATTACHMENT_TOO_LARGE: generated task attachment exceeds {TASK_ATTACHMENT_MAX_BYTES} bytes."
+        )
+    try:
+        data = resolved.read_bytes()
+    except Exception:
+        raise TaskAttachmentError("TASK_ATTACHMENT_UNREADABLE: generated task attachment could not be read.")
+    if len(data) > TASK_ATTACHMENT_MAX_BYTES:
+        raise TaskAttachmentError(
+            f"TASK_ATTACHMENT_TOO_LARGE: generated task attachment exceeds {TASK_ATTACHMENT_MAX_BYTES} bytes."
+        )
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise TaskAttachmentError("TASK_ATTACHMENT_ENCODING: generated task attachment must be UTF-8 text.")
+    metadata = {
+        "path": str(resolved),
+        "root": str(root),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+    return text, metadata
+
+def attachment_integrity_error(state):
+    metadata = state.get("TASK_ATTACHMENT")
+    if not metadata:
+        return None
+    try:
+        path = Path(metadata["path"])
+        root = Path(metadata["root"])
+        expected = str(metadata["sha256"])
+    except Exception:
+        return "TASK_ATTACHMENT_INTEGRITY: stored attachment metadata is invalid."
+    try:
+        if path.is_symlink():
+            return "TASK_ATTACHMENT_INTEGRITY: validated task attachment became a symlink."
+        resolved = path.resolve(strict=True)
+    except Exception:
+        return "TASK_ATTACHMENT_INTEGRITY: validated task attachment disappeared."
+    if str(resolved) != str(path):
+        return "TASK_ATTACHMENT_INTEGRITY: validated task attachment path changed."
+    try:
+        if os.path.commonpath([str(root), str(resolved)]) != str(root):
+            return "TASK_ATTACHMENT_INTEGRITY: validated task attachment escaped its trusted root."
+    except ValueError:
+        return "TASK_ATTACHMENT_INTEGRITY: validated task attachment escaped its trusted root."
+    if not resolved.is_file():
+        return "TASK_ATTACHMENT_INTEGRITY: validated task attachment is no longer a regular file."
+    try:
+        data = resolved.read_bytes()
+    except Exception:
+        return "TASK_ATTACHMENT_INTEGRITY: validated task attachment can no longer be read."
+    if len(data) > TASK_ATTACHMENT_MAX_BYTES:
+        return "TASK_ATTACHMENT_INTEGRITY: validated task attachment now exceeds the size limit."
+    if hashlib.sha256(data).hexdigest() != expected:
+        return "TASK_ATTACHMENT_INTEGRITY: validated task attachment changed after authorization."
+    return None
 
 def scalar(prompt, key):
     match = re.search(rf"(?m)^{re.escape(key)}:\s*(.+?)\s*$", prompt)
@@ -438,12 +570,35 @@ def session_start(payload, root):
 
 def user_prompt(payload, root):
     prompt = str(payload.get("prompt") or "")
-    if "PFM_TASK_V2" not in prompt:
-        emit({"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"No PFM_TASK_V2 envelope is active. This turn is read-only: do not edit, install, test, validate, build, commit, or push."}})
-        return
-    errors, values, reads, writes = validate_envelope(prompt, root)
+    task_prompt = None
+    attachment_metadata = None
+    inline_validation = None
+
+    if "PFM_TASK_V2" in prompt:
+        inline_validation = validate_envelope(prompt, root)
+        if not inline_validation[0]:
+            task_prompt = prompt
+
+    if task_prompt is None:
+        try:
+            attached_prompt, attachment_metadata = read_generated_task_attachment(prompt)
+        except TaskAttachmentError as exc:
+            emit({"decision":"block","reason":str(exc)})
+            return
+        if attached_prompt is not None and "PFM_TASK_V2" in attached_prompt:
+            task_prompt = attached_prompt
+        elif inline_validation is not None:
+            errors = inline_validation[0]
+            emit({"decision":"block","reason":"Invalid PFM_TASK_V2 envelope: " + "; ".join(errors)})
+            return
+        else:
+            emit({"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"No PFM_TASK_V2 envelope is active. This turn is read-only: do not edit, install, test, validate, build, commit, or push."}})
+            return
+
+    errors, values, reads, writes = validate_envelope(task_prompt, root)
     if errors:
-        emit({"decision":"block","reason":"Invalid PFM_TASK_V2 envelope: " + "; ".join(errors)})
+        prefix = "Invalid attachment-backed PFM_TASK_V2 envelope: " if attachment_metadata else "Invalid PFM_TASK_V2 envelope: "
+        emit({"decision":"block","reason":prefix + "; ".join(errors)})
         return
     head = git_value(["rev-parse", "HEAD"], root)
     dirty = git_value(["status", "--porcelain=v1", "--untracked-files=normal"], root)
@@ -477,8 +632,11 @@ def user_prompt(payload, root):
             emit({"decision":"block","reason":"Product/repair tasks may not authorize agent-control paths: " + ", ".join(bad)})
             return
     state = {**values, "READ_PATHS":reads, "ALLOWED_PATHS":writes, "BOOTSTRAP_REQUIRED":bootstrap_required}
+    if attachment_metadata:
+        state["TASK_ATTACHMENT"] = attachment_metadata
     state_path(root, payload).write_text(json.dumps(state, indent=2) + "\n")
-    context = "PFM_TASK_V2 accepted. Treat the handoff as the resolved implementation contract. Do not run local tests/typecheck/builds/validators/benchmarks/dev servers or install packages. Do not expand beyond READ_PATHS. If information is insufficient, stop with LOOKUP_REQUIRED. GitHub CI owns verification and only an external new handoff may advance REPAIR_ROUND."
+    source = " from a trusted Codex long-paste attachment" if attachment_metadata else ""
+    context = f"PFM_TASK_V2 accepted{source}. Treat the handoff as the resolved implementation contract. Do not run local tests/typecheck/builds/validators/benchmarks/dev servers or install packages. Do not expand beyond READ_PATHS. If information is insufficient, stop with LOOKUP_REQUIRED. GitHub CI owns verification and only an external new handoff may advance REPAIR_ROUND."
     if bootstrap_required:
         context += f" Before any repository mutation, run exactly: git switch -c {target}"
     emit({"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":context}})
@@ -491,6 +649,11 @@ def pre_tool(payload, root):
     if tool in {"spawn_agent", "Agent"}:
         deny("Subagents are disabled for PFM implementation turns.")
         return
+    if state is not None and (tool == "apply_patch" or (tool == "Bash" and likely_write(command))):
+        attachment_error = attachment_integrity_error(state)
+        if attachment_error:
+            deny(attachment_error)
+            return
     if state is not None and state.get("BOOTSTRAP_REQUIRED"):
         if tool == "Bash" and is_safe_branch_bootstrap(command, state["TARGET_BRANCH"]):
             emit({})
@@ -570,8 +733,13 @@ def permission_request(payload, root):
     if not is_push and not is_pr_create:
         emit({})
         return
-    if load_state(root, payload) is None:
+    state = load_state(root, payload)
+    if state is None:
         emit({"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"No active PFM_TASK_V2 task."}}})
+        return
+    attachment_error = attachment_integrity_error(state)
+    if attachment_error:
+        emit({"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":attachment_error}}})
         return
     ok, reason = safe_push(command, root) if is_push else safe_pr_create(command, root)
     label = "push" if is_push else "PR creation"
@@ -582,6 +750,10 @@ def post_tool(payload, root):
     state = load_state(root, payload)
     if state is None:
         emit({})
+        return
+    attachment_error = attachment_integrity_error(state)
+    if attachment_error:
+        emit({"continue":False,"stopReason":attachment_error,"systemMessage":"PFM attachment integrity guard stopped the turn. Submit a fresh audited handoff instead of continuing."})
         return
     if state.get("BOOTSTRAP_REQUIRED") and current_branch(root) == state.get("TARGET_BRANCH"):
         state["BOOTSTRAP_REQUIRED"] = False
@@ -613,6 +785,9 @@ def stop(payload, root):
         emit({"continue":True})
         return
     messages = []
+    attachment_error = attachment_integrity_error(state)
+    if attachment_error:
+        messages.append(attachment_error)
     if git_value(["status", "--porcelain=v1", "--untracked-files=normal"], root):
         messages.append("working tree is dirty")
     if git_value(["rev-parse", "HEAD"], root) == state["EXPECTED_HEAD"]:
