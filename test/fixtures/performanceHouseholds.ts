@@ -54,15 +54,26 @@ const appendGrowthPrimitive = (model: PersonalDraft, id: string, assumptionId: s
     PrimitiveInstance: Object.freeze([...(model.objects.PrimitiveInstance ?? []), Object.freeze({ primitive_instance_id: id, primitive_id: "P08", input_bindings: Object.freeze({ rate: assumptionId }), parameters: Object.freeze({}), scenario_id: GOLDEN_HOUSEHOLD_IDS.rootScenario, enabled: true })]),
   }),
 });
-const coverage = (model: PersonalDraft, stress: boolean): PerformanceFixtureCoverage => Object.freeze({
+const coverage = (model: PersonalDraft, stress: boolean, id: string): PerformanceFixtureCoverage => Object.freeze({
   canonicalObjectCounts: counts(model),
   primitives: Object.freeze(["P08 indexed recurring cash flow", "P23 periodic investment return", "VS4 fixed amortizing liability"]),
   rules: Object.freeze(["salary growth", "expense inflation", "investment return"]),
   events: Object.freeze(["scheduled retirement/income termination"]),
-  scenarios: Object.freeze(["current plan (baseline request)", "lower investment returns (executable intent; CI comparison request)"]),
+  scenarios: Object.freeze(["current plan (baseline request)", id === "realistic-household"
+    ? "lower investment returns (bounded CI and controlled heavy validation)"
+    : id === "stress-household" ? "lower investment returns (bounded controlled heavy validation; CI structure only)"
+      : "lower investment returns (intent structure only for scaling probes; no probe comparison execution claim)"]),
   executionMechanics: Object.freeze(["opening reconciliation", "monthly recurrence", "funding/settlement", "recurring investment purchase", "owned-account transfer", "mark-to-market", "debt amortization", "extra principal with required-service dependency", ...(stress ? ["long horizon", "high recurring-flow count"] : [])]),
   unsupportedGaps: Object.freeze(["multi-member household (HOUSEHOLD_MULTI_MEMBER_UNSUPPORTED)", "tax execution", "stochastic execution", "worker execution"]),
-  executableEvidence: Object.freeze(["test/performanceInstrumentation.test.ts: provides executable distinct synthetic fixtures with explicit gaps", "test/performanceInstrumentation.test.ts: executes the declared lower-return comparison intent", "benchmarks/capture.ts: completed primary/scaling forecast requests"]),
+  executableEvidence: Object.freeze([
+    id === "realistic-household"
+      ? "test/performanceInstrumentation.test.ts: provides executable distinct synthetic fixtures with explicit gaps (bounded realistic execution)"
+      : id === "stress-household" ? "test/performanceInstrumentation.test.ts: provides executable distinct synthetic fixtures with explicit gaps (stress compilation/structure only)"
+        : "test/performanceInstrumentation.test.ts: declares an independent horizon and recurring-operation scaling matrix with bounded compilation",
+    ...(id === "realistic-household" ? ["test/performanceInstrumentation.test.ts: executes the declared lower-return comparison intent (realistic execution only)"] : []),
+    ...(id === "realistic-household" || id === "stress-household" ? ["benchmarks/capture.ts: bounded lower-return comparison validation (controlled execution; not timed)"] : []),
+    "benchmarks/capture.ts: completed primary/scaling forecast requests",
+  ]),
 });
 
 const addCashFlowsAndAssets = (base: PersonalDraft, family: "a" | "b", incomes: number, expenses: number, assets: number): PersonalDraft => {
@@ -169,7 +180,7 @@ const representative = (id: string, family: "a" | "b", months: number, scale: nu
   const dimensions = Object.freeze({ horizonMonths: months, recurringOperationCount: (modelCounts.Income ?? 0) + (modelCounts.Expense ?? 0) + purchases.filter((item) => item.schedule.kind === "utc_monthly").length + transfers.length + profiles.length,
     modelEntityCount: Object.values(modelCounts).reduce((sum, count) => sum + count, 0) });
   const comparisonIntents = Object.freeze(createGoldenHouseholdScenarioIntents().filter((intent) => intent.changes.every((change) => change.kind === "investment_return")));
-  return Object.freeze({ id, classification: "synthetic", model, request, dimensions, comparisonIntents, coverage: coverage(model, scale > 1) });
+  return Object.freeze({ id, classification: "synthetic", model, request, dimensions, comparisonIntents, coverage: coverage(model, scale > 1, id) });
 };
 
 export const createRealisticPerformanceFixture = (): PerformanceHouseholdFixture => representative("realistic-household", "a", 24, 1);

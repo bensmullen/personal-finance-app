@@ -79,7 +79,9 @@ describe("performance instrumentation", () => {
     const realistic = createRealisticPerformanceFixture();
     const stress = createStressPerformanceFixture();
     expect(realistic.model).not.toEqual(stress.model);
-    for (const fixture of [realistic, stress]) {
+    // Only realistic execution is ordinary-CI evidence.
+    {
+      const fixture = realistic;
       const boundedRequest = oneMonth(fixture.request);
       const result = runPersonalHouseholdForecast(fixture.model, boundedRequest);
       expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
@@ -122,10 +124,42 @@ describe("performance instrumentation", () => {
     }
     expect(stress.coverage.canonicalObjectCounts.Expense).toBeGreaterThan(realistic.coverage.canonicalObjectCounts.Expense!);
     expect(realistic.coverage.unsupportedGaps.join(" ")).toContain("multi-member");
+    for (const type of ["Account", "Income", "Expense", "Investment", "Liability", "Event", "PrimitiveInstance"] as const) {
+      expect(stress.coverage.canonicalObjectCounts[type]).toBeGreaterThan(realistic.coverage.canonicalObjectCounts[type]!);
+    }
+    expect(stress.dimensions.horizonMonths).toBe(180);
+    expect(stress.dimensions.recurringOperationCount).toBeGreaterThan(realistic.dimensions.recurringOperationCount);
+    const stressRequest = oneMonth(stress.request);
+    const stressCompiled = compileHouseholdProjection(stress.model, stressRequest.compiler);
+    expect(stressCompiled.status, JSON.stringify(stressCompiled.diagnostics)).toBe("compiled");
+    if (stressCompiled.status !== "compiled") throw new Error("Stress fixture compilation failed.");
+    const stressInputs = stressCompiled.value;
+    expect(stressInputs.executionMonths).toBe(1);
+    expect(stressInputs.cashFlowInput!.incomes).toHaveLength(stress.coverage.canonicalObjectCounts.Income!);
+    expect(stressInputs.cashFlowInput!.expenses).toHaveLength(stress.coverage.canonicalObjectCounts.Expense!);
+    expect(stressInputs.cashFlowInput!.events).toHaveLength(stress.request.compiler.cashFlow!.retirementBindings!.length);
+    expect(stressInputs.investmentInput!.purchases).toHaveLength(stress.request.compiler.investments!.purchaseInstructions.length);
+    expect(stressInputs.investmentInput!.transfers).toHaveLength(stress.request.compiler.investments!.transferInstructions.length);
+    expect(stress.request.compiler.investments!.purchaseInstructions.some((purchase) => purchase.schedule.kind === "utc_monthly")).toBe(true);
+    expect(stress.request.compiler.investments!.transferInstructions.some((transfer) => transfer.schedule.kind === "utc_monthly")).toBe(true);
+    expect(stressInputs.liabilityInput!.loans).toHaveLength(stress.coverage.canonicalObjectCounts.Liability!);
+    // Future extra-principal instructions and their required-service contract are
+    // declarations here; execution belongs to the full heavy forecast.
+    expect(stress.request.compiler.liabilities!.executionProfiles.some((profile) =>
+      (profile.extraPrincipalPayments?.length ?? 0) > 0 && profile.paymentAnchor.endsWith("-01")
+      && (profile.extraPrincipalPayments ?? []).every((payment) => payment.scheduledAt === "2026-02-01"),
+    )).toBe(true);
+    expect(stressInputs.scenarioIdentity).toBe(stress.request.compiler.cashFlow!.scenarioId);
+    expect(stress.model.objects.Scenario).toHaveLength(1);
+    expect(stress.coverage.scenarios.join(" ")).toContain("heavy validation");
+    expect(stress.coverage.executionMechanics).toContain("extra principal with required-service dependency");
+    expect(stress.coverage.unsupportedGaps.join(" ")).toContain("multi-member");
+    expect(stress.coverage.executableEvidence.join(" ")).toContain("benchmarks/capture.ts: bounded lower-return comparison validation");
   });
 
   it("executes the declared lower-return comparison intent", () => {
-    for (const fixture of [createRealisticPerformanceFixture(), createStressPerformanceFixture()]) {
+    {
+      const fixture = createRealisticPerformanceFixture();
       expect(fixture.comparisonIntents).toHaveLength(1);
       const comparison = comparePersonalHouseholdScenarioIntents(fixture.model, oneMonth(fixture.request), fixture.comparisonIntents);
       expect(comparison.status, JSON.stringify(comparison.diagnostics)).toBe("completed");
@@ -133,6 +167,24 @@ describe("performance instrumentation", () => {
       expect(comparison.alternatives[0]!.status).toBe("completed");
       expect(comparison.alternatives[0]!.points.some((point) => point.deltas.netWorth.amount !== "0")).toBe(true);
     }
+    const stress = createStressPerformanceFixture();
+    expect(stress.comparisonIntents).toHaveLength(1);
+    const intent = stress.comparisonIntents[0]!;
+    expect(intent.baseScenarioId).toBe(stress.request.compiler.investments!.scenarioId);
+    expect(intent.scenarioId).not.toBe(intent.baseScenarioId);
+    expect(intent.changes).toHaveLength(1);
+    const change = intent.changes[0]!;
+    expect(change.kind).toBe("investment_return");
+    if (change.kind !== "investment_return") throw new Error("Stress intent must change investment return.");
+    expect(change.annualRate).toBe("0.0200");
+    const target = (stress.model.objects.Investment ?? []).find((value) =>
+      (value as Record<string, unknown>).investment_id === change.investmentId,
+    ) as Record<string, unknown> | undefined;
+    expect(target).toBeDefined();
+    expect((stress.model.objects.PrimitiveInstance ?? []).some((value) => {
+      const primitive = value as Record<string, unknown>;
+      return primitive.primitive_instance_id === target?.return_model_id && primitive.primitive_id === "P23";
+    })).toBe(true);
   });
 
   it("declares an independent horizon and recurring-operation scaling matrix with bounded compilation", () => {

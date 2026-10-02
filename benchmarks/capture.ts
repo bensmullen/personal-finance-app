@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { createApplicationPerformanceObserver, requireCompletedPerformanceForecast, createPerformanceEvidenceSample } from "../src/application/performance.js";
 import { PerformanceRegistry, type PerformanceContext } from "../src/diagnostics/performance.js";
 import { createGoldenHouseholdDraft, createGoldenHouseholdForecastRequest, runPersonalHouseholdForecast } from "../src/application/index.js";
+import { comparePersonalHouseholdScenarioIntents } from "../src/application/householdProjection.js";
 import { createRealisticPerformanceFixture, createStressPerformanceFixture, createPerformanceScalingFixtures } from "../test/fixtures/performanceHouseholds.js";
 
 const configuredCount = (name: string, fallback: number) => {
@@ -55,9 +56,42 @@ for (const fixture of fixtures) {
       memoryDeltaBytes: "signed after-minus-before heapUsed; supplemental only" }) }));
   }
   captured.push(Object.freeze({ fixtureId: fixture.id, kind: fixture.id.startsWith("scaling:") ? "scaling" : "primary", context: Object.freeze({ modelCounts: countObjects(fixture.model), coverage: fixture.coverage,
-    ...("comparisonIntents" in fixture ? { comparisonIntents: fixture.comparisonIntents.map((intent) => ({ scenarioId: intent.scenarioId, name: intent.name, changeKinds: intent.changes.map((change) => change.kind) })), comparisonMeasurement: "not_measured; exercised by declared CI comparison request" } : {}),
+    ...("comparisonIntents" in fixture ? { comparisonIntents: fixture.comparisonIntents.map((intent) => ({ scenarioId: intent.scenarioId, name: intent.name, changeKinds: intent.changes.map((change) => change.kind) })),
+      comparisonMeasurement: "not_measured",
+      comparisonEvidenceOwner: fixture.id.startsWith("scaling:") ? "intent structure only; no probe comparison execution claim"
+        : fixture.id === "realistic-household" ? "bounded ordinary CI and controlled heavy validation" : "controlled heavy validation; ordinary CI structure only",
+    } : {}),
     ...("dimensions" in fixture ? { scalingDimensions: fixture.dimensions } : {}) }), runs: Object.freeze(runs) }));
 }
+
+// Required execution evidence, after all timing/resource sampling. Never retain
+// the comparison's financial points, deltas, or configuration values.
+const comparisonValidation = primaryFixtures.flatMap((fixture) => {
+  if (!("comparisonIntents" in fixture)) return [];
+  if (fixture.comparisonIntents.length !== 1 || fixture.comparisonIntents[0]!.changes.length !== 1
+    || fixture.comparisonIntents[0]!.changes[0]!.kind !== "investment_return")
+    throw new Error(`${fixture.id} must declare one lower-return comparison intent.`);
+  const start = fixture.request.compiler.cashFlow!.simulationStart;
+  const end = "2026-02-01";
+  const request = { ...fixture.request, compiler: { ...fixture.request.compiler,
+    cashFlow: { ...fixture.request.compiler.cashFlow!, simulationEnd: end, months: 1 },
+    investments: { ...fixture.request.compiler.investments!, simulationEnd: end, months: 1 },
+    liabilities: { ...fixture.request.compiler.liabilities!, simulationEnd: end, months: 1 },
+  } };
+  const comparison = comparePersonalHouseholdScenarioIntents(fixture.model, request, fixture.comparisonIntents);
+  if (comparison.status !== "completed" || comparison.alternatives.length !== fixture.comparisonIntents.length
+    || comparison.alternatives.some((alternative, index) => alternative.status !== "completed"
+      || alternative.name !== fixture.comparisonIntents[index]!.name || alternative.comparedThrough !== `${end}T00:00:00.000Z`))
+    throw new Error(`${fixture.id} bounded lower-return comparison did not complete (${comparison.status}).`);
+  return [Object.freeze({ fixtureId: fixture.id, applicability: "applicable", status: comparison.status,
+    measurement: "not_measured; validation outside baseline timing/resource samples", horizon: Object.freeze({ start, end }),
+    alternatives: Object.freeze(comparison.alternatives.map((alternative, index) => Object.freeze({
+      scenarioId: fixture.comparisonIntents[index]!.scenarioId,
+      changeKinds: Object.freeze(fixture.comparisonIntents[index]!.changes.map((change) => change.kind)),
+      status: alternative.status, comparedThrough: alternative.comparedThrough,
+    }))),
+  })];
+});
 
 const artifact = Object.freeze({
   schemaVersion: "r1-performance-baseline-v2", classification: "engineering-reference", budgetStatus: "non-budget-non-SLA", optimizationStatus: "pre-optimization",
@@ -66,6 +100,7 @@ const artifact = Object.freeze({
   placement: Object.freeze({ localNode: "measured", browserMain: "interactive/in-memory; not a retained representative-device baseline", serverCloud: "not_implemented/not_measured", recommendation: "deferred_until_approved_budgets" }),
   fixtures: Object.freeze(captured.filter((fixture) => fixture.kind === "primary")),
   scalingProbes: Object.freeze(captured.filter((fixture) => fixture.kind === "scaling")),
+  comparisonValidation: Object.freeze(comparisonValidation),
 });
 await mkdir(resolve(outputPath, ".."), { recursive: true });
 await writeFile(outputPath, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
