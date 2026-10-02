@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Personal Finance App agent lesson ledger",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "lessons"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "lessons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status",
+          "severity",
+          "source_evidence",
+          "applicability",
+          "required_markers",
+          "rule",
+          "do_not_generalize_to",
+          "review_criteria",
+          "superseded_by"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^AL-[0-9]{3}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "candidate",
+              "active",
+              "retired"
+            ]
+          },
+          "severity": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "source_evidence": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "applicability": {
+            "type": "object",
+            "required": [
+              "task_kinds",
+              "ci_profiles",
+              "heavy_validation_profiles",
+              "task_continuities"
+            ],
+            "properties": {
+              "task_kinds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              },
+              "ci_profiles": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              },
+              "heavy_validation_profiles": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              },
+              "task_continuities": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "required_markers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rule": {
+            "type": "string",
+            "minLength": 1
+          },
+          "do_not_generalize_to": {
+            "type": "string",
+            "minLength": 1
+          },
+          "promotion_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "counterevidence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "review_criteria": {
+            "type": "string",
+            "minLength": 1
+          },
+          "superseded_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
