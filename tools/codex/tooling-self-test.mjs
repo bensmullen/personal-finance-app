@@ -188,11 +188,11 @@ fs.mkdirSync(outsideDir, { recursive: true });
 const outsideFile = path.join(outsideDir, "pasted-text.txt");
 fs.writeFileSync(outsideFile, prompt);
 const traversalPath = attachmentRoot + path.sep + ".." + path.sep + ".." + path.sep + "outside" + path.sep + "pasted-text.txt";
-const outside = hook("UserPromptSubmit", {
+const outsideAttachment = hook("UserPromptSubmit", {
   prompt: attachmentWrapper([{ label: "PFM_TASK_V2", file: traversalPath }]),
 }, attachmentEnv);
 assert(
-  outside.decision === "block" && String(outside.reason).includes("TASK_ATTACHMENT_OUTSIDE_ROOT"),
+  outsideAttachment.decision === "block" && String(outsideAttachment.reason).includes("TASK_ATTACHMENT_OUTSIDE_ROOT"),
   "traversal/outside-root task attachment should be blocked",
 );
 
