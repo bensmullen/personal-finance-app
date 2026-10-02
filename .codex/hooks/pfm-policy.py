@@ -9,9 +9,13 @@ import sys
 from pathlib import Path
 
 APPROVED_BRANCH_PREFIXES = ("codex/", "agent/")
-CONTROL_PATHS = ("AGENTS.md", ".codex/", ".agents/", ".github/workflows/", "tools/codex/", "tools/ci/")
+CONTROL_PATHS = (
+    "AGENTS.md", ".codex/", ".agents/", ".github/workflows/", "tools/codex/", "tools/ci/",
+    "docs/development/handoff-authoring-policy.md", "docs/development/verification-policy.md",
+    "docs/development/agent-",
+)
 NORMATIVE_MARKERS = ("docs/specs/", "docs/architecture/", "docs/spec-manifest.json", "requirements-index.json", "system-software-architecture")
-REQUIRED_SCALARS = ("TASK_KIND", "MODE", "SEMANTICS", "REPAIR_ROUND", "EXPECTED_HEAD", "DEPENDENCY_POLICY", "DISCOVERY_POLICY", "LOCAL_EXECUTION_POLICY", "CI_PROFILE", "HEAVY_VALIDATION_PROFILE", "UAT")
+REQUIRED_SCALARS = ("TASK_KIND", "MODE", "SEMANTICS", "REPAIR_ROUND", "TASK_CONTINUITY", "TARGET_BRANCH", "WORKTREE_POLICY", "EXPECTED_HEAD", "DEPENDENCY_POLICY", "DISCOVERY_POLICY", "LOCAL_EXECUTION_POLICY", "CI_PROFILE", "HEAVY_VALIDATION_PROFILE", "UAT", "LESSONS_APPLIED")
 REQUIRED_SECTIONS = ("READ_PATHS", "ALLOWED_PATHS", "OBJECTIVE", "RESOLVED_DECISIONS", "REQUIREMENT_MAP", "FAILURE_MODES", "CLAIMS_AND_GAPS", "PROFILE_CONTRACT", "EVIDENCE_PLAN", "ACCEPTANCE", "OUT_OF_SCOPE", "STOP")
 
 PROFILE_MARKERS = {
@@ -28,7 +32,7 @@ PROFILE_MARKERS = {
 }
 
 HEAVY_PROFILE_MARKERS = {
-    "performance": ("BOUNDARIES:", "APPLICABILITY:", "SUCCESS_STATUS:", "CONTEXT_RETENTION:", "RESOURCE_SEMANTICS:", "CONTROLLED_EVIDENCE:"),
+    "performance": ("CI_WORK_BOUNDARY:", "HEAVY_WORK_BOUNDARY:", "BOUNDARIES:", "APPLICABILITY:", "SUCCESS_STATUS:", "CONTEXT_RETENTION:", "RESOURCE_SEMANTICS:", "CONTROLLED_EVIDENCE:"),
     "stochastic": ("CONVERGENCE_CRITERION:", "RESOURCE_BUDGET:", "SAMPLE_RULE:", "ARTIFACT_CONTEXT:", "CONTROLLED_EVIDENCE:"),
     "onboarding": ("TARGET_METRIC:", "DATA_BOUNDARY:", "ABANDONMENT_OR_ERROR:", "ARTIFACT_CONTEXT:", "CONTROLLED_EVIDENCE:"),
     "provider": ("SECRET_BOUNDARY:", "LIVE_VS_FIXTURE:", "PROVENANCE:", "RETRY_FAILURE:", "ARTIFACT_CONTEXT:"),
@@ -43,6 +47,68 @@ def run_git(args, cwd):
 def git_value(args, cwd):
     result = run_git(args, cwd)
     return result.stdout.strip() if result.returncode == 0 else ""
+
+def current_branch(root):
+    return os.environ.get("PFM_POLICY_TEST_BRANCH") or git_value(["symbolic-ref", "--quiet", "--short", "HEAD"], root)
+
+def is_linked_worktree(root):
+    override = os.environ.get("PFM_POLICY_TEST_LINKED_WORKTREE")
+    if override in {"0", "1"}:
+        return override == "1"
+    git_dir = git_value(["rev-parse", "--git-dir"], root)
+    common_dir = git_value(["rev-parse", "--git-common-dir"], root)
+    if not git_dir or not common_dir:
+        return False
+    def absolute(value):
+        path = Path(value)
+        return path.resolve() if path.is_absolute() else (root / path).resolve()
+    return absolute(git_dir) != absolute(common_dir)
+
+def worktree_for_branch(root, branch):
+    result = run_git(["worktree", "list", "--porcelain"], root)
+    if result.returncode != 0:
+        return ""
+    current = ""
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            current = line[len("worktree "):]
+        elif line == f"branch refs/heads/{branch}":
+            return current
+    return ""
+
+def local_branch_exists(root, branch):
+    return run_git(["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], root).returncode == 0
+
+def load_lessons(root):
+    path = root / "docs" / "development" / "agent-lessons.json"
+    data = json.loads(path.read_text())
+    if data.get("schema_version") != 1 or not isinstance(data.get("lessons"), list):
+        raise ValueError("invalid lesson ledger root")
+    return data["lessons"]
+
+def selector_matches(values, applicability):
+    selectors = (
+        ("task_kinds", "TASK_KIND"),
+        ("ci_profiles", "CI_PROFILE"),
+        ("heavy_validation_profiles", "HEAVY_VALIDATION_PROFILE"),
+        ("task_continuities", "TASK_CONTINUITY"),
+    )
+    for selector, field in selectors:
+        allowed_values = applicability.get(selector, ["*"])
+        if "*" not in allowed_values and values.get(field) not in allowed_values:
+            return False
+    return True
+
+def applicable_active_lessons(root, values):
+    return [
+        lesson for lesson in load_lessons(root)
+        if lesson.get("status") == "active" and selector_matches(values, lesson.get("applicability") or {})
+    ]
+
+def parsed_lesson_ids(value):
+    if value == "none":
+        return []
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
 
 def repo_root(cwd):
     value = git_value(["rev-parse", "--show-toplevel"], cwd)
@@ -97,7 +163,7 @@ def is_control_path(path):
     path = normalize(path)
     return any(path == item.rstrip("/") or path.startswith(item) for item in CONTROL_PATHS)
 
-def validate_envelope(prompt):
+def validate_envelope(prompt, root):
     errors = []
     values = {key: scalar(prompt, key) for key in REQUIRED_SCALARS}
     for key, value in values.items():
@@ -128,6 +194,15 @@ def validate_envelope(prompt):
         errors.append("LOCAL_EXECUTION_POLICY must be no_tests")
     if values.get("UAT") not in {"required", "not_required"}:
         errors.append("UAT must be required or not_required")
+    if values.get("TASK_CONTINUITY") not in {"new_pr", "existing_pr"}:
+        errors.append("TASK_CONTINUITY must be new_pr or existing_pr")
+    if values.get("WORKTREE_POLICY") not in {"isolated", "current"}:
+        errors.append("WORKTREE_POLICY must be isolated or current")
+    if values.get("TASK_CONTINUITY") == "new_pr" and values.get("WORKTREE_POLICY") != "isolated":
+        errors.append("new_pr tasks require WORKTREE_POLICY=isolated")
+    target_branch = values.get("TARGET_BRANCH") or ""
+    if not target_branch.startswith(APPROVED_BRANCH_PREFIXES) or not re.fullmatch(r"[A-Za-z0-9._/-]+", target_branch):
+        errors.append("TARGET_BRANCH must be an approved codex/ or agent/ branch")
     ci_profiles = {"docs-only", "tooling", "spec", "deterministic", "deterministic-interactive", "engine-equivalence", "tax", "stochastic-foundation", "stochastic-orchestration", "onboarding", "provider-adapter", "probabilistic-ux", "full"}
     if values.get("CI_PROFILE") not in ci_profiles:
         errors.append("CI_PROFILE is not a recognized verification profile")
@@ -161,6 +236,23 @@ def validate_envelope(prompt):
         errors.append("non-repair tasks require REPAIR_ROUND 0")
     if not re.fullmatch(r"[0-9a-fA-F]{40}", values.get("EXPECTED_HEAD") or ""):
         errors.append("EXPECTED_HEAD must be a full 40-character SHA")
+    try:
+        active_lessons = applicable_active_lessons(root, values)
+        expected_ids = {lesson.get("id") for lesson in active_lessons}
+        provided_ids = set(parsed_lesson_ids(values.get("LESSONS_APPLIED")))
+        if provided_ids != expected_ids:
+            errors.append(
+                "LESSONS_APPLIED mismatch: expected "
+                + (",".join(sorted(expected_ids)) if expected_ids else "none")
+                + " but received "
+                + (",".join(sorted(provided_ids)) if provided_ids else "none")
+            )
+        for lesson in active_lessons:
+            for marker in lesson.get("required_markers") or []:
+                if marker not in prompt:
+                    errors.append(f"active lesson {lesson.get('id')} missing required marker {marker}")
+    except Exception as exc:
+        errors.append(f"agent lesson ledger invalid/unavailable: {exc}")
     return errors, values, reads, writes
 
 def changed_paths(root, expected):
@@ -221,7 +313,7 @@ def safe_pr_create(command, root):
     parts = tokens(command)
     if len(parts) < 3 or parts[0:3] != ["gh", "pr", "create"]:
         return False, "not a gh pr create command"
-    branch = os.environ.get("PFM_POLICY_TEST_BRANCH") or git_value(["symbolic-ref", "--quiet", "--short", "HEAD"], root)
+    branch = current_branch(root)
     if not branch or branch in {"main", "master"} or not branch.startswith(APPROVED_BRANCH_PREFIXES):
         return False, f"branch {branch or 'DETACHED'} is not an approved feature branch"
     origin = os.environ.get("PFM_POLICY_TEST_ORIGIN") or git_value(["remote", "get-url", "origin"], root)
@@ -254,7 +346,7 @@ def safe_push(command, root):
         return False, "not a git push"
     if any(arg in {"-f", "--force", "--force-with-lease", "--delete"} or arg.startswith("--force=") for arg in args):
         return False, "force/delete pushes are forbidden"
-    branch = os.environ.get("PFM_POLICY_TEST_BRANCH") or git_value(["symbolic-ref", "--quiet", "--short", "HEAD"], root)
+    branch = current_branch(root)
     if not branch or branch in {"main", "master"} or not branch.startswith(APPROVED_BRANCH_PREFIXES):
         return False, f"branch {branch or 'DETACHED'} is not an approved feature branch"
     origin = os.environ.get("PFM_POLICY_TEST_ORIGIN") or git_value(["remote", "get-url", "origin"], root)
@@ -268,10 +360,16 @@ def safe_push(command, root):
         return False, "origin is not the approved repository"
     positional = [arg for arg in args[1:] if not arg.startswith("-") and arg != "origin"]
     for refspec in positional:
-        destination = refspec.split(":")[-1].removeprefix("refs/heads/")
+        destination = refspec.split(":")[-1]
+        prefix = "refs/heads/"
+        if destination.startswith(prefix):
+            destination = destination[len(prefix):]
         if destination not in {branch, "HEAD"}:
             return False, f"destination {destination} does not match {branch}"
     return True, branch
+
+def is_safe_branch_bootstrap(command, target):
+    return tokens(command) == ["git", "switch", "-c", target]
 
 def likely_write(command):
     return bool(re.search(r"(^|\s)(git\s+(commit|push|switch|checkout|reset|merge|rebase|cherry-pick|clean)|rm|mv|cp|touch|mkdir|tee|truncate|chmod|chown)(\s|$)|(^|[^<])>{1,2}\s*\S", command.strip()))
@@ -343,7 +441,7 @@ def user_prompt(payload, root):
     if "PFM_TASK_V2" not in prompt:
         emit({"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"No PFM_TASK_V2 envelope is active. This turn is read-only: do not edit, install, test, validate, build, commit, or push."}})
         return
-    errors, values, reads, writes = validate_envelope(prompt)
+    errors, values, reads, writes = validate_envelope(prompt, root)
     if errors:
         emit({"decision":"block","reason":"Invalid PFM_TASK_V2 envelope: " + "; ".join(errors)})
         return
@@ -355,14 +453,35 @@ def user_prompt(payload, root):
     if dirty:
         emit({"decision":"block","reason":"STATE_DIRTY: working tree must be clean before a PFM task begins."})
         return
+    branch = current_branch(root) or "DETACHED"
+    target = values["TARGET_BRANCH"]
+    if values["WORKTREE_POLICY"] == "isolated" and not is_linked_worktree(root):
+        emit({"decision":"block","reason":"WORKTREE_REQUIRED: this task requires a linked Codex worktree. For a new PR, start a new Codex thread with Worktree enabled; for an existing PR, resume its existing Codex thread/worktree."})
+        return
+    bootstrap_required = False
+    if values["TASK_CONTINUITY"] == "new_pr":
+        if branch != target:
+            if local_branch_exists(root, target):
+                owner = worktree_for_branch(root, target)
+                emit({"decision":"block","reason":f"TARGET_BRANCH_EXISTS: {target} already exists" + (f" in worktree {owner}" if owner else "") + ". Use existing_pr continuity or choose a new audited target branch."})
+                return
+            bootstrap_required = True
+    elif branch != target:
+        owner = worktree_for_branch(root, target)
+        detail = f" Target branch is checked out at {owner}." if owner else ""
+        emit({"decision":"block","reason":f"WRONG_WORKTREE: existing PR task requires {target}, current branch is {branch}.{detail} Resume the PR's existing Codex thread/worktree; do not manually check out the branch."})
+        return
     if values["TASK_KIND"] != "framework":
         bad = [path for path in writes if is_control_path(path.replace("**", ""))]
         if bad:
             emit({"decision":"block","reason":"Product/repair tasks may not authorize agent-control paths: " + ", ".join(bad)})
             return
-    state = {**values, "READ_PATHS":reads, "ALLOWED_PATHS":writes}
+    state = {**values, "READ_PATHS":reads, "ALLOWED_PATHS":writes, "BOOTSTRAP_REQUIRED":bootstrap_required}
     state_path(root, payload).write_text(json.dumps(state, indent=2) + "\n")
-    emit({"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"PFM_TASK_V2 accepted. Treat the handoff as the resolved implementation contract. Do not run local tests/typecheck/builds/validators/benchmarks/dev servers or install packages. Do not expand beyond READ_PATHS. If information is insufficient, stop with LOOKUP_REQUIRED. GitHub CI owns verification and only an external new handoff may advance REPAIR_ROUND."}})
+    context = "PFM_TASK_V2 accepted. Treat the handoff as the resolved implementation contract. Do not run local tests/typecheck/builds/validators/benchmarks/dev servers or install packages. Do not expand beyond READ_PATHS. If information is insufficient, stop with LOOKUP_REQUIRED. GitHub CI owns verification and only an external new handoff may advance REPAIR_ROUND."
+    if bootstrap_required:
+        context += f" Before any repository mutation, run exactly: git switch -c {target}"
+    emit({"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":context}})
 
 def pre_tool(payload, root):
     tool = str(payload.get("tool_name") or "")
@@ -372,6 +491,13 @@ def pre_tool(payload, root):
     if tool in {"spawn_agent", "Agent"}:
         deny("Subagents are disabled for PFM implementation turns.")
         return
+    if state is not None and state.get("BOOTSTRAP_REQUIRED"):
+        if tool == "Bash" and is_safe_branch_bootstrap(command, state["TARGET_BRANCH"]):
+            emit({})
+            return
+        if tool == "apply_patch" or (tool == "Bash" and likely_write(command)):
+            deny(f"TASK_BOOTSTRAP_REQUIRED: run exactly git switch -c {state['TARGET_BRANCH']} before repository mutation.")
+            return
     if state is None:
         if tool == "apply_patch" or (tool == "Bash" and likely_write(command)):
             deny("No PFM_TASK_V2 envelope is active. Repository mutation is blocked.")
@@ -457,6 +583,9 @@ def post_tool(payload, root):
     if state is None:
         emit({})
         return
+    if state.get("BOOTSTRAP_REQUIRED") and current_branch(root) == state.get("TARGET_BRANCH"):
+        state["BOOTSTRAP_REQUIRED"] = False
+        state_path(root, payload).write_text(json.dumps(state, indent=2) + "\n")
     changed = changed_paths(root, state["EXPECTED_HEAD"])
     bad = [path for path in changed if not allowed(path, state["ALLOWED_PATHS"])]
     if bad:
@@ -488,7 +617,9 @@ def stop(payload, root):
         messages.append("working tree is dirty")
     if git_value(["rev-parse", "HEAD"], root) == state["EXPECTED_HEAD"]:
         messages.append("no implementation commit exists")
-    branch = os.environ.get("PFM_POLICY_TEST_BRANCH") or git_value(["symbolic-ref", "--quiet", "--short", "HEAD"], root) or "DETACHED"
+    if state.get("BOOTSTRAP_REQUIRED"):
+        messages.append("target branch bootstrap is incomplete")
+    branch = current_branch(root) or "DETACHED"
     if branch in {"main", "master", "DETACHED"}:
         messages.append(f"final branch is {branch}")
     output = {"continue":True}

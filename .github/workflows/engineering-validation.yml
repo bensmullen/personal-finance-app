@@ -65,3 +65,31 @@ jobs:
             .codex/logs/**
           if-no-files-found: ignore
           retention-days: 30
+
+  incident:
+    name: agent-incident
+    needs: validate
+    if: always() && needs.validate.result != 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Record agent process incident
+        env:
+          INCIDENT_SURFACE: heavy_validation
+          INCIDENT_PROFILE: ${{ inputs.profile }}
+          INCIDENT_HEAD: ${{ github.sha }}
+          INCIDENT_RUN_ID: ${{ github.run_id }}
+          INCIDENT_EVENT: ${{ github.event_name }}
+          INCIDENT_REPOSITORY: ${{ github.repository }}
+          INCIDENT_GATE_VALIDATE: ${{ needs.validate.result }}
+        run: node tools/ci/write-agent-incident.mjs
+      - name: Upload agent process incident
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-incident-${{ github.run_id }}
+          path: engineering-validation-artifacts/agent-incident.json
+          if-no-files-found: error
+          retention-days: 30

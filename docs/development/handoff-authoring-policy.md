@@ -22,10 +22,13 @@ Before emitting the Codex handoff, ChatGPT SHALL:
    telemetry, caching, concurrency, persistence, or generated artifacts;
 7. choose CI, heavy-validation, and UAT evidence from failure risk rather than
    an arbitrary test count;
-8. perform a contradiction/negative-space audit: what would be misleading if
+8. load `docs/development/agent-lessons.json`, deterministically select every
+   active lesson whose applicability matches the task fields, apply its required
+   safeguards, and list exactly those IDs in `LESSONS_APPLIED`;
+9. perform a contradiction/negative-space audit: what would be misleading if
    implemented using a convenient surrogate, inferred from names/counts, or
    silently treated as success?;
-9. collapse the result into the V2 sections. Do not send the full reasoning
+10. collapse the result into the V2 sections. Do not send the full reasoning
    history to Codex.
 
 A handoff is not "resolved" merely because it is long. It is resolved only when
@@ -77,6 +80,15 @@ cannot apply to the task.
 - `UAT:` exact human workflow/decision or not_required.
 
 Codex never performs this evidence locally.
+
+### LESSONS_APPLIED
+
+This scalar is `none` or the comma-separated IDs of every active lesson whose
+deterministic applicability selectors match the task. It is not a place for
+free-form judgment. The policy hook computes the expected set independently and
+fails closed on omissions, extras, or missing required lesson markers.
+
+Candidate and retired lessons are never injected into implementation prompts.
 
 ## 3. Profile contracts
 
@@ -154,6 +166,8 @@ When `HEAVY_VALIDATION_PROFILE` is not `none`, append these markers to the
 same `PROFILE_CONTRACT`.
 
 ### performance
+- `CI_WORK_BOUNDARY:` maximum representative/scaling work ordinary CI may execute
+- `HEAVY_WORK_BOUNDARY:` full workload owned exclusively by engineering-validation
 - `BOUNDARIES:` exact included/excluded work; sibling phases do not silently overlap
 - `APPLICABILITY:` measured vs unavailable/not_applicable/not_implemented/not_measured
 - `SUCCESS_STATUS:` statuses valid for representative/baseline evidence
@@ -211,6 +225,8 @@ applicable questions:
   evidence and its secret/privacy boundary?
 - Does the verification plan prove the failure modes without making timing,
   randomness, or user judgment into flaky correctness assertions?
+- When heavy validation is selected, does the handoff state both the maximum
+  work ordinary CI may execute and the full workload owned by heavy validation?
 
 If any applicable answer is unresolved, the handoff must use
 `SEMANTICS: lookup_required` or return to ChatGPT for further analysis rather

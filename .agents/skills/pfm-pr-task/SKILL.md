@@ -15,6 +15,9 @@ TASK_KIND: product | framework | repair
 MODE: surgical | local | cross-cutting
 SEMANTICS: resolved | lookup_required
 REPAIR_ROUND: 0 | 1 | 2
+TASK_CONTINUITY: new_pr | existing_pr
+TARGET_BRANCH: <approved codex/ or agent/ branch>
+WORKTREE_POLICY: isolated | current
 EXPECTED_HEAD: <full 40-char SHA>
 DEPENDENCY_POLICY: locked | manifest_edit
 DISCOVERY_POLICY: implementation_only | targeted_lookup
@@ -22,6 +25,7 @@ LOCAL_EXECUTION_POLICY: no_tests
 CI_PROFILE: <risk/surface profile>
 HEAVY_VALIDATION_PROFILE: none | performance | stochastic | onboarding | provider
 UAT: required | not_required
+LESSONS_APPLIED: none | <comma-separated active lesson IDs>
 
 READ_PATHS:
 - <exact file or bounded subtree Codex may inspect>
@@ -126,13 +130,26 @@ failure evidence. Codex does not self-repair from locally generated failures.
 Codex may not increment the round itself. A new user/ChatGPT handoff is required
 for every repair round.
 
-## Environment and state
+## Environment, task routing, and state
 
 Environment readiness is checked at session start. Missing/wrong Node/npm or
 missing dependencies is `ENV_NOT_READY`; do not troubleshoot or install
 packages.
 
-The V2 prompt validator itself checks the clean tree and `EXPECTED_HEAD`;
+The V2 validator checks the clean tree, `EXPECTED_HEAD`, target branch,
+task continuity, worktree policy, and applicable active lessons.
+
+For `TASK_CONTINUITY: new_pr`, `WORKTREE_POLICY` must be `isolated`.
+Start a new Codex thread with Worktree enabled. If the worktree is at the
+approved starting commit but not yet on `TARGET_BRANCH`, the hook permits
+exactly one bootstrap command, `git switch -c <TARGET_BRANCH>`, before any
+repository mutation.
+
+For `TASK_CONTINUITY: existing_pr`, the task must already be running on
+`TARGET_BRANCH`. If the branch belongs to another worktree, stop with
+`WRONG_WORKTREE` and resume that PR's existing thread/worktree. Do not ask the
+user to manually check out the branch.
+
 Codex should not spend tool calls rediscovering repository provenance.
 
 ## Completion
@@ -148,16 +165,26 @@ Report:
 - changed files;
 - material decisions;
 - CI status if available;
-- STOP/UAT requirement.
+- STOP/UAT requirement;
+- process signal: `none` or one concise incident/failure pattern for ChatGPT review.
 
 Do not claim verification that GitHub CI has not completed.
 
 
-## Handoff semantic audit
+## Learning loop and handoff semantic audit
 
 Before a V2 handoff is issued, ChatGPT must follow
-`docs/development/handoff-authoring-policy.md`. The hook checks the compact
-results of that audit; Codex is not asked to redo it.
+`docs/development/handoff-authoring-policy.md` and the active entries in
+`docs/development/agent-lessons.json`. The hook independently computes the
+active lessons applicable to the task and rejects a handoff whose
+`LESSONS_APPLIED` set or required lesson markers are incomplete.
+
+Incidents are evidence, not policy. Codex never promotes, retires, or rewrites
+lessons during product/repair work. Promotion remains a curated framework
+decision under `docs/development/agent-learning-policy.md`.
+
+The hook checks the compact results of the semantic audit; Codex is not asked
+to redo it.
 
 The purpose is to prevent a detailed prompt from still being semantically
 under-specified. In particular:

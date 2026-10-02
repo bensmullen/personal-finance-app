@@ -30,6 +30,11 @@ Unknown/toolchain/CI changes default to the full safe matrix.
 
 The aggregate job remains named `test` for branch protection.
 
+Ordinary unit and E2E jobs have explicit 20-minute damage-containment ceilings.
+These are not performance budgets and must never be used as correctness
+thresholds. A timeout is process evidence requiring diagnosis, not permission to
+raise the ceiling or weaken the workload blindly.
+
 ## 3. Task CI profiles
 
 The audited ChatGPT handoff selects the closest semantic profile. This describes
@@ -72,6 +77,12 @@ Profiles:
 
 A profile fails clearly when its script has not yet been implemented.
 
+Whenever a heavy profile is selected, the audited handoff must define both an
+ordinary-CI work boundary and a heavy-work boundary. Full representative,
+stress, scaling, convergence, onboarding, or provider workloads assigned to the
+heavy profile must not migrate into ordinary unit/E2E gates merely because a
+specification requires that evidence to exist somewhere.
+
 Performance repetition counts and stochastic realization counts must be chosen
 from the measurement/convergence objective and observed variance, not from a
 permanent arbitrary global count. A milestone may define an initial engineering
@@ -83,7 +94,19 @@ Initial implementation is round 0. CI failures are interpreted by ChatGPT.
 Every repair gets a new V2 prompt with exact failure evidence and round 1 or 2.
 Codex cannot advance the round internally. There is no autonomous round 3.
 
-## 6. UAT
+## 6. Process-learning incidents
+
+Selected ordinary gates that fail, time out, or are cancelled produce a
+structured `agent-incident` artifact from the aggregate CI job when execution
+reaches that job. Heavy-validation failures write the same evidence shape into
+`engineering-validation-artifacts/`.
+
+An incident is evidence only. CI, Codex, and hooks MUST NOT modify or promote
+`docs/development/agent-lessons.json`. ChatGPT reviews the evidence under
+`docs/development/agent-learning-policy.md`; lesson promotion/retirement is a
+separate framework decision.
+
+## 7. UAT
 
 Automated verification must be green before roadmap-required UAT begins. UAT
 validates user comprehension/workflow, not financial arithmetic that can be

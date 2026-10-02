@@ -71,6 +71,15 @@ for (const file of files) {
     }
     continue;
   }
+  if (
+    file === "docs/development/handoff-authoring-policy.md" ||
+    file === "docs/development/verification-policy.md" ||
+    file.startsWith("docs/development/agent-")
+  ) {
+    gates.tooling = true;
+    reason.add("agent governance changed");
+    continue;
+  }
   if (file.startsWith("docs/")) {
     reason.add("non-normative documentation only");
     continue;
