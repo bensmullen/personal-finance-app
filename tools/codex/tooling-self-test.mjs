@@ -6,6 +6,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const policy = path.join(root, ".codex", "hooks", "pfm-policy.py");
 const stateShell = path.join(root, "tools", "codex", "state.sh");
 const envDoctor = path.join(root, "tools", "codex", "env-doctor.sh");
+const lessonsValidator = path.join(root, "tools", "codex", "validate-agent-lessons.mjs");
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -23,6 +24,7 @@ for (const [command, args] of [
   ["bash", ["-n", stateShell]],
   ["bash", ["-n", envDoctor]],
   ["bash", [envDoctor]],
+  ["node", [lessonsValidator]],
 ]) {
   const result = run(command, args);
   assert(result.status === 0, `${command} ${args.join(" ")} failed: ${result.stderr}`);
@@ -55,6 +57,9 @@ TASK_KIND: framework
 MODE: local
 SEMANTICS: resolved
 REPAIR_ROUND: 0
+TASK_CONTINUITY: existing_pr
+TARGET_BRANCH: agent/policy-self-test
+WORKTREE_POLICY: current
 EXPECTED_HEAD: ${head}
 DEPENDENCY_POLICY: manifest_edit
 DISCOVERY_POLICY: implementation_only
@@ -62,6 +67,7 @@ LOCAL_EXECUTION_POLICY: no_tests
 CI_PROFILE: tooling
 HEAVY_VALIDATION_PROFILE: none
 UAT: not_required
+LESSONS_APPLIED: none
 
 READ_PATHS:
 - package.json
@@ -111,16 +117,29 @@ STOP:
 Stop on any policy mismatch.
 `;
 
-const accepted = hook("UserPromptSubmit", { prompt });
+const policyTestEnv = {
+  PFM_POLICY_TEST_BRANCH: "agent/policy-self-test",
+  PFM_POLICY_TEST_ORIGIN: "https://github.com/bensmullen/personal-finance-app.git",
+  PFM_POLICY_TEST_LINKED_WORKTREE: "1",
+};
+
+const accepted = hook("UserPromptSubmit", { prompt }, policyTestEnv);
 assert(
   accepted?.hookSpecificOutput?.hookEventName === "UserPromptSubmit",
   "valid V2 prompt was not accepted",
 );
 
 const performancePrompt = prompt
+  .replace("TASK_KIND: framework", "TASK_KIND: repair")
+  .replace("REPAIR_ROUND: 0", "REPAIR_ROUND: 1")
   .replace("CI_PROFILE: tooling", "CI_PROFILE: deterministic")
   .replace("HEAVY_VALIDATION_PROFILE: none", "HEAVY_VALIDATION_PROFILE: performance")
+  .replace("LESSONS_APPLIED: none", "LESSONS_APPLIED: AL-001")
+  .replace("READ_PATHS:\n- package.json\n- tools/codex/**\n- .codex/**\n- tools/ci/**", "READ_PATHS:\n- test/**")
+  .replace("ALLOWED_PATHS:\n- tools/codex/**\n- .codex/**\n- tools/ci/**", "ALLOWED_PATHS:\n- test/**")
   .replace(/PROFILE_CONTRACT:\n[\s\S]*?\nEVIDENCE_PLAN:/, `PROFILE_CONTRACT:
+CI_WORK_BOUNDARY: ordinary CI uses bounded deterministic smoke only.
+HEAVY_WORK_BOUNDARY: full representative and scaling workloads run only in engineering-validation.
 BOUNDARIES: sibling measurements are explicitly non-overlapping.
 APPLICABILITY: unavailable transport is not_applicable, never a surrogate duration.
 SUCCESS_STATUS: only completed representative runs are valid baseline evidence.
@@ -129,7 +148,7 @@ RESOURCE_SEMANTICS: memory/cost fields state absolute/delta/metering semantics.
 CONTROLLED_EVIDENCE: full capture runs in engineering-validation, never under Codex.
 
 EVIDENCE_PLAN:`);
-const performanceAccepted = hook("UserPromptSubmit", { prompt: performancePrompt });
+const performanceAccepted = hook("UserPromptSubmit", { prompt: performancePrompt }, policyTestEnv);
 assert(
   performanceAccepted?.hookSpecificOutput?.hookEventName === "UserPromptSubmit",
   "complete performance profile contract should be accepted",
@@ -139,8 +158,47 @@ const incompletePerformance = performancePrompt.replace(
   "CONTROLLED_EVIDENCE: full capture runs in engineering-validation, never under Codex.",
   "CONTROLLED EVIDENCE omitted.",
 );
-const performanceBlocked = hook("UserPromptSubmit", { prompt: incompletePerformance });
+const performanceBlocked = hook("UserPromptSubmit", { prompt: incompletePerformance }, policyTestEnv);
 assert(performanceBlocked.decision === "block", "incomplete performance profile contract should be blocked");
+
+const missingLesson = hook("UserPromptSubmit", {
+  prompt: performancePrompt.replace("LESSONS_APPLIED: AL-001", "LESSONS_APPLIED: none"),
+}, policyTestEnv);
+assert(missingLesson.decision === "block", "applicable active lesson omission should be blocked");
+
+const missingLessonMarker = hook("UserPromptSubmit", {
+  prompt: performancePrompt.replace("CI_WORK_BOUNDARY:", "CI WORK BOUNDARY omitted:"),
+}, policyTestEnv);
+assert(missingLessonMarker.decision === "block", "active lesson required marker omission should be blocked");
+
+const wrongWorktreePrompt = prompt.replace("TARGET_BRANCH: agent/policy-self-test", "TARGET_BRANCH: agent/existing-pr");
+const wrongWorktree = hook("UserPromptSubmit", { prompt: wrongWorktreePrompt }, {
+  ...policyTestEnv,
+  PFM_POLICY_TEST_BRANCH: "main",
+});
+assert(wrongWorktree.decision === "block" && String(wrongWorktree.reason).includes("WRONG_WORKTREE"), "existing PR wrong worktree should be blocked clearly");
+
+const bootstrapPrompt = prompt
+  .replace("TASK_CONTINUITY: existing_pr", "TASK_CONTINUITY: new_pr")
+  .replace("TARGET_BRANCH: agent/policy-self-test", "TARGET_BRANCH: agent/new-policy-branch")
+  .replace("WORKTREE_POLICY: current", "WORKTREE_POLICY: isolated");
+const bootstrapAccepted = hook("UserPromptSubmit", { prompt: bootstrapPrompt }, {
+  ...policyTestEnv,
+  PFM_POLICY_TEST_BRANCH: "main",
+});
+assert(
+  bootstrapAccepted?.hookSpecificOutput?.additionalContext?.includes("git switch -c agent/new-policy-branch"),
+  "new PR linked worktree should receive exact branch bootstrap",
+);
+const bootstrapPre = hook("PreToolUse", {
+  tool_name: "Bash",
+  tool_use_id: "bootstrap",
+  tool_input: { command: "git switch -c agent/new-policy-branch" },
+}, {
+  ...policyTestEnv,
+  PFM_POLICY_TEST_BRANCH: "main",
+});
+assert(JSON.stringify(bootstrapPre) === "{}", "exact new-PR branch bootstrap should be allowed");
 
 const pre = (command) => hook("PreToolUse", {
   tool_name: "Bash",
@@ -174,8 +232,8 @@ const badPatch = hook("PreToolUse", {
 assert(badPatch?.hookSpecificOutput?.permissionDecision === "deny", "out-of-scope patch should be denied");
 
 const testEnv = {
+  ...policyTestEnv,
   PFM_POLICY_TEST_BRANCH: "codex/policy-self-test",
-  PFM_POLICY_TEST_ORIGIN: "https://github.com/bensmullen/personal-finance-app.git",
 };
 const safePush = hook("PermissionRequest", {
   tool_name: "Bash",
@@ -184,6 +242,15 @@ const safePush = hook("PermissionRequest", {
 assert(
   safePush?.hookSpecificOutput?.decision?.behavior === "allow",
   "approved feature-branch push should be auto-allowed",
+);
+
+const safeRefspecPush = hook("PermissionRequest", {
+  tool_name: "Bash",
+  tool_input: { command: "git push origin codex/policy-self-test:refs/heads/codex/policy-self-test" },
+}, testEnv);
+assert(
+  safeRefspecPush?.hookSpecificOutput?.decision?.behavior === "allow",
+  "approved fully-qualified feature-branch refspec should be auto-allowed",
 );
 
 const safePr = hook("PermissionRequest", {
