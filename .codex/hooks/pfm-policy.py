@@ -455,11 +455,11 @@ def user_prompt(payload, root):
         return
     branch = current_branch(root) or "DETACHED"
     target = values["TARGET_BRANCH"]
+    if values["WORKTREE_POLICY"] == "isolated" and not is_linked_worktree(root):
+        emit({"decision":"block","reason":"WORKTREE_REQUIRED: this task requires a linked Codex worktree. For a new PR, start a new Codex thread with Worktree enabled; for an existing PR, resume its existing Codex thread/worktree."})
+        return
     bootstrap_required = False
     if values["TASK_CONTINUITY"] == "new_pr":
-        if not is_linked_worktree(root):
-            emit({"decision":"block","reason":"WORKTREE_REQUIRED: start this new PR in a new Codex thread with Worktree enabled; do not manually switch the primary checkout."})
-            return
         if branch != target:
             if local_branch_exists(root, target):
                 owner = worktree_for_branch(root, target)
