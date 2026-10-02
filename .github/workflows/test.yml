@@ -207,6 +207,14 @@ jobs:
           require_gate unit "$UNIT_ENABLED" "$UNIT"
           require_gate build "$BUILD_ENABLED" "$BUILD"
           require_gate e2e "$E2E_ENABLED" "$E2E"
+      - name: Checkout for agent process incident
+        if: failure()
+        uses: actions/checkout@v4
+      - name: Set up Node for agent process incident
+        if: failure()
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
       - name: Record agent process incident
         if: failure()
         env:
