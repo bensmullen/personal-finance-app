@@ -3,11 +3,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { candidateKey } from "./agent-candidate-key.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const policy = path.join(root, ".codex", "hooks", "pfm-policy.py");
 const stateShell = path.join(root, "tools", "codex", "state.sh");
 const envDoctor = path.join(root, "tools", "codex", "env-doctor.sh");
+const setupLocalEnvironment = path.join(root, "tools", "codex", "setup-local-environment.sh");
+const prepareLinkedWorktree = path.join(root, "tools", "codex", "prepare-linked-worktree.sh");
 const lessonsValidator = path.join(root, "tools", "codex", "validate-agent-lessons.mjs");
 
 const assert = (condition, message) => {
@@ -25,7 +28,10 @@ for (const [command, args] of [
   ["python3", ["-c", 'import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())', policy]],
   ["bash", ["-n", stateShell]],
   ["bash", ["-n", envDoctor]],
+  ["bash", ["-n", setupLocalEnvironment]],
+  ["bash", ["-n", prepareLinkedWorktree]],
   ["bash", [envDoctor]],
+  ["bash", [envDoctor, "--verification"]],
   ["node", [lessonsValidator]],
 ]) {
   const result = run(command, args);
@@ -50,6 +56,39 @@ const hook = (event, extra = {}, env = {}) => {
   assert(result.status === 0, `${event} hook failed: ${result.stderr}`);
   return JSON.parse(result.stdout || "{}");
 };
+
+const sessionStart = hook("SessionStart");
+assert(
+  sessionStart?.continue === true
+    && String(sessionStart?.hookSpecificOutput?.additionalContext ?? "").includes("not a Codex implementation-start requirement"),
+  "SessionStart should not require Node/npm/dependencies or GitHub CLI for no-tests implementation",
+);
+
+const candidateA = {
+  rule: " Diagnose pre-agent failures before blaming the envelope. ",
+  applicability: {
+    task_kinds: ["product", "framework"],
+    ci_profiles: ["tooling", "*"],
+    heavy_validation_profiles: ["none", "*"],
+    task_continuities: ["new_pr"],
+  },
+  do_not_generalize_to: "If the hook returned an explicit envelope error, use that evidence.",
+};
+const candidateB = {
+  rule: "Diagnose   pre-agent failures before blaming the envelope.",
+  applicability: {
+    task_kinds: ["framework", "product", "product"],
+    ci_profiles: ["*", "tooling"],
+    heavy_validation_profiles: ["*", "none"],
+    task_continuities: ["NEW_PR"],
+  },
+  do_not_generalize_to: " If the hook returned an explicit envelope error, use that evidence. ",
+};
+assert(candidateKey(candidateA) === candidateKey(candidateB), "candidate identity should ignore whitespace, selector order, case, and duplicates");
+assert(
+  candidateKey(candidateA) !== candidateKey({ ...candidateA, rule: "Diagnose only worktree creation failures." }),
+  "material candidate rule changes should produce a new identity",
+);
 
 const malformed = hook("UserPromptSubmit", { prompt: "PFM_TASK_V2\nMODE: local" });
 assert(malformed.decision === "block", "malformed V2 prompt should be blocked");
@@ -446,4 +485,4 @@ const compact = hook("PreCompact", { trigger: "auto" });
 assert(compact.continue === false, "automatic compaction should stop an active PFM task");
 
 fs.rmSync(attachmentHome, { recursive: true, force: true });
-console.log("PASS codex tooling — V2 envelope, trusted long-paste attachments, environment, execution, read/scope, push, and compaction guards");
+console.log("PASS codex tooling — V2 envelope, candidate identity, trusted long-paste attachments, implementation preflight, environment setup syntax, execution, read/scope, push, and compaction guards");

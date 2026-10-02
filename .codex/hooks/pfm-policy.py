@@ -542,31 +542,13 @@ def deny(reason):
 
 def session_start(payload, root):
     problems = []
-    for command in ("git", "node", "npm"):
-        result = subprocess.run(["/usr/bin/env", "bash", "-lc", f"command -v {command}"], cwd=root, text=True, capture_output=True)
-        if result.returncode != 0:
-            problems.append(f"{command} is not on PATH")
-    node = subprocess.run(["/usr/bin/env", "bash", "-lc", "node -p 'process.versions.node'"], cwd=root, text=True, capture_output=True)
-    version = node.stdout.strip()
-    if node.returncode == 0 and not version.startswith("22."):
-        problems.append(f"Node 22 required; found {version or 'unknown'}")
-    npm = subprocess.run(["/usr/bin/env", "bash", "-lc", "npm --version"], cwd=root, text=True, capture_output=True)
-    npm_version = npm.stdout.strip()
-    if npm.returncode == 0 and not npm_version.startswith("10."):
-        problems.append(f"npm 10 required; found {npm_version or 'unknown'}")
-    if not (root / "node_modules").is_dir() or not (root / "node_modules" / ".bin" / "tsc").exists():
-        problems.append("dependencies are not installed; select the repository Local Environment so setup runs before Codex")
-    if not os.environ.get("CI"):
-        gh = subprocess.run(["/usr/bin/env", "bash", "-lc", "command -v gh && gh auth status"], cwd=root, text=True, capture_output=True)
-        if gh.returncode != 0:
-            problems.append("GitHub CLI is missing or unauthenticated; run gh auth login and gh auth setup-git")
     origin = git_value(["remote", "get-url", "origin"], root)
     if origin and "bensmullen/personal-finance-app" not in origin:
         problems.append("origin is not bensmullen/personal-finance-app")
     if problems:
-        emit({"continue":False,"stopReason":"ENV_NOT_READY: " + "; ".join(problems),"systemMessage":"Fix the Personal Finance App Local Environment/Node/npm setup before starting a Codex task. Codex must not repair the environment itself."})
+        emit({"continue":False,"stopReason":"ENV_NOT_READY: " + "; ".join(problems),"systemMessage":"PFM repository preflight failed before the task began."})
         return
-    emit({"continue":True,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"PFM environment preflight passed: Git, Node 22, npm, and dependencies are ready. Do not reinstall dependencies during the agent phase."}})
+    emit({"continue":True,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"PFM implementation preflight passed. Node/npm/dependencies are not a Codex implementation-start requirement because local verification and package installation are prohibited; GitHub CI owns verification. GitHub CLI is publication-only and may be unavailable until completion."}})
 
 def user_prompt(payload, root):
     prompt = str(payload.get("prompt") or "")

@@ -4,4 +4,4 @@ version = 1
 name = "Personal Finance App"
 
 [setup]
-script = "npm ci --prefer-offline --no-audit --no-fund"
+script = "bash tools/codex/setup-local-environment.sh"

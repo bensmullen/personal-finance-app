@@ -107,7 +107,9 @@ deterministic applicability selectors match the task. It is not a place for
 free-form judgment. The policy hook computes the expected set independently and
 fails closed on omissions, extras, or missing required lesson markers.
 
-Candidate and retired lessons are never injected into implementation prompts.
+Candidate issues are never injected into implementation prompts. Only active
+entries in `docs/development/agent-lessons.json` participate in deterministic
+applicability. Retired lessons remain historical only.
 
 ## 3. Profile contracts
 

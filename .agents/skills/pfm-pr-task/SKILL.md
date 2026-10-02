@@ -156,18 +156,23 @@ for every repair round.
 
 ## Environment, task routing, and state
 
-Environment readiness is checked at session start. Missing/wrong Node/npm or
-missing dependencies is `ENV_NOT_READY`; do not troubleshoot or install
-packages.
+Session start checks repository identity, not the local verification toolchain.
+Node/npm and installed dependencies are not implementation-start requirements
+because Codex may not run local verification or install packages. A configured
+Local Environment may prepare dependencies for developer convenience, but a
+missing Desktop environment binding does not invalidate an otherwise correct
+linked worktree.
 
 The V2 validator checks the clean tree, `EXPECTED_HEAD`, target branch,
 task continuity, worktree policy, and applicable active lessons.
 
 For `TASK_CONTINUITY: new_pr`, `WORKTREE_POLICY` must be `isolated`.
-Start a new Codex thread with Worktree enabled. If the worktree is at the
-approved starting commit but not yet on `TARGET_BRANCH`, the hook permits
-exactly one bootstrap command, `git switch -c <TARGET_BRANCH>`, before any
-repository mutation.
+Use an isolated linked Git worktree at the approved starting commit. It may be
+created by Codex Desktop or manually with `git worktree add --detach`; the hook
+validates Git worktree isolation, not the Desktop UI that created it. If the
+worktree is at the approved starting commit but not yet on `TARGET_BRANCH`, the
+hook permits exactly one bootstrap command, `git switch -c <TARGET_BRANCH>`,
+before any repository mutation.
 
 For `TASK_CONTINUITY: existing_pr`, the task must already be running on
 `TARGET_BRANCH`. If the branch belongs to another worktree, stop with
@@ -178,11 +183,16 @@ Codex should not spend tool calls rediscovering repository provenance.
 
 ## Completion
 
-Commit, push to an approved feature branch, and open the PR with an explicit safe command of the form:
+Commit and push to an approved feature branch. When GitHub CLI is available,
+open the PR with an explicit safe command of the form:
 
 `gh pr create --repo bensmullen/personal-finance-app --base main --head <current-branch> --title "<title>" --body "<body>"`
 
-The repository permission hook can auto-approve only that bounded PR creation and the corresponding safe feature-branch push.
+The repository permission hook can auto-approve only that bounded PR creation and
+the corresponding safe feature-branch push. If `gh` is unavailable or
+unauthenticated after the push, do not treat that as an implementation failure.
+Report `PUBLICATION_PENDING: GH_UNAVAILABLE` with branch and HEAD; ChatGPT may
+open the PR through the GitHub connector.
 
 Report:
 - branch and new HEAD;
@@ -203,9 +213,12 @@ Before a V2 handoff is issued, ChatGPT must follow
 active lessons applicable to the task and rejects a handoff whose
 `LESSONS_APPLIED` set or required lesson markers are incomplete.
 
-Incidents are evidence, not policy. Codex never promotes, retires, or rewrites
-lessons during product/repair work. Promotion remains a curated framework
-decision under `docs/development/agent-learning-policy.md`.
+Incidents are evidence, not policy. Codex never creates candidate issues,
+promotes, retires, or rewrites lessons during product/repair work. It reports one
+concise process signal; the ChatGPT architecture/review layer decides whether it
+is a candidate and automatically persists qualifying candidates under
+`docs/development/agent-learning-policy.md`. Promotion remains a curated
+framework decision.
 
 The hook checks the compact results of the semantic audit; Codex is not asked
 to redo it.
