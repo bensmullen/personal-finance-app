@@ -182,6 +182,13 @@ const bootstrapPrompt = prompt
   .replace("TASK_CONTINUITY: existing_pr", "TASK_CONTINUITY: new_pr")
   .replace("TARGET_BRANCH: agent/policy-self-test", "TARGET_BRANCH: agent/new-policy-branch")
   .replace("WORKTREE_POLICY: current", "WORKTREE_POLICY: isolated");
+const noWorktree = hook("UserPromptSubmit", { prompt: bootstrapPrompt }, {
+  ...policyTestEnv,
+  PFM_POLICY_TEST_BRANCH: "main",
+  PFM_POLICY_TEST_LINKED_WORKTREE: "0",
+});
+assert(noWorktree.decision === "block" && String(noWorktree.reason).includes("WORKTREE_REQUIRED"), "isolated task should require a linked worktree");
+
 const bootstrapAccepted = hook("UserPromptSubmit", { prompt: bootstrapPrompt }, {
   ...policyTestEnv,
   PFM_POLICY_TEST_BRANCH: "main",
@@ -199,6 +206,15 @@ const bootstrapPre = hook("PreToolUse", {
   PFM_POLICY_TEST_BRANCH: "main",
 });
 assert(JSON.stringify(bootstrapPre) === "{}", "exact new-PR branch bootstrap should be allowed");
+const bootstrapPost = hook("PostToolUse", {
+  tool_name: "Bash",
+  tool_use_id: "bootstrap",
+  tool_input: { command: "git switch -c agent/new-policy-branch" },
+}, {
+  ...policyTestEnv,
+  PFM_POLICY_TEST_BRANCH: "agent/new-policy-branch",
+});
+assert(JSON.stringify(bootstrapPost) === "{}", "successful bootstrap should activate the target branch state");
 
 const pre = (command) => hook("PreToolUse", {
   tool_name: "Bash",
