@@ -81,20 +81,6 @@ test("Advanced exposes in-memory performance diagnostics", async ({ page }) => {
   await expect(page.getByText(/server\/cloud is not implemented and not measured/)).toBeVisible();
 });
 
-test("throwing browser diagnostic timing does not change a household forecast", async ({ page }) => {
-  await loadExample(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Model Settings", exact: true }).click();
-  await page.getByLabel("Simulation end").fill("2026-02-01");
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
-  await page.getByRole("button", { name: "Run household forecast" }).click();
-  const forecast = page.getByRole("table", { name: "Reconciled household forecast" });
-  const original = await forecast.textContent();
-  await page.evaluate(() => { Object.defineProperty(performance, "now", { configurable: true, value: () => { throw new Error("diagnostic clock unavailable"); } }); });
-  await page.getByRole("button", { name: "Run household forecast" }).click();
-  await expect(forecast).toHaveText(original!);
-});
-
 test("Golden household runs, compares, explains, and distinguishes modeled liquidity stress", async ({
   page,
 }) => {

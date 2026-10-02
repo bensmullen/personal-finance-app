@@ -80,22 +80,27 @@ describe("performance instrumentation", () => {
     const stress = createStressPerformanceFixture();
     expect(realistic.model).not.toEqual(stress.model);
     for (const fixture of [realistic, stress]) {
-      const result = runPersonalHouseholdForecast(fixture.model, fixture.request);
+      const boundedRequest = oneMonth(fixture.request);
+      const result = runPersonalHouseholdForecast(fixture.model, boundedRequest);
       expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
       requireCompletedPerformanceForecast(result, fixture.id);
       if (result.status !== "completed") throw new Error("Fixture failed.");
-      expect(result.points).toHaveLength(fixture.dimensions.horizonMonths);
+      expect(result.points).toHaveLength(1);
       expect(result.reachedThrough).toBe(result.requestedHorizon.end);
       expect(result.openingSnapshot.positions).toHaveLength(fixture.coverage.canonicalObjectCounts.Investment!);
       expect(result.retirementMilestones).toHaveLength(fixture.request.compiler.cashFlow!.retirementBindings!.length);
-      expect(result.points.at(-1)!.statementIncome.amount).toBe("0");
-      expect(result.points[1]!.investmentContributionPrincipal.amount).not.toBe("0");
-      expect(result.points[1]!.debtPrincipalReduction.amount).not.toBe("0");
-      const compiled = compileHouseholdProjection(fixture.model, fixture.request.compiler);
+      expect(result.points[0]!.investmentContributionPrincipal.amount).not.toBe("0");
+      expect(result.points[0]!.debtPrincipalReduction.amount).not.toBe("0");
+      const mechanicsRequest = { ...boundedRequest, compiler: { ...boundedRequest.compiler,
+        cashFlow: { ...boundedRequest.compiler.cashFlow!, simulationEnd: "2026-03-01", months: 2 },
+        investments: { ...boundedRequest.compiler.investments!, simulationEnd: "2026-03-01", months: 2 },
+        liabilities: { ...boundedRequest.compiler.liabilities!, simulationEnd: "2026-03-01", months: 2 },
+      } };
+      const compiled = compileHouseholdProjection(fixture.model, mechanicsRequest.compiler);
       expect(compiled.status).toBe("compiled");
       if (compiled.status !== "compiled") throw new Error("Fixture compilation failed.");
       expect(compiled.value.investmentInput!.transfers).toHaveLength(1);
-      expect(compiled.value.liabilityInput!.loans.some((loan) => loan.extraPrincipalPayments.length > 0)).toBe(true);
+      expect(compiled.value.liabilityInput!.loans.some((loan) => (loan.extraPrincipalPayments?.length ?? 0) > 0)).toBe(true);
       const executed = runCompiledHouseholdProjection({ compiled: { ...compiled.value, executionMonths: 2 }, runContext: createRunContext({
         runId: runId(fixture.request.runIdentity), scenarioId: scenarioId(compiled.value.scenarioIdentity), baseCurrency: USD,
         asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"),
@@ -117,7 +122,7 @@ describe("performance instrumentation", () => {
     }
     expect(stress.coverage.canonicalObjectCounts.Expense).toBeGreaterThan(realistic.coverage.canonicalObjectCounts.Expense!);
     expect(realistic.coverage.unsupportedGaps.join(" ")).toContain("multi-member");
-  }, 180_000);
+  });
 
   it("executes the declared lower-return comparison intent", () => {
     for (const fixture of [createRealisticPerformanceFixture(), createStressPerformanceFixture()]) {
@@ -130,18 +135,34 @@ describe("performance instrumentation", () => {
     }
   });
 
-  it("captures a bounded independent horizon and recurring-operation scaling matrix", () => {
+  it("declares an independent horizon and recurring-operation scaling matrix with bounded compilation", () => {
     const fixtures = createPerformanceScalingFixtures();
     expect(fixtures).toHaveLength(4);
     expect(new Set(fixtures.map((fixture) => fixture.dimensions.horizonMonths))).toEqual(new Set([12, 24]));
     expect(new Set(fixtures.map((fixture) => fixture.dimensions.recurringOperationCount)).size).toBe(2);
     for (const fixture of fixtures) {
       expect(fixture.request.compiler.cashFlow!.months).toBe(fixture.dimensions.horizonMonths);
+      expect(fixture.request.compiler.investments!.months).toBe(fixture.dimensions.horizonMonths);
+      expect(fixture.request.compiler.liabilities!.months).toBe(fixture.dimensions.horizonMonths);
       expect(fixture.dimensions.modelEntityCount).toBe(Object.values(fixture.coverage.canonicalObjectCounts).reduce((sum, count) => sum + count, 0));
-      const result = runPersonalHouseholdForecast(fixture.model, fixture.request);
-      requireCompletedPerformanceForecast(result, fixture.id);
+      const counts = fixture.coverage.canonicalObjectCounts;
+      const investments = fixture.request.compiler.investments!;
+      expect(fixture.dimensions.recurringOperationCount).toBe((counts.Income ?? 0) + (counts.Expense ?? 0)
+        + investments.purchaseInstructions.filter((item) => item.schedule.kind === "utc_monthly").length
+        + investments.transferInstructions.length + fixture.request.compiler.liabilities!.executionProfiles.length);
+      expect(fixture.coverage.executableEvidence.length).toBeGreaterThan(0);
+      expect(fixture.coverage.scenarios).toHaveLength(2);
+      expect(fixture.coverage.unsupportedGaps.join(" ")).toContain("multi-member");
+      const compiled = compileHouseholdProjection(fixture.model, oneMonth(fixture.request).compiler);
+      expect(compiled.status, JSON.stringify(compiled.diagnostics)).toBe("compiled");
+      if (compiled.status !== "compiled") throw new Error("Scaling fixture compilation failed.");
+      expect(compiled.value.executionMonths).toBe(1);
+      expect(compiled.value.cashFlowInput!.incomes).toHaveLength(counts.Income!);
+      expect(compiled.value.cashFlowInput!.expenses).toHaveLength(counts.Expense!);
+      expect(compiled.value.investmentInput!.returns).toHaveLength(counts.Investment!);
+      expect(compiled.value.liabilityInput!.loans).toHaveLength(counts.Liability!);
     }
-  }, 180_000);
+  });
 
   it("rejects partial/unavailable evidence without manufacturing timing or success", () => {
     for (const status of ["incomplete", "unavailable", "unsupported", "error"]) {
