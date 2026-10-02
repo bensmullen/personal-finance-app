@@ -54,6 +54,17 @@ jobs:
           esac
           node -e 'const p=require("./package.json"); const s=process.argv[1]; if(!p.scripts?.[s]){console.error("Profile script is not implemented on this branch:",s);process.exit(3)}' "$SCRIPT"
           npm run "$SCRIPT"
+      - name: Record agent process incident
+        if: failure()
+        env:
+          INCIDENT_SURFACE: heavy_validation
+          INCIDENT_PROFILE: ${{ inputs.profile }}
+          INCIDENT_HEAD: ${{ github.sha }}
+          INCIDENT_RUN_ID: ${{ github.run_id }}
+          INCIDENT_EVENT: ${{ github.event_name }}
+          INCIDENT_REPOSITORY: ${{ github.repository }}
+          INCIDENT_GATE_VALIDATE: failure
+        run: node tools/ci/write-agent-incident.mjs
       - name: Upload heavy-validation evidence
         if: always()
         uses: actions/upload-artifact@v4
