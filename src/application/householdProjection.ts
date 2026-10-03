@@ -522,6 +522,9 @@ const filteredScenario = (
   });
 };
 
+const scenarioChangesDomain = (resolved: ResolvedScenario, kinds: ReadonlySet<string>): boolean =>
+  resolved.layers.some(layer => layer.changes.some(change => kinds.has(change.kind)));
+
 const toReadModel = (
   result: CompiledHouseholdProjectionRunResult,
   compiled: CompiledHouseholdProjection,
@@ -785,7 +788,7 @@ const executeInternal = (
             cashFlowInput:
               compiled.cashFlowInput === undefined
                 ? undefined
-                : applyVerticalSlice2Scenario(
+                : !scenarioChangesDomain(resolved, scenarioKinds.cash) ? compiled.cashFlowInput : applyVerticalSlice2Scenario(
                     compiled.cashFlowInput,
                     filteredScenario(resolved, scenarioKinds.cash),
                     template,
@@ -793,7 +796,7 @@ const executeInternal = (
             investmentInput:
               compiled.investmentInput === undefined
                 ? undefined
-                : applyVerticalSlice3Scenario(
+                : !scenarioChangesDomain(resolved, scenarioKinds.investments) ? compiled.investmentInput : applyVerticalSlice3Scenario(
                     compiled.investmentInput,
                     filteredScenario(resolved, scenarioKinds.investments),
                     template,
@@ -801,7 +804,7 @@ const executeInternal = (
             liabilityInput:
               compiled.liabilityInput === undefined
                 ? undefined
-                : applyVerticalSlice4Scenario(
+                : !scenarioChangesDomain(resolved, scenarioKinds.liabilities) ? compiled.liabilityInput : applyVerticalSlice4Scenario(
                     compiled.liabilityInput,
                     filteredScenario(resolved, scenarioKinds.liabilities),
                     template,
@@ -997,7 +1000,7 @@ const commonBoundary = (
         item.compiled.liabilityInput?.householdId,
     );
   const economic = (item: ExecutedHousehold) => {
-    const { scenarioIdentity: _scenarioIdentity, ...base } = item.compiled;
+    const { scenarioIdentity: _scenarioIdentity, executionKernel: _executionKernel, ...base } = item.compiled;
     return canonicalSerialize(base);
   };
   if (
