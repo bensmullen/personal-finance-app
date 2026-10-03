@@ -4,7 +4,7 @@
     {
       "id": "AL-001",
       "title": "Separate ordinary CI work from heavy performance evidence",
-      "status": "active",
+      "status": "retired",
       "severity": "high",
       "source_evidence": [
         "PR #32 R1 performance instrumentation",
@@ -25,15 +25,13 @@
           "*"
         ]
       },
-      "required_markers": [
-        "CI_WORK_BOUNDARY:",
-        "HEAVY_WORK_BOUNDARY:"
-      ],
+      "required_markers": [],
       "rule": "When performance heavy validation is selected, explicitly bound the maximum representative/scaling work ordinary CI may execute and separately name the full workload owned by engineering-validation. Full representative, stress, or scaling workloads must not silently migrate into ordinary unit/E2E verification.",
       "do_not_generalize_to": "Do not prohibit bounded representative correctness smoke tests, structural fixture checks, or full workloads whose correctness genuinely requires the full horizon and whose CI ownership has been explicitly approved.",
       "promotion_reason": "The failure consumed substantial CI time and exposed an ambiguity in the handoff/verification ownership contract; the rule is narrow, deterministic, and preventive.",
       "counterevidence": "Repeated tasks may show that a specific bounded workload is cheap and correctness-critical enough for ordinary CI; that is handled by an explicit task boundary, not by weakening this lesson.",
       "review_criteria": "Retire as codified when the base handoff and verification contracts plus self-tests make omission impossible without relying on the lesson entry.",
+      "retirement_reason": "Codified as a universal base rule in docs/development/verification-policy.md and docs/development/handoff-authoring-policy.md; prompt marker enforcement is no longer needed.",
       "superseded_by": null
     }
   ]

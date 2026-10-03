@@ -33,32 +33,73 @@ Universal financial constraints:
 - preserve stable identity, idempotency, provenance, and observed-vs-modeled boundaries;
 - never commit real personal financial data, secrets, or diagnostic artifacts containing them.
 
-## PFM_TASK_V2 is mandatory for repository mutation
+## PFM task authorization
 
-Any Codex implementation/repair turn that edits, commits, or pushes repository
-content MUST begin with a valid `PFM_TASK_V2` envelope. Read-only questions may
-run without one. Repository hooks enforce this.
+Repository mutation requires a compact `PFM_TASK_V3` authorization. Read-only
+questions do not.
 
-The envelope separates:
-- task continuity (`new_pr` versus `existing_pr`) and exact target branch;
-- worktree policy and exact starting commit;
-- implementation breadth (`MODE`);
-- semantic uncertainty (`SEMANTICS`);
-- read scope (`READ_PATHS`);
-- edit scope (`ALLOWED_PATHS`);
-- dependency authority;
-- CI/heavy-verification profile;
-- applicable active process lessons;
-- UAT requirement;
-- externally assigned repair round.
+The machine-enforced V3 contract is intentionally small:
 
-When `SEMANTICS: resolved`, the handoff is the implementation contract. Do not
-reread normative specs, architecture, PR history, or broad resources for
-reassurance. Do not expand beyond `READ_PATHS`. If a missing fact prevents
-correct implementation, STOP with `LOOKUP_REQUIRED: <exact missing fact>`.
+```
+PFM_TASK_V3
+TASK_KIND: product|framework|repair
+TARGET_BRANCH: codex/...|agent/...
+DEPENDENCY_POLICY: locked|manifest_edit
 
-Only a new external handoff may advance `REPAIR_ROUND`. Codex must never
-self-declare another repair round.
+ALLOWED_PATHS:
+- <one or more authorized paths>
+
+OBJECTIVE:
+<what must be accomplished>
+
+ACCEPTANCE:
+<what must be true before COMPLETE>
+```
+
+The semantic handoff may contain as much additional product/architecture detail
+as the task needs. Hooks do not require that detail to follow a rigid schema.
+
+Hard guarantees:
+- Codex may edit only `ALLOWED_PATHS`.
+- Product/repair tasks may not authorize framework-control paths.
+- Locked dependency declarations may not change.
+- Local verification/package installation remains prohibited.
+- The current branch must already equal `TARGET_BRANCH` before implementation.
+
+Use `apply_patch` for repository content edits so the hook can reject an
+out-of-scope path before mutation. Post-tool scope checks also include untracked
+files, so alternate write mechanisms cannot silently broaden the diff.
+
+## Git bootstrap and shared state
+
+GitHub remote state is authoritative for task initialization.
+
+For every new PR, prepare the local task branch/worktree with:
+
+```
+bash tools/codex/bootstrap-pr.sh new codex/<branch> [worktree-path]
+```
+
+The helper fetches/prunes `origin`, resolves the current `origin/main` SHA,
+creates the feature branch directly at that commit in a clean linked worktree,
+and reports the exact path/head to open in Codex. Local `main` does not need to
+be current.
+
+For an existing PR:
+
+```
+bash tools/codex/bootstrap-pr.sh resume codex/<branch> [worktree-path]
+```
+
+(or `agent/<branch>` when Codex is taking over a ChatGPT-created PR).
+
+Resume uses the fetched remote feature branch as the shared source of truth. It
+may fast-forward a clean local branch, but it never discards unpushed or
+divergent local commits. Dirty worktrees fail clearly instead of being replaced.
+
+Do not create/switch branches inside an active implementation turn. Branch and
+worktree lifecycle belongs to bootstrap; hooks enforce that the task remains on
+the authorized branch.
 
 ## Implementation discipline
 
@@ -66,82 +107,78 @@ Implement only the requested scope. Prefer the smallest defensible diff that
 fully satisfies acceptance. Do not mix cleanup or redesign into a milestone.
 Never weaken a financial/golden expectation merely to pass verification.
 
-Product and repair tasks may not edit agent-control surfaces:
+Product and repair tasks may not edit:
 `AGENTS.md`, `.agents/`, `.codex/`, `.github/workflows/`,
 `tools/codex/`, `tools/ci/`, `docs/development/handoff-authoring-policy.md`,
 `docs/development/verification-policy.md`, or `docs/development/agent-*`.
 Those require `TASK_KIND: framework`.
 
-Subagents are disabled by default. Do not delegate routine work.
+Codex may read implementation resources needed to complete the authorized
+objective. If a missing semantic decision prevents correct implementation,
+report `LOOKUP_REQUIRED: <exact missing fact>` rather than inventing it.
 
-## No local verification in Codex product turns
+Subagents are disabled by default.
+
+## No local verification in Codex implementation turns
 
 Codex implementation/repair turns do not run tests, typecheck, builds,
 architecture/spec validators, Playwright, benchmarks, performance captures,
 stochastic convergence runs, onboarding dry runs, or dev servers.
 
-Codex also does not install dependencies or switch package managers during the
-agent phase. Node/npm and `node_modules` are therefore not implementation-start
-requirements; GitHub CI owns verification. A configured desktop Local
-Environment may prepare dependencies for developer convenience, but failure to
-bind that environment must not block a no-tests implementation turn.
-
-GitHub Actions owns ordinary verification. Separate manually triggered
+Codex does not install dependencies or switch package managers during the agent
+phase. GitHub Actions owns ordinary verification. Separate manually triggered
 engineering-validation workflows own expensive performance, stochastic,
-onboarding, and provider-integration evidence. Test selection is risk/surface
-driven; never choose arbitrary test counts merely to satisfy a ritual.
+onboarding, and provider evidence.
 
-## Repository state, scope, and loop breakers
+## Completion contract
 
-A valid V2 prompt is accepted only when:
-- `EXPECTED_HEAD` exactly matches the checkout;
+Codex must end an authorized implementation turn with one explicit status.
+
+Successful completion:
+
+```
+TASK_STATUS: COMPLETE
+ACCEPTANCE_STATUS: SATISFIED
+```
+
+The Stop hook accepts COMPLETE only when:
+- the current branch still equals `TARGET_BRANCH`;
 - the working tree is clean;
-- `TARGET_BRANCH`, `TASK_CONTINUITY`, and `WORKTREE_POLICY` are valid;
-- every deterministically applicable active lesson is declared and its required prompt markers are present;
-- required policy fields are valid.
+- at least one implementation commit exists after the task-start commit;
+- all committed/uncommitted/untracked changed paths are authorized;
+- locked dependency policy still holds;
+- the branch tracks `origin/TARGET_BRANCH`;
+- local HEAD equals the tracking branch, so implementation work is pushed.
 
-For `TASK_CONTINUITY: new_pr`, use an isolated linked Git worktree at the exact
-`EXPECTED_HEAD`. A Codex-managed worktree is convenient but not authoritative;
-a manually created linked worktree is equally valid. The accepted task may
-perform one exact guarded branch bootstrap before any repository mutation. For
-`existing_pr`, resume the PR's existing thread/worktree; a mismatched checkout
-fails with `WRONG_WORKTREE` rather than asking the user to manually switch
-branches.
+If implementation cannot safely finish, use:
 
-Hooks stop the turn on:
-- an out-of-scope edit;
-- a locked dependency-manifest change;
-- an unauthorized agent-control edit;
-- automatic context compaction;
-- unsafe push behavior;
-- policy-hook failure.
+```
+TASK_STATUS: BLOCKED
+BLOCKER: <specific external/scope/technical blocker>
+```
 
-Automatic context compaction during a bounded PFM implementation/repair turn is
-a failure signal. Stop instead of compacting and continuing.
+or `LOOKUP_REQUIRED: <exact missing fact>`.
+
+A blocked task must still leave the working tree clean. If partial work was
+committed, it must be pushed so the shared Git state remains understandable.
+The completion hook gives Codex one continuation opportunity to finish or clean
+up before it fails closed rather than allowing a false COMPLETE report.
 
 ## Git publication
 
-Built-in Codex web search is disabled for this project. If an audited resolved handoff lacks external information, STOP with `LOOKUP_REQUIRED` and let ChatGPT resolve it outside the implementation turn.
-
 Feature-branch push is allowed only to the configured
-`bensmullen/personal-finance-app` origin, from an approved `codex/` or
+`bensmullen/personal-finance-app` origin, from the authorized `codex/` or
 `agent/` branch, without force/delete semantics and without targeting
-`main`. Direct-main push is forbidden. PR creation is auto-approved only for
-`gh pr create` against this repository with explicit `--base main` and the
-current approved feature branch as `--head`. GitHub CLI is a publication-only
-tool, not an implementation-start dependency. If `gh` is unavailable after a
-successful feature-branch push, stop publication with
-`PUBLICATION_PENDING: GH_UNAVAILABLE`; ChatGPT may create the PR through the
-GitHub connector without rerunning implementation.
+`main`.
 
-Keep completion reports concise: branch/head, changed files, material decisions,
-CI status if already available, any STOP/UAT condition, and a one-line process
-signal when the turn produced evidence that should be reviewed for the learning
-loop. Active lessons are applied automatically; Codex never promotes or edits
-lessons during product/repair work.
+PR creation is auto-approved only for `gh pr create` against this repository
+with explicit `--base main` and the current authorized branch as `--head`.
+
+GitHub CLI is publication-only. If `gh` is unavailable after a successful
+feature-branch push, report `PUBLICATION_PENDING: GH_UNAVAILABLE`; ChatGPT may
+create the PR through the GitHub connector without rerunning implementation.
 
 ## Scoped guidance
 
-When the task targets a subtree with a nested `AGENTS.md`, read only the
-nearest scoped instruction file if it is included in `READ_PATHS`. Do not
-scan unrelated instruction files.
+Nested `AGENTS.md` files may add implementation guidance for their subtree.
+They cannot broaden `ALLOWED_PATHS` or override these repository safety rules.

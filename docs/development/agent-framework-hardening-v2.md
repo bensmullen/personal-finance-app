@@ -1,10 +1,10 @@
 # Agent Framework Hardening V2
 
-**Status:** pre-R1/R2 prerequisite  
+**Status:** historical — superseded by AGENTS.md, the V3 handoff policy, and origin-based PR bootstrap  
 **Purpose:** prevent model/runtime waste and make the Hybrid ChatGPT → Codex →
 GitHub CI workflow enforceable rather than advisory.
 
-## 1. Core operating model
+> This document records the stricter V2 design that preceded the simplified V3 framework. Do not use its V2 envelope/worktree rules as current operating instructions.\n\n## 1. Core operating model
 
 Normal ChatGPT resolves semantics, architecture, acceptance, read scope, edit
 scope, CI profile, heavy-validation needs, UAT, and stop conditions.

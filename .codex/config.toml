@@ -45,7 +45,7 @@ additionalContextLimit = 600
 type = "command"
 command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'
 timeout = 10
-statusMessage = "Validating PFM task contract"
+statusMessage = "Activating PFM task scope"
 additionalContextLimit = 800
 
 [[hooks.PreToolUse]]
@@ -54,7 +54,7 @@ matcher = "*"
 type = "command"
 command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'
 timeout = 10
-statusMessage = "Applying PFM scope and execution policy"
+statusMessage = "Enforcing PFM edit and execution policy"
 
 [[hooks.PermissionRequest]]
 matcher = "^Bash$"
@@ -70,19 +70,12 @@ matcher = "*"
 type = "command"
 command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'
 timeout = 10
-statusMessage = "Checking PFM edit scope"
+statusMessage = "Checking PFM repository scope"
 
-[[hooks.PreCompact]]
-matcher = "^(manual|auto)$"
-[[hooks.PreCompact.hooks]]
-type = "command"
-command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'
-timeout = 10
-statusMessage = "Enforcing PFM context budget"
 
 [[hooks.Stop]]
 [[hooks.Stop.hooks]]
 type = "command"
 command = 'python3 "$(git rev-parse --show-toplevel)/.codex/hooks/pfm-policy.py"'
 timeout = 10
-statusMessage = "Checking PFM completion state"
+statusMessage = "Enforcing PFM completion state"
