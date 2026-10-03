@@ -31,13 +31,10 @@ import {
 } from "recharts";
 import { z } from "zod";
 import {
-  PERSONAL_OBJECT_TYPES,
-  addPersonalObject,
   createGoldenHouseholdDraft,
   createGuidedSetupDraft,
   createSyntheticPersonalDraft,
   deletePersistedPersonalModel,
-  deletePersonalObject,
   exportPersonalModelJson,
   getCurrentPosition,
   getPersonalEditorMetadata,
@@ -46,7 +43,6 @@ import {
   isForecastStartDate,
   migratePersonalModelVersion,
   migratePersistedPersonalModel,
-  patchPersonalObject,
   comparePersonalScenarios,
   runPersonalForecast,
   resolvePersonalSessionSettings,
@@ -82,7 +78,10 @@ import {
 } from "./persistence/indexedDbPersonalModelStore.js";
 
 import { useInteractiveForecast } from "./forecast/useInteractiveForecast.js";
-import { sampleForecastChart, calculationFingerprint } from "../src/application/interactiveForecast.js";
+import { EditorHub } from "./EntityEditor.js";
+import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText } from "./entityPresentation.js";
+import { calculationFingerprint } from "../src/application/interactiveForecast.js";
+import { HouseholdChart } from "./forecast/HouseholdChart.js";
 import { ForecastDetails, LazyExplanation, ExplanationCache } from "./forecast/details.js";
 import { ResultExplanationCache } from "./forecast/explanations.js";
 import type { ForecastView } from "./forecast/controller.js";
@@ -136,7 +135,7 @@ const SUBNAV: Record<Primary, readonly string[]> = {
     "Household & People",
     "Model Settings",
     "Import / Export",
-    "Advanced",
+    "Technical diagnostics",
   ],
 };
 const EDITORS: Record<string, readonly PersonalObjectType[]> = {
@@ -150,156 +149,6 @@ const EDITORS: Record<string, readonly PersonalObjectType[]> = {
   Assumptions: ["Assumption"],
   "What If?": ["Scenario"],
   "Household & People": ["Household", "Person"],
-};
-const TITLES: Record<PersonalObjectType, string> = {
-  Household: "Households",
-  Person: "People",
-  Account: "Accounts",
-  Income: "Income",
-  Expense: "Spending",
-  Asset: "Property & assets",
-  Liability: "Debt",
-  Investment: "Investments",
-  Assumption: "Assumptions",
-  Scenario: "Plans & what-ifs",
-};
-const FIELD_LABELS: Record<string, string> = {
-  source: "Source / name",
-  owner_id: "Owner",
-  income_type: "Income type",
-  amount: "Amount",
-  frequency: "Frequency",
-  start_date: "Start",
-  end_date: "End",
-  category: "Description / category",
-  essentiality: "Essential or discretionary",
-  payment_account_id: "Funding account",
-  name: "Name",
-  account_type: "Account type",
-  institution: "Institution",
-  opening_balance: "Balance",
-  currency: "Currency",
-  liquidity_class: "Liquidity",
-  tax_treatment: "Tax treatment",
-  asset_type: "Asset type",
-  acquisition_date: "Acquisition date",
-  acquisition_cost: "Current value / acquisition cost",
-  valuation_method: "Valuation method",
-  principal: "Original principal",
-  current_balance: "Current balance",
-  interest_rate: "Interest rate",
-  rate_type: "Rate type",
-  extra_payment: "Extra payment",
-  origination_date: "Origination",
-  maturity_date: "Maturity",
-  collateral_id: "Collateral",
-  investment_type: "Investment type",
-  symbol: "Symbol",
-  quantity: "Quantity",
-  expected_return: "Expected return",
-  first_name: "First name",
-  last_name: "Last name",
-  date_of_birth: "Date of birth",
-  residence_jurisdiction: "Residence jurisdiction",
-  household_type: "Household type",
-  formation_date: "Formation date",
-  primary_jurisdiction: "Primary jurisdiction",
-  value: "Value",
-  unit: "Unit",
-  description: "Description",
-};
-const PRIMARY_FIELDS: Record<PersonalObjectType, readonly string[]> = {
-  Household: [
-    "name",
-    "household_type",
-    "formation_date",
-    "primary_jurisdiction",
-  ],
-  Person: [
-    "first_name",
-    "last_name",
-    "date_of_birth",
-    "residence_jurisdiction",
-    "household_id",
-  ],
-  Account: [
-    "name",
-    "account_type",
-    "owner_id",
-    "institution",
-    "opening_balance",
-    "currency",
-    "liquidity_class",
-    "tax_treatment",
-    "opening_date",
-  ],
-  Income: [
-    "source",
-    "owner_id",
-    "income_type",
-    "amount",
-    "frequency",
-    "start_date",
-    "end_date",
-  ],
-  Expense: [
-    "category",
-    "owner_id",
-    "amount",
-    "frequency",
-    "start_date",
-    "end_date",
-    "essentiality",
-    "payment_account_id",
-  ],
-  Asset: [
-    "name",
-    "asset_type",
-    "owner_id",
-    "acquisition_cost",
-    "acquisition_date",
-    "valuation_method",
-    "liquidity_class",
-  ],
-  Liability: [
-    "name",
-    "liability_type",
-    "owner_id",
-    "current_balance",
-    "principal",
-    "interest_rate",
-    "rate_type",
-    "payment_frequency",
-    "extra_payment",
-    "origination_date",
-    "maturity_date",
-    "collateral_id",
-  ],
-  Investment: [
-    "investment_type",
-    "account_id",
-    "symbol",
-    "quantity",
-    "expected_return",
-    "tax_treatment",
-  ],
-  Assumption: [
-    "name",
-    "category",
-    "value",
-    "unit",
-    "start_date",
-    "end_date",
-    "scenario_id",
-  ],
-  Scenario: [
-    "name",
-    "description",
-    "start_date",
-    "end_date",
-    "enabled",
-    "stochastic",
-  ],
 };
 
 const setupSchema = z.object({
@@ -319,24 +168,6 @@ const setupSchema = z.object({
 });
 type SetupValues = z.infer<typeof setupSchema>;
 const randomId = () => crypto.randomUUID();
-const objectEntries = (
-  draft: PersonalDraft,
-  type: PersonalObjectType,
-): readonly JsonObject[] =>
-  (draft.objects[type] ?? []).filter(
-    (value): value is JsonObject =>
-      typeof value === "object" && value !== null && !Array.isArray(value),
-  ) as readonly JsonObject[];
-const objectId = (type: PersonalObjectType, value: JsonObject) =>
-  String(value[`${type.toLowerCase()}_id`]);
-const objectLabel = (type: PersonalObjectType, value: JsonObject) =>
-  String(
-    value.name ??
-      value.source ??
-      value.category ??
-      [value.first_name, value.last_name].filter(Boolean).join(" ") ??
-      TITLES[type],
-  );
 const chartNumber = (exact: string) => Number(exact); // Disposable display coordinate only; never returned to application/engine.
 const householdMoney = (
   value: { amount: string; currency: string } | undefined,
@@ -813,6 +644,7 @@ export function PersonalFinanceApp() {
       if (request?.active && request.model === draft && request.forecast === householdForecast) recordBrowserDuration("ui.react_commit", duration, request.context);
     }}>
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">Skip to financial content</a>
       <header className="topbar">
         <button className="brand" onClick={() => navigate("Overview")}>
           <span className="brand-mark">P</span>
@@ -832,7 +664,7 @@ export function PersonalFinanceApp() {
             </>
           )}
         </div>
-        <button className="avatar" aria-label="Model menu">
+        <button className="avatar" aria-label="Open model settings" onClick={() => { navigate("Settings"); setSubnav("Model Settings"); }}>
           ME
         </button>
       </header>
@@ -841,6 +673,7 @@ export function PersonalFinanceApp() {
           <button
             key={item}
             className={primary === item ? "active" : ""}
+            aria-current={primary === item ? "page" : undefined}
             onClick={() => navigate(item)}
           >
             {item}
@@ -848,12 +681,13 @@ export function PersonalFinanceApp() {
         ))}
       </nav>
       <div className="workspace">
-        <aside className="subnav">
+        <nav className="subnav" aria-label={`${primary} sections`}>
           <p className="eyebrow">{primary}</p>
           {SUBNAV[primary].map((item) => (
             <button
               key={item}
               className={subnav === item ? "active" : ""}
+              aria-current={subnav === item ? "page" : undefined}
               onClick={() => setSubnav(item)}
             >
               {item}
@@ -865,8 +699,8 @@ export function PersonalFinanceApp() {
               {issues.length ? `${issues.length} issues` : "Ready"}
             </strong>
           </div>
-        </aside>
-        <main id="main-content">
+        </nav>
+        <main id="main-content" tabIndex={-1}>
           <ForecastStatus label="Household forecast" state={interactive.baseline} />
           {interactive.available && <button className="primary" onClick={runHouseholdForecast}>Recalculate</button>}
           {primary === "Plan" && subnav === "Compare Plans" && <ForecastStatus label="Household comparison" state={interactive.comparison} />}
@@ -911,6 +745,7 @@ export function PersonalFinanceApp() {
           {primary === "Net Worth" && subnav === "Debt" && (
             <>
               <EditorHub
+                currency={sessionSettings.baseCurrency}
                 types={EDITORS.Debt!}
                 draft={draft}
                 setDraft={updateCanonicalModel}
@@ -969,6 +804,9 @@ export function PersonalFinanceApp() {
                   setRunSettingsError("");
                 }}
               />
+              <details className="panel">
+              <summary>Expert standalone forecasts</summary>
+              <p>Inspect a supported scope independently. These results are separate from the reconciled household outlook.</p>
               <section aria-label="Standalone forecast drill-down">
                 <Plan
                   forecastScope={forecastScope}
@@ -984,6 +822,7 @@ export function PersonalFinanceApp() {
                   setInvestmentOwnerId={setInvestmentOwnerId}
                 />
               </section>
+              </details>
             </>
           )}
           {primary === "Plan" && subnav === "Compare Plans" && (
@@ -1025,8 +864,8 @@ export function PersonalFinanceApp() {
               deleteSaved={deleteSavedModel}
             />
           )}
-          {primary === "Settings" && subnav === "Advanced" && (
-            <Advanced draft={draft} issues={issues} />
+          {primary === "Settings" && subnav === "Technical diagnostics" && (
+            <TechnicalDiagnostics draft={draft} issues={issues} />
           )}
           {primary === "Plan" && subnav === "What If?" && (
             <WhatIfStarter
@@ -1040,6 +879,7 @@ export function PersonalFinanceApp() {
           {EDITORS[subnav] &&
             !(primary === "Net Worth" && subnav === "Debt") && (
               <EditorHub
+                currency={sessionSettings.baseCurrency}
                 types={EDITORS[subnav]!}
                 draft={draft}
                 setDraft={updateCanonicalModel}
@@ -1225,13 +1065,18 @@ function SetupWizard({
 function ForecastStatus({ label, state }: { label: string; state: ForecastView }) {
   return <section className={`forecast-status ${state.stale ? "stale" : ""}`} role="status" aria-label={`${label} status`}
     data-lifecycle={state.lifecycle} data-pending={state.pending} data-fingerprint={state.fingerprint} data-request-id={state.requestId}>
-    <strong>{label} · {state.lifecycle}</strong>
+    <strong>{label} · {state.lifecycle === "completed" ? "Ready" : state.lifecycle === "unsupported" ? "Unsupported configuration" : state.lifecycle === "idle" ? "Not run" : state.lifecycle}</strong>
     {state.pending && <span>{state.lastGoodResult ? "Recalculating" : "Running"} deterministic forecast…</span>}
     {state.stale && <span>Stale retained result — previous inputs; not current.</span>}
     {!state.pending && !state.stale && (state.lifecycle === "completed" || state.lifecycle === "incomplete") && <span>Current result{state.lifecycle === "incomplete" ? " · financially incomplete" : ""}</span>}
-    {state.message && <span>{state.message}</span>}
+    {state.message && <span>{friendlyText(state.message)}</span>}
     {state.lifecycle === "unsupported" && state.latestResult?.status === "unavailable" && state.latestResult.diagnostics.length > 0 && <DiagnosticList diagnostics={state.latestResult.diagnostics} />}
-    {state.cacheState && <span>Baseline cache: {state.cacheState}</span>}
+    <details><summary>Technical forecast details</summary>
+      <dl><dt>Lifecycle</dt><dd>{state.lifecycle}</dd><dt>Request</dt><dd>{state.requestId ?? "Not submitted"}</dd>
+        <dt>Cache</dt><dd>{state.cacheState ?? "Not applicable"}</dd>
+        {state.message && <><dt>Original diagnostic</dt><dd>{state.message}</dd></>}
+      </dl>
+    </details>
   </section>;
 }
 
@@ -1323,7 +1168,7 @@ function Overview({
           <h3>Model check</h3>
           <p>
             {position.unavailable.length
-              ? position.unavailable[0]
+              ? friendlyText(position.unavailable[0])
               : "Your current-position inputs are ready."}
           </p>
         </article>
@@ -1430,7 +1275,7 @@ function NetWorthOverview({
         {data.length ? (
           <div className="chart">
             <ResponsiveContainer>
-              <BarChart data={data}>
+              <BarChart data={data} accessibilityLayer>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" />
                 <YAxis />
@@ -1566,7 +1411,7 @@ function Plan({
           Active scope: {forecastScope.replace("_", " ")}
         </div>
         {forecast ? (
-          <ForecastVisual forecast={forecast} />
+          <ForecastVisual forecast={forecast} draft={draft} />
         ) : (
           <Empty text="No forecast run yet." />
         )}
@@ -1773,7 +1618,7 @@ function DebtExecutionPanel({
           </p>
         )}
         {forecast?.scope === "liabilities" ? (
-          <ForecastVisual forecast={forecast} />
+          <ForecastVisual forecast={forecast} draft={draft} />
         ) : (
           <Empty text="Enter explicit execution configuration and run the liability forecast." />
         )}
@@ -1987,7 +1832,7 @@ function WhatIfStarter({
                   key={String(item.event_id)}
                   value={String(item.event_id)}
                 >
-                  {String(item.name ?? item.event_id)}
+                  {friendlyText(item.name ?? "Unnamed retirement event")}
                 </option>
               ))}
             </select>
@@ -2379,6 +2224,10 @@ function ComparePlans({
   const resultBindings = resultModels.comparison?.resultRequest?.compiler.cashFlow?.retirementBindings ?? retirementBindings;
   const canonicalEvents =
     ((financialModel.objects as Record<string, readonly JsonObject[]>).Event ?? []);
+  const legacyRows = legacyComparison?.status === "completed" || legacyComparison?.status === "incomplete"
+    ? legacyComparison.points.flatMap((point) => Object.entries(point.metrics ?? {
+      primary: { baseline: point.baseline, alternative: point.alternative, delta: point.delta },
+    }).map(([metric, values]) => ({ point, metric, values }))) : [];
   return (
     <>
       <PageHead
@@ -2421,6 +2270,8 @@ function ComparePlans({
                     </p>
                   </div>
                 )}
+                <details>
+                <summary>Expert comparison details</summary>
                 {alternative.configurationDifferences.map((difference) => {
                   const explicitBinding = resultBindings.find((binding) =>
                     difference.semanticTarget.includes(
@@ -2436,8 +2287,6 @@ function ComparePlans({
                   return (
                     <p className="capability" key={difference.differenceId}>
                       {difference.changeKind.replaceAll("_", " ")} ·{" "}
-                      {difference.semanticTarget} · layer{" "}
-                      {difference.scenarioLayerId}
                       {referencedIds.length > 0
                         ? ` · events ${referencedIds
                             .map((id) => {
@@ -2445,13 +2294,16 @@ function ComparePlans({
                                 (candidate) =>
                               String(candidate.event_id) === id,
                               );
-                            return event ? String(event.name ?? id) : id;
+                            return event ? friendlyText(event.name ?? "Unnamed event") : "Unavailable event reference";
                             })
                             .join(", ")}`
                         : ""}
                     </p>
                   );
                 })}
+                </details>
+                <details><summary>Technical comparison details</summary>
+                <pre>{JSON.stringify(alternative.configurationDifferences, null, 2)}</pre>
                 <p className="muted">
                   Applied-rule differences: alternative-only{" "}
                   {alternative.appliedRuleDifferences.alternativeOnly.join(
@@ -2462,9 +2314,10 @@ function ComparePlans({
                     "none"}
                   .
                 </p>
+                </details>
                 <ForecastDetails result={comparison} rows={alternative.points} label={`${alternative.name} comparison details`}>
                   {(rows) => (
-                <div className="table-scroll">
+                <div className="table-scroll" role="region" aria-label="Scrollable financial table" tabIndex={0}>
                   <table
                     aria-label={`${alternative.name} household comparison`}
                   >
@@ -2527,7 +2380,9 @@ function ComparePlans({
             Active scope: {legacyComparison.scope.replace("_", " ")} ·{" "}
             {legacyComparison.status}
           </div>
-          <div className="table-scroll">
+          <ForecastDetails result={legacyComparison} rows={legacyRows} label="scope comparison details">
+            {(rows) => (
+          <div className="table-scroll" role="region" aria-label="Scrollable financial table" tabIndex={0}>
             <table>
               <caption>
                 Current plan, alternative, and alternative-minus-current delta
@@ -2543,16 +2398,7 @@ function ComparePlans({
                 </tr>
               </thead>
               <tbody>
-                {legacyComparison.points.flatMap((point) =>
-                  Object.entries(
-                    point.metrics ?? {
-                      primary: {
-                        baseline: point.baseline,
-                        alternative: point.alternative,
-                        delta: point.delta,
-                      },
-                    },
-                  ).map(([metric, values]) => (
+                {rows.map(({ point, metric, values }) => (
                     <tr key={`${point.period}:${metric}`}>
                       <td>{point.period.slice(0, 10)}</td>
                       <td>{metric.replaceAll(/([A-Z])/g, " $1")}</td>
@@ -2571,20 +2417,21 @@ function ComparePlans({
                         </details>
                       </td>
                     </tr>
-                  )),
-                )}
+                ))}
               </tbody>
             </table>
           </div>
-          <div className="capability">
-            <strong>Configuration differences</strong>
+            )}
+          </ForecastDetails>
+          <details>
+            <summary>Technical scope comparison details</summary>
             {legacyComparison.configurationDifferences.map((difference) => (
               <p key={difference.target}>
                 {difference.kind.replaceAll("_", " ")} · {difference.target} ·
                 layer {difference.scenarioLayerId}
               </p>
             ))}
-          </div>
+          </details>
         </section>
       ) : (
         !comparison && (
@@ -2702,322 +2549,6 @@ function ModelSettings({
   );
 }
 
-function EditorHub({
-  types,
-  draft,
-  setDraft,
-  metadata,
-  setNotice,
-}: {
-  types: readonly PersonalObjectType[];
-  draft: PersonalDraft;
-  setDraft: (draft: PersonalDraft) => void;
-  metadata: ReturnType<typeof getPersonalEditorMetadata>;
-  setNotice: (message: string) => void;
-}) {
-  return (
-    <>
-      {types.map((type) => (
-        <ObjectEditor
-          key={type}
-          type={type}
-          draft={draft}
-          setDraft={setDraft}
-          metadata={metadata}
-          setNotice={setNotice}
-        />
-      ))}
-    </>
-  );
-}
-function ObjectEditor({
-  type,
-  draft,
-  setDraft,
-  metadata,
-  setNotice,
-}: {
-  type: PersonalObjectType;
-  draft: PersonalDraft;
-  setDraft: (draft: PersonalDraft) => void;
-  metadata: ReturnType<typeof getPersonalEditorMetadata>;
-  setNotice: (message: string) => void;
-}) {
-  const [editing, setEditing] = useState<JsonObject>();
-  const values = objectEntries(draft, type);
-  const descriptor = metadata[type];
-  const add = () => {
-    const id = randomId();
-    const next = addPersonalObject(draft, type, id);
-    setDraft(next);
-    setEditing(
-      objectEntries(next, type).find((value) => objectId(type, value) === id)!,
-    );
-  };
-  const saveField = (
-    field: string,
-    value: string | boolean | readonly string[],
-  ) => {
-    if (!editing) return;
-    const next = patchPersonalObject(draft, type, objectId(type, editing), {
-      [field]: value,
-    });
-    setDraft(next);
-    setEditing(
-      objectEntries(next, type).find(
-        (item) => objectId(type, item) === objectId(type, editing),
-      ),
-    );
-  };
-  const secondaryFields = Object.keys(descriptor.fields).filter(
-    (fieldName) =>
-      fieldName !== descriptor.idField &&
-      !PRIMARY_FIELDS[type].includes(fieldName) &&
-      !(descriptor.fields as Record<string, { derived: boolean }>)[fieldName]
-        ?.derived,
-  );
-  const remove = (item: JsonObject) => {
-    const result = deletePersonalObject(draft, type, objectId(type, item));
-    if (!result.deleted) {
-      setNotice(`Cannot delete: referenced by ${result.references.join(", ")}`);
-      return;
-    }
-    setDraft(result.draft);
-    setEditing(undefined);
-  };
-  return (
-    <section>
-      <div className="page-head compact">
-        <div>
-          <p className="eyebrow">{TITLES[type]}</p>
-          <h1>{TITLES[type]}</h1>
-          <p>Friendly editing with technical metadata kept under Advanced.</p>
-        </div>
-        <button className="primary" onClick={add}>
-          + Add {TITLES[type].replace(/s$/, "")}
-        </button>
-      </div>
-      {values.length === 0 ? (
-        <Empty text={`No ${TITLES[type].toLowerCase()} yet.`} />
-      ) : (
-        <div className="object-grid">
-          {values.map((item) => (
-            <article className="object-card" key={objectId(type, item)}>
-              <button className="card-main" onClick={() => setEditing(item)}>
-                <span className="object-icon">{TITLES[type][0]}</span>
-                <span>
-                  <strong>{objectLabel(type, item) || `New ${type}`}</strong>
-                  <small>
-                    {PRIMARY_FIELDS[type]
-                      .slice(0, 3)
-                      .map((field) => item[field])
-                      .filter(Boolean)
-                      .join(" · ") || "Needs details"}
-                  </small>
-                </span>
-              </button>
-              <button className="danger-link" onClick={() => remove(item)}>
-                Delete
-              </button>
-            </article>
-          ))}
-        </div>
-      )}
-      {editing && (
-        <div
-          className="drawer-backdrop"
-          onMouseDown={(event) => {
-            if (event.currentTarget === event.target) setEditing(undefined);
-          }}
-        >
-          <aside className="drawer" aria-label={`Edit ${type}`}>
-            <div className="panel-head">
-              <div>
-                <p className="eyebrow">Edit {type}</p>
-                <h2>{objectLabel(type, editing) || `New ${type}`}</h2>
-              </div>
-              <button
-                className="icon-button"
-                aria-label="Close editor"
-                onClick={() => setEditing(undefined)}
-              >
-                ×
-              </button>
-            </div>
-            <div className="form-grid">
-              {PRIMARY_FIELDS[type].map((fieldName) => (
-                <FieldControl
-                  key={fieldName}
-                  fieldName={fieldName}
-                  field={(descriptor.fields as Record<string, any>)[fieldName]}
-                  value={editing[fieldName]}
-                  draft={draft}
-                  onChange={(value) => saveField(fieldName, value)}
-                />
-              ))}
-            </div>
-            <details>
-              <summary>More options</summary>
-              <div className="form-grid">
-                {secondaryFields.length ? (
-                  secondaryFields.map((fieldName) => (
-                    <FieldControl
-                      key={fieldName}
-                      fieldName={fieldName}
-                      field={
-                        (descriptor.fields as Record<string, any>)[fieldName]
-                      }
-                      value={editing[fieldName]}
-                      draft={draft}
-                      onChange={(value) => saveField(fieldName, value)}
-                    />
-                  ))
-                ) : (
-                  <p className="muted">No secondary fields for this item.</p>
-                )}
-              </div>
-            </details>
-            <details>
-              <summary>Advanced</summary>
-              <dl className="advanced-list">
-                <dt>{type} ID</dt>
-                <dd>{objectId(type, editing)}</dd>
-                {Object.entries(descriptor.fields)
-                  .filter(([, field]) => field.ref)
-                  .map(([name, field]) => (
-                    <span key={name}>
-                      <dt>{name}</dt>
-                      <dd>
-                        {String(editing[name] ?? "Not set")}{" "}
-                        <small>→ {field.ref}</small>
-                      </dd>
-                    </span>
-                  ))}
-              </dl>
-            </details>
-          </aside>
-        </div>
-      )}
-    </section>
-  );
-}
-function FieldControl({
-  fieldName,
-  field,
-  value,
-  draft,
-  onChange,
-}: {
-  fieldName: string;
-  field: any;
-  value: unknown;
-  draft: PersonalDraft;
-  onChange: (value: string | boolean | readonly string[]) => void;
-}) {
-  if (!field || field.derived) return null;
-  const label = FIELD_LABELS[fieldName] ?? fieldName.replaceAll("_", " ");
-  if (field.type === "boolean")
-    return (
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={Boolean(value)}
-          onChange={(event) => onChange(event.target.checked)}
-        />
-        {label}
-      </label>
-    );
-  if (field.enumValues)
-    return (
-      <label>
-        {label}
-        <select
-          value={String(value ?? "")}
-          onChange={(event) => onChange(event.target.value)}
-        >
-          <option value="">Choose…</option>
-          {field.enumValues.map((option: string) => (
-            <option key={option} value={option}>
-              {option.replaceAll("_", " ")}
-            </option>
-          ))}
-        </select>
-      </label>
-    );
-  if (field.ref) {
-    const targets = String(field.ref)
-      .split("|")
-      .filter((target) =>
-        PERSONAL_OBJECT_TYPES.includes(target as PersonalObjectType),
-      ) as PersonalObjectType[];
-    const options = targets.flatMap((target) =>
-      objectEntries(draft, target).map((item) => ({
-        id: objectId(target, item),
-        label: objectLabel(target, item),
-      })),
-    );
-    if (field.type === "uuid[]")
-      return (
-        <label>
-          {label}
-          <select
-            multiple
-            value={Array.isArray(value) ? value.map(String) : []}
-            onChange={(event) =>
-              onChange(
-                Array.from(
-                  event.target.selectedOptions,
-                  (option) => option.value,
-                ),
-              )
-            }
-          >
-            {options.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label || option.id.slice(0, 8)}
-              </option>
-            ))}
-          </select>
-        </label>
-      );
-    return (
-      <label>
-        {label}
-        <select
-          value={String(value ?? "")}
-          onChange={(event) => onChange(event.target.value)}
-        >
-          <option value="">Choose…</option>
-          {options.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.label || option.id.slice(0, 8)}
-            </option>
-          ))}
-        </select>
-      </label>
-    );
-  }
-  const inputType = field.type === "date" ? "date" : "text";
-  return (
-    <label>
-      {label}
-      <input
-        type={inputType}
-        value={String(value ?? "")}
-        inputMode={
-          ["money", "rate", "decimal"].includes(field.type)
-            ? "decimal"
-            : undefined
-        }
-        placeholder={field.required ? "Required" : "Optional"}
-        onChange={(event) => onChange(event.target.value)}
-      />
-      {["money", "rate", "decimal"].includes(field.type) && (
-        <small>Exact decimal text</small>
-      )}
-    </label>
-  );
-}
 
 function DiagnosticList({
   diagnostics,
@@ -3028,24 +2559,19 @@ function DiagnosticList({
 }) {
   return (
     <div className="capability">
-      <strong>Configuration or capability diagnostics</strong>
+      <strong>Forecast needs attention</strong>
       {diagnostics.length === 0 ? (
-        <p>{fallback ?? "No richer diagnostic is available."}</p>
+        <p>{friendlyText(fallback ?? "No richer diagnostic is available.")}</p>
       ) : (
         diagnostics.map((item, index) => (
           <p key={`${item.code}:${item.entityId ?? index}`}>
-            <strong>{item.code}</strong>: {item.message}
-            {item.capability ? ` · capability ${item.capability}` : ""}
-            {item.entityType
-              ? ` · ${item.entityType}${item.entityId ? ` ${item.entityId}` : ""}`
-              : ""}
-            {item.fieldPath ? ` · field ${item.fieldPath}` : ""}
-            {item.relatedIds?.length
-              ? ` · related ${item.relatedIds.join(", ")}`
-              : ""}
+            {friendlyText(item.message)}
           </p>
         ))
       )}
+      <details><summary>Technical diagnostic details</summary>
+        <pre>{JSON.stringify(diagnostics, null, 2)}</pre>
+      </details>
     </div>
   );
 }
@@ -3093,7 +2619,10 @@ function HouseholdPlan({
         title="Your reconciled household plan"
         text="One execution carries cash flow, investments, debt, property, and retirement through the same state transition."
       />
-      <section className="panel controls" aria-label="Household execution configuration">
+      <p className="muted">If the forecast needs setup, open Expert forecast configuration below. These session choices must be configured again after reloading a saved model.</p>
+      <details className="panel">
+      <summary>Expert forecast configuration</summary>
+      <section className="controls" aria-label="Household execution configuration">
         <h2>Household execution configuration</h2>
         <p className="muted">Session-only. These explicit choices are not saved with the canonical model.</p>
         <label>
@@ -3108,12 +2637,13 @@ function HouseholdPlan({
         <fieldset>
           <legend>Baseline retirement binding (session-only)</legend>
           <select aria-label="Baseline retirement income" value={retirementIncomeId} onChange={(event) => setRetirementIncomeId(event.target.value)}><option value="">No retirement binding</option>{incomes.map((income) => <option key={objectId("Income", income)} value={objectId("Income", income)}>{objectLabel("Income", income)}</option>)}</select>
-          <select aria-label="Baseline canonical retirement event" value={retirementEventId} onChange={(event) => { setRetirementEventId(event.target.value); const selected = events.find((item) => String(item.event_id) === event.target.value); if (typeof selected?.start_date === "string") setRetirementDate(selected.start_date); }}><option value="">No canonical event</option>{events.map((event) => <option key={String(event.event_id)} value={String(event.event_id)}>{String(event.name ?? event.event_id)}</option>)}</select>
+          <select aria-label="Baseline canonical retirement event" value={retirementEventId} onChange={(event) => { setRetirementEventId(event.target.value); const selected = events.find((item) => String(item.event_id) === event.target.value); if (typeof selected?.start_date === "string") setRetirementDate(selected.start_date); }}><option value="">No canonical event</option>{events.map((event) => <option key={String(event.event_id)} value={String(event.event_id)}>{friendlyText(event.name ?? "Unnamed retirement event")}</option>)}</select>
           <input aria-label="Baseline retirement date" type="date" value={retirementDate} onChange={(event) => setRetirementDate(event.target.value)} />
           <button type="button" onClick={() => setRetirementBindings(!retirementIncomeId || !retirementDate ? [] : [{ incomeId: retirementIncomeId, terminationEventId, baselineDate: retirementDate, ...(retirementEventId ? { canonicalEventId: retirementEventId } : {}) }])}>Apply retirement binding</button>
         </fieldset>
         <button className="primary" onClick={setHouseholdExecution}>Apply household execution configuration</button>
       </section>
+      </details>
       <section className="panel">
         <div className="panel-head">
           <h2>Authoritative household forecast</h2>
@@ -3161,13 +2691,6 @@ function HouseholdForecastVisual({
   const context = models.baseline?.performanceContext;
   const scope = context && models.baseline?.lastGoodResult === forecast
     ? { active: true, context: { ...context, executionLocation: "browser_main" as const }, model: financialModel, forecast } : request;
-  const chart = sampleForecastChart(forecast.points).map((point) => ({
-    period: point.periodStart.slice(0, 7),
-    netWorth: chartNumber(point.netWorth.amount),
-    assets: chartNumber(point.totalAssets.amount),
-    liabilities: chartNumber(point.totalLiabilities.amount),
-    cash: chartNumber(point.cash.amount),
-  }));
   const ending = forecast.points.at(-1);
   return (
     <>
@@ -3197,7 +2720,7 @@ function HouseholdForecastVisual({
         <section className="panel">
           <h3>Modeled retirement milestone</h3>
           {forecast.retirementMilestones.map((milestone) => (
-            <p key={milestone.eventId}>{milestone.label} · {milestone.date}</p>
+            <p key={milestone.eventId}>{friendlyText(milestone.label)} · {milestone.date}</p>
           ))}
         </section>
       )}
@@ -3209,28 +2732,14 @@ function HouseholdForecastVisual({
           <Kpi label="Ending liabilities" value={householdMoney(ending?.totalLiabilities)} />
         </section>
       )}
-      {!cashFlowOnly && (
-        <div className="chart">
+      <div>
           <Profiler id="forecast-chart" onRender={(_id, _phase, duration) => {
             if (scope?.active) recordBrowserDuration("ui.chart_render", duration, scope.context);
-          }}><ResponsiveContainer>
-            <LineChart data={chart}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="period" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Line dataKey="netWorth" stroke="#26755f" strokeWidth={3} />
-              <Line dataKey="assets" stroke="#3e5f8a" />
-              <Line dataKey="liabilities" stroke="#c07845" />
-              <Line dataKey="cash" stroke="#8b6cab" />
-            </LineChart>
-          </ResponsiveContainer></Profiler>
+          }}><HouseholdChart forecast={forecast} cashFlowOnly={cashFlowOnly} /></Profiler>
         </div>
-      )}
       <ForecastDetails result={forecast} rows={forecast.points} label="forecast details">
         {(rows) => (
-      <div className="table-scroll">
+      <div className="table-scroll" role="region" aria-label="Scrollable financial table" tabIndex={0}>
         <table aria-label="Reconciled household forecast">
           <thead>
             <tr>
@@ -3277,7 +2786,7 @@ function HouseholdForecastVisual({
   );
 }
 
-function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
+function ForecastVisual({ forecast, draft }: { forecast: PersonalForecastReadModel; draft: PersonalDraft }) {
   // Compiler diagnostics carry an explicit capability discriminator. Engine
   // validation issues (including liquidity shortfalls) describe this run, not
   // the supported surface area of the liability compiler.
@@ -3289,7 +2798,7 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
     return (
       <div className="capability">
         <strong>Forecast unavailable for this model</strong>
-        <p>{forecast.message}</p>
+        <p>{friendlyText(forecast.message)}</p>
         <dl className="boundary">
           <dt>As of</dt>
           <dd>{forecast.asOf}</dd>
@@ -3311,7 +2820,9 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
           <strong>As of {forecast.asOf}</strong>
           <span>Debt-service projection</span>
         </div>
-        <div className="table-scroll">
+        <ForecastDetails result={forecast} rows={forecast.liabilityOccurrences} label="debt forecast details">
+          {(rows) => (
+        <div className="table-scroll" role="region" aria-label="Scrollable financial table" tabIndex={0}>
           <table>
             <caption>Detailed liability forecast</caption>
             <thead>
@@ -3330,7 +2841,7 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
               </tr>
             </thead>
             <tbody>
-              {forecast.liabilityOccurrences.map((item) => (
+              {rows.map((item) => (
                 <tr key={`${item.loanId}:${item.scheduledAt}`}>
                   <td>{item.scheduledAt.slice(0, 10)}</td>
                   <td>{item.openingPrincipal.display}</td>
@@ -3355,13 +2866,15 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
             </tbody>
           </table>
         </div>
+          )}
+        </ForecastDetails>
         {forecast.liabilityPayoffs.length > 0 && (
           <p className="muted">
             Payoff:{" "}
             {forecast.liabilityPayoffs
               .map(
                 (item) =>
-                  `${item.liabilityId} at ${item.scheduledAt.slice(0, 10)}`,
+                  `${referenceLabel(draft, "Liability", item.liabilityId)} at ${item.scheduledAt.slice(0, 10)}`,
               )
               .join(", ")}
           </p>
@@ -3378,7 +2891,7 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
                 : "optional extra principal"}
               )
             </strong>
-            <p>{item.diagnostic}</p>
+            <p>{friendlyText(item.diagnostic)}</p>
           </div>
         ))}
         {capabilityDiagnostics.length > 0 && (
@@ -3388,7 +2901,7 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
             </strong>
             {capabilityDiagnostics.map((item, index) => (
               <p key={`${item.code}:${item.entityId ?? index}`}>
-                {item.code}: {item.message}
+                {friendlyText(item.message)}
               </p>
             ))}
           </div>
@@ -3398,7 +2911,7 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
             <strong>Forecast diagnostics</strong>
             {executionDiagnostics.map((item, index) => (
               <p key={`${item.code}:${item.entityId ?? index}`}>
-                {item.code}: {item.message}
+                {friendlyText(item.message)}
               </p>
             ))}
           </div>
@@ -3413,7 +2926,9 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
           <strong>As of {forecast.asOf}</strong>
           <span>Independent investment projection</span>
         </div>
-        <div className="table-scroll">
+        <ForecastDetails result={forecast} rows={forecast.points} label="investment forecast details">
+          {(rows) => (
+        <div className="table-scroll" role="region" aria-label="Scrollable financial table" tabIndex={0}>
           <table>
             <caption>Detailed investment forecast</caption>
             <thead>
@@ -3430,7 +2945,7 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
               </tr>
             </thead>
             <tbody>
-              {forecast.points.map((point) => (
+              {rows.map((point) => (
                 <tr key={point.periodStart}>
                   <td>{point.periodStart.slice(0, 10)}</td>
                   <td>{point.portfolioValue.display}</td>
@@ -3441,7 +2956,7 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
                   <td>{point.cashInvestmentIncome.display}</td>
                   <td>
                     {point.accountValues
-                      .map((item) => `${item.accountId}: ${item.value.display}`)
+                      .map((item) => `${referenceLabel(draft, "Account", item.accountId)}: ${item.value.display}`)
                       .join("; ")}
                   </td>
                   <td>
@@ -3457,12 +2972,14 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
             </tbody>
           </table>
         </div>
+          )}
+        </ForecastDetails>
         {forecast.diagnostics.length > 0 && (
           <div className="stress-detail">
             <strong>Forecast diagnostics</strong>
             {forecast.diagnostics.map((item, index) => (
               <p key={`${item.code}:${item.entityId ?? index}`}>
-                {item.code}: {item.message}
+                {friendlyText(item.message)}
               </p>
             ))}
           </div>
@@ -3493,7 +3010,7 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
       )}
       <div className="chart">
         <ResponsiveContainer>
-          <LineChart data={data}>
+          <LineChart data={data} accessibilityLayer>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="period" />
             <YAxis />
@@ -3523,7 +3040,9 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
           </LineChart>
         </ResponsiveContainer>
       </div>
-      <div className="table-scroll">
+      <ForecastDetails result={forecast} rows={forecast.points} label="cash-flow forecast details">
+          {(rows) => (
+        <div className="table-scroll" role="region" aria-label="Scrollable financial table" tabIndex={0}>
         <table>
           <caption>Detailed cash-flow forecast</caption>
           <thead>
@@ -3537,7 +3056,7 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
             </tr>
           </thead>
           <tbody>
-            {forecast.points.map((point) => (
+            {rows.map((point) => (
               <tr key={point.periodStart}>
                 <td>{point.periodStart.slice(0, 10)}</td>
                 <td>{point.income.display}</td>
@@ -3557,6 +3076,8 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
           </tbody>
         </table>
       </div>
+          )}
+        </ForecastDetails>
       {forecast.shortfalls.map((item) => (
         <div className="stress-detail" key={item.period}>
           <strong>
@@ -3564,9 +3085,9 @@ function ForecastVisual({ forecast }: { forecast: PersonalForecastReadModel }) {
           </strong>
           <p>
             Required {item.required.display}; available {item.available.display}
-            . {item.diagnostic}
+            . {friendlyText(item.diagnostic)}
           </p>
-          <code>{item.entityId}</code>
+          <details><summary>Technical diagnostic details</summary><code>{item.entityId} · {item.diagnostic}</code></details>
         </div>
       ))}
     </>
@@ -3722,7 +3243,7 @@ function Portability({
     </>
   );
 }
-function Advanced({
+function TechnicalDiagnostics({
   draft,
   issues,
 }: {
@@ -3732,7 +3253,7 @@ function Advanced({
   return (
     <>
       <PageHead
-        eyebrow="Settings · Advanced"
+        eyebrow="Settings · Technical diagnostics"
         title="Technical model details"
         text="IDs, versions, and validation details for diagnostics."
       />
@@ -3747,6 +3268,7 @@ function Advanced({
         </dl>
         <h2>Performance diagnostics</h2>
         <p>In-memory measurements only. No telemetry is persisted or transmitted; unavailable phases are shown as N/A. Percentiles pool up to 100 measured records; each sample's interpretation context is retained.</p>
+        <div className="table-scroll" role="region" aria-label="Scrollable performance diagnostics" tabIndex={0}>
         <table aria-label="Performance diagnostics">
           <thead><tr><th>Phase</th><th>Latest</th><th>p50</th><th>p95</th><th>Max</th><th>Samples</th><th>Availability</th><th>Interpretation context</th></tr></thead>
           <tbody>
@@ -3758,6 +3280,7 @@ function Advanced({
             })}
           </tbody>
         </table>
+        </div>
         <p>Execution placement: browser Worker financial execution and browser main thread interaction; local Node is captured by the benchmark command; server/cloud is not implemented and not measured. Local/browser execution is not metered.</p>
         <h2>Detailed validation</h2>
         {issues.length ? (
