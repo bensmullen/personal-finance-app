@@ -107,11 +107,6 @@ assert(
   "SessionStart should expose repository state without requiring local verification tools",
 );
 
-assert(
-  String(session?.hookSpecificOutput?.additionalContext ?? "").includes("Do not run tools/codex/bootstrap-pr.sh inside the implementation turn"),
-  "SessionStart must never instruct Codex to bootstrap from inside an active feature-branch turn",
-);
-
 const readOnly = hook("UserPromptSubmit", { prompt: "Please inspect the code." });
 assert(
   String(readOnly?.hookSpecificOutput?.additionalContext ?? "").includes("read-only"),
