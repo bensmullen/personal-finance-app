@@ -413,17 +413,31 @@ export const compileCurrentPosition = (
         id,
         "quantity",
       );
-    if (qty.amount.isZero()) continue;
-    assetsComplete = false;
-    diagnostics.push(
-      diagnostic(
-        "INVESTMENT_CURRENT_VALUATION_UNAVAILABLE",
-        `Investment ${id} has positive quantity but no authoritative current valuation in PR 15.`,
-        "assets",
-        "Investment",
-        id,
-      ),
-    );
+    const accountCurrency = Currency.of(String(accountsById.get(accountRef)!.currency));
+    for (const field of ["price", "market_value"] as const) {
+      if (investment[field] === undefined || investment[field] === null) continue;
+      const value = exactMoney(investment, field, accountCurrency);
+      if (!value || value.isNegative())
+        return invalidResult("INVESTMENT_VALUE_INVALID", `Investment ${id} ${field} must be nonnegative exact Money.`, "Investment", id, field);
+    }
+    const openingPrice = investment.price === undefined || investment.price === null
+      ? qty.amount.isZero() ? money("0", accountCurrency) : undefined
+      : exactMoney(investment, "price", accountCurrency);
+    if (!openingPrice)
+      return invalidResult("INVESTMENT_PRICE_REQUIRED", `Investment ${id} with nonzero quantity requires an exact opening price.`, "Investment", id, "price");
+    const derivedValue = openingPrice.times(qty.amount);
+    const authoredValue = investment.market_value === undefined || investment.market_value === null
+      ? derivedValue : exactMoney(investment, "market_value", accountCurrency);
+    if (!authoredValue || !authoredValue.equals(derivedValue))
+      return invalidResult("INVESTMENT_MARKET_VALUE_INCONSISTENT", `Investment ${id} market_value must equal quantity times price exactly.`, "Investment", id, "market_value");
+    if (accountCurrency.code !== currency.code) {
+      if (!derivedValue.amount.isZero()) {
+        assetsComplete = false;
+        diagnostics.push(diagnostic("FX_UNSUPPORTED", `Investment ${id} uses ${accountCurrency.code}; current position does not perform FX.`, "assets", "Investment", id, "account_id"));
+      }
+      continue;
+    }
+    nonCashAssets.push(derivedValue);
   }
 
   for (const asset of objects(model, "Asset")) {

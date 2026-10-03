@@ -95,6 +95,7 @@ export interface MoneyReadModel {
   readonly currency: string;
 }
 export interface CurrentPositionReadModel {
+  readonly status: "complete" | "partial" | "unsupported" | "invalid";
   readonly netWorth?: MoneyReadModel;
   readonly cash?: MoneyReadModel;
   readonly assets?: MoneyReadModel;
@@ -624,11 +625,16 @@ export const getCurrentPosition = (
   });
   if (result.status !== "compiled")
     return deepFreeze({
+      status: result.status === "invalid_model" ? "invalid" : "unsupported",
       unavailable: result.diagnostics.map((diagnostic) => diagnostic.message),
       diagnostics: result.diagnostics,
     });
   const value = result.value;
+  const status: CurrentPositionReadModel["status"] = value.diagnostics.length > 0 ||
+    [value.netWorth, value.cash, value.assets, value.liabilities, value.monthlyIncome, value.monthlySpending, value.monthlyCashFlow]
+      .some((item) => item === undefined) ? "partial" : "complete";
   return deepFreeze({
+    status,
     ...(value.netWorth ? { netWorth: moneyDto(value.netWorth) } : {}),
     ...(value.cash ? { cash: moneyDto(value.cash) } : {}),
     ...(value.assets ? { assets: moneyDto(value.assets) } : {}),

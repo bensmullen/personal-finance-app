@@ -12,7 +12,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { PERFORMANCE_PHASES, applicationPerformanceRegistry, createApplicationPerformanceObserver, type PerformanceContext, type PerformancePhase } from "../src/application/performance.js";
+import { PERFORMANCE_PHASES, applicationPerformanceRegistry, type PerformanceContext, type PerformancePhase } from "../src/application/performance.js";
 import { useForm, type UseFormReturn } from "react-hook-form";
 import {
   Area,
@@ -64,11 +64,9 @@ import {
   type PersistedPersonalModelState,
 } from "../src/application/personalMvp.js";
 import {
-  comparePersonalHouseholdScenarioIntents,
-  comparePersonalHouseholdMajorAssetDebtAddition,
+  type comparePersonalHouseholdMajorAssetDebtAddition,
   createHouseholdForecastRequest,
   resolveHouseholdExplanation,
-  runPersonalHouseholdForecast,
   type PersonalHouseholdForecastReadModel,
   type PersonalHouseholdScenarioComparisonReadModel,
   type PersonalHouseholdSessionExecutionConfiguration,
@@ -82,6 +80,16 @@ import {
   IndexedDbPersonalModelStore,
   isPersonalPersistenceEnabledOrigin,
 } from "./persistence/indexedDbPersonalModelStore.js";
+
+import { useInteractiveForecast } from "./forecast/useInteractiveForecast.js";
+import { sampleForecastChart, calculationFingerprint } from "../src/application/interactiveForecast.js";
+import { ForecastDetails, LazyExplanation, ExplanationCache } from "./forecast/details.js";
+import { ResultExplanationCache } from "./forecast/explanations.js";
+import type { ForecastView } from "./forecast/controller.js";
+
+type FinancialExplanation = ReturnType<typeof resolveHouseholdExplanation>;
+const FinancialResultModels = createContext<{ baseline?: ForecastView; comparison?: ForecastView;
+  explanations?: { baseline: ResultExplanationCache<FinancialExplanation>; comparison: ResultExplanationCache<FinancialExplanation> } }>({});
 
 type Primary = "Overview" | "Money" | "Net Worth" | "Plan" | "Settings";
 interface BrowserPerformanceRequest {
@@ -364,6 +372,7 @@ const emptyLiabilityConfig = (): LiabilitySessionConfig => ({
 export function PersonalFinanceApp() {
   const [draft, setDraft] = useState<PersonalDraft | undefined>();
   const browserRequest = useRef<BrowserPerformanceRequest | undefined>(undefined);
+  const [explanations] = useState(() => ({ baseline: new ResultExplanationCache<FinancialExplanation>(), comparison: new ResultExplanationCache<FinancialExplanation>() }));
   useEffect(() => { if (browserRequest.current !== undefined) browserRequest.current.active = false; });
   const [primary, setPrimary] = useState<Primary>("Overview");
   const [subnav, setSubnav] = useState("How am I doing?");
@@ -373,10 +382,6 @@ export function PersonalFinanceApp() {
   const [forecast, setForecast] = useState<PersonalForecastReadModel>();
   const [comparison, setComparison] =
     useState<PersonalScenarioComparisonReadModel>();
-  const [householdForecast, setHouseholdForecast] =
-    useState<PersonalHouseholdForecastReadModel>();
-  const [householdComparison, setHouseholdComparison] =
-    useState<PersonalHouseholdScenarioComparisonReadModel>();
   const [householdExecution, setHouseholdExecution] =
     useState<PersonalHouseholdSessionExecutionConfiguration>();
   const [sessionSettings, setSessionSettings] =
@@ -435,6 +440,15 @@ export function PersonalFinanceApp() {
     },
     [draft, sessionSettings.baseCurrency, sessionSettings.asOf],
   );
+  const interactive = useInteractiveForecast(draft, householdExecution, sessionSettings);
+  const householdForecast = interactive.baseline.lastGoodResult && "scope" in interactive.baseline.lastGoodResult
+    ? interactive.baseline.lastGoodResult as PersonalHouseholdForecastReadModel : undefined;
+  const householdComparison = interactive.comparison.lastGoodResult && "alternatives" in interactive.comparison.lastGoodResult
+    ? interactive.comparison.lastGoodResult as PersonalHouseholdScenarioComparisonReadModel : undefined;
+  if (householdForecast && interactive.baseline.performanceContext && browserRequest.current?.forecast !== householdForecast) {
+    browserRequest.current = { active: true, model: draft!, forecast: householdForecast,
+      context: { ...interactive.baseline.performanceContext, executionLocation: "browser_main", status: householdForecast.status } };
+  }
   const issues = useMemo(
     () => (draft ? validatePersonalDraft(draft) : []),
     [draft],
@@ -463,8 +477,6 @@ export function PersonalFinanceApp() {
   const invalidateResults = () => {
     setForecast(undefined);
     setComparison(undefined);
-    setHouseholdForecast(undefined);
-    setHouseholdComparison(undefined);
     setRunSettingsError("");
   };
 
@@ -738,79 +750,33 @@ export function PersonalFinanceApp() {
       ? configuration.retirementBindings
       : [retirementBinding];
     const configured = { ...effectiveHouseholdExecution!, retirementBindings: bindings };
-    setHouseholdComparison(comparePersonalHouseholdScenarioIntents(
-      draft,
-      createHouseholdForecastRequest(configured, randomId()),
-      [{ scenarioId: whatIfIds.alternativeScenarioId, name: "What-if alternative", changes: [change] }],
-    ));
+    if (!interactive.input) return;
+    const request = createHouseholdForecastRequest(configured, randomId());
+    const intents = [{ scenarioId: whatIfIds.alternativeScenarioId, name: "What-if alternative", changes: [change] }];
+    interactive.compare({ ...interactive.input, operation: "scenario_comparison", request, intents,
+      fingerprint: calculationFingerprint("scenario_comparison", draft, request, intents),
+      performanceContext: { ...interactive.input.performanceContext, runId: request.runIdentity },
+    });
     navigate("Plan");
     setSubnav("Compare Plans");
   };
-  const effectiveHouseholdExecution =
-    householdExecution === undefined
-      ? undefined
-      : {
-          ...householdExecution,
-          baseCurrency: sessionSettings.baseCurrency,
-          asOf: sessionSettings.asOf,
-          dataCutoff: sessionSettings.dataCutoff,
-          simulationStart: sessionSettings.simulationStart,
-          simulationEnd: sessionSettings.simulationEnd,
-          sameInstantCashFlowOrder: sessionSettings.sameInstantCashFlowOrder,
-        };
+  const effectiveHouseholdExecution = interactive.effectiveConfiguration;
   const runHouseholdForecast = () => {
-    if (effectiveHouseholdExecution === undefined) {
-      const message =
-        "The household forecast requires explicit household execution configuration in Current Plan.";
-      setRunSettingsError(message);
-      setHouseholdForecast({
-        scope: "household",
-        status: "unavailable",
-        message,
-        diagnostics: [{
-          code: "HOUSEHOLD_EXECUTION_CONFIGURATION_REQUIRED",
-          message,
-          capability: "household_projection",
-        }],
-      });
+    const resolved = resolvePersonalSessionSettings(sessionSettings, "cash_flow");
+    if (!resolved.request) { setRunSettingsError(resolved.error ?? "Run settings are not valid."); return; }
+    if (!interactive.available) {
+      setRunSettingsError("The household forecast requires explicit household execution configuration in Current Plan.");
       return;
     }
     setRunSettingsError("");
-    const runIdentity = randomId();
-    const context: PerformanceContext = Object.freeze({
-      runId: runIdentity,
-      dataClassification: "user",
-      modelCounts: Object.freeze(Object.fromEntries(Object.entries(draft.objects).map(([name, values]) => [name, values.length]))),
-      horizon: Object.freeze({ start: effectiveHouseholdExecution.simulationStart, end: effectiveHouseholdExecution.simulationEnd }),
-      modelVersion: draft.modelFormatVersion,
-      specificationVersion: draft.financialSpecificationVersion,
-      engineVersion: "0.1.0",
-      executionLocation: "browser_main",
-      runtime: "browser",
-      browser: typeof navigator === "undefined" ? "unavailable" : navigator.userAgent,
-      cacheState: "not_applicable",
-    });
-    const observer = createApplicationPerformanceObserver({ now: () => browserNow() ?? Number.NaN }, context);
-    const result = runPersonalHouseholdForecast(
-        draft,
-        createHouseholdForecastRequest(effectiveHouseholdExecution, runIdentity),
-        observer,
-      );
-    const completedContext: PerformanceContext = Object.freeze({ ...context, status: result.status,
-      ...(result.status === "completed" || result.status === "incomplete" ? { reachedThrough: result.reachedThrough } : {}),
-    });
-    browserRequest.current = { active: true, context: completedContext, model: draft, forecast: result };
-    for (const phase of ["ui.react_commit", "ui.chart_render", "ui.explanation_resolution"] as const) {
-      try { applicationPerformanceRegistry.record({ phase, availability: "not_measured", context: completedContext }); } catch { /* Diagnostic-only. */ }
-    }
-    setHouseholdForecast(result);
+    interactive.recalculate();
   };
   const runMajorAssetDebtComparison = (addition: Parameters<typeof comparePersonalHouseholdMajorAssetDebtAddition>[2]) => {
-    if (effectiveHouseholdExecution === undefined) {
+    if (!interactive.available) {
       setRunSettingsError("Configure reconciled household execution in Current Plan before comparing a major asset/debt addition.");
       return;
     }
-    setHouseholdComparison(comparePersonalHouseholdMajorAssetDebtAddition(draft, createHouseholdForecastRequest(effectiveHouseholdExecution, randomId()), addition));
+    interactive.compareInputs("major_asset_debt_comparison", addition);
     navigate("Plan"); setSubnav("Compare Plans");
   };
   const exportModel = () => {
@@ -840,6 +806,7 @@ export function PersonalFinanceApp() {
   };
 
   return (
+    <FinancialResultModels.Provider value={{ baseline: interactive.baseline, comparison: interactive.comparison, explanations }}>
     <BrowserPerformanceScope.Provider value={browserRequest.current?.model === draft && browserRequest.current?.forecast === householdForecast ? browserRequest.current : undefined}>
     <Profiler id="personal-finance-app" onRender={(_id, _phase, duration) => {
       const request = browserRequest.current;
@@ -900,6 +867,10 @@ export function PersonalFinanceApp() {
           </div>
         </aside>
         <main id="main-content">
+          <ForecastStatus label="Household forecast" state={interactive.baseline} />
+          {interactive.available && <button className="primary" onClick={runHouseholdForecast}>Recalculate</button>}
+          {primary === "Plan" && subnav === "Compare Plans" && <ForecastStatus label="Household comparison" state={interactive.comparison} />}
+
           {notice && (
             <div className="notice" role="status">
               {notice}
@@ -1089,6 +1060,7 @@ export function PersonalFinanceApp() {
     </div>
     </Profiler>
     </BrowserPerformanceScope.Provider>
+    </FinancialResultModels.Provider>
   );
 }
 
@@ -1250,6 +1222,19 @@ function SetupWizard({
   );
 }
 
+function ForecastStatus({ label, state }: { label: string; state: ForecastView }) {
+  return <section className={`forecast-status ${state.stale ? "stale" : ""}`} role="status" aria-label={`${label} status`}
+    data-lifecycle={state.lifecycle} data-pending={state.pending} data-fingerprint={state.fingerprint} data-request-id={state.requestId}>
+    <strong>{label} · {state.lifecycle}</strong>
+    {state.pending && <span>{state.lastGoodResult ? "Recalculating" : "Running"} deterministic forecast…</span>}
+    {state.stale && <span>Stale retained result — previous inputs; not current.</span>}
+    {!state.pending && !state.stale && (state.lifecycle === "completed" || state.lifecycle === "incomplete") && <span>Current result{state.lifecycle === "incomplete" ? " · financially incomplete" : ""}</span>}
+    {state.message && <span>{state.message}</span>}
+    {state.lifecycle === "unsupported" && state.latestResult?.status === "unavailable" && state.latestResult.diagnostics.length > 0 && <DiagnosticList diagnostics={state.latestResult.diagnostics} />}
+    {state.cacheState && <span>Baseline cache: {state.cacheState}</span>}
+  </section>;
+}
+
 function Overview({
   position,
   forecast,
@@ -1263,15 +1248,11 @@ function Overview({
   run: () => void;
   onPlan: () => void;
 }) {
-  const opening =
-    forecast?.status === "completed" || forecast?.status === "incomplete"
-      ? forecast.openingSnapshot
-      : undefined;
   const cards = [
-    ["Net worth", opening?.netWorth],
-    ["Cash", opening?.cash],
+    ["Net worth", position.netWorth],
+    ["Cash", position.cash],
     ["Monthly cash flow", position.monthlyCashFlow],
-    ["Debt", opening?.totalLiabilities],
+    ["Debt", position.liabilities],
   ] as const;
   return (
     <>
@@ -1280,14 +1261,13 @@ function Overview({
         title="How am I doing?"
         text="A clear view of your current position and the modeled path ahead."
       />
+      <p className="scope-badge">Current position · {position.status}</p>
       <section className="kpi-grid">
         {cards.map(([label, value]) => (
           <article className="kpi" key={label}>
             <span>{label}</span>
             <strong>
-              {"amount" in (value ?? {})
-                ? householdMoney(value as never)
-                : ((value as any)?.display ?? "Unavailable")}
+              {value?.display ?? "Unavailable"}
             </strong>
             {!value && <small>Needs supported model data</small>}
           </article>
@@ -1348,16 +1328,6 @@ function Overview({
           </p>
         </article>
       </section>
-      {opening && (
-        <section className="panel">
-          <h2>Where is my money?</h2>
-          <ul>
-            {opening.accounts.map((item) => <li key={item.accountId}>Account {objectLabel("Account", objectEntries(draft, "Account").find((value) => objectId("Account", value) === item.accountId)!)}: {householdMoney(item.cash)}</li>)}
-            {opening.positions.map((item) => <li key={item.positionId}>Investment {objectLabel("Investment", objectEntries(draft, "Investment").find((value) => objectId("Investment", value) === item.positionId)!)}: {householdMoney(item.value)}</li>)}
-            {opening.debts.map((item) => <li key={item.liabilityId}>Debt {objectLabel("Liability", objectEntries(draft, "Liability").find((value) => objectId("Liability", value) === item.liabilityId)!)}: {householdMoney(item.balance)}</li>)}
-          </ul>
-        </section>
-      )}
     </>
   );
 }
@@ -1431,19 +1401,10 @@ function NetWorthOverview({
   forecast: PersonalHouseholdForecastReadModel | undefined;
   run: () => void;
 }) {
-  const opening =
-    forecast?.status === "completed" || forecast?.status === "incomplete"
-      ? forecast.openingSnapshot
-      : undefined;
-  const data = opening
-    ? [
-        { name: "Assets", value: chartNumber(opening.totalAssets.amount) },
-        {
-          name: "Liabilities",
-          value: chartNumber(opening.totalLiabilities.amount),
-        },
-      ]
-    : [];
+  const data = [
+    ...(position.assets ? [{ name: "Assets", value: chartNumber(position.assets.exact) }] : []),
+    ...(position.liabilities ? [{ name: "Liabilities", value: chartNumber(position.liabilities.exact) }] : []),
+  ];
   return (
     <>
       <PageHead
@@ -1451,15 +1412,17 @@ function NetWorthOverview({
         title="What do I own and owe?"
         text="Current values only—no cross-slice projection is implied."
       />
+      <p className="scope-badge">Current position · {position.status}</p>
+      {position.diagnostics.length > 0 && <DiagnosticList diagnostics={position.diagnostics} />}
       <section className="kpi-grid three">
-        <Kpi label="Net worth" value={householdMoney(opening?.netWorth)} />
+        <Kpi label="Net worth" value={position.netWorth?.display ?? "Unavailable"} />
         <Kpi
           label="Total assets"
-          value={householdMoney(opening?.totalAssets)}
+          value={position.assets?.display ?? "Unavailable"}
         />
         <Kpi
           label="Total liabilities"
-          value={householdMoney(opening?.totalLiabilities)}
+          value={position.liabilities?.display ?? "Unavailable"}
         />
       </section>
       <section className="panel">
@@ -1479,7 +1442,7 @@ function NetWorthOverview({
         ) : (
           <div className="capability">
             <strong>
-              Run the household forecast to reconcile current composition
+              Current composition is unavailable for these inputs
             </strong>
             <button className="primary" onClick={run}>
               Run household forecast
@@ -1496,11 +1459,11 @@ function NetWorthOverview({
           <tbody>
             <tr>
               <td>Assets</td>
-              <td>{opening?.totalAssets.amount ?? "Unavailable"}</td>
+              <td>{position.assets?.exact ?? "Unavailable"}</td>
             </tr>
             <tr>
               <td>Liabilities</td>
-              <td>{opening?.totalLiabilities.amount ?? "Unavailable"}</td>
+              <td>{position.liabilities?.exact ?? "Unavailable"}</td>
             </tr>
           </tbody>
         </table>
@@ -2409,8 +2372,13 @@ function ComparePlans({
   draft: PersonalDraft;
   retirementBindings: readonly RetirementTerminationBinding[];
 }) {
+  const resultModels = useContext(FinancialResultModels);
+  const comparisonState = resultModels.comparison;
+  const financialModel = comparisonState && comparisonState.lastGoodResult === comparison ? comparisonState.resultModel ?? draft : draft;
+  const explanationCache = useMemo(() => comparison ? resultModels.explanations?.comparison.forResult(comparison) ?? new ExplanationCache<FinancialExplanation>() : new ExplanationCache<FinancialExplanation>(), [comparison, resultModels.explanations]);
+  const resultBindings = resultModels.comparison?.resultRequest?.compiler.cashFlow?.retirementBindings ?? retirementBindings;
   const canonicalEvents =
-    ((draft.objects as Record<string, readonly JsonObject[]>).Event ?? []);
+    ((financialModel.objects as Record<string, readonly JsonObject[]>).Event ?? []);
   return (
     <>
       <PageHead
@@ -2436,6 +2404,7 @@ function ComparePlans({
                 <h3>
                   {alternative.name} · {alternative.status}
                 </h3>
+                <p>Compared through {alternative.comparedThrough?.slice(0, 10) ?? "Unavailable"} · Ending net worth difference: {householdMoney(alternative.points.at(-1)?.deltas.netWorth)}</p>
                 {alternative.declaredDifference && (
                   <p className="capability">Declared difference: {alternative.declaredDifference.replaceAll("_", " ")}</p>
                 )}
@@ -2453,7 +2422,7 @@ function ComparePlans({
                   </div>
                 )}
                 {alternative.configurationDifferences.map((difference) => {
-                  const explicitBinding = retirementBindings.find((binding) =>
+                  const explicitBinding = resultBindings.find((binding) =>
                     difference.semanticTarget.includes(
                       binding.terminationEventId,
                     ),
@@ -2493,6 +2462,8 @@ function ComparePlans({
                     "none"}
                   .
                 </p>
+                <ForecastDetails result={comparison} rows={alternative.points} label={`${alternative.name} comparison details`}>
+                  {(rows) => (
                 <div className="table-scroll">
                   <table
                     aria-label={`${alternative.name} household comparison`}
@@ -2509,11 +2480,7 @@ function ComparePlans({
                       </tr>
                     </thead>
                     <tbody>
-                      {alternative.points.map((point) => {
-                        const explanation = resolveHouseholdExplanation(
-                          draft,
-                          point.traceRefs,
-                        );
+                      {rows.map((point) => {
                         return (
                           <tr key={point.periodStart}>
                             <td>{point.periodStart.slice(0, 10)}</td>
@@ -2527,50 +2494,10 @@ function ComparePlans({
                             </td>
                             <td>{householdMoney(point.deltas.netWorth)}</td>
                             <td>
-                              <details>
-                                <summary>Explain</summary>
-                                <p>
-                                  Scenario differences associated with this
-                                  changed result:{" "}
-                                  {point.relatedDifferenceIds.join(", ") ||
-                                    "none"}
-                                  .
-                                </p>
-                                <p>
-                                  Source records carried by this result:{" "}
-                                  {explanation.sources
-                                    .map((item) => item.label)
-                                    .join(", ") || "see raw trace metadata"}
-                                  .
-                                </p>
-                                <p>
-                                  Assumptions referenced by the calculation
-                                  trace:{" "}
-                                  {explanation.assumptions
-                                    .map((item) => item.label)
-                                    .join(", ") || "none"}
-                                  .
-                                </p>
-                                <p>
-                                  Rules referenced by the calculation trace:{" "}
-                                  {explanation.rules
-                                    .map((item) => item.label)
-                                    .join(", ") || "none"}
-                                  .
-                                </p>
-                                <p>
-                                  Event references:{" "}
-                                  {explanation.events
-                                    .map((item) => item.label)
-                                    .join(", ") || "none"}
-                                  .
-                                </p>
-                                <code>
-                                  {point.traceRefs
-                                    .map((ref) => ref.traceId)
-                                    .join("\n")}
-                                </code>
-                              </details>
+                              <LazyExplanation cache={explanationCache} rowId={`${alternative.name}:${point.periodStart}`}
+                                resolve={() => resolveHouseholdExplanation(financialModel, point.traceRefs)}
+                                differences={point.relatedDifferenceIds}
+                                traceIds={point.traceRefs.map((ref) => ref.traceId)} />
                             </td>
                           </tr>
                         );
@@ -2578,6 +2505,8 @@ function ComparePlans({
                     </tbody>
                   </table>
                 </div>
+                  )}
+                </ForecastDetails>
               </section>
             ))}
           </>
@@ -3226,14 +3155,20 @@ function HouseholdForecastVisual({
   cashFlowOnly?: boolean;
 }) {
   const request = useContext(BrowserPerformanceScope);
-  const scope = request?.model === draft && request.forecast === forecast ? request : undefined;
-  const chart = forecast.points.map((point) => ({
+  const models = useContext(FinancialResultModels);
+  const financialModel = models.baseline?.lastGoodResult === forecast ? models.baseline.resultModel ?? draft : draft;
+  const cache = useMemo(() => models.explanations?.baseline.forResult(forecast) ?? new ExplanationCache<FinancialExplanation>(), [forecast, models.explanations]);
+  const context = models.baseline?.performanceContext;
+  const scope = context && models.baseline?.lastGoodResult === forecast
+    ? { active: true, context: { ...context, executionLocation: "browser_main" as const }, model: financialModel, forecast } : request;
+  const chart = sampleForecastChart(forecast.points).map((point) => ({
     period: point.periodStart.slice(0, 7),
     netWorth: chartNumber(point.netWorth.amount),
     assets: chartNumber(point.totalAssets.amount),
     liabilities: chartNumber(point.totalLiabilities.amount),
     cash: chartNumber(point.cash.amount),
   }));
+  const ending = forecast.points.at(-1);
   return (
     <>
       <div className="boundary-banner">
@@ -3267,6 +3202,14 @@ function HouseholdForecastVisual({
         </section>
       )}
       {!cashFlowOnly && (
+        <section className="kpi-grid">
+          <Kpi label="Ending net worth" value={householdMoney(ending?.netWorth)} />
+          <Kpi label="Ending cash" value={householdMoney(ending?.cash)} />
+          <Kpi label="Ending assets" value={householdMoney(ending?.totalAssets)} />
+          <Kpi label="Ending liabilities" value={householdMoney(ending?.totalLiabilities)} />
+        </section>
+      )}
+      {!cashFlowOnly && (
         <div className="chart">
           <Profiler id="forecast-chart" onRender={(_id, _phase, duration) => {
             if (scope?.active) recordBrowserDuration("ui.chart_render", duration, scope.context);
@@ -3285,6 +3228,8 @@ function HouseholdForecastVisual({
           </ResponsiveContainer></Profiler>
         </div>
       )}
+      <ForecastDetails result={forecast} rows={forecast.points} label="forecast details">
+        {(rows) => (
       <div className="table-scroll">
         <table aria-label="Reconciled household forecast">
           <thead>
@@ -3301,12 +3246,7 @@ function HouseholdForecastVisual({
             </tr>
           </thead>
           <tbody>
-            {forecast.points.map((point) => {
-              const explanation = resolveExplanationMeasured(
-                scope,
-                draft,
-                point.traceRefs,
-              );
+            {rows.map((point) => {
               return (
                 <tr key={point.periodStart}>
                   <td>{point.periodStart.slice(0, 10)}</td>
@@ -3318,43 +3258,9 @@ function HouseholdForecastVisual({
                   <td>{householdMoney(point.totalLiabilities)}</td>
                   <td>{householdMoney(point.netWorth)}</td>
                   <td>
-                    <details>
-                      <summary>Explain</summary>
-                      <p>
-                        Source records carried by this result:{" "}
-                        {explanation.sources
-                          .map((item) => item.label)
-                          .join(", ") || "none resolved"}
-                        .
-                      </p>
-                      <p>
-                        Assumptions referenced by the calculation trace:{" "}
-                        {explanation.assumptions
-                          .map(
-                            (item) =>
-                              `${item.label}${item.value ? ` (${item.value} ${item.unit ?? ""})` : ""}`,
-                          )
-                          .join(", ") || "none"}
-                        .
-                      </p>
-                      <p>
-                        Rules referenced by the calculation trace:{" "}
-                        {explanation.rules
-                          .map((item) => item.label)
-                          .join(", ") || "none"}
-                        .
-                      </p>
-                      <p>
-                        Event references:{" "}
-                        {explanation.events
-                          .map((item) => item.label)
-                          .join(", ") || "none"}
-                        .
-                      </p>
-                      <code>
-                        {point.traceRefs.map((ref) => ref.traceId).join("\n")}
-                      </code>
-                    </details>
+                    <LazyExplanation cache={cache} rowId={point.periodStart}
+                      resolve={() => resolveExplanationMeasured(scope, financialModel, point.traceRefs)}
+                      traceIds={point.traceRefs.map((ref) => ref.traceId)} />
                   </td>
                 </tr>
               );
@@ -3362,6 +3268,8 @@ function HouseholdForecastVisual({
           </tbody>
         </table>
       </div>
+        )}
+      </ForecastDetails>
       {forecast.diagnostics.length > 0 && (
         <DiagnosticList diagnostics={forecast.diagnostics} />
       )}
@@ -3850,7 +3758,7 @@ function Advanced({
             })}
           </tbody>
         </table>
-        <p>Execution placement: browser main thread measured when a forecast runs; local Node is captured by the benchmark command; server/cloud is not implemented and not measured. Local/browser execution is not metered.</p>
+        <p>Execution placement: browser Worker financial execution and browser main thread interaction; local Node is captured by the benchmark command; server/cloud is not implemented and not measured. Local/browser execution is not metered.</p>
         <h2>Detailed validation</h2>
         {issues.length ? (
           issues.map((issue, index) => (

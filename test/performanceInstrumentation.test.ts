@@ -5,9 +5,15 @@ import { runPersonalHouseholdForecast, comparePersonalHouseholdScenarioIntents }
 import { createRealisticPerformanceFixture, createStressPerformanceFixture, createPerformanceScalingFixtures } from "./fixtures/performanceHouseholds.js";
 import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { runCompiledHouseholdProjection } from "../src/simulation/householdExecution.js";
-import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant } from "../src/time/index.js";
-import { USD } from "../src/values/index.js";
+import { Rate, USD } from "../src/values/index.js";
+import { executeForecastWorkerRequest } from "../ui/forecast/execute.js";
+import { ForecastController, type ForecastWorkerPort } from "../ui/forecast/controller.js";
+import type { ForecastWorkerRequest, ForecastWorkerResponse } from "../ui/forecast/protocol.js";
+import { calculationFingerprint, toForecastWorkerResult } from "../src/application/interactiveForecast.js";
+import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
+import { createGoldenHouseholdForecastRequest, createGoldenHouseholdScenarioIntents } from "../src/application/goldenHousehold.js";
 
 const context: PerformanceContext = Object.freeze({ runId: "performance-test", fixtureId: "realistic-household", dataClassification: "synthetic", modelCounts: Object.freeze({}), executionLocation: "local_node", runtime: "vitest", cacheState: "not_applicable" });
 const oneMonth = <T extends ReturnType<typeof createRealisticPerformanceFixture>["request"]>(request: T): T => ({
@@ -21,6 +27,86 @@ const oneMonth = <T extends ReturnType<typeof createRealisticPerformanceFixture>
 }) as T;
 
 describe("performance instrumentation", () => {
+  it("returns structured-clone safe Worker records with observational financial execution", () => {
+    const fixture = createRealisticPerformanceFixture();
+    const request = oneMonth(fixture.request);
+    const performanceContext: PerformanceContext = { ...context, executionLocation: "browser_worker", cacheState: "miss", workerConcurrency: 1 };
+    const message: ForecastWorkerRequest = { operation: "baseline_forecast", requestId: 1,
+      fingerprint: calculationFingerprint("baseline_forecast", fixture.model, request), model: fixture.model, request, performanceContext };
+    let tick = 0;
+    const response = executeForecastWorkerRequest(structuredClone(message), { now: () => ++tick });
+    expect(response.outcome).toBe("result");
+    if (response.outcome !== "result") throw new Error("Worker failed");
+    expect(response.result).toEqual(runPersonalHouseholdForecast(fixture.model, request));
+    expect(structuredClone(response)).toEqual(response);
+    expect(response).toMatchObject({ operation: message.operation, requestId: 1, fingerprint: message.fingerprint });
+    expect(response.records.find((record) => record.phase === "forecast.total")?.context).toMatchObject({ executionLocation: "browser_worker", cacheState: "miss", workerConcurrency: 1, status: "completed" });
+    expect(response.records.some((record) => record.phase === "transport.serialization")).toBe(false);
+    const clockFailure = executeForecastWorkerRequest(message, { now() { throw new Error("clock"); } });
+    expect(clockFailure.outcome === "result" && clockFailure.result).toEqual(response.result);
+    expect(clockFailure.records.filter((record) => record.phase === "forecast.total")[0]?.availability).toBe("unavailable");
+    const setupFailure = executeForecastWorkerRequest({ ...message, performanceContext: new Proxy(performanceContext, { ownKeys() { throw new Error("instrumentation setup"); } }) }, { now: () => ++tick });
+    expect(setupFailure.outcome === "result" && setupFailure.result).toEqual(response.result);
+    expect(setupFailure.records).toEqual([]);
+    const comparison = executeForecastWorkerRequest({ ...message, operation: "scenario_comparison", intents: [] }, { now: () => ++tick });
+    expect(comparison.outcome).toBe("result"); expect(comparison.records).toEqual([]);
+    const major = executeForecastWorkerRequest({ ...message, operation: "major_asset_debt_comparison", addition: { asset: {}, liability: {}, profile: request.compiler.liabilities!.executionProfiles[0]! } }, { now: () => ++tick });
+    expect(major.outcome).toBe("result"); expect(major.records).toEqual([]);
+  });
+
+  it("attributes unmeasured transport to browser_main and never fabricates cached execution", () => {
+    const fixture = createRealisticPerformanceFixture();
+    const request = oneMonth(fixture.request);
+    const registry = new PerformanceRegistry();
+    let workerRequest: ForecastWorkerRequest | undefined;
+    const worker: ForecastWorkerPort = { onmessage: null, onerror: null, onmessageerror: null, terminate() {}, postMessage(message) { workerRequest = message; } };
+    const controller = new ForecastController(() => worker, { set: () => 0, clear() {} }, () => {}, registry.record.bind(registry));
+    const input = { operation: "baseline_forecast" as const, fingerprint: calculationFingerprint("baseline_forecast", fixture.model, request), model: fixture.model, request, performanceContext: context };
+    controller.submit(input, true);
+    expect(registry.latest("transport.serialization")).toMatchObject({ availability: "not_measured", context: { executionLocation: "browser_main", cacheState: "miss" } });
+    expect(registry.summary("forecast.total")).toBeUndefined();
+    let tick = 0;
+    const response: ForecastWorkerResponse = executeForecastWorkerRequest(workerRequest!, { now: () => ++tick });
+    worker.onmessage?.({ data: response });
+    expect(registry.summary("forecast.total")?.count).toBe(1);
+    const original = controller.state.lastGoodResult;
+    controller.submit(input, true);
+    expect(controller.state.lastGoodResult).toBe(original);
+    expect(registry.latest("forecast.total")).toMatchObject({ availability: "not_measured", context: { cacheState: "hit", executionLocation: "browser_main" } });
+    expect(registry.latest("forecast.total")?.durationMs).toBeUndefined();
+    expect(registry.summary("forecast.total")?.count).toBe(1);
+    expect(registry.summary("transport.serialization")).toBeUndefined();
+    controller.dispose();
+  });
+
+  it("preserves exact comparison metadata across structured clone", () => {
+    const model = createGoldenHouseholdDraft();
+    const request = oneMonth(createGoldenHouseholdForecastRequest());
+    const intents = createGoldenHouseholdScenarioIntents().slice(0, 1);
+    const message: ForecastWorkerRequest = { operation: "scenario_comparison", model, request, intents, requestId: 7,
+      fingerprint: calculationFingerprint("scenario_comparison", model, request, intents), performanceContext: context };
+    const response = executeForecastWorkerRequest(structuredClone(message), { now: () => 1 });
+    expect(response.outcome).toBe("result");
+    if (response.outcome !== "result") throw new Error("Comparison Worker failed.");
+    const direct = comparePersonalHouseholdScenarioIntents(model, request, intents);
+    expect(direct.status).toBe("completed");
+    expect(response.result).toEqual(toForecastWorkerResult(direct));
+    expect(canonicalSerialize(response.result)).toBe(canonicalSerialize(direct));
+    expect(structuredClone(response)).toEqual(response);
+    expect(direct.alternatives[0]!.configurationDifferences.length).toBeGreaterThan(0);
+    for (const difference of direct.alternatives[0]!.configurationDifferences) {
+      expect(difference.before).not.toEqual({});
+      expect(difference.after).not.toEqual({});
+    }
+    const rates = direct.alternatives[0]!.configurationDifferences.flatMap((difference) => [difference.before, difference.after]);
+    expect(rates.some((value) => value instanceof Rate)).toBe(true);
+    if (!("alternatives" in response.result)) throw new Error("Expected comparison response.");
+    const transported = response.result.alternatives[0]!;
+    const original = direct.alternatives[0]!;
+    expect(transported.points).toEqual(original.points);
+    expect(transported.appliedRuleDifferences).toEqual(original.appliedRuleDifferences);
+    expect(transported.configurationDifferences.map((difference) => difference.differenceId)).toEqual(original.configurationDifferences.map((difference) => difference.differenceId));
+  });
   it("is observational and aggregates phase segments", () => {
     const fixture = createRealisticPerformanceFixture();
     const request = oneMonth(fixture.request);

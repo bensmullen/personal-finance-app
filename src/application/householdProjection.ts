@@ -236,6 +236,7 @@ export type PersonalHouseholdForecastReadModel =
   | {
       readonly scope: "household";
       readonly status: "unavailable";
+      readonly executionError?: true;
       readonly message: string;
       readonly diagnostics: readonly (ValidationIssue | CapabilityDiagnostic)[];
     }
@@ -855,6 +856,7 @@ const executeInternal = (
             ? error.message
             : "Household forecast could not be executed.",
         diagnostics,
+        ...(error instanceof ValidationError ? {} : { executionError: true as const }),
       }),
     };
   }
@@ -881,11 +883,13 @@ const execute = (
     if (observer !== undefined) {
       try {
         const context = Object.freeze({ ...observer.context,
-          status: execution?.read.status ?? "error",
+          status: execution?.read.status === "unavailable" && execution.read.executionError ? "error" : execution?.read.status ?? "error",
           ...(execution?.read.status === "completed" || execution?.read.status === "incomplete"
             ? { reachedThrough: execution.read.reachedThrough } : {}),
         });
-        records.push({ phase: "transport.serialization", availability: "not_applicable", context });
+        // Browser transport belongs to the sender, outside financial execution.
+        if (context.executionLocation !== "browser_worker")
+          records.push({ phase: "transport.serialization", availability: "not_applicable", context });
         for (const record of records) {
           try { observer.sink.record(Object.freeze({ ...record, context })); } catch { /* Diagnostic-only. */ }
         }
@@ -925,6 +929,7 @@ export interface HouseholdMetricDelta {
 }
 export interface PersonalHouseholdScenarioComparisonReadModel {
   readonly status: "completed" | "incomplete" | "unavailable";
+  readonly executionError?: true;
   readonly baselineName: string;
   readonly alternatives: readonly {
     readonly name: string;
@@ -1103,6 +1108,7 @@ const compareHouseholds = (
         baselineName: request.baseline.name,
         alternatives: Object.freeze([]),
         diagnostics: baseline.read.diagnostics,
+        ...(baseline.read.status === "unavailable" && baseline.read.executionError ? { executionError: true as const } : {}),
         message:
           baseline.read.status === "unavailable"
             ? baseline.read.message
@@ -1131,6 +1137,7 @@ const compareHouseholds = (
             ...diagnostics,
             ...alternative.read.diagnostics,
           ]),
+          ...(alternative.read.status === "unavailable" && alternative.read.executionError ? { executionError: true as const } : {}),
           message:
             alternative.read.status === "unavailable"
               ? alternative.read.message
@@ -1235,7 +1242,7 @@ const compareHouseholds = (
           ...(points.length === 0
             ? {}
             : { comparedThrough: points[points.length - 1]!.periodEnd }),
-          configurationDifferences: differences,
+          configurationDifferences: Object.freeze(differences),
           appliedRuleDifferences: deriveAppliedRuleDifferences(
             baselineRules,
             alternativeRules,
@@ -1262,6 +1269,7 @@ const compareHouseholds = (
         error instanceof Error
           ? error.message
           : "Household scenario comparison could not be executed.",
+      ...(error instanceof ValidationError ? {} : { executionError: true as const }),
     });
   }
 };
