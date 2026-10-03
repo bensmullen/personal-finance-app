@@ -15,6 +15,8 @@ export function objectLabel(type: PersonalObjectType, item: JsonObject): string 
 }
 export const referenceTargets = (ref: string): PersonalObjectType[] =>
   ref.split("|").filter((target): target is PersonalObjectType => PERSONAL_OBJECT_TYPES.includes(target as PersonalObjectType));
+const isJsonObject = (value: unknown): value is JsonObject =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 export function referenceLabel(draft: PersonalDraft, ref: string, value: unknown): string {
   if (Array.isArray(value)) return value.map((id) => referenceLabel(draft, ref, id)).join(", ") || "Not set";
   if (!value) return "Not set";
@@ -23,9 +25,9 @@ export function referenceLabel(draft: PersonalDraft, ref: string, value: unknown
     if (item) return objectLabel(type, item);
   }
   if (ref.split("|").includes("Event")) {
-    const event = (draft.objects.Event ?? []).find((entry) =>
-      typeof entry === "object" && entry !== null && !Array.isArray(entry) && String(entry.event_id) === String(value));
-    if (event && typeof event === "object" && !Array.isArray(event)) return friendlyText(event.name ?? "Unnamed event");
+    const event = (draft.objects.Event ?? []).find((entry): entry is JsonObject =>
+      isJsonObject(entry) && String(entry.event_id) === String(value));
+    if (event) return friendlyText(event.name ?? "Unnamed event");
   }
   return "Unavailable reference";
 }
