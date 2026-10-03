@@ -17,7 +17,7 @@ export const PERFORMANCE_PHASES = Object.freeze([
 
 export type PerformancePhase = (typeof PERFORMANCE_PHASES)[number];
 export type PerformanceAvailability = "measured" | "unavailable" | "not_applicable" | "not_implemented" | "not_measured";
-export type ExecutionLocation = "browser_main" | "local_node" | "server" | "cloud";
+export type ExecutionLocation = "browser_main" | "browser_worker" | "local_node" | "server" | "cloud";
 
 export interface PerformanceContext {
   readonly runId: string;

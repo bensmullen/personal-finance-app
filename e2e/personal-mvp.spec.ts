@@ -13,6 +13,13 @@ const loadExample = async (page: import("@playwright/test").Page) => {
   ).toBeVisible();
 };
 
+const showHouseholdDetails = async (page: import("@playwright/test").Page, channel: "baseline" | "comparison" = "baseline") => {
+  const status = page.getByRole("status", { name: channel === "baseline" ? "Household forecast status" : "Household comparison status" });
+  await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
+  const details = page.getByRole("button", { name: channel === "baseline" ? "Show forecast details" : /Show .* comparison details/ });
+  if (await details.count()) await details.first().click();
+};
+
 const importDraft = async (
   page: import("@playwright/test").Page,
   draft: unknown,
@@ -30,6 +37,123 @@ const importDraft = async (
   });
   await page.getByRole("button", { name: "Import into session" }).click();
 };
+
+test("R2 real Worker baseline stays responsive, retains stale results and accepts only the latest request", async ({ page }) => {
+  test.setTimeout(120_000);
+  // Gate delivery, not execution: every financial result still comes from the real bundled Worker.
+  await page.addInitScript(() => {
+    const NativeWorker = window.Worker;
+    const control = {
+      queue: [] as { requestId: number; fingerprint: string; deliver: () => void }[],
+      requests: [] as { requestId: number; operation: string }[],
+      errorNext: false,
+    };
+    (window as any).__r2Worker = control;
+    class GatedWorker {
+      native: Worker;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: { preventDefault(): void }) => void) | null = null;
+      onmessageerror: (() => void) | null = null;
+      constructor(url: string | URL, options?: WorkerOptions) {
+        this.native = new NativeWorker(url, options);
+        this.native.onmessage = (event) => control.queue.push({ requestId: event.data.requestId, fingerprint: event.data.fingerprint,
+          deliver: () => this.onmessage?.(event) });
+        this.native.onerror = (event) => this.onerror?.(event);
+        this.native.onmessageerror = () => this.onmessageerror?.();
+      }
+      postMessage(message: { requestId: number; operation: string }) {
+        control.requests.push({ requestId: message.requestId, operation: message.operation });
+        if (control.errorNext) {
+          control.errorNext = false;
+          queueMicrotask(() => this.onerror?.({ preventDefault() {} }));
+        } else this.native.postMessage(message);
+      }
+      terminate() { this.native.terminate(); }
+    }
+    window.Worker = GatedWorker as unknown as typeof Worker;
+  });
+  const status = page.getByRole("status", { name: "Household forecast status" });
+  const waitQueued = async () => page.waitForFunction(() => {
+    const status = document.querySelector('[aria-label="Household forecast status"]') as HTMLElement | null;
+    return (window as any).__r2Worker.queue.some((item: any) => String(item.requestId) === status?.dataset.requestId && item.fingerprint === status?.dataset.fingerprint);
+  });
+  const releaseCurrent = async () => page.evaluate(() => {
+    const status = document.querySelector('[aria-label="Household forecast status"]') as HTMLElement;
+    const control = (window as any).__r2Worker;
+    const index = control.queue.findIndex((item: any) => String(item.requestId) === status.dataset.requestId && item.fingerprint === status.dataset.fingerprint);
+    control.queue.splice(index, 1)[0].deliver();
+  });
+  await loadExample(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Model Settings", exact: true }).click();
+  await page.getByLabel("Simulation end").fill("2026-02-01");
+  await expect(status).toHaveAttribute("data-lifecycle", "running");
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "What do I own and owe?" })).toBeVisible();
+  await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("309,330.29");
+  await waitQueued();
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toHaveCount(0);
+  await releaseCurrent();
+  await expect(status).toHaveAttribute("data-lifecycle", "completed");
+  await expect(page.getByRole("button", { name: "Show forecast details" })).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toHaveCount(0);
+  await showHouseholdDetails(page);
+  const table = page.getByRole("table", { name: "Reconciled household forecast" });
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  await expect(table.locator("code")).toHaveCount(0);
+  const beforeDrillDown = await page.evaluate(() => (window as any).__r2Worker.requests.length);
+  await table.getByText("Explain", { exact: true }).click();
+  await expect(table.locator("code")).toContainText("compiler:canonical:Income");
+  await page.getByRole("button", { name: "Hide forecast details" }).click();
+  await showHouseholdDetails(page);
+  await table.getByText("Explain", { exact: true }).click();
+  expect(await page.evaluate(() => (window as any).__r2Worker.requests.length)).toBe(beforeDrillDown);
+
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Model Settings", exact: true }).click();
+  await page.getByLabel("Simulation end").fill("2026-03-01");
+  await expect(status).toHaveAttribute("data-lifecycle", "stale");
+  await expect(status).toContainText("Stale retained result");
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await expect(page.getByText(/Requested 2026-01-01 → 2026-02-01/)).toBeVisible();
+  await waitQueued();
+  const superseded = await status.getAttribute("data-request-id");
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
+  await expect(status).not.toHaveAttribute("data-request-id", superseded!);
+  await page.evaluate((requestId) => {
+    const queue = (window as any).__r2Worker.queue;
+    queue.splice(queue.findIndex((item: any) => String(item.requestId) === requestId), 1)[0].deliver();
+  }, superseded);
+  await expect(status).toHaveAttribute("data-lifecycle", "stale");
+  await expect(status).toHaveAttribute("data-pending", "true");
+  await waitQueued(); await releaseCurrent();
+  await expect(status).toHaveAttribute("data-lifecycle", "completed");
+  await expect(page.getByText(/Requested 2026-01-01 → 2026-03-01/)).toBeVisible();
+  await showHouseholdDetails(page);
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+
+  await page.evaluate(() => { (window as any).__r2Worker.errorNext = true; });
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Model Settings", exact: true }).click();
+  await page.getByLabel("Simulation end").fill("2026-04-01");
+  await expect(status).toHaveAttribute("data-lifecycle", "error");
+  await expect(status).toContainText("Stale retained result");
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await expect(page.getByText(/Requested 2026-01-01 → 2026-03-01/)).toBeVisible();
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Accounts", exact: true }).click();
+  await page.getByRole("button", { name: /Everyday checking/ }).click();
+  await page.getByLabel("Balance").fill("21000.00");
+  await page.getByRole("button", { name: "Close editor" }).click();
+  await expect(status).toHaveAttribute("data-lifecycle", "stale");
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("310,330.29");
+  await expect(page.getByText(/Requested 2026-01-01 → 2026-03-01/)).toBeVisible();
+  await waitQueued(); await releaseCurrent();
+  await expect(status).toHaveAttribute("data-lifecycle", "completed");
+  await expect(page.getByText(/Requested 2026-01-01 → 2026-04-01/)).toBeVisible();
+});
 
 test("guided setup reaches the Personal-MVP overview", async ({ page }) => {
   await page.goto("/");
@@ -59,24 +183,25 @@ test("Advanced exposes in-memory performance diagnostics", async ({ page }) => {
   await page.getByRole("button", { name: "Model Settings", exact: true }).click();
   await page.getByLabel("Simulation end").fill("2026-02-01");
   await page.getByRole("button", { name: "Overview", exact: true }).click();
-  await page.getByRole("button", { name: "Run household forecast" }).click();
+  await showHouseholdDetails(page, "baseline");
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Advanced", exact: true }).click();
   const diagnostics = page.getByRole("table", { name: "Performance diagnostics" });
   await expect(diagnostics).toBeVisible();
   await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).not.toContainText("N/A");
-  await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).toContainText("browser_main");
+  await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).toContainText("browser_worker");
   await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).toContainText("completed");
   await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).toContainText("modelCounts");
-  await expect(diagnostics.getByRole("row", { name: /transport\.serialization/ })).toContainText("not_applicable");
+  await expect(diagnostics.getByRole("row", { name: /transport\.serialization/ })).toContainText("not_measured");
   await expect(diagnostics.getByRole("row", { name: /transport\.serialization/ })).toContainText("N/A");
   const uiRows = diagnostics.getByRole("row").filter({ hasText: /ui\.(react_commit|chart_render|explanation_resolution)/ });
   const previousUiRecords = await uiRows.allTextContents();
   await page.getByRole("button", { name: "Overview", exact: true }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Advanced", exact: true }).click();
-  expect(await uiRows.allTextContents()).toEqual(previousUiRecords);
+  expect(previousUiRecords.length).toBe(3);
+  await expect(diagnostics.getByRole("row", { name: /ui\.explanation_resolution/ })).toContainText("N/A");
   await expect(page.getByText(/No telemetry is persisted or transmitted/)).toBeVisible();
   await expect(page.getByText(/server\/cloud is not implemented and not measured/)).toBeVisible();
 });
@@ -86,13 +211,19 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
 }) => {
   test.setTimeout(120_000);
   await loadExample(page);
-  await page.getByRole("button", { name: "Run household forecast" }).click();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
   const forecast = page.getByRole("table", {
     name: "Reconciled household forecast",
   });
+  await showHouseholdDetails(page);
   await expect(forecast).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText("Completed through 2036-01-01")).toBeVisible();
-  await expect(forecast.locator("tbody tr")).toHaveCount(120);
+  await expect(forecast.locator("tbody tr")).toHaveCount(24);
+  const requestBeforePaging = await page.getByRole("status", { name: "Household forecast status" }).getAttribute("data-request-id");
+  await page.getByRole("button", { name: "Next page", exact: true }).click();
+  await expect(forecast.locator("tbody tr")).toHaveCount(24);
+  await page.getByRole("button", { name: "Previous page", exact: true }).click();
+  await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-request-id", requestBeforePaging!);
   await forecast.getByText("Explain").first().click();
   await expect(
     page
@@ -124,6 +255,7 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   await page.getByLabel("Investment target").selectOption({ index: 1 });
   await page.getByRole("button", { name: "Compare investment return" }).click();
   const lower = page.getByRole("table", { name: "What-if alternative household comparison" });
+  await showHouseholdDetails(page, "comparison");
   await expect(lower).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/investment return/).first()).toBeVisible();
   await lower.getByText("Explain").last().click();
@@ -140,6 +272,7 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   const retirement = page.getByRole("table", {
     name: "What-if alternative household comparison",
   });
+  await showHouseholdDetails(page, "comparison");
   await expect(retirement).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/retirement date/i).first()).toBeVisible();
   await expect(
@@ -147,34 +280,6 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   ).toBeVisible();
   await retirement.getByText("Explain").last().click();
   await expect(retirement.locator("code").last()).not.toBeEmpty();
-});
-
-test("canonical edits invalidate a displayed household forecast", async ({
-  page,
-}) => {
-  await loadExample(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Model Settings", exact: true })
-    .click();
-  await page.getByLabel("Simulation end").fill("2026-02-01");
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
-  await page.getByRole("button", { name: "Run household forecast" }).click();
-  await expect(
-    page.getByRole("table", { name: "Reconciled household forecast" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Money", exact: true }).click();
-  await page.getByRole("button", { name: "Income", exact: true }).click();
-  await page.getByRole("button", { name: /Example salary/ }).click();
-  await page.getByLabel("Amount").fill("9100.00");
-  await page.getByRole("button", { name: "Close editor" }).click();
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
-  await expect(
-    page.getByRole("table", { name: "Reconciled household forecast" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByText("Run the reconciled household forecast"),
-  ).toBeVisible();
 });
 
 test("session settings drive horizons and block invalid run ordering", async ({
@@ -219,6 +324,7 @@ test("Money cash-flow run uses its explicit scope after Plan selects investments
   await page.getByRole("button", { name: "Money", exact: true }).click();
   await page.getByRole("button", { name: "Cash Flow", exact: true }).click();
   await page.getByRole("button", { name: "Run cash-flow forecast" }).click();
+  await showHouseholdDetails(page, "baseline");
   await expect(
     page.getByRole("table", { name: "Reconciled household forecast" }),
   ).toBeVisible();
@@ -251,6 +357,7 @@ test("money and net-worth workflows update friendly editors and forecast", async
     page.getByText("Financial outcome · Modeled liquidity stress"),
   ).toBeVisible();
   await expect(page.getByText("No observed history loaded")).toBeVisible();
+  await showHouseholdDetails(page, "baseline");
   await expect(
     page.getByRole("table", { name: "Reconciled household forecast" }),
   ).toBeVisible();
@@ -416,6 +523,7 @@ test("model portability and deterministic what-if comparison stay explicit", asy
   await page.getByLabel("Exact effective annual rate").fill("0.0500");
   await page.getByLabel("Income target").selectOption({ index: 1 });
   await page.getByRole("button", { name: "Compare income growth" }).click();
+  await showHouseholdDetails(page, "comparison");
   await expect(page.getByRole("table", { name: "What-if alternative household comparison" })).toBeVisible();
   await expect(page.getByText(/income growth/)).toBeVisible();
   await page.getByText("Explain").first().click();
@@ -467,6 +575,7 @@ test("What If executes retirement without mutating the baseline binding", async 
     .selectOption({ label: "Planned retirement" });
   await page.getByLabel("New retirement date").fill("2026-02-01");
   await page.getByRole("button", { name: "Compare retirement date" }).click();
+  await showHouseholdDetails(page, "comparison");
   await expect(page.getByRole("table", { name: "What-if alternative household comparison" })).toBeVisible();
   await expect(page.getByText(/retirement date/i)).toBeVisible();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
@@ -562,6 +671,7 @@ test("What If executes deterministic investment return", async ({ page }) => {
   await page.getByLabel("Investment target").selectOption({ index: 1 });
   await page.getByLabel("Exact effective annual rate").fill("0.0700");
   await page.getByRole("button", { name: "Compare investment return" }).click();
+  await showHouseholdDetails(page, "comparison");
   await expect(
     page.getByRole("table", { name: "What-if alternative household comparison" }),
   ).toBeVisible();
@@ -588,6 +698,7 @@ test("What If executes explicit liability extra principal", async ({
     .getByLabel("Extra principal funding account")
     .selectOption({ label: "Everyday checking" });
   await page.getByRole("button", { name: "Compare extra principal" }).click();
+  await showHouseholdDetails(page, "comparison");
   await expect(
     page.getByRole("table", { name: "What-if alternative household comparison" }),
   ).toBeVisible();
@@ -659,6 +770,7 @@ test("manual local save survives reload and explicit load without restoring exec
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   await page.getByLabel("Income target").selectOption({ index: 1 });
   await page.getByRole("button", { name: "Compare income growth" }).click();
+  await showHouseholdDetails(page, "comparison");
   await expect(
     page.getByRole("table", { name: "What-if alternative household comparison" }),
   ).toBeVisible();
@@ -748,6 +860,7 @@ test("PR21 closeout: major asset debt at projection start uses reconciled compar
   await page.getByLabel("Major debt settlement priority").fill("2");
   await page.getByRole("button", { name: "Compare major asset/debt" }).click();
   await expect(page.getByText("Declared difference: major asset debt addition")).toBeVisible({ timeout: 60_000 });
+  await showHouseholdDetails(page, "comparison");
   await expect(page.getByRole("table", { name: "Add major asset financed by fixed debt at projection start household comparison" })).toBeVisible();
 });
 
@@ -756,11 +869,13 @@ test("PR21 closeout: configure save reload reconfigure", async ({ page }) => {
   await loadExample(page);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
-  await page.getByRole("button", { name: "Run household forecast" }).first().click();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
+  await showHouseholdDetails(page, "baseline");
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible({ timeout: 60_000 });
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   await page.getByLabel("Income target").selectOption({ index: 1 });
   await page.getByRole("button", { name: "Compare income growth" }).click();
+  await showHouseholdDetails(page, "comparison");
   await expect(page.getByRole("table", { name: "What-if alternative household comparison" })).toBeVisible({ timeout: 60_000 });
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await page.reload();
@@ -821,6 +936,7 @@ test("PR21 closeout: configure save reload reconfigure", async ({ page }) => {
   await expect(
     page.getByText(/Household execution configuration is missing/),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "Run household forecast" }).first().click();
+  await page.getByRole("button", { name: "Recalculate", exact: true }).click();
+  await showHouseholdDetails(page, "baseline");
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible({ timeout: 60_000 });
 });
