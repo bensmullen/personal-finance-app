@@ -1242,7 +1242,14 @@ const compareHouseholds = (
           ...(points.length === 0
             ? {}
             : { comparedThrough: points[points.length - 1]!.periodEnd }),
-          configurationDifferences: differences,
+          // Exact value classes contain private state that structured clone cannot
+          // transport. Encode their metadata through the existing canonical value
+          // representation; financial metrics and difference/trace identities stay intact.
+          configurationDifferences: Object.freeze(differences.map((difference) => Object.freeze({
+            ...difference,
+            before: JSON.parse(canonicalSerialize(difference.before)),
+            after: JSON.parse(canonicalSerialize(difference.after)),
+          }))),
           appliedRuleDifferences: deriveAppliedRuleDifferences(
             baselineRules,
             alternativeRules,

@@ -12,6 +12,8 @@ import { executeForecastWorkerRequest } from "../ui/forecast/execute.js";
 import { ForecastController, type ForecastWorkerPort } from "../ui/forecast/controller.js";
 import type { ForecastWorkerRequest, ForecastWorkerResponse } from "../ui/forecast/protocol.js";
 import { calculationFingerprint } from "../src/application/interactiveForecast.js";
+import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
+import { createGoldenHouseholdForecastRequest, createGoldenHouseholdScenarioIntents } from "../src/application/goldenHousehold.js";
 
 const context: PerformanceContext = Object.freeze({ runId: "performance-test", fixtureId: "realistic-household", dataClassification: "synthetic", modelCounts: Object.freeze({}), executionLocation: "local_node", runtime: "vitest", cacheState: "not_applicable" });
 const oneMonth = <T extends ReturnType<typeof createRealisticPerformanceFixture>["request"]>(request: T): T => ({
@@ -75,6 +77,26 @@ describe("performance instrumentation", () => {
     expect(registry.summary("forecast.total")?.count).toBe(1);
     expect(registry.summary("transport.serialization")).toBeUndefined();
     controller.dispose();
+  });
+
+  it("preserves exact comparison metadata across structured clone", () => {
+    const model = createGoldenHouseholdDraft();
+    const request = oneMonth(createGoldenHouseholdForecastRequest());
+    const intents = createGoldenHouseholdScenarioIntents().slice(0, 1);
+    const message: ForecastWorkerRequest = { operation: "scenario_comparison", model, request, intents, requestId: 7,
+      fingerprint: calculationFingerprint("scenario_comparison", model, request, intents), performanceContext: context };
+    const response = executeForecastWorkerRequest(structuredClone(message), { now: () => 1 });
+    expect(response.outcome).toBe("result");
+    if (response.outcome !== "result") throw new Error("Comparison Worker failed.");
+    const direct = comparePersonalHouseholdScenarioIntents(model, request, intents);
+    expect(direct.status).toBe("completed");
+    expect(response.result).toEqual(direct);
+    expect(structuredClone(response)).toEqual(response);
+    expect(direct.alternatives[0]!.configurationDifferences.length).toBeGreaterThan(0);
+    for (const difference of direct.alternatives[0]!.configurationDifferences) {
+      expect(difference.before).not.toEqual({});
+      expect(difference.after).not.toEqual({});
+    }
   });
   it("is observational and aggregates phase segments", () => {
     const fixture = createRealisticPerformanceFixture();
