@@ -99,7 +99,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await expect(page.getByRole("heading", { name: "What do I own and owe?" })).toBeVisible();
   await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("309330.29");
   await waitQueued();
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toHaveCount(0);
   await releaseCurrent();
   await expect(status).toHaveAttribute("data-lifecycle", "completed");
@@ -122,7 +122,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await page.getByLabel("Simulation end").fill("2026-03-01");
   await expect(status).toHaveAttribute("data-lifecycle", "stale");
   await expect(status).toContainText("Stale retained result");
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByText(/Requested 2026-01-01 → 2026-02-01/)).toBeVisible();
   await waitQueued();
   const superseded = await status.getAttribute("data-request-id");
@@ -146,7 +146,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await page.getByLabel("Simulation end").fill("2026-04-01");
   await expect(status).toHaveAttribute("data-lifecycle", "error");
   await expect(status).toContainText("Stale retained result");
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByText(/Requested 2026-01-01 → 2026-03-01/)).toBeVisible();
   await page.getByRole("button", { name: "Money", exact: true }).click();
   await page.getByRole("button", { name: "Accounts", exact: true }).click();
@@ -154,7 +154,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await page.getByLabel("Balance").fill("21000.00");
   await page.getByRole("button", { name: "Close editor" }).click();
   await expect(status).toHaveAttribute("data-lifecycle", "stale");
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("310,330.29");
   await expect(page.getByText(/Requested 2026-01-01 → 2026-03-01/)).toBeVisible();
   await waitQueued(); await releaseCurrent();
@@ -189,7 +189,7 @@ test("Advanced exposes in-memory performance diagnostics", async ({ page }) => {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Model Settings", exact: true }).click();
   await page.getByLabel("Simulation end").fill("2026-02-01");
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   await showHouseholdDetails(page, "baseline");
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -204,7 +204,7 @@ test("Advanced exposes in-memory performance diagnostics", async ({ page }) => {
   await expect(diagnostics.getByRole("row", { name: /transport\.serialization/ })).toContainText("N/A");
   const uiRows = diagnostics.getByRole("row").filter({ hasText: /ui\.(react_commit|chart_render|explanation_resolution)/ });
   const previousUiRecords = await uiRows.allTextContents();
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Advanced", exact: true }).click();
   expect(previousUiRecords.length).toBe(3);
@@ -566,6 +566,7 @@ test("model portability and deterministic what-if comparison stay explicit", asy
     page.getByRole("status", { name: "Household comparison status" }),
   ).toHaveAttribute("data-lifecycle", "stale");
   await expect(page.getByRole("status", { name: "Household comparison status" })).toContainText("Run a new comparison");
+  await page.getByRole("button", { name: /Show .* comparison details/ }).click();
   await expect(page.getByRole("table", { name: "What-if alternative household comparison" })).toBeVisible();
 });
 
