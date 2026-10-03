@@ -393,7 +393,7 @@ const linkedSessionPayload = JSON.stringify({
 const linkedSessionResult = run("python3", [policy], {
   cwd: targetOne,
   input: linkedSessionPayload,
-  env: { PFM_POLICY_TEST_ALLOW_ANY_ORIGIN: "1" },
+  env: { PFM_POLICY_TEST_ORIGIN: "https://github.com/bensmullen/personal-finance-app.git" },
 });
 assert(linkedSessionResult.status === 0, "linked worktree SessionStart should succeed");
 const linkedSession = JSON.parse(linkedSessionResult.stdout || "{}");
