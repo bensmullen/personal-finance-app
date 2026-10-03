@@ -59,6 +59,19 @@ ACCEPTANCE:
 The semantic handoff may contain as much additional product/architecture detail
 as the task needs. Hooks do not require that detail to follow a rigid schema.
 
+For long or cross-cutting Codex Desktop tasks, prefer a repository-owned GitHub
+Issue whose body begins with the complete PFM_TASK_V3 authorization and then
+contains the semantic contract. Submit only:
+
+```
+PFM_TASK_ISSUE: <issue-number>
+```
+
+The hook fetches the open issue directly from this repository, validates its V3
+authorization, and injects the complete issue body into Codex context. This is
+the preferred transport when Desktop may rewrite or attach pasted text. The
+user does not need to paste the long contract into Codex.
+
 Hard guarantees:
 - Codex may edit only `ALLOWED_PATHS`.
 - Product/repair tasks may not authorize framework-control paths.

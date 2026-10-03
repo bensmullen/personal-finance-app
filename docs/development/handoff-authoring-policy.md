@@ -41,6 +41,31 @@ ACCEPTANCE:
 
 Nothing else is machine-required.
 
+### Preferred transport for long/cross-cutting tasks
+
+When the semantic brief is long enough that Codex Desktop may transform pasted
+content, ChatGPT SHALL create a repository GitHub Issue whose body starts with
+the complete V3 authorization above and then contains the audited semantic
+contract. The Codex composer receives only:
+
+```
+PFM_TASK_ISSUE: <issue-number>
+```
+
+The UserPromptSubmit hook fetches that open issue from
+`bensmullen/personal-finance-app`, validates the V3 authorization, binds the
+resolved contract to the task state, and injects the complete issue body into
+Codex context. The issue pointer is the machine transport; the issue body is the
+repository-owned handoff.
+
+Do not use candidate/learning issues as task authorization. A task issue is a
+purpose-built transport artifact and does not become normative product
+documentation.
+
+Simple short tasks may still use inline V3 authorization. Generated attachment
+transport remains compatibility fallback, not the preferred path for a long
+handoff.
+
 Do not put a starting SHA or worktree policy in the task authorization. Git
 initialization is owned by `tools/codex/bootstrap-pr.sh`, which resolves fresh
 remote state before Codex starts.

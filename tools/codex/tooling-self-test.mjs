@@ -132,6 +132,32 @@ const prompt = [
   "",
 ].join("\n");
 
+const issueFixture = path.join(temp, "task-issue-49.md");
+fs.writeFileSync(
+  issueFixture,
+  prompt + "\n## Semantic detail\nIssue-based semantic contract was injected by the policy hook.\n",
+);
+const issueAccepted = hook(
+  "UserPromptSubmit",
+  { prompt: "Please execute PFM_TASK_ISSUE: 49. Do not rely on multiline prompt transport." },
+  { PFM_POLICY_TEST_ISSUE_BODY_FILE: issueFixture },
+);
+assert(
+  String(issueAccepted?.hookSpecificOutput?.additionalContext ?? "").includes("repository GitHub issue #49")
+    && String(issueAccepted?.hookSpecificOutput?.additionalContext ?? "").includes("Issue-based semantic contract was injected"),
+  "one-line task issue pointer should validate and inject the repository-owned contract",
+);
+
+const issueAmbiguous = hook(
+  "UserPromptSubmit",
+  { prompt: "PFM_TASK_ISSUE: 49 and PFM_TASK_ISSUE: 50" },
+  { PFM_POLICY_TEST_ISSUE_BODY_FILE: issueFixture },
+);
+assert(
+  issueAmbiguous.decision === "block" && String(issueAmbiguous.reason).includes("TASK_ISSUE_AMBIGUOUS"),
+  "multiple task issue pointers must fail closed",
+);
+
 const accepted = hook("UserPromptSubmit", { prompt });
 assert(
   String(accepted?.hookSpecificOutput?.additionalContext ?? "").includes("task authorization accepted"),
@@ -423,5 +449,5 @@ assert(
 
 fs.rmSync(temp, { recursive: true, force: true });
 console.log(
-  "PASS codex tooling — V3 scope authorization, completion enforcement, untracked scope detection, publication safety, robust attachment transport, and origin-based PR bootstrap",
+  "PASS codex tooling — V3 scope authorization, issue-pointer transport, completion enforcement, untracked scope detection, publication safety, attachment compatibility, and origin-based PR bootstrap",
 );
