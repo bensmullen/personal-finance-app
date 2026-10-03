@@ -4,3 +4,50 @@
 .forecast-status.stale { background: #fff6e5; border-color: #d6b579; }
 .forecast-details { margin-top: 1rem; }
 .forecast-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin: .75rem 0; }
+/* R4: readable disclosures, keyboard focus, and layouts that retain controls. */
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 3px solid #26755f; outline-offset: 3px; }
+.topbar button:focus-visible { outline-color: #a4dfc4; }
+.skip-link { position: fixed; top: -80px; left: 12px; z-index: 30; padding: 12px; background: white; color: var(--green-dark); }
+.skip-link:focus { top: 12px; }
+summary { cursor: pointer; font-weight: 650; padding: 8px 0; }
+details p, details dl { line-height: 1.5; }
+pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
+.forecast-status { align-items: baseline; }
+.forecast-status details { margin-left: auto; max-width: 100%; }
+.forecast-status details dl { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 4px 12px; }
+.forecast-status dd { margin: 0; overflow-wrap: anywhere; }
+.forecast-figure { margin: 18px 0; }
+.forecast-figure figcaption p { margin: 8px 0; line-height: 1.5; }
+.forecast-figure .chart { height: clamp(280px, 32vw, 400px); }
+.chart-readout { max-width: min(380px, 80vw); padding: 12px 16px; background: white; border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); font-size: 13px; }
+.chart-readout dl { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 5px 12px; }
+.chart-readout dd { margin: 0; overflow-wrap: anywhere; }
+.card-main, .card-main > span:last-child { min-width: 0; }
+.card-main strong, .card-main small { overflow-wrap: anywhere; }
+.object-icon { flex-shrink: 0; }
+.drawer .panel-head { position: sticky; top: -28px; background: white; z-index: 1; padding: 12px 0; }
+.drawer .panel-head h2 { overflow-wrap: anywhere; }
+.drawer .panel-head .icon-button { flex-shrink: 0; }
+.drawer .form-grid { margin-top: 16px; }
+.drawer .advanced-list > div { display: contents; }
+.reference-state { padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: #f5f7f4; font-size: 13px; }
+.reference-state p { line-height: 1.5; }
+.controls fieldset { min-width: 0; max-width: 100%; }
+.controls fieldset select, .controls fieldset input { max-width: 100%; margin: 6px 0; }
+.table-scroll { max-width: 100%; }
+@media (max-width: 900px) {
+  .topbar { height: auto; min-height: 64px; padding-block: 12px; flex-wrap: wrap; gap: 12px; }
+  .avatar { margin-left: auto; }
+  .session-banner { display: block; order: 3; flex-basis: 100%; margin: 0; line-height: 1.5; }
+}
+@media (max-width: 560px) {
+  .page-head, .panel-head { flex-wrap: wrap; }
+  .boundary-banner { grid-template-columns: 1fr; gap: 8px; }
+  .panel { padding: 16px; }
+  .forecast-status details { margin-left: 0; flex-basis: 100%; }
+  .drawer { padding: 20px; width: 100%; }
+  .drawer .panel-head { top: -20px; }
+  .controls fieldset, .controls fieldset select, .controls fieldset input { width: 100%; }
+  .advanced-list { grid-template-columns: 1fr; gap: 4px; }
+  .advanced-list dd { margin-bottom: 12px; }
+}
