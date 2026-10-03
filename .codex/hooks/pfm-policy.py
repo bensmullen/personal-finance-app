@@ -566,11 +566,6 @@ def user_prompt(payload, root):
         emit({"decision": "block", "reason": "Invalid PFM task contract: " + "; ".join(errors)})
         return
 
-    dirty = git_value(["status", "--porcelain=v1", "--untracked-files=normal"], root)
-    if dirty:
-        emit({"decision": "block", "reason": "STATE_DIRTY: task branch must be clean before implementation begins."})
-        return
-
     branch = current_branch(root) or "DETACHED"
     target = values["TARGET_BRANCH"]
     if branch != target:
@@ -578,11 +573,16 @@ def user_prompt(payload, root):
             {
                 "decision": "block",
                 "reason": (
-                    f"TASK_BRANCH_MISMATCH: current branch is {branch}; task requires {target}. "
-                    "Prepare/resume the branch with tools/codex/bootstrap-pr.sh and open that worktree."
+                    f"TASK_BRANCH_MISMATCH: root={root} current branch is {branch}; task requires {target}. "
+                    "Prepare/resume the branch with tools/codex/bootstrap-pr.sh and open the reported worktree."
                 ),
             }
         )
+        return
+
+    dirty = git_value(["status", "--porcelain=v1", "--untracked-files=normal"], root)
+    if dirty:
+        emit({"decision": "block", "reason": f"STATE_DIRTY: root={root} task branch must be clean before implementation begins."})
         return
 
     state = {

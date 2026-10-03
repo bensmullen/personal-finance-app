@@ -67,6 +67,7 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pfm-tooling-v3-"));
 const hookRepo = path.join(temp, "hook-repo");
 fs.mkdirSync(path.join(hookRepo, ".codex", "runtime"), { recursive: true });
 fs.mkdirSync(path.join(hookRepo, "src"), { recursive: true });
+fs.writeFileSync(path.join(hookRepo, ".gitignore"), ".codex/runtime/\n");
 fs.writeFileSync(path.join(hookRepo, "src", "allowed.ts"), "export const value = 1;\n");
 fs.writeFileSync(path.join(hookRepo, "src", "outside.ts"), "export const outside = 1;\n");
 fs.writeFileSync(
