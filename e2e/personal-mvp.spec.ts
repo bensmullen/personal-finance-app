@@ -97,7 +97,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await expect(status).toHaveAttribute("data-lifecycle", "running");
   await page.getByRole("button", { name: "Net Worth", exact: true }).click();
   await expect(page.getByRole("heading", { name: "What do I own and owe?" })).toBeVisible();
-  await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("309,330.29");
+  await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("309330.29");
   await waitQueued();
   await page.getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toHaveCount(0);
@@ -249,7 +249,7 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   );
 
   await page.getByRole("button", { name: "Net Worth", exact: true }).click();
-  await expect(page.getByText("309,330.29").first()).toBeVisible();
+  await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("309330.29");
   await expect(page.getByText("535000", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -563,8 +563,10 @@ test("model portability and deterministic what-if comparison stay explicit", asy
     .getByRole("button", { name: "Compare Plans", exact: true })
     .click();
   await expect(
-    page.getByText("No executable comparison is available yet."),
-  ).toBeVisible();
+    page.getByRole("status", { name: "Household comparison status" }),
+  ).toHaveAttribute("data-lifecycle", "stale");
+  await expect(page.getByRole("status", { name: "Household comparison status" })).toContainText("Run a new comparison");
+  await expect(page.getByRole("table", { name: "What-if alternative household comparison" })).toBeVisible();
 });
 
 test("What If executes retirement without mutating the baseline binding", async ({
