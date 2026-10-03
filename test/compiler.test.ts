@@ -450,7 +450,7 @@ describe("canonical executable-model compiler", () => {
     }
   });
 
-  it("keeps independent current metrics when a positive investment lacks price", () => {
+  it("rejects positive investment quantity without the required opening price", () => {
     const result = compileCurrentPosition(
       modelWith((value) => {
         value.objects.Investment![0]!.quantity = "2";
@@ -458,52 +458,53 @@ describe("canonical executable-model compiler", () => {
       }),
       { baseCurrency: "USD", asOf: "2026-01-01" },
     );
-    expect(result.status).toBe("compiled");
-    if (result.status === "compiled") {
-      expect(result.value.cash?.amount.toString()).toBe("5000");
-      expect(result.value.liabilities?.amount.toString()).toBe("225669.71");
-      expect(result.value.assets).toBeUndefined();
-      expect(result.value.netWorth).toBeUndefined();
-      expect(
-        result.value.diagnostics.some(
-          (item) => item.code === "INVESTMENT_CURRENT_VALUATION_UNAVAILABLE",
-        ),
-      ).toBe(true);
+    expect(result.status).toBe("invalid_model");
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: "INVESTMENT_PRICE_REQUIRED", entityType: "Investment", fieldPath: "price",
+    }));
+  });
+
+  it("includes exact zero opening investment values with authored or derived market value", () => {
+    for (const authored of [true, false]) {
+      const result = compileCurrentPosition(
+        modelWith((value) => {
+          value.objects.Investment![0]!.quantity = "2";
+          value.objects.Investment![0]!.price = "0";
+          if (authored) value.objects.Investment![0]!.market_value = "0";
+          else delete value.objects.Investment![0]!.market_value;
+        }),
+        { baseCurrency: "USD", asOf: "2026-01-01" },
+      );
+      expect(result.status).toBe("compiled");
+      if (result.status === "compiled") {
+        expect(result.value.cash?.amount.toString()).toBe("5000");
+        expect(result.value.assets?.amount.toString()).toBe("355000");
+        expect(result.value.liabilities?.amount.toString()).toBe("225669.71");
+        expect(result.value.netWorth?.amount.toString()).toBe("129330.29");
+        expect(result.value.diagnostics).toEqual([]);
+      }
     }
   });
 
-  it("does not promote an exact zero investment price into a current valuation", () => {
-    const result = compileCurrentPosition(
-      modelWith((value) => {
-        value.objects.Investment![0]!.quantity = "2";
-        value.objects.Investment![0]!.price = "0";
-      }),
-      { baseCurrency: "USD", asOf: "2026-01-01" },
-    );
-    expect(result.status).toBe("compiled");
-    if (result.status === "compiled") {
-      expect(result.value.assets).toBeUndefined();
-      expect(
-        result.value.diagnostics.some(
-          (item) => item.code === "INVESTMENT_CURRENT_VALUATION_UNAVAILABLE",
-        ),
-      ).toBe(true);
-    }
-  });
-
-  it("keeps linked Investment valuation unavailable rather than using derived price", () => {
+  it("counts linked Investment opening value once and excludes its linked Asset", () => {
     const result = compileCurrentPosition(
       modelWith((value) => {
         value.objects.Investment![0]!.quantity = "2";
         value.objects.Investment![0]!.price = "10";
+        value.objects.Investment![0]!.market_value = "20";
         value.objects.Investment![0]!.asset_id =
           "90000000-0000-4000-8000-000000000007";
       }),
       { baseCurrency: "USD", asOf: "2026-01-01" },
     );
     expect(result.status).toBe("compiled");
-    if (result.status === "compiled")
-      expect(result.value.assets).toBeUndefined();
+    if (result.status === "compiled") {
+      expect(result.value.cash?.amount.toString()).toBe("5000");
+      expect(result.value.assets?.amount.toString()).toBe("5020");
+      expect(result.value.liabilities?.amount.toString()).toBe("225669.71");
+      expect(result.value.netWorth?.amount.toString()).toBe("-220649.71");
+      expect(result.value.diagnostics).toEqual([]);
+    }
   });
 
   it("gates opening cash when authored Transaction history is not replayed", () => {
@@ -734,11 +735,14 @@ describe("canonical executable-model compiler", () => {
       const result = compileCurrentPosition(
         modelWith((value) => {
           value.objects.Investment![0]!.quantity = "2";
-          value.objects.Investment![0]!.price = price;
+        value.objects.Investment![0]!.price = price;
         }),
         { baseCurrency: "USD", asOf: "2026-01-01" },
       );
-      expect(result.status).toBe("compiled");
+      expect(result.status).toBe("invalid_model");
+      expect(result.diagnostics).toContainEqual(expect.objectContaining({
+        code: "INVESTMENT_VALUE_INVALID", entityType: "Investment", fieldPath: "price",
+      }));
     }
     for (const cost of ["not-exact", "-1"]) {
       const result = compileCurrentPosition(
@@ -756,8 +760,12 @@ describe("canonical executable-model compiler", () => {
       { baseCurrency: "USD", asOf: "2026-01-01" },
     );
     expect(missing.status).toBe("compiled");
-    if (missing.status === "compiled")
+    if (missing.status === "compiled") {
       expect(missing.value.assets).toBeUndefined();
+      expect(missing.value.netWorth).toBeUndefined();
+      expect(missing.value.cash?.amount.toString()).toBe("5000");
+      expect(missing.value.liabilities?.amount.toString()).toBe("225669.71");
+    }
   });
 
   it("excludes future investment Accounts and gates already-closed positions", () => {
@@ -909,18 +917,18 @@ describe("canonical executable-model compiler", () => {
     });
     const current = getCurrentPosition(draft, { baseCurrency: "USD", asOf: "2026-01-01" });
     expect(current.diagnostics[0]!.code).toBe("RETURN_MODEL_REFERENCE_INVALID");
-    const partial = getCurrentPosition(
+    const invalid = getCurrentPosition(
       modelWith((value) => {
         value.objects.Investment![0]!.quantity = "2";
         delete value.objects.Investment![0]!.price;
       }),
       { baseCurrency: "USD", asOf: "2026-01-01" },
     );
-    expect(
-      partial.diagnostics.some(
-        (diagnostic) => diagnostic.code === "INVESTMENT_CURRENT_VALUATION_UNAVAILABLE",
-      ),
-    ).toBe(true);
+    expect(invalid.status).toBe("invalid");
+    expect(invalid.netWorth).toBeUndefined();
+    expect(invalid.diagnostics).toContainEqual(expect.objectContaining({
+      code: "INVESTMENT_PRICE_REQUIRED", entityType: "Investment", fieldPath: "price",
+    }));
     const comparison = comparePersonalCashFlowPlans(
       draft,
       {
