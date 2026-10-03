@@ -179,6 +179,7 @@ if [ "$mode" = "new" ]; then
 fi
 
 remote_target="refs/remotes/origin/$branch"
+remote_tracking="origin/$branch"
 if ! git show-ref --verify --quiet "$remote_target"; then
   printf 'PR_BOOTSTRAP_FAIL remote branch does not exist: %s\n' "$branch" >&2
   exit 1
@@ -187,7 +188,7 @@ remote_head="$(git rev-parse "$remote_target")"
 owner="$(branch_owner)"
 
 if [ -n "$owner" ]; then
-  git -C "$owner" branch --set-upstream-to="$remote_target" "$branch" >/dev/null 2>&1 || true
+  git -C "$owner" branch --set-upstream-to="$remote_tracking" "$branch" >/dev/null
   if [ -n "$(git -C "$owner" status --porcelain=v1 --untracked-files=normal)" ]; then
     printf 'PR_BOOTSTRAP_FAIL existing branch worktree is dirty: %s\n' "$owner" >&2
     exit 1
@@ -214,7 +215,7 @@ if git show-ref --verify --quiet "refs/heads/$branch"; then
   local_head="$(git rev-parse "refs/heads/$branch")"
   if [ "$local_head" != "$remote_head" ]; then
     if git merge-base --is-ancestor "$local_head" "$remote_head"; then
-      git branch -f "$branch" "$remote_target" >/dev/null
+      git branch -f "$branch" "$remote_tracking" >/dev/null
     elif git merge-base --is-ancestor "$remote_head" "$local_head"; then
       printf 'PR_BOOTSTRAP_FAIL local branch has unpushed commits: %s local=%s remote=%s\n' "$branch" "$local_head" "$remote_head" >&2
       exit 1
@@ -224,9 +225,9 @@ if git show-ref --verify --quiet "refs/heads/$branch"; then
     fi
   fi
 else
-  git branch --track "$branch" "$remote_target" >/dev/null
+  git branch --track "$branch" "$remote_tracking" >/dev/null
 fi
-git branch --set-upstream-to="$remote_target" "$branch" >/dev/null
+git branch --set-upstream-to="$remote_tracking" "$branch" >/dev/null
 
 prepare_target_path
 git worktree add "$target_abs" "$branch"
