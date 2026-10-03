@@ -48,6 +48,16 @@ ACCEPTANCE:
 
 Only these fields are machine-required.
 
+For long/cross-cutting Desktop work, store the V3 authorization plus semantic
+contract in an open repository task issue and send only:
+
+```text
+PFM_TASK_ISSUE: <issue-number>
+```
+
+The policy hook validates and injects the issue body directly; do not paste the
+long handoff again.
+
 The remainder of the handoff is normal semantic implementation guidance. For
 complex work, include resolved decisions, failure states, requirement/evidence
 mapping, performance or concurrency boundaries, UAT, exclusions, and lookup

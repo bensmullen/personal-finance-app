@@ -7,6 +7,8 @@ import re
 import shlex
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 APPROVED_REPOSITORY = "bensmullen/personal-finance-app"
@@ -19,6 +21,7 @@ CONTROL_PATHS = (
 TASK_MARKERS = ("PFM_TASK_V3", "PFM_TASK_V2")
 TASK_ATTACHMENT_NAMES = {"pasted-text.txt", "writing-block.md"}
 TASK_ATTACHMENT_MAX_BYTES = 256 * 1024
+TASK_ISSUE_MAX_BYTES = 256 * 1024
 REQUIRED_SCALARS = ("TASK_KIND", "TARGET_BRANCH", "DEPENDENCY_POLICY")
 REQUIRED_SECTIONS = ("ALLOWED_PATHS", "OBJECTIVE", "ACCEPTANCE")
 
@@ -168,6 +171,95 @@ class TaskAttachmentError(ValueError):
     pass
 
 
+class TaskIssueError(ValueError):
+    pass
+
+
+def task_issue_numbers(prompt):
+    matches = re.findall(r"\bPFM_TASK_ISSUE\s*:\s*#?(\d+)\b", prompt, flags=re.I)
+    unique = []
+    for match in matches:
+        number = int(match)
+        if number not in unique:
+            unique.append(number)
+    return unique
+
+
+def read_task_issue(prompt):
+    numbers = task_issue_numbers(prompt)
+    if not numbers:
+        return None, None
+    if len(numbers) != 1:
+        raise TaskIssueError(
+            f"TASK_ISSUE_AMBIGUOUS: expected exactly one PFM_TASK_ISSUE pointer, found {len(numbers)}."
+        )
+    number = numbers[0]
+    if number <= 0:
+        raise TaskIssueError("TASK_ISSUE_INVALID: issue number must be positive.")
+
+    test_path = os.environ.get("PFM_POLICY_TEST_ISSUE_BODY_FILE")
+    if test_path:
+        try:
+            body_bytes = Path(test_path).read_bytes()
+        except Exception:
+            raise TaskIssueError("TASK_ISSUE_TEST_SOURCE_MISSING: configured issue fixture is unreadable.")
+        title = "PFM policy test issue"
+        state = "open"
+    else:
+        url = f"https://api.github.com/repos/{APPROVED_REPOSITORY}/issues/{number}"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "personal-finance-app-pfm-policy-hook",
+        }
+        token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        request = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=8) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise TaskIssueError(f"TASK_ISSUE_FETCH_FAILED: GitHub issue #{number} returned HTTP {exc.code}.")
+        except Exception as exc:
+            raise TaskIssueError(f"TASK_ISSUE_FETCH_FAILED: unable to read GitHub issue #{number}: {exc}")
+
+        if payload.get("pull_request") is not None:
+            raise TaskIssueError("TASK_ISSUE_INVALID: task pointer must reference a GitHub Issue, not a pull request.")
+        if payload.get("state") != "open":
+            raise TaskIssueError(f"TASK_ISSUE_CLOSED: GitHub issue #{number} is not open.")
+        body = payload.get("body")
+        if not isinstance(body, str) or not body.strip():
+            raise TaskIssueError(f"TASK_ISSUE_EMPTY: GitHub issue #{number} has no task body.")
+        body_bytes = body.encode("utf-8")
+        title = str(payload.get("title") or "")
+        state = str(payload.get("state") or "")
+
+    if len(body_bytes) > TASK_ISSUE_MAX_BYTES:
+        raise TaskIssueError(
+            f"TASK_ISSUE_TOO_LARGE: GitHub issue #{number} exceeds {TASK_ISSUE_MAX_BYTES} bytes."
+        )
+    try:
+        text = body_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise TaskIssueError(f"TASK_ISSUE_ENCODING: GitHub issue #{number} must be UTF-8 text.")
+
+    if "PFM_TASK_V3" not in text:
+        raise TaskIssueError(f"TASK_ISSUE_INVALID: GitHub issue #{number} does not contain PFM_TASK_V3.")
+
+    errors, _, _ = validate_task(text)
+    if errors:
+        raise TaskIssueError(
+            f"TASK_ISSUE_INVALID: GitHub issue #{number} has an invalid PFM task contract: " + "; ".join(errors)
+        )
+
+    return text, {
+        "number": number,
+        "title": title,
+        "state": state,
+        "sha256": hashlib.sha256(body_bytes).hexdigest(),
+    }
+
+
 def codex_attachments_root():
     home = Path(os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")).expanduser()
     return home / "attachments"
@@ -273,19 +365,19 @@ def attachment_integrity_error(state):
 
 
 def find_task_prompt(prompt):
+    issue_text, issue_metadata = read_task_issue(prompt)
+    if issue_text is not None:
+        return issue_text, {"issue": issue_metadata}
+
     inline_has_marker = any(marker in prompt for marker in TASK_MARKERS)
     if inline_has_marker:
         errors, _, _ = validate_task(prompt)
         if not errors:
             return prompt, None
 
-    try:
-        attached, metadata = read_task_attachment(prompt)
-    except TaskAttachmentError:
-        raise
-
+    attached, metadata = read_task_attachment(prompt)
     if attached is not None and any(marker in attached for marker in TASK_MARKERS):
-        return attached, metadata
+        return attached, {"attachment": metadata}
 
     if inline_has_marker:
         errors, _, _ = validate_task(prompt)
@@ -543,7 +635,7 @@ def user_prompt(payload, root):
     prompt = str(payload.get("prompt") or "")
     try:
         task_prompt, attachment_metadata = find_task_prompt(prompt)
-    except (TaskAttachmentError, ValueError) as exc:
+    except (TaskAttachmentError, TaskIssueError, ValueError) as exc:
         emit({"decision": "block", "reason": str(exc)})
         return
 
@@ -593,10 +685,20 @@ def user_prompt(payload, root):
         "ACCEPTANCE": section(task_prompt, "ACCEPTANCE"),
     }
     if attachment_metadata:
-        state["TASK_ATTACHMENT"] = attachment_metadata
+        if attachment_metadata.get("attachment") is not None:
+            state["TASK_ATTACHMENT"] = attachment_metadata["attachment"]
+        if attachment_metadata.get("issue") is not None:
+            state["TASK_ISSUE"] = attachment_metadata["issue"]
     state_path(root, payload).write_text(json.dumps(state, indent=2) + "\n")
 
-    source = " from a trusted attachment" if attachment_metadata else ""
+    issue_metadata = state.get("TASK_ISSUE")
+    attachment_source = state.get("TASK_ATTACHMENT") is not None
+    if issue_metadata is not None:
+        source = f" from repository GitHub issue #{issue_metadata['number']}"
+    elif attachment_source:
+        source = " from a trusted attachment"
+    else:
+        source = ""
     context = (
         f"PFM task authorization accepted{source}. Repository edits are restricted to ALLOWED_PATHS. "
         "Use apply_patch for repository file edits; do not run local tests/builds/validators or install packages. "
@@ -605,6 +707,12 @@ def user_prompt(payload, root):
         "COMPLETE is accepted only after the task branch is clean, contains an implementation commit, "
         "and is pushed/up-to-date with its origin tracking branch."
     )
+    if issue_metadata is not None:
+        context += (
+            "\n\nThe complete repository-owned task contract follows. Treat this as the authoritative "
+            "implementation handoff for the current task; do not ask the user to paste it again.\n\n"
+            + task_prompt
+        )
     emit(
         {
             "hookSpecificOutput": {
