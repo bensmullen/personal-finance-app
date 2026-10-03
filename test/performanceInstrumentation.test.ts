@@ -117,14 +117,22 @@ describe("performance instrumentation", () => {
     const observed = runPersonalHouseholdForecast(fixture.model, request, createApplicationPerformanceObserver({ now: () => ++tick }, context, registry));
     expect(observed).toEqual(baseline);
     expect(registry.summary("forecast.total")?.count).toBe(1);
-    expect(registry.summary("engine.prepare")?.latest).toBeGreaterThan(1);
+    // R3 reuses fingerprint preparation for execution of this one-month fixture.
+    expect(registry.summary("engine.prepare")?.latest).toBe(1);
+    expect(registry.summary("engine.prepare")?.count).toBe(1);
     expect(registry.summary("engine.execute")?.count).toBe(1);
     // A unit-step clock proves these sibling phases cannot include each other.
     expect(registry.summary("compile.model_and_slices")?.latest).toBe(1);
     expect(registry.summary("compile.opening_reconciliation")?.latest).toBe(2);
+    for (const phase of ["compile.household_invariants", "engine.compile_invariants", "engine.fingerprint"] as const) {
+      expect(registry.latest(phase)?.availability).toBe("measured");
+      expect(registry.summary(phase)?.latest).toBe(1);
+      expect(registry.summary(phase)?.count).toBe(1);
+    }
     expect(registry.latest("transport.serialization")?.availability).toBe("not_applicable");
     expect(registry.summary("transport.serialization")).toBeUndefined();
-    for (const phase of ["forecast.total", "compile.model_and_slices", "engine.execute", "application.read_model"] as const) {
+    for (const phase of ["forecast.total", "compile.model_and_slices", "compile.household_invariants",
+      "engine.compile_invariants", "engine.fingerprint", "engine.prepare", "engine.execute", "application.read_model"] as const) {
       expect(registry.latest(phase)?.context).toMatchObject({ ...context, status: "completed" });
     }
   });
