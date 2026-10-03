@@ -149,13 +149,16 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByText(/Requested 2026-01-01 → 2026-03-01/)).toBeVisible();
   await page.getByRole("button", { name: "Money", exact: true }).click();
-  await page.getByRole("button", { name: "Accounts", exact: true }).click();
-  await page.getByRole("button", { name: /Everyday checking/ }).click();
-  await page.getByLabel("Balance").fill("21000.00");
+  await page.getByRole("button", { name: "Income", exact: true }).click();
+  await page.getByRole("button", { name: /Example salary/ }).click();
+  // Opening account balances are immutable; exercise a supported economic edit.
+  await page.getByLabel("Amount").fill("10000.00");
+  await expect(page.getByLabel("Amount")).toHaveValue("10000.00");
   await page.getByRole("button", { name: "Close editor" }).click();
   await expect(status).toHaveAttribute("data-lifecycle", "stale");
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
-  await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("310,330.29");
+  // A future income amount changes the forecast, not opening net worth.
+  await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("309330.29");
   await expect(page.getByText(/Requested 2026-01-01 → 2026-03-01/)).toBeVisible();
   await waitQueued(); await releaseCurrent();
   await expect(status).toHaveAttribute("data-lifecycle", "completed");
