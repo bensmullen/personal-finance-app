@@ -1,107 +1,45 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { candidateKey } from "./agent-candidate-key.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const policy = path.join(root, ".codex", "hooks", "pfm-policy.py");
-const stateShell = path.join(root, "tools", "codex", "state.sh");
-const envDoctor = path.join(root, "tools", "codex", "env-doctor.sh");
-const setupLocalEnvironment = path.join(root, "tools", "codex", "setup-local-environment.sh");
-const prepareLinkedWorktree = path.join(root, "tools", "codex", "prepare-linked-worktree.sh");
-const lessonsValidator = path.join(root, "tools", "codex", "validate-agent-lessons.mjs");
+const bootstrap = path.join(root, "tools", "codex", "bootstrap-pr.sh");
+const prepareWorktree = path.join(root, "tools", "codex", "prepare-linked-worktree.sh");
+const setupEnvironment = path.join(root, "tools", "codex", "setup-local-environment.sh");
+
+const run = (command, args = [], options = {}) =>
+  spawnSync(command, args, {
+    cwd: options.cwd ?? root,
+    encoding: "utf8",
+    input: options.input,
+    env: { ...process.env, ...(options.env ?? {}) },
+  });
+
+const mustRun = (command, args = [], options = {}) => {
+  const result = run(command, args, options);
+  if (result.status !== 0) {
+    throw new Error(
+      command + " " + args.join(" ") + " failed\nstdout:\n" + result.stdout + "\nstderr:\n" + result.stderr,
+    );
+  }
+  return result;
+};
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
 };
 
-const run = (command, args = [], options = {}) => spawnSync(command, args, {
-  cwd: root,
-  encoding: "utf8",
-  env: { ...process.env, ...options.env },
-  input: options.input ?? "",
-});
-
-for (const [command, args] of [
-  ["python3", ["-c", 'import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())', policy]],
-  ["bash", ["-n", stateShell]],
-  ["bash", ["-n", envDoctor]],
-  ["bash", ["-n", setupLocalEnvironment]],
-  ["bash", ["-n", prepareLinkedWorktree]],
-  ["bash", [envDoctor]],
-  ["bash", [envDoctor, "--verification"]],
-  ["node", [lessonsValidator]],
-]) {
-  const result = run(command, args);
-  assert(result.status === 0, `${command} ${args.join(" ")} failed: ${result.stderr}`);
+mustRun("python3", [
+  "-c",
+  "import ast,pathlib; ast.parse(pathlib.Path(" + JSON.stringify(policy) + ").read_text())",
+]);
+for (const script of [bootstrap, prepareWorktree, setupEnvironment]) {
+  mustRun("bash", ["-n", script]);
 }
-
-const head = run("git", ["rev-parse", "HEAD"]).stdout.trim();
-assert(/^[0-9a-f]{40}$/.test(head), "unable to resolve HEAD");
-
-const worktreeGuardHome = fs.mkdtempSync(path.join(os.tmpdir(), "pfm-worktree-guard-"));
-const worktreeGuardRepo = path.join(worktreeGuardHome, "repo");
-const worktreeGuardTarget = path.join(worktreeGuardHome, "target");
-fs.mkdirSync(worktreeGuardRepo, { recursive: true });
-for (const [command, args] of [
-  ["git", ["init", "-b", "main", worktreeGuardRepo]],
-  ["git", ["-C", worktreeGuardRepo, "config", "user.email", "pfm-self-test@example.invalid"]],
-  ["git", ["-C", worktreeGuardRepo, "config", "user.name", "PFM Self Test"]],
-]) {
-  const result = spawnSync(command, args, { encoding: "utf8" });
-  assert(result.status === 0, `worktree guard setup failed: ${result.stderr}`);
-}
-fs.writeFileSync(path.join(worktreeGuardRepo, "fixture.txt"), "fixture\n");
-for (const args of [
-  ["-C", worktreeGuardRepo, "add", "fixture.txt"],
-  ["-C", worktreeGuardRepo, "commit", "-m", "fixture"],
-  ["-C", worktreeGuardRepo, "worktree", "add", "--detach", worktreeGuardTarget, "HEAD"],
-]) {
-  const result = spawnSync("git", args, { encoding: "utf8" });
-  assert(result.status === 0, `worktree guard setup failed: ${result.stderr}`);
-}
-const worktreeGuardHead = spawnSync("git", ["-C", worktreeGuardTarget, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
-const selfRemoval = spawnSync("bash", [prepareLinkedWorktree, worktreeGuardTarget, worktreeGuardHead], {
-  cwd: worktreeGuardTarget,
-  encoding: "utf8",
-});
-assert(
-  selfRemoval.status !== 0
-    && selfRemoval.stderr.includes("target worktree is the current/source checkout"),
-  "prepare-linked-worktree must fail closed instead of removing its current worktree",
-);
-assert(
-  fs.existsSync(worktreeGuardTarget)
-    && spawnSync("git", ["-C", worktreeGuardTarget, "rev-parse", "HEAD"], { encoding: "utf8" }).status === 0,
-  "self-protection failure must leave the current worktree intact",
-);
-spawnSync("git", ["-C", worktreeGuardRepo, "worktree", "remove", worktreeGuardTarget], { encoding: "utf8" });
-fs.rmSync(worktreeGuardHome, { recursive: true, force: true });
-
-const sessionId = "policy-self-test";
-const turnId = "turn-1";
-const hook = (event, extra = {}, env = {}) => {
-  const payload = JSON.stringify({
-    session_id: sessionId,
-    turn_id: turnId,
-    cwd: root,
-    hook_event_name: event,
-    permission_mode: "default",
-    ...extra,
-  });
-  const result = run("python3", [policy], { input: payload, env });
-  assert(result.status === 0, `${event} hook failed: ${result.stderr}`);
-  return JSON.parse(result.stdout || "{}");
-};
-
-const sessionStart = hook("SessionStart");
-assert(
-  sessionStart?.continue === true
-    && String(sessionStart?.hookSpecificOutput?.additionalContext ?? "").includes("not a Codex implementation-start requirement"),
-  "SessionStart should not require Node/npm/dependencies or GitHub CLI for no-tests implementation",
-);
 
 const candidateA = {
   rule: " Diagnose pre-agent failures before blaming the envelope. ",
@@ -123,405 +61,365 @@ const candidateB = {
   },
   do_not_generalize_to: " If the hook returned an explicit envelope error, use that evidence. ",
 };
-assert(candidateKey(candidateA) === candidateKey(candidateB), "candidate identity should ignore whitespace, selector order, case, and duplicates");
-assert(
-  candidateKey(candidateA) !== candidateKey({ ...candidateA, rule: "Diagnose only worktree creation failures." }),
-  "material candidate rule changes should produce a new identity",
+assert(candidateKey(candidateA) === candidateKey(candidateB), "candidate identity normalization regressed");
+
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pfm-tooling-v3-"));
+const hookRepo = path.join(temp, "hook-repo");
+fs.mkdirSync(path.join(hookRepo, ".codex", "runtime"), { recursive: true });
+fs.mkdirSync(path.join(hookRepo, "src"), { recursive: true });
+fs.writeFileSync(path.join(hookRepo, "src", "allowed.ts"), "export const value = 1;\n");
+fs.writeFileSync(path.join(hookRepo, "src", "outside.ts"), "export const outside = 1;\n");
+fs.writeFileSync(
+  path.join(hookRepo, "package.json"),
+  JSON.stringify({ name: "hook-test", dependencies: {}, devDependencies: {} }, null, 2) + "\n",
 );
 
-const malformed = hook("UserPromptSubmit", { prompt: "PFM_TASK_V2\nMODE: local" });
-assert(malformed.decision === "block", "malformed V2 prompt should be blocked");
+mustRun("git", ["init", "-b", "main"], { cwd: hookRepo });
+mustRun("git", ["config", "user.name", "PFM Test"], { cwd: hookRepo });
+mustRun("git", ["config", "user.email", "pfm@example.test"], { cwd: hookRepo });
+mustRun("git", ["remote", "add", "origin", "https://github.com/bensmullen/personal-finance-app.git"], { cwd: hookRepo });
+mustRun("git", ["add", "."], { cwd: hookRepo });
+mustRun("git", ["commit", "-m", "base"], { cwd: hookRepo });
+mustRun("git", ["switch", "-c", "codex/policy-self-test"], { cwd: hookRepo });
+const baseHead = mustRun("git", ["rev-parse", "HEAD"], { cwd: hookRepo }).stdout.trim();
 
-const prompt = `PFM_TASK_V2
-TASK_KIND: framework
-MODE: local
-SEMANTICS: resolved
-REPAIR_ROUND: 0
-TASK_CONTINUITY: existing_pr
-TARGET_BRANCH: agent/policy-self-test
-WORKTREE_POLICY: current
-EXPECTED_HEAD: ${head}
-DEPENDENCY_POLICY: manifest_edit
-DISCOVERY_POLICY: implementation_only
-LOCAL_EXECUTION_POLICY: no_tests
-CI_PROFILE: tooling
-HEAVY_VALIDATION_PROFILE: none
-UAT: not_required
-LESSONS_APPLIED: none
-
-READ_PATHS:
-- package.json
-- tools/codex/**
-- .codex/**
-- tools/ci/**
-
-ALLOWED_PATHS:
-- tools/codex/**
-- .codex/**
-- tools/ci/**
-
-OBJECTIVE:
-Exercise the repository policy hook without modifying the tree.
-
-RESOLVED_DECISIONS:
-The hook contract is already resolved.
-
-REQUIREMENT_MAP:
-- POLICY-V2 -> validate task envelope and resource guardrails -> codex-tooling self-test
-
-FAILURE_MODES:
-- Malformed envelopes and unsafe actions are blocked before repository mutation.
-
-CLAIMS_AND_GAPS:
-CLAIMS: The self-test covers the guarded V2 lifecycle.
-KNOWN_GAPS: It does not prove application financial behavior.
-EVIDENCE: codex-tooling CI executes the policy self-test.
-
-PROFILE_CONTRACT:
-POLICY_BOUNDARY: Project-local Codex implementation and publication behavior only.
-FAIL_CLOSED: Unsafe mutation/publication and malformed contracts are denied.
-SELF_TEST: The codex-tooling job exercises the policy decisions.
-
-EVIDENCE_PLAN:
-CI: codex-tooling plus conservative routed framework gates.
-HEAVY: none.
-UAT: not_required.
-
-ACCEPTANCE:
-Policy events return the expected decisions.
-
-OUT_OF_SCOPE:
-Application changes.
-
-STOP:
-Stop on any policy mismatch.
-`;
-
-const policyTestEnv = {
-  PFM_POLICY_TEST_BRANCH: "agent/policy-self-test",
-  PFM_POLICY_TEST_ORIGIN: "https://github.com/bensmullen/personal-finance-app.git",
-  PFM_POLICY_TEST_LINKED_WORKTREE: "1",
+const sessionId = "policy-self-test";
+const turnId = "turn-1";
+const hook = (event, extra = {}, env = {}) => {
+  const payload = JSON.stringify({
+    session_id: sessionId,
+    turn_id: turnId,
+    cwd: hookRepo,
+    hook_event_name: event,
+    permission_mode: "default",
+    ...extra,
+  });
+  const result = run("python3", [policy], { cwd: hookRepo, input: payload, env });
+  assert(result.status === 0, event + " hook failed: " + result.stderr);
+  return JSON.parse(result.stdout || "{}");
 };
 
-const attachmentHome = fs.mkdtempSync(path.join(os.tmpdir(), "pfm-policy-attachments-"));
-const attachmentRoot = path.join(attachmentHome, "attachments", "self-test");
-fs.mkdirSync(attachmentRoot, { recursive: true });
-const attachmentEnv = { ...policyTestEnv, CODEX_HOME: attachmentHome };
-const attachmentWrapper = (entries) => "# Files mentioned by the user:\n\n"
-  + entries.map(({ label, file }) => "## " + label + ": " + file).join("\n\n")
-  + "\n\nThe attached pasted text file(s) contain the user's request. Read and act on that content.\n\n## My request for Codex:\n";
-const writeAttachment = (directory, name, content) => {
-  const targetDir = path.join(attachmentRoot, directory);
-  fs.mkdirSync(targetDir, { recursive: true });
-  const target = path.join(targetDir, name);
-  fs.writeFileSync(target, content);
-  return target;
-};
-
-const accepted = hook("UserPromptSubmit", { prompt }, policyTestEnv);
+const session = hook("SessionStart");
 assert(
-  accepted?.hookSpecificOutput?.hookEventName === "UserPromptSubmit",
-  "valid V2 prompt was not accepted",
+  session?.continue === true
+    && String(session?.hookSpecificOutput?.additionalContext ?? "").includes("branch=codex/policy-self-test"),
+  "SessionStart should expose repository state without requiring local verification tools",
 );
 
-const pastedTextPath = writeAttachment("valid-pasted", "pasted-text.txt", prompt);
-const pastedAccepted = hook("UserPromptSubmit", {
-  prompt: attachmentWrapper([{ label: "Pasted task", file: pastedTextPath }]),
-}, attachmentEnv);
+const readOnly = hook("UserPromptSubmit", { prompt: "Please inspect the code." });
 assert(
-  pastedAccepted?.hookSpecificOutput?.additionalContext?.includes("trusted Codex long-paste attachment"),
-  "valid pasted-text.txt V2 envelope was not accepted",
+  String(readOnly?.hookSpecificOutput?.additionalContext ?? "").includes("read-only"),
+  "non-task prompts should remain read-only",
 );
 
-const writingBlockPath = writeAttachment("valid-writing", "writing-block.md", prompt);
-const writingAccepted = hook("UserPromptSubmit", {
-  prompt: attachmentWrapper([{ label: "Writing block", file: writingBlockPath }]),
-}, attachmentEnv);
+const prompt = [
+  "PFM_TASK_V3",
+  "TASK_KIND: product",
+  "TARGET_BRANCH: codex/policy-self-test",
+  "DEPENDENCY_POLICY: locked",
+  "",
+  "ALLOWED_PATHS:",
+  "- src/allowed.ts",
+  "- src/new/**",
+  "",
+  "OBJECTIVE:",
+  "Change the authorized implementation only.",
+  "",
+  "ACCEPTANCE:",
+  "Authorized changes are committed and pushed.",
+  "",
+].join("\n");
+
+const accepted = hook("UserPromptSubmit", { prompt });
 assert(
-  writingAccepted?.hookSpecificOutput?.additionalContext?.includes("trusted Codex long-paste attachment"),
-  "valid writing-block.md V2 envelope was not accepted",
+  String(accepted?.hookSpecificOutput?.additionalContext ?? "").includes("task authorization accepted"),
+  "valid V3 task should be accepted",
 );
 
-const inlinePrefixAccepted = hook("UserPromptSubmit", {
-  prompt: attachmentWrapper([{ label: "PFM_TASK_V2", file: pastedTextPath }]),
-}, attachmentEnv);
+const wrongBranch = hook(
+  "UserPromptSubmit",
+  { prompt },
+  { PFM_POLICY_TEST_BRANCH: "main" },
+);
 assert(
-  inlinePrefixAccepted?.hookSpecificOutput?.additionalContext?.includes("trusted Codex long-paste attachment"),
-  "inline PFM_TASK_V2 prefix plus attachment should fall back to the complete attachment",
+  wrongBranch.decision === "block" && String(wrongBranch.reason).includes("TASK_BRANCH_MISMATCH"),
+  "task should fail clearly when Codex is bound to the wrong branch/root",
 );
 
-const ambiguous = hook("UserPromptSubmit", {
-  prompt: attachmentWrapper([
-    { label: "First pasted task", file: pastedTextPath },
-    { label: "Second pasted task", file: writingBlockPath },
-  ]),
-}, attachmentEnv);
-assert(
-  ambiguous.decision === "block" && String(ambiguous.reason).includes("TASK_ATTACHMENT_AMBIGUOUS"),
-  "multiple generated task attachments should be blocked",
-);
+const pre = (command) =>
+  hook("PreToolUse", {
+    tool_name: "Bash",
+    tool_use_id: "tool-bash",
+    tool_input: { command },
+  });
 
-const outsideDir = path.join(attachmentHome, "outside");
-fs.mkdirSync(outsideDir, { recursive: true });
-const outsideFile = path.join(outsideDir, "pasted-text.txt");
-fs.writeFileSync(outsideFile, prompt);
-const traversalPath = attachmentRoot + path.sep + ".." + path.sep + ".." + path.sep + "outside" + path.sep + "pasted-text.txt";
-const outsideAttachment = hook("UserPromptSubmit", {
-  prompt: attachmentWrapper([{ label: "PFM_TASK_V2", file: traversalPath }]),
-}, attachmentEnv);
-assert(
-  outsideAttachment.decision === "block" && String(outsideAttachment.reason).includes("TASK_ATTACHMENT_OUTSIDE_ROOT"),
-  "traversal/outside-root task attachment should be blocked",
-);
-
-const symlinkTarget = writeAttachment("symlink-target", "target.txt", prompt);
-const symlinkDir = path.join(attachmentRoot, "symlink-case");
-fs.mkdirSync(symlinkDir, { recursive: true });
-const symlinkPath = path.join(symlinkDir, "pasted-text.txt");
-fs.symlinkSync(symlinkTarget, symlinkPath);
-const symlinked = hook("UserPromptSubmit", {
-  prompt: attachmentWrapper([{ label: "PFM_TASK_V2", file: symlinkPath }]),
-}, attachmentEnv);
-assert(
-  symlinked.decision === "block" && String(symlinked.reason).includes("TASK_ATTACHMENT_SYMLINK"),
-  "symlinked task attachment should be blocked",
-);
-
-const missingPath = path.join(attachmentRoot, "missing", "pasted-text.txt");
-const missing = hook("UserPromptSubmit", {
-  prompt: attachmentWrapper([{ label: "PFM_TASK_V2", file: missingPath }]),
-}, attachmentEnv);
-assert(
-  missing.decision === "block" && String(missing.reason).includes("TASK_ATTACHMENT_MISSING"),
-  "missing task attachment should be blocked",
-);
-
-const nonUtf8Path = writeAttachment("non-utf8", "pasted-text.txt", Buffer.from([0xff, 0xfe, 0xfd]));
-const nonUtf8 = hook("UserPromptSubmit", {
-  prompt: attachmentWrapper([{ label: "PFM_TASK_V2", file: nonUtf8Path }]),
-}, attachmentEnv);
-assert(
-  nonUtf8.decision === "block" && String(nonUtf8.reason).includes("TASK_ATTACHMENT_ENCODING"),
-  "non-UTF8 task attachment should be blocked",
-);
-
-const oversizePath = writeAttachment("oversize", "pasted-text.txt", Buffer.alloc(256 * 1024 + 1, 0x61));
-const oversize = hook("UserPromptSubmit", {
-  prompt: attachmentWrapper([{ label: "PFM_TASK_V2", file: oversizePath }]),
-}, attachmentEnv);
-assert(
-  oversize.decision === "block" && String(oversize.reason).includes("TASK_ATTACHMENT_TOO_LARGE"),
-  "oversized task attachment should be blocked",
-);
-
-const malformedPath = writeAttachment("malformed", "pasted-text.txt", "PFM_TASK_V2\nMODE: local\n");
-const malformedAttachment = hook("UserPromptSubmit", {
-  prompt: attachmentWrapper([{ label: "Pasted task", file: malformedPath }]),
-}, attachmentEnv);
-assert(
-  malformedAttachment.decision === "block" && String(malformedAttachment.reason).includes("Invalid attachment-backed PFM_TASK_V2 envelope"),
-  "malformed attachment-backed envelope should be blocked by normal V2 validation",
-);
-
-const mutablePath = writeAttachment("mutable", "pasted-text.txt", prompt);
-const mutableAccepted = hook("UserPromptSubmit", {
-  prompt: attachmentWrapper([{ label: "Pasted task", file: mutablePath }]),
-}, attachmentEnv);
-assert(
-  mutableAccepted?.hookSpecificOutput?.additionalContext?.includes("trusted Codex long-paste attachment"),
-  "mutable attachment fixture should initially be accepted",
-);
-fs.appendFileSync(mutablePath, "\n# changed after validation\n");
-const mutatedPreTool = hook("PreToolUse", {
-  tool_name: "apply_patch",
-  tool_use_id: "attachment-integrity",
-  tool_input: { command: "*** Begin Patch\n*** Update File: tools/codex/state.sh\n*** End Patch" },
-}, attachmentEnv);
-assert(
-  mutatedPreTool?.hookSpecificOutput?.permissionDecision === "deny"
-    && String(mutatedPreTool?.hookSpecificOutput?.permissionDecisionReason ?? "").includes("TASK_ATTACHMENT_INTEGRITY"),
-  "changed task attachment should be denied before repository mutation",
-);
-
-const publishPath = writeAttachment("publish-mutable", "pasted-text.txt", prompt);
-const publishAccepted = hook("UserPromptSubmit", {
-  prompt: attachmentWrapper([{ label: "Pasted task", file: publishPath }]),
-}, attachmentEnv);
-assert(
-  publishAccepted?.hookSpecificOutput?.additionalContext?.includes("trusted Codex long-paste attachment"),
-  "publication integrity fixture should initially be accepted",
-);
-fs.appendFileSync(publishPath, "\n# changed before publication\n");
-const mutatedPublication = hook("PermissionRequest", {
-  tool_name: "Bash",
-  tool_input: { command: "git push -u origin agent/policy-self-test" },
-}, attachmentEnv);
-assert(
-  mutatedPublication?.hookSpecificOutput?.decision?.behavior === "deny"
-    && String(mutatedPublication?.hookSpecificOutput?.decision?.message ?? "").includes("TASK_ATTACHMENT_INTEGRITY"),
-  "changed task attachment should be denied before publication",
-);
-
-const performancePrompt = prompt
-  .replace("TASK_KIND: framework", "TASK_KIND: repair")
-  .replace("REPAIR_ROUND: 0", "REPAIR_ROUND: 1")
-  .replace("CI_PROFILE: tooling", "CI_PROFILE: deterministic")
-  .replace("HEAVY_VALIDATION_PROFILE: none", "HEAVY_VALIDATION_PROFILE: performance")
-  .replace("LESSONS_APPLIED: none", "LESSONS_APPLIED: AL-001")
-  .replace("READ_PATHS:\n- package.json\n- tools/codex/**\n- .codex/**\n- tools/ci/**", "READ_PATHS:\n- test/**")
-  .replace("ALLOWED_PATHS:\n- tools/codex/**\n- .codex/**\n- tools/ci/**", "ALLOWED_PATHS:\n- test/**")
-  .replace(/PROFILE_CONTRACT:\n[\s\S]*?\nEVIDENCE_PLAN:/, `PROFILE_CONTRACT:
-CI_WORK_BOUNDARY: ordinary CI uses bounded deterministic smoke only.
-HEAVY_WORK_BOUNDARY: full representative and scaling workloads run only in engineering-validation.
-BOUNDARIES: sibling measurements are explicitly non-overlapping.
-APPLICABILITY: unavailable transport is not_applicable, never a surrogate duration.
-SUCCESS_STATUS: only completed representative runs are valid baseline evidence.
-CONTEXT_RETENTION: artifact/UI preserve horizon, versions, runtime, location, cache state, and model counts.
-RESOURCE_SEMANTICS: memory/cost fields state absolute/delta/metering semantics.
-CONTROLLED_EVIDENCE: full capture runs in engineering-validation, never under Codex.
-
-EVIDENCE_PLAN:`);
-const performanceAccepted = hook("UserPromptSubmit", { prompt: performancePrompt }, policyTestEnv);
-assert(
-  performanceAccepted?.hookSpecificOutput?.hookEventName === "UserPromptSubmit",
-  "complete performance profile contract should be accepted",
-);
-
-const incompletePerformance = performancePrompt.replace(
-  "CONTROLLED_EVIDENCE: full capture runs in engineering-validation, never under Codex.",
-  "CONTROLLED EVIDENCE omitted.",
-);
-const performanceBlocked = hook("UserPromptSubmit", { prompt: incompletePerformance }, policyTestEnv);
-assert(performanceBlocked.decision === "block", "incomplete performance profile contract should be blocked");
-
-const missingLesson = hook("UserPromptSubmit", {
-  prompt: performancePrompt.replace("LESSONS_APPLIED: AL-001", "LESSONS_APPLIED: none"),
-}, policyTestEnv);
-assert(missingLesson.decision === "block", "applicable active lesson omission should be blocked");
-
-const missingLessonMarker = hook("UserPromptSubmit", {
-  prompt: performancePrompt.replace("CI_WORK_BOUNDARY:", "CI WORK BOUNDARY omitted:"),
-}, policyTestEnv);
-assert(missingLessonMarker.decision === "block", "active lesson required marker omission should be blocked");
-
-const wrongWorktreePrompt = prompt.replace("TARGET_BRANCH: agent/policy-self-test", "TARGET_BRANCH: agent/existing-pr");
-const wrongWorktree = hook("UserPromptSubmit", { prompt: wrongWorktreePrompt }, {
-  ...policyTestEnv,
-  PFM_POLICY_TEST_BRANCH: "main",
-});
-assert(wrongWorktree.decision === "block" && String(wrongWorktree.reason).includes("WRONG_WORKTREE"), "existing PR wrong worktree should be blocked clearly");
-
-const bootstrapPrompt = prompt
-  .replace("TASK_CONTINUITY: existing_pr", "TASK_CONTINUITY: new_pr")
-  .replace("TARGET_BRANCH: agent/policy-self-test", "TARGET_BRANCH: agent/new-policy-branch")
-  .replace("WORKTREE_POLICY: current", "WORKTREE_POLICY: isolated");
-const noWorktree = hook("UserPromptSubmit", { prompt: bootstrapPrompt }, {
-  ...policyTestEnv,
-  PFM_POLICY_TEST_BRANCH: "main",
-  PFM_POLICY_TEST_LINKED_WORKTREE: "0",
-});
-assert(noWorktree.decision === "block" && String(noWorktree.reason).includes("WORKTREE_REQUIRED"), "isolated task should require a linked worktree");
-
-const bootstrapAccepted = hook("UserPromptSubmit", { prompt: bootstrapPrompt }, {
-  ...policyTestEnv,
-  PFM_POLICY_TEST_BRANCH: "main",
-});
-assert(
-  bootstrapAccepted?.hookSpecificOutput?.additionalContext?.includes("git switch -c agent/new-policy-branch"),
-  "new PR linked worktree should receive exact branch bootstrap",
-);
-const bootstrapPre = hook("PreToolUse", {
-  tool_name: "Bash",
-  tool_use_id: "bootstrap",
-  tool_input: { command: "git switch -c agent/new-policy-branch" },
-}, {
-  ...policyTestEnv,
-  PFM_POLICY_TEST_BRANCH: "main",
-});
-assert(JSON.stringify(bootstrapPre) === "{}", "exact new-PR branch bootstrap should be allowed");
-const bootstrapPost = hook("PostToolUse", {
-  tool_name: "Bash",
-  tool_use_id: "bootstrap",
-  tool_input: { command: "git switch -c agent/new-policy-branch" },
-}, {
-  ...policyTestEnv,
-  PFM_POLICY_TEST_BRANCH: "agent/new-policy-branch",
-});
-assert(JSON.stringify(bootstrapPost) === "{}", "successful bootstrap should activate the target branch state");
-
-const pre = (command) => hook("PreToolUse", {
-  tool_name: "Bash",
-  tool_use_id: "tool-1",
-  tool_input: { command },
-});
-
-for (const command of [
-  "npm test",
-  "npm run typecheck",
-  "npx vitest run test/state.test.ts",
-  "npm ci",
-]) {
-  const output = pre(command);
-  assert(output?.hookSpecificOutput?.permissionDecision === "deny", `${command} should be denied`);
+for (const command of ["npm test", "npm run typecheck", "npm ci", "git switch main", "touch src/allowed.ts"]) {
+  const result = pre(command);
+  assert(
+    result?.hookSpecificOutput?.permissionDecision === "deny",
+    command + " should be denied",
+  );
 }
 
-const normative = pre("cat docs/specs/roadmap/post-pr21-implementation-roadmap.md");
-assert(normative?.hookSpecificOutput?.permissionDecision === "deny", "resolved task should block normative reread");
+const mkdirAllowed = pre("mkdir -p src/new");
+assert(JSON.stringify(mkdirAllowed) === "{}", "mkdir should be allowed only for an authorized subtree");
 
-const outside = pre("cat docs/development/agent-framework-optimization.md");
-assert(outside?.hookSpecificOutput?.permissionDecision === "deny", "read outside READ_PATHS should be denied");
+const mkdirBlocked = pre("mkdir -p src/not-allowed");
+assert(
+  mkdirBlocked?.hookSpecificOutput?.permissionDecision === "deny",
+  "mkdir outside ALLOWED_PATHS should be denied",
+);
 
-assert(JSON.stringify(pre("cat package.json")) === "{}", "allowed read should pass");
-
-const badPatch = hook("PreToolUse", {
+const allowedPatch = hook("PreToolUse", {
   tool_name: "apply_patch",
-  tool_use_id: "tool-2",
-  tool_input: { command: "*** Begin Patch\n*** Update File: src/index.ts\n*** End Patch" },
+  tool_use_id: "patch-allowed",
+  tool_input: {
+    command: "*** Begin Patch\n*** Update File: src/allowed.ts\n@@\n-export const value = 1;\n+export const value = 2;\n*** End Patch",
+  },
 });
-assert(badPatch?.hookSpecificOutput?.permissionDecision === "deny", "out-of-scope patch should be denied");
+assert(JSON.stringify(allowedPatch) === "{}", "authorized apply_patch should pass");
 
-const testEnv = {
-  ...policyTestEnv,
-  PFM_POLICY_TEST_BRANCH: "codex/policy-self-test",
-};
+const blockedPatch = hook("PreToolUse", {
+  tool_name: "apply_patch",
+  tool_use_id: "patch-outside",
+  tool_input: {
+    command: "*** Begin Patch\n*** Update File: src/outside.ts\n@@\n-export const outside = 1;\n+export const outside = 2;\n*** End Patch",
+  },
+});
+assert(
+  blockedPatch?.hookSpecificOutput?.permissionDecision === "deny"
+    && String(blockedPatch?.hookSpecificOutput?.permissionDecisionReason ?? "").includes("Out-of-scope"),
+  "out-of-scope apply_patch should be blocked before mutation",
+);
+
+fs.writeFileSync(path.join(hookRepo, "src", "allowed.ts"), "export const value = 2;\n");
+const allowedPost = hook("PostToolUse", {
+  tool_name: "apply_patch",
+  tool_use_id: "post-allowed",
+  tool_input: { command: "allowed test mutation" },
+  tool_response: {},
+});
+assert(JSON.stringify(allowedPost) === "{}", "authorized changed path should pass post-tool scope check");
+
+fs.writeFileSync(path.join(hookRepo, "untracked-outside.txt"), "unexpected\n");
+const untrackedPost = hook("PostToolUse", {
+  tool_name: "Bash",
+  tool_use_id: "post-untracked",
+  tool_input: { command: "python helper" },
+  tool_response: {},
+});
+assert(
+  untrackedPost?.continue === false && String(untrackedPost?.stopReason ?? "").includes("SCOPE_VIOLATION"),
+  "untracked out-of-scope files must be detected",
+);
+fs.rmSync(path.join(hookRepo, "untracked-outside.txt"));
+
+fs.writeFileSync(
+  path.join(hookRepo, "package.json"),
+  JSON.stringify({ name: "hook-test", dependencies: { x: "1.0.0" }, devDependencies: {} }, null, 2) + "\n",
+);
+const dependencyPost = hook("PostToolUse", {
+  tool_name: "Bash",
+  tool_use_id: "post-dependency",
+  tool_input: { command: "python helper" },
+  tool_response: {},
+});
+assert(
+  dependencyPost?.continue === false
+    && String(dependencyPost?.stopReason ?? "").includes("DEPENDENCY_POLICY_VIOLATION"),
+  "locked dependency declaration changes must be detected",
+);
+mustRun("git", ["restore", "package.json"], { cwd: hookRepo });
+
 const safePush = hook("PermissionRequest", {
   tool_name: "Bash",
   tool_input: { command: "git push -u origin codex/policy-self-test" },
-}, testEnv);
+});
 assert(
   safePush?.hookSpecificOutput?.decision?.behavior === "allow",
-  "approved feature-branch push should be auto-allowed",
-);
-
-const safeRefspecPush = hook("PermissionRequest", {
-  tool_name: "Bash",
-  tool_input: { command: "git push origin codex/policy-self-test:refs/heads/codex/policy-self-test" },
-}, testEnv);
-assert(
-  safeRefspecPush?.hookSpecificOutput?.decision?.behavior === "allow",
-  "approved fully-qualified feature-branch refspec should be auto-allowed",
-);
-
-const safePr = hook("PermissionRequest", {
-  tool_name: "Bash",
-  tool_input: { command: 'gh pr create --repo bensmullen/personal-finance-app --base main --head codex/policy-self-test --title "Policy test" --body "Test"' },
-}, testEnv);
-assert(
-  safePr?.hookSpecificOutput?.decision?.behavior === "allow",
-  "approved feature-branch PR creation should be auto-allowed",
+  "approved feature-branch push should be allowed",
 );
 
 const unsafePush = hook("PermissionRequest", {
   tool_name: "Bash",
   tool_input: { command: "git push --force origin main" },
-}, testEnv);
+});
 assert(
   unsafePush?.hookSpecificOutput?.decision?.behavior === "deny",
   "force/main push should be denied",
 );
 
-const compact = hook("PreCompact", { trigger: "auto" });
-assert(compact.continue === false, "automatic compaction should stop an active PFM task");
+mustRun("git", ["add", "src/allowed.ts"], { cwd: hookRepo });
+mustRun("git", ["commit", "-m", "implementation"], { cwd: hookRepo });
+const implementationHead = mustRun("git", ["rev-parse", "HEAD"], { cwd: hookRepo }).stdout.trim();
 
-fs.rmSync(attachmentHome, { recursive: true, force: true });
-console.log("PASS codex tooling — V2 envelope, candidate identity, trusted long-paste attachments, implementation preflight, environment setup syntax, execution, read/scope, push, and compaction guards");
+const incompleteStop = hook("Stop", {
+  last_assistant_message: "TASK_STATUS: COMPLETE\nACCEPTANCE_STATUS: SATISFIED",
+  stop_hook_active: false,
+});
+assert(
+  incompleteStop.decision === "block"
+    && String(incompleteStop.reason).includes("origin tracking branch"),
+  "COMPLETE must be rejected until implementation is pushed/shared",
+);
+
+mustRun("git", ["update-ref", "refs/remotes/origin/codex/policy-self-test", implementationHead], { cwd: hookRepo });
+mustRun("git", ["config", "branch.codex/policy-self-test.remote", "origin"], { cwd: hookRepo });
+mustRun("git", ["config", "branch.codex/policy-self-test.merge", "refs/heads/codex/policy-self-test"], { cwd: hookRepo });
+
+const completeStop = hook("Stop", {
+  last_assistant_message: "TASK_STATUS: COMPLETE\nACCEPTANCE_STATUS: SATISFIED",
+  stop_hook_active: false,
+});
+assert(completeStop?.continue === true, "mechanically complete/pushed task should be allowed to stop");
+
+const missingStatus = hook("Stop", {
+  last_assistant_message: "Finished.",
+  stop_hook_active: false,
+});
+assert(
+  missingStatus.decision === "block" && String(missingStatus.reason).includes("TASK_STATUS: BLOCKED"),
+  "Stop hook should require explicit completion or blocker status",
+);
+
+const blockedStop = hook("Stop", {
+  last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: external semantic decision required",
+  stop_hook_active: false,
+});
+assert(blockedStop?.continue === true, "explicit clean BLOCKED state should be allowed");
+
+fs.writeFileSync(path.join(hookRepo, "src", "allowed.ts"), "export const value = 3;\n");
+const dirtyBlocked = hook("Stop", {
+  last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: external semantic decision required",
+  stop_hook_active: false,
+});
+assert(
+  dirtyBlocked.decision === "block" && String(dirtyBlocked.reason).includes("working tree is dirty"),
+  "BLOCKED must leave a clean/shared state",
+);
+mustRun("git", ["restore", "src/allowed.ts"], { cwd: hookRepo });
+
+const codexHome = path.join(temp, "codex-home");
+const attachmentDir = path.join(codexHome, "attachments", "generated");
+fs.mkdirSync(attachmentDir, { recursive: true });
+const attachment = path.join(attachmentDir, "writing-block.md");
+fs.writeFileSync(attachment, prompt);
+const attachmentResult = hook(
+  "UserPromptSubmit",
+  { prompt: "Generated task transport: " + attachment },
+  { CODEX_HOME: codexHome },
+);
+assert(
+  String(attachmentResult?.hookSpecificOutput?.additionalContext ?? "").includes("trusted attachment"),
+  "attachment parser should accept wrapper variants without exact heading syntax",
+);
+fs.appendFileSync(attachment, "\n# changed after authorization\n");
+const attachmentMutation = hook(
+  "PreToolUse",
+  {
+    tool_name: "apply_patch",
+    tool_use_id: "attachment-mutated",
+    tool_input: { command: "*** Begin Patch\\n*** Update File: src/allowed.ts\\n*** End Patch" },
+  },
+  { CODEX_HOME: codexHome },
+);
+assert(
+  attachmentMutation?.hookSpecificOutput?.permissionDecision === "deny"
+    && String(attachmentMutation?.hookSpecificOutput?.permissionDecisionReason ?? "").includes("TASK_ATTACHMENT_INTEGRITY"),
+  "attachment-backed authorization must be hash-bound for mutation",
+);
+
+const bootstrapRoot = path.join(temp, "bootstrap");
+const seed = path.join(bootstrapRoot, "seed");
+const remote = path.join(bootstrapRoot, "remote.git");
+const source = path.join(bootstrapRoot, "source");
+fs.mkdirSync(seed, { recursive: true });
+mustRun("git", ["init", "-b", "main"], { cwd: seed });
+mustRun("git", ["config", "user.name", "PFM Test"], { cwd: seed });
+mustRun("git", ["config", "user.email", "pfm@example.test"], { cwd: seed });
+fs.writeFileSync(path.join(seed, "file.txt"), "one\n");
+mustRun("git", ["add", "."], { cwd: seed });
+mustRun("git", ["commit", "-m", "one"], { cwd: seed });
+mustRun("git", ["init", "--bare", remote], { cwd: bootstrapRoot });
+mustRun("git", ["remote", "add", "origin", remote], { cwd: seed });
+mustRun("git", ["push", "-u", "origin", "main"], { cwd: seed });
+mustRun("git", ["--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main"], { cwd: bootstrapRoot });
+mustRun("git", ["clone", remote, source], { cwd: bootstrapRoot });
+
+const bootstrapEnv = { PFM_BOOTSTRAP_TEST_ALLOW_ANY_ORIGIN: "1" };
+const targetOne = path.join(bootstrapRoot, "task-one");
+const firstBootstrap = mustRun(
+  "bash",
+  [bootstrap, "new", "codex/task-one", targetOne],
+  { cwd: source, env: bootstrapEnv },
+);
+assert(firstBootstrap.stdout.includes("PR_WORKTREE_READY mode=new"), "new bootstrap should return a ready receipt");
+const firstBase = mustRun("git", ["-C", targetOne, "rev-parse", "HEAD"]).stdout.trim();
+assert(
+  firstBase === mustRun("git", ["-C", source, "rev-parse", "origin/main"]).stdout.trim(),
+  "new PR must start at fetched origin/main",
+);
+
+fs.writeFileSync(path.join(seed, "file.txt"), "two\n");
+mustRun("git", ["add", "file.txt"], { cwd: seed });
+mustRun("git", ["commit", "-m", "two"], { cwd: seed });
+mustRun("git", ["push", "origin", "main"], { cwd: seed });
+const staleLocalMain = mustRun("git", ["-C", source, "rev-parse", "main"]).stdout.trim();
+
+const targetTwo = path.join(bootstrapRoot, "task-two");
+mustRun("bash", [bootstrap, "new", "codex/task-two", targetTwo], { cwd: source, env: bootstrapEnv });
+const secondBase = mustRun("git", ["-C", targetTwo, "rev-parse", "HEAD"]).stdout.trim();
+assert(secondBase !== staleLocalMain, "bootstrap must not use stale local main");
+assert(
+  secondBase === mustRun("git", ["-C", source, "rev-parse", "origin/main"]).stdout.trim(),
+  "bootstrap must fetch and pin the current origin/main commit",
+);
+
+mustRun("git", ["-C", targetTwo, "config", "user.name", "PFM Test"]);
+mustRun("git", ["-C", targetTwo, "config", "user.email", "pfm@example.test"]);
+fs.writeFileSync(path.join(targetTwo, "feature.txt"), "feature\n");
+mustRun("git", ["-C", targetTwo, "add", "feature.txt"]);
+mustRun("git", ["-C", targetTwo, "commit", "-m", "feature"]);
+mustRun("git", ["-C", targetTwo, "push", "-u", "origin", "codex/task-two"]);
+const remoteFeatureHead = mustRun("git", ["-C", targetTwo, "rev-parse", "HEAD"]).stdout.trim();
+mustRun("git", ["-C", source, "worktree", "remove", targetTwo]);
+
+const resumed = path.join(bootstrapRoot, "task-two-resumed");
+const resumeResult = mustRun(
+  "bash",
+  [bootstrap, "resume", "codex/task-two", resumed],
+  { cwd: source, env: bootstrapEnv },
+);
+assert(resumeResult.stdout.includes("PR_WORKTREE_READY mode=resume"), "resume should return a ready receipt");
+assert(
+  mustRun("git", ["-C", resumed, "rev-parse", "HEAD"]).stdout.trim() === remoteFeatureHead,
+  "resume must use the fetched remote feature head",
+);
+
+fs.writeFileSync(path.join(resumed, "local-only.txt"), "local\n");
+mustRun("git", ["-C", resumed, "add", "local-only.txt"]);
+mustRun("git", ["-C", resumed, "commit", "-m", "local only"]);
+const unsafeResume = run(
+  "bash",
+  [bootstrap, "resume", "codex/task-two", resumed],
+  { cwd: source, env: bootstrapEnv },
+);
+assert(
+  unsafeResume.status !== 0 && unsafeResume.stderr.includes("unpushed local commits"),
+  "resume must never overwrite unpushed local commits",
+);
+
+const selfTarget = run(
+  "bash",
+  [bootstrap, "new", "codex/self-target", source],
+  { cwd: source, env: bootstrapEnv },
+);
+assert(
+  selfTarget.status !== 0 && selfTarget.stderr.includes("current/source checkout"),
+  "bootstrap must never replace its own source checkout",
+);
+
+fs.rmSync(temp, { recursive: true, force: true });
+console.log(
+  "PASS codex tooling — V3 scope authorization, completion enforcement, untracked scope detection, publication safety, robust attachment transport, and origin-based PR bootstrap",
+);

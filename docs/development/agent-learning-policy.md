@@ -1,8 +1,8 @@
 # Agent Learning Policy
 
-**Status:** repository-enforced governance for process learning  
+**Status:** repository governance for process learning  
 **Owner:** ChatGPT semantic/architecture layer plus framework-only repository changes  
-**Purpose:** preserve useful lessons across turns, threads, and PRs without allowing a single anomalous failure to rewrite development policy.
+**Purpose:** preserve useful lessons across turns, threads, and PRs without allowing one anomalous failure to rewrite development policy.
 
 ## 1. Core model
 
@@ -16,17 +16,17 @@ user/ChatGPT correction. An incident is not itself a rule.
 
 A **candidate** is a plausible generalizable lesson selected by the ChatGPT
 semantic/architecture layer. Candidates are durably stored as GitHub Issues in
-this repository's candidate registry and are never injected into Codex handoffs.
+this repository's candidate registry and are never injected automatically into
+Codex handoffs.
 
 An **active lesson** is a curated repository rule stored in
-`docs/development/agent-lessons.json`. It has deterministic applicability
-selectors and is enforced by the PFM hook. Active lessons complement, but never
-override, higher-authority financial specifications, AGENTS rules, or
-verification policy.
+`docs/development/agent-lessons.json`. Active lessons guide ChatGPT planning
+and framework evolution. They complement, but never override, higher-authority
+financial specifications, AGENTS rules, or verification policy.
 
-A **retired** lesson remains in the lesson ledger for history but is no longer
-injected because it was superseded, disproven, or permanently codified into a
-higher-level base contract.
+A **retired** lesson remains in the ledger for history but is no longer applied
+because it was superseded, disproven, or permanently codified into a universal
+base contract.
 
 ## 2. Candidate capture is automatic; activation is curated
 
@@ -52,8 +52,7 @@ If GitHub persistence fails, the response MUST say
 Raw incidents MUST NOT automatically become candidates. CI, Codex, hooks, and
 generated artifacts may record incident evidence, but only the ChatGPT
 semantic/architecture layer classifies whether evidence is plausibly
-generalizable. Codex may report a concise process signal for later review; it
-does not create, promote, reject, or activate candidate lessons.
+generalizable.
 
 ### Candidate identity
 
@@ -70,9 +69,7 @@ UTF-8 bytes, and use the first 12 lowercase hex characters:
 
 `ALC-<12 hex>`
 
-`tools/codex/agent-candidate-key.mjs` is the executable reference for this
-normalization. The deterministic key prevents recurrence from creating duplicate
-candidate records merely because the supporting incident text changed.
+`tools/codex/agent-candidate-key.mjs` is the executable reference.
 
 ### Candidate issue contract
 
@@ -91,57 +88,64 @@ and retain:
 - first-seen and last-seen context;
 - recurrence count;
 - review criteria;
-- links to any active lesson/framework change that later resolves the candidate.
+- links to any lesson/framework change that later resolves the candidate.
 
 Allowed dispositions are `pending`, `promoted`, `codified`, `rejected`,
-and `duplicate`. Pending candidates have no effect on task routing or prompt
-validation.
+and `duplicate`. Pending candidates have no task-routing effect.
 
 ## 3. Promotion is curated
 
-`docs/development/agent-lessons.json` is the curated active/retired policy
-ledger. CI, Codex, hooks, candidate issues, and generated artifacts MUST NOT edit
-or promote that ledger.
+`docs/development/agent-lessons.json` is the curated active/retired ledger.
+CI, Codex, hooks, candidate issues, and generated artifacts MUST NOT edit or
+promote that ledger.
 
 A framework change may promote a pending candidate only when the evidence shows
 the failure is generalizable and the proposed rule is narrower than the problem
-it prevents. Normally a one-off issue remains pending. Repeated failures or a
-severe safety/resource/process failure may justify immediate activation when the
-rule is deterministic and low-risk.
+it prevents. Repeated failures or a severe safety/resource/process failure may
+justify immediate activation when the rule is deterministic and low-risk.
 
 Every active lesson MUST include:
-- concrete source evidence, including the candidate issue when applicable;
+- concrete source evidence;
 - narrow applicability selectors;
 - the preventive rule;
 - explicit `do_not_generalize_to` negative space;
-- review/retirement criteria;
-- any prompt markers the hook can verify.
+- review/retirement criteria.
 
 Promotion assigns the next curated `AL-NNN` identifier. The source candidate
-issue is then updated to `promoted`. If a framework/base-contract change solves
-the problem without requiring an active lesson, update the candidate disposition
-to `codified`. Rejection or duplicate disposition likewise requires an explicit
-reason; no counter or score may make that decision automatically.
+issue is then updated to `promoted`.
 
-## 4. Deterministic active-lesson applicability
+If a framework/base-contract change solves the problem universally, update the
+candidate to `codified` and retire any active lesson whose independent
+application is no longer needed. Universal safeguards belong in the base
+framework, not as repetitive prompt markers.
 
-Applicability is computed only from task-envelope fields:
-- `TASK_KIND`;
-- `CI_PROFILE`;
-- `HEAVY_VALIDATION_PROFILE`;
-- `TASK_CONTINUITY`.
+## 4. Applying active lessons
 
-Each selector is an explicit list; `*` means any value. The hook computes the
-matching active IDs and requires `LESSONS_APPLIED` to match exactly. It also
-requires every active lesson's `required_markers` to be present in the handoff.
+For Personal Finance App development planning, audits, and Codex handoffs,
+ChatGPT SHALL consult the live policy and active lesson ledger before issuing
+implementation instructions.
 
-Candidate issues are deliberately excluded from applicability computation. The
-implementation model does not reread or reinterpret candidates.
+Applicability remains based on the lesson's explicit selectors:
+- task kind;
+- CI profile;
+- heavy-validation profile;
+- task continuity.
+
+ChatGPT applies matching lessons to the semantic plan and records meaningful
+framework follow-up in the user-facing Process learning line.
+
+The Codex prompt hook does **not** require `LESSONS_APPLIED` or lesson-specific
+marker strings. Lesson application is a planning/audit responsibility, not a
+transport or task-start gate. This prevents learning governance from making
+otherwise safe implementation prompts brittle.
+
+Candidate issues remain excluded from task routing and prompt authorization.
 
 ## 5. Conflict, retirement, and overcorrection
 
 A lesson cannot override higher-authority repository policy. If an active lesson
-conflicts with a newer base contract, fail closed and repair the framework.
+conflicts with a newer base contract, repair the framework and retire/supersede
+the lesson.
 
 Lessons should be reviewed when:
 - the same incident recurs despite application;
@@ -169,8 +173,7 @@ create a candidate, or recommend a policy change.
 ## 7. User-facing reporting
 
 After Personal Finance App implementation/audit/planning turns, the
-architecture/review layer should end with exactly one concise Process learning
-line:
+architecture/review layer ends with exactly one concise Process learning line:
 
 - `Process learning: none.`
 - `Process learning: candidate recorded — ALC-xxxxxxxxxxxx (#N). Framework action: <review trigger or none>.`
@@ -178,11 +181,14 @@ line:
 - `Process learning: active — AL-NNN. Framework action: <none or specific follow-up>.`
 
 Do not report `candidate recorded` merely because a lesson was mentioned in
-chat. The GitHub issue is the durable candidate record; the active/retired lesson
-ledger is the durable policy record.
+chat. The GitHub issue is the durable candidate record; the active/retired
+lesson ledger is the durable policy record.
 
-## 8. Migration
+## 8. Migration and compatibility
 
-Legacy candidate entries that predate this policy are migrated to candidate
-issues. After migration, `docs/development/agent-lessons.json` contains only
-active and retired lessons. Existing active lesson IDs remain stable.
+Legacy candidate entries remain migrated to GitHub issues. Existing lesson IDs
+remain stable.
+
+Legacy `PFM_TASK_V2` handoffs may still be accepted by the hook when they
+contain the minimal V3 authorization fields, but new handoffs should use
+`PFM_TASK_V3`.
