@@ -1,5 +1,5 @@
 import { BaselineCache, FORECAST_DEBOUNCE_MS, initialForecastState, isCacheableBaseline, isCurrentForecastResponse, pendingForecastState, settledForecastState, type ForecastState } from "../../src/application/interactiveForecast.js";
-import type { PerformanceContext, PerformanceRecord } from "../../src/diagnostics/performance.js";
+import type { PerformanceContext, PerformanceRecord } from "../../src/application/performance.js";
 import type { ForecastWorkerRequest, ForecastWorkerResponse, ForecastWorkerResult } from "./protocol.js";
 
 export interface ForecastWorkerPort {
@@ -103,7 +103,7 @@ export class ForecastController {
   invalidate(message = "Execution configuration is unavailable."): void {
     this.#stop();
     this.#publish({ ...this.#state, pending: false, stale: this.#state.lastGoodResult !== undefined,
-      lifecycle: this.#state.lastGoodResult === undefined ? "idle" : "unsupported", message });
+      lifecycle: this.#state.lastGoodResult === undefined ? "idle" : "stale", latestResult: undefined, message });
   }
   dispose(): void {
     this.#stop();

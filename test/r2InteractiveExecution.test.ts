@@ -60,6 +60,8 @@ describe("R2 economics and current position", () => {
     const boundary = { baseCurrency: "USD", asOf: "2026-01-01" };
     const current = getCurrentPosition(golden, boundary);
     expect(current.netWorth).toBeDefined();
+    expect(current.netWorth?.exact).toBe("309330.29");
+    expect(current.assets?.exact).toBe("535000");
     expect(current.status).toBe(current.unavailable.length ? "partial" : "complete");
     expect(getCurrentPosition(golden, { ...boundary, asOf: "invalid" }).status).toBe("invalid");
     const income = golden.objects.Income![0] as Record<string, string>;
@@ -67,14 +69,64 @@ describe("R2 economics and current position", () => {
     const partial = getCurrentPosition(patchPersonalObject(golden, "Income", income.income_id!, { frequency: "weekly" }), boundary);
     expect(partial.status).toBe("partial");
     expect(partial.monthlyIncome).toBeUndefined();
+    expect(partial.netWorth?.exact).toBe("309330.29");
     expect(partial.diagnostics.length).toBeGreaterThan(0);
     const unsupported = getCurrentPosition({ ...golden, objects: { ...golden.objects, Household: [] } }, boundary);
     expect(unsupported.status).toBe("unsupported");
     expect(unsupported.netWorth).toBeUndefined();
   });
+  it("validates exact opening investment values and does not invent FX conversion", () => {
+    const golden = createGoldenHouseholdDraft();
+    const boundary = { baseCurrency: "USD", asOf: "2026-01-01" };
+    const investment = golden.objects.Investment![0] as Record<string, string>;
+    // Imported authored data must be tested independently of editor mutability rules.
+    const withInvestment = (draft: typeof golden, patch: Record<string, string | null>) => ({
+      ...draft, objects: { ...draft.objects, Investment: draft.objects.Investment!.map((item) => {
+        const position = item as Record<string, string>;
+        return position.investment_id === investment.investment_id ? { ...position, ...patch } : item;
+      }) },
+    });
+    for (const patch of [
+      { market_value: "1" }, { price: null }, { price: "-1" },
+      { market_value: "not-money" }, { quantity: "-1" }, { quantity: "not-quantity" },
+      { quantity: "0", market_value: "1" },
+    ]) expect(getCurrentPosition(withInvestment(golden, patch), boundary).status).toBe("invalid");
+    const derived = getCurrentPosition(withInvestment(golden, { market_value: null }), boundary);
+    expect(derived.netWorth?.exact).toBe("309330.29");
+    const foreign = { ...golden, objects: { ...golden.objects, Account: golden.objects.Account!.map((item) => {
+      const account = item as Record<string, string>;
+      return account.account_id === investment.account_id ? { ...account, currency: "EUR", opening_balance: "0" } : item;
+    }) } };
+    const unavailable = getCurrentPosition(foreign, boundary);
+    expect(unavailable.status).toBe("partial");
+    expect(unavailable.assets).toBeUndefined();
+    expect(unavailable.netWorth).toBeUndefined();
+    expect(unavailable.cash).toBeDefined();
+    expect(unavailable.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "FX_UNSUPPORTED", entityType: "Investment" })]));
+    const zero = getCurrentPosition(withInvestment(foreign, { quantity: "0", price: null, market_value: "0" }), boundary);
+    expect(zero.assets).toBeDefined();
+    expect(zero.diagnostics.some((item) => item.code === "FX_UNSUPPORTED")).toBe(false);
+  });
 });
 
 describe("R2 request channels", () => {
+  it("keeps missing configuration idle and retains invalidated baseline/comparison results as stale", () => {
+    for (const operation of ["baseline_forecast", "scenario_comparison"] as const) {
+      const { controller, workers } = channel();
+      controller.invalidate();
+      expect(controller.state).toMatchObject({ lifecycle: "idle", pending: false, stale: false });
+      const input: ForecastSubmission = operation === "baseline_forecast" ? submission() : { ...submission(), operation, intents: [] };
+      controller.submit(input, true);
+      const good = financial();
+      workers[0]!.complete(good);
+      controller.submit({ ...input, fingerprint: "new-economics" }, true);
+      controller.invalidate("Inputs changed. Run a new comparison.");
+      workers[1]!.complete(financial("completed", "superseded"));
+      expect(controller.state).toMatchObject({ lifecycle: "stale", pending: false, stale: true, lastGoodResult: good, resultFingerprint: "a", message: "Inputs changed. Run a new comparison." });
+      expect(controller.state.latestResult).toBeUndefined();
+      controller.dispose();
+    }
+  });
   it("debounces exactly 300 ms and manual recalculation supersedes pending and active work", () => {
     vi.useFakeTimers();
     const { controller, workers } = channel();

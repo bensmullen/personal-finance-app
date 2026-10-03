@@ -1,6 +1,6 @@
 import { DecimalAmount } from "../values/index.js";
 import { PERFORMANCE_PHASES, PerformanceRegistry, type PerformanceContext, type PerformanceObserver, type PerformanceResources } from "../diagnostics/performance.js";
-export { PERFORMANCE_PHASES, type PerformanceContext, type PerformancePhase } from "../diagnostics/performance.js";
+export { PERFORMANCE_PHASES, type PerformanceContext, type PerformancePhase, type PerformanceClock, type PerformanceObserver, type PerformanceRecord } from "../diagnostics/performance.js";
 
 export const applicationPerformanceRegistry = new PerformanceRegistry(100);
 

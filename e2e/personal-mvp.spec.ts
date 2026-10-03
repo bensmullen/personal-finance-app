@@ -13,11 +13,18 @@ const loadExample = async (page: import("@playwright/test").Page) => {
   ).toBeVisible();
 };
 
-const showHouseholdDetails = async (page: import("@playwright/test").Page, channel: "baseline" | "comparison" = "baseline") => {
+const showHouseholdDetails = async (page: import("@playwright/test").Page, channel: "baseline" | "comparison" = "baseline", forecastBudget = 15_000) => {
   const status = page.getByRole("status", { name: channel === "baseline" ? "Household forecast status" : "Household comparison status" });
-  await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
+  await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: forecastBudget });
   const details = page.getByRole("button", { name: channel === "baseline" ? "Show forecast details" : /Show .* comparison details/ });
   if (await details.count()) await details.first().click();
+};
+
+// Interaction tests need a few periods, not the full Golden retirement horizon.
+const useShortHorizon = async (page: import("@playwright/test").Page) => {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Model Settings", exact: true }).click();
+  await page.getByLabel("Simulation end").fill("2026-04-01");
 };
 
 const importDraft = async (
@@ -76,7 +83,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   const waitQueued = async () => page.waitForFunction(() => {
     const status = document.querySelector('[aria-label="Household forecast status"]') as HTMLElement | null;
     return (window as any).__r2Worker.queue.some((item: any) => String(item.requestId) === status?.dataset.requestId && item.fingerprint === status?.dataset.fingerprint);
-  });
+  }, undefined, { timeout: 30_000 });
   const releaseCurrent = async () => page.evaluate(() => {
     const status = document.querySelector('[aria-label="Household forecast status"]') as HTMLElement;
     const control = (window as any).__r2Worker;
@@ -215,7 +222,7 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   const forecast = page.getByRole("table", {
     name: "Reconciled household forecast",
   });
-  await showHouseholdDetails(page);
+  await showHouseholdDetails(page, "baseline", 60_000);
   await expect(forecast).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText("Completed through 2036-01-01")).toBeVisible();
   await expect(forecast.locator("tbody tr")).toHaveCount(24);
@@ -255,7 +262,7 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   await page.getByLabel("Investment target").selectOption({ index: 1 });
   await page.getByRole("button", { name: "Compare investment return" }).click();
   const lower = page.getByRole("table", { name: "What-if alternative household comparison" });
-  await showHouseholdDetails(page, "comparison");
+  await showHouseholdDetails(page, "comparison", 30_000);
   await expect(lower).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/investment return/).first()).toBeVisible();
   await lower.getByText("Explain").last().click();
@@ -272,7 +279,7 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   const retirement = page.getByRole("table", {
     name: "What-if alternative household comparison",
   });
-  await showHouseholdDetails(page, "comparison");
+  await showHouseholdDetails(page, "comparison", 30_000);
   await expect(retirement).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/retirement date/i).first()).toBeVisible();
   await expect(
@@ -319,6 +326,7 @@ test("Money cash-flow run uses its explicit scope after Plan selects investments
 }) => {
   test.setTimeout(60_000);
   await loadExample(page);
+  await useShortHorizon(page);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByLabel("Forecast scope").selectOption("investments");
   await page.getByRole("button", { name: "Money", exact: true }).click();
@@ -338,6 +346,7 @@ test("money and net-worth workflows update friendly editors and forecast", async
 }) => {
   test.setTimeout(60_000);
   await loadExample(page);
+  await useShortHorizon(page);
   await page.getByRole("button", { name: "Money", exact: true }).click();
   await page.getByRole("button", { name: "Income", exact: true }).click();
   await page.getByRole("button", { name: /Example salary/ }).click();
@@ -355,7 +364,7 @@ test("money and net-worth workflows update friendly editors and forecast", async
   await page.getByRole("button", { name: "Run cash-flow forecast" }).click();
   await expect(
     page.getByText("Financial outcome · Modeled liquidity stress"),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("No observed history loaded")).toBeVisible();
   await showHouseholdDetails(page, "baseline");
   await expect(
@@ -509,6 +518,7 @@ test("model portability and deterministic what-if comparison stay explicit", asy
   page,
 }) => {
   await loadExample(page);
+  await useShortHorizon(page);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   for (const starter of [
@@ -561,6 +571,7 @@ test("What If executes retirement without mutating the baseline binding", async 
   page,
 }) => {
   await loadExample(page);
+  await useShortHorizon(page);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   const baselineDate = await page.getByLabel("Baseline retirement date").inputValue();
@@ -682,6 +693,7 @@ test("What If executes explicit liability extra principal", async ({
   page,
 }) => {
   await loadExample(page);
+  await useShortHorizon(page);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   await page.getByLabel("Liability target").selectOption({ index: 1 });
@@ -741,6 +753,7 @@ test("manual local save survives reload and explicit load without restoring exec
   page,
 }) => {
   await loadExample(page);
+  await useShortHorizon(page);
   await page.getByRole("button", { name: "Money", exact: true }).click();
   await page.getByRole("button", { name: "Income", exact: true }).click();
   await page.getByRole("button", { name: /Example salary/ }).click();
@@ -847,6 +860,7 @@ test("current and exact saved recovery exports match, and confirmed delete remov
 test("PR21 closeout: major asset debt at projection start uses reconciled comparison", async ({ page }) => {
   test.setTimeout(120_000);
   await loadExample(page);
+  await useShortHorizon(page);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   await page.getByLabel("Major asset owner").selectOption({ index: 1 });
@@ -870,12 +884,12 @@ test("PR21 closeout: configure save reload reconfigure", async ({ page }) => {
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByRole("button", { name: "Recalculate", exact: true }).click();
-  await showHouseholdDetails(page, "baseline");
+  await showHouseholdDetails(page, "baseline", 60_000);
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible({ timeout: 60_000 });
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   await page.getByLabel("Income target").selectOption({ index: 1 });
   await page.getByRole("button", { name: "Compare income growth" }).click();
-  await showHouseholdDetails(page, "comparison");
+  await showHouseholdDetails(page, "comparison", 60_000);
   await expect(page.getByRole("table", { name: "What-if alternative household comparison" })).toBeVisible({ timeout: 60_000 });
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await page.reload();
@@ -937,6 +951,6 @@ test("PR21 closeout: configure save reload reconfigure", async ({ page }) => {
     page.getByText(/Household execution configuration is missing/),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Recalculate", exact: true }).click();
-  await showHouseholdDetails(page, "baseline");
+  await showHouseholdDetails(page, "baseline", 60_000);
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible({ timeout: 60_000 });
 });

@@ -5,13 +5,13 @@ import { runPersonalHouseholdForecast, comparePersonalHouseholdScenarioIntents }
 import { createRealisticPerformanceFixture, createStressPerformanceFixture, createPerformanceScalingFixtures } from "./fixtures/performanceHouseholds.js";
 import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { runCompiledHouseholdProjection } from "../src/simulation/householdExecution.js";
-import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant } from "../src/time/index.js";
-import { USD } from "../src/values/index.js";
+import { Rate, USD } from "../src/values/index.js";
 import { executeForecastWorkerRequest } from "../ui/forecast/execute.js";
 import { ForecastController, type ForecastWorkerPort } from "../ui/forecast/controller.js";
 import type { ForecastWorkerRequest, ForecastWorkerResponse } from "../ui/forecast/protocol.js";
-import { calculationFingerprint } from "../src/application/interactiveForecast.js";
+import { calculationFingerprint, toForecastWorkerResult } from "../src/application/interactiveForecast.js";
 import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
 import { createGoldenHouseholdForecastRequest, createGoldenHouseholdScenarioIntents } from "../src/application/goldenHousehold.js";
 
@@ -90,13 +90,22 @@ describe("performance instrumentation", () => {
     if (response.outcome !== "result") throw new Error("Comparison Worker failed.");
     const direct = comparePersonalHouseholdScenarioIntents(model, request, intents);
     expect(direct.status).toBe("completed");
-    expect(response.result).toEqual(direct);
+    expect(response.result).toEqual(toForecastWorkerResult(direct));
+    expect(canonicalSerialize(response.result)).toBe(canonicalSerialize(direct));
     expect(structuredClone(response)).toEqual(response);
     expect(direct.alternatives[0]!.configurationDifferences.length).toBeGreaterThan(0);
     for (const difference of direct.alternatives[0]!.configurationDifferences) {
       expect(difference.before).not.toEqual({});
       expect(difference.after).not.toEqual({});
     }
+    const rates = direct.alternatives[0]!.configurationDifferences.flatMap((difference) => [difference.before, difference.after]);
+    expect(rates.some((value) => value instanceof Rate)).toBe(true);
+    if (!("alternatives" in response.result)) throw new Error("Expected comparison response.");
+    const transported = response.result.alternatives[0]!;
+    const original = direct.alternatives[0]!;
+    expect(transported.points).toEqual(original.points);
+    expect(transported.appliedRuleDifferences).toEqual(original.appliedRuleDifferences);
+    expect(transported.configurationDifferences.map((difference) => difference.differenceId)).toEqual(original.configurationDifferences.map((difference) => difference.differenceId));
   });
   it("is observational and aggregates phase segments", () => {
     const fixture = createRealisticPerformanceFixture();

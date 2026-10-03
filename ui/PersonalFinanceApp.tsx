@@ -2373,7 +2373,8 @@ function ComparePlans({
   retirementBindings: readonly RetirementTerminationBinding[];
 }) {
   const resultModels = useContext(FinancialResultModels);
-  const financialModel = resultModels.comparison?.lastGoodResult === comparison ? resultModels.comparison.resultModel ?? draft : draft;
+  const comparisonState = resultModels.comparison;
+  const financialModel = comparisonState && comparisonState.lastGoodResult === comparison ? comparisonState.resultModel ?? draft : draft;
   const explanationCache = useMemo(() => comparison ? resultModels.explanations?.comparison.forResult(comparison) ?? new ExplanationCache<FinancialExplanation>() : new ExplanationCache<FinancialExplanation>(), [comparison, resultModels.explanations]);
   const resultBindings = resultModels.comparison?.resultRequest?.compiler.cashFlow?.retirementBindings ?? retirementBindings;
   const canonicalEvents =

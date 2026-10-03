@@ -1,7 +1,73 @@
 import type { PortableModelEnvelope } from "../model/modelVersion.js";
 import { CURRENT_RUN_VERSIONS } from "../model/version.js";
 import { canonicalSerialize } from "../simulation/run.js";
-import type { HouseholdForecastRequest } from "./householdProjection.js";
+import type { ExecutableScenarioIntent } from "./compiler/scenarios.js";
+import type { HouseholdForecastRequest, MajorAssetDebtAddition, PersonalHouseholdForecastReadModel, PersonalHouseholdScenarioComparisonReadModel } from "./householdProjection.js";
+import type { PerformanceClock, PerformanceContext, PerformanceObserver, PerformanceRecord } from "./performance.js";
+import { runPersonalHouseholdForecast, comparePersonalHouseholdScenarioIntents, comparePersonalHouseholdMajorAssetDebtAddition } from "./householdProjection.js";
+import { createApplicationPerformanceObserver } from "./performance.js";
+
+interface RequestBoundary {
+  readonly requestId: number;
+  readonly fingerprint: string;
+  readonly model: PortableModelEnvelope;
+  readonly request: HouseholdForecastRequest;
+  readonly performanceContext: PerformanceContext;
+}
+export type ForecastWorkerRequest = RequestBoundary & (
+  | { readonly operation: "baseline_forecast" }
+  | { readonly operation: "scenario_comparison"; readonly intents: readonly ExecutableScenarioIntent[] }
+  | { readonly operation: "major_asset_debt_comparison"; readonly addition: MajorAssetDebtAddition }
+);
+export type ForecastWorkerResult = PersonalHouseholdForecastReadModel | PersonalHouseholdScenarioComparisonReadModel;
+export type ForecastWorkerResponse = Pick<ForecastWorkerRequest, "operation" | "requestId" | "fingerprint"> & {
+  readonly records: readonly PerformanceRecord[];
+} & (
+  | { readonly outcome: "result"; readonly result: ForecastWorkerResult }
+  | { readonly outcome: "error"; readonly error: { readonly code: "EXECUTION_ERROR"; readonly message: string } }
+);
+
+/** Runtime-neutral seam; invoked only inside the dedicated Worker in the browser. */
+export const executeForecastWorkerRequest = (message: ForecastWorkerRequest, clock: PerformanceClock): ForecastWorkerResponse => {
+  const records: PerformanceRecord[] = [];
+  const boundary = { operation: message.operation, requestId: message.requestId, fingerprint: message.fingerprint };
+  let observer: PerformanceObserver | undefined;
+  try {
+    observer = createApplicationPerformanceObserver(clock,
+      { ...message.performanceContext, executionLocation: "browser_worker", cacheState: "miss", workerConcurrency: 1 },
+      { record: (record) => { records.push(record); } });
+  } catch { /* Instrumentation setup cannot prevent financial execution. */ }
+  try {
+    const result = message.operation === "baseline_forecast"
+      ? runPersonalHouseholdForecast(message.model, message.request, observer)
+      : message.operation === "scenario_comparison"
+        ? comparePersonalHouseholdScenarioIntents(message.model, message.request, message.intents)
+        : comparePersonalHouseholdMajorAssetDebtAddition(message.model, message.request, message.addition);
+    if (result.status === "unavailable" && result.executionError)
+      return { ...boundary, outcome: "error", error: { code: "EXECUTION_ERROR", message: "Unexpected household execution error." }, records };
+    // Comparison APIs have no observer seam. Do not invent their timing.
+    return { ...boundary, outcome: "result", result: toForecastWorkerResult(result), records };
+  } catch {
+    // Runtime error text is deliberately portable and contains no personal data.
+    return { ...boundary, outcome: "error", error: { code: "EXECUTION_ERROR", message: "Unexpected household execution error." }, records };
+  }
+};
+
+export const INTERACTIVE_ENGINE_VERSION = CURRENT_RUN_VERSIONS.engineVersion;
+
+/** Only transport metadata is canonicalized; direct comparison callers retain exact values. */
+export const toForecastWorkerResult = (result: ForecastWorkerResult): ForecastWorkerResult => {
+  if (!("alternatives" in result)) return result;
+  return { ...result, alternatives: result.alternatives.map((alternative) => ({
+    ...alternative,
+    configurationDifferences: alternative.configurationDifferences.map((difference) => ({
+      ...difference,
+      before: JSON.parse(canonicalSerialize(difference.before)),
+      after: JSON.parse(canonicalSerialize(difference.after)),
+    })),
+  })) };
+};
+
 
 export type ForecastOperation = "baseline_forecast" | "scenario_comparison" | "major_asset_debt_comparison";
 export type ForecastLifecycle = "idle" | "running" | "stale" | "completed" | "incomplete" | "unsupported" | "error";

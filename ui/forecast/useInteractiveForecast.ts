@@ -1,9 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { calculationFingerprint } from "../../src/application/interactiveForecast.js";
+import { calculationFingerprint, INTERACTIVE_ENGINE_VERSION } from "../../src/application/interactiveForecast.js";
 import { createHouseholdForecastRequest, type PersonalHouseholdSessionExecutionConfiguration } from "../../src/application/householdProjection.js";
 import { resolvePersonalSessionSettings, type PersonalDraft, type PersonalSessionSettings } from "../../src/application/personalMvp.js";
 import { applicationPerformanceRegistry } from "../../src/application/performance.js";
-import { CURRENT_RUN_VERSIONS } from "../../src/model/version.js";
 import { ForecastController, type ForecastSubmission, type ForecastView, type ForecastWorkerPort } from "./controller.js";
 
 const makeWorker = (): ForecastWorkerPort => new Worker(new URL("./household.worker.ts", import.meta.url), { type: "module" }) as unknown as ForecastWorkerPort;
@@ -27,7 +26,7 @@ export function useInteractiveForecast(model: PersonalDraft | undefined, configu
         runId: request.runIdentity, dataClassification: "user", modelCounts: Object.fromEntries(Object.entries(model.objects).map(([name, values]) => [name, values.length])),
         horizon: { start: effectiveConfiguration.simulationStart, end: effectiveConfiguration.simulationEnd },
         modelVersion: model.modelFormatVersion, specificationVersion: model.financialSpecificationVersion,
-        engineVersion: CURRENT_RUN_VERSIONS.engineVersion, executionLocation: "browser_worker", runtime: "browser",
+        engineVersion: INTERACTIVE_ENGINE_VERSION, executionLocation: "browser_worker", runtime: "browser",
         browser: typeof navigator === "undefined" ? "unavailable" : navigator.userAgent, cacheState: "miss", workerConcurrency: 1,
       } };
     } catch { return undefined; }
