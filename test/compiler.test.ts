@@ -735,7 +735,7 @@ describe("canonical executable-model compiler", () => {
       const result = compileCurrentPosition(
         modelWith((value) => {
           value.objects.Investment![0]!.quantity = "2";
-        value.objects.Investment![0]!.price = price;
+          value.objects.Investment![0]!.price = price;
         }),
         { baseCurrency: "USD", asOf: "2026-01-01" },
       );
