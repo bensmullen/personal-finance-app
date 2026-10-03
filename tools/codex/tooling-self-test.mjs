@@ -122,6 +122,7 @@ const prompt = [
   "ALLOWED_PATHS:",
   "- src/allowed.ts",
   "- src/new/**",
+  "- package.json",
   "",
   "OBJECTIVE:",
   "Change the authorized implementation only.",
