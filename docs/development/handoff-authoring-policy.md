@@ -135,6 +135,10 @@ authorization if the scope change is justified.
 
 ## 6. Git handoff lifecycle
 
+Git bootstrap is an **external operator action performed before the Codex
+implementation turn**. A task issue must not instruct Codex to invoke the
+bootstrap helper during the implementation turn.
+
 Before the Codex task is submitted, prepare the branch/worktree from remote
 state:
 
@@ -157,7 +161,10 @@ Because it fetches `origin` first, the handoff does not need an
 `EXPECTED_HEAD` field and does not depend on local `main` being current.
 
 After bootstrap, open the reported worktree path in Codex and submit the handoff
-whose `TARGET_BRANCH` matches the prepared branch.
+whose `TARGET_BRANCH` matches the prepared branch. Once Codex is running in a
+clean linked feature worktree on that branch, bootstrap is satisfied for that
+turn. SessionStart and task instructions must say so rather than directing Codex
+to rerun bootstrap from inside the prepared worktree.
 
 ## 7. Completion protocol
 

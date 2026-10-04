@@ -9,6 +9,9 @@ Use this skill for repository implementation or repair.
 
 ## Before the Codex turn
 
+Git bootstrap is an **operator-only pre-turn action**. Codex must not invoke the
+bootstrap helper from inside an active implementation turn.
+
 Prepare shared Git state from the remote repository.
 
 New PR:
@@ -27,6 +30,12 @@ Use `agent/<branch>` when resuming a ChatGPT-created PR.
 
 Open the exact worktree path printed by `PR_WORKTREE_READY`. Do not ask Codex
 to create/switch worktrees or branches inside the implementation turn.
+
+When SessionStart reports a clean linked `codex/` or `agent/` feature
+worktree and UserPromptSubmit accepts a task whose `TARGET_BRANCH` equals the
+current branch, preparation is already satisfied. Proceed with implementation;
+do **not** rerun `bootstrap-pr.sh` merely because this skill documents the
+pre-turn bootstrap procedure.
 
 ## Required authorization
 

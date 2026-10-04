@@ -613,11 +613,27 @@ def session_start(payload, root):
     branch = current_branch(root) or "DETACHED"
     head = git_value(["rev-parse", "HEAD"], root) or "unknown"
     dirty = bool(git_value(["status", "--porcelain=v1", "--untracked-files=normal"], root))
-    linked = "yes" if is_linked_worktree(root) else "no"
+    linked_worktree = is_linked_worktree(root)
+    linked = "yes" if linked_worktree else "no"
+    prepared_feature_worktree = linked_worktree and branch.startswith(APPROVED_BRANCH_PREFIXES) and not dirty
+    if prepared_feature_worktree:
+        bootstrap_context = (
+            "This checkout is already a clean linked feature worktree. "
+            "Treat Git bootstrap as satisfied for a task whose TARGET_BRANCH matches the current branch. "
+            "Do not run tools/codex/bootstrap-pr.sh inside the implementation turn; "
+            "UserPromptSubmit will validate task/branch alignment."
+        )
+    else:
+        bootstrap_context = (
+            "This checkout is not a prepared clean linked feature worktree. "
+            "Git bootstrap is an external operator action that must happen before an implementation turn. "
+            "Do not run tools/codex/bootstrap-pr.sh from inside the implementation turn; "
+            "the operator should prepare/reopen the reported worktree."
+        )
     context = (
         f"PFM repo state: root={root} branch={branch} head={head} "
         f"dirty={'yes' if dirty else 'no'} linked_worktree={linked}. "
-        "Use tools/codex/bootstrap-pr.sh before implementation to establish the correct feature branch from remote state. "
+        f"{bootstrap_context} "
         "Node/npm/dependencies are not implementation-start requirements; GitHub CI owns verification."
     )
     emit(
