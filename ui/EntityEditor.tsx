@@ -244,14 +244,16 @@ function ProjectedReturn({ investment, draft, setDraft, selectedScenarioId }: {
   const assumption = linkedReturnAssumption(draft, investment, selectedScenarioId);
   const [rate, setRate] = useState(String(assumption?.value ?? ""));
   useEffect(() => { setRate(String(assumption?.value ?? "")); }, [assumption?.assumption_id, assumption?.value]);
-  const valid = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(rate) && !/^-([1-9]\d*|1)(?:\.|$)/.test(rate);
+  const negative = /^-(\d+)(?:\.(\d+))?$/.exec(rate);
+  const belowTotalLoss = negative && negative[1] !== "0" && (negative[1] !== "1" || /[1-9]/.test(negative[2] ?? ""));
+  const valid = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(rate) && !belowTotalLoss;
   if (!assumption) return <p role="note">Projected annual return is unavailable: this investment has no supported linked deterministic return assumption in the current plan. Plan → Assumptions can edit existing assumptions; creating the executable relationship is not supported here. Import a model with a supported linked return model to establish it.</p>;
   return <section aria-label={`Projected return for ${objectLabel("Investment", investment)}`}>
     <label>Projected annual return
       <input aria-label="Projected annual return" inputMode="decimal" value={rate} onChange={(event) => setRate(event.target.value)} />
     </label>
     <p>Effective annual rate: {rate} = {formatRate(rate)}. Baseline assumption: {objectLabel("Assumption", assumption)}. This changes the linked assumption, including any other holdings that share it.</p>
-    {!valid && <p role="alert">Enter an exact effective annual decimal rate greater than −1, such as 0.08 = 8%.</p>}
+    {!valid && <p role="alert">Enter an exact effective annual decimal rate of at least −1, such as 0.08 = 8%. Returns below a total loss are unsupported.</p>}
     <button type="button" disabled={!valid || rate === String(assumption.value)} onClick={() => setDraft(patchPersonalObject(draft, "Assumption", objectId("Assumption", assumption), { value: rate }))}>Apply projected return</button>
   </section>;
 }

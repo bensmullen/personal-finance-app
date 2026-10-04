@@ -65,6 +65,13 @@ export function forecastDiagnosticMessage(diagnostic: {
       return "The forecast dates do not form a supported monthly horizon. Under Settings → Model Settings, choose a Simulation start on the first day of a month and a later Simulation end on the first day of a month.";
     case "RETIREMENT_DATE_INVALID":
       return "The new retirement date is invalid. Under Plan → What If? → Retire earlier/later, enter a valid New retirement date.";
+    case "MONTHLY_FLOW_RECURRENCE_UNSUPPORTED":
+    case "RECURRENCE_UNSUPPORTED":
+      return `${label(diagnostic.entityType ?? "Income|Expense", diagnostic.entityId, "This income or spending item")} has a schedule this monthly forecast cannot execute. Under Money → Income or Money → Spending, review Frequency. If the actual schedule is monthly, choose monthly; other schedules currently require a separate financial capability. Do not change a recorded schedule merely to remove the warning.`;
+    case "LIABILITY_PAYMENT_FREQUENCY_UNSUPPORTED":
+      return `${label("Liability", diagnostic.entityId, "This debt")} has a payment schedule the fixed monthly debt forecast cannot execute. Under Net Worth → Debt, open the debt and review payment frequency. Choose monthly only if that is the actual contract; other payment schedules are unsupported.`;
+    case "LIABILITY_EXECUTION_PROFILE_REQUIRED":
+      return `${label("Liability", diagnostic.entityId, "This debt")} needs its contractual payment setup. Under Net Worth → Debt → Debt execution configuration, choose Execution owner and enter the debt’s Payment anchor, Total payment count, Funding account, and Settlement priority. Under Plan → Current Plan → Expert forecast configuration, use Apply household execution configuration. Only the supported fixed monthly mortgage contract can execute.`;
     case "INVESTMENT_RETURN_MODEL_UNSUPPORTED":
     case "INVESTMENT_RETURN_BINDING_UNSUPPORTED":
     case "INVESTMENT_RETURN_ASSUMPTION_UNSUPPORTED":
