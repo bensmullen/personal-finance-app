@@ -200,7 +200,7 @@
     {
       "id": "probabilistic-forecasting",
       "path": "docs/specs/capabilities/probabilistic-forecasting.md",
-      "version": "0.1.3-draft",
+      "version": "0.1.4-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -236,7 +236,8 @@
       "depends_on_spec_ids": [
         "executable-financial-semantics",
         "performance-and-execution",
-        "market-economic-calibration"
+        "market-economic-calibration",
+        "deterministic-household-financial-semantics"
       ]
     },
     {
@@ -306,7 +307,8 @@
       "depends_on_spec_ids": [
         "executable-financial-semantics",
         "performance-and-execution",
-        "probabilistic-forecasting"
+        "probabilistic-forecasting",
+        "deterministic-household-financial-semantics"
       ]
     },
     {
