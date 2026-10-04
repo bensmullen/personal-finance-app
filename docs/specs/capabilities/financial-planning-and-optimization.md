@@ -1,6 +1,6 @@
 # Financial Planning & Decision Optimization
 
-**Version:** 0.1.0-draft
+**Version:** 0.2.0-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-PLAN
 
@@ -84,11 +84,31 @@ The product MAY surface modeled recommendations or candidate strategies, but SHA
 
 Search/optimization algorithms, local versus server execution, and acceleration technology are implementation choices behind stable planning and simulation boundaries. An optimizer implementation SHALL NOT redefine financial semantics, result meaning, or reproducibility requirements.
 
+
+### PFA-PLAN-015 — Deterministic portfolio optimization may precede stochastic modeling
+
+After the deterministic D1 financial-semantic gate and the applicable tax floor are complete, the planning layer SHALL be able to implement a bounded deterministic portfolio optimizer before Monte Carlo/stochastic simulation exists.
+
+That optimizer MAY generate and rank candidate contribution, allocation, rebalancing, and supported account-location strategies using:
+- explicit deterministic return assumptions;
+- authoritative contribution limits/employer-match rules;
+- authoritative funding/liquidity/accounting semantics;
+- applicable authoritative tax evaluation;
+- explicit user goals, target allocations/ranges, and hard constraints.
+
+Its claims SHALL match its evidence. Deterministic portfolio optimization may identify the best strategy among the bounded alternatives under the stated deterministic assumptions, but SHALL NOT be presented as uncertainty-aware risk optimization, sequence-risk optimization, or globally optimal asset allocation.
+
+### PFA-PLAN-016 — Stochastic portfolio optimization upgrades deterministic planning
+
+After the required probabilistic market/household semantics exist, P2 SHALL extend supported portfolio optimization with uncertainty-aware comparisons such as downside risk, dispersion, sequence risk, probability of goal success, and other supported distribution-sensitive objectives.
+
+The stochastic optimizer SHALL reuse the same decision semantics as PFA-PLAN-015 rather than redefining contributions, allocation, rebalancing, taxes, or account location. Deterministic portfolio optimization remains useful for preview, explanation, screening, and cases whose conclusion does not materially depend on uncertainty.
+
 ## 4. Initial scope
 
-The first planning milestone should establish a deterministic strategy-definition/evaluation contract for a small number of already-supported decisions. It should prove strategy identity, comparable evaluation, explanations, capability diagnostics, and compiled-plan reuse before broad automated search is introduced.
+The first planning milestone SHALL establish the deterministic strategy-definition/evaluation contract and the bounded deterministic portfolio-optimization floor required by PFA-INV-024. It should prove strategy identity, comparable evaluation, explanations, capability diagnostics, compiled-plan reuse, contribution/account constraints, and bounded candidate generation before broad stochastic search is introduced.
 
-Later milestones may add stochastic candidate evaluation, progressive optimization, and integrated decision domains. Full cross-domain optimization is not a prerequisite for private alpha unless the product exposes a feature that depends on it.
+Later milestones add stochastic candidate evaluation, progressive uncertainty-aware optimization, and broader integrated decision domains. Full cross-domain optimization is not a prerequisite for private alpha, but the bounded deterministic portfolio optimizer is.
 
 ## 5. Deferred representation decisions
 
