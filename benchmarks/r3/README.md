@@ -70,6 +70,13 @@ materialization at output boundaries, rich cash/debt period assembly, complete
 final audit retention and exhaustive contention previews remain. Contention
 signatures still serialize full candidate state/history during previews. Broader
 structural counters, sparse checkpoints and application defaults are pending.
+Static-entity currency/runtime consistency checks still traverse whole entity or
+primitive collections inside preparation/work evaluation. Cash local-order
+construction still uses repeated stream/occurrence searches, and household
+overlap-component discovery still uses pairwise resource comparisons. These
+remain operation/entity-count scaling risks even though candidate forks no
+longer copy growing historical state. No near-linear operation-count claim is
+made for this intermediate stage.
 This stage does not
 meet issue 68 acceptance and supplies no new timing evidence. CI owns bounded
 verification; fresh Node 22 engineering-validation remains required for closeout.
