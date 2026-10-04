@@ -382,6 +382,29 @@ const firstBootstrap = mustRun(
   { cwd: source, env: bootstrapEnv },
 );
 assert(firstBootstrap.stdout.includes("PR_WORKTREE_READY mode=new"), "new bootstrap should return a ready receipt");
+
+const linkedSessionPayload = JSON.stringify({
+  session_id: "linked-worktree-session",
+  turn_id: "linked-worktree-turn",
+  cwd: targetOne,
+  hook_event_name: "SessionStart",
+  permission_mode: "default",
+});
+const linkedSessionResult = run("python3", [policy], {
+  cwd: targetOne,
+  input: linkedSessionPayload,
+  env: { PFM_POLICY_TEST_ORIGIN: "https://github.com/bensmullen/personal-finance-app.git" },
+});
+assert(linkedSessionResult.status === 0, "linked worktree SessionStart should succeed");
+const linkedSession = JSON.parse(linkedSessionResult.stdout || "{}");
+const linkedContext = String(linkedSession?.hookSpecificOutput?.additionalContext ?? "");
+assert(
+  linkedContext.includes("already a clean linked feature worktree")
+    && linkedContext.includes("Treat Git bootstrap as satisfied")
+    && linkedContext.includes("Do not run tools/codex/bootstrap-pr.sh inside the implementation turn"),
+  "prepared linked worktree must be reported as bootstrap-ready without in-turn bootstrap instructions",
+);
+
 const firstBase = mustRun("git", ["-C", targetOne, "rev-parse", "HEAD"]).stdout.trim();
 assert(
   firstBase === mustRun("git", ["-C", source, "rev-parse", "origin/main"]).stdout.trim(),

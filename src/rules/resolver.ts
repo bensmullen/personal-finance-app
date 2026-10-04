@@ -2,6 +2,7 @@ import { failValidation, issueCodes } from "../diagnostics/index.js";
 import type { Instant } from "../time/index.js";
 import { Money, Ratio, RoundingPolicy, decimal } from "../values/index.js";
 import type { FinancialRule, FinancialRuleId, RuleCatalog, RuleKind, RuleTarget } from "./contracts.js";
+import { assertTaxCoreDefinition, immutableTaxData } from "./tax/definition.js";
 
 const resolvedRuleBrand: unique symbol = Symbol("resolved-rule");
 const resolvedRules = new WeakSet<object>();
@@ -23,7 +24,12 @@ const definitionError = (rule: FinancialRule, message: string, fieldPath?: strin
 
 export const assertValidRuleDefinition = (rule: FinancialRule): void => {
   if (rule.effectiveUntil !== undefined && rule.effectiveFrom >= rule.effectiveUntil) definitionError(rule, `Rule ${rule.id} must have a non-empty effective range`, "effectiveUntil");
-  if (rule.target === undefined || !["person", "household", "account", "liability"].includes(rule.target.targetType) || typeof rule.target.targetId !== "string" || rule.target.targetId.length === 0) definitionError(rule, `Rule ${rule.id} requires an explicit supported target`, "target");
+  if (rule.target === undefined || !["person", "household", "account", "liability", "jurisdiction"].includes(rule.target.targetType) || typeof rule.target.targetId !== "string" || rule.target.targetId.length === 0) definitionError(rule, `Rule ${rule.id} requires an explicit supported target`, "target");
+  if (rule.kind !== "tax_core" && rule.target.targetType === "jurisdiction") definitionError(rule, "Legacy rule kinds require their existing economic targets", "target");
+  if (rule.kind === "tax_core") {
+    try { assertTaxCoreDefinition(rule); }
+    catch (error) { definitionError(rule, error instanceof Error ? error.message : "Invalid tax definition"); }
+  }
   if (rule.kind === "proportional_income_tax" && (!(rule.effectiveRate instanceof Ratio) || !(rule.postingRounding instanceof RoundingPolicy) || rule.effectiveRate.value.isNegative() || rule.effectiveRate.value.compare(decimal("1")) > 0)) definitionError(rule, `Rule ${rule.id} tax rate must be between zero and one with explicit rounding`, "effectiveRate");
   if (rule.kind === "annual_contribution_limit") {
     if (!Number.isSafeInteger(rule.calendarYear) || rule.calendarYear < 100 || rule.calendarYear > 9998 || rule.calendar !== "utc") definitionError(rule, `Rule ${rule.id} requires a valid UTC calendar year`, "calendarYear");
@@ -43,7 +49,7 @@ export const assertValidRuleDefinition = (rule: FinancialRule): void => {
 
 const sameTarget = (left: RuleTarget, right: RuleTarget): boolean => left.targetType === right.targetType && left.targetId === right.targetId;
 const activeAt = (rule: FinancialRule, at: Instant): boolean => rule.effectiveFrom <= at && (rule.effectiveUntil === undefined || at < rule.effectiveUntil);
-const snapshotRule = <Rule extends FinancialRule>(rule: Rule): Rule => Object.freeze({
+const snapshotRule = <Rule extends FinancialRule>(rule: Rule): Rule => rule.kind === "tax_core" ? immutableTaxData(rule) : Object.freeze({
   ...rule,
   target: Object.freeze({ ...rule.target }),
 }) as unknown as Rule;
