@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.3.0-draft
+**Version:** 0.4.0-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -22,41 +22,42 @@ R0  Specification decomposition and traceability  [complete]
 R1  Performance instrumentation + benchmark fixtures
  |
 R2  Interactive deterministic execution foundation
- | | +--> R4  UX/editor cleanup --------------------+
- | |       |                                       |
- | |       +--> O1 Assisted onboarding/import -----|---------+
- |                                                 |         |
- +--> R3  High-throughput deterministic kernel ---+----+    |
- |    |                                                 |    |
- |    +--> C1 Provider-neutral calibration contract     |    |
- |    |                                                 |    |
- |    +--> T1A Phase B household tax integration <--- T1A Phase A
- |                                                      |
- +------------------------------------------------------+
-                                                        v
-                 D1  Deterministic household semantics readiness
-                 |   + required alpha financial use cases
-                 |   + input-to-calculation semantic audit
-                 |   + deterministic truth-table fixtures/UAT
-                 |
-                 +--> P1 Deterministic planning/strategy foundation
-                 |
-                 +--> R5 Stochastic runtime foundation <---- C1
-                      |
-                      v
-                   R6 Monte Carlo orchestration
-                      |
-                      v
-                   R7 Baseline probabilistic household engine
-                      |                       |  +--> P2 Stochastic strategy evaluation /
-                      |        progressive optimization
-                      v
-                   R8 Institutional market/sector calibration adapters
-                      |
-                      +--> R10 Probabilistic + planning decision UX
-
-A1  Private-alpha concentration safeguard may proceed in parallel after R3,
-but remains required before R11.
+ | \
+ |  +--> R4 UX/editor cleanup
+ |        \
+ |         +--> O1 foundation work (candidate/import boundary only)
+ |
+ +--> R3 High-throughput deterministic kernel
+      | \
+      |  +--> C1 Provider-neutral calibration contract
+      |       \
+      |        +--> R8 provider-adapter work when C1 is stable
+      |
+      +--> T1A Phase B household tax integration <--- T1A Phase A
+                |
+                +----> D1 Deterministic household semantics readiness <--- R4
+                       |   + D1-A authoring/account semantics (Issue #70)
+                       |   + D1-B remaining deterministic domain mechanics
+                       |   + D1-C combined truth-table/UAT closeout
+                       |
+                       +--> P1 Deterministic planning/strategy foundation
+                       |
+                       +--> O1 authoritative-model/editor integration
+                       |
+                       +--> A1 concentration safeguard implementation
+                       |
+                       +--> R5 Stochastic runtime foundation <---- C1
+                            |
+                            v
+                         R6 Monte Carlo orchestration
+                            |
+                            v
+                         R7 Baseline probabilistic household engine
+                            | \
+                            |  +--> P2 Stochastic strategy evaluation /
+                            |       progressive optimization
+                            |
+                            +--> R10 Probabilistic + planning decision UX
 
 D1 + O1 + P1 + T1A target-cohort coverage + A1
                          |
@@ -76,6 +77,35 @@ R9  Full issuer/RSU/employer-risk stochastic modeling is conditional
 T1B Advanced/specialized tax domains progress with the capabilities that need
     them and gate only affected outputs.
 ~~~
+
+### 2.1 Parallel-development coordination contract
+
+Parallel work is allowed only across stable ownership boundaries. The purpose of parallelization is to shorten calendar time without creating sibling branches that redefine the same financial meaning or require manual reconciliation of competing implementations.
+
+The following coordination rules apply to every parallel wave:
+
+- **Merged-main is the integration authority.** Parallel lanes SHALL start from a common merged prerequisite base. A sibling feature branch SHALL NOT become an undeclared dependency of another sibling branch. When one lane changes a public contract needed by another, the dependent lane pauses at that boundary, rebases after the owning change merges, and then continues.
+- **One owner for each shared semantic hotspot.** Existing cross-cutting compiler/execution/editor surfaces SHALL have one active implementation owner at a time. Other lanes either consume the merged public contract or restrict themselves to isolated modules, fixtures, adapters, and tests. A second lane SHALL NOT add compatibility shims or duplicate formulas merely to avoid waiting for the owner.
+- **Interface changes synchronize before implementation continues.** If parallel work discovers that a frozen boundary is insufficient, use a small dedicated synchronization/specification change first, merge it, and rebase every affected lane. Do not let two branches independently evolve the same interface.
+- **Parallel branches may add isolated modules freely, not competing integration paths.** New calibration adapters, import parsers, stochastic process modules, or domain rule modules can develop concurrently when they consume stable contracts. Shared household compilation, execution ordering, authoritative state mutation, funding, tax settlement, and normal-user editor semantics remain single-owner integration surfaces.
+- **Every dependent wave starts from audited merged state.** Before a milestone that consumes multiple parallel lanes begins, the prerequisite lanes must be merged, ordinary CI green, and the merged result semantically audited. Green sibling PRs are not equivalent to an audited integrated main branch.
+
+For the currently planned lanes, ownership is:
+
+| Lane | Safe parallel scope | Shared integration boundary |
+| --- | --- | --- |
+| T1A Phase B | Household tax integration after R3 + Phase A | Owns tax household execution until merged; D1 does not start against an unmerged T1A-B branch |
+| D1 | Deterministic authoring, account/funding/current-position and remaining PFA-DET mechanics | Owns shared deterministic compiler/execution/editor semantics until D1 closeout |
+| C1 | Normalized calibration contract, immutable fingerprints, synthetic calibration | Must not change household financial semantics or stochastic runtime behavior; safe alongside T1A-B/D1 |
+| O1 | During D1: candidate/import schemas, parsers, provenance, idempotency, telemetry, synthetic fixtures | Authoritative model mutation and shared editor/compiler integration wait for D1 merge |
+| P1 | Planning-owned orchestration and decision/strategy configuration | Starts after D1; consumes the merged decision-overlay/execution boundary and does not change financial formulas |
+| A1 | Before D1 merge: analysis/spec/fixtures only | Executable concentration classification/compiler/UI integration starts after D1 because it shares investment/read-model semantics |
+| R5/R6 | Stochastic runtime/orchestration only after D1 + C1 | Own stochastic stream/run/orchestration contracts; ordinary deterministic semantics are frozen inputs |
+| R7 | After R5/R6 contracts are stable, disjoint stochastic process modules may proceed in parallel | Correlation model, shared process identities, aggregation contracts, and orchestration remain single-owner synchronization surfaces |
+| R8 | Provider adapters against the merged C1 boundary | Adapter work may proceed independently; it must not redefine CalibrationSet or silently change user-facing forecast assumptions |
+| T1B | Isolated effective-dated rule/catalog work may proceed with consuming capabilities | Household/execution integration waits for the consuming domain's stable boundary or uses a dedicated synchronization change |
+
+This coordination contract controls implementation sequencing only. It does not move financial authority out of the canonical schema, executable financial semantics, or capability specifications.
 
 ## 3. R1 — Performance instrumentation and baselines
 
@@ -182,9 +212,17 @@ Required deterministic use cases include:
 
 D1 SHALL include independent truth-table fixtures for each required case plus at least one combined realistic household. Verification must reconcile cash, account/position/asset state, liabilities, income/expense/gain/tax recognition, transfers/contributions, and ending net worth without double counting.
 
+D1 should be implemented as seam-safe slices rather than one cross-cutting branch:
+
+1. **D1-A — authoring/account semantics.** Issue #70 is the current D1-A slice. It establishes current-position event semantics, cash versus investment/retirement classification, no-double-counting rules, executable baseline return authoring, personally funded contribution paths, payroll-sourced 401(k)/HSA contributions, and coherent retirement-date baseline/What-If behavior.
+2. **D1-B — remaining deterministic domain mechanics.** After D1-A merges, remaining PFA-DET cases such as in-plan Roth conversion, mortgage/refinance/extra principal, cash-account interest, Treasury/bond/CD mechanics, cryptocurrency, the bounded option lifecycle, insurance premium/payout behavior, dividend reinvestment, and any still-missing tax characterization may be split into parallel domain slices only where they own disjoint domain modules. Shared compiler/editor/execution integration remains a single integration lane.
+3. **D1-C — integrated closeout.** Merge all D1 slices, run the combined realistic-household truth table and source-of-funds/no-double-counting checks, complete semantic audit, then perform D1 UAT from the actual normal-user authoring paths.
+
+Completion of Issue #70 alone SHALL NOT satisfy the D1 gate unless a merged-main audit demonstrates that every PFA-DET requirement and D1 truth-table case is already covered.
+
 If a named subfeature cannot be supported safely for the initial alpha contract, its exact unsupported boundary must be explicit and the private-alpha scope cannot claim that use case complete.
 
-**R5 gate:** do not begin stochastic household runtime implementation until D1 is complete and its deterministic verification is green. Isolated calibration-contract work in C1 may continue because it does not assume unresolved household financial semantics.
+**R5 gate:** do not begin stochastic household runtime implementation until the full D1 matrix, including D1-C integrated closeout, is complete and its deterministic verification/UAT are green. Isolated C1 calibration work and other explicitly parallel-safe foundation work may continue because they do not assume unresolved household financial semantics.
 
 **User validation:** required. D1 closeout SHALL include a focused user walkthrough proving that the required use cases can be entered in financially recognizable terms and that the resulting deterministic cash/state/tax behavior is understandable.
 
@@ -219,6 +257,8 @@ Before stochastic runtime code hard-codes any distribution/provider shape:
 
 C1 is the early contract half of the former R8 work. It prevents rework without prematurely choosing external providers.
 
+C1 is the primary implementation lane that may run fully in parallel with T1A Phase B and D1. To preserve that independence, C1 SHALL remain confined to the provider-neutral calibration contract, normalized immutable snapshots/fingerprints, and synthetic/internal calibration. It SHALL NOT change deterministic household economics, tax/account/funding semantics, or stochastic runtime execution merely to make a calibration shape convenient.
+
 **User validation:** not required.
 
 ## 8. R4 — UX/editor cleanup
@@ -240,7 +280,11 @@ Implement PFA-UX with emphasis on:
 
 ## 9. O1 — Assisted onboarding and import foundation
 
-O1 begins after the R2/R4 interaction foundations are stable enough to support a guided workflow and may proceed in parallel with R3/C1/R5-R10.
+O1 begins after the R2/R4 interaction foundations are stable enough to support a guided workflow. Its foundation may proceed in parallel with R3/C1/T1A-B/D1, but O1 is split at the authoritative-mutation seam:
+
+- while D1 is active, O1 may build onboarding-specific candidate/import contracts, parsers/extractors, provenance/idempotency, privacy-safe telemetry, synthetic fixtures, and review workflows in isolated modules;
+- O1 SHALL NOT independently redefine shared account classification, contribution/funding semantics, retirement bindings, tax facts, or normal editor/compiler mutation paths owned by D1;
+- after D1 merges, O1 integrates confirmed candidates into the authoritative model using the merged D1 authoring semantics and then performs onboarding dry runs.
 
 Implement PFA-ONB with emphasis on:
 
@@ -281,11 +325,13 @@ Examples of tax-independent results may continue to display in accordance with P
 
 Add specialized capital-gains, retirement, equity-compensation, and other jurisdiction/product mechanics alongside the capabilities that require them. Missing T1B behavior gates only materially affected outputs.
 
+T1B may parallelize safely at the rule/catalog layer when it adds isolated effective-dated rules behind the existing tax contract. A T1B slice that changes household compilation, recognition ordering, funding/settlement, or shared tax-execution interfaces SHALL wait for the current owner of that shared boundary to merge, or use a dedicated synchronization change before both lanes continue.
+
 **User validation:** required only when a tax milestone changes user-facing workflows/results. Automated rule/invariant tests remain the correctness authority; user validation checks understandable presentation and expected real-world workflow.
 
 ## 11. R5 — Stochastic runtime foundation
 
-**Start condition:** D1 deterministic household financial-semantic readiness is complete with green deterministic truth-table verification and accepted D1 UAT. Do not use R5 to discover or patch unresolved ordinary household financial semantics.
+**Start condition:** the full D1 deterministic household financial-semantic readiness gate is complete on merged main, including D1-C integrated truth-table verification, semantic audit, and accepted D1 UAT; C1's calibration contract is also merged. Issue #70/D1-A by itself is not sufficient. Do not use R5 to discover or patch unresolved ordinary household financial semantics.
 
 Implement the higher-authority stochastic semantics before Monte Carlo orchestration:
 
@@ -340,6 +386,8 @@ Introduce uncertainty incrementally against C1's synthetic/internal calibration:
 5. expense variability;
 6. later employment, longevity, major expense, real-estate, and other life-event processes.
 
+After R5/R6 freeze the random-stream, process-identity, correlation, realization, and aggregation contracts, individual R7 process families may be implemented in parallel when they live behind those contracts and do not redefine them. Changes to shared correlation structure, process identity, aggregation/result meaning, or orchestration are synchronization changes and remain single-owner until merged.
+
 User decisions remain explicit scenario controls unless behavioral uncertainty is intentionally enabled.
 
 R7 may expose engineering/developer results before T1A is complete, but a tax-affected result SHALL NOT be presented to a normal user as a complete household probability until PFA-TAX-008/009 are satisfied.
@@ -366,9 +414,9 @@ P2 may remain post-alpha if the private-alpha product does not claim automated s
 
 ## 15. R8 — Institutional market/economic calibration adapters
 
-R8 is now only the provider-adapter/data half of calibration work because C1 defined the internal contract earlier.
+R8 is now only the provider-adapter/data half of calibration work because C1 defined the internal contract earlier. Adapter implementation may begin after C1 is merged and can run in parallel with D1 or later engine work because it consumes, rather than redefines, the CalibrationSet boundary.
 
-Implement one or more institution/provider adapters using explicit provenance, horizon, return basis, volatility/dependence, mapping methodology, licensing, version pinning, and immutable normalized content fingerprints. Do not silently blend providers.
+Implement one or more institution/provider adapters using explicit provenance, horizon, return basis, volatility/dependence, mapping methodology, licensing, version pinning, and immutable normalized content fingerprints. Do not silently blend providers. If an adapter exposes a deficiency in the C1 contract, repair/freeze C1 through a dedicated synchronization change before continuing adapter and runtime work; do not fork the calibration model inside an adapter.
 
 Company-specific data is added only where exposure is material or explicitly requested.
 
@@ -378,7 +426,7 @@ Company-specific data is added only where exposure is material or explicitly req
 
 ### A1 — Private-alpha concentration safeguard
 
-A1 is required before private alpha even if full R9 is deferred:
+A1 is required before private alpha even if full R9 is deferred. Because A1 shares investment classification/read-model/editor semantics with D1, executable A1 integration begins after D1 is merged. Analysis, specification refinement, and isolated fixtures may proceed earlier, but a parallel A1 branch SHALL NOT independently change the shared investment/compiler/UI surface while D1 owns it.
 
 - detect or allow declaration of material single-issuer concentration;
 - show the concentration clearly;
@@ -441,7 +489,7 @@ Before private-alpha infrastructure:
 - the assisted-input architecture preserves factual-versus-planning semantic categories, candidate review, provenance, ambiguity handling, idempotency, and the privacy boundary required by PFA-ONB;
 - performance, convergence, memory, and per-run compute-cost budgets are documented and met for supported realistic use, with explicit cost-per-rerun measurement/estimation for every enabled stochastic execution placement;
 - Golden, realistic-household, and computationally complex/stress fixtures pass their applicable correctness/performance checks and their coverage inventories show the supported product is exercised materially beyond the simple Golden Household;
-- D1 is complete: every required PFA-DET deterministic use case has an independently specified truth-table test, the combined realistic household reconciles, source-of-funds constraints are enforced, and product-owner D1 UAT is accepted;
+- D1 is complete on merged main: every required PFA-DET deterministic use case has an independently specified truth-table test, the combined realistic household reconciles, source-of-funds constraints are enforced, and product-owner D1 UAT is accepted; completion of Issue #70 alone does not satisfy this gate unless the full matrix is covered;
 - current-state UI is responsive;
 - deterministic forecasts do not block the UI;
 - stochastic forecasts are reproducible and convergence metadata is interpretable;
