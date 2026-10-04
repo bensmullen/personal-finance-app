@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { issueCodes, ValidationError } from "../src/diagnostics/index.js";
 import { instant } from "../src/time/index.js";
 import { Currency, Ratio, RoundingPolicy, money } from "../src/values/index.js";
-import { alphaLocalTaxCatalog, alphaStateTaxCatalog, federal2024TaxCatalog, taxLawCoverageGaps, applyTaxCoreRule, calculateProgressiveTax, createTaxCatalog, resolveTaxCoreRule, taxCatalogFingerprint, type TaxCalculationInput, type TaxCoreRule, type TaxJurisdictionFacts } from "../src/rules/index.js";
+import { alphaLocalTaxCatalog, alphaStateTaxCatalog, federal2024TaxCatalog, federal2026TaxCatalog, federalTaxCatalog, federalBaseDeductionOnlyEligibilityKey, fullYearResidentEligibilityKey, taxLawCoverageGaps, applyTaxCoreRule, calculateProgressiveTax, createTaxCatalog, resolveTaxCoreRule, taxCatalogFingerprint, type TaxCalculationInput, type TaxCoreRule, type TaxJurisdictionFacts } from "../src/rules/index.js";
 import { syntheticPayroll, syntheticRmd, taxInput, taxRule } from "./fixtures/t1aTaxRules.js";
 
 const at = instant("2024-06-01T00:00:00.000Z");
 const noJurisdictions: TaxJurisdictionFacts = { residenceJurisdictions: [], workJurisdictions: [] };
+const fullYearResidentFacts = (jurisdiction: string): TaxJurisdictionFacts => ({ residenceJurisdictions: [jurisdiction], workJurisdictions: [], eligibility: { [fullYearResidentEligibilityKey(jurisdiction)]: true } });
 const resolve = (rule: TaxCoreRule) => resolveTaxCoreRule([rule], rule.jurisdiction, "single", at, noJurisdictions);
 const calculate = (input = taxInput(), rule = taxRule()) => applyTaxCoreRule(resolve(rule), input).result;
 const errorCode = (operation: () => unknown) => {
@@ -177,14 +178,67 @@ describe("T1A explicit local jurisdiction facts", () => {
 });
 
 describe("T1A bounded, source-identified law catalogs", () => {
+  it.each(["PA", "NY", "NJ", "CO", "CA", "AZ", "GA", "MA"])("has selectable 2026 %s law or an explicit effective-dated gap, never 2025 fallback", (state) => {
+    const jurisdiction = `US:${state}`;
+    const date = instant("2026-10-03T00:00:00.000Z");
+    const facts = fullYearResidentFacts(jurisdiction);
+    if (["NY", "CO", "CA"].includes(state)) {
+      expect(errorCode(() => resolveTaxCoreRule(alphaStateTaxCatalog, jurisdiction, "single", date, facts))).toBe(issueCodes.ruleNotActive);
+      const gap = taxLawCoverageGaps.find((entry) => entry.jurisdiction === jurisdiction && entry.taxYear === 2026)!;
+      expect(gap.effectiveFrom! <= date && date < gap.effectiveUntil!).toBe(true);
+      expect(gap.reason.length).toBeGreaterThan(0);
+    } else {
+      const selected = resolveTaxCoreRule(alphaStateTaxCatalog, jurisdiction, "single", date, facts);
+      expect(selected.rule.version).toContain(":2026:");
+      expect(selected.rule.effectiveFrom).toBe(instant("2026-01-01T00:00:00.000Z"));
+      const extra = state === "MA" ? { additionalTaxBases: { ma_taxable_short_gains: money("0"), ma_combined_taxable_income: money("100000") } } : {};
+      const expected = { PA: "3070", NJ: "4243.75", AZ: "2500", GA: "4990", MA: "5000" }[state as "PA" | "NJ" | "AZ" | "GA" | "MA"];
+      expect(applyTaxCoreRule(selected, taxInput({}, { explicitTaxableBase: money("100000"), ...extra })).result.totalLiability.equals(money(expected))).toBe(true);
+      expect(errorCode(() => resolveTaxCoreRule(alphaStateTaxCatalog, jurisdiction, "single", instant("2027-01-01T00:00:00.000Z"), facts))).toBe(issueCodes.ruleNotActive);
+    }
+  });
+  it("requires positive full-year residency for every resident-only state/NYC rule", () => {
+    for (const rule of [...alphaStateTaxCatalog, ...alphaLocalTaxCatalog.filter((entry) => entry.jurisdiction === "US:NY:NYC")]) {
+      const facts = fullYearResidentFacts(rule.jurisdiction);
+      const filingStatus = rule.filingStatus === "all" ? "single" : rule.filingStatus;
+      expect(resolveTaxCoreRule([rule], rule.jurisdiction, filingStatus, rule.effectiveFrom, facts).rule.id).toBe(rule.id);
+      for (const eligibility of [undefined, {}, { [fullYearResidentEligibilityKey(rule.jurisdiction)]: false }, { [fullYearResidentEligibilityKey("US:OTHER")]: true }]) {
+        expect(errorCode(() => resolveTaxCoreRule([rule], rule.jurisdiction, filingStatus, rule.effectiveFrom, { residenceJurisdictions: facts.residenceJurisdictions, workJurisdictions: [], ...(eligibility === undefined ? {} : { eligibility }) }))).toBe(issueCodes.ruleNotActive);
+      }
+      expect(errorCode(() => resolveTaxCoreRule([rule], rule.jurisdiction, filingStatus, rule.effectiveFrom, { ...facts, residenceJurisdictions: [], workJurisdictions: [rule.jurisdiction] }))).toBe(issueCodes.ruleNotActive);
+    }
+    expect(errorCode(() => resolveTaxCoreRule(alphaLocalTaxCatalog, "US:NY:NYC", "single", instant("2026-06-01T00:00:00.000Z"), fullYearResidentFacts("US:NY:NYC")))).toBe(issueCodes.ruleNotActive);
+    expect(taxLawCoverageGaps.some((gap) => gap.jurisdiction === "US:NY:NYC" && gap.taxYear === 2026)).toBe(true);
+  });
+  it.each([
+    ["US:NY", "13900", "599.5", "600"],
+    ["US:NY", "80650", "4271.25", "4271"],
+    ["US:NY:NYC", "25000", "858.06", "858"],
+    ["US:NY:NYC", "50000", "1812.75", "1813"],
+    ["US:CA", "72724", "3201.97", "3201.97"],
+    ["US:CA", "371479", "30986.19", "30986.19"],
+  ])("honors published %s intercepts at %s and one cent above", (jurisdiction, threshold, atBoundary, aboveBoundary) => {
+    const rule = [...alphaStateTaxCatalog, ...alphaLocalTaxCatalog].find((entry) => entry.jurisdiction === jurisdiction && entry.filingStatus === "single")!;
+    const schedule = rule.income!.ordinaryBrackets;
+    // Schedule arithmetic only: unsupported table/recapture liability inputs remain gated separately.
+    expect(calculateProgressiveTax(money(threshold), schedule, rule.rounding).equals(money(atBoundary))).toBe(true);
+    expect(calculateProgressiveTax(money(threshold).plus(money("0.01")), schedule, rule.rounding).equals(money(aboveBoundary))).toBe(true);
+    expect(calculateProgressiveTax(money(threshold).plus(money("0.01")), schedule, rule.rounding).equals(money(aboveBoundary))).toBe(true);
+  });
+  it("uses the published 2026 MA threshold without changing historical law", () => {
+    const selected = resolveTaxCoreRule(alphaStateTaxCatalog, "US:MA", "single", instant("2026-10-03T00:00:00.000Z"), fullYearResidentFacts("US:MA"));
+    for (const [base, surtax] of [["1107750", "0"], ["1107750.01", "0"], ["1107751", "0.04"]] as const) {
+      const result = applyTaxCoreRule(selected, taxInput({}, { explicitTaxableBase: money(base), additionalTaxBases: { ma_taxable_short_gains: money("0"), ma_combined_taxable_income: money(base) } })).result;
+      expect(result.additionalIncomeTaxes.find((component) => component.key === "income_surtax")!.liability.equals(money(surtax))).toBe(true);
+    }
+  });
   it.each(["PA", "NY", "NJ", "CO", "CA", "AZ", "GA", "MA"])("selects verified %s law deterministically", (state) => {
     const jurisdiction = `US:${state}`;
-    const facts = { residenceJurisdictions: [jurisdiction], workJurisdictions: [] };
+    const facts = fullYearResidentFacts(jurisdiction);
     const date = instant("2025-06-01T00:00:00.000Z");
     const selected = resolveTaxCoreRule(alphaStateTaxCatalog, jurisdiction, "single", date, facts);
     expect(resolveTaxCoreRule([...alphaStateTaxCatalog].reverse(), jurisdiction, "single", date, facts).rule.id).toBe(selected.rule.id);
     expect(selected.rule.provenance.type).toBe("verified_law");
-    expect(errorCode(() => resolveTaxCoreRule(alphaStateTaxCatalog, jurisdiction, "single", instant("2026-01-01T00:00:00.000Z"), facts))).toBe(issueCodes.ruleNotActive);
     const extra: Partial<TaxCalculationInput> = state === "CA" ? { additionalTaxBases: { ca_total_taxable_income: money("110000") } }
       : state === "MA" ? { additionalTaxBases: { ma_taxable_short_gains: money("0"), ma_combined_taxable_income: money("100000") } } : {};
     const result = applyTaxCoreRule(selected, taxInput({}, { explicitTaxableBase: money(state === "CA" ? "110000" : "100000"), adjustedGrossIncome: money("100000"), ...extra })).result;
@@ -196,13 +250,13 @@ describe("T1A bounded, source-identified law catalogs", () => {
   it("rejects NY recapture and NY/CA tax-table gaps instead of approximating", () => {
     for (const state of ["NY", "CA"]) {
       const jurisdiction = `US:${state}`;
-      const selected = resolveTaxCoreRule(alphaStateTaxCatalog, jurisdiction, "single", instant("2025-06-01T00:00:00.000Z"), { residenceJurisdictions: [jurisdiction], workJurisdictions: [] });
+      const selected = resolveTaxCoreRule(alphaStateTaxCatalog, jurisdiction, "single", instant("2025-06-01T00:00:00.000Z"), fullYearResidentFacts(jurisdiction));
       expect(errorCode(() => applyTaxCoreRule(selected, taxInput({}, { explicitTaxableBase: money("10000"), adjustedGrossIncome: money("10000") })))).toBe(issueCodes.ruleInputInvalid);
       if (state === "NY") expect(errorCode(() => applyTaxCoreRule(selected, taxInput({}, { explicitTaxableBase: money("100000"), adjustedGrossIncome: money("107650.01") })))).toBe(issueCodes.ruleInputInvalid);
     }
   });
   it("requires explicit MA character/surtax bases and applies the extra rates", () => {
-    const selected = resolveTaxCoreRule(alphaStateTaxCatalog, "US:MA", "single", instant("2025-06-01T00:00:00.000Z"), { residenceJurisdictions: ["US:MA"], workJurisdictions: [] });
+    const selected = resolveTaxCoreRule(alphaStateTaxCatalog, "US:MA", "single", instant("2025-06-01T00:00:00.000Z"), fullYearResidentFacts("US:MA"));
     const result = applyTaxCoreRule(selected, taxInput({}, { explicitTaxableBase: money("1083150"), additionalTaxBases: { ma_taxable_short_gains: money("10000"), ma_combined_taxable_income: money("1093150") } })).result;
     expect(result.additionalIncomeTaxes.find((component) => component.key === "short_term_gains")!.liability.equals(money("850"))).toBe(true);
     expect(result.additionalIncomeTaxes.find((component) => component.key === "income_surtax")!.liability.equals(money("400"))).toBe(true);
@@ -211,7 +265,7 @@ describe("T1A bounded, source-identified law catalogs", () => {
     expect(errorCode(() => applyTaxCoreRule(selected, inconsistent))).toBe(issueCodes.ruleInputInvalid);
   });
   it("calculates CA's published example and keeps the income surtax separate", () => {
-    const selected = resolveTaxCoreRule(alphaStateTaxCatalog, "US:CA", "married_joint", instant("2025-06-01T00:00:00.000Z"), { residenceJurisdictions: ["US:CA"], workJurisdictions: [] });
+    const selected = resolveTaxCoreRule(alphaStateTaxCatalog, "US:CA", "married_joint", instant("2025-06-01T00:00:00.000Z"), fullYearResidentFacts("US:CA"));
     const result = applyTaxCoreRule(selected, taxInput({}, { explicitTaxableBase: money("125000"), additionalTaxBases: { ca_total_taxable_income: money("125000") } })).result;
     expect(result.ordinaryTax.equals(money("4768.1"))).toBe(true);
     expect(result.additionalIncomeTaxes[0]!.liability.isZero()).toBe(true);
@@ -224,9 +278,41 @@ describe("T1A bounded, source-identified law catalogs", () => {
     expect(applyTaxCoreRule(resident, taxInput({}, { explicitTaxableBase: money("1000") })).result.ordinaryTax.equals(money("37.35"))).toBe(true);
     expect(applyTaxCoreRule(worker, taxInput({}, { explicitTaxableBase: money("1000") })).result.ordinaryTax.equals(money("34.25"))).toBe(true);
     expect(errorCode(() => resolveTaxCoreRule(alphaLocalTaxCatalog, jurisdiction, "single", instant("2026-06-30T23:59:59.999Z"), { residenceJurisdictions: ["US:PA:PHILADELPHIA"], workJurisdictions: [] }))).toBe(issueCodes.ruleNotActive);
+    expect(errorCode(() => resolveTaxCoreRule(alphaLocalTaxCatalog, jurisdiction, "single", date, { residenceJurisdictions: [], workJurisdictions: [] }))).toBe(issueCodes.ruleNotActive);
+    const facts = { residenceJurisdictions: ["US:PA:PHILADELPHIA"], workJurisdictions: [] };
+    for (const activeDate of ["2026-12-31T23:59:59.999Z", "2027-01-01T00:00:00.000Z", "2027-06-30T23:59:59.999Z"]) {
+      expect(resolveTaxCoreRule(alphaLocalTaxCatalog, jurisdiction, "single", instant(activeDate), facts).rule.id).toBe(resident.rule.id);
+    }
+    expect(errorCode(() => resolveTaxCoreRule(alphaLocalTaxCatalog, jurisdiction, "single", instant("2027-07-01T00:00:00.000Z"), facts))).toBe(issueCodes.ruleNotActive);
+  });
+  it("treats Philadelphia Wage withholding and Earnings payments as collection of one liability", () => {
+    const selected = resolveTaxCoreRule(alphaLocalTaxCatalog, "US:PA:PHILADELPHIA:WAGE", "single", instant("2027-06-30T00:00:00.000Z"), { residenceJurisdictions: ["US:PA:PHILADELPHIA"], workJurisdictions: [] });
+    const unpaid = applyTaxCoreRule(selected, taxInput({}, { explicitTaxableBase: money("1000") })).result;
+    const withheld = applyTaxCoreRule(selected, taxInput({}, { explicitTaxableBase: money("1000"), withholding: money("40") })).result;
+    const paidDirectly = applyTaxCoreRule(selected, taxInput({}, { explicitTaxableBase: money("1000"), estimatedPayments: money("40") })).result;
+    expect(unpaid.totalLiability.equals(money("37.35"))).toBe(true);
+    expect(unpaid.balanceDue.equals(money("37.35"))).toBe(true);
+    for (const result of [withheld, paidDirectly]) {
+      expect(result.totalLiability.equals(unpaid.totalLiability)).toBe(true);
+      expect(result.balanceDue.isZero()).toBe(true);
+      expect(result.refundableAmount.equals(money("2.65"))).toBe(true);
+    }
+    expect(withheld.payments.withholding.equals(money("40"))).toBe(true);
+    expect(paidDirectly.payments.estimated.equals(money("40"))).toBe(true);
+    expect(taxLawCoverageGaps.some((gap) => gap.jurisdiction === "US:PA:PHILADELPHIA:EARNINGS")).toBe(false);
+    expect(errorCode(() => resolveTaxCoreRule(alphaLocalTaxCatalog, "US:PA:PHILADELPHIA:EARNINGS", "single", selected.resolvedAt, noJurisdictions))).toBe(issueCodes.ruleNotActive);
+  });
+  it("uses only DOR/City primary provenance for Colorado and Philadelphia", () => {
+    for (const rule of [...alphaStateTaxCatalog.filter((entry) => entry.jurisdiction === "US:CO"), ...alphaLocalTaxCatalog.filter((entry) => entry.jurisdiction === "US:PA:PHILADELPHIA:WAGE")]) {
+      if (rule.provenance.type !== "verified_law") throw new Error("Expected real law");
+      for (const source of rule.provenance.sources) {
+        expect(new URL(source.url).hostname).toBe(rule.jurisdiction === "US:CO" ? "tax.colorado.gov" : "www.phila.gov");
+        expect(source.authority).toBe(rule.jurisdiction === "US:CO" ? "Colorado Department of Revenue" : "City of Philadelphia Department of Revenue");
+      }
+    }
   });
   it("sources and bounds every real-law entry and preserves known gaps", () => {
-    for (const rule of [...alphaStateTaxCatalog, ...alphaLocalTaxCatalog, ...federal2024TaxCatalog]) {
+    for (const rule of [...alphaStateTaxCatalog, ...alphaLocalTaxCatalog, ...federalTaxCatalog]) {
       expect(rule.effectiveFrom < rule.effectiveUntil).toBe(true);
       expect(Object.isFrozen(rule)).toBe(true);
       expect(rule.provenance.type).toBe("verified_law");
@@ -247,5 +333,44 @@ describe("T1A bounded, source-identified law catalogs", () => {
     expect(result.payrollTaxes.find((component) => component.key === "social_security")!.liability.equals(money("1550"))).toBe(true);
     expect(result.totalLiability.equals(money("3072.5"))).toBe(true);
     expect(result.balanceDue.equals(money("1072.5"))).toBe(true);
+  });
+  it("resolves 2026 federal law only in its period and capability-gates unsupported deductions", () => {
+    const facts = { ...noJurisdictions, eligibility: { [federalBaseDeductionOnlyEligibilityKey]: true } };
+    const date = instant("2026-10-03T00:00:00.000Z");
+    const selected = resolveTaxCoreRule(federalTaxCatalog, "US:FEDERAL", "single", date, facts);
+    expect(selected.rule.version).toBe("US:FEDERAL:2026:v1");
+    expect(resolveTaxCoreRule(federalTaxCatalog, "US:FEDERAL", "single", at, noJurisdictions).rule.id).toBe(federal2024TaxCatalog[0]!.id);
+    expect(errorCode(() => resolveTaxCoreRule(federal2024TaxCatalog, "US:FEDERAL", "single", date, facts))).toBe(issueCodes.ruleNotActive);
+    for (const outside of ["2025-12-31T23:59:59.999Z", "2027-01-01T00:00:00.000Z"]) {
+      expect(errorCode(() => resolveTaxCoreRule(federal2026TaxCatalog, "US:FEDERAL", "single", instant(outside), facts))).toBe(issueCodes.ruleNotActive);
+    }
+    for (const supplied of [noJurisdictions, { ...facts, eligibility: { [federalBaseDeductionOnlyEligibilityKey]: false } }]) {
+      expect(errorCode(() => resolveTaxCoreRule(federalTaxCatalog, "US:FEDERAL", "single", date, supplied))).toBe(issueCodes.ruleNotActive);
+    }
+    const input = taxInput({ wages: money("28500") }, { employeeWages: [{ employeeKey: "one", wages: money("200000") }], modifiedAdjustedGrossIncome: money("28500"), netInvestmentIncome: money("0") });
+    const result = applyTaxCoreRule(selected, input).result;
+    expect(result.basicDeductionApplied.equals(money("16100"))).toBe(true);
+    expect(result.ordinaryTax.equals(money("1240"))).toBe(true);
+    expect(result.payrollTaxes.find((component) => component.key === "social_security")!.liability.equals(money("11439"))).toBe(true);
+    expect(result.payrollTaxes.find((component) => component.key === "medicare")!.liability.equals(money("2900"))).toBe(true);
+    expect(result.niit.isZero()).toBe(true);
+    for (const concept of ["senior_deduction", "qualified_tips_deduction", "qualified_overtime_deduction", "vehicle_loan_interest_deduction"]) {
+      expect(errorCode(() => applyTaxCoreRule(selected, { ...input, unsupportedConcepts: [concept] }))).toBe(issueCodes.ruleInputInvalid);
+    }
+  });
+  it.each([
+    ["single", "16100", "12400", "640600", "49450", "545500", "3000"],
+    ["married_joint", "32200", "24800", "768700", "98900", "613700", "3000"],
+    ["married_separate", "16100", "12400", "384350", "49450", "306850", "1500"],
+    ["head_of_household", "24150", "17700", "640600", "66200", "579600", "3000"],
+    ["qualifying_surviving_spouse", "32200", "24800", "768700", "98900", "613700", "3000"],
+  ])("keeps source-backed 2026 %s thresholds exact", (status, deduction, firstThreshold, topThreshold, zeroGainLimit, fifteenGainLimit, lossLimit) => {
+    const rule = federal2026TaxCatalog.find((entry) => entry.filingStatus === status)!;
+    expect(rule.income!.standardDeduction.equals(money(deduction))).toBe(true);
+    expect(rule.income!.ordinaryBrackets[1]!.lower.equals(money(firstThreshold))).toBe(true);
+    expect(rule.income!.ordinaryBrackets[6]!.lower.equals(money(topThreshold))).toBe(true);
+    expect(rule.income!.preferentialBrackets![1]!.lower.equals(money(zeroGainLimit))).toBe(true);
+    expect(rule.income!.preferentialBrackets![2]!.lower.equals(money(fifteenGainLimit))).toBe(true);
+    expect(rule.income!.capitalLossDeductionLimit.equals(money(lossLimit))).toBe(true);
   });
 });

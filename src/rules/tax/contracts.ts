@@ -5,6 +5,15 @@ import type { DecimalAmount, Money, Ratio, RoundingPolicy } from "../../values/i
 
 export type FilingStatus = "single" | "married_joint" | "married_separate" | "head_of_household" | "qualifying_surviving_spouse";
 export type AlphaState = "PA" | "NY" | "NJ" | "CO" | "CA" | "AZ" | "GA" | "MA";
+/** Positive only for full-year residency in this taxing jurisdiction in the selected tax year. */
+export const fullYearResidentEligibilityKey = (jurisdiction: string): string => `full_year_resident:${jurisdiction}`;
+/**
+ * Positive only after establishing base-standard-deduction eligibility and that
+ * age/blindness, dependent, itemized, senior, tips, overtime, vehicle-interest
+ * and other unimplemented deduction mechanics do not affect the calculation.
+ * Missing/false facts gate 2026 federal selection; Phase A never infers this fact.
+ */
+export const federalBaseDeductionOnlyEligibilityKey = "federal_base_deduction_only";
 export interface TaxJurisdictionFacts {
   /** Authoritative taxing jurisdictions, never mailing-city labels. Empty arrays mean explicitly none. */
   readonly residenceJurisdictions: readonly string[];
@@ -13,6 +22,7 @@ export interface TaxJurisdictionFacts {
   readonly residencePsdCode?: string;
   readonly workMunicipality?: string;
   readonly workPsdCode?: string;
+  /** Legal decisions for the selected jurisdiction/year, including the stable keys above. */
   readonly eligibility?: Readonly<Record<string, boolean>>;
 }
 export type TaxApplicability =
@@ -25,6 +35,15 @@ export interface TaxSource {
   readonly url: string;
   readonly reference: string;
   readonly verifiedOn: string;
+}
+/** A catalog coverage boundary, never a zero-rate or fallback liability rule. */
+export interface TaxLawCoverageGap {
+  readonly jurisdiction: string;
+  readonly taxYear?: number;
+  readonly effectiveFrom?: Instant;
+  readonly effectiveUntil?: Instant;
+  readonly reason: string;
+  readonly sources?: readonly TaxSource[];
 }
 export type TaxProvenance =
   | { readonly type: "synthetic_test_only"; readonly description: string }
