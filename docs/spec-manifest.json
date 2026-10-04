@@ -274,7 +274,7 @@
     {
       "id": "financial-planning-and-optimization",
       "path": "docs/specs/capabilities/financial-planning-and-optimization.md",
-      "version": "0.1.0-draft",
+      "version": "0.2.0-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -297,7 +297,10 @@
         "optimization",
         "progressive fidelity",
         "recommendation",
-        "tradeoff"
+        "tradeoff",
+        "portfolio optimization",
+        "deterministic optimization",
+        "stochastic optimization"
       ],
       "applies_to": [
         "personal-mvp",
@@ -314,7 +317,7 @@
     {
       "id": "portfolio-planning",
       "path": "docs/specs/capabilities/portfolio-planning.md",
-      "version": "0.3.0-draft",
+      "version": "0.4.0-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -340,7 +343,9 @@
         "investment policy",
         "employer match",
         "contribution limit",
-        "rollover"
+        "rollover",
+        "plan loan",
+        "deterministic portfolio optimization"
       ],
       "applies_to": [
         "personal-mvp",
@@ -616,7 +621,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.4.0-draft",
+      "version": "0.5.0-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
