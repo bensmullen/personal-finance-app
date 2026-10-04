@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.4.0-draft
+**Version:** 0.5.0-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -231,9 +231,9 @@ If a named subfeature cannot be supported safely for the initial alpha contract,
 
 ## 6. P1 — Deterministic planning / strategy-evaluation foundation
 
-P1 begins after D1 confirms that the deterministic financial mechanics used by private-alpha planning decisions are semantically correct and testable. It may then progress in parallel with C1 and later stochastic work.
+P1 begins after D1 confirms that the deterministic financial mechanics used by private-alpha planning decisions are semantically correct and testable. Because T1A Phase B is already a D1 prerequisite, P1 may use authoritative tax evaluation for supported tax-sensitive decisions. P1 may begin **before R5 stochastic implementation** and should proceed in parallel with C1/later stochastic work.
 
-Implement the initial PFA-PLAN contract with a deliberately small supported decision set:
+P1 now includes a required **deterministic portfolio-optimization floor for private alpha**. Implement the initial PFA-PLAN contract with a deliberately bounded supported decision set:
 
 - typed separation of facts, assumptions, decisions, goals, constraints, strategies, and outcomes;
 - durable/reproducible strategy identity;
@@ -242,9 +242,10 @@ Implement the initial PFA-PLAN contract with a deliberately small supported deci
 - comparable result summaries and explanation of material decision/outcome differences;
 - capability diagnostics when missing tax/investment/insurance/other semantics could materially change a conclusion;
 - no automated financial action;
-- compiled-plan reuse for localized decision overlays where semantically valid.
+- compiled-plan reuse for localized decision overlays where semantically valid;
+- bounded deterministic portfolio candidate generation/ranking for supported contribution priority, employer-match capture, contribution allocation, movement toward explicit target allocation/ranges, rebalancing, and tax-aware account/location decisions where authoritative tax coverage exists.
 
-P1 does not require automated search, Monte Carlo optimization, a new canonical Goal/Strategy object, or complete portfolio/insurance/tax planning. Its purpose is to establish the stable planning boundary early enough that stochastic and domain work build toward it rather than requiring a later architectural rewrite.
+P1 does not require Monte Carlo optimization, efficient-frontier/risk-optimal allocation, a new canonical Goal/Strategy object, or complete cross-domain planning. Its deterministic optimizer must disclose that conclusions depend on fixed return assumptions and bounded candidate/search scope. Its purpose is to deliver useful basic portfolio decision support before stochastic work while establishing the stable planning boundary that P2 later upgrades.
 
 **User validation:** P1 requires focused user validation of whether a supported strategy comparison is understandable and decision-relevant. Financial equivalence and reproducibility remain automated/engineering verification.
 
@@ -411,7 +412,7 @@ After P1 and the required R7 probabilistic semantics exist, add strategy-set sto
 - explicit disclosure when search is heuristic, bounded, or incomplete;
 - authoritative finalist reevaluation at the required tax/investment/insurance/domain completeness level.
 
-P2 may remain post-alpha if the private-alpha product does not claim automated stochastic optimization. If a private-alpha feature presents an optimized/recommended strategy based on stochastic search, the applicable P2 requirements become part of that feature's launch gate.
+P2 may remain post-alpha if the private-alpha product uses only the bounded deterministic portfolio optimizer from P1 and clearly labels its fixed-assumption limitations. If a private-alpha feature presents an uncertainty-aware/risk-optimized recommendation based on stochastic search, the applicable P2 requirements become part of that feature's launch gate.
 
 **User validation:** required before automated stochastic strategy recommendations become a normal-user feature.
 
@@ -453,7 +454,13 @@ Unvested RSUs remain contingent compensation until an actual modeled vesting eve
 
 If R9 is not completed before private alpha because the cohort does not require it, it SHALL remain explicitly listed as an unresolved required capability in this roadmap/TODO register. It must not disappear from planning merely because alpha begins.
 
-**User validation:** required if A1/R9 is used by an alpha participant.
+### L1 — Workplace retirement plan loans (tracked deferred capability)
+
+401(k)/workplace-plan loan mechanics are not an initial private-alpha gate unless an alpha household actually has a plan loan. They remain an explicit tracked requirement under PFA-INV-023, analogous to deferred full RSU support: alpha may proceed without them only when the cohort does not need them.
+
+Implement L1 after the alpha-critical D1/P1 work, preferably alongside the advanced retirement/T1B domain work whose tax/distribution semantics it depends on, unless a participant need pulls it earlier. Before general product support is claimed, L1 must model origination, plan/account economic effect, payroll principal/interest repayment, statutory/plan limits, employment-termination/default/offset behavior, and applicable tax consequences without disguising the loan as a normal withdrawal or consumer debt.
+
+**User validation:** required if A1/R9 or L1 is used by an alpha participant.
 
 ## 17. R10 — Probabilistic and planning decision UX
 
@@ -501,9 +508,10 @@ Before private-alpha infrastructure:
 - major UAT editor/UX defects are resolved;
 - caching/persistence cannot make stale results look current or destroy the last successful result on failed rerun; saved plans are independent from derived results; recovery/grace-period behavior, snapshot limits, deduplication, and aggregate-only stochastic storage are exercised;
 - A1 concentration safeguards exist;
-- P1 deterministic strategy-evaluation foundation is implemented for the supported alpha planning decision set, with understandable tradeoffs and capability diagnostics; automated search/P2/P3 are not required unless an enabled alpha feature depends on them;
+- P1 deterministic strategy-evaluation foundation **and the bounded deterministic portfolio optimizer required by PFA-INV-024** are implemented for the supported alpha planning decision set, with understandable tradeoffs and capability diagnostics; stochastic optimization/P2/P3 are not required unless an enabled alpha feature depends on them;
 - any enabled portfolio-planning or insurance-planning recommendation surface meets the applicable PFA-INV/PFA-INS requirements, while unsupported domains remain explicitly capability-gated;
 - full R9 is completed if the initial alpha cohort requires it, otherwise it remains an explicit tracked TODO;
+- workplace retirement plan loans (L1/PFA-INV-023) are implemented if an alpha participant requires them; otherwise they remain an explicit tracked post-alpha TODO and are not silently treated as ordinary debt/withdrawals;
 - privacy/persistence boundaries remain suitable for personal use.
 
 **User validation:** required. The milestone closeout SHALL provide a focused end-to-end private-alpha readiness checklist. Automated CI/financial verification SHALL pass before asking the user to perform UAT.
