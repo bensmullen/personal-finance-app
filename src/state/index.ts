@@ -10,7 +10,176 @@ import { failValidation, issueCodes } from "../diagnostics/index.js";
 import type { DomainId, GeneratedOccurrenceKey, IdempotencyKey } from "../identity/index.js";
 import { normalizeClaimLifecycle, type ObligationOrRight } from "../semantics/claim.js";
 import type { RecognitionId, SettlementId } from "../semantics/identity.js";
+import { createRecognitionFact as createRecognitionFactWithHistory, type RecognitionFactDraft, type RecognitionFact } from "../semantics/recognition.js";
 import type { Currency, Money, Quantity, Rate } from "../values/index.js";
+
+interface IndexNode<T> {
+  readonly key: string;
+  readonly value: T;
+  readonly left: IndexNode<T> | undefined;
+  readonly right: IndexNode<T> | undefined;
+  readonly height: number;
+  readonly size: number;
+}
+const indexHeight = <T>(node: IndexNode<T> | undefined): number => node?.height ?? 0;
+const indexSize = <T>(node: IndexNode<T> | undefined): number => node?.size ?? 0;
+const indexNode = <T>(key: string, value: T, left?: IndexNode<T>, right?: IndexNode<T>): IndexNode<T> =>
+  ({ key, value, left, right, height: 1 + Math.max(indexHeight(left), indexHeight(right)), size: 1 + indexSize(left) + indexSize(right) });
+const indexRotateLeft = <T>(node: IndexNode<T>): IndexNode<T> => {
+  const right = node.right!;
+  return indexNode(right.key, right.value, indexNode(node.key, node.value, node.left, right.left), right.right);
+};
+const indexRotateRight = <T>(node: IndexNode<T>): IndexNode<T> => {
+  const left = node.left!;
+  return indexNode(left.key, left.value, left.left, indexNode(node.key, node.value, left.right, node.right));
+};
+const indexBalance = <T>(node: IndexNode<T>): IndexNode<T> => {
+  const difference = indexHeight(node.left) - indexHeight(node.right);
+  if (difference > 1) {
+    const left = node.left!;
+    return indexRotateRight(indexHeight(left.left) >= indexHeight(left.right) ? node
+      : indexNode(node.key, node.value, indexRotateLeft(left), node.right));
+  }
+  if (difference < -1) {
+    const right = node.right!;
+    return indexRotateLeft(indexHeight(right.right) >= indexHeight(right.left) ? node
+      : indexNode(node.key, node.value, node.left, indexRotateRight(right)));
+  }
+  return node;
+};
+
+/** Deterministic persistent AVL index. Forking shares the root; updates copy only a logarithmic path. */
+export class PersistentStringIndex<T> {
+  #root: IndexNode<T> | undefined;
+  constructor(entries: Iterable<readonly [string, T]> = []) {
+    for (const [key, value] of entries) this.set(key, value);
+  }
+  get size(): number { return indexSize(this.#root); }
+  fork(): PersistentStringIndex<T> {
+    const next = new PersistentStringIndex<T>();
+    next.#root = this.#root;
+    return next;
+  }
+  get(key: string): T | undefined {
+    let node = this.#root;
+    while (node !== undefined) {
+      if (key === node.key) return node.value;
+      node = key < node.key ? node.left : node.right;
+    }
+    return undefined;
+  }
+  has(key: string): boolean {
+    let node = this.#root;
+    while (node !== undefined) {
+      if (key === node.key) return true;
+      node = key < node.key ? node.left : node.right;
+    }
+    return false;
+  }
+  set(key: string, value: T): void {
+    const insert = (node: IndexNode<T> | undefined): IndexNode<T> => {
+      if (node === undefined) return indexNode(key, value);
+      if (key === node.key) return indexNode(key, value, node.left, node.right);
+      return indexBalance(key < node.key
+        ? indexNode(node.key, node.value, insert(node.left), node.right)
+        : indexNode(node.key, node.value, node.left, insert(node.right)));
+    };
+    this.#root = insert(this.#root);
+  }
+  delete(key: string): void {
+    const remove = (node: IndexNode<T> | undefined, target: string): IndexNode<T> | undefined => {
+      if (node === undefined) return undefined;
+      if (target < node.key) return indexBalance(indexNode(node.key, node.value, remove(node.left, target), node.right));
+      if (target > node.key) return indexBalance(indexNode(node.key, node.value, node.left, remove(node.right, target)));
+      if (node.left === undefined) return node.right;
+      if (node.right === undefined) return node.left;
+      let successor = node.right;
+      while (successor.left !== undefined) successor = successor.left;
+      return indexBalance(indexNode(successor.key, successor.value, node.left, remove(node.right, successor.key)));
+    };
+    this.#root = remove(this.#root, key);
+  }
+  at(index: number): readonly [string, T] | undefined {
+    if (!Number.isSafeInteger(index) || index < 0) return undefined;
+    let node = this.#root;
+    let remaining = index;
+    while (node !== undefined) {
+      const leftSize = indexSize(node.left);
+      if (remaining === leftSize) return [node.key, node.value];
+      if (remaining < leftSize) node = node.left;
+      else { remaining -= leftSize + 1; node = node.right; }
+    }
+    return undefined;
+  }
+  *entries(): IterableIterator<readonly [string, T]> {
+    const visit = function* (node: IndexNode<T> | undefined): IterableIterator<readonly [string, T]> {
+      if (node === undefined) return;
+      yield* visit(node.left);
+      yield [node.key, node.value];
+      yield* visit(node.right);
+    };
+    yield* visit(this.#root);
+  }
+}
+
+interface IndexedRecord<T extends object> {
+  readonly index: PersistentStringIndex<T>;
+  readonly dirty: Set<string>;
+  readonly record: Record<string, T>;
+}
+const indexedRecords = new WeakMap<object, IndexedRecord<object>>();
+
+/** Copy-on-write entity views preserve mutable state APIs without mutating another candidate. */
+const indexedRecord = <T extends object>(index: PersistentStringIndex<T>, mutableEntities: boolean,
+  changed?: (key: string, previous: T | undefined, next: T | undefined) => void,
+  normalize?: (value: T) => T): IndexedRecord<T> => {
+  const dirty = new Set<string>();
+  const views = new Map<string, T>();
+  const entity = (key: string): T | undefined => {
+    const value = index.get(key);
+    if (value === undefined || !mutableEntities) return value;
+    let view = views.get(key);
+    if (view === undefined) {
+      view = new Proxy({} as T, {
+        get: (_target, property) => Reflect.get(index.get(key) ?? {}, property),
+        set: (_target, property, replacement) => {
+          const next = { ...index.get(key) } as T;
+          Reflect.set(next, property, replacement);
+          index.set(key, next); dirty.add(key);
+          return true;
+        },
+        ownKeys: () => Reflect.ownKeys(index.get(key) ?? {}),
+        getOwnPropertyDescriptor: (_target, property) => {
+          const descriptor = Reflect.getOwnPropertyDescriptor(index.get(key) ?? {}, property);
+          return descriptor === undefined ? undefined : { ...descriptor, configurable: true };
+        },
+      });
+      views.set(key, view);
+    }
+    return view;
+  };
+  const record = new Proxy({} as Record<string, T>, {
+    get: (_target, property) => typeof property === "string" && index.has(property) ? entity(property) : undefined,
+    set: (_target, property, value: T) => {
+      if (typeof property !== "string") return false;
+      const next = normalize === undefined ? (mutableEntities ? { ...value } : value) : normalize(value);
+      changed?.(property, index.get(property), next);
+      index.set(property, next); dirty.add(property); return true;
+    },
+    deleteProperty: (_target, property) => {
+      if (typeof property !== "string") return false;
+      changed?.(property, index.get(property), undefined);
+      index.delete(property); dirty.add(property); views.delete(property); return true;
+    },
+    has: (_target, property) => typeof property === "string" && index.has(property),
+    ownKeys: () => [...index.entries()].map(([key]) => key),
+    getOwnPropertyDescriptor: (_target, property) => typeof property === "string" && index.has(property)
+      ? { value: entity(property), writable: true, configurable: true, enumerable: true } : undefined,
+  });
+  const result = { index, dirty, record };
+  indexedRecords.set(record, result as IndexedRecord<object>);
+  return result;
+};
 
 export type AccountKind = "checking" | "savings" | "cash" | "brokerage" | "retirement" | "other";
 
@@ -59,6 +228,140 @@ export interface AuthoritativeStateDraft {
   readonly identities?: Partial<AuthoritativeIdentityRegistry>;
 }
 
+const identityIndexes = new WeakMap<AuthoritativeIdentityRegistry, Record<keyof AuthoritativeIdentityRegistry, PersistentStringIndex<string>>>();
+const identityArrays = new WeakMap<object, PersistentStringIndex<string>>();
+const identityKinds: readonly (keyof AuthoritativeIdentityRegistry)[] = [
+  "postedTransactionIds", "recognitionIds", "settlementIds", "generatedOccurrenceKeys", "externalIdempotencyKeys",
+];
+const identityArray = <T extends string>(index: PersistentStringIndex<string>): readonly T[] => {
+  const ordinal = (property: PropertyKey): number | undefined => typeof property === "string" && /^(0|[1-9]\d*)$/.test(property)
+    ? Number(property) : undefined;
+  const array = new Proxy([] as T[], {
+    get: (target, property, receiver) => {
+      if (property === "length") return index.size;
+      if (property === "hasIdentity") return (value: string) => index.has(value);
+      if (property === "includes") return (value: string, fromIndex = 0) => {
+        if (!index.has(value)) return false;
+        if (fromIndex === 0) return true;
+        return Array.from(index.entries(), ([key]) => key).includes(value, fromIndex);
+      };
+      if (property === Symbol.iterator) return function* () { for (const [key] of index.entries()) yield key; };
+      const position = ordinal(property);
+      return position === undefined ? Reflect.get(target, property, receiver) : index.at(position)?.[0];
+    },
+    has: (target, property) => {
+      const position = ordinal(property);
+      return position === undefined ? Reflect.has(target, property) : position < index.size;
+    },
+    set: () => false,
+  });
+  identityArrays.set(array, index);
+  return array;
+};
+const indexedIdentityRegistry = (source: AuthoritativeIdentityRegistry): AuthoritativeIdentityRegistry => {
+  const prior = identityIndexes.get(source);
+  const indexes = {} as Record<keyof AuthoritativeIdentityRegistry, PersistentStringIndex<string>>;
+  const registry = {} as AuthoritativeIdentityRegistry;
+  for (const kind of identityKinds) {
+    const index = prior?.[kind].fork() ?? new PersistentStringIndex<string>(source[kind].map(value => [value, value] as const));
+    indexes[kind] = index;
+    Object.assign(registry, { [kind]: identityArray(index.fork()) });
+  }
+  identityIndexes.set(registry, indexes);
+  return registry;
+};
+
+/** Preserve recognition validation while passing only the duplicate candidate to its history API. */
+export const createIndexedRecognitionFact = (draft: RecognitionFactDraft, history: Iterable<string> = []): RecognitionFact => {
+  const index = typeof history === "object" && history !== null ? identityArrays.get(history) : undefined;
+  return createRecognitionFactWithHistory(draft, index === undefined ? history : index.has(draft.id) ? [draft.id] : []);
+};
+
+interface ExecutionStateIndex {
+  readonly recognitionClaims: PersistentStringIndex<string>;
+  readonly settlementClaims: PersistentStringIndex<string>;
+  readonly activeClaims: PersistentStringIndex<PersistentStringIndex<ObligationOrRight>>;
+  readonly pendingClaimIds: Set<string>;
+}
+const executionStateIndexes = new WeakMap<AuthoritativeState, ExecutionStateIndex>();
+const claimGroup = (category: string, balanceEntityId?: string): string => `${category}\u0000${balanceEntityId ?? ""}`;
+
+/** Establish indexed execution once at the opening authority boundary. */
+export const createIndexedExecutionState = (opening: AuthoritativeState): AuthoritativeState => {
+  const existing = executionStateIndexes.get(opening);
+  if (existing === undefined) validateAuthoritativeState(opening);
+  const recognitionClaims = existing?.recognitionClaims.fork() ?? new PersistentStringIndex<string>();
+  const settlementClaims = existing?.settlementClaims.fork() ?? new PersistentStringIndex<string>();
+  const activeClaims = existing?.activeClaims.fork() ?? new PersistentStringIndex<PersistentStringIndex<ObligationOrRight>>();
+  const pendingClaimIds = new Set(existing?.pendingClaimIds);
+  const updateClaim = (key: string, previous: ObligationOrRight | undefined, next: ObligationOrRight | undefined): void => {
+    pendingClaimIds.add(key);
+    if (previous !== undefined) {
+      recognitionClaims.delete(previous.originatingRecognitionId);
+      for (const settlement of previous.settlementIds) settlementClaims.delete(settlement);
+      const groupKey = claimGroup(previous.category, previous.balanceEntityId);
+      const group = activeClaims.get(groupKey)?.fork();
+      if (group !== undefined) { group.delete(key); if (group.size === 0) activeClaims.delete(groupKey); else activeClaims.set(groupKey, group); }
+    }
+    if (next !== undefined) {
+      const owner = recognitionClaims.get(next.originatingRecognitionId);
+      if (owner !== undefined && owner !== key) failValidation({ severity: "error", code: issueCodes.duplicateRecognition,
+        message: `Recognition ${next.originatingRecognitionId} is claimed by multiple claims`, entityType: "claim",
+        entityId: next.id, fieldPath: "originatingRecognitionId", relatedIds: [owner, next.originatingRecognitionId] });
+      recognitionClaims.set(next.originatingRecognitionId, key);
+      for (const settlement of next.settlementIds) {
+        const settlementOwner = settlementClaims.get(settlement);
+        if (settlementOwner !== undefined && settlementOwner !== key) failValidation({ severity: "error", code: issueCodes.duplicateSettlement,
+          message: `Settlement ${settlement} is claimed by multiple claims`, entityType: "claim", entityId: next.id,
+          fieldPath: "settlementIds", relatedIds: [settlementOwner, settlement] });
+        settlementClaims.set(settlement, key);
+      }
+      if (next.outstandingAmount.isPositive()) {
+        const groupKey = claimGroup(next.category, next.balanceEntityId);
+        const group = activeClaims.get(groupKey)?.fork() ?? new PersistentStringIndex<ObligationOrRight>();
+        group.set(key, next); activeClaims.set(groupKey, group);
+      }
+    }
+  };
+  const makeRecord = <T extends object>(record: Record<string, T>, mutable: boolean,
+    changed?: (key: string, previous: T | undefined, next: T | undefined) => void,
+    normalize?: (value: T) => T): Record<string, T> => {
+    const previous = indexedRecords.get(record) as IndexedRecord<T> | undefined;
+    const next = indexedRecord(previous?.index.fork() ?? new PersistentStringIndex(Object.entries(record)), mutable, changed, normalize);
+    if (previous !== undefined) for (const key of previous.dirty) next.dirty.add(key);
+    return next.record;
+  };
+  const state: AuthoritativeState = {
+    accounts: makeRecord(opening.accounts, true), positions: makeRecord(opening.positions, true),
+    liabilities: makeRecord(opening.liabilities, true), obligations: makeRecord(opening.obligations, false, updateClaim, normalizeClaimLifecycle),
+    identities: indexedIdentityRegistry(opening.identities),
+  };
+  if (existing === undefined) for (const [key, claim] of Object.entries(opening.obligations)) updateClaim(key, undefined, claim);
+  if (existing === undefined) pendingClaimIds.clear();
+  executionStateIndexes.set(state, { recognitionClaims, settlementClaims, activeClaims, pendingClaimIds });
+  return state;
+};
+
+export const activeAuthoritativeClaims = (state: AuthoritativeState, category: string, balanceEntityId?: string): readonly ObligationOrRight[] => {
+  const indexed = executionStateIndexes.get(state);
+  if (indexed === undefined) return Object.values(state.obligations).filter(claim => claim.category === category
+    && (balanceEntityId === undefined || claim.balanceEntityId === balanceEntityId) && claim.outstandingAmount.isPositive());
+  if (balanceEntityId !== undefined) return Array.from(indexed.activeClaims.get(claimGroup(category, balanceEntityId))?.entries() ?? [], ([, claim]) => claim);
+  const results: ObligationOrRight[] = [];
+  for (const [key, group] of indexed.activeClaims.entries()) if (key.startsWith(`${category}\u0000`))
+    for (const [, claim] of group.entries()) results.push(claim);
+  return results;
+};
+
+export const authoritativeClaimHistory = (state: AuthoritativeState): Iterable<ObligationOrRight> & {
+  readonly hasClaimIdentity: (claimId: string, recognitionId: string) => boolean;
+} => ({
+  *[Symbol.iterator]() { yield* Object.values(state.obligations); },
+  hasClaimIdentity: (claimId, recognitionId) => state.obligations[claimId] !== undefined ||
+    (executionStateIndexes.get(state)?.recognitionClaims.has(recognitionId)
+      ?? Object.values(state.obligations).some(claim => claim.originatingRecognitionId === recognitionId)),
+});
+
 const stableUnique = <T extends string>(values: readonly T[] | undefined): T[] =>
   [...new Set(values ?? [])].sort() as T[];
 
@@ -85,8 +388,24 @@ export const createAuthoritativeState = (draft: AuthoritativeStateDraft = {}): A
   return state;
 };
 
-export const cloneAuthoritativeState = (state: AuthoritativeState): AuthoritativeState =>
-  createAuthoritativeState(state);
+export const cloneAuthoritativeState = (state: AuthoritativeState): AuthoritativeState => {
+  if (!executionStateIndexes.has(state)) return createAuthoritativeState(state);
+  if (![state.accounts, state.positions, state.liabilities, state.obligations].every(record => indexedRecords.has(record))
+    || !identityIndexes.has(state.identities)) return createIndexedExecutionState(createAuthoritativeState(state));
+  const candidate = createIndexedExecutionState(state);
+  const pendingClaimIds = executionStateIndexes.get(candidate)!.pendingClaimIds;
+  for (const key of pendingClaimIds) {
+    const claim = candidate.obligations[key];
+    if (claim === undefined) continue;
+    if (!candidate.identities.recognitionIds.includes(claim.originatingRecognitionId))
+      registerAuthoritativeIdentity(candidate.identities, "recognitionIds", claim.originatingRecognitionId);
+    for (const settlement of claim.settlementIds) if (!candidate.identities.settlementIds.includes(settlement))
+      registerAuthoritativeIdentity(candidate.identities, "settlementIds", settlement);
+  }
+  pendingClaimIds.clear();
+  validateAuthoritativeState(candidate);
+  return candidate;
+};
 
 type IdentityKind = keyof AuthoritativeIdentityRegistry;
 
@@ -115,6 +434,14 @@ export const registerAuthoritativeIdentity = <Kind extends IdentityKind>(
   kind: Kind,
   identity: AuthoritativeIdentityRegistry[Kind][number],
 ): void => {
+  const indexed = identityIndexes.get(registry)?.[kind];
+  if (indexed !== undefined) {
+    if (indexed.has(identity)) failValidation({ severity: "error", code: duplicateCode(kind),
+      message: `Duplicate ${identityLabel(kind)} ${identity}`, entityType: "authoritative_identity", entityId: identity, fieldPath: kind });
+    indexed.set(identity, identity);
+    Object.assign(registry, { [kind]: identityArray(indexed.fork()) });
+    return;
+  }
   const values = [...registry[kind]] as string[];
   if (values.includes(identity)) {
     failValidation({
@@ -142,6 +469,16 @@ const stateTargetMissing = (transaction: AccountingTransaction, targetType: stri
   });
 
 export const validateAuthoritativeState = (state: AuthoritativeState, transactionId?: string): void => {
+  const entries = <T extends object>(record: Record<string, T>, full = false): readonly (readonly [string, T])[] => {
+    const indexed = executionStateIndexes.has(state) && !full ? indexedRecords.get(record) : undefined;
+    return indexed === undefined ? Object.entries(record)
+      : [...indexed.dirty].flatMap(key => record[key] === undefined ? [] : [[key, record[key]!] as const]);
+  };
+  const accountEntries = entries(state.accounts);
+  const accountDeleted = [...(indexedRecords.get(state.accounts)?.dirty ?? [])].some(key => state.accounts[key] === undefined);
+  const positionEntries = entries(state.positions, accountDeleted);
+  const liabilityEntries = entries(state.liabilities);
+  const claimEntries = entries(state.obligations);
   const validateRecordIdentity = (collection: string, entityType: string, key: string, id: string): void => {
     if (key !== id) {
       failValidation({
@@ -155,8 +492,8 @@ export const validateAuthoritativeState = (state: AuthoritativeState, transactio
       });
     }
   };
-  for (const [key, account] of Object.entries(state.accounts)) validateRecordIdentity("accounts", "account", key, account.id);
-  for (const [key, position] of Object.entries(state.positions)) {
+  for (const [key, account] of accountEntries) validateRecordIdentity("accounts", "account", key, account.id);
+  for (const [key, position] of positionEntries) {
     validateRecordIdentity("positions", "position", key, position.id);
     if (state.accounts[position.accountId] === undefined) {
       failValidation({
@@ -170,9 +507,9 @@ export const validateAuthoritativeState = (state: AuthoritativeState, transactio
       });
     }
   }
-  for (const [key, liability] of Object.entries(state.liabilities)) validateRecordIdentity("liabilities", "liability", key, liability.id);
-  for (const [key, claim] of Object.entries(state.obligations)) validateRecordIdentity("obligations", "claim", key, claim.id);
-  for (const account of Object.values(state.accounts)) {
+  for (const [key, liability] of liabilityEntries) validateRecordIdentity("liabilities", "liability", key, liability.id);
+  for (const [key, claim] of claimEntries) validateRecordIdentity("obligations", "claim", key, claim.id);
+  for (const [, account] of accountEntries) {
     if (account.cash.isNegative()) {
       failValidation({
         severity: "error",
@@ -184,7 +521,7 @@ export const validateAuthoritativeState = (state: AuthoritativeState, transactio
       });
     }
   }
-  for (const liability of Object.values(state.liabilities)) {
+  for (const [, liability] of liabilityEntries) {
     if (liability.balance.isNegative()) {
       failValidation({
         severity: "error",
@@ -196,7 +533,7 @@ export const validateAuthoritativeState = (state: AuthoritativeState, transactio
       });
     }
   }
-  for (const position of Object.values(state.positions)) {
+  for (const [, position] of positionEntries) {
     if (position.quantity.isNegative() || position.price.isNegative() || position.carryingValue.isNegative()) {
       failValidation({
         severity: "error",
@@ -208,6 +545,7 @@ export const validateAuthoritativeState = (state: AuthoritativeState, transactio
       });
     }
   }
+  for (const record of [state.accounts, state.positions, state.liabilities, state.obligations]) indexedRecords.get(record)?.dirty.clear();
 };
 
 const reconcileClaimIdentityHistory = (state: AuthoritativeState): void => {
@@ -265,6 +603,9 @@ const commitCandidate = (target: AuthoritativeState, candidate: AuthoritativeSta
   target.liabilities = candidate.liabilities;
   target.obligations = candidate.obligations;
   target.identities = candidate.identities;
+  const indexed = executionStateIndexes.get(candidate);
+  if (indexed === undefined) executionStateIndexes.delete(target);
+  else executionStateIndexes.set(target, indexed);
 };
 
 export interface PositionValuationInput {

@@ -39,6 +39,7 @@ import {
   cloneAuthoritativeState,
   registerAuthoritativeIdentity,
   validateAuthoritativeState,
+  PersistentStringIndex,
   type AuthoritativeState,
 } from "../state/index.js";
 import { deriveStatements, type Statements } from "../statements/index.js";
@@ -66,10 +67,14 @@ export type PrimitiveRuntimeStateEntry =
   | { readonly primitiveId: "P30"; readonly state: EventTerminationPrimitiveState };
 
 export type PrimitiveRuntimeStateStore = Readonly<Record<string, PrimitiveRuntimeStateEntry>>;
+const validatedPrimitiveStores = new WeakSet<object>();
+const primitiveStoreIndexes = new WeakMap<object, PersistentStringIndex<PrimitiveRuntimeStateEntry>>();
 
 export const createPrimitiveRuntimeStateStore = (
   entries: PrimitiveRuntimeStateStore = {},
-): PrimitiveRuntimeStateStore => Object.freeze(Object.fromEntries(
+): PrimitiveRuntimeStateStore => {
+  if (validatedPrimitiveStores.has(entries)) return entries;
+  const store: PrimitiveRuntimeStateStore = Object.freeze(Object.fromEntries(
   Object.entries(entries).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => {
     const valid = (() => {
       switch (entry.primitiveId) {
@@ -115,7 +120,36 @@ export const createPrimitiveRuntimeStateStore = (
     }
     return [key, Object.freeze({ primitiveId: entry.primitiveId, state: Object.freeze({ ...entry.state }) }) as PrimitiveRuntimeStateEntry];
   }),
-));
+  ));
+  validatedPrimitiveStores.add(store);
+  return store;
+};
+
+/** Validate changed primitive entries only; share unchanged runtime history. */
+export const updatePrimitiveRuntimeStateStore = (
+  store: PrimitiveRuntimeStateStore,
+  changes: PrimitiveRuntimeStateStore,
+): PrimitiveRuntimeStateStore => {
+  const validated = createPrimitiveRuntimeStateStore(changes);
+  const index = primitiveStoreIndexes.get(store)?.fork()
+    ?? new PersistentStringIndex(Object.entries(createPrimitiveRuntimeStateStore(store)));
+  for (const [key, value] of Object.entries(validated)) index.set(key, value);
+  const result = new Proxy({} as Record<string, PrimitiveRuntimeStateEntry>, {
+    get: (_target, property) => typeof property === "string" ? index.get(property) : undefined,
+    has: (_target, property) => typeof property === "string" && index.has(property),
+    ownKeys: () => Array.from(index.entries(), ([key]) => key),
+    getOwnPropertyDescriptor: (_target, property) => typeof property === "string" && index.has(property)
+      ? { value: index.get(property), writable: false, configurable: true, enumerable: true } : undefined,
+    set: () => false, deleteProperty: () => false, defineProperty: () => false,
+  });
+  primitiveStoreIndexes.set(result, index);
+  validatedPrimitiveStores.add(result);
+  return result;
+};
+
+/** Ordinary immutable output/transport object, materialized once at a run boundary. */
+export const materializePrimitiveRuntimeStateStore = (store: PrimitiveRuntimeStateStore): PrimitiveRuntimeStateStore =>
+  createPrimitiveRuntimeStateStore(Object.fromEntries(Object.entries(store)));
 
 export const assertPrimitiveRuntimeStateConsistent = (
   store: PrimitiveRuntimeStateStore,
@@ -419,8 +453,7 @@ export const executePeriodWorkCandidate = (input: RunPeriodInput): PeriodWorkCan
         if (occurrenceId !== undefined) registerAuthoritativeIdentity(candidateState.identities, "generatedOccurrenceKeys", occurrenceId);
       }
       if (evaluated.nextStateEntry !== undefined) {
-        candidatePrimitiveState = createPrimitiveRuntimeStateStore({
-          ...candidatePrimitiveState,
+        candidatePrimitiveState = updatePrimitiveRuntimeStateStore(candidatePrimitiveState, {
           [item.request.context.primitiveInstanceId]: evaluated.nextStateEntry,
         });
       }

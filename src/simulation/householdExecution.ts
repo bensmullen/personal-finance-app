@@ -18,7 +18,9 @@ import {
 import {
   assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
-  createAuthoritativeIdentityRegistry,
+  createIndexedExecutionState,
+  createAuthoritativeState,
+  registerAuthoritativeIdentity,
   validateAuthoritativeState,
   type AuthoritativeState,
 } from "../state/index.js";
@@ -46,6 +48,8 @@ import {
 import {
   assertPrimitiveRuntimeStateConsistent,
   createPrimitiveRuntimeStateStore,
+  updatePrimitiveRuntimeStateStore,
+  materializePrimitiveRuntimeStateStore,
   type PrimitiveRuntimeStateStore,
 } from "./period.js";
 import {
@@ -186,17 +190,16 @@ const display = (context: RunContext) =>
 const mergeEventPreparationIdentities = (
   state: AuthoritativeState,
   prepared: PreparedVerticalSlice2Period,
-): AuthoritativeState =>
-  cloneAuthoritativeState({
-    ...state,
-    identities: createAuthoritativeIdentityRegistry({
-      postedTransactionIds: [...state.identities.postedTransactionIds, ...prepared.state.identities.postedTransactionIds],
-      recognitionIds: [...state.identities.recognitionIds, ...prepared.state.identities.recognitionIds],
-      settlementIds: [...state.identities.settlementIds, ...prepared.state.identities.settlementIds],
-      generatedOccurrenceKeys: [...state.identities.generatedOccurrenceKeys, ...prepared.state.identities.generatedOccurrenceKeys],
-      externalIdempotencyKeys: [...state.identities.externalIdempotencyKeys, ...prepared.state.identities.externalIdempotencyKeys],
-    }),
-  });
+): AuthoritativeState => {
+  const candidate = cloneAuthoritativeState(state);
+  for (const entry of Object.values(prepared.eventPrimitiveTransition)) {
+    if (entry.primitiveId !== "P27" && entry.primitiveId !== "P30") continue;
+    const occurrence = entry.state.occurrenceId;
+    if (occurrence !== undefined && !candidate.identities.generatedOccurrenceKeys.includes(occurrence))
+      registerAuthoritativeIdentity(candidate.identities, "generatedOccurrenceKeys", occurrence);
+  }
+  return candidate;
+};
 
 type InstantExecution = {
   readonly state: AuthoritativeState;
@@ -391,7 +394,7 @@ const runCompiledHouseholdProjectionInternal = (
     compiled.reconciledOpeningState,
     runContext.baseCurrency,
   );
-  let state = cloneAuthoritativeState(compiled.reconciledOpeningState);
+  let state = createIndexedExecutionState(cloneAuthoritativeState(compiled.reconciledOpeningState));
   let primitiveState = createPrimitiveRuntimeStateStore(
     compiled.reconciledPrimitiveState,
   );
@@ -584,12 +587,7 @@ const runCompiledHouseholdProjectionInternal = (
           !eventRuntimeCommitted &&
           at >= prepared.cash!.primitiveStateFrontier
         ) {
-          candidatePrimitiveState = createPrimitiveRuntimeStateStore(
-            {
-              ...candidatePrimitiveState,
-              ...prepared.cash!.eventPrimitiveTransition,
-            },
-          );
+          candidatePrimitiveState = updatePrimitiveRuntimeStateStore(candidatePrimitiveState, prepared.cash!.eventPrimitiveTransition);
           candidateState = mergeEventPreparationIdentities(candidateState, prepared.cash!);
           eventRuntimeCommitted = true;
         }
@@ -742,12 +740,7 @@ const runCompiledHouseholdProjectionInternal = (
         liability = liabilityPeriods[liabilityPeriods.length - 1];
       }
       if (!eventRuntimeCommitted) {
-        candidatePrimitiveState = createPrimitiveRuntimeStateStore(
-          {
-            ...candidatePrimitiveState,
-            ...prepared.cash!.eventPrimitiveTransition,
-          },
-        );
+        candidatePrimitiveState = updatePrimitiveRuntimeStateStore(candidatePrimitiveState, prepared.cash!.eventPrimitiveTransition);
         candidateState = mergeEventPreparationIdentities(candidateState, prepared.cash!);
       }
       performance.measure("engine.trace_result", () => {
@@ -989,8 +982,8 @@ const runCompiledHouseholdProjectionInternal = (
         requestedHorizon,
         stoppedAt: period.start,
         ...(reachedThrough === undefined ? {} : { reachedThrough }),
-        state,
-        primitiveState,
+        state: createAuthoritativeState(state),
+        primitiveState: materializePrimitiveRuntimeStateStore(primitiveState),
         periods: Object.freeze(committed),
         diagnostics: Object.freeze(diagnostics),
         displayInputs: display(runContext),
@@ -1001,8 +994,8 @@ const runCompiledHouseholdProjectionInternal = (
     runMetadata,
     requestedHorizon,
     reachedThrough: requestedHorizon.end,
-    state,
-    primitiveState,
+    state: createAuthoritativeState(state),
+    primitiveState: materializePrimitiveRuntimeStateStore(primitiveState),
     periods: Object.freeze(committed),
     diagnostics: Object.freeze(diagnostics),
     displayInputs: display(runContext),

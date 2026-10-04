@@ -8,12 +8,14 @@ import { runHouseholdKernel, type HouseholdKernelParticipant, runCompiledHouseho
   runHouseholdForecastSummary, replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
 import { summarizeHouseholdPeriod } from "../src/simulation/r3/forecastSummary.js";
 import { createStatementFlowAccumulator, deriveVerticalSliceStatements } from "../src/statements/index.js";
-import { createPrimitiveRuntimeStateStore, executePeriodWorkCandidate, type RunPeriodInput } from "../src/simulation/period.js";
+import { createPrimitiveRuntimeStateStore, executePeriodWorkCandidate, updatePrimitiveRuntimeStateStore, type RunPeriodInput } from "../src/simulation/period.js";
 import { runPeriod as referencePeriod } from "../src/simulation/r3/referencePeriod.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import type { FixedAmortizingLoan } from "../src/simulation/verticalSlice4.js";
 import type { VerticalSlice2Input } from "../src/simulation/verticalSlice2.js";
-import { createAuthoritativeState } from "../src/state/index.js";
+import { createAuthoritativeState, createIndexedExecutionState, cloneAuthoritativeState, validateAuthoritativeState,
+  applyAccountingTransactionAtomically, PersistentStringIndex, activeAuthoritativeClaims, authoritativeClaimHistory } from "../src/state/index.js";
+import { createObligation } from "../src/semantics/claim.js";
 import { instant } from "../src/time/index.js";
 import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
 
@@ -87,6 +89,62 @@ const integrated = (incomeAmount: string, withPolicy = true): CompiledHouseholdP
 };
 
 describe("R3 reusable deterministic household kernel", () => {
+  it("shares persistent history across forks while isolating edits and deletions", () => {
+    fc.assert(fc.property(fc.array(fc.tuple(fc.integer({ min: 0, max: 200 }), fc.integer()), { maxLength: 60 }), entries => {
+      const expected = new Map(entries.map(([key, value]) => [String(key), value]));
+      const index = new PersistentStringIndex(entries.map(([key, value]) => [String(key), value] as const));
+      const snapshot = [...index.entries()];
+      const branch = index.fork();
+      for (const key of expected.keys()) if (Number(key) % 2 === 0) { branch.delete(key); expected.delete(key); }
+      branch.set("new", 12); expected.set("new", 12);
+      const sorted = [...expected].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+      expect([...branch.entries()]).toEqual(sorted);
+      expect(branch.size).toBe(expected.size);
+      sorted.forEach((entry, ordinal) => expect(branch.at(ordinal)).toEqual(entry));
+      expect([...index.entries()]).toEqual(snapshot);
+    }), { numRuns: 20, seed: 68 });
+  });
+
+  it("isolates failed candidates and retains indexed historical claim identities", () => {
+    const source = createIndexedExecutionState(opening());
+    const failed = cloneAuthoritativeState(source);
+    failed.accounts[ids.cash]!.cash = money("-1");
+    expect(() => validateAuthoritativeState(failed)).toThrow(ValidationError);
+    expect(source.accounts[ids.cash]!.cash).toEqual(money("10"));
+    const input = integrated("120");
+    const reference = referenceRun({ compiled: input, runContext: context() });
+    const branch = cloneAuthoritativeState(source);
+    const transaction = reference.periods[0]!.transactions.find(transaction => transaction.type === "income")!;
+    applyAccountingTransactionAtomically(branch, transaction);
+    expect(source.identities.postedTransactionIds).toHaveLength(0);
+    expect(branch.accounts[ids.cash]!.cash).toEqual(money("130"));
+    const committed = canonicalSerialize(branch);
+    expect(() => applyAccountingTransactionAtomically(branch, transaction)).toThrow(ValidationError);
+    expect(canonicalSerialize(branch)).toBe(committed);
+    const historical = createIndexedExecutionState(reference.state);
+    const claim = Object.values(reference.state.obligations)[0]!;
+    expect(activeAuthoritativeClaims(historical, claim.category, claim.balanceEntityId)).toHaveLength(0);
+    expect(Object.values(historical.obligations)).toEqual(Object.values(reference.state.obligations)
+      .sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+    expect(() => createObligation({ ...claim, id: "duplicate-claim" as never }, authoritativeClaimHistory(historical)))
+      .toThrow(ValidationError);
+  });
+
+  it("does not revisit inactive historical claims while forking candidates", () => {
+    const input = integrated("120");
+    const reference = referenceRun({ compiled: input, runContext: context() });
+    let historyReads = 0;
+    const obligations = Object.fromEntries(Object.entries(reference.state.obligations).map(([key, claim]) => [key, {
+      ...claim, get outstandingAmount() { historyReads += 1; return claim.outstandingAmount; },
+    }]));
+    let state = createIndexedExecutionState({ ...reference.state, obligations });
+    historyReads = 0;
+    for (let count = 0; count < 30; count += 1) state = cloneAuthoritativeState(state);
+    expect(historyReads).toBe(0);
+    expect(activeAuthoritativeClaims(state, "mortgage_principal_due", ids.missingPrincipal)).toHaveLength(0);
+    expect(historyReads).toBe(0);
+  });
+
   it("evaluates primitive work without standalone statements or an opening-state result", () => {
     const request: RunPeriodInput = {
       period: { start, end }, runContext: context(), openingState: opening(),
@@ -109,6 +167,14 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(candidate).not.toHaveProperty("openingState");
     expect(candidate.primitiveState[primitive("900")]?.primitiveId).toBe("P24");
     expect(request.openingState).toEqual(opening());
+    const nextEntry = { primitiveId: "P24" as const, state: { evaluations: 2, lastAccruedAmount: money("12") } };
+    const updated = updatePrimitiveRuntimeStateStore(candidate.primitiveState, { [primitive("900")]: nextEntry });
+    expect(updated[primitive("900")]).toEqual(nextEntry);
+    expect(candidate.primitiveState[primitive("900")]).toEqual(reference.primitiveState[primitive("900")]);
+    expect(() => updatePrimitiveRuntimeStateStore(updated, { [primitive("900")]: {
+      primitiveId: "P24", state: { evaluations: -1 },
+    } })).toThrow(ValidationError);
+    expect(updated[primitive("900")]).toEqual(nextEntry);
   });
 
   it("retains compact metrics and regenerates selected evidence from the same immutable basis", () => {

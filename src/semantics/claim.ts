@@ -70,8 +70,9 @@ export const createClaim = (
   draft: ClaimDraft,
   existingClaims: Iterable<ObligationOrRight> = [],
 ): ObligationOrRight => {
-  const existing = [...existingClaims];
-  if (existing.some((claim) => claim.id === draft.id || claim.originatingRecognitionId === draft.originatingRecognitionId)) {
+  const indexed = existingClaims as Iterable<ObligationOrRight> & { readonly hasClaimIdentity?: (id: string, recognitionId: string) => boolean };
+  if (indexed.hasClaimIdentity?.(draft.id, draft.originatingRecognitionId)
+    ?? [...existingClaims].some((claim) => claim.id === draft.id || claim.originatingRecognitionId === draft.originatingRecognitionId)) {
     failValidation({
       severity: "error",
       code: issueCodes.duplicateRecognition,

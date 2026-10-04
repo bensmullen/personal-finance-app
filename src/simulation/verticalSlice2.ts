@@ -15,7 +15,6 @@ import {
   applySettlement,
   claimId,
   createObligation,
-  createRecognitionFact,
   createSemanticEffect,
   createSettlement,
   createSettlementProposal,
@@ -34,6 +33,9 @@ import {
   assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
   registerAuthoritativeIdentity,
+  createIndexedRecognitionFact as createRecognitionFact,
+  authoritativeClaimHistory,
+  activeAuthoritativeClaims,
   type AuthoritativeState,
 } from "../state/index.js";
 import {
@@ -565,7 +567,7 @@ export const executePreparedVerticalSlice2Occurrence = (
 };
 
 const outstandingExpenses = (state: AuthoritativeState, currency: Currency): Money => sumMoney(
-  Object.values(state.obligations).filter((claim) => claim.category === "expense_payable").map((claim) => claim.outstandingAmount),
+  activeAuthoritativeClaims(state, "expense_payable").map((claim) => claim.outstandingAmount),
   currency,
 );
 
@@ -666,7 +668,7 @@ const executeCashFlowPeriodCandidate = (
             const recognition = createRecognitionFact({ id: recognitionId(`recognition:expense:${stream.id}:${occurrence.scheduledAt}`), category: "recurring_expense", amount, recognizedAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, provenance, traceRefs }, state.identities.recognitionIds);
             registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
             recognitions.push(recognition);
-            const obligation = createObligation({ id: claimId(`obligation:${recognition.id}`), category: "expense_payable", originatingRecognitionId: recognition.id, economicOwnerId: stream.ownerId, balanceEntityId: stream.payableLiabilityId, originalAmount: amount, recognizedAt: occurrence.scheduledAt, traceRefs }, Object.values(state.obligations));
+            const obligation = createObligation({ id: claimId(`obligation:${recognition.id}`), category: "expense_payable", originatingRecognitionId: recognition.id, economicOwnerId: stream.ownerId, balanceEntityId: stream.payableLiabilityId, originalAmount: amount, recognizedAt: occurrence.scheduledAt, traceRefs }, authoritativeClaimHistory(state));
             state.obligations[obligation.id] = obligation;
             effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "recurring_expense", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, provenance, traceRefs }));
             effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${obligation.id}`), kind: "claim", category: "recurring_expense", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, claimId: obligation.id, provenance, traceRefs }));

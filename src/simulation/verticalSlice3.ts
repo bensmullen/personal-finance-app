@@ -75,6 +75,7 @@ import {
 } from "../rules/index.js";
 import {
   createPrimitiveRuntimeStateStore,
+  updatePrimitiveRuntimeStateStore,
   executePeriodWorkCandidate,
   type PeriodWork,
   type PrimitiveRuntimeStateStore,
@@ -1301,10 +1302,7 @@ export const executePreparedVerticalSlice3Operation = (
     // Their runtime becomes authoritative only when the valuation executes.
     return Object.freeze({
       state: next,
-      primitiveState: createPrimitiveRuntimeStateStore({
-        ...primitiveState,
-        ...operation.primitiveTransition,
-      }),
+      primitiveState: updatePrimitiveRuntimeStateStore(primitiveState, operation.primitiveTransition),
       effects: Object.freeze([effect]),
       transactions: Object.freeze([]),
       contributionPrincipal: Money.zero(input.baseCurrency),

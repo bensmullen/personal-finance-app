@@ -35,14 +35,11 @@ results and lineage refs are retained for authoritative selected results.
 | PFA-PERF-022 | Existing compact lineage facts; one retained contention signature rather than all rich preview results; unchanged R2 lazy explanations | Full lineage equivalence and additional participant facts CI cases |
 | PFA-PERF-023 | Pure engine contracts with versioned economic participant metadata and common state/facts | Generic domain registration CI cases; no browser/server/native assumptions |
 
-Domain formula internals and their canonical snapshot boundaries remain owned
-by VS2/VS3/VS4. Required debt service still delegates to the existing prepared
-VS4 operation, including its internal one-month financial runner. This task
-does not duplicate that financial implementation across the ownership fence.
-State-sensitive preparation is repeated each month/run; it is never cached as
-invariant household structure. Full rich user-facing explanations remain an
-application concern.
-# Issue 68 staged closeout
+Domain formula internals remain owned by VS2/VS3/VS4. The issue 68 stages below
+supersede the original nested-runner implementation. State-sensitive preparation
+is repeated each month/run; it is never cached as invariant household structure.
+
+## Issue 68 staged closeout
 
 The summary/replay boundary is a foundation, not a completed performance repair.
 `runHouseholdForecastSummary` retains compact household metrics and capability
@@ -58,10 +55,21 @@ statements/opening snapshots, and valuation makes one candidate instead of two.
 The bounded oracle now imports frozen domain/period evaluators so production
 refactoring does not also replace the oracle's orchestration.
 
+The third stage uses persistent AVL-backed state/identity indexes and entity
+copy-on-write views. Candidate forks share historical values; only changed
+entities are copied/validated. Claim duplicate checks use indexed historical
+identity membership, while financial claim queries use active category/entity
+indexes. Primitive updates share unchanged entries and validate changed entries.
+Frozen loan contracts cache exact recurrence membership. Ordinary output state
+and primitive objects are materialized at the run boundary for transport.
+
 Known remaining work: production defaults are still detailed; the evaluator still
 constructs detailed period objects before summary extraction; replay evaluates
 the full horizon and has no sparse intermediate checkpoint; full-state/history
-cloning, historical claim scans, identity sorting, primitive-store rebuilding,
-rich cash/debt period assembly and exhaustive contention previews remain. This stage does not
+materialization at output boundaries, rich cash/debt period assembly, complete
+final audit retention and exhaustive contention previews remain. Contention
+signatures still serialize full candidate state/history during previews. Broader
+structural counters, sparse checkpoints and application defaults are pending.
+This stage does not
 meet issue 68 acceptance and supplies no new timing evidence. CI owns bounded
 verification; fresh Node 22 engineering-validation remains required for closeout.

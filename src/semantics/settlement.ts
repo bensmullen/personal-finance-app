@@ -46,7 +46,8 @@ export const createSettlement = (
   const proposal = acceptedFunding.proposal;
   const amount = acceptedFunding.acceptedAmount;
   const fundingAllocations = acceptedFunding.fundingAllocations;
-  if (new Set(existingSettlementIds).has(draft.id) || claim.settlementIds.includes(draft.id)) {
+  const indexed = existingSettlementIds as Iterable<string> & { readonly hasIdentity?: (id: string) => boolean };
+  if ((indexed.hasIdentity?.(draft.id) ?? new Set(existingSettlementIds).has(draft.id)) || claim.settlementIds.includes(draft.id)) {
     failValidation({ severity: "error", code: issueCodes.duplicateSettlement, message: `Duplicate settlement ${draft.id}`, entityType: "settlement", entityId: draft.id });
   }
   if (proposal.claimId !== claim.id) {
