@@ -40,7 +40,9 @@ const compiled = (lateFailure = false, withAsset = false): CompiledHouseholdProj
 import { ValidationError } from "../src/diagnostics/index.js";
 import { compileHouseholdKernel, applyHouseholdExecutionOverlay } from "../src/simulation/r3/compiledHousehold.js";
 import { runCompiledHouseholdProjection as referenceRun } from "../src/simulation/r3/referenceHouseholdExecution.js";
-import { dependencyOrders, firstDependencyOrder, indexReachability } from "../src/simulation/r3/ordering.js";
+import { firstDependencyOrder, indexReachability } from "../src/simulation/r3/ordering.js";
+import { dependencyOrders } from "../src/simulation/r3/referenceOrdering.js";
+import { compareReachableStates, createReachableStateCounters } from "../src/simulation/r3/reachableStates.js";
 import { indexPreparedOperations, type PreparedHouseholdOperation } from "../src/simulation/r3/operations.js";
 import { buildHouseholdScheduledPlan, type HouseholdWorkDescriptor } from "../src/simulation/intraperiodScheduler.js";
 import { canonicalSerialize } from "../src/simulation/run.js";
@@ -110,13 +112,78 @@ describe("R3 reusable deterministic household kernel", () => {
       }] },
     };
     const reference = referenceRun({ compiled: input, runContext: context() });
-    const actual = runCompiledHouseholdProjection({ compiled: input, runContext: context() });
+    const registry = new PerformanceRegistry();
+    let tick = 0;
+    const actual = runCompiledHouseholdProjection({ compiled: input, runContext: context() }, {
+      clock: { now: () => tick++ }, sink: registry,
+      context: { runId: "conservation", dataClassification: "synthetic", modelCounts: {},
+        executionLocation: "local_node", cacheState: "not_applicable" },
+    });
     expect(reference.status).toBe("completed");
     expect(actual).toEqual(reference);
     expect(actual.periods[0]!.liability!.liabilities[0]!.scheduledFundingStatus).toBe("unfunded");
     expect(actual.state.accounts[ids.cash]!.cash).toEqual(money("5"));
     expect(actual.state.accounts[ids.savings]!.cash).toEqual(money("15"));
     expect(actual.periods[0]!.traceRefs.some(ref => ref.traceId.includes("contention-policy"))).toBe(false);
+    const counters = registry.latest("engine.schedule_contention")!.resources!.structuralCounters!;
+    expect(counters.contentionAnalyticalFundingPoolConservation).toBe(1);
+    expect(counters.contentionFallbackInvocations ?? 0).toBe(0);
+    // When funding becomes possible, source allocation is authoritative:
+    // transferring first changes the split between the ordered sources.
+    const funded = { ...input, reconciledOpeningState: createAuthoritativeState({ ...input.reconciledOpeningState,
+      accounts: { ...input.reconciledOpeningState.accounts,
+        [ids.cash]: { ...input.reconciledOpeningState.accounts[ids.cash]!, cash: money("48") } },
+    }) };
+    const ambiguous = runCompiledHouseholdProjection({ compiled: funded, runContext: context() }, {
+      clock: { now: () => tick++ }, sink: registry,
+      context: { runId: "funded-allocation", dataClassification: "synthetic", modelCounts: {},
+        executionLocation: "local_node", cacheState: "not_applicable" },
+    });
+    expect(ambiguous).toEqual(referenceRun({ compiled: funded, runContext: context() }));
+    expect(ambiguous.status).toBe("incomplete");
+    expect(ambiguous.diagnostics.some(issue => issue.code === "HOUSEHOLD_CONTENTION_UNRESOLVED")).toBe(true);
+    expect(registry.latest("engine.schedule_contention")!.resources!.structuralCounters!.contentionFallbackInvocations).toBeGreaterThan(0);
+  });
+
+  it("merges exact reachable prefixes rather than executing every complete order", () => {
+    const items = Array.from({ length: 8 }, (_, i) => descriptor(String(i)));
+    const counters = createReachableStateCounters();
+    const result = compareReachableStates({ items, edges: [], opening: 0,
+      advance: state => state + 1, equivalenceKey: String, terminalSignature: String, counters });
+    expect(result.differs).toBe(false);
+    expect(result.first).toEqual(items);
+    expect(counters.distinctStates).toBe(256);
+    expect(counters.terminalOutcomes).toBe(1);
+    expect(counters.mergedPrefixes).toBeGreaterThan(0);
+  });
+
+  it("matches exhaustive outcomes for bounded state-dependent contention graphs", () => {
+    fc.assert(fc.property(fc.array(fc.integer({ min: 0, max: 8 }), { minLength: 4, maxLength: 4 }),
+      fc.array(fc.boolean(), { minLength: 6, maxLength: 6 }), (amounts, flags) => {
+        const items = amounts.map((_, i) => descriptor(String(i)));
+        const pairs = [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]] as const;
+        const edges = pairs.filter((_, i) => flags[i]).map(([before, after]) => ({ before: String(before), after: String(after) }));
+        const advance = (state: { cash: number; accepted: readonly string[] }, item: HouseholdWorkDescriptor) => {
+          const amount = amounts[Number(item.id)]!;
+          return amount <= state.cash ? { cash: state.cash - amount, accepted: [...state.accepted, item.id].sort() } : state;
+        };
+        const opening = { cash: 10, accepted: [] as readonly string[] };
+        const signatures = [...dependencyOrders(items, edges)].map(order => canonicalSerialize(order.reduce(advance, opening)));
+        const result = compareReachableStates({ items, edges, opening, advance,
+          equivalenceKey: canonicalSerialize, terminalSignature: canonicalSerialize, counters: createReachableStateCounters() });
+        expect(result.differs).toBe(new Set(signatures).size > 1);
+        expect(result.first).toEqual(firstDependencyOrder(items, edges));
+      }), { numRuns: 32, seed: 68 });
+  });
+
+  it("does not hide a hard failure after sensitivity has already been established", () => {
+    const items = [descriptor("a"), descriptor("b"), descriptor("c")];
+    expect(() => compareReachableStates({ items, edges: [], opening: "",
+      advance: (state, item) => {
+        if (state === "b" && item.id === "c") throw new Error("late reachable failure");
+        return state + item.id;
+      }, equivalenceKey: String, terminalSignature: String, counters: createReachableStateCounters(),
+    })).toThrow("late reachable failure");
   });
 
   it("shares persistent history across forks while isolating edits and deletions", () => {

@@ -2,7 +2,9 @@ import { compileHouseholdKernel, applyHouseholdExecutionOverlay, canonicalDescri
 import { indexPreparedOperations, type OperationState, type PreparedOperationParticipant } from "./r3/operations.js";
 import { householdDomainParticipants, type HouseholdOperationFacts } from "./r3/domainOperations.js";
 import { summarizeHouseholdPeriod, type HouseholdForecastSummaryPeriod } from "./r3/forecastSummary.js";
-import { dependencyOrders, firstDependencyOrder, indexReachability, indexSequencingInstants } from "./r3/ordering.js";
+import { firstDependencyOrder, indexReachability, indexSequencingInstants } from "./r3/ordering.js";
+import { compareReachableStates, createReachableStateCounters } from "./r3/reachableStates.js";
+import { fundingPoolConservationProof } from "./r3/commutativity.js";
 import type { AccountingTransaction } from "../accounting/index.js";
 import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../diagnostics/index.js";
 import type {
@@ -202,6 +204,7 @@ const mergeEventPreparationIdentities = (
 };
 
 type InstantExecution = {
+  readonly requiredStatuses: ReadonlyMap<string, string>;
   readonly state: AuthoritativeState;
   readonly primitiveState: PrimitiveRuntimeStateStore;
   readonly cashPeriods: readonly VerticalSlice2PeriodResult[];
@@ -300,27 +303,6 @@ const policyPrecedes = (
     before.operationClass,
     after.operationClass,
   );
-
-/** Retain one signature and one order; execute every preview to preserve hard-failure precedence. */
-const compareDependencyOrders = (
-  items: readonly HouseholdWorkDescriptor[],
-  edges: readonly { readonly before: string; readonly after: string }[],
-  execute: (order: readonly HouseholdWorkDescriptor[]) => InstantExecution,
-): { readonly first: readonly HouseholdWorkDescriptor[] | undefined; readonly differs: boolean } => {
-  let first: readonly HouseholdWorkDescriptor[] | undefined;
-  let signature: string | undefined;
-  let differs = false;
-  for (const order of dependencyOrders(items, edges)) {
-    first ??= order;
-    const execution = execute(order);
-    if (!differs) {
-      const next = outcomeSignature(execution);
-      if (signature === undefined) signature = next;
-      else if (signature !== next) differs = true;
-    }
-  }
-  return { first, differs };
-};
 
 const outcomeSignature = (execution: InstantExecution): string =>
   canonicalSerialize({
@@ -549,14 +531,15 @@ const runCompiledHouseholdProjectionInternal = (
         order: readonly HouseholdWorkDescriptor[],
         opening: AuthoritativeState,
         openingPrimitiveState: PrimitiveRuntimeStateStore,
+        prefix?: InstantExecution,
       ): InstantExecution => {
         let nextState = opening;
         let nextPrimitiveState = openingPrimitiveState;
-        const cashResults: VerticalSlice2PeriodResult[] = [];
-        const investmentResults: HouseholdInvestmentOperationResult[] = [];
-        const liabilityResults: VerticalSlice4PeriodResult[] = [];
-        const additionalFacts: HouseholdOperationFacts[] = [];
-        const requiredStatuses = new Map<string, string>();
+        const cashResults: VerticalSlice2PeriodResult[] = [...(prefix?.cashPeriods ?? [])];
+        const investmentResults: HouseholdInvestmentOperationResult[] = [...(prefix?.investmentPeriods ?? [])];
+        const liabilityResults: VerticalSlice4PeriodResult[] = [...(prefix?.liabilityPeriods ?? [])];
+        const additionalFacts: HouseholdOperationFacts[] = [...(prefix?.additionalFacts ?? [])];
+        const requiredStatuses = new Map<string, string>(prefix?.requiredStatuses);
         for (const descriptor of order) {
           const result = prepared.operations.execute(descriptor,
             { state: nextState, primitiveState: nextPrimitiveState }, requiredStatuses);
@@ -568,7 +551,7 @@ const runCompiledHouseholdProjectionInternal = (
               result.facts.liquidityShortfalls !== undefined || result.facts.diagnostics !== undefined ||
               result.facts.traceRefs !== undefined) additionalFacts.push(result.facts);
         }
-        return Object.freeze({ state: nextState, primitiveState: nextPrimitiveState,
+        return Object.freeze({ state: nextState, primitiveState: nextPrimitiveState, requiredStatuses,
           cashPeriods: Object.freeze(cashResults), investmentPeriods: Object.freeze(investmentResults),
           liabilityPeriods: Object.freeze(liabilityResults), additionalFacts: Object.freeze(additionalFacts) });
       };
@@ -642,13 +625,34 @@ const runCompiledHouseholdProjectionInternal = (
               group.some((item) => item.id === edge.after),
           );
           const groupIds = new Set(group.map(item => item.id));
+          if (fundingPoolConservationProof(group.map(item => prepared.operations.commutativity(item,
+            { state: candidateState, primitiveState: candidatePrimitiveState })))) {
+            performance.counters({ contentionAnalyticalFundingPoolConservation: 1 });
+            continue;
+          }
           const remainder = sameInstant.filter(item => !groupIds.has(item.id))
             .sort((left, right) => left.id.localeCompare(right.id));
-          const preview = (candidate: readonly HouseholdWorkDescriptor[]) => executeAt(
-            at, [...candidate, ...remainder], candidateState, candidatePrimitiveState,
-          );
+          const compare = (edges: readonly { readonly before: string; readonly after: string }[]) => {
+            const counters = createReachableStateCounters();
+            try {
+              return compareReachableStates({ items: group, edges,
+                opening: executeAt(at, [], candidateState, candidatePrimitiveState),
+                advance: (prefix, item) => executeAt(at, [item], cloneAuthoritativeState(prefix.state), prefix.primitiveState, prefix),
+                equivalenceKey: prefix => canonicalSerialize({
+                  outcome: outcomeSignature(prefix), statuses: [...prefix.requiredStatuses].sort(([a], [b]) => a.localeCompare(b)),
+                }),
+                terminalSignature: prefix => outcomeSignature(executeAt(at, remainder, prefix.state, prefix.primitiveState, prefix)),
+                counters,
+              });
+            } finally {
+              performance.counters({ contentionFallbackInvocations: counters.fallbackInvocations,
+                contentionDistinctStates: counters.distinctStates, contentionMergedPrefixes: counters.mergedPrefixes,
+                contentionTerminalOutcomes: counters.terminalOutcomes });
+              performance.counters({ contentionMaximumAmbiguousComponentSize: counters.maximumComponentSize }, "max");
+            }
+          };
           const alternatives = performance.measure("engine.schedule_contention", () =>
-            compareDependencyOrders(group, groupEdges, preview));
+            compare(groupEdges));
           if (alternatives.differs) {
             const policy = scheduled.value.policy;
             const policyEdges =
@@ -664,7 +668,7 @@ const runCompiledHouseholdProjectionInternal = (
                       .map((after) => ({ before: before.id, after: after.id })),
                   );
             const constrained = performance.measure("engine.schedule_contention", () =>
-              compareDependencyOrders(group, [...groupEdges, ...policyEdges], preview));
+              compare([...groupEdges, ...policyEdges]));
             if (constrained.first === undefined)
               throw new ValidationError({
                 severity: "error",

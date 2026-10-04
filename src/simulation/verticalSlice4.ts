@@ -1,4 +1,4 @@
-import { accountingTransactionId, createAccountingLeg, createAccountingTransaction, type AccountingLegDraft, type AccountingTransaction, type LiabilityId } from "../accounting/index.js";
+import { accountingTransactionId, createAccountingLeg, createAccountingTransaction, type AccountId, type AccountingLegDraft, type AccountingTransaction, type LiabilityId } from "../accounting/index.js";
 import { ValidationError, failValidation, issueCodes, validationIssue, type ValidationIssue } from "../diagnostics/index.js";
 import { createFundingPolicy, fundingConstraintId, isAcceptedFundingResolution, resolveAllOrNothingFunding, resolveFunding, type AllOrNothingConstraintOutcome, type AllOrNothingLiquidityShortfall, type ConstraintOutcome, type FundingPolicy, type LiquidityShortfall } from "../funding/index.js";
 import { domainId, generatedOccurrenceKey, type DomainId, type GeneratedOccurrenceKey } from "../identity/index.js";
@@ -382,6 +382,37 @@ export const executePreparedVerticalSlice4Period = (
 };
 
 /** Shared debt financial evaluator; no nested run metadata or forecast fingerprint. */
+/**
+ * A sufficient domain certificate, never a conservative rejection. Existing
+ * claims provide a lower bound at any supported nonnegative rate. With a zero
+ * rate, P22's shared contractual payment supplies an additional principal bound.
+ * More complicated funded/partial/source-allocation cases use exact search.
+ */
+export const guaranteedUnfundedRequiredServicePool = (
+  operation: PreparedVerticalSlice4Operation, state: AuthoritativeState,
+  primitiveState: PrimitiveRuntimeStateStore,
+): readonly AccountId[] | undefined => {
+  if (operation.kind !== "required_service") return undefined;
+  const loan = operation.loan;
+  if (loan.fundingPolicy.allowPartial || loan.fundingPolicy.insufficientFundsBehavior !== "unfunded" || loan.partialPaymentPolicy !== "all_or_nothing") return undefined;
+  const accounts = [...new Set(loan.fundingPolicy.orderedSources.map(source => source.accountId))];
+  const principal = state.liabilities[loan.principalLiabilityId]!.balance;
+  const currency = principal.currency;
+  const liquidity = accounts.reduce((sum, id) => sum.plus(state.accounts[id]!.cash), Money.zero(currency));
+  const principalDue = claimTotal(claimsFor(state, loan.principalLiabilityId, "mortgage_principal_due"), currency);
+  const interestDue = claimTotal(claimsFor(state, loan.interestPayableLiabilityId, "mortgage_interest_payable"), currency);
+  let principalBound = principalDue;
+  if (loan.annualRate.value.isZero() && principal.isPositive()) {
+    const prior = primitiveState[loan.primitiveIds.amortization];
+    if (prior?.primitiveId === "P22" && prior.state.evaluations >= loan.totalPayments) return undefined;
+    const payment = prior?.primitiveId === "P22" && prior.state.contractualPayment !== undefined
+      ? prior.state.contractualPayment : fixedMortgagePayment(loan.originalPrincipal, loan.annualRate, loan.totalPayments, loan.postingRounding);
+    const bounded = payment.compare(principal) > 0 ? principal : payment;
+    if (bounded.compare(principalBound) > 0) principalBound = bounded;
+  }
+  return principalBound.plus(interestDue).compare(liquidity) > 0 ? Object.freeze(accounts) : undefined;
+};
+
 const executeLoanPeriodCandidate = (
   request: VerticalSlice4RunInput,
   period: Period,

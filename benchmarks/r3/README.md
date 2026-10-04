@@ -67,7 +67,7 @@ Known remaining work: production defaults are still detailed; the evaluator stil
 constructs detailed period objects before summary extraction; replay evaluates
 the full horizon and has no sparse intermediate checkpoint; full-state/history
 materialization at output boundaries, rich cash/debt period assembly, complete
-final audit retention and exhaustive contention previews remain. Contention
+final audit retention remain. Contention
 signatures still serialize full candidate state/history during previews. Broader
 structural counters, sparse checkpoints and application defaults are pending.
 Static-entity currency/runtime consistency checks still traverse whole entity or
@@ -81,14 +81,24 @@ This stage does not
 meet issue 68 acceptance and supplies no new timing evidence. CI owns bounded
 verification; fresh Node 22 engineering-validation remains required for closeout.
 
-The exact contention proof remains an implementation gap. A bounded regression
+The updated contention strategy uses a domain-owned analytical certificate and
+an exact memoized reachable-prefix-state fallback. A bounded regression
 case captures a policy-free accepted overlap with scarce liquidity: an internal
 transfer of 5 between two funding-source accounts holding 10 each overlaps a
 required mortgage service of 50 using those same sources. Both orders preserve
 the funding-group availability of 20, the unfunded service outcome/shortfall,
 the claim lifecycle and the transfer postings. Scarcity and overlapping access
 therefore cannot justify rejecting this model or adding policy lineage. The
-current resolver still uses exhaustive previews to establish this equivalence;
-a replacement must prove source-group conservation and all other authoritative
-outcomes under supported state-dependent funding, rather than assume that
-insufficient aggregate liquidity implies order sensitivity.
+current resolver accepts this case via source-pool conservation without candidate
+execution. Funded/partial/cross-pool cases cannot use that certificate. Ambiguous
+components advance atomic operations through a prefix-state DAG; identical future
+state, primitive state, required-service statuses and accumulated authoritative
+outcomes are necessary for merging. Exhaustive complete-order generation is
+confined to `referenceOrdering.ts` and the frozen bounded oracle. The fallback
+drains distinct branches even after sensitivity is established to preserve the
+reference's hard-failure precedence. Counters report analytical hits, fallback
+invocations, states, merges, terminal comparisons and maximum ambiguous size.
+Fallback signatures still include full historical state, and accumulated outcome
+order can inhibit merging. No worst-case polynomial bound or measured fallback
+frequency is claimed. Common-path analytical coverage and heavy fixture evidence
+remain required before R3 closeout.

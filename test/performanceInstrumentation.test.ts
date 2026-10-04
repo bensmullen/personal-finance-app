@@ -345,4 +345,19 @@ describe("performance instrumentation", () => {
     expect(registry.latest("engine.execute")?.availability).toBe("unavailable");
     expect(registry.summary("engine.execute")).toBeUndefined();
   });
+
+  it("publishes structural counts and maxima without changing financial return values", () => {
+    const registry = new PerformanceRegistry();
+    let tick = 0;
+    const session = createPerformanceSession(createApplicationPerformanceObserver({ now: () => tick++ }, context, registry));
+    expect(session.measure("engine.execute", () => 42)).toBe(42);
+    session.counters({ states: 3 });
+    session.counters({ states: 5 });
+    session.counters({ largest: 6 }, "max");
+    session.counters({ largest: 2 }, "max");
+    session.finish({ metering: "not_metered", memoryBytes: 100 });
+    expect(registry.latest("engine.execute")?.resources).toEqual({
+      metering: "not_metered", memoryBytes: 100, structuralCounters: { states: 8, largest: 6 },
+    });
+  });
 });

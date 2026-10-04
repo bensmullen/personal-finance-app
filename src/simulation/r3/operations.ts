@@ -2,6 +2,13 @@ import { ValidationError } from "../../diagnostics/index.js";
 import type { HouseholdWorkDescriptor } from "../intraperiodScheduler.js";
 import type { AuthoritativeState } from "../../state/index.js";
 import type { PrimitiveRuntimeStateStore } from "../period.js";
+import type { AccountId } from "../../accounting/index.js";
+import type { Money } from "../../values/index.js";
+
+/** Domain-owned proof data; deliberately outside the fingerprinted descriptor. */
+export type OperationCommutativity =
+  | { readonly kind: "fixed_owned_transfer"; readonly source: AccountId; readonly destination: AccountId; readonly amount: Money; readonly primitiveIds: readonly string[] }
+  | { readonly kind: "guaranteed_unfunded_pool"; readonly accounts: readonly AccountId[]; readonly primitiveIds: readonly string[] };
 
 export interface OperationState {
   readonly state: AuthoritativeState;
@@ -14,6 +21,7 @@ export interface OperationResult<Facts> extends OperationState {
 export interface PreparedHouseholdOperation<Facts> {
   readonly descriptor: HouseholdWorkDescriptor;
   readonly execute: (opening: OperationState, statuses: Map<string, string>) => OperationResult<Facts>;
+  readonly commutativity?: (opening: OperationState) => OperationCommutativity | undefined;
 }
 export interface PreparedOperationParticipant<Facts> {
   readonly id: string;
@@ -38,6 +46,7 @@ export const indexPreparedOperations = <Facts>(participants: readonly PreparedOp
   return Object.freeze({
     size: operations.size,
     descriptors: Object.freeze([...operations.values()].map(operation => operation.descriptor)),
+    commutativity: (descriptor: HouseholdWorkDescriptor, opening: OperationState) => operations.get(descriptor.id)?.commutativity?.(opening),
     execute: (descriptor: HouseholdWorkDescriptor, opening: OperationState, statuses: Map<string, string>) => {
       const operation = operations.get(descriptor.id);
       if (operation === undefined) throw new ValidationError({ severity: "error",

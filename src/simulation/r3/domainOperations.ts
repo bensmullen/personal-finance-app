@@ -5,7 +5,7 @@ import { executePreparedVerticalSlice2Occurrence } from "../verticalSlice2.js";
 import type { PreparedVerticalSlice3Period } from "../verticalSlice3.js";
 import { executePreparedVerticalSlice3Operation } from "../verticalSlice3.js";
 import type { VerticalSlice4PeriodResult, PreparedVerticalSlice4Period } from "../verticalSlice4.js";
-import { executePreparedVerticalSlice4Operation } from "../verticalSlice4.js";
+import { executePreparedVerticalSlice4Operation, guaranteedUnfundedRequiredServicePool } from "../verticalSlice4.js";
 import type { RunContext } from "../run.js";
 import type { OperationState, PreparedOperationParticipant } from "./operations.js";
 import type { CompiledHouseholdKernel } from "./compiledHousehold.js";
@@ -59,6 +59,11 @@ export const householdDomainParticipants = (
     })) },
     { id: "investments", operations: (prepared.investments?.operations ?? []).map(operation => ({
       descriptor: operation.descriptor,
+      commutativity: () => operation.kind === "transfer" ? {
+        kind: "fixed_owned_transfer" as const, source: operation.operation.sourceAccountId,
+        destination: operation.operation.destinationAccountId, amount: operation.operation.amount,
+        primitiveIds: [operation.operation.schedulePrimitiveId],
+      } : undefined,
       execute: (opening: OperationState) => {
         const result = executePreparedVerticalSlice3Operation(prepared.investments!, operation,
           opening.state, opening.primitiveState, input.investmentInput!, context);
@@ -71,6 +76,11 @@ export const householdDomainParticipants = (
     })) },
     { id: "liabilities", operations: (prepared.liabilities?.operations ?? []).map(operation => ({
       descriptor: operation.descriptor,
+      commutativity: (opening: OperationState) => {
+        const accounts = guaranteedUnfundedRequiredServicePool(operation, opening.state, opening.primitiveState);
+        return accounts === undefined ? undefined : { kind: "guaranteed_unfunded_pool" as const, accounts,
+          primitiveIds: [operation.loan.primitiveIds.schedule, operation.loan.primitiveIds.amortization, operation.loan.primitiveIds.accrual] };
+      },
       execute: (opening: OperationState, statuses: Map<string, string>) => {
         if (operation.kind === "extra_principal") {
           const service = required.get(JSON.stringify([operation.loan.id, operation.scheduledAt]));
