@@ -104,5 +104,12 @@ reference's hard-failure precedence. Counters report analytical hits, fallback
 invocations, states, merges, terminal comparisons and maximum ambiguous size.
 Fallback signatures still include full historical state, and accumulated outcome
 order can inhibit merging. No worst-case polynomial bound or measured fallback
-frequency is claimed. Common-path analytical coverage and heavy fixture evidence
+frequency is claimed. A further sufficient certificate accepts a nonnegative
+income / required-service pair when opening first-source cash already covers a
+conservative service upper bound. It uses the existing posted mortgage interest
+and payment rules, includes active arrears, handles final contractual payoff,
+and requires disjoint primitive identities. Source allocation then remains
+entirely in the first source regardless of income order. Bounded coverage includes
+zero and nonzero nominal rates; insufficient margins still use exact search.
+Common-path analytical coverage and heavy fixture evidence
 remain required before R3 closeout.

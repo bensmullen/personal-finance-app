@@ -5,7 +5,7 @@ import { executePreparedVerticalSlice2Occurrence } from "../verticalSlice2.js";
 import type { PreparedVerticalSlice3Period } from "../verticalSlice3.js";
 import { executePreparedVerticalSlice3Operation } from "../verticalSlice3.js";
 import type { VerticalSlice4PeriodResult, PreparedVerticalSlice4Period } from "../verticalSlice4.js";
-import { executePreparedVerticalSlice4Operation, guaranteedUnfundedRequiredServicePool } from "../verticalSlice4.js";
+import { executePreparedVerticalSlice4Operation, guaranteedUnfundedRequiredServicePool, guaranteedFirstSourceRequiredService } from "../verticalSlice4.js";
 import type { RunContext } from "../run.js";
 import type { OperationState, PreparedOperationParticipant } from "./operations.js";
 import type { CompiledHouseholdKernel } from "./compiledHousehold.js";
@@ -50,6 +50,12 @@ export const householdDomainParticipants = (
   return Object.freeze([
     { id: "cash_flow", operations: (prepared.cash?.occurrences ?? []).map(occurrence => ({
       descriptor: occurrence.descriptor,
+      commutativity: () => {
+        if (occurrence.descriptor.operationClass !== "cash_income_settlement") return undefined;
+        const income = kernel.cash?.occurrenceInput(occurrence.streamId)?.incomes[0];
+        return income === undefined ? undefined : { kind: "nonnegative_cash_income" as const,
+          account: income.depositAccountId, primitiveIds: Object.values(income.primitiveIds).filter((id): id is NonNullable<typeof id> => id !== undefined) };
+      },
       execute: (opening: OperationState) => {
         const result = executePreparedVerticalSlice2Occurrence(prepared.cash!, occurrence,
           opening.state, opening.primitiveState,
@@ -77,9 +83,12 @@ export const householdDomainParticipants = (
     { id: "liabilities", operations: (prepared.liabilities?.operations ?? []).map(operation => ({
       descriptor: operation.descriptor,
       commutativity: (opening: OperationState) => {
+        const primitiveIds = [operation.loan.primitiveIds.schedule, operation.loan.primitiveIds.amortization, operation.loan.primitiveIds.accrual];
+        if (guaranteedFirstSourceRequiredService(operation, opening.state, opening.primitiveState))
+          return { kind: "guaranteed_first_source_service" as const, primitiveIds };
         const accounts = guaranteedUnfundedRequiredServicePool(operation, opening.state, opening.primitiveState);
         return accounts === undefined ? undefined : { kind: "guaranteed_unfunded_pool" as const, accounts,
-          primitiveIds: [operation.loan.primitiveIds.schedule, operation.loan.primitiveIds.amortization, operation.loan.primitiveIds.accrual] };
+          primitiveIds };
       },
       execute: (opening: OperationState, statuses: Map<string, string>) => {
         if (operation.kind === "extra_principal") {

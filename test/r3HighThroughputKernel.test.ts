@@ -158,6 +158,29 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(counters.mergedPrefixes).toBeGreaterThan(0);
   });
 
+  it("proves income/service independence when opening cash guarantees first-source funding", () => {
+    for (const annualRate of ["0", "0.12"]) {
+      const base = integrated("120", false);
+      const input = { ...base, reconciledOpeningState: createAuthoritativeState({ ...base.reconciledOpeningState,
+        accounts: { ...base.reconciledOpeningState.accounts,
+          [ids.cash]: { ...base.reconciledOpeningState.accounts[ids.cash]!, cash: money("100") } },
+      }), liabilityInput: { ...base.liabilityInput!, loans: [{ ...base.liabilityInput!.loans[0]!,
+        annualRate: Rate.fromDecimal(annualRate, rateConvention.nominalAnnual(12)) }] } };
+      const registry = new PerformanceRegistry();
+      let tick = 0;
+      const actual = runCompiledHouseholdProjection({ compiled: input, runContext: context() }, {
+        clock: { now: () => tick++ }, sink: registry,
+        context: { runId: "funding-margin", dataClassification: "synthetic", modelCounts: {},
+          executionLocation: "local_node", cacheState: "not_applicable" },
+      });
+      expect(actual).toEqual(referenceRun({ compiled: input, runContext: context() }));
+      expect(actual.status).toBe("completed");
+      const counters = registry.latest("engine.schedule_contention")!.resources!.structuralCounters!;
+      expect(counters.contentionAnalyticalGuaranteedFirstSource).toBe(1);
+      expect(counters.contentionFallbackInvocations ?? 0).toBe(0);
+    }
+  });
+
   it("matches exhaustive outcomes for bounded state-dependent contention graphs", () => {
     fc.assert(fc.property(fc.array(fc.integer({ min: 0, max: 8 }), { minLength: 4, maxLength: 4 }),
       fc.array(fc.boolean(), { minLength: 6, maxLength: 6 }), (amounts, flags) => {

@@ -4,7 +4,7 @@ import { householdDomainParticipants, type HouseholdOperationFacts } from "./r3/
 import { summarizeHouseholdPeriod, type HouseholdForecastSummaryPeriod } from "./r3/forecastSummary.js";
 import { firstDependencyOrder, indexReachability, indexSequencingInstants } from "./r3/ordering.js";
 import { compareReachableStates, createReachableStateCounters } from "./r3/reachableStates.js";
-import { fundingPoolConservationProof } from "./r3/commutativity.js";
+import { fundingPoolConservationProof, guaranteedFundingIncomeProof } from "./r3/commutativity.js";
 import type { AccountingTransaction } from "../accounting/index.js";
 import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../diagnostics/index.js";
 import type {
@@ -645,9 +645,14 @@ const runCompiledHouseholdProjectionInternal = (
               group.some((item) => item.id === edge.after),
           );
           const groupIds = new Set(group.map(item => item.id));
-          if (fundingPoolConservationProof(group.map(item => prepared.operations.commutativity(item,
-            { state: candidateState, primitiveState: candidatePrimitiveState })))) {
+          const contracts = group.map(item => prepared.operations.commutativity(item,
+            { state: candidateState, primitiveState: candidatePrimitiveState }));
+          if (fundingPoolConservationProof(contracts)) {
             performance.counters({ contentionAnalyticalFundingPoolConservation: 1 });
+            continue;
+          }
+          if (guaranteedFundingIncomeProof(contracts)) {
+            performance.counters({ contentionAnalyticalGuaranteedFirstSource: 1 });
             continue;
           }
           const remainder = sameInstant.filter(item => !groupIds.has(item.id))

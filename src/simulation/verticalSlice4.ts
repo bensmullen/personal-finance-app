@@ -4,7 +4,7 @@ import { createFundingPolicy, fundingConstraintId, isAcceptedFundingResolution, 
 import { domainId, generatedOccurrenceKey, type DomainId, type GeneratedOccurrenceKey } from "../identity/index.js";
 import { calculationTraceId, calculationTraceRef, freezeTraceRefs, mergeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
 import { createFactProvenance, type FactProvenance, type ModelGeneratedFactProvenance } from "../model/provenance.js";
-import { fixedMortgagePayment } from "../rules/index.js";
+import { fixedMortgagePayment, mortgageInterest } from "../rules/index.js";
 import { createSemanticEffect, type SemanticEffect } from "../semantics/effect.js";
 import { applySettlement, claimId, createObligation, createRight, createSettlement, createSettlementProposal, recognitionId, semanticEffectId, settlementId, settlementProposalId, type Obligation, type RecognitionFact, type Right, type Settlement, type SettlementProposal } from "../semantics/index.js";
 import { applyAccountingTransactionAtomically, assertAuthoritativeStateCurrency, cloneAuthoritativeState, registerAuthoritativeIdentity, createIndexedRecognitionFact as createRecognitionFact, authoritativeClaimHistory, activeAuthoritativeClaims, type AuthoritativeState } from "../state/index.js";
@@ -381,7 +381,36 @@ export const executePreparedVerticalSlice4Period = (
   return Object.freeze({ state: finalState, primitiveState: finalPrimitiveState, period });
 };
 
-/** Shared debt financial evaluator; no nested run metadata or forecast fingerprint. */
+/** A sufficient all-orders first-source funding margin, using shared financial rules. */
+export const guaranteedFirstSourceRequiredService = (
+  operation: PreparedVerticalSlice4Operation, state: AuthoritativeState,
+  primitiveState: PrimitiveRuntimeStateStore,
+): boolean => {
+  if (operation.kind !== "required_service") return false;
+  const loan = operation.loan;
+  if (loan.fundingPolicy.allowPartial || loan.fundingPolicy.insufficientFundsBehavior !== "unfunded" || loan.partialPaymentPolicy !== "all_or_nothing") return false;
+  const first = loan.fundingPolicy.orderedSources[0];
+  if (first === undefined) return false;
+  const principal = state.liabilities[loan.principalLiabilityId]!.balance;
+  const prior = primitiveState[loan.primitiveIds.amortization];
+  const evaluations = prior?.primitiveId === "P22" ? prior.state.evaluations : 0;
+  if (principal.isPositive() && evaluations >= loan.totalPayments) return false;
+  const currency = principal.currency;
+  const interest = principal.isPositive() ? mortgageInterest(principal, loan.annualRate, loan.postingRounding) : Money.zero(currency);
+  const payment = prior?.primitiveId === "P22" && prior.state.contractualPayment !== undefined
+    ? prior.state.contractualPayment : fixedMortgagePayment(loan.originalPrincipal, loan.annualRate, loan.totalPayments, loan.postingRounding);
+  if (payment.compare(interest) < 0) return false;
+  const principalDue = claimTotal(claimsFor(state, loan.principalLiabilityId, "mortgage_principal_due"), currency);
+  const interestDue = claimTotal(claimsFor(state, loan.interestPayableLiabilityId, "mortgage_interest_payable"), currency);
+  // A sufficient upper bound uses the same posted interest/payment rules as
+  // P24/P22. Final service may request the whole remaining principal. Earlier
+  // service is capped by contractual principal; existing claims are included.
+  const proposed = evaluations + 1 === loan.totalPayments ? principal : payment.minus(interest);
+  const principalBound = proposed.compare(principal) > 0 ? principal : proposed;
+  const upperBound = principalDue.plus(principalBound).plus(interestDue).plus(interest);
+  return state.accounts[first.accountId]!.cash.compare(upperBound) >= 0;
+};
+
 /**
  * A sufficient domain certificate, never a conservative rejection. Existing
  * claims provide a lower bound at any supported nonnegative rate. With a zero
@@ -413,6 +442,7 @@ export const guaranteedUnfundedRequiredServicePool = (
   return principalBound.plus(interestDue).compare(liquidity) > 0 ? Object.freeze(accounts) : undefined;
 };
 
+/** Shared debt financial evaluator; no nested run metadata or forecast fingerprint. */
 const executeLoanPeriodCandidate = (
   request: VerticalSlice4RunInput,
   period: Period,

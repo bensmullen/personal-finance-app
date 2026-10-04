@@ -1,5 +1,16 @@
 import type { OperationCommutativity } from "./operations.js";
 
+/** Nonnegative income cannot change an already guaranteed first-source allocation. */
+export const guaranteedFundingIncomeProof = (
+  contracts: readonly (OperationCommutativity | undefined)[],
+): boolean => {
+  if (contracts.length !== 2) return false;
+  const income = contracts.find(contract => contract?.kind === "nonnegative_cash_income");
+  const service = contracts.find(contract => contract?.kind === "guaranteed_first_source_service");
+  return income?.kind === "nonnegative_cash_income" && service?.kind === "guaranteed_first_source_service" &&
+    !income.primitiveIds.some(id => service.primitiveIds.includes(id));
+};
+
 /**
  * The mortgage consumes zero cash and observes invariant total pool liquidity.
  * Its claim/primitive writes are disjoint from a fixed owned-account transfer.

@@ -8,7 +8,9 @@ import type { Money } from "../../values/index.js";
 /** Domain-owned proof data; deliberately outside the fingerprinted descriptor. */
 export type OperationCommutativity =
   | { readonly kind: "fixed_owned_transfer"; readonly source: AccountId; readonly destination: AccountId; readonly amount: Money; readonly primitiveIds: readonly string[] }
-  | { readonly kind: "guaranteed_unfunded_pool"; readonly accounts: readonly AccountId[]; readonly primitiveIds: readonly string[] };
+  | { readonly kind: "guaranteed_unfunded_pool"; readonly accounts: readonly AccountId[]; readonly primitiveIds: readonly string[] }
+  | { readonly kind: "nonnegative_cash_income"; readonly account: AccountId; readonly primitiveIds: readonly string[] }
+  | { readonly kind: "guaranteed_first_source_service"; readonly primitiveIds: readonly string[] };
 
 export interface OperationState {
   readonly state: AuthoritativeState;
