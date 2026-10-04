@@ -54,6 +54,8 @@ The deterministic household model SHALL support payroll-sourced employee contrib
 
 Contribution amount/rate, payroll timing/frequency, applicable limits/rules, cash-pay reduction, account increase, tax recognition, and lineage SHALL remain distinct.
 
+Traditional/pre-tax, Roth, and after-tax contribution character SHALL remain distinct through payroll and tax calculation. The engine SHALL NOT assume that all retirement contributions reduce the same taxable bases. Any applicable income-tax versus payroll-tax treatment must come from the authoritative tax rules for that contribution type.
+
 A contribution SHALL NOT be double-counted as both household spending and an investment purchase.
 
 Where employer contributions or other compensation allocations are not yet supported, they SHALL be explicitly capability-gated rather than silently treated as employee cash flow.
