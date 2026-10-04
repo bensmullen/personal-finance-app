@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.2.0-draft
+**Version:** 0.3.0-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -22,44 +22,47 @@ R0  Specification decomposition and traceability  [complete]
 R1  Performance instrumentation + benchmark fixtures
  |
 R2  Interactive deterministic execution foundation
- | | +--> R4  UX/editor cleanup -----------------------------+
- | |       |
- | |       +--> O1  Assisted onboarding/import foundation ---+
- |                                                       |
- +--> R3  High-throughput deterministic simulation kernel |
-      |    + reusable compiled household                 |
-      |    + decision/scenario overlay seam               |
-      |    + measured scaling behavior                    |
-      |                                                   |
-      +--> P1  Deterministic planning/strategy foundation |
-      |                                                   |
-      +--> C1  Provider-neutral calibration contract      |
-      |        + synthetic/internal baseline calibration  |
-      |                                                   |
-      +--> R5  Stochastic runtime foundation <------------+
-      |        |
-      |        v
-      |     R6  Monte Carlo orchestration
-      |        |
-      |        v
-      |     R7  Baseline probabilistic household engine
-      |        |
-      |        +--> P2  Stochastic strategy evaluation /
-      |        |        progressive optimization
-      |        |
-      |        v
-      |     R8  Institutional market/sector calibration adapters
-      |        |
-      |        +--> R10 Probabilistic + planning decision UX
-      |                         |
-      +--> T1A Target-cohort tax floor (parallel) --------+
-      |                         |
-      +--> A1  Private-alpha concentration safeguard -----+
-      |                         |
-      +-------------------------+--> O1 + P1 alpha coverage gate
-                                |
-                     R11 Private-alpha readiness /
-                         stabilization-exit gate
+ | | +--> R4  UX/editor cleanup --------------------+
+ | |       |                                       |
+ | |       +--> O1 Assisted onboarding/import -----|---------+
+ |                                                 |         |
+ +--> R3  High-throughput deterministic kernel ---+----+    |
+ |    |                                                 |    |
+ |    +--> C1 Provider-neutral calibration contract     |    |
+ |    |                                                 |    |
+ |    +--> T1A Phase B household tax integration <--- T1A Phase A
+ |                                                      |
+ +------------------------------------------------------+
+                                                        v
+                 D1  Deterministic household semantics readiness
+                 |   + required alpha financial use cases
+                 |   + input-to-calculation semantic audit
+                 |   + deterministic truth-table fixtures/UAT
+                 |
+                 +--> P1 Deterministic planning/strategy foundation
+                 |
+                 +--> R5 Stochastic runtime foundation <---- C1
+                      |
+                      v
+                   R6 Monte Carlo orchestration
+                      |
+                      v
+                   R7 Baseline probabilistic household engine
+                      |                       |  +--> P2 Stochastic strategy evaluation /
+                      |        progressive optimization
+                      v
+                   R8 Institutional market/sector calibration adapters
+                      |
+                      +--> R10 Probabilistic + planning decision UX
+
+A1  Private-alpha concentration safeguard may proceed in parallel after R3,
+but remains required before R11.
+
+D1 + O1 + P1 + T1A target-cohort coverage + A1
+                         |
+                         v
+              R11 Private-alpha readiness /
+                  stabilization-exit gate
 
 P3  Integrated cross-domain optimization (tax + portfolio + insurance +
     retirement/debt/liquidity as supported) follows P1 and the applicable
@@ -153,9 +156,41 @@ R3 SHALL implement PFA-PERF-019 through PFA-PERF-023 and satisfy the reusable ex
 
 **User validation:** not normally required unless a user-visible behavior changes. Financial/result equivalence and performance improvement are primarily automated/engineering verification.
 
+## 5A. D1 — Deterministic household financial-semantic readiness
+
+D1 is a hard semantic gate before R5 stochastic runtime work. It implements and verifies PFA-DET after R3's reusable execution foundation and T1A Phase B's applicable tax integration are available. R4 authoring integrity and the intended alpha input paths must be sufficiently stable to test the same concepts a user will actually enter.
+
+D1 SHALL complete the deterministic semantic audit from user input through canonical representation, executable behavior, accounting/state effects, tax characterization, and user-visible result for the initial private-alpha scope.
+
+Required deterministic use cases include:
+
+- traditional, Roth, and after-tax 401(k) employee contributions;
+- in-plan 401(k) Roth conversions;
+- traditional and Roth IRA contributions/holdings;
+- taxable brokerage funding, purchases, sales, gains/losses, interest/dividends, and dividend reinvestment;
+- ordinary mortgage amortization, refinance, and extra principal payments;
+- HSA payroll contributions and applicable account/tax behavior;
+- checking/savings interest;
+- Treasury bill/bond interest/coupon and principal/maturity behavior;
+- CDs;
+- cryptocurrency positions/disposals;
+- a bounded supported deterministic options contract;
+- insurance premiums and deterministic payout/stress-event behavior;
+- applicable short/long-term capital-gain, interest, dividend, retirement/HSA, fixed-income, crypto, and option tax characterization;
+- payroll-only funding for supported 401(k)/HSA employee contributions; and
+- checking/savings-only funding for the initial supported IRA/brokerage/Treasury/CD personally funded flows.
+
+D1 SHALL include independent truth-table fixtures for each required case plus at least one combined realistic household. Verification must reconcile cash, account/position/asset state, liabilities, income/expense/gain/tax recognition, transfers/contributions, and ending net worth without double counting.
+
+If a named subfeature cannot be supported safely for the initial alpha contract, its exact unsupported boundary must be explicit and the private-alpha scope cannot claim that use case complete.
+
+**R5 gate:** do not begin stochastic household runtime implementation until D1 is complete and its deterministic verification is green. Isolated calibration-contract work in C1 may continue because it does not assume unresolved household financial semantics.
+
+**User validation:** required. D1 closeout SHALL include a focused user walkthrough proving that the required use cases can be entered in financially recognizable terms and that the resulting deterministic cash/state/tax behavior is understandable.
+
 ## 6. P1 — Deterministic planning / strategy-evaluation foundation
 
-P1 begins after the R3 reusable compiled-plan/decision-overlay seam exists and may progress in parallel with C1/R5-R7.
+P1 begins after D1 confirms that the deterministic financial mechanics used by private-alpha planning decisions are semantically correct and testable. It may then progress in parallel with C1 and later stochastic work.
 
 Implement the initial PFA-PLAN contract with a deliberately small supported decision set:
 
@@ -230,7 +265,7 @@ A production Plaid/bank-aggregation integration is not required for O1 or privat
 
 ### T1A — Target-cohort/common-household tax floor
 
-Begin after R2 and develop in parallel with R3/C1/R5/R6.
+T1A Phase A begins after R2 and may develop in parallel with R3/C1. T1A Phase B household integration begins only after R3 and Phase A are merged, and the applicable target-cohort tax integration is a prerequisite to D1 closeout. R5/R6 do not begin before D1.
 
 T1A is not “all tax law.” It is the deterministic per-realization tax coverage materially required by the households and outputs targeted for personal use/private alpha. Tax-affected stochastic outputs remain blocked/scoped until their required tax semantics are covered.
 
@@ -249,6 +284,8 @@ Add specialized capital-gains, retirement, equity-compensation, and other jurisd
 **User validation:** required only when a tax milestone changes user-facing workflows/results. Automated rule/invariant tests remain the correctness authority; user validation checks understandable presentation and expected real-world workflow.
 
 ## 11. R5 — Stochastic runtime foundation
+
+**Start condition:** D1 deterministic household financial-semantic readiness is complete with green deterministic truth-table verification and accepted D1 UAT. Do not use R5 to discover or patch unresolved ordinary household financial semantics.
 
 Implement the higher-authority stochastic semantics before Monte Carlo orchestration:
 
@@ -404,6 +441,7 @@ Before private-alpha infrastructure:
 - the assisted-input architecture preserves factual-versus-planning semantic categories, candidate review, provenance, ambiguity handling, idempotency, and the privacy boundary required by PFA-ONB;
 - performance, convergence, memory, and per-run compute-cost budgets are documented and met for supported realistic use, with explicit cost-per-rerun measurement/estimation for every enabled stochastic execution placement;
 - Golden, realistic-household, and computationally complex/stress fixtures pass their applicable correctness/performance checks and their coverage inventories show the supported product is exercised materially beyond the simple Golden Household;
+- D1 is complete: every required PFA-DET deterministic use case has an independently specified truth-table test, the combined realistic household reconciles, source-of-funds constraints are enforced, and product-owner D1 UAT is accepted;
 - current-state UI is responsive;
 - deterministic forecasts do not block the UI;
 - stochastic forecasts are reproducible and convergence metadata is interpretable;
@@ -452,8 +490,8 @@ The portfolio capability (PFA-INV) and insurance capability (PFA-INS) may be imp
 The following items SHALL remain visible until closed:
 
 - **Full concentrated issuer + RSU/employer-risk stochastic modeling (R9):** conditional pre-alpha, but mandatory future capability if not completed before alpha. Trigger earlier if an intended participant has material concentrated stock or equity compensation.
-- **General portfolio-planning depth (PFA-INV):** implement allocation/rebalancing/account-location/contribution-withdrawal planning as product surfaces require it; trigger before presenting portfolio strategy recommendations that depend on those semantics.
-- **Insurance planning (PFA-INS):** implement the relevant product-family semantics before presenting coverage recommendations or before onboarding an alpha participant whose planning value materially depends on insurance decisions.
+- **Advanced portfolio-planning depth (PFA-INV):** allocation optimization, broad rebalancing policy, account-location optimization, security selection, and other advanced planning may remain incremental. The deterministic account/instrument/contribution/conversion/funding mechanics named by PFA-DET are **not deferred** and are required before R5/private alpha.
+- **Advanced insurance planning (PFA-INS):** probabilistic claims, coverage optimization, underwriting/product-specific recommendation logic, and unsupported policy families may remain incremental. Deterministic premiums plus explicitly modeled payout/stress-event behavior required by PFA-DET are **not deferred** and are required before R5/private alpha.
 - **Stochastic strategy optimization (P2):** may remain post-alpha if alpha offers explicit scenario/strategy comparison rather than automated optimization; trigger before exposing an automated stochastic strategy recommendation.
 - **Integrated cross-domain optimization (P3):** long-term product capability spanning the supported tax, investment, insurance, retirement, debt, liquidity, and future planning domains. It is intentionally not a blanket private-alpha prerequisite.
 
