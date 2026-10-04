@@ -97,9 +97,9 @@ The supported floor includes, where applicable:
 - short-term and long-term realized capital gains/losses;
 - taxable interest, including supported checking/savings, Treasury/bond, and CD interest;
 - ordinary/non-qualified dividends and qualified dividends;
-- traditional and Roth 401(k)/IRA contribution and distribution treatment;
-- after-tax 401(k) contribution basis and supported in-plan Roth conversion treatment;
-- HSA payroll contribution/distribution treatment required by the target jurisdiction/output;
+- traditional and Roth 401(k)/IRA contribution and distribution treatment, including whether the contribution changes the applicable income-tax and/or payroll-tax base;
+- after-tax 401(k) contribution basis and supported in-plan Roth conversion treatment, preserving previously taxed basis and recognizing taxable conversion amounts only under the applicable rule;
+- HSA payroll contribution/distribution treatment required by the target jurisdiction/output, including jurisdiction-specific nonconformity where material;
 - taxable-brokerage purchases/sales and basis realization;
 - cryptocurrency dispositions;
 - supported option sale/exercise/assignment/expiration tax facts; and
