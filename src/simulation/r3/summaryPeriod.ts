@@ -6,7 +6,8 @@ import type { Period } from "../../time/index.js";
 import type { CompiledHouseholdKernel } from "./compiledHousehold.js";
 import type { HouseholdOperationFacts } from "./domainOperations.js";
 import type { HouseholdForecastSummaryPeriod } from "./forecastSummary.js";
-import { deriveHouseholdClosingMetrics } from "../householdProjection.js";
+import { householdExecutionMetrics } from "./metrics.js";
+import { mergeOutputCapabilities } from "./capabilities.js";
 
 /** Materializes display facts directly, without a detailed period adapter. */
 export const createHouseholdSummaryPeriod = (period: Period, opening: AuthoritativeState, closing: AuthoritativeState,
@@ -22,7 +23,7 @@ export const createHouseholdSummaryPeriod = (period: Period, opening: Authoritat
   for (const fact of facts) for (const tx of fact.transactions ?? []) flows.add(tx);
   const zero = Money.zero(currency);
   const sum = (values: readonly Money[]) => values.reduce((total, value) => total.plus(value), zero);
-  const metrics = deriveHouseholdClosingMetrics(closing, currency, kernel.executable.standaloneAssets);
+  const metrics = householdExecutionMetrics(closing, currency, kernel.executable);
   const balances = debts.flatMap(debt => debt.balances);
   const last = new Map<string, number>();
   balances.forEach((balance, index) => last.set(balance.loanId, index));
@@ -32,6 +33,7 @@ export const createHouseholdSummaryPeriod = (period: Period, opening: Authoritat
   const assumptions = [...new Set(operations.flatMap(op => op.evidence.assumptions))].sort();
   const events = [...new Set(operations.flatMap(op => op.evidence.events))].sort();
   return Object.freeze({ period: Object.freeze({ ...period }), statements: deriveStatementsFromFlows(closing, flows.snapshot(), currency),
+    outputCapabilities: mergeOutputCapabilities(facts.map(fact => fact.outputCapabilities)),
     cash: metrics.cash, investmentValue: metrics.investmentValue, assets: metrics.totalAssets, liabilities: metrics.totalLiabilities, netWorth: metrics.netWorth,
     constraintOutcomes: Object.freeze([...cash.flatMap(op => op.constraintOutcomes), ...debts.flatMap(op => op.constraintOutcomes), ...facts.flatMap(op => op.constraintOutcomes ?? [])]),
     liquidityShortfalls: Object.freeze([...cash.flatMap(op => op.liquidityShortfalls), ...debts.flatMap(op => op.liquidityShortfalls), ...facts.flatMap(op => op.liquidityShortfalls ?? [])]),

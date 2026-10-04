@@ -15,7 +15,12 @@ export type OperationCommutativity =
 export interface OperationState {
   readonly state: AuthoritativeState;
   readonly primitiveState: PrimitiveRuntimeStateStore;
+  /** Immutable domain-owned realization state, forked with each financial candidate. */
+  readonly runtime?: Readonly<Record<string, unknown>> | undefined;
 }
+const realizationState = new WeakMap<AuthoritativeState, Readonly<Record<string, unknown>>>();
+export const operationRuntime = (state: AuthoritativeState): Readonly<Record<string, unknown>> => realizationState.get(state) ?? Object.freeze({});
+export const restoreOperationRuntime = (state: AuthoritativeState, runtime: Readonly<Record<string, unknown>>): void => { realizationState.set(state, runtime); };
 export interface OperationResult<Facts> extends OperationState {
   readonly facts: Facts;
 }
@@ -54,7 +59,10 @@ export const indexPreparedOperations = <Facts>(participants: readonly PreparedOp
       if (operation === undefined) throw new ValidationError({ severity: "error",
         code: "HOUSEHOLD_OPERATION_MISSING", message: "Scheduled work has no prepared operation.", entityType: "household_projection",
         relatedIds: [descriptor.id] });
-      return operation.execute(opening, statuses);
+      const runtime = opening.runtime ?? operationRuntime(opening.state);
+      const result = operation.execute({ ...opening, runtime }, statuses);
+      restoreOperationRuntime(result.state, result.runtime ?? runtime);
+      return result;
     },
   });
 };

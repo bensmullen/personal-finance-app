@@ -18,3 +18,4 @@ export const applyProportionalIncomeTaxRule = (resolved: ResolvedProportionalTax
   const traceRefs = freezeTraceRefs([calculationTraceRef(calculationTraceId(`rule:${rule.kind}:${rule.id}:${at}`), [rule.id])])!;
   return Object.freeze({ ruleId: rule.id, ruleKind: rule.kind, target: Object.freeze({ ...rule.target }), evaluatedAt: at, result: tax, traceRefs });
 };
+export * from "./tax/recognition.js";

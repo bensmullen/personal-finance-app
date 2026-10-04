@@ -27,3 +27,4 @@ export {
   executeVerticalSlice4PeriodCandidate,
   createVerticalSlice4Id,
 } from "./verticalSlice4.js";
+export * from "./tax.js";

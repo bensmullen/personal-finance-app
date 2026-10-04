@@ -9,11 +9,15 @@ import { compileCashFlow, type CashFlowCompilerRequest, type CashFlowScenarioBin
 import { compileInvestments, type InvestmentCompilerRequest, type CompiledInvestments } from "./investments.js";
 import { compileLiabilities, type LiabilityCompilerRequest, type CompiledLiabilities } from "./liabilities.js";
 import type { CapabilityDiagnostic, CompileResult } from "./types.js";
+import { compileHouseholdTax, type HouseholdTaxCompilerRequest } from "./tax.js";
+import { createHouseholdTaxParticipant, taxCreditPositionIds } from "../../simulation/tax.js";
+import type { HouseholdKernelParticipant } from "../../simulation/householdExecution.js";
 import { Currency, money, type Money } from "../../values/index.js";
 import { capability, EXACT_DECIMAL, ASSET_TYPES, ASSET_VALUATION_METHODS, canonicalId, objects, preflightCanonicalCollections, resolveHouseholdScope, resolveOwnerScope, UUID, utcDate, type CanonicalObject, type HouseholdScope } from "./shared.js";
 
 /** Application boundary for the one reconciled PR20 execution input. */
 export interface HouseholdProjectionCompilerRequest {
+  readonly tax?: HouseholdTaxCompilerRequest;
   readonly cashFlow?: CashFlowCompilerRequest;
   readonly investments?: InvestmentCompilerRequest;
   readonly liabilities?: LiabilityCompilerRequest;
@@ -27,6 +31,8 @@ export interface CompiledStandaloneAsset {
 }
 
 export interface CompiledHouseholdProjection {
+  readonly nonInvestmentPositionIds?: readonly string[];
+  readonly participants?: readonly HouseholdKernelParticipant[];
   readonly executionKernel?: CompiledHouseholdKernel;
   readonly cashFlowInput?: CompiledCashFlow["input"] | undefined;
   readonly investmentInput?: CompiledInvestments["input"] | undefined;
@@ -161,6 +167,8 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   if (scenarios.size !== 1 || horizons.size !== 1 || currencies.size !== 1 || households.size !== 1 || owners.size !== 1 || starts.size !== 1 || ends.size !== 1 || asOfs.size > 1) return invalid("HOUSEHOLD_COMPILER_DISAGREEMENT", "Participating compilers must agree on Household, execution owner, currency, scenario, as-of boundary, and exact horizon.");
   const standalone = compileStandaloneAssets(model, firstBoundary.baseCurrency, firstBoundary.simulationStart, firstBoundary.simulationEnd);
   if (standalone.status !== "compiled") return standalone;
+  const tax = compileHouseholdTax(model, request.tax);
+  if (tax.status !== "compiled") return tax;
   return () => {
   const opening = performance.measure("compile.opening_reconciliation", () => reconcileHouseholdOpeningState(compiled.map((value) => value.openingState)));
   if (opening.status === "invalid_model") return opening;
@@ -172,6 +180,8 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
     ...(liabilities === undefined ? {} : { liabilities: liabilities.value.scenarioBindings }),
   });
   const value: CompiledHouseholdProjection = Object.freeze({
+    nonInvestmentPositionIds: taxCreditPositionIds(tax.value),
+    participants: Object.freeze([createHouseholdTaxParticipant({ ...tax.value, simulationStart: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`) })]),
     ...(cash === undefined ? {} : { cashFlowInput: cash.value.input }),
     ...(investments === undefined ? {} : { investmentInput: investments.value.input }),
     ...(liabilities === undefined ? {} : { liabilityInput: liabilities.value.input }),

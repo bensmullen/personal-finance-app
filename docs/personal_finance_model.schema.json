@@ -113,6 +113,72 @@
         "risk_profile": {
           "type": "string",
           "default": "moderate"
+        },
+        "residence_jurisdiction_periods": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "state_jurisdiction": {
+                "type": "string",
+                "minLength": 1
+              },
+              "local_jurisdiction": {
+                "type": "string",
+                "minLength": 1
+              },
+              "municipality": {
+                "type": "string",
+                "minLength": 1
+              },
+              "psd_code": {
+                "type": "string",
+                "pattern": "^[0-9]{6}$"
+              },
+              "effective_date": {
+                "type": "string",
+                "format": "date"
+              },
+              "expiration_date": {
+                "type": "string",
+                "format": "date"
+              }
+            },
+            "required": [
+              "state_jurisdiction",
+              "effective_date"
+            ]
+          }
+        },
+        "tax_eligibility_periods": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "type": "boolean"
+              },
+              "effective_date": {
+                "type": "string",
+                "format": "date"
+              },
+              "expiration_date": {
+                "type": "string",
+                "format": "date"
+              }
+            },
+            "required": [
+              "key",
+              "value",
+              "effective_date"
+            ]
+          }
         }
       },
       "required": [
@@ -182,6 +248,35 @@
         },
         "household_net_worth": {
           "type": "number"
+        },
+        "tax_eligibility_periods": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "type": "boolean"
+              },
+              "effective_date": {
+                "type": "string",
+                "format": "date"
+              },
+              "expiration_date": {
+                "type": "string",
+                "format": "date"
+              }
+            },
+            "required": [
+              "key",
+              "value",
+              "effective_date"
+            ]
+          }
         }
       },
       "required": [
@@ -651,6 +746,77 @@
           "type": "string",
           "format": "uuid",
           "x-ref": "Event"
+        },
+        "work_service_jurisdiction_allocations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "state_jurisdiction": {
+                "type": "string",
+                "minLength": 1
+              },
+              "local_jurisdiction": {
+                "type": "string",
+                "minLength": 1
+              },
+              "municipality": {
+                "type": "string",
+                "minLength": 1
+              },
+              "psd_code": {
+                "type": "string",
+                "pattern": "^[0-9]{6}$"
+              },
+              "allocation": {
+                "type": "string",
+                "pattern": "^(?:0\\.[0-9]*[1-9][0-9]*|1(?:\\.0+)?)$"
+              },
+              "effective_date": {
+                "type": "string",
+                "format": "date"
+              },
+              "expiration_date": {
+                "type": "string",
+                "format": "date"
+              }
+            },
+            "required": [
+              "state_jurisdiction",
+              "allocation",
+              "effective_date"
+            ]
+          }
+        },
+        "tax_eligibility_periods": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "type": "boolean"
+              },
+              "effective_date": {
+                "type": "string",
+                "format": "date"
+              },
+              "expiration_date": {
+                "type": "string",
+                "format": "date"
+              }
+            },
+            "required": [
+              "key",
+              "value",
+              "effective_date"
+            ]
+          }
         }
       },
       "required": [

@@ -97,6 +97,13 @@ export const PERSONAL_EDITOR_DESCRIPTOR = {
         "default": null,
         "derived": true,
         "mutable": false
+      },
+      "tax_eligibility_periods": {
+        "type": "object[]",
+        "required": false,
+        "default": [],
+        "derived": false,
+        "mutable": true
       }
     }
   },
@@ -213,6 +220,20 @@ export const PERSONAL_EDITOR_DESCRIPTOR = {
         "type": "string",
         "required": false,
         "default": "moderate",
+        "derived": false,
+        "mutable": true
+      },
+      "residence_jurisdiction_periods": {
+        "type": "object[]",
+        "required": false,
+        "default": [],
+        "derived": false,
+        "mutable": true
+      },
+      "tax_eligibility_periods": {
+        "type": "object[]",
+        "required": false,
+        "default": [],
         "derived": false,
         "mutable": true
       }
@@ -525,6 +546,20 @@ export const PERSONAL_EDITOR_DESCRIPTOR = {
         "required": false,
         "default": null,
         "ref": "Event",
+        "derived": false,
+        "mutable": true
+      },
+      "tax_eligibility_periods": {
+        "type": "object[]",
+        "required": false,
+        "default": [],
+        "derived": false,
+        "mutable": true
+      },
+      "work_service_jurisdiction_allocations": {
+        "type": "object[]",
+        "required": false,
+        "default": [],
         "derived": false,
         "mutable": true
       }

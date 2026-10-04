@@ -180,6 +180,7 @@ export type HouseholdLiquidityShortfallReadModel =
       readonly evaluatedAt: string;
     };
 export interface HouseholdForecastPoint {
+  readonly outputCapabilities?: import("../simulation/tax/contracts.js").TaxOutputCapabilities;
   readonly periodStart: string;
   readonly periodEnd: string;
   readonly cash: HouseholdMoneyReadModel;
@@ -205,6 +206,7 @@ export interface HouseholdForecastPoint {
   readonly traceRefs: readonly CalculationTraceRef[];
 }
 export interface HouseholdOpeningSnapshot {
+  readonly outputCapabilities?: import("../simulation/tax/contracts.js").TaxOutputCapabilities;
   readonly cash: HouseholdMoneyReadModel;
   readonly investmentValue: HouseholdMoneyReadModel;
   readonly standaloneAssetValue: HouseholdMoneyReadModel;
@@ -550,6 +552,7 @@ const toReadModel = (
     compiled.standaloneAssets,
   );
   const openingSnapshot: HouseholdOpeningSnapshot = Object.freeze({
+    outputCapabilities: Object.freeze(Object.fromEntries(["cash", "investmentValue", "totalAssets", "totalLiabilities", "netWorth"].map(field => [field, Object.freeze({ dependency: "tax_independent" as const, status: "complete" as const, diagnostics: Object.freeze([]) })]))),
     cash: moneyDto(opening.cash),
     investmentValue: moneyDto(opening.investmentValue),
     standaloneAssetValue: moneyDto(opening.standaloneAssetValue),
@@ -617,6 +620,7 @@ const toReadModel = (
     );
     return Object.freeze({
       periodStart: period.period.start,
+      ...(period.outputCapabilities === undefined ? {} : { outputCapabilities: period.outputCapabilities }),
       periodEnd: period.period.end,
       cash: moneyDto(period.cash),
       investmentValue: moneyDto(period.investmentValue),
@@ -1018,8 +1022,8 @@ const commonBoundary = (
         item.compiled.liabilityInput?.householdId,
     );
   const economic = (item: ExecutedHousehold) => {
-    const { scenarioIdentity: _scenarioIdentity, executionKernel: _executionKernel, ...base } = item.compiled;
-    return canonicalSerialize(base);
+    const { scenarioIdentity: _scenarioIdentity, executionKernel: _executionKernel, participants, ...base } = item.compiled;
+    return canonicalSerialize({ ...base, participants: participants?.map(({ id, version, economicInputs }) => ({ id, version, economicInputs })) });
   };
   if (
     String(leftRoot) !== String(rightRoot) ||

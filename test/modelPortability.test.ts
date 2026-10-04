@@ -15,6 +15,7 @@ import {
   type PortableModelEnvelope,
 } from "../src/model/modelVersion.js";
 import { CURRENT_RUN_VERSIONS } from "../src/model/version.js";
+import { addPersonalObject, createEmptyPersonalDraft } from "../src/application/personalMvp.js";
 
 const MODEL_ID = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
 const OLD_FORMAT = "0.1.5-separated-draft";
@@ -62,6 +63,21 @@ const migration: ModelMigration = {
 const migrationRegistry = new ModelMigrationRegistry([migration]);
 
 describe("personal model validation and direct import", () => {
+  it("preserves additive tax facts through canonical object authoring and portable-envelope round trips", () => {
+    const personId = "87000000-0000-4000-8000-000000000001";
+    const residence = [{ state_jurisdiction: "US:PA", local_jurisdiction: "TEST:PA:RESIDENCE", municipality: "TEST:MUNICIPALITY", psd_code: "999901", effective_date: "2026-01-01", expiration_date: "2027-01-01" }];
+    const eligibility = [{ key: "federal_base_deduction_only", value: true, effective_date: "2026-01-01", expiration_date: "2027-01-01" }];
+    const work = [{ state_jurisdiction: "US:PA", local_jurisdiction: "TEST:PA:SERVICE", psd_code: "999902", allocation: "0.1", effective_date: "2026-01-01" }, { state_jurisdiction: "US:PA", local_jurisdiction: "TEST:PA:HOME-WORKSITE", psd_code: "999901", allocation: "0.9", effective_date: "2026-01-01" }];
+    let model = addPersonalObject(createEmptyPersonalDraft(MODEL_ID), "Person", personId, { residence_jurisdiction_periods: residence, tax_eligibility_periods: eligibility });
+    model = addPersonalObject(model, "Income", "87000000-0000-4000-8000-000000000002", { owner_id: personId, work_service_jurisdiction_allocations: work, tax_eligibility_periods: eligibility });
+    model = addPersonalObject(model, "Household", "87000000-0000-4000-8000-000000000003", { tax_eligibility_periods: eligibility });
+    const copy = importPersonalModelJson(exportPersonalModelJson(model));
+    expect(copy.modelFormatVersion).toBe(CURRENT_MODEL_FORMAT_VERSION);
+    expect(copy.objects).toEqual(model.objects);
+    expect(copy.objects.Person?.[0]).toEqual(expect.objectContaining({ residence_jurisdiction_periods: residence, tax_eligibility_periods: eligibility }));
+    expect(copy.objects.Income?.[0]).toEqual(expect.objectContaining({ work_service_jurisdiction_allocations: work }));
+    expect(copy.objects.Household?.[0]).toEqual(expect.objectContaining({ tax_eligibility_periods: eligibility }));
+  });
   it("validates a current synthetic model as directly importable", () => {
     const report = validatePersonalModelJson(asJson(currentDocument()));
     expect(report).toEqual(expect.objectContaining({
