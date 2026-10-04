@@ -166,3 +166,46 @@ unmeasured. JSON serialization of a read model can duplicate a shared artifact
 across addresses, whereas the production Worker uses structured cloning. That
 export boundary is not a forecast hot path and should not be used as a timing
 proxy for Worker transport.
+
+## Final issue 68 evidence
+
+The completed execution implementation is
+`af15003654bd67dfdedc8edcf06e3ebb24c8ee46`. Ordinary GitHub CI run
+`37226620938` passed all nine verification jobs, including bounded reference,
+summary/replay, persistent settlement-history and application/Worker checks.
+Engineering-validation run `37227353002` succeeded on that exact head using
+Node 22.23.3, zero warmups and one measured run. The repository-owned issue 68
+records the samples from artifact
+`engineering-validation-performance-37227353002` (ID `11312645492`).
+
+| Application forecast | Wall time |
+| --- | ---: |
+| Golden | 495.695 ms |
+| Realistic | 254.948 ms |
+| 180-month stress | 3,389.958 ms |
+
+Stress execution took 2,525.772 ms, preparation 640.726 ms and contention
+24.064 ms. Sampled heap after execution was 198,756,424 bytes; this is not peak
+heap. Controlled 12-to-24-month total-time ratios were 1.916 and 1.824;
+execution-time ratios were 2.331 and 2.007. Increasing recurring operations
+from 12 to 20 produced total-time ratios of 1.516 at twelve months and 1.443
+at twenty-four months. These samples remove the measured minute-scale and
+approximately-fourfold horizon-growth blockers; they do not establish a formal
+asymptotic bound or a latency SLA.
+
+The stress run executed 6,442 summary operations and retained 180 compact
+periods with fourteen sparse checkpoints. Detailed period materializations,
+detail objects retained by summary mode, full summary trace unions, settlement
+history entries copied per append and full claim-history validations during hot
+execution were all zero. This supersedes the intermediate unresolved default
+summary and settlement-history work recorded above.
+
+Bounded ordinary CI proves exact selected-window reference detail, matching
+displayed metrics and fingerprint, checkpoint resumption, and portable replay
+without transporting the detailed warehouse. This is sufficient for the issue's
+updated replay closeout: a separate absolute explain/replay timing sample was not
+captured and no replay latency budget is claimed. Portable opening-basis warmup,
+legacy custom-participant full-state comparisons, entity-count checks, pairwise
+overlap discovery, exact-search worst cases and JSON export duplication remain
+the documented limits above. No local verification or new performance run was
+performed to record this evidence.
