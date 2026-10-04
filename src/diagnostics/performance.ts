@@ -3,6 +3,9 @@ export const PERFORMANCE_PHASES = Object.freeze([
   "forecast.total",
   "compile.model_and_slices",
   "compile.opening_reconciliation",
+  "compile.household_invariants",
+  "engine.compile_invariants",
+  "engine.fingerprint",
   "engine.prepare",
   "engine.schedule_contention",
   "engine.execute",
@@ -40,6 +43,8 @@ export interface PerformanceContext {
 }
 
 export interface PerformanceResources {
+  /** Non-economic structural work counts for engineering validation. */
+  readonly structuralCounters?: Readonly<Record<string, number>>;
   /** Aggregate diagnostic execution CPU where measurable, never authoritative. */
   readonly cpuTimeMs?: number;
   /** Absolute representative/sampled heap; a signed delta belongs in memoryDeltaBytes. */
@@ -71,6 +76,7 @@ export interface PerformanceObserver {
 export interface PerformanceSession {
   measure<T>(phase: PerformancePhase, operation: () => T): T;
   add(phase: PerformancePhase, durationMs: number): void;
+  counters(values: Readonly<Record<string, number>>, aggregation?: "sum" | "max"): void;
   finish(resources?: PerformanceResources): void;
 }
 
@@ -86,6 +92,7 @@ export const createPerformanceSession = (observer?: PerformanceObserver): Perfor
   const attempted = new Set<PerformancePhase>();
   const unavailable = new Set<PerformancePhase>();
   let finished = false;
+  const structuralCounters: Record<string, number> = {};
   const add = (phase: PerformancePhase, durationMs: number): void => {
     if (!Number.isFinite(durationMs) || durationMs < 0) return;
     const total = (totals.get(phase) ?? 0) + durationMs;
@@ -105,6 +112,12 @@ export const createPerformanceSession = (observer?: PerformanceObserver): Perfor
       }
     },
     add,
+    counters(values: Readonly<Record<string, number>>, aggregation: "sum" | "max" = "sum"): void {
+      for (const [key, value] of Object.entries(values)) {
+        if (Number.isFinite(value) && value >= 0) structuralCounters[key] = aggregation === "max"
+          ? Math.max(structuralCounters[key] ?? 0, value) : (structuralCounters[key] ?? 0) + value;
+      }
+    },
     finish(resources?: PerformanceResources): void {
       if (finished || observer === undefined) return;
       finished = true;
@@ -116,7 +129,10 @@ export const createPerformanceSession = (observer?: PerformanceObserver): Perfor
             availability: durationMs === undefined ? "unavailable" : "measured",
             ...(durationMs === undefined ? {} : { durationMs }),
             context: observer.context,
-            ...(resources === undefined ? {} : { resources }),
+            ...(resources === undefined && Object.keys(structuralCounters).length === 0 ? {} : {
+              resources: Object.freeze({ metering: "not_metered" as const, ...resources,
+                structuralCounters: Object.freeze({ ...resources?.structuralCounters, ...structuralCounters }) }),
+            }),
           }));
         } catch { /* Diagnostics must never enter financial control flow. */ }
       }

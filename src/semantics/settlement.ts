@@ -9,6 +9,7 @@ import { createFactProvenance, type FactProvenance } from "../model/provenance.j
 import type { Instant } from "../time/index.js";
 import type { Money } from "../values/index.js";
 import type { ObligationOrRight } from "./claim.js";
+import { appendSettlementIdentity } from "./claim.js";
 import type { ClaimId, SettlementId, SettlementProposalId } from "./identity.js";
 
 interface SettlementData {
@@ -46,7 +47,8 @@ export const createSettlement = (
   const proposal = acceptedFunding.proposal;
   const amount = acceptedFunding.acceptedAmount;
   const fundingAllocations = acceptedFunding.fundingAllocations;
-  if (new Set(existingSettlementIds).has(draft.id) || claim.settlementIds.includes(draft.id)) {
+  const indexed = existingSettlementIds as Iterable<string> & { readonly hasIdentity?: (id: string) => boolean };
+  if ((indexed.hasIdentity?.(draft.id) ?? new Set(existingSettlementIds).has(draft.id)) || claim.settlementIds.includes(draft.id)) {
     failValidation({ severity: "error", code: issueCodes.duplicateSettlement, message: `Duplicate settlement ${draft.id}`, entityType: "settlement", entityId: draft.id });
   }
   if (proposal.claimId !== claim.id) {
@@ -101,6 +103,6 @@ export const applySettlement = (claim: ObligationOrRight, settlement: Settlement
   return Object.freeze({
     ...claim,
     outstandingAmount: claim.outstandingAmount.minus(settlement.amount),
-    settlementIds: Object.freeze([...claim.settlementIds, settlement.id]),
+    settlementIds: appendSettlementIdentity(claim.settlementIds, settlement.id, claim.id),
   });
 };
