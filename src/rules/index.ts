@@ -67,6 +67,10 @@ export function fixedMortgagePrincipalAfterPayments(
 export * from "./contracts.js";
 export * from "./resolver.js";
 export * from "./tax.js";
+export * from "./tax/contracts.js";
+export * from "./tax/catalog.js";
+export * from "./tax/calculator.js";
+export * from "./tax/lawCatalog.js";
 export * from "./contribution.js";
 export * from "./product.js";
 export * from "./fee.js";
