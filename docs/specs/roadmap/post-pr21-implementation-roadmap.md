@@ -195,7 +195,10 @@ D1 SHALL complete the deterministic semantic audit from user input through canon
 Required deterministic use cases include:
 
 - traditional, Roth, and after-tax 401(k) employee contributions;
+- employer 401(k) matching/non-elective contributions and employer HSA contributions;
+- automatic effective-dated 401(k)/HSA/IRA contribution-limit and catch-up calculation, including applicable combined employee/employer limits;
 - in-plan 401(k) Roth conversions;
+- supported direct and indirect retirement rollovers preserving pre-tax/Roth/after-tax basis and tax character;
 - traditional and Roth IRA contributions/holdings;
 - taxable brokerage funding, purchases, sales, gains/losses, interest/dividends, and dividend reinvestment;
 - ordinary mortgage amortization, refinance, and extra principal payments;
@@ -214,7 +217,7 @@ D1 SHALL include independent truth-table fixtures for each required case plus at
 
 D1 should be implemented as seam-safe slices rather than one cross-cutting branch:
 
-1. **D1-A — authoring/account semantics.** Issue #70 is the current D1-A slice. It establishes current-position event semantics, cash versus investment/retirement classification, no-double-counting rules, executable baseline return authoring, personally funded contribution paths, payroll-sourced 401(k)/HSA contributions, and coherent retirement-date baseline/What-If behavior.
+1. **D1-A — authoring/account semantics.** Issue #70 is the current D1-A slice. It establishes current-position event semantics, cash versus investment/retirement classification, no-double-counting rules, executable baseline return authoring, personally funded contribution paths, employee and employer 401(k)/HSA contribution semantics, automatic statutory contribution-limit calculation, supported advanced rollover semantics, and coherent retirement-date baseline/What-If behavior.
 2. **D1-B — remaining deterministic domain mechanics.** After D1-A merges, remaining PFA-DET cases such as in-plan Roth conversion, mortgage/refinance/extra principal, cash-account interest, Treasury/bond/CD mechanics, cryptocurrency, the bounded option lifecycle, insurance premium/payout behavior, dividend reinvestment, and any still-missing tax characterization may be split into parallel domain slices only where they own disjoint domain modules. Shared compiler/editor/execution integration remains a single integration lane.
 3. **D1-C — integrated closeout.** Merge all D1 slices, run the combined realistic-household truth table and source-of-funds/no-double-counting checks, complete semantic audit, then perform D1 UAT from the actual normal-user authoring paths.
 
