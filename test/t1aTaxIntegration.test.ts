@@ -15,6 +15,12 @@ import { domainId } from "../src/identity/index.js";
 import { taxHouseholdFixture } from "./fixtures/t1aTaxHouseholds.js";
 import { taxRule, syntheticPayroll } from "./fixtures/t1aTaxRules.js";
 
+const differenceContext = (actual: unknown, expected: unknown): string => {
+  const left = canonicalSerialize(actual), right = canonicalSerialize(expected);
+  let index = 0; while (index < left.length && left[index] === right[index]) index++;
+  return `First canonical difference at ${index}: actual=${left.slice(Math.max(0, index - 120), index + 400)} expected=${right.slice(Math.max(0, index - 120), index + 400)}`;
+};
+
 const localFixture = (year: string, months: number, state: string, source: Partial<CompiledTaxIncome>, inputOverrides: Partial<HouseholdTaxInput> = {}, startMonth = "01") => {
   const fixture = taxHouseholdFixture({ months });
   const from = instant(`${year}-01-01T00:00:00.000Z`), until = instant(`${Number(year) + 1}-01-01T00:00:00.000Z`);
@@ -44,7 +50,7 @@ describe("T1A household tax integration", () => {
     const window = forecast.periods[12]!.period;
     const local = replayHouseholdForecastWindow(forecast, window);
     const transported = replayHouseholdForecastWindow(restored, window);
-    expect(transported).toEqual(local);
+    expect(transported, differenceContext(transported, local)).toEqual(local);
   });
 
   it("keeps participant-free execution and portable replay free of capability metadata", () => {
@@ -91,7 +97,7 @@ describe("T1A household tax integration", () => {
       expect(canonicalSerialize(detail.periods[index]!.statements)).toBe(canonicalSerialize(summary.periods[index]!.statements));
       expect(detail.periods[index]!.netWorth.equals(summary.periods[index]!.netWorth)).toBe(true);
     }
-    expect(canonicalSerialize(detail.state)).toBe(canonicalSerialize(summary.state));
+    expect(canonicalSerialize(detail.state), differenceContext(detail.state, summary.state)).toBe(canonicalSerialize(summary.state));
   });
 
   it("uses ordinary funding constraints for final tax liquidity shortfalls", () => {
@@ -149,7 +155,7 @@ describe("T1A household tax integration", () => {
     const result = runHouseholdKernel({ kernel: fixture.kernel, runContext: fixture.context });
     expect(result.periods[11]!.outputCapabilities?.cash?.status).toBe("complete");
     expect(result.periods[12]!.outputCapabilities?.cash?.status).toBe("incomplete");
-    expect(result.diagnostics.some(issue => issue.message.includes("Unsupported tax coverage"))).toBe(true);
+    expect(result.outputCapabilities?.cash?.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "PFA-TAX-009", jurisdiction: "US:FEDERAL", category: "rule_selection" })]));
   });
 
   it("replays deterministically and reuses bindings while recomputing altered salary economics", () => {

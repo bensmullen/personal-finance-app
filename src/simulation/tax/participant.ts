@@ -103,8 +103,10 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
       if (source.work.some(period => [period.effective_date, period.expiration_date].some(boundary => boundary !== undefined && boundary > monthStart && boundary.slice(0, 7) === date.slice(0, 7)))) diagnostics.push(taxDiagnostic("earned_service_interval", "Intra-month service-location changes require an authoritative wage-to-service interval allocation; pay date alone cannot establish that base.", undefined, id));
       if (income.wages.isPositive() && !work.length) diagnostics.push(taxDiagnostic("work_service_jurisdiction_allocations", "Employment service location is unknown; employer or residence is not substituted.", undefined, id));
       const eligibility = resolveTaxEligibility([...input.eligibility, ...source.eligibility], date);
-      const traces = mergeTraceRefs(facts.cash?.traceRefs, facts.summary?.evidence.sources,
-        [calculationTraceRef(calculationTraceId(`compiler:canonical:Income:${id}:tax`))]) ?? [];
+      const sourceEvidence = new SummaryOperationSink(USD);
+      sourceEvidence.traces(facts.cash?.traceRefs ?? facts.summary?.evidence.sources ?? []);
+      const traces = mergeTraceRefs(sourceEvidence.snapshot().sources,
+        [calculationTraceRef(calculationTraceId(`compiler:canonical:Income:${id}:tax`)), calculationTraceRef(calculationTraceId(`tax:recognized:${descriptor.id}`))]) ?? [];
       // Federal/state residence economics are recorded once; work allocations remain separate facts.
       const base: RecognizedTaxEconomics = { sourceId: id, at, income, allocation: "1", facts: {
         residenceJurisdictions: residence === undefined ? [] : [jurisdictionKey(residence.state_jurisdiction), ...(residence.local_jurisdiction === undefined ? [] : [residence.local_jurisdiction])], workJurisdictions: [],
