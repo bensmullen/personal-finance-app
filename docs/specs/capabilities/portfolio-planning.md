@@ -1,6 +1,6 @@
 # Portfolio & Investment Planning
 
-**Version:** 0.1.0-draft
+**Version:** 0.2.0-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-INV
 
@@ -55,6 +55,57 @@ Expected return, volatility, correlation, and other probabilistic market assumpt
 ### PFA-INV-011 — Explainable portfolio comparisons
 
 A user-facing portfolio strategy comparison SHALL identify the material allocation/policy changes and relevant effects on modeled return, downside/liquidity risk, taxes, costs, and other supported goals. It SHALL identify material unsupported investment semantics that could change the conclusion.
+
+### PFA-INV-012 — Private-alpha account and instrument floor
+
+Before private alpha, deterministic investment execution SHALL support the account/instrument relationships required by PFA-DET, including traditional/Roth/after-tax 401(k) balances, traditional/Roth IRA, HSA, taxable brokerage, checking/savings funding accounts, supported Treasuries/bonds/CDs, cryptocurrency, and a deliberately bounded supported option subset.
+
+Account wrappers, positions, and standalone assets SHALL remain economically distinct so household aggregation does not double-count the same resource.
+
+### PFA-INV-013 — Payroll-funded workplace contributions
+
+For the initial private-alpha supported authoring contract, employee traditional 401(k), Roth 401(k), after-tax 401(k), and HSA contributions SHALL originate from payroll compensation allocation rather than generic spending or an arbitrary account transfer.
+
+The contribution policy SHALL preserve contribution character, payroll timing, cash-pay reduction, destination account/position effects, applicable limits, and tax facts.
+
+### PFA-INV-014 — Personally funded investment contributions
+
+For the initial private-alpha supported authoring contract, IRA contributions, taxable-brokerage purchases, Treasury purchases, CD purchases, and other ordinary personally funded investment purchases SHALL draw from an explicitly selected checking or savings account.
+
+Other real-world funding paths MAY be added later, but they SHALL NOT be inferred or silently accepted before their semantics are implemented.
+
+### PFA-INV-015 — Retirement conversion semantics
+
+Supported in-plan 401(k) Roth conversions and other supported retirement conversions SHALL be explicit non-consumption operations that preserve source/destination identity, converted basis/character, applicable tax recognition, and separate tax settlement.
+
+A conversion SHALL NOT be represented as an ordinary expense, withdrawal-plus-unrelated-deposit shortcut, or unexplained balance edit.
+
+### PFA-INV-016 — Fixed-income, deposit, crypto, and option mechanics
+
+The private-alpha deterministic investment floor SHALL define executable semantics for the supported subset of:
+
+- Treasury bills/bonds and other admitted fixed-income positions, including coupon/interest and principal/maturity behavior;
+- CDs, including deposit principal, interest, and maturity;
+- cryptocurrency positions, including quantity, price/value, basis, purchases, and disposals; and
+- options, with explicit premium/cost, quantity/contract multiplier, underlying, expiration, and the supported sale/exercise/assignment/expiration outcomes.
+
+Unsupported instrument features or strategies SHALL be capability-gated rather than approximated.
+
+### PFA-INV-017 — Investment income and reinvestment
+
+Interest, ordinary/non-qualified dividends, qualified dividends when supported, realized gain/loss, unrealized gain/loss, and return of principal SHALL remain distinct economic/tax facts.
+
+Dividend reinvestment SHALL preserve dividend recognition and then execute a linked purchase. Reinvestment SHALL NOT erase income recognition or double-count household cash flow.
+
+### PFA-INV-018 — Deterministic tax-character integration
+
+Supported investment operations SHALL emit the tax-character facts required by PFA-TAX for short/long-term gains, interest, dividends, retirement/HSA activity, fixed-income income/dispositions, cryptocurrency dispositions, and supported option outcomes.
+
+Portfolio logic SHALL NOT duplicate the tax engine's liability calculation.
+
+### PFA-INV-019 — Pre-stochastic deterministic verification
+
+The investment mechanics required by PFA-DET-013 SHALL be verified deterministically before R5 begins. Verification SHALL include funding-source enforcement, account/position/no-double-counting behavior, cash settlement, basis/gain effects, tax-character facts, and ending balances.
 
 ## 3. Relationship to specialized equity capability
 
