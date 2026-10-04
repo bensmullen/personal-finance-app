@@ -3910,8 +3910,7 @@
         "e2e/"
       ],
       "depends_on_requirement_ids": [
-        "PFA-UX-014",
-        "PFA-ONB-013"
+        "PFA-UX-014"
       ],
       "verification_methods": [
         "analysis",
@@ -3944,7 +3943,8 @@
         "PFA-DET-014",
         "PFA-INV-019",
         "PFA-TAX-014",
-        "PFA-INS-012"
+        "PFA-INS-012",
+        "PFA-ONB-013"
       ],
       "verification_methods": [
         "analysis",
@@ -4272,6 +4272,30 @@
         "automated",
         "engineering-review",
         "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-PROB-020",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/simulation/",
+        "src/application/",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-DET-015"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
       ]
     }
   ]
