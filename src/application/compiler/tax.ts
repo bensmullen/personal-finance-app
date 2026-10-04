@@ -25,14 +25,14 @@ export interface HouseholdTaxCompilerRequest {
   readonly payments?: readonly TaxPaymentInstruction[];
   readonly settlements?: readonly TaxSettlementInstruction[];
 }
-const fail = (message: string): never => { throw new ValidationError({ severity: "error", code: "TAX_FACT_INVALID", message, entityType: "tax_facts" }); };
+function fail(message: string): never { throw new ValidationError({ severity: "error", code: "TAX_FACT_INVALID", message, entityType: "tax_facts" }); }
 const periods = <T extends { readonly effective_date: string; readonly expiration_date?: string }>(object: CanonicalObject, field: string): readonly T[] => {
   const raw = object[field];
   if (raw === undefined || raw === null) return Object.freeze([]);
   if (!Array.isArray(raw)) return fail(`${field} must be an array.`);
   for (const item of raw) {
     if (item === null || typeof item !== "object" || Array.isArray(item)) fail(`${field} entries must be objects.`);
-    const entry = item as Record<string, unknown>;
+    const entry = item as CanonicalObject;
     const start = utcDate(entry.effective_date), end = entry.expiration_date === undefined ? undefined : utcDate(entry.expiration_date);
     if (!start || (entry.expiration_date !== undefined && !end) || (end !== undefined && end <= start)) fail(`${field} requires increasing half-open date intervals.`);
   }

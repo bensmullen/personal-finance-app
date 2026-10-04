@@ -32,8 +32,9 @@ export const createHouseholdSummaryPeriod = (period: Period, opening: Authoritat
   const rules = [...new Set(operations.flatMap(op => op.evidence.rules))].sort();
   const assumptions = [...new Set(operations.flatMap(op => op.evidence.assumptions))].sort();
   const events = [...new Set(operations.flatMap(op => op.evidence.events))].sort();
+  const outputCapabilities = mergeOutputCapabilities(facts.map(fact => fact.outputCapabilities));
   return Object.freeze({ period: Object.freeze({ ...period }), statements: deriveStatementsFromFlows(closing, flows.snapshot(), currency),
-    outputCapabilities: mergeOutputCapabilities(facts.map(fact => fact.outputCapabilities)),
+    ...(outputCapabilities === undefined ? {} : { outputCapabilities }),
     cash: metrics.cash, investmentValue: metrics.investmentValue, assets: metrics.totalAssets, liabilities: metrics.totalLiabilities, netWorth: metrics.netWorth,
     constraintOutcomes: Object.freeze([...cash.flatMap(op => op.constraintOutcomes), ...debts.flatMap(op => op.constraintOutcomes), ...facts.flatMap(op => op.constraintOutcomes ?? [])]),
     liquidityShortfalls: Object.freeze([...cash.flatMap(op => op.liquidityShortfalls), ...debts.flatMap(op => op.liquidityShortfalls), ...facts.flatMap(op => op.liquidityShortfalls ?? [])]),

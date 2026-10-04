@@ -154,6 +154,7 @@ export type { CompiledHouseholdKernel, HouseholdExecutionOverlay } from "./r3/co
 
 /** Pure period preparation for future domain participants. No central dispatch changes required. */
 export interface HouseholdKernelParticipant {
+  readonly portableCodec?: string;
   readonly id: string;
   readonly version: string;
   readonly economicInputs: unknown;
@@ -173,12 +174,13 @@ export function runHouseholdKernel(
   request: HouseholdKernelRunInput & { readonly resultTier?: "detail" },
   observer?: PerformanceObserver,
 ): CompiledHouseholdProjectionRunResult | HouseholdForecastSummaryResult {
-  const kernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
-  if (request.resultTier !== "detail") return runHouseholdForecastSummary({ kernel, runContext: request.runContext,
-    ...(request.participants === undefined ? {} : { participants: request.participants }) }, observer);
+  const baseKernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
+  const kernel = request.participants === undefined ? baseKernel : applyHouseholdExecutionOverlay(baseKernel, {
+    participants: [...(baseKernel.executable.participants ?? []), ...request.participants],
+  });
+  if (request.resultTier !== "detail") return runHouseholdForecastSummary({ kernel, runContext: request.runContext }, observer);
   return runCompiledHouseholdProjection({
     runContext: request.runContext, compiled: { ...kernel.executable, executionKernel: kernel },
-    ...(request.participants === undefined ? {} : { participants: request.participants }),
   }, observer);
 }
 export interface CompiledHouseholdProjectionRunResult {
@@ -367,7 +369,7 @@ const runCompiledHouseholdProjectionInternal = (
   periodRetention?: {
     readonly accept: (period: HouseholdProjectionPeriodResult) => void;
     readonly retain: (period: Period) => boolean;
-    readonly checkpoint?: (period: Period, state: AuthoritativeState, primitiveState: PrimitiveRuntimeStateStore, metadata: RunMetadata, capabilities: import("./tax/contracts.js").TaxOutputCapabilities) => void;
+    readonly checkpoint?: (period: Period, state: AuthoritativeState, primitiveState: PrimitiveRuntimeStateStore, metadata: RunMetadata, capabilities: import("./tax/contracts.js").TaxOutputCapabilities | undefined) => void;
     readonly resume?: HouseholdReplayCheckpoint;
     readonly stopAfter?: Instant;
     readonly retainDiagnostics?: (period: Period) => boolean;
@@ -532,7 +534,7 @@ const runCompiledHouseholdProjectionInternal = (
   const committed: HouseholdProjectionPeriodResult[] = [];
   let reachedThrough: Instant | undefined;
   const diagnostics: ValidationIssue[] = [];
-  let outputCapabilities = periodRetention?.resume?.outputCapabilities ?? mergeOutputCapabilities([]);
+  let outputCapabilities = periodRetention?.resume?.outputCapabilities;
   for (const period of periods.filter(period =>
     (periodRetention?.resume === undefined || period.start >= periodRetention.resume.at) &&
     (periodRetention?.stopAfter === undefined || period.end <= periodRetention.stopAfter)))
@@ -840,7 +842,7 @@ const runCompiledHouseholdProjectionInternal = (
         const currentSummary = performance.measure("engine.statements_metrics", () =>
           createHouseholdSummaryPeriod(period, state, candidateState, additionalFacts, kernel, runContext.baseCurrency));
         outputCapabilities = mergeOutputCapabilities([outputCapabilities, currentSummary.outputCapabilities]);
-        const summary = Object.freeze({ ...currentSummary, outputCapabilities });
+        const summary = Object.freeze({ ...currentSummary, ...(outputCapabilities === undefined ? {} : { outputCapabilities }) });
         diagnostics.push(...(prepared.cash?.diagnostics ?? []), ...additionalFacts.flatMap(fact => [
           ...(fact.summary?.cash?.diagnostics ?? []), ...(fact.summary?.debt?.diagnostics ?? []), ...(fact.diagnostics ?? []),
         ]));
@@ -1037,9 +1039,10 @@ const runCompiledHouseholdProjectionInternal = (
                   ...investmentPeriods.map((item) => item.traceRefs),
                 ) ?? Object.freeze([]),
             });
+      const periodCapabilities = mergeOutputCapabilities([outputCapabilities, ...additionalFacts.map(fact => fact.outputCapabilities)]);
       return Object.freeze({
         period: Object.freeze({ ...period }),
-        outputCapabilities: mergeOutputCapabilities([outputCapabilities, ...additionalFacts.map(fact => fact.outputCapabilities)]),
+        ...(periodCapabilities === undefined ? {} : { outputCapabilities: periodCapabilities }),
         statements,
         cash: metrics.cash,
         investmentValue: metrics.investmentValue,
@@ -1088,7 +1091,7 @@ const runCompiledHouseholdProjectionInternal = (
       diagnostics.push(...error.issues);
       return performance.measure("engine.trace_result", () => Object.freeze({
         status: "incomplete",
-        outputCapabilities,
+        ...(outputCapabilities === undefined ? {} : { outputCapabilities }),
         runMetadata,
         requestedHorizon,
         stoppedAt: period.start,
@@ -1101,8 +1104,8 @@ const runCompiledHouseholdProjectionInternal = (
       }));
     }
   return performance.measure("engine.trace_result", () => Object.freeze({
-    status: Object.values(outputCapabilities).some(value => value.status === "incomplete") ? "incomplete" : "completed",
-    outputCapabilities,
+    status: Object.values(outputCapabilities ?? {}).some(value => value.status === "incomplete") ? "incomplete" : "completed",
+    ...(outputCapabilities === undefined ? {} : { outputCapabilities }),
     runMetadata,
     requestedHorizon,
     reachedThrough: reachedThrough ?? requestedHorizon.end,
@@ -1134,7 +1137,7 @@ export interface HouseholdForecastSummaryResult extends Omit<CompiledHouseholdPr
 }
 
 interface HouseholdReplayCheckpoint {
-  readonly outputCapabilities: import("./tax/contracts.js").TaxOutputCapabilities;
+  readonly outputCapabilities?: import("./tax/contracts.js").TaxOutputCapabilities;
   readonly runtime: Readonly<Record<string, unknown>>;
   readonly at: Instant;
   readonly fingerprint: RunMetadata["inputFingerprint"];
@@ -1152,7 +1155,10 @@ export const runHouseholdForecastSummary = (
   request: { readonly kernel: CompiledHouseholdKernel; readonly overlay?: HouseholdExecutionOverlay; readonly runContext: RunContext; readonly participants?: readonly HouseholdKernelParticipant[] },
   observer?: PerformanceObserver,
 ): HouseholdForecastSummaryResult => {
-  const kernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
+  const baseKernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
+  const kernel = request.participants === undefined ? baseKernel : applyHouseholdExecutionOverlay(baseKernel, {
+    participants: [...(baseKernel.executable.participants ?? []), ...request.participants],
+  });
   const runContext = Object.freeze({ ...request.runContext, versions: Object.freeze({ ...request.runContext.versions }) });
   const performance = createPerformanceSession(observer);
   const summaries: HouseholdForecastSummaryPeriod[] = [];
@@ -1160,7 +1166,6 @@ export const runHouseholdForecastSummary = (
   try {
     const result = runCompiledHouseholdProjectionInternal({
       compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
-      ...(request.participants === undefined ? {} : { participants: request.participants }),
     }, performance, {
       accept: () => {}, acceptSummary: period => { summaries.push(period); },
       retain: () => false,
@@ -1169,7 +1174,7 @@ export const runHouseholdForecastSummary = (
         // measured product budget. Never retain an unused terminal checkpoint.
         if ((summaries.length + 1) % 12 !== 0 || period.end >= runContext.simulationEnd) return;
         checkpoints.push(Object.freeze({ at: period.end, fingerprint: metadata.inputFingerprint,
-          outputCapabilities,
+          ...(outputCapabilities === undefined ? {} : { outputCapabilities }),
           runtime: operationRuntime(state),
           state: cloneAuthoritativeState(state), primitiveState: createPrimitiveRuntimeStateStore(primitiveState) }));
       },

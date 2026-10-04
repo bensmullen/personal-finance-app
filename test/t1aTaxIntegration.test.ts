@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { assertBalanced } from "../src/accounting/index.js";
 import { compileHouseholdTax, validateResidenceTaxPeriods, validateWorkTaxAllocations, resolveTaxEligibility } from "../src/application/compiler/tax.js";
-import { runHouseholdKernel, runCompiledHouseholdProjection } from "../src/simulation/householdExecution.js";
+import { runHouseholdKernel, runCompiledHouseholdProjection, replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
+import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
 import { applyHouseholdExecutionOverlay, compileHouseholdKernel } from "../src/simulation/r3/compiledHousehold.js";
 import { canonicalSerialize } from "../src/simulation/run.js";
 import { createHouseholdTaxParticipant, emptyTaxIncome, taxCreditPositionIds, type HouseholdTaxInput, type CompiledTaxIncome } from "../src/simulation/tax.js";
@@ -23,15 +24,49 @@ const localFixture = (year: string, months: number, state: string, source: Parti
     settlements: [{ id: "final-federal", jurisdiction: "US:FEDERAL", taxYear: year, at: instant(`${year}-12-31T23:59:59.999Z`), priority: 0 }, { id: "final-state", jurisdiction: state, taxYear: year, at: instant(`${year}-12-31T23:59:59.999Z`), priority: 1 }], ...inputOverrides };
   const context = { ...fixture.context, simulationStart: from, simulationEnd: utcMonthlyPeriods(from, months).at(-1)!.end };
   const cash = fixture.compiled.cashFlowInput!;
-  const compiled = { ...fixture.compiled, participants: [createHouseholdTaxParticipant(input)], nonInvestmentPositionIds: taxCreditPositionIds(input), cashFlowInput: { ...cash, incomes: [{ ...cash.incomes[0]!, start: instant(`${year}-${startMonth}-01T00:00:00.000Z`), growthBaseAt: from, recurrence: { ...cash.incomes[0]!.recurrence, anchor: instant(`${year}-${startMonth}-15T00:00:00.000Z`) } }] } };
+  const compiled = { ...fixture.compiled, participants: [createHouseholdTaxParticipant(input)], nonInvestmentPositionIds: taxCreditPositionIds(input), cashFlowInput: { ...cash, incomes: [{ ...cash.incomes[0]!, start: instant(`${year}-${startMonth}-01T00:00:00.000Z`), growthBaseAt: instant(`${year}-${startMonth}-15T00:00:00.000Z`), recurrence: { ...cash.incomes[0]!.recurrence, anchor: instant(`${year}-${startMonth}-15T00:00:00.000Z`) } }] } };
   return { input, context, kernel: compileHouseholdKernel(compiled, from) };
 };
 
 describe("T1A household tax integration", () => {
+  it("restores portable tax participants and reproduces sparse replay, diagnostics and basis", () => {
+    const fixture = taxHouseholdFixture({ months: 13 });
+    const forecast = runHouseholdKernel({ kernel: fixture.kernel, runContext: fixture.context });
+    expect(forecast.periods, JSON.stringify(forecast.diagnostics)).toHaveLength(13);
+    const artifact = structuredClone(createPortableHouseholdReplayArtifact(forecast));
+    const restored = restorePortableHouseholdReplayArtifact(artifact);
+    const rerun = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
+    expect(rerun.runMetadata).toEqual(forecast.runMetadata);
+    expect(canonicalSerialize(rerun.state)).toBe(canonicalSerialize(forecast.state));
+    expect(rerun.periods).toEqual(forecast.periods);
+    expect(rerun.diagnostics).toEqual(forecast.diagnostics);
+    expect(rerun.outputCapabilities).toEqual(forecast.outputCapabilities);
+    const window = forecast.periods[12]!.period;
+    const local = replayHouseholdForecastWindow(forecast, window);
+    const transported = replayHouseholdForecastWindow(restored, window);
+    expect(transported).toEqual(local);
+  });
+
+  it("keeps participant-free execution and portable replay free of capability metadata", () => {
+    const fixture = taxHouseholdFixture();
+    const { participants: _participants, nonInvestmentPositionIds: _positions, ...executable } = fixture.compiled;
+    const kernel = compileHouseholdKernel(executable, fixture.context.simulationStart);
+    const summary = runHouseholdKernel({ kernel, runContext: fixture.context });
+    const detail = runHouseholdKernel({ kernel, runContext: fixture.context, resultTier: "detail" });
+    expect(summary.status).toBe("completed");
+    expect(summary).not.toHaveProperty("outputCapabilities");
+    expect(detail).not.toHaveProperty("outputCapabilities");
+    expect(summary.periods[0]).not.toHaveProperty("outputCapabilities");
+    expect(detail.periods[0]).not.toHaveProperty("outputCapabilities");
+    const restored = restorePortableHouseholdReplayArtifact(createPortableHouseholdReplayArtifact(summary));
+    expect(restored.replay.kernel.executable).not.toHaveProperty("participants");
+    expect(runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext }).runMetadata).toEqual(summary.runMetadata);
+  });
+
   it("accrues liability from actual salary without consuming cash before payment", () => {
     const fixture = taxHouseholdFixture();
     const result = runHouseholdKernel({ kernel: fixture.kernel, runContext: fixture.context, resultTier: "detail" });
-    expect(result.status).toBe("completed");
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
     expect(result.periods[0]!.cash.equals(money("1000"))).toBe(true);
     expect(result.periods[0]!.liabilities.equals(money("100"))).toBe(true);
     expect(result.periods[0]!.netWorth.equals(money("900"))).toBe(true);
@@ -63,7 +98,7 @@ describe("T1A household tax integration", () => {
     const fixture = taxHouseholdFixture({ months: 12, input: { catalog: [taxRule(1, { jurisdiction: "US:FEDERAL", payroll: syntheticPayroll })] } });
     const salary = fixture.compiled.cashFlowInput!;
     // An explicit expense draws all earned cash before the authored final tax date.
-    const compiled = { ...fixture.compiled, cashFlowInput: { ...salary, expenses: [{ id: domainId("expense", "86000000-0000-4000-8000-000000000009"), ownerId: salary.ownerId, paymentAccountId: salary.cashAccountId, payableLiabilityId: salary.expensePayableLiabilityId, fundingPolicy: fixture.input.fundingPolicy!, baseMonthlyAmount: money("1000"), start: fixture.context.simulationStart, recurrence: { kind: "utc_monthly" as const, anchor: instant("2024-01-25T00:00:00.000Z"), invalidDayPolicy: "skip" as const }, inflationRate: salary.incomes[0]!.growthRate, inflationBaseAt: fixture.context.simulationStart, primitiveIds: { indexGrowth: domainId("primitive-instance", "86000000-0000-4000-8001-000000000003"), inflationLink: domainId("primitive-instance", "86000000-0000-4000-8001-000000000004"), recurrence: domainId("primitive-instance", "86000000-0000-4000-8001-000000000005") } }] } };
+    const compiled = { ...fixture.compiled, cashFlowInput: { ...salary, expenses: [{ id: domainId("expense", "86000000-0000-4000-8000-000000000009"), ownerId: salary.ownerId, paymentAccountId: salary.cashAccountId, payableLiabilityId: salary.expensePayableLiabilityId, fundingPolicy: fixture.input.fundingPolicy!, baseMonthlyAmount: money("1000"), start: fixture.context.simulationStart, recurrence: { kind: "utc_monthly" as const, anchor: instant("2024-01-25T00:00:00.000Z"), invalidDayPolicy: "skip" as const }, inflationRate: salary.incomes[0]!.growthRate, inflationBaseAt: instant("2024-01-25T00:00:00.000Z"), primitiveIds: { indexGrowth: domainId("primitive-instance", "86000000-0000-4000-8001-000000000003"), inflationLink: domainId("primitive-instance", "86000000-0000-4000-8001-000000000004"), recurrence: domainId("primitive-instance", "86000000-0000-4000-8001-000000000005") } }] } };
     const result = runCompiledHouseholdProjection({ compiled, runContext: fixture.context });
     expect(result.periods.at(-1)!.cash.isZero()).toBe(true);
     expect(result.periods.at(-1)!.liquidityShortfalls.length).toBeGreaterThan(0);

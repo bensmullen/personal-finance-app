@@ -108,7 +108,7 @@ const assemble = (
     cashFlowInput: cash?.input, investmentInput: investments?.input, liabilityInput: liabilities?.input,
     scenarioBindings: immutableConfiguration(executable.scenarioBindings),
     standaloneAssets: immutableConfiguration(executable.standaloneAssets ?? []),
-    nonInvestmentPositionIds: immutableConfiguration(executable.nonInvestmentPositionIds),
+    ...(executable.nonInvestmentPositionIds === undefined ? {} : { nonInvestmentPositionIds: immutableConfiguration(executable.nonInvestmentPositionIds) }),
     contentionPolicy: immutableConfiguration(executable.contentionPolicy),
   });
   return Object.freeze({ schemaVersion: "household-kernel-v1", horizon, cash, investments, liabilities,
@@ -116,7 +116,7 @@ const assemble = (
     canonicalInputs: Object.freeze({
       cashFlowInput: cash?.canonical, investmentInput: investments?.canonical, liabilityInput: liabilities?.canonical,
       scenarioBindings: snapshot.scenarioBindings, standaloneAssets: snapshot.standaloneAssets,
-      nonInvestmentPositionIds: snapshot.nonInvestmentPositionIds,
+      ...(snapshot.nonInvestmentPositionIds === undefined ? {} : { nonInvestmentPositionIds: snapshot.nonInvestmentPositionIds }),
     }),
   });
 };

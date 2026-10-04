@@ -83,7 +83,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
     }
   };
   return Object.freeze({
-    id: "tax", version: "t1a-household-v1", economicInputs: Object.freeze({ ...input, catalogFingerprint: fingerprint }),
+    id: "tax", version: "t1a-household-v1", portableCodec: "household-tax/v1", economicInputs: Object.freeze({ ...input, catalogFingerprint: fingerprint }),
     observe: (descriptor, facts, runtime) => {
       if (descriptor.operationClass !== "cash_income_settlement") return runtime;
       const id = descriptor.id.split(":")[1]!;
@@ -95,6 +95,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
       const diagnostics: TaxCapabilityDiagnostic[] = [];
       const income = source === undefined ? undefined : incomeFacts(source, amount);
       if (source === undefined || income === undefined) return withYear(runtime, year, { ...prior, diagnostics: prior.diagnostics.with([taxDiagnostic("income_character", `Unsupported recognized Income ${id}; business, rental, equity compensation and uncharacterized distributions require separate semantics.`, undefined, id)]) });
+      if (Object.values(income).every(value => value.isZero())) return runtime;
       const residence = source.residence.find(period => activeTaxFact(period, date));
       if (residence === undefined) diagnostics.push(taxDiagnostic("residence_jurisdiction_periods", "Effective residence tax facts are missing; coarse jurisdiction is not substituted.", undefined, id));
       const work = source.work.filter(period => activeTaxFact(period, date));

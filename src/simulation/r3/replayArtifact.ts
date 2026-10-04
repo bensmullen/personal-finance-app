@@ -3,6 +3,9 @@ import type { HouseholdForecastSummaryResult, ExecutableHouseholdProjection } fr
 import type { RunContext, RunMetadata } from "../run.js";
 import type { HouseholdForecastSummaryPeriod } from "./forecastSummary.js";
 import { compileHouseholdKernel } from "./compiledHousehold.js";
+import { portableHouseholdParticipant, restoreHouseholdParticipant, type PortableHouseholdParticipant } from "./participantCodec.js";
+// Composition boundary: domain codecs register factories; replay dispatch stays generic.
+import "../tax/replayCodec.js";
 
 type Wire = null | boolean | number | string | { readonly kind: string; readonly value: unknown };
 const encode = (value: unknown): Wire => {
@@ -45,7 +48,8 @@ const decode = (wire: Wire): unknown => {
 export interface PortableHouseholdReplayArtifact { readonly version: "household-replay/v1"; readonly encoded: string; }
 /** One shared opening/configuration artifact per forecast; never a detailed history warehouse. */
 export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecastSummaryResult): PortableHouseholdReplayArtifact => {
-  const { executionKernel: _kernel, ...executable } = forecast.replay.kernel.executable;
+  const { executionKernel: _kernel, participants, ...base } = forecast.replay.kernel.executable;
+  const executable = { ...base, ...(participants === undefined ? {} : { participants: participants.map(portableHouseholdParticipant) }) };
   return Object.freeze({ version: "household-replay/v1", encoded: JSON.stringify(encode({ executable,
     runContext: forecast.replay.runContext, runMetadata: forecast.runMetadata, periods: forecast.periods })) });
 };
@@ -54,9 +58,11 @@ export const restorePortableHouseholdReplayArtifact = (artifact: unknown): Pick<
   if (supplied?.version !== "household-replay/v1" || typeof supplied.encoded !== "string")
     throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNAVAILABLE: original execution artifacts are required");
   const restored = decode(JSON.parse(supplied.encoded) as Wire) as {
-    executable: ExecutableHouseholdProjection; runContext: RunContext; runMetadata: RunMetadata; periods: readonly HouseholdForecastSummaryPeriod[];
+    executable: Omit<ExecutableHouseholdProjection, "participants"> & { readonly participants?: readonly PortableHouseholdParticipant[] }; runContext: RunContext; runMetadata: RunMetadata; periods: readonly HouseholdForecastSummaryPeriod[];
   };
-  const kernel = compileHouseholdKernel(restored.executable, restored.runContext.simulationStart);
+  const { participants, ...base } = restored.executable;
+  const executable = { ...base, ...(participants === undefined ? {} : { participants: participants.map(restoreHouseholdParticipant) }) };
+  const kernel = compileHouseholdKernel(executable, restored.runContext.simulationStart);
   return Object.freeze({ runMetadata: restored.runMetadata, periods: restored.periods,
     replay: Object.freeze({ kernel, runContext: restored.runContext }) });
 };

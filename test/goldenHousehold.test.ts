@@ -47,8 +47,12 @@ describe("PR21 Golden Household", () => {
     const model = createGoldenHouseholdDraft();
     const request = createGoldenHouseholdForecastRequest();
     const result = runPersonalHouseholdForecast(model, request);
-    expect(result.status, JSON.stringify(result)).toBe("completed");
-    if (result.status !== "completed") return;
+    expect(result.status, JSON.stringify(result)).toBe("incomplete");
+    if (result.status === "unavailable") return;
+    expect(result.openingSnapshot.outputCapabilities?.netWorth?.status).toBe("complete");
+    expect(result.points[0]!.outputCapabilities?.netWorth?.status).toBe("incomplete");
+    expect(result.points[0]!.outputCapabilities?.statementIncome?.status).toBe("complete");
+    expect(result.diagnostics.some(issue => issue.code === "PFA-TAX-009")).toBe(true);
     expect(result.openingSnapshot).toMatchObject({
       cash: { amount: "35000", currency: "USD" },
       investmentValue: { amount: "150000", currency: "USD" },
@@ -191,7 +195,7 @@ describe("PR21 Golden Household", () => {
                 lastPoint: alternative.points.at(-1),
               })),
       }),
-    ).toBe("completed");
+    ).toBe("incomplete");
     if (result.status === "unavailable") return;
     const lower = result.alternatives.find(
       (item) => item.name === "Lower investment returns",
@@ -245,8 +249,8 @@ describe("PR21 Golden Household", () => {
       model,
       through("2026-02-01", 1),
     );
-    expect(result.status).toBe("completed");
-    if (result.status !== "completed") return;
+    expect(result.status).toBe("incomplete");
+    if (result.status === "unavailable") return;
     const explanation = resolveHouseholdExplanation(
       model,
       result.points[0]!.traceRefs,
