@@ -23,7 +23,7 @@ export class SummaryOperationSink {
   }
   traces(refs: readonly CalculationTraceRef[]): void {
     for (const ref of refs) {
-      if (String(ref.traceId).startsWith("compiler:canonical:")) this.#sources.set(ref.traceId,
+      if (String(ref.traceId).startsWith("compiler:canonical:") || /:[^:]+-assumption$/.test(String(ref.traceId))) this.#sources.set(ref.traceId,
         mergeTraceRefs(this.#sources.has(ref.traceId) ? [this.#sources.get(ref.traceId)!] : [], [ref])![0]!);
       for (const id of ref.ruleIds ?? []) this.#rules.add(id);
       for (const id of ref.assumptionIds ?? []) this.#assumptions.add(id);
@@ -40,7 +40,7 @@ export class SummaryOperationSink {
 export interface SummaryAccountingEvidence {
   readonly flows: StatementFlows;
   readonly witnesses: readonly string[];
-  /** Actual compiler source bindings, without occurrence/calculation trace unions. */
+  /** Actual compiler sources and static assumption addresses, without occurrence trace unions. */
   readonly sources: readonly CalculationTraceRef[];
   readonly rules: NonNullable<CalculationTraceRef["ruleIds"]>;
   readonly assumptions: NonNullable<CalculationTraceRef["assumptionIds"]>;

@@ -7,6 +7,8 @@ import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { runHouseholdKernel, type HouseholdKernelParticipant, runCompiledHouseholdProjection,
   runHouseholdForecastSummary, replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
 import { summarizeHouseholdPeriod } from "../src/simulation/r3/forecastSummary.js";
+import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
+import { runPersonalHouseholdForecast, resolveHouseholdExplanation } from "../src/application/householdProjection.js";
 import { createStatementFlowAccumulator, deriveVerticalSliceStatements } from "../src/statements/index.js";
 import { createPrimitiveRuntimeStateStore, executePeriodWorkCandidate, updatePrimitiveRuntimeStateStore, type RunPeriodInput } from "../src/simulation/period.js";
 import { runPeriod as referencePeriod } from "../src/simulation/r3/referencePeriod.js";
@@ -485,6 +487,39 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(flows.financingCashFlow).toEqual(period.statements.financingCashFlow);
     expect(flows.gains).toEqual(period.statements.gains);
     expect(Object.keys(accumulator).sort()).toEqual(["add", "merge", "snapshot"]);
+  });
+
+  it("reconstructs exact detail from portable opening artifacts without transporting a warehouse", () => {
+    const input = { ...integrated("120"), executionMonths: 2 };
+    const runContext = context(2);
+    const forecast = runHouseholdForecastSummary({ kernel: compileHouseholdKernel(input, start), runContext });
+    const artifact = structuredClone(createPortableHouseholdReplayArtifact(forecast));
+    const basis = restorePortableHouseholdReplayArtifact(artifact);
+    const reference = referenceRun({ compiled: input, runContext });
+    const selected = reference.periods[1]!.period;
+    expect(replayHouseholdForecastWindow(basis, selected).periods).toEqual([reference.periods[1]]);
+    expect(basis.runMetadata).toEqual(forecast.runMetadata);
+    expect(basis.periods).toEqual(forecast.periods);
+    expect(artifact.encoded).not.toContain('"transactions"');
+    expect(artifact.encoded).not.toContain('"recognitions"');
+    expect(artifact.encoded).not.toContain('"settlements"');
+    expect(artifact.encoded).not.toContain('"effects"');
+    const model = createGoldenHouseholdDraft();
+    const golden = createGoldenHouseholdForecastRequest();
+    const read = runPersonalHouseholdForecast(model, { ...golden, compiler: { ...golden.compiler,
+      cashFlow: { ...golden.compiler.cashFlow!, simulationEnd: "2026-02-01", months: 1 },
+      investments: { ...golden.compiler.investments!, simulationEnd: "2026-02-01", months: 1 },
+      liabilities: { ...golden.compiler.liabilities!, simulationEnd: "2026-02-01", months: 1 },
+    } });
+    expect(read.status).toBe("completed");
+    if (read.status !== "completed") throw new Error("Expected a completed bounded Golden forecast");
+    const point = read.points[0]!;
+    expect(point.traceIds.some(id => id.startsWith("compiler:canonical:Income:"))).toBe(true);
+    expect(point.traceIds.some(id => id.endsWith(":salary-growth-assumption"))).toBe(true);
+    const transported = structuredClone(point.traceRefs);
+    expect(resolveHouseholdExplanation(model, transported)).toEqual(resolveHouseholdExplanation(model, point.traceRefs));
+    const missing = transported.map(({ replayArtifact: _artifact, ...ref }) => ref);
+    expect(() => resolveHouseholdExplanation(model, missing)).toThrow(/ARTIFACT_UNAVAILABLE/);
   });
 
   it("replays a bounded late window from a sparse shared checkpoint", () => {

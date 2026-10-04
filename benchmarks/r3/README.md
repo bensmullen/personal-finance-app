@@ -154,3 +154,15 @@ order, active removal and historical replay protection. Counters expose cold
 validation, append tree visits and historical entries copied. This supersedes the
 per-claim quadratic risk described for the previous intermediate implementation;
 timing and current-head CI evidence are still required.
+
+Worker explanation addresses now share one portable opening/configuration and
+compact-metrics artifact per forecast. Structured cloning preserves that shared
+basis; explicit explanation restores exact financial value types and checks the
+selected replay against its fingerprint and displayed metrics. Compiler source
+IDs and static assumption addresses remain available to existing navigation.
+This does not transport per-period financial warehouses. A portable explanation
+without private checkpoints warms from the opening basis; its latency remains
+unmeasured. JSON serialization of a read model can duplicate a shared artifact
+across addresses, whereas the production Worker uses structured cloning. That
+export boundary is not a forecast hot path and should not be used as a timing
+proxy for Worker transport.

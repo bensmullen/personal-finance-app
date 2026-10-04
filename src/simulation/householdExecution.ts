@@ -1112,7 +1112,7 @@ interface HouseholdReplayCheckpoint {
 // Checkpoints are private persistent roots, not serialized per-period snapshots.
 // Their audit trees share unchanged nodes with the execution stream. Transported
 // forecasts without these optional roots can still replay from the opening basis.
-const forecastCheckpoints = new WeakMap<HouseholdForecastSummaryResult, readonly HouseholdReplayCheckpoint[]>();
+const forecastCheckpoints = new WeakMap<object, readonly HouseholdReplayCheckpoint[]>();
 
 /** Direct summary evaluation. Financial operations are shared with the detailed adapter. */
 export const runHouseholdForecastSummary = (
@@ -1151,7 +1151,7 @@ export const runHouseholdForecastSummary = (
 
 /** Regenerate only the selected evidence warehouse from the immutable opening boundary. */
 export const replayHouseholdForecastWindow = (
-  forecast: HouseholdForecastSummaryResult,
+  forecast: Pick<HouseholdForecastSummaryResult, "periods" | "runMetadata" | "replay">,
   selectedWindow: Period,
   observer?: PerformanceObserver,
 ): CompiledHouseholdProjectionRunResult => {

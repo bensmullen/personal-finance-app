@@ -35,6 +35,7 @@ import {
 } from "../simulation/run.js";
 import type { CalculationTraceRef } from "../lineage/index.js";
 import { mergeTraceRefs, createReplayTraceAnchor, resolveReplayTraceAnchors } from "../lineage/index.js";
+import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../simulation/r3/replayArtifact.js";
 import { instant } from "../time/index.js";
 import { Currency, Money } from "../values/index.js";
 import {
@@ -346,7 +347,14 @@ export const resolveHouseholdExplanation = (
     HouseholdExplanationReadModel["sources"][number]
   >();
   const unresolved = new Set<string>();
-  const resolvedRefs = resolveReplayTraceAnchors(refs);
+  const resolvedRefs = resolveReplayTraceAnchors(refs, ref => {
+    const address = ref.replayArtifact as { readonly basis: unknown; readonly start: string; readonly end: string };
+    const basis = restorePortableHouseholdReplayArtifact(address.basis);
+    const replay = replayHouseholdForecastWindow(basis, { start: instant(address.start), end: instant(address.end) });
+    const identity = `household:replay:${basis.runMetadata.inputFingerprint}:${address.start}:${address.end}`;
+    if (identity !== ref.traceId) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: explanation address differs from its artifacts");
+    return replay.periods.flatMap(period => period.traceRefs);
+  });
   for (const ref of resolvedRefs) {
     for (const id of ref.assumptionIds ?? []) {
       const value = canonicalObject(
@@ -583,12 +591,15 @@ const toReadModel = (
   });
   const paid = new Set<string>();
   const debtPayoffs: { loanId: string; scheduledAt: string }[] = [];
+  const replayBasis = createPortableHouseholdReplayArtifact(result);
   const points = result.periods.map((period) => {
     const balances = period.debtBalances ?? [];
     const bindings = period.explanationBindings;
     const anchor = createReplayTraceAnchor(`${result.runMetadata.inputFingerprint}:${period.period.start}:${period.period.end}`,
       () => replayHouseholdForecastWindow(result, period.period).periods.flatMap(detail => detail.traceRefs),
-      bindings?.rules, bindings?.assumptions, bindings?.events);
+      bindings?.rules, bindings?.assumptions, bindings?.events,
+      Object.freeze({ basis: replayBasis, start: period.period.start, end: period.period.end }));
+    const navigationRefs = Object.freeze([...(bindings?.sources ?? []), anchor]);
     for (const item of balances) {
       const loanId = String(item.loanId);
       if (
@@ -641,9 +652,9 @@ const toReadModel = (
       ),
       liquidityShortfalls,
       traceIds: Object.freeze(
-        [anchor.traceId],
+        navigationRefs.map(ref => ref.traceId).sort(),
       ),
-      traceRefs: Object.freeze([anchor]),
+      traceRefs: navigationRefs,
     });
   });
   return Object.freeze({
