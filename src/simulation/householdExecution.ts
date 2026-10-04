@@ -1047,20 +1047,20 @@ export const runHouseholdForecastSummary = (
 /** Regenerate only the selected evidence warehouse from the immutable opening boundary. */
 export const replayHouseholdForecastWindow = (
   forecast: HouseholdForecastSummaryResult,
-  window: Period,
+  selectedWindow: Period,
   observer?: PerformanceObserver,
 ): CompiledHouseholdProjectionRunResult => {
   const { kernel, runContext } = forecast.replay;
-  const selected = forecast.periods.filter(period => period.period.start >= window.start && period.period.end <= window.end);
-  if (window.start >= window.end || selected.length === 0 ||
-      selected[0]!.period.start !== window.start || selected[selected.length - 1]!.period.end !== window.end)
+  const selected = forecast.periods.filter(period => period.period.start >= selectedWindow.start && period.period.end <= selectedWindow.end);
+  if (selectedWindow.start >= selectedWindow.end || selected.length === 0 ||
+      selected[0]!.period.start !== selectedWindow.start || selected[selected.length - 1]!.period.end !== selectedWindow.end)
     throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_WINDOW_INVALID",
       message: "Replay requires an aligned window of successfully committed forecast periods.", entityType: "household_projection" });
   const performance = createPerformanceSession(observer);
   try {
     const replay = runCompiledHouseholdProjectionInternal({
       compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
-    }, performance, { accept: () => {}, retain: period => period.start >= window.start && period.end <= window.end });
+    }, performance, { accept: () => {}, retain: period => period.start >= selectedWindow.start && period.end <= selectedWindow.end });
     if (canonicalSerialize(replay.runMetadata) !== canonicalSerialize(forecast.runMetadata) ||
         canonicalSerialize(replay.periods.map(summarizeHouseholdPeriod)) !== canonicalSerialize(selected))
       throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_BASIS_MISMATCH",
