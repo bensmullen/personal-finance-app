@@ -2,11 +2,12 @@ import type { DomainId } from "../identity/index.js";
 import type { CalculationTraceRef } from "../lineage/index.js";
 import type { Instant } from "../time/index.js";
 import type { Money, Ratio, RoundingPolicy } from "../values/index.js";
+import type { TaxCoreRule } from "./tax/contracts.js";
 
 export type FinancialRuleId = DomainId<"tax-rule">;
 export type RuleId = FinancialRuleId;
-export type RuleKind = "proportional_income_tax" | "annual_contribution_limit" | "product_operation_eligibility" | "fixed_fee";
-export type RuleTargetType = "person" | "household" | "account" | "liability";
+export type RuleKind = "proportional_income_tax" | "annual_contribution_limit" | "product_operation_eligibility" | "fixed_fee" | "tax_core";
+export type RuleTargetType = "person" | "household" | "account" | "liability" | "jurisdiction";
 
 export interface RuleTarget {
   readonly targetType: RuleTargetType;
@@ -58,7 +59,7 @@ export interface FixedFeeRule extends EffectiveDatedRule {
   readonly amount: Money;
 }
 
-export type FinancialRule = ProportionalIncomeTaxRule | AnnualContributionLimitRule | ProductOperationEligibilityRule | FixedFeeRule;
+export type FinancialRule = ProportionalIncomeTaxRule | AnnualContributionLimitRule | ProductOperationEligibilityRule | FixedFeeRule | TaxCoreRule;
 export type RuleCatalog = readonly FinancialRule[];
 
 export interface RuleApplication<Result> {
