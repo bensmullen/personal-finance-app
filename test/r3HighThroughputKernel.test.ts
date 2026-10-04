@@ -361,7 +361,17 @@ describe("R3 reusable deterministic household kernel", () => {
     const input = { ...integrated("120"), executionMonths: 2 };
     const runContext = context(2);
     const reference = referenceRun({ compiled: input, runContext });
-    const summary = runHouseholdForecastSummary({ kernel: compileHouseholdKernel(input, start), runContext });
+    const registry = new PerformanceRegistry(); let tick = 0;
+    const summary = runHouseholdKernel({ kernel: compileHouseholdKernel(input, start), runContext }, {
+      clock: { now: () => tick++ }, sink: registry,
+      context: { runId: "summary-structure", dataClassification: "synthetic", modelCounts: {}, executionLocation: "local_node", cacheState: "not_applicable" },
+    });
+    expect(summary.resultTier).toBe("summary");
+    const counters = registry.latest("engine.execute")!.resources!.structuralCounters!;
+    expect(counters.summaryOperationsExecuted).toBeGreaterThan(0);
+    expect(counters.detailedPeriodResultsMaterialized).toBe(0);
+    expect(counters.detailedObjectsRetainedBySummary).toBe(0);
+    expect(counters.summaryTraceUnionsMaterialized).toBe(0);
     expect(summary.status).toBe("completed");
     expect(summary.state).toEqual(reference.state);
     expect(summary.primitiveState).toEqual(reference.primitiveState);
@@ -397,7 +407,7 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(flows.investingCashFlow).toEqual(period.statements.investingCashFlow);
     expect(flows.financingCashFlow).toEqual(period.statements.financingCashFlow);
     expect(flows.gains).toEqual(period.statements.gains);
-    expect(Object.keys(accumulator).sort()).toEqual(["add", "snapshot"]);
+    expect(Object.keys(accumulator).sort()).toEqual(["add", "merge", "snapshot"]);
   });
 
   it("replays a bounded late window from a sparse shared checkpoint", () => {
@@ -520,7 +530,12 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(overlay.horizon).toBe(kernel.horizon);
     expect(overlay.cash!.schedules[0]).toBe(kernel.cash!.schedules[0]);
     const overlaid = runHouseholdKernel({ kernel: overlay, runContext: context() });
-    expect(overlaid).toEqual(referenceRun({ compiled: overlay.executable, runContext: context() }));
+    const overlayReference = referenceRun({ compiled: overlay.executable, runContext: context() });
+    expect(overlaid.periods).toEqual(overlayReference.periods.map(summarizeHouseholdPeriod));
+    expect(overlaid.state).toEqual(overlayReference.state);
+    expect(overlaid.primitiveState).toEqual(overlayReference.primitiveState);
+    expect(overlaid.runMetadata).toEqual(overlayReference.runMetadata);
+    expect(runHouseholdKernel({ kernel: overlay, runContext: context(), resultTier: "detail" })).toEqual(overlayReference);
     expect(overlaid.runMetadata.inputFingerprint).not.toBe(first.runMetadata.inputFingerprint);
     expect(canonicalSerialize(kernel.canonicalInputs)).toBe(original);
     expect(runHouseholdKernel({ kernel, runContext: context() })).toEqual(first);
@@ -542,7 +557,7 @@ describe("R3 reusable deterministic household kernel", () => {
       accounts: { [ids.cash]: { ...input.reconciledOpeningState.accounts[ids.cash]!, cash: money("0") } } });
     const changed = applyHouseholdExecutionOverlay(kernel, { reconciledOpeningState: changedOpening });
     expect(changed.cash).toBe(kernel.cash);
-    expect(runHouseholdKernel({ kernel: changed, runContext: context() }))
+    expect(runHouseholdKernel({ kernel: changed, runContext: context(), resultTier: "detail" }))
       .toEqual(referenceRun({ compiled: changed.executable, runContext: context() }));
   });
 

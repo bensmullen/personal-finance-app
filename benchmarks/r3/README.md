@@ -125,3 +125,17 @@ entirely in the first source regardless of income order. Bounded coverage includ
 zero and nonzero nominal rates; insufficient margins still use exact search.
 Common-path analytical coverage and heavy fixture evidence
 remain required before R3 closeout.
+
+The summary-first closeout replaces the prior retention filter. Built-in atomic
+evaluators now stream posted accounting into compact flows and release audit
+objects; summary mode skips slice and household period warehouses and full
+period trace unions. Both ordinary application forecasts/comparisons and the
+reusable-kernel capture default to this path. Compact debt balances preserve
+payoff transitions. Explanation addresses reconstruct an aligned period through
+the existing checkpoint replay, using original artifacts; transported addresses
+without those artifacts fail explicitly. Compiler source bindings and applied
+rule/assumption/event IDs are compact navigation metadata from actual execution,
+not synthetic financial lineage. Detailed compatibility remains explicit.
+These changes still require CI equivalence and fresh heavy evidence. Long-lived
+claim settlement-history work remains the next code closeout; the operation-count
+risks above and exact-search worst cases remain unmeasured.

@@ -115,6 +115,10 @@ describe("performance instrumentation", () => {
     let tick = 0;
     const registry = new PerformanceRegistry();
     const observed = runPersonalHouseholdForecast(fixture.model, request, createApplicationPerformanceObserver({ now: () => ++tick }, context, registry));
+    const structural = registry.latest("engine.execute")!.resources!.structuralCounters!;
+    expect(structural.summaryOperationsExecuted).toBeGreaterThan(0);
+    expect(structural.detailedPeriodResultsMaterialized).toBe(0);
+    expect(structural.detailedObjectsRetainedBySummary).toBe(0);
     expect(observed).toEqual(baseline);
     expect(registry.summary("forecast.total")?.count).toBe(1);
     // R3 reuses fingerprint preparation for execution of this one-month fixture.

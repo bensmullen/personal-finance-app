@@ -1,3 +1,4 @@
+import type { SummaryOperationSink } from "./r3/summarySink.js";
 import {
   accountingTransactionId,
   createAccountingLeg,
@@ -972,6 +973,7 @@ export const prepareVerticalSlice3Period = (
   period: Period,
   currentState: AuthoritativeState,
   currentPrimitiveState: PrimitiveRuntimeStateStore = {},
+  summary?: SummaryOperationSink,
 ): PreparedVerticalSlice3Period => {
   const scopedContext = Object.freeze({
     ...runContext,
@@ -1238,6 +1240,7 @@ export const prepareVerticalSlice3Period = (
         }),
       };
     });
+  if (summary !== undefined) for (const output of [...p23.primitiveOutputs, ...p26.primitiveOutputs]) summary.traces(output.traceRefs ?? []);
   return Object.freeze({
     period: Object.freeze({ ...period }),
     state: p26.closingState,
@@ -1249,7 +1252,7 @@ export const prepareVerticalSlice3Period = (
       ),
     ),
     operations: Object.freeze([...preparedValuations, ...operationsPrepared]),
-    traceRefs:
+    traceRefs: summary !== undefined ? Object.freeze([]) :
       mergeTraceRefs(
         p23.primitiveOutputs.flatMap((output) => output.traceRefs ?? []),
         p26.primitiveOutputs.flatMap((output) => output.traceRefs ?? []),
@@ -1265,6 +1268,7 @@ export const executePreparedVerticalSlice3Operation = (
   primitiveState: PrimitiveRuntimeStateStore,
   input: VerticalSlice3Input,
   runContext: RunContext,
+  summary?: SummaryOperationSink,
 ): ExecutedVerticalSlice3Operation => {
   if (operation.kind === "valuation") {
     const before = positionMarketValue(
@@ -1298,12 +1302,13 @@ export const executePreparedVerticalSlice3Operation = (
       description: "Economic-only non-cash mark-to-market",
       traceRefs: traceRefs(operation.returnConfiguration, prepared.period),
     });
+    summary?.traces(effect.traceRefs ?? []);
     // P23/P26 were evaluated while preparing this end-of-period valuation.
     // Their runtime becomes authoritative only when the valuation executes.
     return Object.freeze({
       state: next,
       primitiveState: updatePrimitiveRuntimeStateStore(primitiveState, operation.primitiveTransition),
-      effects: Object.freeze([effect]),
+      effects: summary === undefined ? Object.freeze([effect]) : Object.freeze([]),
       transactions: Object.freeze([]),
       contributionPrincipal: Money.zero(input.baseCurrency),
       fees: Money.zero(input.baseCurrency),
@@ -1342,7 +1347,7 @@ export const executePreparedVerticalSlice3Operation = (
     openingState: state,
     primitiveState,
     work: generatedWork.work,
-  });
+  }, summary);
   return Object.freeze({
     state: result.closingState,
     primitiveState: result.primitiveState,

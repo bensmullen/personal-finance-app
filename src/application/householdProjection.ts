@@ -21,8 +21,10 @@ import {
   type ScenarioConfigurationDifference,
 } from "../simulation/scenario.js";
 import {
-  runCompiledHouseholdProjection,
-  type CompiledHouseholdProjectionRunResult,
+  runHouseholdForecastSummary,
+  replayHouseholdForecastWindow,
+  compileHouseholdKernel,
+  type HouseholdForecastSummaryResult,
   type ExecutableHouseholdProjection,
 } from "../simulation/householdExecution.js";
 import {
@@ -32,7 +34,7 @@ import {
   scenarioId,
 } from "../simulation/run.js";
 import type { CalculationTraceRef } from "../lineage/index.js";
-import { mergeTraceRefs } from "../lineage/index.js";
+import { mergeTraceRefs, createReplayTraceAnchor, resolveReplayTraceAnchors } from "../lineage/index.js";
 import { instant } from "../time/index.js";
 import { Currency, Money } from "../values/index.js";
 import {
@@ -344,7 +346,8 @@ export const resolveHouseholdExplanation = (
     HouseholdExplanationReadModel["sources"][number]
   >();
   const unresolved = new Set<string>();
-  for (const ref of refs) {
+  const resolvedRefs = resolveReplayTraceAnchors(refs);
+  for (const ref of resolvedRefs) {
     for (const id of ref.assumptionIds ?? []) {
       const value = canonicalObject(
         model,
@@ -427,7 +430,7 @@ export const resolveHouseholdExplanation = (
       ),
     );
   return Object.freeze({
-    traceRefs: Object.freeze([...refs]),
+    traceRefs: Object.freeze([...resolvedRefs]),
     sources: ordered(sources.values(), "traceId"),
     assumptions: ordered(assumptions.values(), "assumptionId"),
     events: ordered(events.values(), "eventId"),
@@ -526,7 +529,7 @@ const scenarioChangesDomain = (resolved: ResolvedScenario, kinds: ReadonlySet<st
   resolved.layers.some(layer => layer.changes.some(change => kinds.has(change.kind)));
 
 const toReadModel = (
-  result: CompiledHouseholdProjectionRunResult,
+  result: HouseholdForecastSummaryResult,
   compiled: CompiledHouseholdProjection,
   model: PortableModelEnvelope,
   currency: Money["currency"],
@@ -581,7 +584,11 @@ const toReadModel = (
   const paid = new Set<string>();
   const debtPayoffs: { loanId: string; scheduledAt: string }[] = [];
   const points = result.periods.map((period) => {
-    const balances = period.liability?.liabilities ?? [];
+    const balances = period.debtBalances ?? [];
+    const bindings = period.explanationBindings;
+    const anchor = createReplayTraceAnchor(`${result.runMetadata.inputFingerprint}:${period.period.start}:${period.period.end}`,
+      () => replayHouseholdForecastWindow(result, period.period).periods.flatMap(detail => detail.traceRefs),
+      bindings?.rules, bindings?.assumptions, bindings?.events);
     for (const item of balances) {
       const loanId = String(item.loanId);
       if (
@@ -608,7 +615,7 @@ const toReadModel = (
       totalLiabilities: moneyDto(period.liabilities),
       netWorth: moneyDto(period.netWorth),
       debtPrincipalReduction: moneyDto(
-        period.liability?.principalReduction ?? Money.zero(currency),
+        period.principalReduction ?? Money.zero(currency),
       ),
       statementIncome: moneyDto(period.statements.income),
       statementExpenses: moneyDto(period.statements.expenses),
@@ -617,11 +624,11 @@ const toReadModel = (
       investingCashFlow: moneyDto(period.statements.investingCashFlow),
       financingCashFlow: moneyDto(period.statements.financingCashFlow),
       investmentContributionPrincipal: moneyDto(
-        period.investments?.contributionPrincipal ?? Money.zero(currency),
+        period.contributionPrincipal ?? Money.zero(currency),
       ),
-      fees: moneyDto(period.investments?.fees ?? Money.zero(currency)),
+      fees: moneyDto(period.investmentFees ?? Money.zero(currency)),
       unrealizedGain: moneyDto(
-        period.investments?.unrealizedGain ?? Money.zero(currency),
+        period.unrealizedGain ?? Money.zero(currency),
       ),
       debtBalances: Object.freeze(
         balances.map((item) =>
@@ -634,9 +641,9 @@ const toReadModel = (
       ),
       liquidityShortfalls,
       traceIds: Object.freeze(
-        period.traceRefs.map((ref) => ref.traceId).sort(),
+        [anchor.traceId],
       ),
-      traceRefs: Object.freeze([...period.traceRefs]),
+      traceRefs: Object.freeze([anchor]),
     });
   });
   return Object.freeze({
@@ -688,7 +695,7 @@ const toReadModel = (
 interface ExecutedHousehold {
   readonly compiled: CompiledHouseholdProjection;
   readonly executable: ExecutableHouseholdProjection;
-  readonly result: CompiledHouseholdProjectionRunResult;
+  readonly result: HouseholdForecastSummaryResult;
   readonly read: Extract<
     PersonalHouseholdForecastReadModel,
     { status: "completed" | "incomplete" }
@@ -704,7 +711,7 @@ const executeInternal = (
 ): {
   readonly compiled?: CompiledHouseholdProjection;
   readonly executable?: ExecutableHouseholdProjection;
-  readonly result?: CompiledHouseholdProjectionRunResult;
+  readonly result?: HouseholdForecastSummaryResult;
   readonly read: PersonalHouseholdForecastReadModel;
   readonly context?: ReturnType<typeof createRunContext>;
 } => {
@@ -829,10 +836,10 @@ const executeInternal = (
       scenarioId: scenarioId(executable.scenarioIdentity),
       ...template,
     });
-    const result = runCompiledHouseholdProjection({
-      runContext: context,
-      compiled: executable,
-    }, observer);
+    const kernel = executable.executionKernel === undefined
+      ? compileHouseholdKernel(executable, context.simulationStart)
+      : executable.executionKernel;
+    const result = runHouseholdForecastSummary({ kernel, overlay: executable, runContext: context }, observer);
     return {
       compiled,
       executable,
@@ -1202,7 +1209,7 @@ const compareHouseholds = (
         // A trace id identifies one calculation source, not one side of a
         // comparison.  Preserve metadata carried by both executions.
         const refs =
-          mergeTraceRefs(left.traceRefs, right.traceRefs) ?? Object.freeze([]);
+          mergeTraceRefs(left.explanationBindings?.sources, right.explanationBindings?.sources, basePoint.traceRefs, alternativePoint.traceRefs) ?? Object.freeze([]);
         return Object.freeze({
           periodStart: left.period.start,
           periodEnd: left.period.end,
@@ -1214,7 +1221,7 @@ const compareHouseholds = (
             refs,
             Object.values(deltas).some((delta) => delta.amount !== "0"),
           ),
-          traceRefs: refs,
+          traceRefs: Object.freeze([...basePoint.traceRefs, ...alternativePoint.traceRefs]),
         });
       });
       if (
@@ -1226,14 +1233,14 @@ const compareHouseholds = (
       const baselineRules = [
         ...new Set(
           baseline.result.periods.flatMap((period) =>
-            period.traceRefs.flatMap((ref) => ref.ruleIds ?? []),
+            period.explanationBindings?.rules ?? [],
           ),
         ),
       ].sort();
       const alternativeRules = [
         ...new Set(
           alternative.result.periods.flatMap((period) =>
-            period.traceRefs.flatMap((ref) => ref.ruleIds ?? []),
+            period.explanationBindings?.rules ?? [],
           ),
         ),
       ].sort();

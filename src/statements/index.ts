@@ -40,6 +40,12 @@ export const createStatementFlowAccumulator = (currency: Currency) => {
     snapshot(): StatementFlows {
       return Object.freeze({ income, expenses, gains, operatingCashFlow, investingCashFlow, financingCashFlow });
     },
+    merge(flows: StatementFlows): void {
+      income = income.plus(flows.income); expenses = expenses.plus(flows.expenses); gains = gains.plus(flows.gains);
+      operatingCashFlow = operatingCashFlow.plus(flows.operatingCashFlow);
+      investingCashFlow = investingCashFlow.plus(flows.investingCashFlow);
+      financingCashFlow = financingCashFlow.plus(flows.financingCashFlow);
+    },
   };
 };
 

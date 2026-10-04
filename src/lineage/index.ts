@@ -60,3 +60,24 @@ export const mergeTraceRefs = (
 export const freezeTraceRefs = (
   refs: readonly CalculationTraceRef[] | undefined,
 ): readonly CalculationTraceRef[] | undefined => refs === undefined ? undefined : (mergeTraceRefs(refs) ?? Object.freeze([]));
+
+const replayAnchors = new WeakMap<CalculationTraceRef, () => readonly CalculationTraceRef[]>();
+
+/** A replay address, not a synthesized financial calculation trace. */
+export const createReplayTraceAnchor = (identity: string, replay: () => readonly CalculationTraceRef[],
+  rules?: CalculationTraceRef["ruleIds"], assumptions?: CalculationTraceRef["assumptionIds"], events?: CalculationTraceRef["eventIds"]): CalculationTraceRef => {
+  const anchor = calculationTraceRef(calculationTraceId(`household:replay:${identity}`), rules, assumptions, events);
+  replayAnchors.set(anchor, replay);
+  return anchor;
+};
+
+/** Materialize authoritative detail only for an explicit explanation request. */
+export const resolveReplayTraceAnchors = (refs: readonly CalculationTraceRef[]): readonly CalculationTraceRef[] => {
+  const groups = refs.map(ref => {
+    if (!String(ref.traceId).startsWith("household:replay:")) return [ref];
+    const replay = replayAnchors.get(ref);
+    if (replay === undefined) throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNAVAILABLE: explanation requires its original forecast artifacts");
+    return replay();
+  });
+  return mergeTraceRefs(...groups) ?? Object.freeze([]);
+};

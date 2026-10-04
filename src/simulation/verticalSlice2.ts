@@ -1,3 +1,4 @@
+import { evidenceBuffer, type SummaryOperationSink } from "./r3/summarySink.js";
 import {
   accountingTransactionId,
   createAccountingLeg,
@@ -523,6 +524,7 @@ export const prepareVerticalSlice2Period = (
   period: Period,
   currentState: AuthoritativeState,
   currentPrimitiveState: PrimitiveRuntimeStateStore,
+  summary?: SummaryOperationSink,
 ): PreparedVerticalSlice2Period => {
   const request: VerticalSlice2RunInput = { runContext, openingState: currentState, input, months: 1, primitiveState: currentPrimitiveState };
   validateInput(request, [period], true);
@@ -540,7 +542,9 @@ export const prepareVerticalSlice2Period = (
   }
   const ordered = withLocalOrdering(input, occurrences);
   const eventPrimitiveTransition = createPrimitiveRuntimeStateStore(Object.fromEntries(eventResult.primitiveOutputs.filter((output) => output.primitiveId === "P27" || output.primitiveId === "P30").map((output) => [output.primitiveInstanceId, eventResult.primitiveState[output.primitiveInstanceId]!])));
-  return Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), eventPrimitiveTransition, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
+  if (summary !== undefined) for (const output of eventResult.primitiveOutputs)
+    if (output.effects.length > 0) summary.traces(output.traceRefs ?? []);
+  return Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), eventPrimitiveTransition, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: summary !== undefined ? Object.freeze([]) : mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
 };
 
 /**
@@ -549,14 +553,19 @@ export const prepareVerticalSlice2Period = (
  * executor, so recognition, obligations, funding, settlement, accounting,
  * effects, identities, and traces remain implemented exactly once.
  */
-export const executePreparedVerticalSlice2Occurrence = (
+type CashCandidate = { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore };
+export type CashOperationSummary = Pick<VerticalSlice2PeriodResult, "recurringIncomeRecognized" | "recurringExpenseRecognized" | "expenseCashSettlement" | "outstandingExpenseObligations" | "constraintOutcomes" | "liquidityShortfalls" | "diagnostics">;
+export function executePreparedVerticalSlice2Occurrence(prepared: PreparedVerticalSlice2Period, occurrence: PreparedVerticalSlice2Occurrence, state: AuthoritativeState, primitiveState: PrimitiveRuntimeStateStore, input: VerticalSlice2Input, runContext: RunContext): CashCandidate & { readonly period: VerticalSlice2PeriodResult };
+export function executePreparedVerticalSlice2Occurrence(prepared: PreparedVerticalSlice2Period, occurrence: PreparedVerticalSlice2Occurrence, state: AuthoritativeState, primitiveState: PrimitiveRuntimeStateStore, input: VerticalSlice2Input, runContext: RunContext, summary: SummaryOperationSink): CashCandidate & { readonly summary: CashOperationSummary };
+export function executePreparedVerticalSlice2Occurrence(
   prepared: PreparedVerticalSlice2Period,
   occurrence: PreparedVerticalSlice2Occurrence,
   state: AuthoritativeState,
   primitiveState: PrimitiveRuntimeStateStore,
   input: VerticalSlice2Input,
   runContext: RunContext,
-): { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly period: VerticalSlice2PeriodResult } => {
+  summary?: SummaryOperationSink,
+): CashCandidate & { readonly period?: VerticalSlice2PeriodResult; readonly summary?: CashOperationSummary } {
   const income = input.incomes.find((stream) => stream.id === occurrence.streamId);
   const expense = input.expenses.find((stream) => stream.id === occurrence.streamId);
   if (income === undefined && expense === undefined) invalidInput(`Prepared VS2 occurrence ${occurrence.streamId} is not present in the fingerprinted input`, "input");
@@ -576,10 +585,13 @@ export const executePreparedVerticalSlice2Occurrence = (
   const filtered = income === undefined
     ? { ...inputWithoutMixedOrder, incomes: Object.freeze([]), expenses: Object.freeze([executableStream as RecurringExpenseStream]), events: Object.freeze([]) }
     : { ...inputWithoutMixedOrder, incomes: Object.freeze([executableStream as RecurringIncomeStream]), expenses: Object.freeze([]), events: Object.freeze([]) };
-  return executeCashFlowPeriodCandidate({ runContext, openingState: state, primitiveState, input: filtered }, prepared.period, {
+  const events = {
     closingState: state, primitiveState, effects: [], transactions: [], diagnostics: [], primitiveOutputs: [],
-  });
-};
+  };
+  const request = { runContext, openingState: state, primitiveState, input: filtered };
+  return summary === undefined ? executeCashFlowPeriodCandidate(request, prepared.period, events)
+    : executeCashFlowPeriodCandidate(request, prepared.period, events, summary);
+}
 
 const outstandingExpenses = (state: AuthoritativeState, currency: Currency): Money => sumMoney(
   activeAuthoritativeClaims(state, "expense_payable").map((claim) => claim.outstandingAmount),
@@ -592,27 +604,30 @@ interface VerticalSlice2InternalRunInput extends VerticalSlice2RunInput {
 }
 
 /** Shared financial evaluator; a prepared occurrence passes no event work or run wrapper. */
-const executeCashFlowPeriodCandidate = (
+function executeCashFlowPeriodCandidate(request: VerticalSlice2RunInput, targetPeriod: Period, eventResult: PeriodWorkCandidate): CashCandidate & { readonly period: VerticalSlice2PeriodResult };
+function executeCashFlowPeriodCandidate(request: VerticalSlice2RunInput, targetPeriod: Period, eventResult: PeriodWorkCandidate, summary: SummaryOperationSink): CashCandidate & { readonly summary: CashOperationSummary };
+function executeCashFlowPeriodCandidate(
   request: VerticalSlice2RunInput,
   targetPeriod: Period,
   eventResult: PeriodWorkCandidate,
-): { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly period: VerticalSlice2PeriodResult } => {
+  summary?: SummaryOperationSink,
+): CashCandidate & { readonly period?: VerticalSlice2PeriodResult; readonly summary?: CashOperationSummary } {
       const state = cloneAuthoritativeState(eventResult.closingState);
-      const recognitions: RecognitionFact[] = [];
-      const proposals: SettlementProposal[] = [];
-      const settlements: Settlement[] = [];
-      const effects: SemanticEffect[] = [];
-      const transactions: AccountingTransaction[] = [];
+      const recognitions = evidenceBuffer<RecognitionFact>(summary);
+      const proposals = evidenceBuffer<SettlementProposal>(summary);
+      const settlements = evidenceBuffer<Settlement>(summary);
+      const effects = evidenceBuffer<SemanticEffect>(summary, value => summary?.traces(value.traceRefs ?? []));
+      const transactions = evidenceBuffer<AccountingTransaction>(summary, value => summary?.transaction(value));
       const outcomes: ConstraintOutcome[] = [];
       const shortfalls: LiquidityShortfall[] = [];
       const diagnostics: ValidationIssue[] = [...eventResult.diagnostics];
-      const incomeOccurrences: ProjectedCashFlowOccurrence[] = [];
-      const expenseOccurrences: ProjectedCashFlowOccurrence[] = [];
+      const incomeOccurrences = evidenceBuffer<ProjectedCashFlowOccurrence>(summary);
+      const expenseOccurrences = evidenceBuffer<ProjectedCashFlowOccurrence>(summary);
       const eventOutputs = new Map(eventResult.primitiveOutputs.map((output) => [output.workId, output.output]));
       // A trace for an evaluated no-op event is not causal lineage.
-      const periodTraces: CalculationTraceRef[] = eventResult.primitiveOutputs
+      const periodTraces: CalculationTraceRef[] = summary === undefined ? eventResult.primitiveOutputs
         .filter((output) => output.effects.length > 0)
-        .flatMap((output) => [...(output.traceRefs ?? [])]);
+        .flatMap((output) => [...(output.traceRefs ?? [])]) : evidenceBuffer<CalculationTraceRef>(summary, ref => summary.traces([ref]));
       let recognizedIncome = Money.zero(request.input.baseCurrency);
       let recognizedExpense = Money.zero(request.input.baseCurrency);
       let expenseSettlement = Money.zero(request.input.baseCurrency);
@@ -730,6 +745,10 @@ const executeCashFlowPeriodCandidate = (
         || left.id.localeCompare(right.id));
       for (const action of actions) action.execute();
 
+      if (summary !== undefined) return Object.freeze({ state, primitiveState: eventResult.primitiveState,
+        summary: Object.freeze({ recurringIncomeRecognized: recognizedIncome, recurringExpenseRecognized: recognizedExpense,
+          expenseCashSettlement: expenseSettlement, outstandingExpenseObligations: outstandingExpenses(state, request.input.baseCurrency),
+          constraintOutcomes: Object.freeze(outcomes), liquidityShortfalls: Object.freeze(shortfalls), diagnostics: Object.freeze(diagnostics) }) });
       const periodResult: VerticalSlice2PeriodResult = Object.freeze({
         period: Object.freeze({ ...targetPeriod }),
         recurringIncomeRecognized: recognizedIncome,
@@ -750,7 +769,7 @@ const executeCashFlowPeriodCandidate = (
         traceRefs: mergeTraceRefs(periodTraces)!,
       });
       return Object.freeze({ state, primitiveState: eventResult.primitiveState, period: periodResult });
-};
+}
 
 const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): VerticalSlice2RunResult => {
   const months = request.months ?? 360;

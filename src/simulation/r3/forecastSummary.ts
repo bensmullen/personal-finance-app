@@ -2,6 +2,8 @@ import type { Money } from "../../values/index.js";
 import type { Statements } from "../../statements/index.js";
 import type { HouseholdProjectionPeriodResult } from "../householdExecution.js";
 import type { Period } from "../../time/index.js";
+import type { CompactLoanBalance } from "../verticalSlice4.js";
+import { SummaryOperationSink, type SummaryAccountingEvidence } from "./summarySink.js";
 
 /** Display metrics and capability outcomes, with no transaction or lineage warehouse. */
 export interface HouseholdForecastSummaryPeriod {
@@ -25,10 +27,15 @@ export interface HouseholdForecastSummaryPeriod {
   readonly principalReduction?: Money;
   readonly endingPrincipal?: Money;
   readonly outstandingInterest?: Money;
+  readonly debtBalances?: readonly CompactLoanBalance[];
+  readonly explanationBindings?: Omit<SummaryAccountingEvidence, "flows" | "witnesses">;
 }
 
-export const summarizeHouseholdPeriod = (result: HouseholdProjectionPeriodResult): HouseholdForecastSummaryPeriod =>
-  Object.freeze({
+export const summarizeHouseholdPeriod = (result: HouseholdProjectionPeriodResult): HouseholdForecastSummaryPeriod => {
+  const sink = new SummaryOperationSink(result.cash.currency);
+  sink.traces(result.traceRefs);
+  const { sources, rules, assumptions, events } = sink.snapshot();
+  return Object.freeze({
     period: result.period,
     statements: result.statements,
     cash: result.cash,
@@ -38,6 +45,7 @@ export const summarizeHouseholdPeriod = (result: HouseholdProjectionPeriodResult
     netWorth: result.netWorth,
     constraintOutcomes: result.constraintOutcomes,
     liquidityShortfalls: result.liquidityShortfalls,
+    explanationBindings: Object.freeze({ sources, rules, assumptions, events }),
     ...(result.cashFlow === undefined ? {} : {
       recurringIncomeRecognized: result.cashFlow.recurringIncomeRecognized,
       recurringExpenseRecognized: result.cashFlow.recurringExpenseRecognized,
@@ -54,5 +62,8 @@ export const summarizeHouseholdPeriod = (result: HouseholdProjectionPeriodResult
       principalReduction: result.liability.principalReduction,
       endingPrincipal: result.liability.endingPrincipal,
       outstandingInterest: result.liability.outstandingInterest,
+      debtBalances: Object.freeze(result.liability.liabilities.map(({ loanId, scheduledAt, openingPrincipal, endingPrincipal, outstandingInterest, scheduledFundingStatus }) =>
+        Object.freeze({ loanId, scheduledAt, openingPrincipal, endingPrincipal, outstandingInterest, scheduledFundingStatus }))),
     }),
   });
+};

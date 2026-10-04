@@ -1,4 +1,7 @@
 import { mergeTraceRefs } from "../../lineage/index.js";
+import { SummaryOperationSink, type SummaryAccountingEvidence } from "./summarySink.js";
+import type { CashOperationSummary } from "../verticalSlice2.js";
+import type { DebtOperationSummary } from "../verticalSlice4.js";
 import type { HouseholdInvestmentPeriodSummary, ExecutableHouseholdProjection } from "../householdExecution.js";
 import type { VerticalSlice2PeriodResult, PreparedVerticalSlice2Period } from "../verticalSlice2.js";
 import { executePreparedVerticalSlice2Occurrence } from "../verticalSlice2.js";
@@ -19,6 +22,7 @@ export type InvestmentOperationFacts = Pick<HouseholdInvestmentPeriodSummary,
 
 /** Existing summaries remain intact. New domains contribute common audit/accounting facts. */
 export interface HouseholdOperationFacts {
+  readonly summary?: HouseholdSummaryOperationFacts;
   readonly cash?: VerticalSlice2PeriodResult;
   readonly investment?: InvestmentOperationFacts;
   readonly liability?: VerticalSlice4PeriodResult;
@@ -27,6 +31,13 @@ export interface HouseholdOperationFacts {
   readonly liquidityShortfalls?: readonly LiquidityShortfall[];
   readonly diagnostics?: readonly ValidationIssue[];
   readonly traceRefs?: readonly CalculationTraceRef[];
+}
+
+export interface HouseholdSummaryOperationFacts {
+  readonly evidence: SummaryAccountingEvidence;
+  readonly cash?: CashOperationSummary;
+  readonly investment?: Pick<InvestmentOperationFacts, "contributionPrincipal" | "fees" | "unrealizedGain">;
+  readonly debt?: DebtOperationSummary;
 }
 
 export interface PreparedHouseholdDomains {
@@ -39,6 +50,7 @@ export interface PreparedHouseholdDomains {
 export const householdDomainParticipants = (
   prepared: PreparedHouseholdDomains, input: ExecutableHouseholdProjection, context: RunContext,
   kernel: CompiledHouseholdKernel,
+  tier: "summary" | "detail" = "detail",
 ): readonly PreparedOperationParticipant<HouseholdOperationFacts>[] => {
   const required = new Map<string, string>();
   for (const operation of prepared.liabilities?.operations ?? [])
@@ -57,6 +69,12 @@ export const householdDomainParticipants = (
           account: income.depositAccountId, primitiveIds: Object.values(income.primitiveIds).filter((id): id is NonNullable<typeof id> => id !== undefined) };
       },
       execute: (opening: OperationState) => {
+        if (tier === "summary") {
+          const sink = new SummaryOperationSink(context.baseCurrency);
+          const result = executePreparedVerticalSlice2Occurrence(prepared.cash!, occurrence, opening.state, opening.primitiveState,
+            kernel.cash?.occurrenceInput(occurrence.streamId) ?? input.cashFlowInput!, context, sink);
+          return { state: result.state, primitiveState: result.primitiveState, facts: { summary: { evidence: sink.snapshot(), cash: result.summary } } };
+        }
         const result = executePreparedVerticalSlice2Occurrence(prepared.cash!, occurrence,
           opening.state, opening.primitiveState,
           kernel.cash?.occurrenceInput(occurrence.streamId) ?? input.cashFlowInput!, context);
@@ -71,6 +89,14 @@ export const householdDomainParticipants = (
         primitiveIds: [operation.operation.schedulePrimitiveId],
       } : undefined,
       execute: (opening: OperationState) => {
+        if (tier === "summary") {
+          const sink = new SummaryOperationSink(context.baseCurrency);
+          const result = executePreparedVerticalSlice3Operation(prepared.investments!, operation,
+            opening.state, opening.primitiveState, input.investmentInput!, context, sink);
+          return { state: result.state, primitiveState: result.primitiveState, facts: { summary: { evidence: sink.snapshot(), investment: {
+            contributionPrincipal: result.contributionPrincipal, fees: result.fees, unrealizedGain: result.unrealizedGain,
+          } } } };
+        }
         const result = executePreparedVerticalSlice3Operation(prepared.investments!, operation,
           opening.state, opening.primitiveState, input.investmentInput!, context);
         return { state: result.state, primitiveState: result.primitiveState, facts: { investment: Object.freeze({
@@ -95,6 +121,17 @@ export const householdDomainParticipants = (
           const service = required.get(JSON.stringify([operation.loan.id, operation.scheduledAt]));
           if (service !== undefined && statuses.get(service) !== "fully_satisfied")
             return { ...opening, facts: {} };
+        }
+        if (tier === "summary") {
+          const sink = new SummaryOperationSink(context.baseCurrency);
+          const result = executePreparedVerticalSlice4Operation(prepared.liabilities!, operation,
+            opening.state, opening.primitiveState, input.liabilityInput!, context, sink);
+          if (operation.kind === "required_service" && result.summary !== undefined) {
+            const balance = result.summary.balances[0];
+            if (balance !== undefined) statuses.set(operation.descriptor.id, balance.scheduledFundingStatus);
+            return { state: result.state, primitiveState: result.primitiveState, facts: { summary: { evidence: sink.snapshot(), debt: result.summary } } };
+          }
+          return { state: result.state, primitiveState: result.primitiveState, facts: {} };
         }
         const result = executePreparedVerticalSlice4Operation(prepared.liabilities!, operation,
           opening.state, opening.primitiveState, input.liabilityInput!, context);

@@ -2,6 +2,8 @@ import { compileHouseholdKernel, applyHouseholdExecutionOverlay, canonicalDescri
 import { indexPreparedOperations, type OperationState, type PreparedOperationParticipant } from "./r3/operations.js";
 import { householdDomainParticipants, type HouseholdOperationFacts } from "./r3/domainOperations.js";
 import { summarizeHouseholdPeriod, type HouseholdForecastSummaryPeriod } from "./r3/forecastSummary.js";
+import { createHouseholdSummaryPeriod } from "./r3/summaryPeriod.js";
+import { SummaryOperationSink, type SummaryAccountingEvidence } from "./r3/summarySink.js";
 import { firstDependencyOrder, indexReachability, indexSequencingInstants } from "./r3/ordering.js";
 import { compareReachableStates, createReachableStateCounters } from "./r3/reachableStates.js";
 import { fundingPoolConservationProof, guaranteedFundingIncomeProof } from "./r3/commutativity.js";
@@ -155,17 +157,24 @@ export interface HouseholdKernelParticipant {
 }
 
 /** Explicit reusable boundary for repeated deterministic evaluations. */
-export const runHouseholdKernel = (
-  request: { readonly kernel: CompiledHouseholdKernel; readonly overlay?: HouseholdExecutionOverlay;
-    readonly runContext: RunContext; readonly participants?: readonly HouseholdKernelParticipant[] },
+interface HouseholdKernelRunInput {
+  readonly kernel: CompiledHouseholdKernel; readonly overlay?: HouseholdExecutionOverlay;
+  readonly runContext: RunContext; readonly participants?: readonly HouseholdKernelParticipant[];
+}
+export function runHouseholdKernel(request: HouseholdKernelRunInput & { readonly resultTier: "detail" }, observer?: PerformanceObserver): CompiledHouseholdProjectionRunResult;
+export function runHouseholdKernel(request: HouseholdKernelRunInput, observer?: PerformanceObserver): HouseholdForecastSummaryResult;
+export function runHouseholdKernel(
+  request: HouseholdKernelRunInput & { readonly resultTier?: "detail" },
   observer?: PerformanceObserver,
-): CompiledHouseholdProjectionRunResult => {
+): CompiledHouseholdProjectionRunResult | HouseholdForecastSummaryResult {
   const kernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
+  if (request.resultTier !== "detail") return runHouseholdForecastSummary({ kernel, runContext: request.runContext,
+    ...(request.participants === undefined ? {} : { participants: request.participants }) }, observer);
   return runCompiledHouseholdProjection({
     runContext: request.runContext, compiled: { ...kernel.executable, executionKernel: kernel },
     ...(request.participants === undefined ? {} : { participants: request.participants }),
   }, observer);
-};
+}
 export interface CompiledHouseholdProjectionRunResult {
   readonly status: "completed" | "incomplete";
   readonly runMetadata: RunMetadata;
@@ -224,6 +233,7 @@ type HouseholdInvestmentOperationResult = {
 };
 
 type PreparedHouseholdPeriod = {
+  readonly summaryEvidence?: SummaryAccountingEvidence;
   readonly descriptors: readonly HouseholdWorkDescriptor[];
   readonly cash: PreparedVerticalSlice2Period | undefined;
   readonly investments: PreparedVerticalSlice3Period | undefined;
@@ -317,21 +327,27 @@ const outcomeSignature = (execution: InstantExecution, opening?: AuthoritativeSt
       ...execution.liabilityPeriods,
     ]
       .flatMap((period) => period.transactions ?? [])
-      .map((transaction) => ({
+      .map((transaction) => canonicalSerialize({
         id: transaction.id,
         type: transaction.type,
         date: transaction.date,
         legs: transaction.legs,
-      })),
+      })).concat([
+        ...execution.additionalFacts.filter(fact => fact.summary?.cash !== undefined),
+        ...execution.additionalFacts.filter(fact => fact.summary?.investment !== undefined),
+        ...execution.additionalFacts.filter(fact => fact.summary?.debt !== undefined),
+      ].flatMap(fact => fact.summary!.evidence.witnesses)),
     constraints: [...execution.cashPeriods, ...execution.liabilityPeriods, ...execution.additionalFacts]
       .flatMap((period) => period.constraintOutcomes ?? [])
-      .map((outcome) => outcome),
+      .map((outcome) => outcome).concat(execution.additionalFacts.flatMap(fact =>
+        fact.summary?.cash?.constraintOutcomes ?? fact.summary?.debt?.constraintOutcomes ?? [])),
     shortfalls: [
       ...execution.additionalFacts.flatMap(facts => facts.liquidityShortfalls ?? []),
       ...execution.cashPeriods.flatMap((period) => period.liquidityShortfalls),
       ...execution.liabilityPeriods.flatMap(
         (period) => period.liquidityShortfalls,
       ),
+      ...execution.additionalFacts.flatMap(fact => fact.summary?.cash?.liquidityShortfalls ?? fact.summary?.debt?.liquidityShortfalls ?? []),
     ] as readonly unknown[],
   });
 
@@ -346,9 +362,13 @@ const runCompiledHouseholdProjectionInternal = (
     readonly resume?: HouseholdReplayCheckpoint;
     readonly stopAfter?: Instant;
     readonly retainDiagnostics?: (period: Period) => boolean;
+    readonly acceptSummary?: (period: HouseholdForecastSummaryPeriod) => void;
   },
 ): CompiledHouseholdProjectionRunResult => {
   const { runContext } = request;
+  const tier = periodRetention?.acceptSummary === undefined ? "detail" : "summary";
+  performance.counters({ summaryOperationsExecuted: 0, detailedPeriodResultsMaterialized: 0,
+    detailedObjectsRetainedBySummary: 0, summaryTraceUnionsMaterialized: 0 });
   assertRunContext(runContext);
   const source = request.compiled;
   if (String(runContext.scenarioId) !== source.scenarioIdentity)
@@ -399,6 +419,7 @@ const runCompiledHouseholdProjectionInternal = (
     opening: AuthoritativeState,
     openingPrimitiveState: PrimitiveRuntimeStateStore,
   ): PreparedHouseholdPeriod => {
+    const sink = tier === "summary" ? new SummaryOperationSink(runContext.baseCurrency) : undefined;
     const cash =
       compiled.cashFlowInput === undefined
         ? undefined
@@ -408,6 +429,7 @@ const runCompiledHouseholdProjectionInternal = (
             period,
             opening,
             openingPrimitiveState,
+            sink,
           );
     // VS2 preparation may establish event eligibility/runtime state; VS3 must receive the
     // complete investment input and the resulting current candidate state.
@@ -423,6 +445,7 @@ const runCompiledHouseholdProjectionInternal = (
             period,
             investmentOpening,
             investmentPrimitiveOpening,
+            sink,
           );
     const liabilities =
       compiled.liabilityInput === undefined ||
@@ -434,9 +457,10 @@ const runCompiledHouseholdProjectionInternal = (
             period,
             investmentOpening,
             investmentPrimitiveOpening,
+            sink,
           );
     const periodContext = Object.freeze({ ...runContext, simulationStart: period.start, simulationEnd: period.end });
-    const builtins = householdDomainParticipants({ cash, investments, liabilities }, compiled, periodContext, kernel);
+    const builtins = householdDomainParticipants({ cash, investments, liabilities }, compiled, periodContext, kernel, tier);
     const additional = participants.map(participant => {
       const prepared = participant.prepare(periodContext, period, {
         state: cloneAuthoritativeState(investmentOpening),
@@ -454,7 +478,8 @@ const runCompiledHouseholdProjectionInternal = (
       })) };
     });
     const operations = indexPreparedOperations([...builtins, ...additional]);
-    return Object.freeze({ cash, investments, liabilities, operations, descriptors: operations.descriptors });
+    return Object.freeze({ cash, investments, liabilities, operations, descriptors: operations.descriptors,
+      ...(sink === undefined ? {} : { summaryEvidence: sink.snapshot() }) });
   };
   // The executable inputs and the prepared descriptors are fingerprinted as
   // part of the run. Preparation is state-sensitive, so it belongs inside the
@@ -566,12 +591,14 @@ const runCompiledHouseholdProjectionInternal = (
           const result = prepared.operations.execute(descriptor,
             { state: nextState, primitiveState: nextPrimitiveState }, requiredStatuses);
           nextState = result.state; nextPrimitiveState = result.primitiveState;
+          if (tier === "summary") performance.counters({ summaryOperationsExecuted: 1 });
+          else performance.counters({ detailedPeriodResultsMaterialized: (result.facts.cash === undefined ? 0 : 1) + (result.facts.liability === undefined ? 0 : 1) });
           if (result.facts.cash !== undefined) cashResults.push(result.facts.cash);
           if (result.facts.investment !== undefined) investmentResults.push(result.facts.investment);
           if (result.facts.liability !== undefined) liabilityResults.push(result.facts.liability);
           if (result.facts.transactions !== undefined || result.facts.constraintOutcomes !== undefined ||
               result.facts.liquidityShortfalls !== undefined || result.facts.diagnostics !== undefined ||
-              result.facts.traceRefs !== undefined) additionalFacts.push(result.facts);
+              result.facts.traceRefs !== undefined || result.facts.summary !== undefined) additionalFacts.push(result.facts);
         }
         return Object.freeze({ state: nextState, primitiveState: nextPrimitiveState, requiredStatuses,
           cashPeriods: Object.freeze(cashResults), investmentPeriods: Object.freeze(investmentResults),
@@ -581,7 +608,10 @@ const runCompiledHouseholdProjectionInternal = (
       const explicitEdges = scheduled.value.dependencies.map(({ before, after }) => ({ before, after }));
       const explicitReaches = indexReachability(explicitEdges);
       const additionalFacts: HouseholdOperationFacts[] = [];
-      const periodTraceRefs: CalculationTraceRef[] = performance.measure("engine.trace_result", () => [
+      if (tier === "summary") {
+        additionalFacts.push({ summary: { evidence: prepared.summaryEvidence! } });
+      }
+      const periodTraceRefs: CalculationTraceRef[] = tier === "summary" ? [] : performance.measure("engine.trace_result", () => [
         ...(prepared.cash?.traceRefs ?? []),
         ...(prepared.investments?.traceRefs ?? []),
         ...(prepared.liabilities?.traceRefs ?? []),
@@ -740,7 +770,7 @@ const runCompiledHouseholdProjectionInternal = (
             for (const edge of policyEdges)
               if (!edgeExists(resolvedEdges, edge.before, edge.after))
                 resolvedEdges.push({ ...edge });
-            periodTraceRefs.push(contentionTrace(policy!, at));
+            if (tier === "detail") periodTraceRefs.push(contentionTrace(policy!, at));
             const chosen = constrained.first!;
             for (let index = 0; index < chosen.length - 1; index += 1)
               resolvedEdges.push({
@@ -777,6 +807,20 @@ const runCompiledHouseholdProjectionInternal = (
       if (!eventRuntimeCommitted) {
         candidatePrimitiveState = updatePrimitiveRuntimeStateStore(candidatePrimitiveState, prepared.cash!.eventPrimitiveTransition);
         candidateState = mergeEventPreparationIdentities(candidateState, prepared.cash!);
+      }
+      if (tier === "summary") {
+        validateAuthoritativeState(candidateState);
+        assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
+        assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
+        const summary = performance.measure("engine.statements_metrics", () =>
+          createHouseholdSummaryPeriod(period, state, candidateState, additionalFacts, kernel, runContext.baseCurrency));
+        diagnostics.push(...(prepared.cash?.diagnostics ?? []), ...additionalFacts.flatMap(fact => [
+          ...(fact.summary?.cash?.diagnostics ?? []), ...(fact.summary?.debt?.diagnostics ?? []), ...(fact.diagnostics ?? []),
+        ]));
+        state = candidateState; primitiveState = candidatePrimitiveState; reachedThrough = period.end;
+        periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata);
+        periodRetention?.acceptSummary?.(summary);
+        continue;
       }
       performance.measure("engine.trace_result", () => {
       if (liabilityPeriods.length > 0) {
@@ -901,6 +945,7 @@ const runCompiledHouseholdProjectionInternal = (
         compiled.standaloneAssets,
       ));
       const periodResult: HouseholdProjectionPeriodResult = performance.measure("engine.trace_result", () => {
+      performance.counters({ detailedPeriodResultsMaterialized: 1 });
       const cashFlow =
         cashPeriods.length === 0
           ? undefined
@@ -1069,9 +1114,9 @@ interface HouseholdReplayCheckpoint {
 // forecasts without these optional roots can still replay from the opening basis.
 const forecastCheckpoints = new WeakMap<HouseholdForecastSummaryResult, readonly HouseholdReplayCheckpoint[]>();
 
-/** Summary retention boundary. Financial evaluation is shared with the detailed adapter. */
+/** Direct summary evaluation. Financial operations are shared with the detailed adapter. */
 export const runHouseholdForecastSummary = (
-  request: { readonly kernel: CompiledHouseholdKernel; readonly overlay?: HouseholdExecutionOverlay; readonly runContext: RunContext },
+  request: { readonly kernel: CompiledHouseholdKernel; readonly overlay?: HouseholdExecutionOverlay; readonly runContext: RunContext; readonly participants?: readonly HouseholdKernelParticipant[] },
   observer?: PerformanceObserver,
 ): HouseholdForecastSummaryResult => {
   const kernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
@@ -1082,8 +1127,9 @@ export const runHouseholdForecastSummary = (
   try {
     const result = runCompiledHouseholdProjectionInternal({
       compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
+      ...(request.participants === undefined ? {} : { participants: request.participants }),
     }, performance, {
-      accept: period => { summaries.push(summarizeHouseholdPeriod(period)); },
+      accept: () => {}, acceptSummary: period => { summaries.push(period); },
       retain: () => false,
       checkpoint: (period, state, primitiveState, metadata) => {
         // Twelve display periods is the initial engineering choice, not a

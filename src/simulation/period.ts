@@ -1,4 +1,5 @@
 import type { AccountingTransaction } from "../accounting/index.js";
+import { evidenceBuffer, type SummaryOperationSink } from "./r3/summarySink.js";
 import { DependencyGraph } from "../dependencies/index.js";
 import {
   ValidationError,
@@ -419,7 +420,7 @@ const evaluatePeriodPrimitive = (
 export type PeriodWorkCandidate = Omit<CommittedPeriodResult, "period" | "openingState" | "statements">;
 
 /** Financial work evaluator. It owns no run metadata, statement or opening snapshot. */
-export const executePeriodWorkCandidate = (input: RunPeriodInput): PeriodWorkCandidate => {
+export const executePeriodWorkCandidate = (input: RunPeriodInput, summary?: SummaryOperationSink): PeriodWorkCandidate => {
   assertRunContext(input.runContext);
   if (input.period.start < input.runContext.simulationStart || input.period.end > input.runContext.simulationEnd || input.period.start >= input.period.end) {
     invalidWork("Period must be a non-empty interval within the run horizon");
@@ -429,8 +430,8 @@ export const executePeriodWorkCandidate = (input: RunPeriodInput): PeriodWorkCan
   assertAuthoritativeStateCurrency(candidateState, input.runContext.baseCurrency);
   let candidatePrimitiveState = createPrimitiveRuntimeStateStore(input.primitiveState);
   assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
-  const effects: SemanticEffect[] = [];
-  const transactions: AccountingTransaction[] = [];
+  const effects = evidenceBuffer<SemanticEffect>(summary, value => summary?.traces(value.traceRefs ?? []));
+  const transactions = evidenceBuffer<AccountingTransaction>(summary, value => summary?.transaction(value));
   const diagnostics: ValidationIssue[] = [];
   const primitiveOutputs: PrimitivePeriodOutput[] = [];
 
