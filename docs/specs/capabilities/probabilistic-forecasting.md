@@ -1,6 +1,6 @@
 # Probabilistic Forecasting
 
-**Version:** 0.1.3-draft
+**Version:** 0.1.4-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-PROB
 
@@ -101,6 +101,14 @@ The stochastic runtime SHALL support bounded lower-cost evaluation for candidate
 ### PFA-PROB-019 — Planning evaluation remains reproducible
 
 Stochastic strategy evaluation SHALL remain reproducible independent of worker scheduling, candidate ordering, or optimizer implementation. Changing the search algorithm SHALL NOT by itself alter an already-defined candidate's stochastic process identities or Forecast Basis.
+
+### PFA-PROB-020 — Deterministic semantic prerequisite
+
+Household stochastic execution SHALL NOT begin until PFA-DET-015 is satisfied for the intended private-alpha deterministic scope.
+
+Stochastic modeling may introduce uncertainty around already-defined deterministic financial mechanics, but it SHALL NOT be used to decide the ordinary economic meaning of contributions, conversions, account funding, debt service/refinance, interest/coupon/principal flows, dividends/reinvestment, insurance premiums/benefits, instrument lifecycle, or tax characterization.
+
+Provider-neutral calibration-contract work MAY precede this gate because it does not execute unresolved household financial semantics.
 
 ## 3. Initial modeling scope
 

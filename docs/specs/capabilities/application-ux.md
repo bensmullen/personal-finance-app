@@ -1,6 +1,6 @@
 # Application UX & Financial Comprehension
 
-**Version:** 0.1.3-draft
+**Version:** 0.1.4-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-UX
 
@@ -67,6 +67,22 @@ User-facing forecast-snapshot quotas SHOULD be expressed as a simple saved-snaps
 ### PFA-UX-013 — Strategy tradeoffs and recommendation transparency
 
 When planning strategies or modeled recommendations are shown, the UI SHALL identify the material decision differences, relevant goals/constraints, Forecast Basis/evaluation fidelity, and materially important capability limitations. It SHALL present tradeoffs rather than an unexplained universal score and SHALL distinguish a bounded modeled recommendation from a guarantee or exhaustive proof of optimality.
+
+### PFA-UX-014 — Semantic authoring integrity
+
+For private-alpha financial inputs, the normal editor SHALL expose only controls whose financial meaning and executable behavior are defined for the supported product scope.
+
+The application SHALL:
+
+- distinguish account containers, investment positions, and standalone property/assets in user language;
+- respect creation-only/immutable versus editable versus derived fields;
+- prevent known-invalid funding-source choices before forecast execution where the valid set is known;
+- not expose a standalone expected-return, volatility, or similar field as executable when the current engine requires a different explicit assumption/model contract;
+- show rate basis, frequency, and units when they materially affect meaning;
+- derive redundant values when the authoritative inputs make the result unambiguous rather than requiring duplicate entry; and
+- translate capability diagnostics into actionable user guidance while retaining technical codes/IDs only in technical detail.
+
+An editor that appears to accept a value which the canonical model silently refuses or the forecast necessarily rejects does not satisfy this requirement.
 
 ## 3. Near-term cleanup scope
 

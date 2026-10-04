@@ -1,6 +1,6 @@
 # Tax Engine Capability
 
-**Version:** 0.1.3-draft
+**Version:** 0.1.5-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-TAX
 
@@ -87,6 +87,28 @@ Supported tax-sensitive decisions such as contribution type, withdrawal ordering
 ### PFA-TAX-013 — Authoritative finalist tax evaluation
 
 A planning/search layer MAY use explicitly labeled lower-fidelity tax estimates for candidate screening only when a specification permits it. Any user-facing finalist strategy whose conclusion materially depends on tax SHALL be reevaluated through the authoritative tax engine at the required tax-completeness level before being presented as an integrated planning result.
+
+### PFA-TAX-014 — Private-alpha deterministic investment/retirement tax characterization
+
+Before stochastic household modeling, the deterministic tax path SHALL support or explicitly capability-gate the tax characterization materially required by PFA-DET for the intended private-alpha households.
+
+The supported floor includes, where applicable:
+
+- short-term and long-term realized capital gains/losses;
+- taxable interest, including supported checking/savings, Treasury/bond, and CD interest;
+- ordinary/non-qualified dividends and qualified dividends;
+- traditional and Roth 401(k)/IRA contribution and distribution treatment, including whether the contribution changes the applicable income-tax and/or payroll-tax base;
+- after-tax 401(k) contribution basis and supported in-plan Roth conversion treatment, preserving previously taxed basis and recognizing taxable conversion amounts only under the applicable rule;
+- HSA payroll contribution/distribution treatment required by the target jurisdiction/output, including jurisdiction-specific nonconformity where material;
+- employer 401(k) matching/non-elective and employer HSA contribution treatment, including their interaction with applicable combined contribution limits;
+- effective-dated 401(k), HSA, and IRA contribution/catch-up limits required by supported D1 flows, distinguishing employee elective-deferral limits from combined employer+employee limits where applicable;
+- supported direct and indirect retirement rollover tax treatment, including preservation of pre-tax/Roth/after-tax basis/character and applicable withholding/deadline/frequency restrictions;
+- taxable-brokerage purchases/sales and basis realization;
+- cryptocurrency dispositions;
+- supported option sale/exercise/assignment/expiration tax facts; and
+- dividend reinvestment without loss of the underlying dividend tax recognition.
+
+Where federal/state/local treatment differs, target-cohort jurisdiction rules SHALL resolve the applicable behavior or the affected after-tax output SHALL remain incomplete. Missing rules SHALL never be interpreted as zero tax.
 
 ## 3. Planned decomposition
 
