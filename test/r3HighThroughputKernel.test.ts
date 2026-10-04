@@ -4,7 +4,10 @@ import { PerformanceRegistry, type PerformanceObserver } from "../src/diagnostic
 import type { CompiledHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { domainId } from "../src/identity/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
-import { runHouseholdKernel, type HouseholdKernelParticipant, runCompiledHouseholdProjection } from "../src/simulation/householdExecution.js";
+import { runHouseholdKernel, type HouseholdKernelParticipant, runCompiledHouseholdProjection,
+  runHouseholdForecastSummary, replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
+import { summarizeHouseholdPeriod } from "../src/simulation/r3/forecastSummary.js";
+import { createStatementFlowAccumulator, deriveVerticalSliceStatements } from "../src/statements/index.js";
 import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import type { FixedAmortizingLoan } from "../src/simulation/verticalSlice4.js";
@@ -83,6 +86,49 @@ const integrated = (incomeAmount: string, withPolicy = true): CompiledHouseholdP
 };
 
 describe("R3 reusable deterministic household kernel", () => {
+  it("retains compact metrics and regenerates selected evidence from the same immutable basis", () => {
+    const input = { ...integrated("120"), executionMonths: 2 };
+    const runContext = context(2);
+    const reference = referenceRun({ compiled: input, runContext });
+    const summary = runHouseholdForecastSummary({ kernel: compileHouseholdKernel(input, start), runContext });
+    expect(summary.status).toBe("completed");
+    expect(summary.state).toEqual(reference.state);
+    expect(summary.primitiveState).toEqual(reference.primitiveState);
+    expect(summary.runMetadata).toEqual(reference.runMetadata);
+    expect(summary.periods).toEqual(reference.periods.map(summarizeHouseholdPeriod));
+    for (const period of summary.periods) {
+      expect(period).not.toHaveProperty("transactions");
+      expect(period).not.toHaveProperty("traceRefs");
+      expect(period).not.toHaveProperty("liability");
+      expect(period).not.toHaveProperty("openingState");
+      expect(period).not.toHaveProperty("closingState");
+    }
+    const explanation = replayHouseholdForecastWindow(summary, reference.periods[1]!.period);
+    expect(explanation.periods).toEqual([reference.periods[1]]);
+    expect(explanation.runMetadata).toEqual(summary.runMetadata);
+    expect(() => replayHouseholdForecastWindow(summary, { start, end: instant("2026-02-15T00:00:00.000Z") }))
+      .toThrow(ValidationError);
+    const tampered = { ...summary, runMetadata: { ...summary.runMetadata, inputFingerprint: "changed" as never } };
+    expect(() => replayHouseholdForecastWindow(tampered, reference.periods[0]!.period)).toThrow(ValidationError);
+  });
+
+  it("streams statement flows without retaining accounting evidence", () => {
+    const input = integrated("120");
+    const reference = referenceRun({ compiled: input, runContext: context() });
+    const period = reference.periods[0]!;
+    const accumulator = createStatementFlowAccumulator(USD);
+    for (const transaction of period.transactions) accumulator.add(transaction);
+    const flows = accumulator.snapshot();
+    const legacy = deriveVerticalSliceStatements(reference.state, period.transactions, USD);
+    expect(flows.income).toEqual(legacy.income);
+    expect(flows.expenses).toEqual(legacy.expenses);
+    expect(flows.operatingCashFlow).toEqual(legacy.operatingCashFlow);
+    expect(flows.investingCashFlow).toEqual(period.statements.investingCashFlow);
+    expect(flows.financingCashFlow).toEqual(period.statements.financingCashFlow);
+    expect(flows.gains).toEqual(period.statements.gains);
+    expect(Object.keys(accumulator).sort()).toEqual(["add", "snapshot"]);
+  });
+
   it("matches the frozen R2 reference, including fingerprint, lineage, accounting and stress outcomes", () => {
     fc.assert(fc.property(fc.integer({ min: 0, max: 140 }), amount => {
       const input = integrated(String(amount));

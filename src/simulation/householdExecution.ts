@@ -1,6 +1,7 @@
 import { compileHouseholdKernel, applyHouseholdExecutionOverlay, canonicalDescriptorOrder, type CompiledHouseholdKernel, type HouseholdExecutionOverlay } from "./r3/compiledHousehold.js";
 import { indexPreparedOperations, type OperationState, type PreparedOperationParticipant } from "./r3/operations.js";
 import { householdDomainParticipants, type HouseholdOperationFacts } from "./r3/domainOperations.js";
+import { summarizeHouseholdPeriod, type HouseholdForecastSummaryPeriod } from "./r3/forecastSummary.js";
 import { dependencyOrders, firstDependencyOrder, indexReachability, indexSequencingInstants } from "./r3/ordering.js";
 import type { AccountingTransaction } from "../accounting/index.js";
 import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../diagnostics/index.js";
@@ -351,6 +352,7 @@ const outcomeSignature = (execution: InstantExecution): string =>
 const runCompiledHouseholdProjectionInternal = (
   request: CompiledHouseholdProjectionRunInput,
   performance: PerformanceSession,
+  periodRetention?: { readonly accept: (period: HouseholdProjectionPeriodResult) => void; readonly retain: (period: Period) => boolean },
 ): CompiledHouseholdProjectionRunResult => {
   const { runContext } = request;
   assertRunContext(runContext);
@@ -487,6 +489,7 @@ const runCompiledHouseholdProjectionInternal = (
   }));
   const runMetadata = createRunMetadata(runContext, fingerprint);
   const committed: HouseholdProjectionPeriodResult[] = [];
+  let reachedThrough: Instant | undefined;
   const diagnostics: ValidationIssue[] = [];
   for (const period of periods)
     try {
@@ -974,7 +977,9 @@ const runCompiledHouseholdProjectionInternal = (
       );
       state = candidateState;
       primitiveState = candidatePrimitiveState;
-      committed.push(periodResult);
+      reachedThrough = period.end;
+      periodRetention?.accept(periodResult);
+      if (periodRetention === undefined || periodRetention.retain(period)) committed.push(periodResult);
     } catch (error) {
       if (!(error instanceof ValidationError)) throw error;
       diagnostics.push(...error.issues);
@@ -983,9 +988,7 @@ const runCompiledHouseholdProjectionInternal = (
         runMetadata,
         requestedHorizon,
         stoppedAt: period.start,
-        ...(committed.length === 0
-          ? {}
-          : { reachedThrough: committed[committed.length - 1]!.period.end }),
+        ...(reachedThrough === undefined ? {} : { reachedThrough }),
         state,
         primitiveState,
         periods: Object.freeze(committed),
@@ -1013,6 +1016,63 @@ export const runCompiledHouseholdProjection = (
   const performance = createPerformanceSession(observer);
   try {
     return runCompiledHouseholdProjectionInternal(request, performance);
+  } finally {
+    performance.finish();
+  }
+};
+
+export interface HouseholdForecastSummaryResult extends Omit<CompiledHouseholdProjectionRunResult, "periods"> {
+  readonly resultTier: "summary";
+  readonly periods: readonly HouseholdForecastSummaryPeriod[];
+  /** Immutable opening boundary; no per-period state snapshots are retained for replay. */
+  readonly replay: { readonly kernel: CompiledHouseholdKernel; readonly runContext: RunContext };
+}
+
+/** Summary retention boundary. Financial evaluation is shared with the detailed adapter. */
+export const runHouseholdForecastSummary = (
+  request: { readonly kernel: CompiledHouseholdKernel; readonly overlay?: HouseholdExecutionOverlay; readonly runContext: RunContext },
+  observer?: PerformanceObserver,
+): HouseholdForecastSummaryResult => {
+  const kernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
+  const runContext = Object.freeze({ ...request.runContext, versions: Object.freeze({ ...request.runContext.versions }) });
+  const performance = createPerformanceSession(observer);
+  const summaries: HouseholdForecastSummaryPeriod[] = [];
+  try {
+    const result = runCompiledHouseholdProjectionInternal({
+      compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
+    }, performance, {
+      accept: period => { summaries.push(summarizeHouseholdPeriod(period)); },
+      retain: () => false,
+    });
+    return Object.freeze({ ...result, resultTier: "summary", periods: Object.freeze(summaries),
+      replay: Object.freeze({ kernel, runContext }) });
+  } finally {
+    performance.finish();
+  }
+};
+
+/** Regenerate only the selected evidence warehouse from the immutable opening boundary. */
+export const replayHouseholdForecastWindow = (
+  forecast: HouseholdForecastSummaryResult,
+  window: Period,
+  observer?: PerformanceObserver,
+): CompiledHouseholdProjectionRunResult => {
+  const { kernel, runContext } = forecast.replay;
+  const selected = forecast.periods.filter(period => period.period.start >= window.start && period.period.end <= window.end);
+  if (window.start >= window.end || selected.length === 0 ||
+      selected[0]!.period.start !== window.start || selected[selected.length - 1]!.period.end !== window.end)
+    throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_WINDOW_INVALID",
+      message: "Replay requires an aligned window of successfully committed forecast periods.", entityType: "household_projection" });
+  const performance = createPerformanceSession(observer);
+  try {
+    const replay = runCompiledHouseholdProjectionInternal({
+      compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
+    }, performance, { accept: () => {}, retain: period => period.start >= window.start && period.end <= window.end });
+    if (canonicalSerialize(replay.runMetadata) !== canonicalSerialize(forecast.runMetadata) ||
+        canonicalSerialize(replay.periods.map(summarizeHouseholdPeriod)) !== canonicalSerialize(selected))
+      throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_BASIS_MISMATCH",
+        message: "Immutable forecast artifacts did not reproduce the displayed forecast exactly.", entityType: "household_projection" });
+    return replay;
   } finally {
     performance.finish();
   }

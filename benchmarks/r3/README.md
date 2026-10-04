@@ -42,3 +42,19 @@ does not duplicate that financial implementation across the ownership fence.
 State-sensitive preparation is repeated each month/run; it is never cached as
 invariant household structure. Full rich user-facing explanations remain an
 application concern.
+# Issue 68 staged closeout
+
+The summary/replay boundary is a foundation, not a completed performance repair.
+`runHouseholdForecastSummary` retains compact household metrics and capability
+outcomes. `replayHouseholdForecastWindow` regenerates selected committed periods
+from the immutable opening kernel and run context, checking both run metadata and
+the displayed compact metrics before returning evidence. Statement flows can be
+accumulated without retaining accounting transactions.
+
+Known remaining work: production defaults are still detailed; the evaluator still
+constructs detailed period objects before summary extraction; replay evaluates
+the full horizon and has no sparse intermediate checkpoint; full-state/history
+cloning, historical claim scans, identity sorting, primitive-store rebuilding,
+nested runners and exhaustive contention previews remain. This stage does not
+meet issue 68 acceptance and supplies no new timing evidence. CI owns bounded
+verification; fresh Node 22 engineering-validation remains required for closeout.

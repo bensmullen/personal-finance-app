@@ -15,6 +15,34 @@ export interface Statements {
   readonly financingCashFlow: Money;
 }
 
+/** Compact accounting flows; the accumulator never retains transaction objects. */
+export type StatementFlows = Pick<Statements,
+  "income" | "expenses" | "gains" | "operatingCashFlow" | "investingCashFlow" | "financingCashFlow">;
+
+export const createStatementFlowAccumulator = (currency: Currency) => {
+  let income = Money.zero(currency);
+  let expenses = Money.zero(currency);
+  let gains = Money.zero(currency);
+  let operatingCashFlow = Money.zero(currency);
+  let investingCashFlow = Money.zero(currency);
+  let financingCashFlow = Money.zero(currency);
+  return {
+    add(transaction: AccountingTransaction): void {
+      for (const leg of transaction.legs) {
+        if (leg.type === "income" && leg.posting === "credit") income = income.plus(leg.amount);
+        if ((leg.type === "expense" || leg.type === "tax") && leg.posting === "debit") expenses = expenses.plus(leg.amount);
+        if (leg.type === "gain" && leg.posting === "credit") gains = gains.plus(leg.amount);
+      }
+      operatingCashFlow = operatingCashFlow.plus(cashFlowAmount(transaction, "operating", currency));
+      investingCashFlow = investingCashFlow.plus(cashFlowAmount(transaction, "investing", currency));
+      financingCashFlow = financingCashFlow.plus(cashFlowAmount(transaction, "financing", currency));
+    },
+    snapshot(): StatementFlows {
+      return Object.freeze({ income, expenses, gains, operatingCashFlow, investingCashFlow, financingCashFlow });
+    },
+  };
+};
+
 export interface VerticalSliceStatements {
   readonly assets: Money;
   readonly liabilities: Money;
@@ -65,17 +93,23 @@ export const deriveStatements = (
   transactions: readonly AccountingTransaction[],
   currency: Currency,
 ): Statements => {
+  const flows = createStatementFlowAccumulator(currency);
+  for (const transaction of transactions) flows.add(transaction);
+  return deriveStatementsFromFlows(state, flows.snapshot(), currency);
+};
+
+/** The same statement authority accepts streamed flows at a commit boundary. */
+export const deriveStatementsFromFlows = (
+  state: AuthoritativeState,
+  flows: StatementFlows,
+  currency: Currency,
+): Statements => {
   const balances = balanceSheet(state, currency);
   return Object.freeze({
     assets: balances.assets,
     liabilities: balances.liabilities,
     netWorth: balances.netWorth,
-    income: totalByLeg(transactions, currency, "income", "credit"),
-    expenses: totalByLeg(transactions, currency, "expense", "debit").plus(totalByLeg(transactions, currency, "tax", "debit")),
-    gains: totalByLeg(transactions, currency, "gain", "credit"),
-    operatingCashFlow: sumMoney(transactions.map((transaction) => cashFlowAmount(transaction, "operating", currency)), currency),
-    investingCashFlow: sumMoney(transactions.map((transaction) => cashFlowAmount(transaction, "investing", currency)), currency),
-    financingCashFlow: sumMoney(transactions.map((transaction) => cashFlowAmount(transaction, "financing", currency)), currency),
+    ...flows,
   });
 };
 
