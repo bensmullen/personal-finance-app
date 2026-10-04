@@ -1,6 +1,6 @@
 # Deterministic Household Financial Semantics Readiness
 
-**Version:** 0.1.0-draft  
+**Version:** 0.2.0-draft  
 **Status:** Pre-stochastic/private-alpha gate  
 **Requirement prefix:** PFA-DET
 
@@ -58,7 +58,9 @@ Traditional/pre-tax, Roth, and after-tax contribution character SHALL remain dis
 
 A contribution SHALL NOT be double-counted as both household spending and an investment purchase.
 
-Where employer contributions or other compensation allocations are not yet supported, they SHALL be explicitly capability-gated rather than silently treated as employee cash flow.
+Employer 401(k) matching/non-elective contributions and employer HSA contributions SHALL be modeled as employer-funded allocations: they increase the destination account/position without reducing employee cash pay, while still participating in the applicable combined statutory limits and tax characterization.
+
+Applicable effective-dated employee, employer+employee, HSA, and IRA contribution limits/catch-ups SHALL be calculated from authoritative rule data and household facts rather than manually entered as magic constants.
 
 ### PFA-DET-004 — Retirement-account conversions and IRA semantics
 
@@ -73,7 +75,7 @@ The deterministic model SHALL support:
 
 A conversion is not household consumption and SHALL NOT be represented as an ordinary expense. Asset movement, tax recognition, and any cash tax settlement SHALL remain separate.
 
-Unsupported rollover, pro-rata, basis, plan-rule, or distribution cases SHALL produce explicit capability diagnostics.
+D1 SHALL also support a bounded but advanced rollover contract covering eligible direct trustee-to-trustee/plan-to-plan rollovers, pre-tax versus Roth destination compatibility, preservation/splitting of after-tax basis, and supported indirect-rollover timing/withholding/frequency restrictions. A rollover is not household consumption or earned income. Unsupported plan-specific/inherited/RMD/corrective/other specialized cases SHALL produce explicit capability diagnostics.
 
 ### PFA-DET-005 — Taxable brokerage account mechanics
 
@@ -192,24 +194,31 @@ The minimum pre-stochastic fixture matrix SHALL include:
 1. traditional 401(k) payroll contribution;
 2. Roth 401(k) payroll contribution;
 3. after-tax 401(k) payroll contribution;
-4. in-plan Roth conversion;
-5. traditional IRA contribution;
-6. Roth IRA contribution;
-7. taxable brokerage purchase/sale;
-8. ordinary mortgage amortization;
-9. mortgage extra principal payment;
-10. mortgage refinance;
-11. HSA payroll contribution;
-12. checking/savings interest credit;
-13. Treasury bill/bond interest plus principal maturity behavior;
-14. CD interest plus maturity principal;
-15. cryptocurrency purchase/sale;
-16. insurance premium plus deterministic payout/stress event;
-17. at least one supported deterministic option lifecycle;
-18. short-term versus long-term gain treatment;
-19. interest and dividend tax-character treatment;
-20. dividend reinvestment; and
-21. funding-source enforcement proving payroll-only versus checking/savings-only paths.
+4. employer 401(k) match and non-elective contribution;
+5. HSA employee payroll contribution;
+6. employer HSA contribution;
+7. automatic 401(k)/HSA/IRA annual and catch-up contribution-limit calculation, including applicable combined employee/employer limits;
+8. in-plan Roth conversion;
+9. direct Traditional/pre-tax retirement rollover;
+10. Roth retirement rollover;
+11. mixed pre-tax/after-tax rollover preserving basis/character;
+12. at least one supported indirect-rollover case;
+13. traditional IRA contribution;
+14. Roth IRA contribution;
+15. taxable brokerage purchase/sale;
+16. ordinary mortgage amortization;
+17. mortgage extra principal payment;
+18. mortgage refinance;
+19. checking/savings interest credit;
+20. Treasury bill/bond interest plus principal maturity behavior;
+21. CD interest plus maturity principal;
+22. cryptocurrency purchase/sale;
+23. insurance premium plus deterministic payout/stress event;
+24. at least one supported deterministic option lifecycle;
+25. short-term versus long-term gain treatment;
+26. interest and dividend tax-character treatment;
+27. dividend reinvestment; and
+28. funding-source enforcement proving payroll-only versus checking/savings-only paths.
 
 For each case, verification SHALL reconcile the applicable beginning state, recognized income/expense/gain/tax facts, transfers/contributions, cash settlement, asset/liability change, ending state, and no-double-counting invariants.
 
