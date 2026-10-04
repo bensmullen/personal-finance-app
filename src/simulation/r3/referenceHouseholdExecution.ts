@@ -1,62 +1,56 @@
-import { compileHouseholdKernel, applyHouseholdExecutionOverlay, canonicalDescriptorOrder, type CompiledHouseholdKernel, type HouseholdExecutionOverlay } from "./r3/compiledHousehold.js";
-import { indexPreparedOperations, type OperationState, type PreparedOperationParticipant } from "./r3/operations.js";
-import { householdDomainParticipants, type HouseholdOperationFacts } from "./r3/domainOperations.js";
-import { summarizeHouseholdPeriod, type HouseholdForecastSummaryPeriod } from "./r3/forecastSummary.js";
-import { createHouseholdSummaryPeriod } from "./r3/summaryPeriod.js";
-import { SummaryOperationSink, type SummaryAccountingEvidence } from "./r3/summarySink.js";
-import { firstDependencyOrder, indexReachability, indexSequencingInstants } from "./r3/ordering.js";
-import { compareReachableStates, createReachableStateCounters } from "./r3/reachableStates.js";
-import { fundingPoolConservationProof, guaranteedFundingIncomeProof } from "./r3/commutativity.js";
-import type { AccountingTransaction } from "../accounting/index.js";
-import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../diagnostics/index.js";
+/** Frozen pre-R3 reference at 2d10b02; imported only by bounded equivalence tests.
+ * Keep financial behavior unchanged here; production uses householdExecution.ts. */
+import type { AccountingTransaction } from "../../accounting/index.js";
+import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../../diagnostics/index.js";
 import type {
   ConstraintOutcome,
   LiquidityShortfall,
-} from "../funding/index.js";
+} from "../../funding/index.js";
 import {
   calculationTraceId,
   calculationTraceRef,
   mergeTraceRefs,
   type CalculationTraceRef,
-} from "../lineage/index.js";
+} from "../../lineage/index.js";
 import {
   assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
-  createIndexedExecutionState,
-  createAuthoritativeState,
-  registerAuthoritativeIdentity,
+  createAuthoritativeIdentityRegistry,
   validateAuthoritativeState,
-  authoritativeStateChangesSince,
   type AuthoritativeState,
-} from "../state/index.js";
-import { deriveStatements, type Statements } from "../statements/index.js";
-import { type Instant, type Period } from "../time/index.js";
-import { Money } from "../values/index.js";
-import { deriveHouseholdClosingMetrics } from "./householdProjection.js";
+} from "../../state/index.js";
+import { deriveStatements, type Statements } from "../../statements/index.js";
+import { utcMonthlyPeriods, type Instant, type Period } from "../../time/index.js";
+import { Money } from "../../values/index.js";
+import { deriveHouseholdClosingMetrics } from "../householdProjection.js";
 import {
   buildHouseholdScheduledPlan,
   type HouseholdContentionPolicy,
   type HouseholdWorkDescriptor,
-} from "./intraperiodScheduler.js";
+} from "../intraperiodScheduler.js";
 import {
+  executePreparedVerticalSlice2Occurrence,
   prepareVerticalSlice2Period,
+  type PreparedVerticalSlice2Occurrence,
   type PreparedVerticalSlice2Period,
-} from "./verticalSlice2.js";
+} from "./referenceVerticalSlice2.js";
 import {
+  executePreparedVerticalSlice3Operation,
   prepareVerticalSlice3Period,
+  type PreparedVerticalSlice3Operation,
   type PreparedVerticalSlice3Period,
-} from "./verticalSlice3.js";
+} from "./referenceVerticalSlice3.js";
 import {
+  executePreparedVerticalSlice4Operation,
   prepareVerticalSlice4Period,
+  type PreparedVerticalSlice4Operation,
   type PreparedVerticalSlice4Period,
-} from "./verticalSlice4.js";
+} from "./referenceVerticalSlice4.js";
 import {
   assertPrimitiveRuntimeStateConsistent,
   createPrimitiveRuntimeStateStore,
-  updatePrimitiveRuntimeStateStore,
-  materializePrimitiveRuntimeStateStore,
   type PrimitiveRuntimeStateStore,
-} from "./period.js";
+} from "../period.js";
 import {
   assertRunContext,
   canonicalSerialize,
@@ -64,21 +58,21 @@ import {
   createRunMetadata,
   type RunContext,
   type RunMetadata,
-} from "./run.js";
+} from "../run.js";
 import type {
   VerticalSlice2Input,
   VerticalSlice2PeriodResult,
-} from "./verticalSlice2.js";
+} from "../verticalSlice2.js";
 import type {
   VerticalSlice3Input,
   VerticalSlice3PeriodResult,
-} from "./verticalSlice3.js";
+} from "../verticalSlice3.js";
 import type {
   VerticalSlice4ConstraintOutcome,
   VerticalSlice4Input,
   VerticalSlice4LiquidityShortfall,
   VerticalSlice4PeriodResult,
-} from "./verticalSlice4.js";
+} from "../verticalSlice4.js";
 
 export interface HouseholdProjectionPeriodResult {
   readonly period: Period;
@@ -127,7 +121,6 @@ export interface HouseholdInvestmentPeriodSummary {
 
 /** Inward-facing structural execution contract; application compilers satisfy it without an engine-to-application dependency. */
 export interface ExecutableHouseholdProjection {
-  readonly executionKernel?: CompiledHouseholdKernel;
   readonly cashFlowInput?: VerticalSlice2Input | undefined;
   readonly investmentInput?: VerticalSlice3Input | undefined;
   readonly liabilityInput?: VerticalSlice4Input | undefined;
@@ -142,38 +135,6 @@ export interface ExecutableHouseholdProjection {
 export interface CompiledHouseholdProjectionRunInput {
   readonly runContext: RunContext;
   readonly compiled: ExecutableHouseholdProjection;
-  readonly participants?: readonly HouseholdKernelParticipant[];
-}
-
-export { compileHouseholdKernel, applyHouseholdExecutionOverlay } from "./r3/compiledHousehold.js";
-export type { CompiledHouseholdKernel, HouseholdExecutionOverlay } from "./r3/compiledHousehold.js";
-
-/** Pure period preparation for future domain participants. No central dispatch changes required. */
-export interface HouseholdKernelParticipant {
-  readonly id: string;
-  readonly version: string;
-  readonly economicInputs: unknown;
-  readonly prepare: (context: RunContext, period: Period, opening: OperationState) => PreparedOperationParticipant<HouseholdOperationFacts>;
-}
-
-/** Explicit reusable boundary for repeated deterministic evaluations. */
-interface HouseholdKernelRunInput {
-  readonly kernel: CompiledHouseholdKernel; readonly overlay?: HouseholdExecutionOverlay;
-  readonly runContext: RunContext; readonly participants?: readonly HouseholdKernelParticipant[];
-}
-export function runHouseholdKernel(request: HouseholdKernelRunInput & { readonly resultTier: "detail" }, observer?: PerformanceObserver): CompiledHouseholdProjectionRunResult;
-export function runHouseholdKernel(request: HouseholdKernelRunInput, observer?: PerformanceObserver): HouseholdForecastSummaryResult;
-export function runHouseholdKernel(
-  request: HouseholdKernelRunInput & { readonly resultTier?: "detail" },
-  observer?: PerformanceObserver,
-): CompiledHouseholdProjectionRunResult | HouseholdForecastSummaryResult {
-  const kernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
-  if (request.resultTier !== "detail") return runHouseholdForecastSummary({ kernel, runContext: request.runContext,
-    ...(request.participants === undefined ? {} : { participants: request.participants }) }, observer);
-  return runCompiledHouseholdProjection({
-    runContext: request.runContext, compiled: { ...kernel.executable, executionKernel: kernel },
-    ...(request.participants === undefined ? {} : { participants: request.participants }),
-  }, observer);
 }
 export interface CompiledHouseholdProjectionRunResult {
   readonly status: "completed" | "incomplete";
@@ -202,25 +163,24 @@ const display = (context: RunContext) =>
 const mergeEventPreparationIdentities = (
   state: AuthoritativeState,
   prepared: PreparedVerticalSlice2Period,
-): AuthoritativeState => {
-  const candidate = cloneAuthoritativeState(state);
-  for (const entry of Object.values(prepared.eventPrimitiveTransition)) {
-    if (entry.primitiveId !== "P27" && entry.primitiveId !== "P30") continue;
-    const occurrence = entry.state.occurrenceId;
-    if (occurrence !== undefined && !candidate.identities.generatedOccurrenceKeys.includes(occurrence))
-      registerAuthoritativeIdentity(candidate.identities, "generatedOccurrenceKeys", occurrence);
-  }
-  return candidate;
-};
+): AuthoritativeState =>
+  cloneAuthoritativeState({
+    ...state,
+    identities: createAuthoritativeIdentityRegistry({
+      postedTransactionIds: [...state.identities.postedTransactionIds, ...prepared.state.identities.postedTransactionIds],
+      recognitionIds: [...state.identities.recognitionIds, ...prepared.state.identities.recognitionIds],
+      settlementIds: [...state.identities.settlementIds, ...prepared.state.identities.settlementIds],
+      generatedOccurrenceKeys: [...state.identities.generatedOccurrenceKeys, ...prepared.state.identities.generatedOccurrenceKeys],
+      externalIdempotencyKeys: [...state.identities.externalIdempotencyKeys, ...prepared.state.identities.externalIdempotencyKeys],
+    }),
+  });
 
 type InstantExecution = {
-  readonly requiredStatuses: ReadonlyMap<string, string>;
   readonly state: AuthoritativeState;
   readonly primitiveState: PrimitiveRuntimeStateStore;
   readonly cashPeriods: readonly VerticalSlice2PeriodResult[];
   readonly investmentPeriods: readonly HouseholdInvestmentOperationResult[];
   readonly liabilityPeriods: readonly VerticalSlice4PeriodResult[];
-  readonly additionalFacts: readonly HouseholdOperationFacts[];
 };
 
 /** Internal operation facts only; never a fabricated standalone VS3 result. */
@@ -233,12 +193,10 @@ type HouseholdInvestmentOperationResult = {
 };
 
 type PreparedHouseholdPeriod = {
-  readonly summaryEvidence?: SummaryAccountingEvidence;
   readonly descriptors: readonly HouseholdWorkDescriptor[];
   readonly cash: PreparedVerticalSlice2Period | undefined;
   readonly investments: PreparedVerticalSlice3Period | undefined;
   readonly liabilities: PreparedVerticalSlice4Period | undefined;
-  readonly operations: ReturnType<typeof indexPreparedOperations<HouseholdOperationFacts>>;
 };
 
 const contentionTrace = (
@@ -315,39 +273,61 @@ const policyPrecedes = (
     after.operationClass,
   );
 
-const outcomeSignature = (execution: InstantExecution, opening?: AuthoritativeState, visited?: (nodes: number) => void): string =>
+const linearizations = (
+  items: readonly HouseholdWorkDescriptor[],
+  edges: readonly { readonly before: string; readonly after: string }[],
+): readonly (readonly HouseholdWorkDescriptor[])[] => {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const result: HouseholdWorkDescriptor[][] = [];
+  const visit = (
+    remaining: Set<string>,
+    ordered: HouseholdWorkDescriptor[],
+  ): void => {
+    if (remaining.size === 0) {
+      result.push(ordered);
+      return;
+    }
+    const ready = [...remaining]
+      .filter((id) =>
+        edges
+          .filter((edge) => edge.after === id && remaining.has(edge.before))
+          .every((edge) => !remaining.has(edge.before)),
+      )
+      .sort();
+    for (const id of ready) {
+      const next = new Set(remaining);
+      next.delete(id);
+      visit(next, [...ordered, byId.get(id)!]);
+    }
+  };
+  visit(new Set(items.map((item) => item.id)), []);
+  return Object.freeze(result.map((order) => Object.freeze(order)));
+};
+
+const outcomeSignature = (execution: InstantExecution): string =>
   canonicalSerialize({
-    state: opening === undefined ? execution.state : authoritativeStateChangesSince(execution.state, opening,
-      (left, right) => left === right || canonicalSerialize(left) === canonicalSerialize(right), visited),
+    state: execution.state,
     primitiveState: execution.primitiveState,
     transactions: [
-      ...execution.additionalFacts,
       ...execution.cashPeriods,
       ...execution.investmentPeriods,
       ...execution.liabilityPeriods,
     ]
-      .flatMap((period) => period.transactions ?? [])
-      .map((transaction) => canonicalSerialize({
+      .flatMap((period) => period.transactions)
+      .map((transaction) => ({
         id: transaction.id,
         type: transaction.type,
         date: transaction.date,
         legs: transaction.legs,
-      })).concat([
-        ...execution.additionalFacts.filter(fact => fact.summary?.cash !== undefined),
-        ...execution.additionalFacts.filter(fact => fact.summary?.investment !== undefined),
-        ...execution.additionalFacts.filter(fact => fact.summary?.debt !== undefined),
-      ].flatMap(fact => fact.summary!.evidence.witnesses)),
-    constraints: [...execution.cashPeriods, ...execution.liabilityPeriods, ...execution.additionalFacts]
-      .flatMap((period) => period.constraintOutcomes ?? [])
-      .map((outcome) => outcome).concat(execution.additionalFacts.flatMap(fact =>
-        fact.summary?.cash?.constraintOutcomes ?? fact.summary?.debt?.constraintOutcomes ?? [])),
+      })),
+    constraints: [...execution.cashPeriods, ...execution.liabilityPeriods]
+      .flatMap((period) => period.constraintOutcomes)
+      .map((outcome) => outcome),
     shortfalls: [
-      ...execution.additionalFacts.flatMap(facts => facts.liquidityShortfalls ?? []),
       ...execution.cashPeriods.flatMap((period) => period.liquidityShortfalls),
       ...execution.liabilityPeriods.flatMap(
         (period) => period.liquidityShortfalls,
       ),
-      ...execution.additionalFacts.flatMap<LiquidityShortfall | VerticalSlice4LiquidityShortfall>(fact => fact.summary?.cash?.liquidityShortfalls ?? fact.summary?.debt?.liquidityShortfalls ?? []),
     ] as readonly unknown[],
   });
 
@@ -355,33 +335,9 @@ const outcomeSignature = (execution: InstantExecution, opening?: AuthoritativeSt
 const runCompiledHouseholdProjectionInternal = (
   request: CompiledHouseholdProjectionRunInput,
   performance: PerformanceSession,
-  periodRetention?: {
-    readonly accept: (period: HouseholdProjectionPeriodResult) => void;
-    readonly retain: (period: Period) => boolean;
-    readonly checkpoint?: (period: Period, state: AuthoritativeState, primitiveState: PrimitiveRuntimeStateStore, metadata: RunMetadata) => void;
-    readonly resume?: HouseholdReplayCheckpoint;
-    readonly stopAfter?: Instant;
-    readonly retainDiagnostics?: (period: Period) => boolean;
-    readonly acceptSummary?: (period: HouseholdForecastSummaryPeriod) => void;
-  },
 ): CompiledHouseholdProjectionRunResult => {
-  const { runContext } = request;
-  const tier = periodRetention?.acceptSummary === undefined ? "detail" : "summary";
-  performance.counters({ summaryOperationsExecuted: 0, detailedPeriodResultsMaterialized: 0,
-    detailedObjectsRetainedBySummary: 0, summaryTraceUnionsMaterialized: 0 });
+  const { runContext, compiled } = request;
   assertRunContext(runContext);
-  const source = request.compiled;
-  if (String(runContext.scenarioId) !== source.scenarioIdentity)
-    throw new ValidationError({
-      severity: "error", code: "HOUSEHOLD_SCENARIO_MISMATCH",
-      message: "Compiled scenario identity must equal the run context scenario.", entityType: "household_projection",
-    });
-  const reusable = source.executionKernel;
-  const kernel = performance.measure("engine.compile_invariants", () => reusable === undefined || reusable.horizon.start !== runContext.simulationStart
-    ? compileHouseholdKernel(source, runContext.simulationStart)
-    : applyHouseholdExecutionOverlay(reusable, source));
-  const compiled = kernel.executable;
-  const participants = [...(request.participants ?? [])].sort((a, b) => a.id.localeCompare(b.id));
   if (String(runContext.scenarioId) !== compiled.scenarioIdentity)
     throw new ValidationError({
       severity: "error",
@@ -390,7 +346,10 @@ const runCompiledHouseholdProjectionInternal = (
         "Compiled scenario identity must equal the run context scenario.",
       entityType: "household_projection",
     });
-  const periods = kernel.horizon.periods;
+  const periods = utcMonthlyPeriods(
+    runContext.simulationStart,
+    compiled.executionMonths,
+  );
   if (
     periods.length === 0 ||
     periods[periods.length - 1]!.end !== runContext.simulationEnd
@@ -405,7 +364,7 @@ const runCompiledHouseholdProjectionInternal = (
     compiled.reconciledOpeningState,
     runContext.baseCurrency,
   );
-  let state = createIndexedExecutionState(cloneAuthoritativeState(compiled.reconciledOpeningState), counts => performance.counters(counts));
+  let state = cloneAuthoritativeState(compiled.reconciledOpeningState);
   let primitiveState = createPrimitiveRuntimeStateStore(
     compiled.reconciledPrimitiveState,
   );
@@ -419,7 +378,6 @@ const runCompiledHouseholdProjectionInternal = (
     opening: AuthoritativeState,
     openingPrimitiveState: PrimitiveRuntimeStateStore,
   ): PreparedHouseholdPeriod => {
-    const sink = tier === "summary" ? new SummaryOperationSink(runContext.baseCurrency) : undefined;
     const cash =
       compiled.cashFlowInput === undefined
         ? undefined
@@ -429,7 +387,6 @@ const runCompiledHouseholdProjectionInternal = (
             period,
             opening,
             openingPrimitiveState,
-            sink,
           );
     // VS2 preparation may establish event eligibility/runtime state; VS3 must receive the
     // complete investment input and the resulting current candidate state.
@@ -445,7 +402,6 @@ const runCompiledHouseholdProjectionInternal = (
             period,
             investmentOpening,
             investmentPrimitiveOpening,
-            sink,
           );
     const liabilities =
       compiled.liabilityInput === undefined ||
@@ -457,83 +413,105 @@ const runCompiledHouseholdProjectionInternal = (
             period,
             investmentOpening,
             investmentPrimitiveOpening,
-            sink,
           );
-    const periodContext = Object.freeze({ ...runContext, simulationStart: period.start, simulationEnd: period.end });
-    const builtins = householdDomainParticipants({ cash, investments, liabilities }, compiled, periodContext, kernel, tier);
-    const additional = participants.map(participant => {
-      const prepared = participant.prepare(periodContext, period, {
-        state: cloneAuthoritativeState(investmentOpening),
-        primitiveState: createPrimitiveRuntimeStateStore(investmentPrimitiveOpening),
-      });
-      if (prepared.id !== participant.id)
-        throw new ValidationError({ severity: "error", code: "HOUSEHOLD_PARTICIPANT_MISMATCH",
-          message: "Prepared participant identity must match its registration.", entityType: "household_projection" });
-      return { id: prepared.id, operations: prepared.operations.map(operation => ({
-        ...operation,
-        execute: (opening: OperationState, statuses: Map<string, string>) => operation.execute({
-          state: cloneAuthoritativeState(opening.state),
-          primitiveState: createPrimitiveRuntimeStateStore(opening.primitiveState),
-        }, statuses),
-      })) };
+    return Object.freeze({
+      cash,
+      investments,
+      liabilities,
+      descriptors: Object.freeze([
+        ...(cash?.descriptors ?? []),
+        ...(investments?.descriptors ?? []),
+        ...(liabilities?.descriptors ?? []),
+      ]),
     });
-    const operations = indexPreparedOperations([...builtins, ...additional]);
-    return Object.freeze({ cash, investments, liabilities, operations, descriptors: operations.descriptors,
-      ...(sink === undefined ? {} : { summaryEvidence: sink.snapshot() }) });
   };
   // The executable inputs and the prepared descriptors are fingerprinted as
   // part of the run. Preparation is state-sensitive, so it belongs inside the
   // period transaction and must never fail before rollback is established.
   let runDescriptors: readonly HouseholdWorkDescriptor[] = [];
-  let firstPrepared: PreparedHouseholdPeriod | undefined;
   try {
     if (periods[0] !== undefined)
-      firstPrepared = performance.measure("engine.prepare", () => preparePeriod(periods[0]!, state, primitiveState));
-    runDescriptors = firstPrepared?.descriptors ?? [];
+      runDescriptors = performance.measure("engine.prepare", () => preparePeriod(
+        periods[0]!,
+        state,
+        primitiveState,
+      ).descriptors);
   } catch (error) {
     if (!(error instanceof ValidationError)) throw error;
   }
-  const canonicalInputs = kernel.canonicalInputs;
-  const fingerprint = performance.measure("engine.fingerprint", () => createInputFingerprint({
+  const byId = <T extends { readonly id: string }>(
+    items: readonly T[] | undefined,
+  ): readonly T[] =>
+    Object.freeze(
+      [...(items ?? [])].sort((left, right) => left.id.localeCompare(right.id)),
+    );
+  const canonicalInputs = {
+    cashFlowInput:
+      compiled.cashFlowInput === undefined
+        ? undefined
+        : {
+            ...compiled.cashFlowInput,
+            incomes: byId(compiled.cashFlowInput.incomes),
+            expenses: byId(compiled.cashFlowInput.expenses),
+            events: byId(compiled.cashFlowInput.events),
+          },
+    investmentInput:
+      compiled.investmentInput === undefined
+        ? undefined
+        : {
+            ...compiled.investmentInput,
+            transfers: byId(compiled.investmentInput.transfers),
+            purchases: byId(compiled.investmentInput.purchases),
+            fees: byId(compiled.investmentInput.fees),
+            returns: [...compiled.investmentInput.returns].sort((left, right) =>
+              left.targetPositionId.localeCompare(right.targetPositionId),
+            ),
+          },
+    liabilityInput:
+      compiled.liabilityInput === undefined
+        ? undefined
+        : {
+            ...compiled.liabilityInput,
+            loans: [...compiled.liabilityInput.loans]
+              .sort((left, right) => left.id.localeCompare(right.id))
+              .map((loan) => ({
+                ...loan,
+                extraPrincipalPayments: byId(loan.extraPrincipalPayments),
+              })),
+          },
+    scenarioBindings: compiled.scenarioBindings,
+    standaloneAssets: compiled.standaloneAssets ?? [],
+  };
+  const fingerprint = createInputFingerprint({
     runContext,
     openingState: state,
     primitiveState,
     model: canonicalInputs,
     executionPlan: {
       months: compiled.executionMonths,
-      descriptors: canonicalDescriptorOrder(runDescriptors),
+      descriptors: [...runDescriptors].sort((left, right) =>
+        canonicalSerialize(left).localeCompare(canonicalSerialize(right)),
+      ),
       contentionPolicy: compiled.contentionPolicy,
-      ...(participants.length === 0 ? {} : { participants: participants.map(({ id, version, economicInputs }) => ({ id, version, economicInputs })) }),
     },
-  }));
+  });
   const runMetadata = createRunMetadata(runContext, fingerprint);
-  if (periodRetention?.resume !== undefined) {
-    if (periodRetention.resume.fingerprint !== runMetadata.inputFingerprint)
-      throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_BASIS_MISMATCH",
-        message: "Replay checkpoint belongs to a different immutable forecast basis.", entityType: "household_projection" });
-    state = cloneAuthoritativeState(periodRetention.resume.state);
-    primitiveState = createPrimitiveRuntimeStateStore(periodRetention.resume.primitiveState);
-    // The opening-period preparation is fingerprint input, not reusable work
-    // for the state at an intermediate checkpoint.
-    firstPrepared = undefined;
-  }
   const committed: HouseholdProjectionPeriodResult[] = [];
-  let reachedThrough: Instant | undefined;
   const diagnostics: ValidationIssue[] = [];
-  for (const period of periods.filter(period =>
-    (periodRetention?.resume === undefined || period.start >= periodRetention.resume.at) &&
-    (periodRetention?.stopAfter === undefined || period.end <= periodRetention.stopAfter)))
+  for (const period of periods)
     try {
-      performance.counters({ householdPeriodsExecuted: 1 });
-      // Domain operations return candidates; keep the previous committed authority for rollback.
-      let candidateState = state;
-      let candidatePrimitiveState = primitiveState;
+      let candidateState = cloneAuthoritativeState(state);
+      let candidatePrimitiveState =
+        createPrimitiveRuntimeStateStore(primitiveState);
       let liability: VerticalSlice4PeriodResult | undefined;
       const cashPeriods: VerticalSlice2PeriodResult[] = [];
       const investmentPeriods: HouseholdInvestmentOperationResult[] = [];
       const liabilityPeriods: VerticalSlice4PeriodResult[] = [];
-      const prepared = period === periods[0] && firstPrepared !== undefined ? firstPrepared
-        : performance.measure("engine.prepare", () => preparePeriod(period, candidateState, candidatePrimitiveState));
+      const prepared = performance.measure("engine.prepare", () => preparePeriod(
+        period,
+        candidateState,
+        candidatePrimitiveState,
+      ));
       const descriptors = prepared.descriptors;
       if (
         compiled.liabilityInput?.loans.some(
@@ -578,62 +556,150 @@ const runCompiledHouseholdProjectionInternal = (
         order: readonly HouseholdWorkDescriptor[],
         opening: AuthoritativeState,
         openingPrimitiveState: PrimitiveRuntimeStateStore,
-        prefix?: InstantExecution,
       ): InstantExecution => {
-        let nextState = opening;
-        let nextPrimitiveState = openingPrimitiveState;
-        const cashResults: VerticalSlice2PeriodResult[] = [...(prefix?.cashPeriods ?? [])];
-        const investmentResults: HouseholdInvestmentOperationResult[] = [...(prefix?.investmentPeriods ?? [])];
-        const liabilityResults: VerticalSlice4PeriodResult[] = [...(prefix?.liabilityPeriods ?? [])];
-        const additionalFacts: HouseholdOperationFacts[] = [...(prefix?.additionalFacts ?? [])];
-        const requiredStatuses = new Map<string, string>(prefix?.requiredStatuses);
+        let nextState = cloneAuthoritativeState(opening);
+        let nextPrimitiveState = createPrimitiveRuntimeStateStore(
+          openingPrimitiveState,
+        );
+        const cashResults: VerticalSlice2PeriodResult[] = [];
+        const investmentResults: HouseholdInvestmentOperationResult[] = [];
+        const liabilityResults: VerticalSlice4PeriodResult[] = [];
+        const periodContext = Object.freeze({
+          ...runContext,
+          simulationStart: period.start,
+          simulationEnd: period.end,
+        });
+        const requiredStatuses = new Map<string, string>();
         for (const descriptor of order) {
-          const result = prepared.operations.execute(descriptor,
-            { state: nextState, primitiveState: nextPrimitiveState }, requiredStatuses);
-          nextState = result.state; nextPrimitiveState = result.primitiveState;
-          if (tier === "summary") performance.counters({ summaryOperationsExecuted: 1 });
-          else performance.counters({ detailedPeriodResultsMaterialized: (result.facts.cash === undefined ? 0 : 1) + (result.facts.liability === undefined ? 0 : 1) });
-          if (result.facts.cash !== undefined) cashResults.push(result.facts.cash);
-          if (result.facts.investment !== undefined) investmentResults.push(result.facts.investment);
-          if (result.facts.liability !== undefined) liabilityResults.push(result.facts.liability);
-          if (result.facts.transactions !== undefined || result.facts.constraintOutcomes !== undefined ||
-              result.facts.liquidityShortfalls !== undefined || result.facts.diagnostics !== undefined ||
-              result.facts.traceRefs !== undefined || result.facts.summary !== undefined) additionalFacts.push(result.facts);
+          const occurrence = prepared.cash?.occurrences.find(
+            (item) => item.descriptor.id === descriptor.id,
+          );
+          if (occurrence !== undefined) {
+            const result = executePreparedVerticalSlice2Occurrence(
+              prepared.cash!,
+              occurrence,
+              nextState,
+              nextPrimitiveState,
+              compiled.cashFlowInput!,
+              periodContext,
+            );
+            nextState = result.state;
+            nextPrimitiveState = result.primitiveState;
+            cashResults.push(result.period);
+            continue;
+          }
+          const investment = prepared.investments?.operations.find(
+            (item) => item.descriptor.id === descriptor.id,
+          );
+          if (investment !== undefined) {
+            const result = executePreparedVerticalSlice3Operation(
+              prepared.investments!,
+              investment,
+              nextState,
+              nextPrimitiveState,
+              compiled.investmentInput!,
+              periodContext,
+            );
+            nextState = result.state;
+            nextPrimitiveState = result.primitiveState;
+            investmentResults.push(Object.freeze({
+              transactions: result.transactions,
+              contributionPrincipal: result.contributionPrincipal,
+              fees: result.fees,
+              unrealizedGain: result.unrealizedGain,
+              traceRefs: mergeTraceRefs(result.effects.flatMap((effect) => effect.traceRefs ?? [])) ?? Object.freeze([]),
+            }));
+            continue;
+          }
+          const liability = prepared.liabilities?.operations.find(
+            (item) => item.descriptor.id === descriptor.id,
+          );
+          if (liability !== undefined) {
+            if (liability.kind === "extra_principal") {
+              const required = prepared.liabilities!.operations.find(
+                (item) =>
+                  item.kind === "required_service" &&
+                  item.loan.id === liability.loan.id &&
+                  item.scheduledAt === liability.scheduledAt,
+              );
+              if (
+                required !== undefined &&
+                requiredStatuses.get(required.descriptor.id) !==
+                  "fully_satisfied"
+              )
+                continue;
+            }
+            const result = executePreparedVerticalSlice4Operation(
+              prepared.liabilities!,
+              liability,
+              nextState,
+              nextPrimitiveState,
+              compiled.liabilityInput!,
+              periodContext,
+            );
+            nextState = result.state;
+            nextPrimitiveState = result.primitiveState;
+            if (
+              liability.kind === "required_service" &&
+              result.period !== undefined
+            ) {
+              const liabilityResult = result.period.liabilities[0];
+              if (liabilityResult !== undefined)
+                requiredStatuses.set(
+                  descriptor.id,
+                  liabilityResult.scheduledFundingStatus,
+                );
+              liabilityResults.push(result.period);
+            }
+          }
         }
-        return Object.freeze({ state: nextState, primitiveState: nextPrimitiveState, requiredStatuses,
-          cashPeriods: Object.freeze(cashResults), investmentPeriods: Object.freeze(investmentResults),
-          liabilityPeriods: Object.freeze(liabilityResults), additionalFacts: Object.freeze(additionalFacts) });
+        return Object.freeze({
+          state: nextState,
+          primitiveState: nextPrimitiveState,
+          cashPeriods: Object.freeze(cashResults),
+          investmentPeriods: Object.freeze(investmentResults),
+          liabilityPeriods: Object.freeze(liabilityResults),
+        });
       };
-      const instantGroups = performance.measure("engine.schedule_contention", () => indexSequencingInstants(scheduled.value.descriptors));
-      const explicitEdges = scheduled.value.dependencies.map(({ before, after }) => ({ before, after }));
-      const explicitReaches = indexReachability(explicitEdges);
-      const additionalFacts: HouseholdOperationFacts[] = [];
-      if (tier === "summary") {
-        additionalFacts.push({ summary: { evidence: prepared.summaryEvidence! } });
-      }
-      const periodTraceRefs: CalculationTraceRef[] = tier === "summary" ? [] : performance.measure("engine.trace_result", () => [
+      const allAt = performance.measure("engine.schedule_contention", () => [
+        ...new Set(
+          scheduled.value.descriptors.map((item) => item.sequencingInstant),
+        ),
+      ].sort());
+      const periodTraceRefs: CalculationTraceRef[] = performance.measure("engine.trace_result", () => [
         ...(prepared.cash?.traceRefs ?? []),
         ...(prepared.investments?.traceRefs ?? []),
         ...(prepared.liabilities?.traceRefs ?? []),
       ]);
       let eventRuntimeCommitted = prepared.cash === undefined;
-      for (const { at, descriptors: sameInstant } of instantGroups) {
+      for (const at of allAt) {
         if (
           !eventRuntimeCommitted &&
           at >= prepared.cash!.primitiveStateFrontier
         ) {
-          candidatePrimitiveState = updatePrimitiveRuntimeStateStore(candidatePrimitiveState, prepared.cash!.eventPrimitiveTransition);
+          candidatePrimitiveState = createPrimitiveRuntimeStateStore(
+            {
+              ...candidatePrimitiveState,
+              ...prepared.cash!.eventPrimitiveTransition,
+            },
+          );
           candidateState = mergeEventPreparationIdentities(candidateState, prepared.cash!);
           eventRuntimeCommitted = true;
         }
-        const instantById = new Map(sameInstant.map(item => [item.id, item]));
+        const sameInstant = scheduled.value.descriptors.filter(
+          (item) => item.sequencingInstant === at,
+        );
+        const explicitEdges = scheduled.value.dependencies.map((edge) => ({
+          before: edge.before,
+          after: edge.after,
+        }));
         const contenders = sameInstant.filter((item) =>
           sameInstant.some(
             (other) =>
               item.id !== other.id &&
               hasSharedConsumedResource(item, other) &&
-              !explicitReaches(item.id, other.id) &&
-              !explicitReaches(other.id, item.id),
+              !reaches(explicitEdges, item.id, other.id) &&
+              !reaches(explicitEdges, other.id, item.id),
           ),
         );
         const component = (
@@ -649,7 +715,7 @@ const runCompiledHouseholdProjectionInternal = (
                 [...members].some((id) =>
                   hasSharedConsumedResource(
                     item,
-                    instantById.get(id)!,
+                    sameInstant.find((candidate) => candidate.id === id)!,
                   ),
                 )
               ) {
@@ -676,45 +742,24 @@ const runCompiledHouseholdProjectionInternal = (
               group.some((item) => item.id === edge.before) &&
               group.some((item) => item.id === edge.after),
           );
-          const groupIds = new Set(group.map(item => item.id));
-          const contracts = group.map(item => prepared.operations.commutativity(item,
-            { state: candidateState, primitiveState: candidatePrimitiveState }));
-          if (fundingPoolConservationProof(contracts)) {
-            performance.counters({ contentionAnalyticalFundingPoolConservation: 1 });
-            continue;
-          }
-          if (guaranteedFundingIncomeProof(contracts)) {
-            performance.counters({ contentionAnalyticalGuaranteedFirstSource: 1 });
-            continue;
-          }
-          const remainder = sameInstant.filter(item => !groupIds.has(item.id))
-            .sort((left, right) => left.id.localeCompare(right.id));
-          const compare = (edges: readonly { readonly before: string; readonly after: string }[]) => {
-            const counters = createReachableStateCounters();
-            // Legacy extension callbacks can replace the indexed representation.
-            // Keep one complete comparison encoding for all their branches.
-            const signature = (execution: InstantExecution) => outcomeSignature(execution, participants.length === 0 ? candidateState : undefined,
-              nodes => performance.counters({ contentionStateIndexNodesVisited: nodes }));
-            try {
-              return compareReachableStates({ items: group, edges,
-                opening: executeAt(at, [], candidateState, candidatePrimitiveState),
-                advance: (prefix, item) => executeAt(at, [item], cloneAuthoritativeState(prefix.state), prefix.primitiveState, prefix),
-                equivalenceKey: prefix => canonicalSerialize({
-                  outcome: signature(prefix), statuses: [...prefix.requiredStatuses].sort(([a], [b]) => a.localeCompare(b)),
-                }),
-                terminalSignature: prefix => signature(executeAt(at, remainder, prefix.state, prefix.primitiveState, prefix)),
-                counters,
-              });
-            } finally {
-              performance.counters({ contentionFallbackInvocations: counters.fallbackInvocations,
-                contentionDistinctStates: counters.distinctStates, contentionMergedPrefixes: counters.mergedPrefixes,
-                contentionTerminalOutcomes: counters.terminalOutcomes });
-              performance.counters({ contentionMaximumAmbiguousComponentSize: counters.maximumComponentSize }, "max");
-            }
-          };
-          const alternatives = performance.measure("engine.schedule_contention", () =>
-            compare(groupEdges));
-          if (alternatives.differs) {
+          const candidates = performance.measure("engine.schedule_contention", () => linearizations(group, groupEdges));
+          const previews = performance.measure("engine.schedule_contention", () => candidates.map((candidate) =>
+            executeAt(
+              at,
+              [
+                ...candidate,
+                ...sameInstant
+                  .filter(
+                    (item) => !group.some((member) => member.id === item.id),
+                  )
+                  .sort((left, right) => left.id.localeCompare(right.id)),
+              ],
+              candidateState,
+              candidatePrimitiveState,
+            ),
+          ));
+          const signatures = [...new Set(previews.map(outcomeSignature))];
+          if (signatures.length > 1) {
             const policy = scheduled.value.policy;
             const policyEdges =
               policy === undefined
@@ -728,9 +773,11 @@ const runCompiledHouseholdProjectionInternal = (
                       )
                       .map((after) => ({ before: before.id, after: after.id })),
                   );
-            const constrained = performance.measure("engine.schedule_contention", () =>
-              compare([...groupEdges, ...policyEdges]));
-            if (constrained.first === undefined)
+            const constrained = performance.measure("engine.schedule_contention", () => linearizations(group, [
+              ...groupEdges,
+              ...policyEdges,
+            ]));
+            if (constrained.length === 0)
               throw new ValidationError({
                 severity: "error",
                 code: "HOUSEHOLD_CONTENTION_POLICY_CYCLE",
@@ -744,9 +791,24 @@ const runCompiledHouseholdProjectionInternal = (
                   ...(policy === undefined ? [] : [policy.id]),
                 ],
               });
+            const constrainedPreviews = performance.measure("engine.schedule_contention", () => constrained.map((candidate) =>
+              executeAt(
+                at,
+                [
+                  ...candidate,
+                  ...sameInstant
+                    .filter(
+                      (item) => !group.some((member) => member.id === item.id),
+                    )
+                    .sort((left, right) => left.id.localeCompare(right.id)),
+                ],
+                candidateState,
+                candidatePrimitiveState,
+              ),
+            ));
             if (
               policy === undefined ||
-              constrained.differs
+              new Set(constrainedPreviews.map(outcomeSignature)).size > 1
             ) {
               const policyText =
                 policy === undefined
@@ -770,8 +832,8 @@ const runCompiledHouseholdProjectionInternal = (
             for (const edge of policyEdges)
               if (!edgeExists(resolvedEdges, edge.before, edge.after))
                 resolvedEdges.push({ ...edge });
-            if (tier === "detail") periodTraceRefs.push(contentionTrace(policy!, at));
-            const chosen = constrained.first!;
+            periodTraceRefs.push(contentionTrace(policy!, at));
+            const chosen = constrained[0]!;
             for (let index = 0; index < chosen.length - 1; index += 1)
               resolvedEdges.push({
                 before: chosen[index]!.id,
@@ -779,9 +841,14 @@ const runCompiledHouseholdProjectionInternal = (
               });
           }
         }
-        const finalOrder = performance.measure("engine.schedule_contention", () => firstDependencyOrder(
-          sameInstant, resolvedEdges,
-        ));
+        const finalOrder = performance.measure("engine.schedule_contention", () => linearizations(
+          sameInstant,
+          resolvedEdges.filter(
+            (edge) =>
+              sameInstant.some((item) => item.id === edge.before) &&
+              sameInstant.some((item) => item.id === edge.after),
+          ),
+        ))[0];
         if (finalOrder === undefined)
           throw new ValidationError({
             severity: "error",
@@ -801,26 +868,16 @@ const runCompiledHouseholdProjectionInternal = (
         cashPeriods.push(...executed.cashPeriods);
         investmentPeriods.push(...executed.investmentPeriods);
         liabilityPeriods.push(...executed.liabilityPeriods);
-        additionalFacts.push(...executed.additionalFacts);
         liability = liabilityPeriods[liabilityPeriods.length - 1];
       }
       if (!eventRuntimeCommitted) {
-        candidatePrimitiveState = updatePrimitiveRuntimeStateStore(candidatePrimitiveState, prepared.cash!.eventPrimitiveTransition);
+        candidatePrimitiveState = createPrimitiveRuntimeStateStore(
+          {
+            ...candidatePrimitiveState,
+            ...prepared.cash!.eventPrimitiveTransition,
+          },
+        );
         candidateState = mergeEventPreparationIdentities(candidateState, prepared.cash!);
-      }
-      if (tier === "summary") {
-        validateAuthoritativeState(candidateState);
-        assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
-        assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
-        const summary = performance.measure("engine.statements_metrics", () =>
-          createHouseholdSummaryPeriod(period, state, candidateState, additionalFacts, kernel, runContext.baseCurrency));
-        diagnostics.push(...(prepared.cash?.diagnostics ?? []), ...additionalFacts.flatMap(fact => [
-          ...(fact.summary?.cash?.diagnostics ?? []), ...(fact.summary?.debt?.diagnostics ?? []), ...(fact.diagnostics ?? []),
-        ]));
-        state = candidateState; primitiveState = candidatePrimitiveState; reachedThrough = period.end;
-        periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata);
-        periodRetention?.acceptSummary?.(summary);
-        continue;
       }
       performance.measure("engine.trace_result", () => {
       if (liabilityPeriods.length > 0) {
@@ -828,18 +885,19 @@ const runCompiledHouseholdProjectionInternal = (
         const rawLiabilities = liabilityPeriods.flatMap(
           (item) => item.liabilities,
         );
-        const lastIndexByLoan = new Map<string, number>();
-        const scheduledPrincipalByLoan = new Map<string, Money>();
-        rawLiabilities.forEach((item, index) => {
-          lastIndexByLoan.set(item.loanId, index);
-          scheduledPrincipalByLoan.set(item.loanId,
-            (scheduledPrincipalByLoan.get(item.loanId) ?? zero).plus(item.scheduledPrincipalPaid));
-        });
         const consolidatedLiabilities = rawLiabilities.map((item, index) => {
-          const lastForLoan = lastIndexByLoan.get(item.loanId) === index;
+          const lastForLoan =
+            rawLiabilities
+              .map((candidate, candidateIndex) =>
+                candidate.loanId === item.loanId ? candidateIndex : -1,
+              )
+              .filter((candidateIndex) => candidateIndex >= 0)
+              .pop() === index;
           if (!lastForLoan || compiled.liabilityInput === undefined)
             return item;
-          const loan = kernel.liabilities?.loan(item.loanId);
+          const loan = compiled.liabilityInput.loans.find(
+            (candidate) => candidate.id === item.loanId,
+          );
           if (loan === undefined) return item;
           const opening =
             state.liabilities[loan.principalLiabilityId]?.balance ?? zero;
@@ -849,7 +907,13 @@ const runCompiledHouseholdProjectionInternal = (
           const extraPaid = opening
             .minus(closing)
             .minus(
-              scheduledPrincipalByLoan.get(item.loanId) ?? zero,
+              rawLiabilities
+                .filter((candidate) => candidate.loanId === item.loanId)
+                .reduce(
+                  (total, candidate) =>
+                    total.plus(candidate.scheduledPrincipalPaid),
+                  zero,
+                ),
             );
           return Object.freeze({
             ...item,
@@ -861,8 +925,16 @@ const runCompiledHouseholdProjectionInternal = (
           (total, item) => total.plus(item.interestExpense),
           zero,
         );
-        const principalIds = kernel.liabilities?.principalIds ?? [];
-        const interestIds = kernel.liabilities?.interestIds ?? [];
+        const principalIds = new Set(
+          compiled.liabilityInput?.loans.map(
+            (loan) => loan.principalLiabilityId,
+          ) ?? [],
+        );
+        const interestIds = new Set(
+          compiled.liabilityInput?.loans.map(
+            (loan) => loan.interestPayableLiabilityId,
+          ) ?? [],
+        );
         const principalBefore = [...principalIds].reduce(
           (total, id) => total.plus(state.liabilities[id]?.balance ?? zero),
           zero,
@@ -927,7 +999,6 @@ const runCompiledHouseholdProjectionInternal = (
           ...cashPeriods.flatMap((item) => item.transactions),
           ...investmentPeriods.flatMap((item) => item.transactions),
           ...liabilityPeriods.flatMap((item) => item.transactions),
-          ...additionalFacts.flatMap(facts => facts.transactions ?? []),
         ].sort(
           (left, right) =>
             left.date.localeCompare(right.date) ||
@@ -945,7 +1016,6 @@ const runCompiledHouseholdProjectionInternal = (
         compiled.standaloneAssets,
       ));
       const periodResult: HouseholdProjectionPeriodResult = performance.measure("engine.trace_result", () => {
-      performance.counters({ detailedPeriodResultsMaterialized: 1 });
       const cashFlow =
         cashPeriods.length === 0
           ? undefined
@@ -1022,12 +1092,10 @@ const runCompiledHouseholdProjectionInternal = (
         constraintOutcomes: Object.freeze([
           ...cashPeriods.flatMap((item) => item.constraintOutcomes),
           ...liabilityPeriods.flatMap((item) => item.constraintOutcomes),
-          ...additionalFacts.flatMap(facts => facts.constraintOutcomes ?? []),
         ]),
         liquidityShortfalls: Object.freeze([
           ...cashPeriods.flatMap((item) => item.liquidityShortfalls),
           ...liabilityPeriods.flatMap((item) => item.liquidityShortfalls),
-          ...additionalFacts.flatMap(facts => facts.liquidityShortfalls ?? []),
         ]),
         traceRefs:
           mergeTraceRefs(
@@ -1035,25 +1103,20 @@ const runCompiledHouseholdProjectionInternal = (
             ...cashPeriods.map((item) => item.traceRefs),
             ...investmentPeriods.map((item) => item.traceRefs),
             ...liabilityPeriods.map((item) => item.traceRefs),
-            ...additionalFacts.map(facts => facts.traceRefs),
           ) ?? Object.freeze([]),
         ...(cashFlow === undefined ? {} : { cashFlow }),
         ...(investments === undefined ? {} : { investments }),
         ...(liability === undefined ? {} : { liability }),
       });
       });
-      if (periodRetention?.retainDiagnostics === undefined || periodRetention.retainDiagnostics(period)) diagnostics.push(
+      diagnostics.push(
         ...(prepared.cash?.diagnostics ?? []),
         ...cashPeriods.flatMap((item) => item.diagnostics),
         ...liabilityPeriods.flatMap((item) => item.diagnostics),
-        ...additionalFacts.flatMap(facts => facts.diagnostics ?? []),
       );
       state = candidateState;
       primitiveState = candidatePrimitiveState;
-      reachedThrough = period.end;
-      periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata);
-      periodRetention?.accept(periodResult);
-      if (periodRetention === undefined || periodRetention.retain(period)) committed.push(periodResult);
+      committed.push(periodResult);
     } catch (error) {
       if (!(error instanceof ValidationError)) throw error;
       diagnostics.push(...error.issues);
@@ -1062,9 +1125,11 @@ const runCompiledHouseholdProjectionInternal = (
         runMetadata,
         requestedHorizon,
         stoppedAt: period.start,
-        ...(reachedThrough === undefined ? {} : { reachedThrough }),
-        state: createAuthoritativeState(state),
-        primitiveState: materializePrimitiveRuntimeStateStore(primitiveState),
+        ...(committed.length === 0
+          ? {}
+          : { reachedThrough: committed[committed.length - 1]!.period.end }),
+        state,
+        primitiveState,
         periods: Object.freeze(committed),
         diagnostics: Object.freeze(diagnostics),
         displayInputs: display(runContext),
@@ -1074,9 +1139,9 @@ const runCompiledHouseholdProjectionInternal = (
     status: "completed",
     runMetadata,
     requestedHorizon,
-    reachedThrough: reachedThrough ?? requestedHorizon.end,
-    state: createAuthoritativeState(state),
-    primitiveState: materializePrimitiveRuntimeStateStore(primitiveState),
+    reachedThrough: requestedHorizon.end,
+    state,
+    primitiveState,
     periods: Object.freeze(committed),
     diagnostics: Object.freeze(diagnostics),
     displayInputs: display(runContext),
@@ -1090,92 +1155,6 @@ export const runCompiledHouseholdProjection = (
   const performance = createPerformanceSession(observer);
   try {
     return runCompiledHouseholdProjectionInternal(request, performance);
-  } finally {
-    performance.finish();
-  }
-};
-
-export interface HouseholdForecastSummaryResult extends Omit<CompiledHouseholdProjectionRunResult, "periods"> {
-  readonly resultTier: "summary";
-  readonly periods: readonly HouseholdForecastSummaryPeriod[];
-  /** Immutable opening boundary; no per-period state snapshots are retained for replay. */
-  readonly replay: { readonly kernel: CompiledHouseholdKernel; readonly runContext: RunContext };
-}
-
-interface HouseholdReplayCheckpoint {
-  readonly at: Instant;
-  readonly fingerprint: RunMetadata["inputFingerprint"];
-  readonly state: AuthoritativeState;
-  readonly primitiveState: PrimitiveRuntimeStateStore;
-}
-
-// Checkpoints are private persistent roots, not serialized per-period snapshots.
-// Their audit trees share unchanged nodes with the execution stream. Transported
-// forecasts without these optional roots can still replay from the opening basis.
-const forecastCheckpoints = new WeakMap<object, readonly HouseholdReplayCheckpoint[]>();
-
-/** Direct summary evaluation. Financial operations are shared with the detailed adapter. */
-export const runHouseholdForecastSummary = (
-  request: { readonly kernel: CompiledHouseholdKernel; readonly overlay?: HouseholdExecutionOverlay; readonly runContext: RunContext; readonly participants?: readonly HouseholdKernelParticipant[] },
-  observer?: PerformanceObserver,
-): HouseholdForecastSummaryResult => {
-  const kernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
-  const runContext = Object.freeze({ ...request.runContext, versions: Object.freeze({ ...request.runContext.versions }) });
-  const performance = createPerformanceSession(observer);
-  const summaries: HouseholdForecastSummaryPeriod[] = [];
-  const checkpoints: HouseholdReplayCheckpoint[] = [];
-  try {
-    const result = runCompiledHouseholdProjectionInternal({
-      compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
-      ...(request.participants === undefined ? {} : { participants: request.participants }),
-    }, performance, {
-      accept: () => {}, acceptSummary: period => { summaries.push(period); },
-      retain: () => false,
-      checkpoint: (period, state, primitiveState, metadata) => {
-        // Twelve display periods is the initial engineering choice, not a
-        // measured product budget. Never retain an unused terminal checkpoint.
-        if ((summaries.length + 1) % 12 !== 0 || period.end >= runContext.simulationEnd) return;
-        checkpoints.push(Object.freeze({ at: period.end, fingerprint: metadata.inputFingerprint,
-          state: cloneAuthoritativeState(state), primitiveState: createPrimitiveRuntimeStateStore(primitiveState) }));
-      },
-    });
-    const forecast: HouseholdForecastSummaryResult = Object.freeze({ ...result, resultTier: "summary", periods: Object.freeze(summaries),
-      replay: Object.freeze({ kernel, runContext }) });
-    forecastCheckpoints.set(forecast, Object.freeze(checkpoints));
-    performance.counters({ replayCheckpointsRetained: checkpoints.length, summaryPeriodsRetained: summaries.length });
-    return forecast;
-  } finally {
-    performance.finish();
-  }
-};
-
-/** Regenerate only the selected evidence warehouse from the immutable opening boundary. */
-export const replayHouseholdForecastWindow = (
-  forecast: Pick<HouseholdForecastSummaryResult, "periods" | "runMetadata" | "replay">,
-  selectedWindow: Period,
-  observer?: PerformanceObserver,
-): CompiledHouseholdProjectionRunResult => {
-  const { kernel, runContext } = forecast.replay;
-  const selected = forecast.periods.filter(period => period.period.start >= selectedWindow.start && period.period.end <= selectedWindow.end);
-  if (selectedWindow.start >= selectedWindow.end || selected.length === 0 ||
-      selected[0]!.period.start !== selectedWindow.start || selected[selected.length - 1]!.period.end !== selectedWindow.end)
-    throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_WINDOW_INVALID",
-      message: "Replay requires an aligned window of successfully committed forecast periods.", entityType: "household_projection" });
-  const performance = createPerformanceSession(observer);
-  try {
-    const checkpoint = (forecastCheckpoints.get(forecast) ?? []).filter(value => value.at <= selectedWindow.start).at(-1);
-    const replay = runCompiledHouseholdProjectionInternal({
-      compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
-    }, performance, { accept: () => {}, retain: period => period.start >= selectedWindow.start && period.end <= selectedWindow.end,
-      ...(checkpoint === undefined ? {} : { resume: checkpoint }), stopAfter: selectedWindow.end,
-      retainDiagnostics: period => period.start >= selectedWindow.start });
-    performance.counters({ replayCheckpointResumes: checkpoint === undefined ? 0 : 1,
-      replayDetailPeriodsMaterialized: replay.periods.length });
-    if (canonicalSerialize(replay.runMetadata) !== canonicalSerialize(forecast.runMetadata) ||
-        canonicalSerialize(replay.periods.map(summarizeHouseholdPeriod)) !== canonicalSerialize(selected))
-      throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_BASIS_MISMATCH",
-        message: "Immutable forecast artifacts did not reproduce the displayed forecast exactly.", entityType: "household_projection" });
-    return Object.freeze({ ...replay, requestedHorizon: Object.freeze({ ...selectedWindow }) });
   } finally {
     performance.finish();
   }

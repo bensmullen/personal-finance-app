@@ -1,16 +1,17 @@
-import type { AccountingTransaction } from "../accounting/index.js";
-import { evidenceBuffer, type SummaryOperationSink } from "./r3/summarySink.js";
-import { DependencyGraph } from "../dependencies/index.js";
+/** Frozen domain evaluator at 4800f6e (financial behavior inherited from pre-R3).
+ * Bounded reference tests only; never import into production execution. */
+import type { AccountingTransaction } from "../../accounting/index.js";
+import { DependencyGraph } from "../../dependencies/index.js";
 import {
   ValidationError,
   failValidation,
   issueCodes,
   validationIssue,
   type ValidationIssue,
-} from "../diagnostics/index.js";
-import type { GeneratedOccurrenceKey } from "../identity/index.js";
-import type { CalculationTraceRef } from "../lineage/index.js";
-import { isObservedFact } from "../model/provenance.js";
+} from "../../diagnostics/index.js";
+import type { GeneratedOccurrenceKey } from "../../identity/index.js";
+import type { CalculationTraceRef } from "../../lineage/index.js";
+import { isObservedFact } from "../../model/provenance.js";
 import {
   evaluatePrimitive,
   initialEventModificationPrimitiveState,
@@ -32,22 +33,21 @@ import {
   type AccrualPrimitiveState,
   type MarkToMarketPrimitiveState,
   type PrimitiveEvaluationContext,
-} from "../primitives/index.js";
-import { createSemanticEffect, type SemanticEffect } from "../semantics/effect.js";
+} from "../../primitives/index.js";
+import { createSemanticEffect, type SemanticEffect } from "../../semantics/effect.js";
 import {
   applyAccountingTransactionAtomically,
   assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
   registerAuthoritativeIdentity,
   validateAuthoritativeState,
-  PersistentStringIndex,
   type AuthoritativeState,
-} from "../state/index.js";
-import { deriveStatements, type Statements } from "../statements/index.js";
-import { inPeriod, type Instant, type Period } from "../time/index.js";
-import { Money } from "../values/index.js";
-import type { RunContext } from "./run.js";
-import { assertObservedFactWithinDataCutoff, assertRunContext } from "./run.js";
+} from "../../state/index.js";
+import { deriveStatements, type Statements } from "../../statements/index.js";
+import { inPeriod, type Instant, type Period } from "../../time/index.js";
+import { Money } from "../../values/index.js";
+import type { RunContext } from "../run.js";
+import { assertObservedFactWithinDataCutoff, assertRunContext } from "../run.js";
 
 type BindPrimitiveRuntime<T> = T extends ImplementedPrimitiveEvaluationRequest
   ? Omit<T, "context" | "priorState"> & {
@@ -68,14 +68,10 @@ export type PrimitiveRuntimeStateEntry =
   | { readonly primitiveId: "P30"; readonly state: EventTerminationPrimitiveState };
 
 export type PrimitiveRuntimeStateStore = Readonly<Record<string, PrimitiveRuntimeStateEntry>>;
-const validatedPrimitiveStores = new WeakSet<object>();
-const primitiveStoreIndexes = new WeakMap<object, PersistentStringIndex<PrimitiveRuntimeStateEntry>>();
 
 export const createPrimitiveRuntimeStateStore = (
   entries: PrimitiveRuntimeStateStore = {},
-): PrimitiveRuntimeStateStore => {
-  if (validatedPrimitiveStores.has(entries)) return entries;
-  const store: PrimitiveRuntimeStateStore = Object.freeze(Object.fromEntries(
+): PrimitiveRuntimeStateStore => Object.freeze(Object.fromEntries(
   Object.entries(entries).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => {
     const valid = (() => {
       switch (entry.primitiveId) {
@@ -121,36 +117,7 @@ export const createPrimitiveRuntimeStateStore = (
     }
     return [key, Object.freeze({ primitiveId: entry.primitiveId, state: Object.freeze({ ...entry.state }) }) as PrimitiveRuntimeStateEntry];
   }),
-  ));
-  validatedPrimitiveStores.add(store);
-  return store;
-};
-
-/** Validate changed primitive entries only; share unchanged runtime history. */
-export const updatePrimitiveRuntimeStateStore = (
-  store: PrimitiveRuntimeStateStore,
-  changes: PrimitiveRuntimeStateStore,
-): PrimitiveRuntimeStateStore => {
-  const validated = createPrimitiveRuntimeStateStore(changes);
-  const index = primitiveStoreIndexes.get(store)?.fork()
-    ?? new PersistentStringIndex(Object.entries(createPrimitiveRuntimeStateStore(store)));
-  for (const [key, value] of Object.entries(validated)) index.set(key, value);
-  const result = new Proxy({} as Record<string, PrimitiveRuntimeStateEntry>, {
-    get: (_target, property) => typeof property === "string" ? index.get(property) : undefined,
-    has: (_target, property) => typeof property === "string" && index.has(property),
-    ownKeys: () => Array.from(index.entries(), ([key]) => key),
-    getOwnPropertyDescriptor: (_target, property) => typeof property === "string" && index.has(property)
-      ? { value: index.get(property), writable: false, configurable: true, enumerable: true } : undefined,
-    set: () => false, deleteProperty: () => false, defineProperty: () => false,
-  });
-  primitiveStoreIndexes.set(result, index);
-  validatedPrimitiveStores.add(result);
-  return result;
-};
-
-/** Ordinary immutable output/transport object, materialized once at a run boundary. */
-export const materializePrimitiveRuntimeStateStore = (store: PrimitiveRuntimeStateStore): PrimitiveRuntimeStateStore =>
-  createPrimitiveRuntimeStateStore(Object.fromEntries(Object.entries(store)));
+));
 
 export const assertPrimitiveRuntimeStateConsistent = (
   store: PrimitiveRuntimeStateStore,
@@ -417,21 +384,20 @@ const evaluatePeriodPrimitive = (
   }
 };
 
-export type PeriodWorkCandidate = Omit<CommittedPeriodResult, "period" | "openingState" | "statements">;
-
-/** Financial work evaluator. It owns no run metadata, statement or opening snapshot. */
-export const executePeriodWorkCandidate = (input: RunPeriodInput, summary?: SummaryOperationSink): PeriodWorkCandidate => {
+/** Executes one half-open period against private candidate financial and primitive state. */
+export const runPeriod = (input: RunPeriodInput): CommittedPeriodResult => {
   assertRunContext(input.runContext);
   if (input.period.start < input.runContext.simulationStart || input.period.end > input.runContext.simulationEnd || input.period.start >= input.period.end) {
     invalidWork("Period must be a non-empty interval within the run horizon");
   }
   assertPeriodWorkPlan(input.work, input.period, input.runContext);
+  const openingState = cloneAuthoritativeState(input.openingState);
   const candidateState = cloneAuthoritativeState(input.openingState);
   assertAuthoritativeStateCurrency(candidateState, input.runContext.baseCurrency);
   let candidatePrimitiveState = createPrimitiveRuntimeStateStore(input.primitiveState);
   assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
-  const effects = evidenceBuffer<SemanticEffect>(summary, value => summary?.traces(value.traceRefs ?? []));
-  const transactions = evidenceBuffer<AccountingTransaction>(summary, value => summary?.transaction(value));
+  const effects: SemanticEffect[] = [];
+  const transactions: AccountingTransaction[] = [];
   const diagnostics: ValidationIssue[] = [];
   const primitiveOutputs: PrimitivePeriodOutput[] = [];
 
@@ -454,7 +420,8 @@ export const executePeriodWorkCandidate = (input: RunPeriodInput, summary?: Summ
         if (occurrenceId !== undefined) registerAuthoritativeIdentity(candidateState.identities, "generatedOccurrenceKeys", occurrenceId);
       }
       if (evaluated.nextStateEntry !== undefined) {
-        candidatePrimitiveState = updatePrimitiveRuntimeStateStore(candidatePrimitiveState, {
+        candidatePrimitiveState = createPrimitiveRuntimeStateStore({
+          ...candidatePrimitiveState,
           [item.request.context.primitiveInstanceId]: evaluated.nextStateEntry,
         });
       }
@@ -484,22 +451,14 @@ export const executePeriodWorkCandidate = (input: RunPeriodInput, summary?: Summ
 
   validateAuthoritativeState(candidateState);
   return Object.freeze({
+    period: Object.freeze({ ...input.period }),
+    openingState,
     closingState: candidateState,
     primitiveState: candidatePrimitiveState,
     effects: Object.freeze(effects),
     transactions: Object.freeze(transactions),
+    statements: deriveStatements(candidateState, transactions, input.runContext.baseCurrency),
     diagnostics: Object.freeze(diagnostics),
     primitiveOutputs: Object.freeze(primitiveOutputs),
-  });
-};
-
-/** Detailed standalone adapter; wrappers compose the shared financial evaluator. */
-export const runPeriod = (input: RunPeriodInput): CommittedPeriodResult => {
-  const candidate = executePeriodWorkCandidate(input);
-  return Object.freeze({
-    ...candidate,
-    period: Object.freeze({ ...input.period }),
-    openingState: cloneAuthoritativeState(input.openingState),
-    statements: deriveStatements(candidate.closingState, candidate.transactions, input.runContext.baseCurrency),
   });
 };
