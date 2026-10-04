@@ -2,13 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { addPersonalObject, deletePersonalObject, patchPersonalObject, type getPersonalEditorMetadata, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../src/application/personalMvp.js";
-import { objectEntries, objectId, objectLabel, entitySummary, referenceLabel, referenceTargets, formatExactMoney, formatRate } from "./entityPresentation.js";
+import { objectEntries, objectId, objectLabel, entitySummary, referenceLabel, referenceTargets, formatExactMoney, formatRate, isCashFlowPaymentAccount } from "./entityPresentation.js";
 
 const randomId = () => crypto.randomUUID();
 interface EditorField {
   readonly type: string;
   readonly required: boolean;
   readonly derived: boolean;
+  readonly mutable: boolean;
+  readonly default: unknown;
   readonly ref?: string;
   readonly enumValues?: readonly string[];
 }
@@ -26,8 +28,8 @@ const FIELD_HELP: Record<string, string> = {
   current_balance: "Remaining debt at the model's opening position.",
   extra_payment: "Optional extra principal payment in addition to required debt service.",
   interest_rate: "Decimal rate: 0.0525 means 5.25%. Supported fixed monthly debt uses a nominal annual rate.",
-  expected_return: "Stored model detail; this field alone has no executable investment rate-basis contract.",
-  volatility: "Stored model detail; probabilistic forecasting is not supported in this view.",
+  expected_return: "Direct Expected return is not supported by the deterministic forecast. Use the existing linked return assumption under Plan → Assumptions, or Plan → What If? → Change investment returns.",
+  volatility: "Volatility belongs to future probabilistic forecasting and is not supported by the current deterministic forecast.",
   stochastic: "Stored scenario setting; this view runs deterministic forecasts only.",
   quantity: "Number of investment units; this is not a money amount.",
   end_date: "Exclusive end: this item applies before this date.",
@@ -101,7 +103,9 @@ const FIELD_LABELS: Record<string, string> = {
   rebalancing_rule_id: "Rebalancing rule",
   related_event_id: "Linked life event",
   distribution_parameters: "Distribution parameters",
+  volatility: "Volatility",
 };
+const RETIREMENT_LIMITATION = "Recurring retirement contributions are not currently authorable through this editor. Do not model a contribution as Spending paid to a retirement account. Supported investment operations must be explicitly configured; this is a pre-alpha capability limitation.";
 const PRIMARY_FIELDS: Record<PersonalObjectType, readonly string[]> = {
   Household: [
     "name",
@@ -243,6 +247,8 @@ function ObjectEditor({
   currency: string;
 }) {
   const [editing, setEditing] = useState<JsonObject>();
+  const [creating, setCreating] = useState(false);
+  const [creationError, setCreationError] = useState("");
   const drawer = useRef<HTMLElement>(null);
   const editingId = editing ? objectId(type, editing) : undefined;
   useEffect(() => {
@@ -258,19 +264,48 @@ function ObjectEditor({
   }, [editingId]);
   const values = objectEntries(draft, type);
   const descriptor = metadata[type];
+  const fields = descriptor.fields as Record<string, EditorField>;
+  const close = () => { setEditing(undefined); setCreating(false); setCreationError(""); };
   const add = () => {
     const id = randomId();
-    const next = addPersonalObject(draft, type, id);
+    const initial: Record<string, string | boolean | number | readonly string[]> = { [descriptor.idField]: id };
+    for (const [name, field] of Object.entries(fields)) {
+      if (field.derived || name === descriptor.idField || internalReference(field) ||
+        (type === "Investment" && ["expected_return", "volatility"].includes(name))) continue;
+      const value = field.default;
+      if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
+        if (["money", "rate", "decimal"].includes(field.type) && !/^-?\d+(\.\d+)?$/.test(String(value))) continue;
+        initial[name] = value;
+      }
+    }
+    setCreating(true);
+    setCreationError("");
+    setEditing(initial);
+  };
+  const create = () => {
+    if (!editing) return;
+    const missing = Object.entries(fields).filter(([name, field]) => name !== descriptor.idField &&
+      !field.derived && !field.mutable && field.required &&
+      (editing[name] === undefined || editing[name] === null || editing[name] === ""));
+    if (missing.length) {
+      setCreationError("Complete the creation-time facts: " + missing.map(([name]) => FIELD_LABELS[name] ?? name.replaceAll("_", " ")).join(", "));
+      return;
+    }
+    const next = addPersonalObject(draft, type, objectId(type, editing), editing);
     setDraft(next);
-    setEditing(
-      objectEntries(next, type).find((value) => objectId(type, value) === id)!,
-    );
+    close();
   };
   const saveField = (
     field: string,
-    value: string | boolean | readonly string[],
+    value: string | boolean | readonly string[] | null,
   ) => {
     if (!editing) return;
+    if (type === "Investment" && ["expected_return", "volatility"].includes(field) && value !== null) return;
+    if (creating) {
+      setEditing({ ...editing, [field]: value });
+      return;
+    }
+    if (fields[field]?.mutable === false && editing[field] !== undefined) return;
     const next = patchPersonalObject(draft, type, objectId(type, editing), {
       [field]: value,
     });
@@ -281,12 +316,12 @@ function ObjectEditor({
       ),
     );
   };
-  const fields = descriptor.fields as Record<string, EditorField>;
   const editableFields = Object.keys(fields).filter((name) =>
     name !== descriptor.idField && !fields[name]!.derived && !internalReference(fields[name]!));
-  const commonFields = PRIMARY_FIELDS[type].filter((name) => editableFields.includes(name) && !EXPERT_FIELDS.has(name));
+  const commonFields = editableFields.filter((name) =>
+    (PRIMARY_FIELDS[type].includes(name) && !EXPERT_FIELDS.has(name)) || (creating && !fields[name]!.mutable));
   const secondaryFields = editableFields.filter((name) => !commonFields.includes(name) && !EXPERT_FIELDS.has(name));
-  const expertFields = editableFields.filter((name) => EXPERT_FIELDS.has(name));
+  const expertFields = editableFields.filter((name) => EXPERT_FIELDS.has(name) && !commonFields.includes(name));
   const managedFields = Object.keys(fields).filter((name) => internalReference(fields[name]!));
   const remove = (item: JsonObject) => {
     const result = deletePersonalObject(draft, type, objectId(type, item));
@@ -303,18 +338,20 @@ function ObjectEditor({
         <div>
           <h1>{TITLES[type]}</h1>
           <p>Review names, amounts, and relationships. Model details are available inside each item.</p>
+          {type === "Asset" && <p>Use Investments for securities and positions in investment accounts. Property & assets is for real estate, vehicles, businesses, personal property, and other non-security resources. Do not duplicate cash or securities here.</p>}
         </div>
         <button className="primary" onClick={add}>
-          + Add {TITLES[type].replace(/s$/, "")}
+          + Add {type}
         </button>
       </div>
+      {(type === "Investment" || type === "Account") && <p className="reference-state" role="note">{RETIREMENT_LIMITATION}</p>}
       {values.length === 0 ? (
         <p className="empty">No {TITLES[type].toLowerCase()} yet.</p>
       ) : (
         <div className="object-grid">
           {values.map((item) => (
             <article className="object-card" key={objectId(type, item)}>
-              <button className="card-main" onClick={() => setEditing(item)}>
+              <button className="card-main" onClick={() => { setCreating(false); setEditing(item); }}>
                 <span className="object-icon">{TITLES[type][0]}</span>
                 <span>
                   <strong id={`${type}-${objectId(type, item)}-label`}>{objectLabel(type, item) || `New ${type}`}</strong>
@@ -334,12 +371,12 @@ function ObjectEditor({
         <div
           className="drawer-backdrop"
           onMouseDown={(event) => {
-            if (event.currentTarget === event.target) setEditing(undefined);
+            if (event.currentTarget === event.target) close();
           }}
         >
-          <aside ref={drawer} className="drawer" role="dialog" aria-modal="true" aria-label={`Edit ${type}`}
+          <aside ref={drawer} className="drawer" role="dialog" aria-modal="true" aria-label={`${creating ? "Create" : "Edit"} ${type}`}
             onKeyDown={(event) => {
-              if (event.key === "Escape") { event.preventDefault(); setEditing(undefined); }
+              if (event.key === "Escape") { event.preventDefault(); close(); }
               if (event.key !== "Tab") return;
               const controls = Array.from(drawer.current?.querySelectorAll<HTMLElement>(
                 'button:not(:disabled), input:not(:disabled), select:not(:disabled), summary, [tabindex="0"]') ?? [])
@@ -350,17 +387,20 @@ function ObjectEditor({
             }}>
             <div className="panel-head">
               <div>
-                <p className="eyebrow">Edit {type}</p>
-                <h2>{objectLabel(type, editing) || `New ${type}`}</h2>
+                <p className="eyebrow">{creating ? "Create" : "Edit"} {type}</p>
+                <h2>{creating ? `New ${type.toLowerCase()}` : objectLabel(type, editing)}</h2>
               </div>
               <button
                 className="icon-button"
                 aria-label="Close editor"
-                onClick={() => setEditing(undefined)}
+                onClick={close}
               >
                 ×
               </button>
             </div>
+            {creating && <p>Choose creation-time facts before adding this record. Once set, these facts cannot be overwritten. Closing or cancelling discards this new record.</p>}
+            {(type === "Investment" || type === "Account") && <p role="note">{RETIREMENT_LIMITATION}</p>}
+            <form onSubmit={(event) => { event.preventDefault(); if (creating) create(); }}>
             <div className="form-grid">
               {commonFields.map((fieldName) => (
                 <FieldControl
@@ -370,6 +410,8 @@ function ObjectEditor({
                   value={editing[fieldName]}
                   draft={draft}
                   currency={editing.currency ?? currency}
+                  entityType={type}
+                  creating={creating}
                   onChange={(value) => saveField(fieldName, value)}
                 />
               ))}
@@ -389,6 +431,8 @@ function ObjectEditor({
                       value={editing[fieldName]}
                       draft={draft}
                       currency={editing.currency ?? currency}
+                      entityType={type}
+                      creating={creating}
                       onChange={(value) => saveField(fieldName, value)}
                     />
                   ))
@@ -403,6 +447,7 @@ function ObjectEditor({
               <div className="form-grid">
                 {expertFields.map((fieldName) => <FieldControl key={fieldName}
                   fieldName={fieldName} field={fields[fieldName]} value={editing[fieldName]} draft={draft}
+                  entityType={type} creating={creating}
                   currency={editing.currency ?? currency} onChange={(value) => saveField(fieldName, value)} />)}
               </div>
               {managedFields.length > 0 && <section aria-label="Managed model references">
@@ -417,6 +462,12 @@ function ObjectEditor({
               </section>}
               {expertFields.length === 0 && managedFields.length === 0 && <p>No expert settings for this item.</p>}
             </details>
+            {creating && <div className="row">
+              <button type="submit" className="primary">Create {type}</button>
+              <button type="button" className="secondary" onClick={close}>Cancel</button>
+            </div>}
+            {creationError && <p className="field-error" role="alert">{creationError}</p>}
+            </form>
             <details>
               <summary>Technical details</summary>
               <p className="muted">Record IDs for troubleshooting relationships. These do not change financial behavior.</p>
@@ -442,33 +493,50 @@ function ObjectEditor({
     </section>
   );
 }
-function FieldControl({ fieldName, field, value, draft, currency, onChange }: {
+function FieldControl({ fieldName, field, value, draft, currency, entityType, creating, onChange }: {
   fieldName: string; field: EditorField | undefined; value: unknown; draft: PersonalDraft; currency: unknown;
-  onChange: (value: string | boolean | readonly string[]) => void;
+  entityType: PersonalObjectType; creating: boolean;
+  onChange: (value: string | boolean | readonly string[] | null) => void;
 }) {
   if (!field || field.derived || internalReference(field)) return null;
   const label = FIELD_LABELS[fieldName] ?? fieldName.replaceAll("_", " ");
+  const unsupportedReturn = entityType === "Investment" && ["expected_return", "volatility"].includes(fieldName);
+  if (unsupportedReturn || (!creating && !field.mutable && value !== undefined)) return <div className="financial-fact" role="group" aria-label={label}>
+    <strong>{label}</strong>
+    <p>{value === undefined || value === null || value === "" ? "Not set" :
+      field.type === "money" ? formatExactMoney(value, currency) :
+      field.type === "rate" ? formatRate(value) :
+      field.ref ? referenceLabel(draft, field.ref, value) : String(value).replaceAll("_", " ")}</p>
+    <small>{unsupportedReturn ? FIELD_HELP[fieldName] : "Read-only · set at creation. This fact cannot be overwritten on this record."}</small>
+    {unsupportedReturn && value !== undefined && value !== null && <>
+      <p>This stored value prevents deterministic forecasting. It is preserved until you explicitly clear it. Supported return changes use the linked assumption or What-If workflow.</p>
+      <button type="button" className="secondary" onClick={() => onChange(null)}>Clear stored {label}</button>
+    </>}
+  </div>;
+  const required = creating && field.required;
   if (field.type === "boolean") return <label className="check">
     <input aria-label={label} type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} />
     <span>{label}{FIELD_HELP[fieldName] && <small>{FIELD_HELP[fieldName]}</small>}</span>
   </label>;
   if (field.enumValues) return <label>{label}
-    <select aria-label={label} value={String(value ?? "")} onChange={(event) => onChange(event.target.value)}>
+    <select aria-label={label} required={required} value={String(value ?? "")} onChange={(event) => onChange(event.target.value)}>
       <option value="">{field.required ? "Select an option" : "Not set"}</option>
-      {field.enumValues.map((option) => <option key={option} value={option}>{option.replaceAll("_", " ")}</option>)}
+      {field.enumValues.filter((option) => !(creating && entityType === "Asset" && fieldName === "asset_type" && ["cash", "investment"].includes(option)))
+        .map((option) => <option key={option} value={option}>{option.replaceAll("_", " ")}</option>)}
     </select>
     {FIELD_HELP[fieldName] && <small>{FIELD_HELP[fieldName]}</small>}
   </label>;
   if (field.ref) {
+    const expenseFunding = entityType === "Expense" && fieldName === "payment_account_id";
     const targets = referenceTargets(field.ref);
-    const options = targets.flatMap((target) => objectEntries(draft, target).map((item) => ({
+    const options = targets.flatMap((target) => objectEntries(draft, target).filter((item) => !expenseFunding || isCashFlowPaymentAccount(item)).map((item) => ({
       id: objectId(target, item), label: objectLabel(target, item),
       context: entitySummary(target, item, draft, typeof currency === "string" ? currency : undefined),
     })));
     const hasReference = Array.isArray(value) ? value.length > 0 : Boolean(value);
     if (options.length === 0) return <div className="reference-state" role="note">
       <strong>{label}</strong>
-      <p>{hasReference ? referenceLabel(draft, field.ref, value) + ". " : ""}No {targets.map((type) => TITLES[type].toLowerCase()).join(" or ")} available. Add a record in its editor to choose this relationship.</p>
+      <p>{hasReference ? referenceLabel(draft, field.ref, value) + ". " : ""}{expenseFunding ? "No checking, savings, or cash funding accounts available. Add one under Money → Accounts; retirement and brokerage accounts cannot fund spending." : `No ${targets.map((type) => TITLES[type].toLowerCase()).join(" or ")} available. Add a record in its editor to choose this relationship.`}</p>
       {hasReference && <small>The stored reference is preserved; inspect Technical details for its ID.</small>}
     </div>;
     const selected = Array.isArray(value) ? value.map(String) : value ? [String(value)] : [];
@@ -481,21 +549,25 @@ function FieldControl({ fieldName, field, value, draft, currency, onChange }: {
       <small>Select one or more relationships. {missing.length > 0 && "An existing relationship is unavailable; its ID is in Technical details."}</small>
     </label>;
     return <label>{label}
-      <select aria-label={label} value={String(value ?? "")} onChange={(event) => onChange(event.target.value)}>
+      {expenseFunding && missing.length > 0 && <span role="note" className="reference-state">
+        Stored funding: {referenceLabel(draft, field.ref, value)}. This relationship is incompatible or unavailable and is preserved until you choose a checking, savings, or cash account. Do not model retirement contributions as Spending.
+      </span>}
+      <select aria-label={label} required={required} value={expenseFunding && missing.length > 0 ? "" : String(value ?? "")} onChange={(event) => onChange(event.target.value)}>
         <option value="">{field.required ? "Select a relationship" : "Not set"}</option>
-        {missing.map((id) => <option key={id} value={id}>Unavailable reference</option>)}
+        {!expenseFunding && missing.map((id) => <option key={id} value={id}>Unavailable reference</option>)}
         {options.map((option) => <option key={option.id} value={option.id}>{option.label} · {option.context}</option>)}
       </select>
       <small>{referenceLabel(draft, field.ref, value)}{missing.length > 0 && " · inspect Technical details for the stored ID"}</small>
     </label>;
   }
   return <label>{label}
-    <input aria-label={label} type={field.type === "date" ? "date" : "text"} value={String(value ?? "")}
+    <input aria-label={label} required={required} type={field.type === "date" ? "date" : "text"} value={String(value ?? "")}
       inputMode={["money", "rate", "decimal"].includes(field.type) ? "decimal" : undefined}
       placeholder={field.required ? "Required" : "Optional"} onChange={(event) => onChange(event.target.value)} />
     {FIELD_HELP[fieldName] && <small>{FIELD_HELP[fieldName]}</small>}
     {field.type === "money" && <small>Currency: {String(currency ?? "not specified")}. {value ? formatExactMoney(value, currency) : "Enter a decimal amount."}</small>}
     {field.type === "rate" && <small>Decimal rate{value ? ` · ${formatRate(value)}` : " · 0.05 means 5%"}. No rate basis is inferred.</small>}
     {field.type === "decimal" && <small>Decimal value; retain the supplied units and precision.</small>}
+    {!creating && !field.mutable && value === undefined && <small>Missing creation-time fact: supply once. It cannot be overwritten afterward.</small>}
   </label>;
 }

@@ -4,6 +4,27 @@ export const objectEntries = (draft: PersonalDraft, type: PersonalObjectType): r
   (draft.objects[type] ?? []).filter((value): value is JsonObject =>
     typeof value === "object" && value !== null && !Array.isArray(value)) as readonly JsonObject[];
 export const objectId = (type: PersonalObjectType, value: JsonObject) => String(value[`${type.toLowerCase()}_id`]);
+/** Mirrors the supported payment-account choices for display/authoring only. */
+export const isCashFlowPaymentAccount = (account: JsonObject): boolean =>
+  ["checking", "savings", "cash"].includes(String(account.account_type));
+export function forecastDiagnosticMessage(diagnostic: {
+  code?: string; message?: string; entityId?: string; relatedIds?: readonly string[];
+}, draft?: PersonalDraft): string {
+  const label = (ref: string, id: unknown, fallback: string) => {
+    const resolved = draft && id ? referenceLabel(draft, ref, id) : "Unavailable reference";
+    return resolved && resolved !== "Unavailable reference" ? resolved : fallback;
+  };
+  switch (diagnostic.code) {
+    case "PAYMENT_ACCOUNT_TYPE_UNSUPPORTED":
+      return `${label("Expense", diagnostic.entityId, "This spending item")} uses ${label("Account", diagnostic.relatedIds?.[0], "a non-cash account")} for funding. Under Money → Spending, choose a checking, savings, or cash funding account. Retirement and brokerage accounts cannot pay spending in this forecast.`;
+    case "INVESTMENT_EXPECTED_RETURN_UNSUPPORTED":
+      return `${label("Investment", diagnostic.entityId, "This investment")} has a stored direct Expected return that the deterministic forecast cannot use. Under Net Worth → Investments → Expert model details, clear the stored Expected return to remove this blocker. For supported return changes, review its existing linked return assumption under Plan → Assumptions, or use Plan → What If? → Change investment returns.`;
+    case "INVESTMENT_STOCHASTIC_RETURN_UNSUPPORTED":
+      return `${label("Investment", diagnostic.entityId, "This investment")} has stored Volatility. Volatility belongs to future probabilistic forecasting and is not supported in this deterministic forecast. Under Net Worth → Investments → Expert model details, clear the stored Volatility to remove this blocker.`;
+    default:
+      return friendlyText(diagnostic.message);
+  }
+}
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 
 /** Display-only sanitization; original diagnostic text remains in technical disclosure. */

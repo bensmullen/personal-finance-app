@@ -3,9 +3,12 @@ import { readFile } from "node:fs/promises";
 import {
   addPersonalObject,
   createEmptyPersonalDraft,
+  createGoldenHouseholdDraft,
   createSyntheticPersonalDraft,
+  patchPersonalObject,
   exportPersonalModelJson,
 } from "../src/application/personalMvp.js";
+import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
 
 const loadExample = async (page: import("@playwright/test").Page) => {
   await page.goto("/");
@@ -54,6 +57,157 @@ const importDraft = async (
 };
 
 const rawUuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+test("R4 UAT creates asset facts deliberately and preserves them as read-only", async ({ page }) => {
+  await loadExample(page);
+  await useShortHorizon(page);
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Property & Assets", exact: true }).click();
+  await expect(page.getByText(/Use Investments for securities/)).toBeVisible();
+  const before = await page.locator(".object-card").count();
+  await page.getByRole("button", { name: "+ Add Asset", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "Create Asset" });
+  await editor.getByLabel("Name", { exact: true }).fill("Family vehicle");
+  await editor.getByLabel("Asset type", { exact: true }).selectOption("vehicle");
+  await expect(editor.getByLabel("Asset type", { exact: true }).locator('option[value="cash"], option[value="investment"]')).toHaveCount(0);
+  await editor.getByLabel("Owner", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.household);
+  await editor.getByLabel("Acquisition date", { exact: true }).fill("2026-01-01");
+  await editor.getByLabel("Acquisition cost", { exact: true }).fill("25000.00");
+  // Creation edits have not added an incomplete record to the canonical model.
+  await expect(page.locator(".object-card")).toHaveCount(before);
+  await editor.getByRole("button", { name: "Create Asset", exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  const card = page.getByRole("button", { name: /Family vehicle/ });
+  await expect(card).toContainText("vehicle");
+  await expect(card).toContainText("25,000.00 USD");
+  await card.click();
+  const saved = page.getByRole("dialog", { name: "Edit Asset" });
+  await expect(saved.getByRole("group", { name: "Asset type", exact: true })).toContainText("vehicle");
+  await expect(saved.getByRole("group", { name: "Acquisition cost", exact: true })).toContainText("25,000.00 USD");
+  await expect(saved.locator('input[aria-label="Acquisition cost"], select[aria-label="Asset type"], input[aria-label="Acquisition date"]')).toHaveCount(0);
+  await saved.getByRole("button", { name: "Close editor" }).click();
+  await page.getByRole("button", { name: "+ Add Asset", exact: true }).click();
+  await page.getByRole("dialog", { name: "Create Asset" }).getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.locator(".object-card")).toHaveCount(before + 1);
+});
+
+test("R4 UAT immutable account, income, and debt facts are not fake editable controls", async ({ page }) => {
+  await loadExample(page);
+  await useShortHorizon(page);
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Accounts", exact: true }).click();
+  await expect(page.getByText(/Recurring retirement contributions are not currently authorable/)).toBeVisible();
+  await page.getByRole("button", { name: /Everyday checking/ }).click();
+  let editor = page.getByRole("dialog", { name: "Edit Account" });
+  await expect(editor.getByRole("group", { name: "Account type", exact: true })).toContainText("checking");
+  await expect(editor.getByRole("group", { name: "Balance", exact: true })).toContainText("20,000.00 USD");
+  await expect(editor.locator('input[aria-label="Balance"], input[aria-label="Currency"], input[aria-label="opening date"], select[aria-label="Account type"]')).toHaveCount(0);
+  await editor.getByText("Expert model details", { exact: true }).click();
+  await expect(editor.locator('select[aria-label="Tax treatment"]')).toHaveCount(0);
+  await editor.getByRole("button", { name: "Close editor" }).click();
+  await page.getByRole("button", { name: "Income", exact: true }).click();
+  await page.getByRole("button", { name: /Example salary/ }).click();
+  editor = page.getByRole("dialog", { name: "Edit Income" });
+  await expect(editor.getByRole("group", { name: "Income type", exact: true })).toContainText("salary");
+  await expect(editor.locator('select[aria-label="Income type"], input[aria-label="Start"]')).toHaveCount(0);
+  await editor.getByRole("button", { name: "Close editor" }).click();
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Debt", exact: true }).click();
+  await page.getByRole("button", { name: /Example mortgage/ }).click();
+  editor = page.getByRole("dialog", { name: "Edit Liability" });
+  await expect(editor.getByRole("group", { name: "Original principal", exact: true })).toContainText("240,000.00 USD");
+  await expect(editor.locator('select[aria-label="liability type"], input[aria-label="Original principal"], input[aria-label="Origination"]')).toHaveCount(0);
+});
+
+test("R4 UAT normal investment and spending editors cannot author known unsupported inputs", async ({ page }) => {
+  await loadExample(page);
+  await useShortHorizon(page);
+  const status = page.getByRole("status", { name: "Household forecast status" });
+  await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
+  const request = await status.getAttribute("data-request-id");
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Investments", exact: true }).click();
+  await page.getByRole("button", { name: /RETIREMENT-DEMO/ }).click();
+  const editor = page.getByRole("dialog", { name: "Edit Investment" });
+  await editor.getByText("Expert model details", { exact: true }).click();
+  await expect(editor.locator('input[aria-label="Expected return"], input[aria-label="Volatility"]')).toHaveCount(0);
+  await expect(editor.getByRole("group", { name: "Expected return", exact: true })).toContainText("Change investment returns");
+  await expect(editor).toContainText("Do not model a contribution as Spending");
+  await editor.getByRole("button", { name: "Close editor" }).click();
+  await expect(status).toHaveAttribute("data-request-id", request!);
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Spending", exact: true }).click();
+  await page.getByRole("button", { name: /Living costs/ }).click();
+  const funding = page.getByRole("dialog", { name: "Edit Expense" }).getByLabel("Funding account", { exact: true });
+  await expect(funding).toContainText("Everyday checking");
+  await expect(funding).toContainText("Emergency savings");
+  await expect(funding.locator(`option[value="${GOLDEN_HOUSEHOLD_IDS.retirementAccount}"], option[value="${GOLDEN_HOUSEHOLD_IDS.brokerageAccount}"]`)).toHaveCount(0);
+});
+
+for (const [field, value, code, message] of [
+  ["expected_return", "0.08", "INVESTMENT_EXPECTED_RETURN_UNSUPPORTED", "stored direct Expected return"],
+  ["volatility", "0.10", "INVESTMENT_STOCHASTIC_RETURN_UNSUPPORTED", "future probabilistic forecasting"],
+] as const) {
+  test(`R4 UAT preserves imported ${field}, explains its blocker, and clears only explicitly`, async ({ page }) => {
+    await importDraft(page, patchPersonalObject(createGoldenHouseholdDraft(), "Investment", GOLDEN_HOUSEHOLD_IDS.retirementInvestment, { [field]: value }));
+    await useShortHorizon(page);
+    await page.getByRole("button", { name: "Plan", exact: true }).click();
+    await openPlanDetails(page);
+    const standalone = page.getByRole("region", { name: "Standalone forecast drill-down" });
+    await standalone.getByLabel("Forecast scope").selectOption("investments");
+    await standalone.getByLabel("Execution owner").selectOption({ label: "Taylor Example" });
+    await standalone.getByRole("button", { name: "Run investments forecast" }).click();
+    await expect(standalone.getByText(new RegExp(message))).toBeVisible();
+    expect(await standalone.innerText()).not.toMatch(rawUuid);
+    expect(await standalone.innerText()).not.toMatch(/rate-basis contract|VS3|INVESTMENT_.*UNSUPPORTED/);
+    await standalone.getByText("Technical diagnostic details", { exact: true }).click();
+    await expect(standalone.locator("pre")).toContainText(code);
+    await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+    await page.getByRole("button", { name: "Investments", exact: true }).click();
+    await page.getByRole("button", { name: /RETIREMENT-DEMO/ }).click();
+    const editor = page.getByRole("dialog", { name: "Edit Investment" });
+    await editor.getByText("Expert model details", { exact: true }).click();
+    const label = field === "expected_return" ? "Expected return" : "Volatility";
+    await expect(editor.getByRole("group", { name: label, exact: true })).toContainText(field === "expected_return" ? "8%" : "10%");
+    await expect(editor.locator(`input[aria-label="${label}"]`)).toHaveCount(0);
+    await editor.getByRole("button", { name: `Clear stored ${label}`, exact: true }).click();
+    await expect(editor.getByRole("group", { name: label, exact: true })).toContainText("Not set");
+    await editor.getByRole("button", { name: "Close editor" }).click();
+    await page.getByRole("button", { name: "Plan", exact: true }).click();
+    await openPlanDetails(page);
+    await standalone.getByRole("button", { name: "Run investments forecast" }).click();
+    await expect(standalone.getByRole("button", { name: "Show investment forecast details" })).toBeVisible();
+  });
+}
+
+test("R4 UAT preserves incompatible expense funding with actionable diagnostics", async ({ page }) => {
+  await importDraft(page, patchPersonalObject(createGoldenHouseholdDraft(), "Expense", GOLDEN_HOUSEHOLD_IDS.expense, {
+    payment_account_id: GOLDEN_HOUSEHOLD_IDS.retirementAccount,
+  }));
+  await useShortHorizon(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await openPlanDetails(page);
+  const standalone = page.getByRole("region", { name: "Standalone forecast drill-down" });
+  await standalone.getByRole("button", { name: "Run cash flow forecast" }).click();
+  await expect(standalone.getByText(/Living costs uses Workplace retirement/)).toBeVisible();
+  await expect(standalone).toContainText("checking, savings, or cash");
+  expect(await standalone.innerText()).not.toMatch(rawUuid);
+  expect(await standalone.innerText()).not.toMatch(/valid non-cash payment Account|PAYMENT_ACCOUNT_TYPE_UNSUPPORTED/);
+  await standalone.getByText("Technical diagnostic details", { exact: true }).click();
+  await expect(standalone.locator("pre")).toContainText("PAYMENT_ACCOUNT_TYPE_UNSUPPORTED");
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Spending", exact: true }).click();
+  await page.getByRole("button", { name: /Living costs/ }).click();
+  const editor = page.getByRole("dialog", { name: "Edit Expense" });
+  await expect(editor.getByRole("note")).toContainText("Stored funding: Workplace retirement");
+  await expect(editor.getByRole("note")).toContainText("preserved until you choose");
+  await editor.getByText("Technical details", { exact: true }).click();
+  await expect(editor.locator("dd").filter({ hasText: GOLDEN_HOUSEHOLD_IDS.retirementAccount })).toBeVisible();
+  const funding = editor.getByLabel("Funding account", { exact: true });
+  await expect(funding.locator(`option[value="${GOLDEN_HOUSEHOLD_IDS.retirementAccount}"]`)).toHaveCount(0);
+  await funding.selectOption(GOLDEN_HOUSEHOLD_IDS.checking);
+  await expect(editor.getByRole("note")).toHaveCount(0);
+});
 
 test("R4 current plan starts with the outlook and opens expert setup without recalculation", async ({ page }) => {
   await loadExample(page);
@@ -527,12 +681,15 @@ test("money and net-worth workflows update friendly editors and forecast", async
 test("Debt runs the explicitly configured mortgage surface without classifying funding stress as partial coverage", async ({
   page,
 }) => {
-  await loadExample(page);
-  await page.getByRole("button", { name: "Money", exact: true }).click();
-  await page.getByRole("button", { name: "Accounts", exact: true }).click();
-  await page.getByRole("button", { name: /Everyday checking/ }).click();
-  await page.getByLabel("Balance").fill("100");
-  await page.getByRole("button", { name: "Close editor" }).click();
+  // Opening balance is a creation-time fact: prepare low cash in the fixture,
+  // rather than asking the normal editor to overwrite an immutable value.
+  const golden = createGoldenHouseholdDraft();
+  await importDraft(page, { ...golden, objects: { ...golden.objects,
+    Account: (golden.objects.Account ?? []).map((value) =>
+      typeof value === "object" && value !== null && !Array.isArray(value)
+        ? { ...value, ...(String((value as { account_id?: string }).account_id) === GOLDEN_HOUSEHOLD_IDS.checking ? { opening_balance: "100" } : {}) }
+        : value),
+  } });
   await page.getByRole("button", { name: "Net Worth", exact: true }).click();
   await page.getByRole("button", { name: "Debt", exact: true }).click();
   await page

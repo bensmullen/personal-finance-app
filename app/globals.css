@@ -32,6 +32,9 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .drawer .advanced-list > div { display: contents; }
 .reference-state { padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: #f5f7f4; font-size: 13px; }
 .reference-state p { line-height: 1.5; }
+.financial-fact { padding: 12px; border-left: 3px solid var(--line); font-size: 13px; overflow-wrap: anywhere; }
+.financial-fact p { margin: 7px 0; line-height: 1.5; }
+.financial-fact small { color: var(--muted); line-height: 1.5; }
 .controls fieldset { min-width: 0; max-width: 100%; }
 .controls fieldset select, .controls fieldset input { max-width: 100%; margin: 6px 0; }
 .table-scroll { max-width: 100%; }

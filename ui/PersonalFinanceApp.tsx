@@ -79,7 +79,7 @@ import {
 
 import { useInteractiveForecast } from "./forecast/useInteractiveForecast.js";
 import { EditorHub } from "./EntityEditor.js";
-import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText } from "./entityPresentation.js";
+import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage } from "./entityPresentation.js";
 import { calculationFingerprint } from "../src/application/interactiveForecast.js";
 import { HouseholdChart } from "./forecast/HouseholdChart.js";
 import { ForecastDetails, LazyExplanation, ExplanationCache } from "./forecast/details.js";
@@ -87,7 +87,7 @@ import { ResultExplanationCache } from "./forecast/explanations.js";
 import type { ForecastView } from "./forecast/controller.js";
 
 type FinancialExplanation = ReturnType<typeof resolveHouseholdExplanation>;
-const FinancialResultModels = createContext<{ baseline?: ForecastView; comparison?: ForecastView;
+const FinancialResultModels = createContext<{ model?: PersonalDraft; baseline?: ForecastView; comparison?: ForecastView;
   explanations?: { baseline: ResultExplanationCache<FinancialExplanation>; comparison: ResultExplanationCache<FinancialExplanation> } }>({});
 
 type Primary = "Overview" | "Money" | "Net Worth" | "Plan" | "Settings";
@@ -637,7 +637,7 @@ export function PersonalFinanceApp() {
   };
 
   return (
-    <FinancialResultModels.Provider value={{ baseline: interactive.baseline, comparison: interactive.comparison, explanations }}>
+    <FinancialResultModels.Provider value={{ model: draft, baseline: interactive.baseline, comparison: interactive.comparison, explanations }}>
     <BrowserPerformanceScope.Provider value={browserRequest.current?.model === draft && browserRequest.current?.forecast === householdForecast ? browserRequest.current : undefined}>
     <Profiler id="personal-finance-app" onRender={(_id, _phase, duration) => {
       const request = browserRequest.current;
@@ -1069,7 +1069,7 @@ function ForecastStatus({ label, state }: { label: string; state: ForecastView }
     {state.pending && <span>{state.lastGoodResult ? "Recalculating" : "Running"} deterministic forecast…</span>}
     {state.stale && <span>Stale retained result — previous inputs; not current.</span>}
     {!state.pending && !state.stale && (state.lifecycle === "completed" || state.lifecycle === "incomplete") && <span>Current result{state.lifecycle === "incomplete" ? " · financially incomplete" : ""}</span>}
-    {state.message && <span>{friendlyText(state.message)}</span>}
+    {state.message && <span>{state.lifecycle === "unsupported" && state.latestResult?.status === "unavailable" && state.latestResult.diagnostics.length > 0 ? "Review the forecast guidance below." : friendlyText(state.message)}</span>}
     {state.lifecycle === "unsupported" && state.latestResult?.status === "unavailable" && state.latestResult.diagnostics.length > 0 && <DiagnosticList diagnostics={state.latestResult.diagnostics} />}
     <details><summary>Technical forecast details</summary>
       <dl><dt>Lifecycle</dt><dd>{state.lifecycle}</dd><dt>Request</dt><dd>{state.requestId ?? "Not submitted"}</dd>
@@ -2553,10 +2553,13 @@ function ModelSettings({
 function DiagnosticList({
   diagnostics,
   fallback,
+  model,
 }: {
   diagnostics: readonly any[];
   fallback?: string;
+  model?: PersonalDraft;
 }) {
+  const currentModel = useContext(FinancialResultModels).model;
   return (
     <div className="capability">
       <strong>Forecast needs attention</strong>
@@ -2565,7 +2568,7 @@ function DiagnosticList({
       ) : (
         diagnostics.map((item, index) => (
           <p key={`${item.code}:${item.entityId ?? index}`}>
-            {friendlyText(item.message)}
+            {forecastDiagnosticMessage(item, model ?? currentModel)}
           </p>
         ))
       )}
@@ -2780,7 +2783,7 @@ function HouseholdForecastVisual({
         )}
       </ForecastDetails>
       {forecast.diagnostics.length > 0 && (
-        <DiagnosticList diagnostics={forecast.diagnostics} />
+        <DiagnosticList diagnostics={forecast.diagnostics} model={financialModel} />
       )}
     </>
   );
@@ -2798,7 +2801,7 @@ function ForecastVisual({ forecast, draft }: { forecast: PersonalForecastReadMod
     return (
       <div className="capability">
         <strong>Forecast unavailable for this model</strong>
-        <p>{friendlyText(forecast.message)}</p>
+        <DiagnosticList diagnostics={forecast.diagnostics} fallback={forecast.message} model={draft} />
         <dl className="boundary">
           <dt>As of</dt>
           <dd>{forecast.asOf}</dd>
@@ -2901,7 +2904,7 @@ function ForecastVisual({ forecast, draft }: { forecast: PersonalForecastReadMod
             </strong>
             {capabilityDiagnostics.map((item, index) => (
               <p key={`${item.code}:${item.entityId ?? index}`}>
-                {friendlyText(item.message)}
+                {forecastDiagnosticMessage(item, draft)}
               </p>
             ))}
           </div>
@@ -2911,7 +2914,7 @@ function ForecastVisual({ forecast, draft }: { forecast: PersonalForecastReadMod
             <strong>Forecast diagnostics</strong>
             {executionDiagnostics.map((item, index) => (
               <p key={`${item.code}:${item.entityId ?? index}`}>
-                {friendlyText(item.message)}
+                {forecastDiagnosticMessage(item, draft)}
               </p>
             ))}
           </div>
@@ -2979,7 +2982,7 @@ function ForecastVisual({ forecast, draft }: { forecast: PersonalForecastReadMod
             <strong>Forecast diagnostics</strong>
             {forecast.diagnostics.map((item, index) => (
               <p key={`${item.code}:${item.entityId ?? index}`}>
-                {friendlyText(item.message)}
+                {forecastDiagnosticMessage(item, draft)}
               </p>
             ))}
           </div>
