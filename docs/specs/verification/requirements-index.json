@@ -3598,7 +3598,9 @@
       "depends_on_requirement_ids": [
         "PFA-DET-002",
         "PFA-INV-013",
-        "PFA-TAX-014"
+        "PFA-TAX-014",
+        "PFA-INV-020",
+        "PFA-INV-021"
       ],
       "verification_methods": [
         "analysis",
@@ -3626,7 +3628,8 @@
       ],
       "depends_on_requirement_ids": [
         "PFA-INV-015",
-        "PFA-TAX-014"
+        "PFA-TAX-014",
+        "PFA-INV-022"
       ],
       "verification_methods": [
         "analysis",
@@ -4156,7 +4159,10 @@
         "PFA-INV-015",
         "PFA-INV-016",
         "PFA-INV-017",
-        "PFA-INV-018"
+        "PFA-INV-018",
+        "PFA-INV-020",
+        "PFA-INV-021",
+        "PFA-INV-022"
       ],
       "verification_methods": [
         "analysis",
@@ -4288,6 +4294,91 @@
       ],
       "depends_on_requirement_ids": [
         "PFA-DET-015"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-020",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "future portfolio modules",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-013",
+        "PFA-TAX-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-021",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "future portfolio modules",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-013",
+        "PFA-INV-020",
+        "PFA-TAX-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-022",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "future portfolio modules",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-015",
+        "PFA-TAX-014"
       ],
       "verification_methods": [
         "analysis",
