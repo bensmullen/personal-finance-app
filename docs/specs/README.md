@@ -21,6 +21,7 @@ The architecture/governance documents control decomposition and retrieval but do
 
 ## Current capability outlines
 
+- capabilities/deterministic-household-financial-semantics.md
 - capabilities/performance-and-execution.md
 - capabilities/probabilistic-forecasting.md
 - capabilities/market-economic-calibration.md
