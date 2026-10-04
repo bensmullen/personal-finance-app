@@ -72,8 +72,9 @@ signatures still serialize full candidate state/history during previews. Broader
 structural counters, sparse checkpoints and application defaults are pending.
 Static-entity currency/runtime consistency checks still traverse whole entity or
 primitive collections inside preparation/work evaluation. Cash local-order
-construction still uses repeated stream/occurrence searches, and household
-overlap-component discovery still uses pairwise resource comparisons. These
+construction now uses frozen-input income/expense indexes and appends occurrence
+groups without copying each prefix. Household overlap-component discovery still
+uses pairwise resource comparisons. These
 remain operation/entity-count scaling risks even though candidate forks no
 longer copy growing historical state. No near-linear operation-count claim is
 made for this intermediate stage.

@@ -457,36 +457,51 @@ const occurrenceDescriptor = (
   return Object.freeze({ descriptor, streamId: stream.id, scheduledAt });
 };
 
+const localOrderingIndexes = new WeakMap<VerticalSlice2Input, {
+  readonly incomeIds: ReadonlySet<string>;
+  readonly expenseById: ReadonlyMap<string, RecurringExpenseStream>;
+}>();
+
 const withLocalOrdering = (
   input: VerticalSlice2Input,
   occurrences: readonly PreparedVerticalSlice2Occurrence[],
 ): readonly PreparedVerticalSlice2Occurrence[] => {
   const byId = new Map(occurrences.map((item) => [item.descriptor.id, item]));
   const descriptors = new Map(occurrences.map((item) => [item.descriptor.id, item.descriptor]));
-  for (const instantOccurrences of new Map<Instant, PreparedVerticalSlice2Occurrence[]>(
-    occurrences.reduce((map, item) => map.set(item.scheduledAt, [...(map.get(item.scheduledAt) ?? []), item]), new Map()),
-  ).values()) {
-    const incomes = instantOccurrences.filter((item) => input.incomes.some((stream) => stream.id === item.streamId));
-    const expenses = instantOccurrences.filter((item) => input.expenses.some((stream) => stream.id === item.streamId));
+  let indexes = Object.isFrozen(input) ? localOrderingIndexes.get(input) : undefined;
+  if (indexes === undefined) {
+    indexes = { incomeIds: new Set(input.incomes.map(stream => String(stream.id))),
+      expenseById: new Map(input.expenses.map(stream => [String(stream.id), stream])) };
+    if (Object.isFrozen(input)) localOrderingIndexes.set(input, indexes);
+  }
+  const { incomeIds, expenseById } = indexes;
+  const groups = new Map<Instant, PreparedVerticalSlice2Occurrence[]>();
+  for (const occurrence of occurrences) {
+    const group = groups.get(occurrence.scheduledAt) ?? [];
+    group.push(occurrence); groups.set(occurrence.scheduledAt, group);
+  }
+  for (const instantOccurrences of groups.values()) {
+    const incomes = instantOccurrences.filter(item => incomeIds.has(item.streamId));
+    const expenses = instantOccurrences.filter(item => expenseById.has(item.streamId));
     if (incomes.length > 0 && expenses.length > 0 && input.sameInstantCashFlowOrder === undefined) {
       invalidInput("Same-instant income and expense actions require an explicit cash-flow order", "input.sameInstantCashFlowOrder");
     }
     if (expenses.length > 1) {
-      const priorities = expenses.map((item) => input.expenses.find((stream) => stream.id === item.streamId)!.settlementPriority);
+      const priorities = expenses.map(item => expenseById.get(item.streamId)!.settlementPriority);
       if (priorities.some((priority) => priority === undefined) || new Set(priorities).size !== priorities.length) {
         invalidInput("Same-instant expense actions require distinct settlement priorities", "expenses");
       }
     }
     const ordered = [...instantOccurrences].sort((left, right) => {
-      const leftIncome = incomes.some((item) => item.descriptor.id === left.descriptor.id);
-      const rightIncome = incomes.some((item) => item.descriptor.id === right.descriptor.id);
+      const leftIncome = incomeIds.has(left.streamId);
+      const rightIncome = incomeIds.has(right.streamId);
       if (leftIncome !== rightIncome) {
         const incomeFirst = input.sameInstantCashFlowOrder === "income_before_expense";
         return leftIncome === incomeFirst ? -1 : 1;
       }
       if (!leftIncome && !rightIncome) {
-        const leftPriority = input.expenses.find((stream) => stream.id === left.streamId)!.settlementPriority!;
-        const rightPriority = input.expenses.find((stream) => stream.id === right.streamId)!.settlementPriority!;
+        const leftPriority = expenseById.get(left.streamId)!.settlementPriority!;
+        const rightPriority = expenseById.get(right.streamId)!.settlementPriority!;
         return leftPriority - rightPriority;
       }
       return left.descriptor.id.localeCompare(right.descriptor.id);
