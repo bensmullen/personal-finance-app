@@ -8,7 +8,8 @@ import { runHouseholdKernel, type HouseholdKernelParticipant, runCompiledHouseho
   runHouseholdForecastSummary, replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
 import { summarizeHouseholdPeriod } from "../src/simulation/r3/forecastSummary.js";
 import { createStatementFlowAccumulator, deriveVerticalSliceStatements } from "../src/statements/index.js";
-import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
+import { createPrimitiveRuntimeStateStore, executePeriodWorkCandidate, type RunPeriodInput } from "../src/simulation/period.js";
+import { runPeriod as referencePeriod } from "../src/simulation/r3/referencePeriod.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import type { FixedAmortizingLoan } from "../src/simulation/verticalSlice4.js";
 import type { VerticalSlice2Input } from "../src/simulation/verticalSlice2.js";
@@ -86,6 +87,30 @@ const integrated = (incomeAmount: string, withPolicy = true): CompiledHouseholdP
 };
 
 describe("R3 reusable deterministic household kernel", () => {
+  it("evaluates primitive work without standalone statements or an opening-state result", () => {
+    const request: RunPeriodInput = {
+      period: { start, end }, runContext: context(), openingState: opening(),
+      work: [{ id: "atomic-interest", kind: "primitive", request: {
+        primitiveId: "P24", input: { balance: money("1200"), rate: Rate.fromDecimal("0.12", rateConvention.nominalAnnual(12)) },
+        parameters: { temporal: { measurement: "occurrence_based", contractualPeriod: "monthly", rateBasis: "nominal_annual_12",
+          calendar: "utc", stubPeriodPolicy: "reject", dayCountConvention: "none", capitalization: "none" },
+          postingRounding: RoundingPolicy.currency(2, "half_up") },
+        context: { evaluationInstant: start, scenarioId: context().scenarioId, primitiveInstanceId: primitive("900"),
+          economicTargetId: ids.payable, semanticEffectType: "interest-accrual" },
+      } }],
+    };
+    const reference = referencePeriod(request);
+    const candidate = executePeriodWorkCandidate(request);
+    expect(candidate.closingState).toEqual(reference.closingState);
+    expect(candidate.primitiveState).toEqual(reference.primitiveState);
+    expect(candidate.primitiveOutputs).toEqual(reference.primitiveOutputs);
+    expect(candidate.diagnostics).toEqual(reference.diagnostics);
+    expect(candidate).not.toHaveProperty("statements");
+    expect(candidate).not.toHaveProperty("openingState");
+    expect(candidate.primitiveState[primitive("900")]?.primitiveId).toBe("P24");
+    expect(request.openingState).toEqual(opening());
+  });
+
   it("retains compact metrics and regenerates selected evidence from the same immutable basis", () => {
     const input = { ...integrated("120"), executionMonths: 2 };
     const runContext = context(2);

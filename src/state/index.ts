@@ -267,11 +267,17 @@ const commitCandidate = (target: AuthoritativeState, candidate: AuthoritativeSta
   target.identities = candidate.identities;
 };
 
-/** Commits a non-cash valuation and its generated occurrence identity atomically. */
-export const applyPositionValuationAtomically = (
+export interface PositionValuationInput {
+  readonly positionId: PositionId;
+  readonly price: Money;
+  readonly generatedOccurrenceKey: GeneratedOccurrenceKey;
+}
+
+/** Returns one isolated valuation candidate; callers need no preceding state clone. */
+export const positionValuationCandidate = (
   state: AuthoritativeState,
-  input: { readonly positionId: PositionId; readonly price: Money; readonly generatedOccurrenceKey: GeneratedOccurrenceKey },
-): void => {
+  input: PositionValuationInput,
+): AuthoritativeState => {
   const candidate = cloneAuthoritativeState(state);
   const position = candidate.positions[input.positionId];
   if (position === undefined) {
@@ -286,7 +292,12 @@ export const applyPositionValuationAtomically = (
   registerAuthoritativeIdentity(candidate.identities, "generatedOccurrenceKeys", input.generatedOccurrenceKey);
   candidate.positions[input.positionId] = { ...position, price: input.price };
   validateAuthoritativeState(candidate);
-  commitCandidate(state, candidate);
+  return candidate;
+};
+
+/** Commits a non-cash valuation and its generated occurrence identity atomically. */
+export const applyPositionValuationAtomically = (state: AuthoritativeState, input: PositionValuationInput): void => {
+  commitCandidate(state, positionValuationCandidate(state, input));
 };
 
 /** Applies a complete accounting transaction to isolated candidate state and commits only after all invariants pass. */

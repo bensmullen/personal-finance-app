@@ -1,3 +1,5 @@
+/** Frozen domain evaluator at 4800f6e (financial behavior inherited from pre-R3).
+ * Bounded reference tests only; never import into production execution. */
 import {
   accountingTransactionId,
   createAccountingLeg,
@@ -6,43 +8,43 @@ import {
   type AccountingTransaction,
   type AccountId,
   type PositionId,
-} from "../accounting/index.js";
+} from "../../accounting/index.js";
 import {
   ValidationError,
   failValidation,
   issueCodes,
   type ValidationIssue,
-} from "../diagnostics/index.js";
+} from "../../diagnostics/index.js";
 import {
   domainId,
   generatedOccurrenceKey,
   type DomainId,
   type GeneratedOccurrenceKey,
-} from "../identity/index.js";
+} from "../../identity/index.js";
 import {
   calculationTraceId,
   calculationTraceRef,
   freezeTraceRefs,
   mergeTraceRefs,
   type CalculationTraceRef,
-} from "../lineage/index.js";
+} from "../../lineage/index.js";
 import {
   createFactProvenance,
   type ModelGeneratedFactProvenance,
-} from "../model/provenance.js";
-import { type CompoundingReturnBasis } from "../primitives/index.js";
+} from "../../model/provenance.js";
+import { type CompoundingReturnBasis } from "../../primitives/index.js";
 import {
   createSemanticEffect,
   semanticEffectId,
   type SemanticEffect,
-} from "../semantics/index.js";
+} from "../../semantics/index.js";
 import {
-  positionValuationCandidate,
+  applyPositionValuationAtomically,
   assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
   type AuthoritativeState,
-} from "../state/index.js";
-import { deriveStatements, type Statements } from "../statements/index.js";
+} from "../../state/index.js";
+import { deriveStatements, type Statements } from "../../statements/index.js";
 import {
   subtractMilliseconds,
   utcMonthDifference,
@@ -50,12 +52,12 @@ import {
   utcMonthlyPeriods,
   type Instant,
   type Period,
-} from "../time/index.js";
+} from "../../time/index.js";
 import {
   accountValueFromState,
   positionMarketValue,
   totalPositionMarketValue,
-} from "../valuation/index.js";
+} from "../../valuation/index.js";
 import {
   Money,
   Quantity,
@@ -63,7 +65,7 @@ import {
   RoundingPolicy,
   type Currency,
   type Rate,
-} from "../values/index.js";
+} from "../../values/index.js";
 import {
   evaluateFixedFee,
   resolveEffectiveRule,
@@ -72,26 +74,26 @@ import {
   type FinancialRuleId,
   type RuleApplication,
   type RuleCatalog,
-} from "../rules/index.js";
+} from "../../rules/index.js";
 import {
   createPrimitiveRuntimeStateStore,
-  executePeriodWorkCandidate,
+  runPeriod,
   type PeriodWork,
   type PrimitiveRuntimeStateStore,
-} from "./period.js";
+} from "./referencePeriod.js";
 import {
   createInputFingerprint,
   createRunMetadata,
   type RunContext,
   type RunMetadata,
-} from "./run.js";
+} from "../run.js";
 import {
   executeVerticalSlice2PeriodCandidate,
   type VerticalSlice2Input,
   type VerticalSlice2PeriodResult,
   type VerticalSlice2RunInput,
-} from "./verticalSlice2.js";
-import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
+} from "./referenceVerticalSlice2.js";
+import type { HouseholdWorkDescriptor } from "../intraperiodScheduler.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -1012,7 +1014,7 @@ export const prepareVerticalSlice3Period = (
         },
       },
     }));
-  const p23 = executePeriodWorkCandidate({
+  const p23 = runPeriod({
     period,
     runContext: scopedContext,
     openingState: currentState,
@@ -1057,7 +1059,7 @@ export const prepareVerticalSlice3Period = (
         },
       },
     }));
-  const p26 = executePeriodWorkCandidate({
+  const p26 = runPeriod({
     period,
     runContext: scopedContext,
     openingState: currentState,
@@ -1266,8 +1268,9 @@ export const executePreparedVerticalSlice3Operation = (
   runContext: RunContext,
 ): ExecutedVerticalSlice3Operation => {
   if (operation.kind === "valuation") {
+    const next = cloneAuthoritativeState(state);
     const before = positionMarketValue(
-      state.positions[operation.returnConfiguration.targetPositionId]!,
+      next.positions[operation.returnConfiguration.targetPositionId]!,
     );
     const provenance = generated(
       { runContext, openingState: state, input, months: 1 },
@@ -1276,7 +1279,7 @@ export const executePreparedVerticalSlice3Operation = (
       "mark-to-market",
       operation.returnConfiguration.targetPositionId,
     );
-    const next = positionValuationCandidate(state, {
+    applyPositionValuationAtomically(next, {
       positionId: operation.returnConfiguration.targetPositionId,
       price: operation.closingPrice,
       generatedOccurrenceKey: provenance.generatedOccurrenceKey,
@@ -1338,7 +1341,7 @@ export const executePreparedVerticalSlice3Operation = (
     prepared.closingPrices,
     operation.descriptor.id.replace("investment-", ""),
   );
-  const result = executePeriodWorkCandidate({
+  const result = runPeriod({
     period: prepared.period,
     runContext: request.runContext,
     openingState: state,

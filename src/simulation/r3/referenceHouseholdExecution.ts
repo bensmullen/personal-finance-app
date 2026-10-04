@@ -33,19 +33,19 @@ import {
   prepareVerticalSlice2Period,
   type PreparedVerticalSlice2Occurrence,
   type PreparedVerticalSlice2Period,
-} from "../verticalSlice2.js";
+} from "./referenceVerticalSlice2.js";
 import {
   executePreparedVerticalSlice3Operation,
   prepareVerticalSlice3Period,
   type PreparedVerticalSlice3Operation,
   type PreparedVerticalSlice3Period,
-} from "../verticalSlice3.js";
+} from "./referenceVerticalSlice3.js";
 import {
   executePreparedVerticalSlice4Operation,
   prepareVerticalSlice4Period,
   type PreparedVerticalSlice4Operation,
   type PreparedVerticalSlice4Period,
-} from "../verticalSlice4.js";
+} from "./referenceVerticalSlice4.js";
 import {
   assertPrimitiveRuntimeStateConsistent,
   createPrimitiveRuntimeStateStore,

@@ -1,16 +1,18 @@
+/** Frozen domain evaluator at 4800f6e (financial behavior inherited from pre-R3).
+ * Bounded reference tests only; never import into production execution. */
 import {
   accountingTransactionId,
   createAccountingLeg,
   createAccountingTransaction,
   type AccountingLegDraft,
   type AccountingTransaction,
-} from "../accounting/index.js";
-import { ValidationError, failValidation, issueCodes, type ValidationIssue } from "../diagnostics/index.js";
-import { isAcceptedFundingResolution, resolveFunding, type ConstraintOutcome, type FundingPolicy, type LiquidityShortfall } from "../funding/index.js";
-import { domainId, generatedOccurrenceKey, type DomainId, type GeneratedOccurrenceKey } from "../identity/index.js";
-import { calculationTraceId, calculationTraceRef, freezeTraceRefs, mergeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
-import { createFactProvenance, type ModelGeneratedFactProvenance } from "../model/provenance.js";
-import { evaluatePrimitive, primitiveEvaluationContext, type PrimitivePeriodFlow } from "../primitives/index.js";
+} from "../../accounting/index.js";
+import { ValidationError, failValidation, issueCodes, type ValidationIssue } from "../../diagnostics/index.js";
+import { isAcceptedFundingResolution, resolveFunding, type ConstraintOutcome, type FundingPolicy, type LiquidityShortfall } from "../../funding/index.js";
+import { domainId, generatedOccurrenceKey, type DomainId, type GeneratedOccurrenceKey } from "../../identity/index.js";
+import { calculationTraceId, calculationTraceRef, freezeTraceRefs, mergeTraceRefs, type CalculationTraceRef } from "../../lineage/index.js";
+import { createFactProvenance, type ModelGeneratedFactProvenance } from "../../model/provenance.js";
+import { evaluatePrimitive, primitiveEvaluationContext, type PrimitivePeriodFlow } from "../../primitives/index.js";
 import {
   applySettlement,
   claimId,
@@ -28,14 +30,14 @@ import {
   type SemanticEffect,
   type Settlement,
   type SettlementProposal,
-} from "../semantics/index.js";
+} from "../../semantics/index.js";
 import {
   applyAccountingTransactionAtomically,
   assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
   registerAuthoritativeIdentity,
   type AuthoritativeState,
-} from "../state/index.js";
+} from "../../state/index.js";
 import {
   civilDate,
   subtractMilliseconds,
@@ -44,7 +46,7 @@ import {
   utcMonthlyPeriods,
   type Instant,
   type Period,
-} from "../time/index.js";
+} from "../../time/index.js";
 import {
   DecimalAmount,
   Money,
@@ -54,22 +56,21 @@ import {
   sumMoney,
   type Currency,
   type Rate,
-} from "../values/index.js";
+} from "../../values/index.js";
 import {
   assertRunContext,
   createInputFingerprint,
   createRunMetadata,
   type RunContext,
   type RunMetadata,
-} from "./run.js";
+} from "../run.js";
 import {
   createPrimitiveRuntimeStateStore,
-  executePeriodWorkCandidate,
-  type PeriodWorkCandidate,
+  runPeriod,
   type PeriodWork,
   type PrimitiveRuntimeStateStore,
-} from "./period.js";
-import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
+} from "./referencePeriod.js";
+import type { HouseholdWorkDescriptor } from "../intraperiodScheduler.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -509,7 +510,7 @@ export const prepareVerticalSlice2Period = (
 ): PreparedVerticalSlice2Period => {
   const request: VerticalSlice2RunInput = { runContext, openingState: currentState, input, months: 1, primitiveState: currentPrimitiveState };
   validateInput(request, [period], true);
-  const eventResult = executePeriodWorkCandidate({ period, runContext, openingState: currentState, primitiveState: currentPrimitiveState, work: eventWork(request, period) });
+  const eventResult = runPeriod({ period, runContext, openingState: currentState, primitiveState: currentPrimitiveState, work: eventWork(request, period) });
   const eventOutputs = new Map(eventResult.primitiveOutputs.map((output) => [output.workId, output.output]));
   const occurrences: PreparedVerticalSlice2Occurrence[] = [];
   const streams: readonly (RecurringIncomeStream | RecurringExpenseStream)[] = [...input.incomes, ...input.expenses];
@@ -527,7 +528,7 @@ export const prepareVerticalSlice2Period = (
 };
 
 /**
- * Executes one prepared occurrence through the shared cash-flow financial evaluator.
+ * Executes one prepared occurrence through the existing VS2 financial path.
  * The filtered input is an internal mechanic, never a caller-supplied
  * executor, so recognition, obligations, funding, settlement, accounting,
  * effects, identities, and traces remain implemented exactly once.
@@ -559,9 +560,7 @@ export const executePreparedVerticalSlice2Occurrence = (
   const filtered = income === undefined
     ? { ...inputWithoutMixedOrder, incomes: Object.freeze([]), expenses: Object.freeze([executableStream as RecurringExpenseStream]), events: Object.freeze([]) }
     : { ...inputWithoutMixedOrder, incomes: Object.freeze([executableStream as RecurringIncomeStream]), expenses: Object.freeze([]), events: Object.freeze([]) };
-  return executeCashFlowPeriodCandidate({ runContext, openingState: state, primitiveState, input: filtered }, prepared.period, {
-    closingState: state, primitiveState, effects: [], transactions: [], diagnostics: [], primitiveOutputs: [],
-  });
+  return executeVerticalSlice2PeriodCandidate({ runContext, openingState: state, primitiveState, input: filtered }, prepared.period, state, primitiveState);
 };
 
 const outstandingExpenses = (state: AuthoritativeState, currency: Currency): Money => sumMoney(
@@ -574,12 +573,31 @@ interface VerticalSlice2InternalRunInput extends VerticalSlice2RunInput {
   readonly targetPeriods?: readonly Period[];
 }
 
-/** Shared financial evaluator; a prepared occurrence passes no event work or run wrapper. */
-const executeCashFlowPeriodCandidate = (
-  request: VerticalSlice2RunInput,
-  targetPeriod: Period,
-  eventResult: PeriodWorkCandidate,
-): { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly period: VerticalSlice2PeriodResult } => {
+const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): VerticalSlice2RunResult => {
+  const months = request.months ?? 360;
+  const periods = request.targetPeriods ?? utcMonthlyPeriods(request.runContext.simulationStart, months);
+  validateInput(request, periods, request.targetPeriods !== undefined);
+  const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end });
+  const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({
+    runContext: request.runContext,
+    openingState: request.openingState,
+    model: request.input,
+    assumptions: { months },
+  }));
+  let committedState = cloneAuthoritativeState(request.openingState);
+  let committedPrimitiveState = createPrimitiveRuntimeStateStore(request.primitiveState);
+  const committedPeriods: VerticalSlice2PeriodResult[] = [];
+  const runDiagnostics: ValidationIssue[] = [];
+
+  for (const targetPeriod of periods) {
+    try {
+      const eventResult = runPeriod({
+        period: targetPeriod,
+        runContext: request.runContext,
+        openingState: committedState,
+        primitiveState: committedPrimitiveState,
+        work: eventWork(request, targetPeriod),
+      });
       const state = cloneAuthoritativeState(eventResult.closingState);
       const recognitions: RecognitionFact[] = [];
       const proposals: SettlementProposal[] = [];
@@ -732,30 +750,10 @@ const executeCashFlowPeriodCandidate = (
         diagnostics: Object.freeze(diagnostics),
         traceRefs: mergeTraceRefs(periodTraces)!,
       });
-      return Object.freeze({ state, primitiveState: eventResult.primitiveState, period: periodResult });
-};
-
-const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): VerticalSlice2RunResult => {
-  const months = request.months ?? 360;
-  const periods = request.targetPeriods ?? utcMonthlyPeriods(request.runContext.simulationStart, months);
-  validateInput(request, periods, request.targetPeriods !== undefined);
-  const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end });
-  const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({
-    runContext: request.runContext, openingState: request.openingState, model: request.input, assumptions: { months },
-  }));
-  let committedState = cloneAuthoritativeState(request.openingState);
-  let committedPrimitiveState = createPrimitiveRuntimeStateStore(request.primitiveState);
-  const committedPeriods: VerticalSlice2PeriodResult[] = [];
-  const runDiagnostics: ValidationIssue[] = [];
-  for (const targetPeriod of periods) {
-    try {
-      const events = executePeriodWorkCandidate({ period: targetPeriod, runContext: request.runContext,
-        openingState: committedState, primitiveState: committedPrimitiveState, work: eventWork(request, targetPeriod) });
-      const candidate = executeCashFlowPeriodCandidate(request, targetPeriod, events);
-      committedState = candidate.state;
-      committedPrimitiveState = candidate.primitiveState;
-      committedPeriods.push(candidate.period);
-      runDiagnostics.push(...candidate.period.diagnostics);
+      committedState = state;
+      committedPrimitiveState = eventResult.primitiveState;
+      committedPeriods.push(periodResult);
+      runDiagnostics.push(...diagnostics);
     } catch (error) {
       if (!(error instanceof ValidationError)) throw error;
       const diagnostics = [...runDiagnostics, ...error.issues];

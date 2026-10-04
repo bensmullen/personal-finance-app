@@ -1,15 +1,17 @@
-import type { AccountingTransaction } from "../accounting/index.js";
-import { DependencyGraph } from "../dependencies/index.js";
+/** Frozen domain evaluator at 4800f6e (financial behavior inherited from pre-R3).
+ * Bounded reference tests only; never import into production execution. */
+import type { AccountingTransaction } from "../../accounting/index.js";
+import { DependencyGraph } from "../../dependencies/index.js";
 import {
   ValidationError,
   failValidation,
   issueCodes,
   validationIssue,
   type ValidationIssue,
-} from "../diagnostics/index.js";
-import type { GeneratedOccurrenceKey } from "../identity/index.js";
-import type { CalculationTraceRef } from "../lineage/index.js";
-import { isObservedFact } from "../model/provenance.js";
+} from "../../diagnostics/index.js";
+import type { GeneratedOccurrenceKey } from "../../identity/index.js";
+import type { CalculationTraceRef } from "../../lineage/index.js";
+import { isObservedFact } from "../../model/provenance.js";
 import {
   evaluatePrimitive,
   initialEventModificationPrimitiveState,
@@ -31,8 +33,8 @@ import {
   type AccrualPrimitiveState,
   type MarkToMarketPrimitiveState,
   type PrimitiveEvaluationContext,
-} from "../primitives/index.js";
-import { createSemanticEffect, type SemanticEffect } from "../semantics/effect.js";
+} from "../../primitives/index.js";
+import { createSemanticEffect, type SemanticEffect } from "../../semantics/effect.js";
 import {
   applyAccountingTransactionAtomically,
   assertAuthoritativeStateCurrency,
@@ -40,12 +42,12 @@ import {
   registerAuthoritativeIdentity,
   validateAuthoritativeState,
   type AuthoritativeState,
-} from "../state/index.js";
-import { deriveStatements, type Statements } from "../statements/index.js";
-import { inPeriod, type Instant, type Period } from "../time/index.js";
-import { Money } from "../values/index.js";
-import type { RunContext } from "./run.js";
-import { assertObservedFactWithinDataCutoff, assertRunContext } from "./run.js";
+} from "../../state/index.js";
+import { deriveStatements, type Statements } from "../../statements/index.js";
+import { inPeriod, type Instant, type Period } from "../../time/index.js";
+import { Money } from "../../values/index.js";
+import type { RunContext } from "../run.js";
+import { assertObservedFactWithinDataCutoff, assertRunContext } from "../run.js";
 
 type BindPrimitiveRuntime<T> = T extends ImplementedPrimitiveEvaluationRequest
   ? Omit<T, "context" | "priorState"> & {
@@ -382,15 +384,14 @@ const evaluatePeriodPrimitive = (
   }
 };
 
-export type PeriodWorkCandidate = Omit<CommittedPeriodResult, "period" | "openingState" | "statements">;
-
-/** Financial work evaluator. It owns no run metadata, statement or opening snapshot. */
-export const executePeriodWorkCandidate = (input: RunPeriodInput): PeriodWorkCandidate => {
+/** Executes one half-open period against private candidate financial and primitive state. */
+export const runPeriod = (input: RunPeriodInput): CommittedPeriodResult => {
   assertRunContext(input.runContext);
   if (input.period.start < input.runContext.simulationStart || input.period.end > input.runContext.simulationEnd || input.period.start >= input.period.end) {
     invalidWork("Period must be a non-empty interval within the run horizon");
   }
   assertPeriodWorkPlan(input.work, input.period, input.runContext);
+  const openingState = cloneAuthoritativeState(input.openingState);
   const candidateState = cloneAuthoritativeState(input.openingState);
   assertAuthoritativeStateCurrency(candidateState, input.runContext.baseCurrency);
   let candidatePrimitiveState = createPrimitiveRuntimeStateStore(input.primitiveState);
@@ -450,22 +451,14 @@ export const executePeriodWorkCandidate = (input: RunPeriodInput): PeriodWorkCan
 
   validateAuthoritativeState(candidateState);
   return Object.freeze({
+    period: Object.freeze({ ...input.period }),
+    openingState,
     closingState: candidateState,
     primitiveState: candidatePrimitiveState,
     effects: Object.freeze(effects),
     transactions: Object.freeze(transactions),
+    statements: deriveStatements(candidateState, transactions, input.runContext.baseCurrency),
     diagnostics: Object.freeze(diagnostics),
     primitiveOutputs: Object.freeze(primitiveOutputs),
-  });
-};
-
-/** Detailed standalone adapter; wrappers compose the shared financial evaluator. */
-export const runPeriod = (input: RunPeriodInput): CommittedPeriodResult => {
-  const candidate = executePeriodWorkCandidate(input);
-  return Object.freeze({
-    ...candidate,
-    period: Object.freeze({ ...input.period }),
-    openingState: cloneAuthoritativeState(input.openingState),
-    statements: deriveStatements(candidate.closingState, candidate.transactions, input.runContext.baseCurrency),
   });
 };

@@ -51,10 +51,17 @@ from the immutable opening kernel and run context, checking both run metadata an
 the displayed compact metrics before returning evidence. Statement flows can be
 accumulated without retaining accounting transactions.
 
+The second stage extracts shared cash/debt financial evaluators and a period-work
+candidate evaluator. Prepared operations no longer call the complete VS2/VS4
+forecast wrappers or `runPeriod`; period-work candidates omit standalone
+statements/opening snapshots, and valuation makes one candidate instead of two.
+The bounded oracle now imports frozen domain/period evaluators so production
+refactoring does not also replace the oracle's orchestration.
+
 Known remaining work: production defaults are still detailed; the evaluator still
 constructs detailed period objects before summary extraction; replay evaluates
 the full horizon and has no sparse intermediate checkpoint; full-state/history
 cloning, historical claim scans, identity sorting, primitive-store rebuilding,
-nested runners and exhaustive contention previews remain. This stage does not
+rich cash/debt period assembly and exhaustive contention previews remain. This stage does not
 meet issue 68 acceptance and supplies no new timing evidence. CI owns bounded
 verification; fresh Node 22 engineering-validation remains required for closeout.
