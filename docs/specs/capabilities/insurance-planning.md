@@ -1,6 +1,6 @@
 # Insurance Planning
 
-**Version:** 0.1.0-draft
+**Version:** 0.2.0-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-INS
 
@@ -55,6 +55,18 @@ If material policy mechanics, underwriting constraints, event models, or househo
 ### PFA-INS-011 — Product and provider neutrality
 
 Core insurance-planning semantics SHALL be provider-neutral. Carrier/product adapters, quote services, and underwriting integrations MAY be added later without redefining the financial meaning of coverage, premium, benefit, or planning outcomes.
+
+### PFA-INS-012 — Private-alpha deterministic insurance floor
+
+Before stochastic household modeling and private alpha, the supported household model SHALL be able to represent and test the deterministic insurance effects required by PFA-DET:
+
+- premium/cost schedules funded through authoritative household cash flow;
+- policy/coverage effective periods;
+- explicitly scheduled or scenario-triggered benefit/payout events for supported stress cases;
+- payout settlement to the applicable account/beneficiary; and
+- applicable accounting and tax classification.
+
+Probabilistic claim frequency/severity is not required for this gate. Unsupported policy-family or claim mechanics SHALL be capability-gated rather than approximated.
 
 ## 3. Initial scope
 

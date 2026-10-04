@@ -3524,6 +3524,779 @@
         "automated",
         "engineering-review"
       ]
+    },
+    {
+      "id": "PFA-DET-001",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-DET-002",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-013",
+        "PFA-INV-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-DET-003",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-DET-002",
+        "PFA-INV-013",
+        "PFA-TAX-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-DET-004",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-015",
+        "PFA-TAX-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-DET-005",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-012",
+        "PFA-INV-014",
+        "PFA-INV-017",
+        "PFA-TAX-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-DET-006",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-TAX-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-DET-007",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-016",
+        "PFA-TAX-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-DET-008",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-DET-009",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-016",
+        "PFA-TAX-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-DET-010",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-017",
+        "PFA-TAX-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-DET-011",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INS-012"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-DET-012",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-TAX-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-DET-013",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-DET-002",
+        "PFA-DET-003",
+        "PFA-DET-004",
+        "PFA-DET-005",
+        "PFA-DET-006",
+        "PFA-DET-007",
+        "PFA-DET-008",
+        "PFA-DET-009",
+        "PFA-DET-010",
+        "PFA-DET-011",
+        "PFA-DET-012"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-DET-014",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-UX-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-DET-015",
+      "spec_id": "deterministic-household-financial-semantics",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "src/rules/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-DET-013",
+        "PFA-DET-014",
+        "PFA-INV-019",
+        "PFA-TAX-014",
+        "PFA-INS-012",
+        "PFA-ONB-013"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-INV-012",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-013",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-005",
+        "PFA-INV-008",
+        "PFA-TAX-012"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-014",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-005",
+        "PFA-INV-008"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-015",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-006",
+        "PFA-TAX-012"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-016",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-003",
+        "PFA-INV-007"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-017",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-005",
+        "PFA-TAX-012"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-018",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-TAX-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INV-019",
+      "spec_id": "portfolio-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future portfolio modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INV-012",
+        "PFA-INV-013",
+        "PFA-INV-014",
+        "PFA-INV-015",
+        "PFA-INV-016",
+        "PFA-INV-017",
+        "PFA-INV-018"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-TAX-014",
+      "spec_id": "tax-engine",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/rules/",
+        "src/application/",
+        "src/simulation/",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-TAX-010",
+        "PFA-TAX-012"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-INS-012",
+      "spec_id": "insurance-planning",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "src/simulation/",
+        "future insurance modules",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-INS-002",
+        "PFA-INS-003",
+        "PFA-INS-004"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-UX-014",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "ui/",
+        "app/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-UX-003"
+      ],
+      "verification_methods": [
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-ONB-013",
+      "spec_id": "data-onboarding-and-import",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/application/",
+        "ui/",
+        "future import adapters",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-ONB-002",
+        "PFA-ONB-003",
+        "PFA-DET-014"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-PROB-020",
+      "spec_id": "probabilistic-forecasting",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/simulation/",
+        "src/application/",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-DET-015"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
     }
   ]
 }
