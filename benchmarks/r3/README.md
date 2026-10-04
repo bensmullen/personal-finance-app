@@ -67,7 +67,12 @@ Known remaining work: production defaults are still detailed; the evaluator stil
 constructs detailed period objects before summary extraction; full-state/history
 materialization at output boundaries, rich cash/debt period assembly, complete
 final audit retention remain. Contention
-signatures still serialize full candidate state/history during previews. Broader
+signatures now compare exact shared-root deltas against a fixed instant opening
+state for built-in domains. Unchanged historical subtrees are skipped, and
+financially equal changed values are compared with authoritative serialization.
+Legacy custom-participant comparisons still serialize complete state because
+callbacks may replace indexed records or identity ordering. That extension path
+remains a history-growth risk. Broader
 structural counters and application defaults are pending. Replay now stops at
 the requested window end and can resume from private shared-root checkpoints
 every twelve periods. A transported compatibility copy can fall back to the
@@ -102,8 +107,7 @@ confined to `referenceOrdering.ts` and the frozen bounded oracle. The fallback
 drains distinct branches even after sensitivity is established to preserve the
 reference's hard-failure precedence. Counters report analytical hits, fallback
 invocations, states, merges, terminal comparisons and maximum ambiguous size.
-Fallback signatures still include full historical state, and accumulated outcome
-order can inhibit merging. No worst-case polynomial bound or measured fallback
+Accumulated outcome order can inhibit merging. No worst-case polynomial bound or measured fallback
 frequency is claimed. A further sufficient certificate accepts a nonnegative
 income / required-service pair when opening first-source cash already covers a
 conservative service upper bound. It uses the existing posted mortgage interest

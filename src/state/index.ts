@@ -76,6 +76,34 @@ export class PersistentStringIndex<T> {
     }
     return false;
   }
+  /** Exact changes between shared roots; unchanged subtrees are never scanned. */
+  changesSince(before: PersistentStringIndex<T>): {
+    readonly changes: readonly { readonly key: string; readonly before: T | undefined; readonly after: T | undefined }[];
+    readonly visitedNodes: number;
+  } {
+    const findNode = (index: PersistentStringIndex<T>, key: string): IndexNode<T> | undefined => {
+      let node = index.#root;
+      while (node !== undefined && node.key !== key) node = key < node.key ? node.left : node.right;
+      return node;
+    };
+    const changes = new Map<string, { readonly key: string; readonly before: T | undefined; readonly after: T | undefined }>();
+    let visitedNodes = 0;
+    const visit = (node: IndexNode<T> | undefined, other: PersistentStringIndex<T>, removals: boolean): void => {
+      if (node === undefined) return;
+      visitedNodes += 1;
+      const counterpart = findNode(other, node.key);
+      if (counterpart === node) return;
+      if (removals) {
+        if (counterpart === undefined) changes.set(node.key, { key: node.key, before: node.value, after: undefined });
+      } else if (counterpart === undefined || counterpart.value !== node.value) {
+        changes.set(node.key, { key: node.key, before: counterpart?.value, after: node.value });
+      }
+      visit(node.left, other, removals); visit(node.right, other, removals);
+    };
+    visit(this.#root, before, false);
+    visit(before.#root, this, true);
+    return { changes: [...changes.values()].sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0), visitedNodes };
+  }
   set(key: string, value: T): void {
     const insert = (node: IndexNode<T> | undefined): IndexNode<T> => {
       if (node === undefined) return indexNode(key, value);
@@ -284,6 +312,33 @@ interface ExecutionStateIndex {
   readonly pendingClaimIds: Set<string>;
 }
 const executionStateIndexes = new WeakMap<AuthoritativeState, ExecutionStateIndex>();
+
+/**
+ * A complete, exact delta against one fixed comparison opening state. Callers
+ * supply authoritative value equality; no financial hashing or approximation
+ * belongs in the state layer. Undefined denotes a deleted entry. Legacy states
+ * without shared indexes retain the complete-state comparison representation.
+ */
+export const authoritativeStateChangesSince = (
+  state: AuthoritativeState, before: AuthoritativeState,
+  equal: (left: unknown, right: unknown) => boolean,
+  visited?: (nodes: number) => void,
+): unknown => {
+  const fields = ["accounts", "positions", "liabilities", "obligations"] as const;
+  const identities = identityIndexes.get(state.identities);
+  const priorIdentities = identityIndexes.get(before.identities);
+  if (identities === undefined || priorIdentities === undefined ||
+      fields.some(field => !indexedRecords.has(state[field]) || !indexedRecords.has(before[field]))) return state;
+  const changes = <T>(index: PersistentStringIndex<T>, prior: PersistentStringIndex<T>) => {
+    const delta = index.changesSince(prior);
+    visited?.(delta.visitedNodes);
+    return delta.changes.filter(change => !equal(change.before, change.after)).map(change => [change.key, change.after]);
+  };
+  return {
+    ...Object.fromEntries(fields.map(field => [field, changes(indexedRecords.get(state[field])!.index, indexedRecords.get(before[field])!.index)])),
+    identities: Object.fromEntries(identityKinds.map(kind => [kind, changes(identities[kind], priorIdentities[kind])])),
+  };
+};
 const claimGroup = (category: string, balanceEntityId?: string): string => `${category}\u0000${balanceEntityId ?? ""}`;
 
 /** Establish indexed execution once at the opening authority boundary. */

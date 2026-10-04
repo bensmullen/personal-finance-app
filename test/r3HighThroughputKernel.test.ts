@@ -15,6 +15,7 @@ import type { FixedAmortizingLoan } from "../src/simulation/verticalSlice4.js";
 import type { VerticalSlice2Input } from "../src/simulation/verticalSlice2.js";
 import { createAuthoritativeState, createIndexedExecutionState, cloneAuthoritativeState, validateAuthoritativeState,
   applyAccountingTransactionAtomically, PersistentStringIndex, activeAuthoritativeClaims, authoritativeClaimHistory } from "../src/state/index.js";
+import { authoritativeStateChangesSince, registerAuthoritativeIdentity } from "../src/state/index.js";
 import { createObligation } from "../src/semantics/claim.js";
 import { instant } from "../src/time/index.js";
 import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
@@ -224,6 +225,44 @@ describe("R3 reusable deterministic household kernel", () => {
       sorted.forEach((entry, ordinal) => expect(branch.at(ordinal)).toEqual(entry));
       expect([...index.entries()]).toEqual(snapshot);
     }), { numRuns: 20, seed: 68 });
+  });
+
+  it("compares shared state by exact changes without traversing archived history", () => {
+    const base = createIndexedExecutionState(createAuthoritativeState({ ...opening(), identities: {
+      postedTransactionIds: Array.from({ length: 500 }, (_, i) => `tx:archived:${String(i).padStart(4, "0")}` as never),
+    } }));
+    const left = cloneAuthoritativeState(base);
+    const right = cloneAuthoritativeState(base);
+    registerAuthoritativeIdentity(left.identities, "postedTransactionIds", "tx:new:a" as never);
+    registerAuthoritativeIdentity(left.identities, "postedTransactionIds", "tx:new:b" as never);
+    registerAuthoritativeIdentity(right.identities, "postedTransactionIds", "tx:new:b" as never);
+    registerAuthoritativeIdentity(right.identities, "postedTransactionIds", "tx:new:a" as never);
+    left.accounts[ids.cash]!.cash = left.accounts[ids.cash]!.cash.plus(money("1"));
+    right.accounts[ids.cash]!.cash = money("11");
+    let visited = 0;
+    const delta = (state: typeof base) => authoritativeStateChangesSince(state, base,
+      (a, b) => canonicalSerialize(a) === canonicalSerialize(b), nodes => { visited += nodes; });
+    expect(canonicalSerialize(delta(left))).toBe(canonicalSerialize(delta(right)));
+    expect(canonicalSerialize(left)).toBe(canonicalSerialize(right));
+    expect(visited).toBeLessThan(150);
+    const changed = cloneAuthoritativeState(right);
+    changed.accounts[ids.cash]!.cash = money("12");
+    expect(canonicalSerialize(delta(changed))).not.toBe(canonicalSerialize(delta(left)));
+  });
+
+  it("reports exact persistent-index changes across insertions, updates, deletion and rotations", () => {
+    fc.assert(fc.property(fc.array(fc.tuple(fc.integer({ min: 0, max: 30 }), fc.integer()), { maxLength: 40 }), changes => {
+      const before = new PersistentStringIndex(Array.from({ length: 20 }, (_, i) => [String(i), i] as const));
+      const next = before.fork();
+      for (const [key, value] of changes) next.set(String(key), value);
+      for (let key = 0; key < 5; key += 1) next.delete(String(key));
+      const rebuilt = new Map(before.entries());
+      for (const change of next.changesSince(before).changes) {
+        if (change.after === undefined) rebuilt.delete(change.key);
+        else rebuilt.set(change.key, change.after);
+      }
+      expect([...rebuilt].sort(([a], [b]) => a.localeCompare(b))).toEqual([...next.entries()].sort(([a], [b]) => a.localeCompare(b)));
+    }), { numRuns: 24, seed: 68 });
   });
 
   it("isolates failed candidates and retains indexed historical claim identities", () => {

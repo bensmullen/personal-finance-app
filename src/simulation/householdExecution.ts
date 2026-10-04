@@ -24,6 +24,7 @@ import {
   createAuthoritativeState,
   registerAuthoritativeIdentity,
   validateAuthoritativeState,
+  authoritativeStateChangesSince,
   type AuthoritativeState,
 } from "../state/index.js";
 import { deriveStatements, type Statements } from "../statements/index.js";
@@ -304,9 +305,10 @@ const policyPrecedes = (
     after.operationClass,
   );
 
-const outcomeSignature = (execution: InstantExecution): string =>
+const outcomeSignature = (execution: InstantExecution, opening?: AuthoritativeState, visited?: (nodes: number) => void): string =>
   canonicalSerialize({
-    state: execution.state,
+    state: opening === undefined ? execution.state : authoritativeStateChangesSince(execution.state, opening,
+      (left, right) => left === right || canonicalSerialize(left) === canonicalSerialize(right), visited),
     primitiveState: execution.primitiveState,
     transactions: [
       ...execution.additionalFacts,
@@ -659,14 +661,18 @@ const runCompiledHouseholdProjectionInternal = (
             .sort((left, right) => left.id.localeCompare(right.id));
           const compare = (edges: readonly { readonly before: string; readonly after: string }[]) => {
             const counters = createReachableStateCounters();
+            // Legacy extension callbacks can replace the indexed representation.
+            // Keep one complete comparison encoding for all their branches.
+            const signature = (execution: InstantExecution) => outcomeSignature(execution, participants.length === 0 ? candidateState : undefined,
+              nodes => performance.counters({ contentionStateIndexNodesVisited: nodes }));
             try {
               return compareReachableStates({ items: group, edges,
                 opening: executeAt(at, [], candidateState, candidatePrimitiveState),
                 advance: (prefix, item) => executeAt(at, [item], cloneAuthoritativeState(prefix.state), prefix.primitiveState, prefix),
                 equivalenceKey: prefix => canonicalSerialize({
-                  outcome: outcomeSignature(prefix), statuses: [...prefix.requiredStatuses].sort(([a], [b]) => a.localeCompare(b)),
+                  outcome: signature(prefix), statuses: [...prefix.requiredStatuses].sort(([a], [b]) => a.localeCompare(b)),
                 }),
-                terminalSignature: prefix => outcomeSignature(executeAt(at, remainder, prefix.state, prefix.primitiveState, prefix)),
+                terminalSignature: prefix => signature(executeAt(at, remainder, prefix.state, prefix.primitiveState, prefix)),
                 counters,
               });
             } finally {
