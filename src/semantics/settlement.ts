@@ -9,6 +9,7 @@ import { createFactProvenance, type FactProvenance } from "../model/provenance.j
 import type { Instant } from "../time/index.js";
 import type { Money } from "../values/index.js";
 import type { ObligationOrRight } from "./claim.js";
+import { appendSettlementIdentity } from "./claim.js";
 import type { ClaimId, SettlementId, SettlementProposalId } from "./identity.js";
 
 interface SettlementData {
@@ -102,6 +103,6 @@ export const applySettlement = (claim: ObligationOrRight, settlement: Settlement
   return Object.freeze({
     ...claim,
     outstandingAmount: claim.outstandingAmount.minus(settlement.amount),
-    settlementIds: Object.freeze([...claim.settlementIds, settlement.id]),
+    settlementIds: appendSettlementIdentity(claim.settlementIds, settlement.id, claim.id),
   });
 };

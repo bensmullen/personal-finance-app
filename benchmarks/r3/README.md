@@ -139,3 +139,18 @@ not synthetic financial lineage. Detailed compatibility remains explicit.
 These changes still require CI equivalence and fresh heavy evidence. Long-lived
 claim settlement-history work remains the next code closeout; the operation-count
 risks above and exact-search worst cases remain unmeasured.
+
+The settlement-history closeout now uses persistent chronological and membership
+AVL roots with readonly array views. Appends visit logarithmic tree paths;
+normalization and invariant checks recognize validated roots instead of copying
+or scanning preceding IDs. In-place ownership updates preserve recognition and
+historical settlement ownership, reconcile only new settlement IDs, and remove
+fully settled claims only from the active index. Cold replacements/deletions and
+canonical output retain full defensive validation. Exact contention deltas encode
+shared claim prefixes relative to the same opening authority, so comparisons of
+an incrementally settled claim do not serialize its preceding settlement history.
+Bounded tests cover arbitrary identity order, branches, duplicates, materialized
+order, active removal and historical replay protection. Counters expose cold
+validation, append tree visits and historical entries copied. This supersedes the
+per-claim quadratic risk described for the previous intermediate implementation;
+timing and current-head CI evidence are still required.

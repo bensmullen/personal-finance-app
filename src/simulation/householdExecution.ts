@@ -347,7 +347,7 @@ const outcomeSignature = (execution: InstantExecution, opening?: AuthoritativeSt
       ...execution.liabilityPeriods.flatMap(
         (period) => period.liquidityShortfalls,
       ),
-      ...execution.additionalFacts.flatMap(fact => fact.summary?.cash?.liquidityShortfalls ?? fact.summary?.debt?.liquidityShortfalls ?? []),
+      ...execution.additionalFacts.flatMap<LiquidityShortfall | VerticalSlice4LiquidityShortfall>(fact => fact.summary?.cash?.liquidityShortfalls ?? fact.summary?.debt?.liquidityShortfalls ?? []),
     ] as readonly unknown[],
   });
 
@@ -405,7 +405,7 @@ const runCompiledHouseholdProjectionInternal = (
     compiled.reconciledOpeningState,
     runContext.baseCurrency,
   );
-  let state = createIndexedExecutionState(cloneAuthoritativeState(compiled.reconciledOpeningState));
+  let state = createIndexedExecutionState(cloneAuthoritativeState(compiled.reconciledOpeningState), counts => performance.counters(counts));
   let primitiveState = createPrimitiveRuntimeStateStore(
     compiled.reconciledPrimitiveState,
   );

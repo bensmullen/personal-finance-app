@@ -16,7 +16,7 @@ import type { VerticalSlice2Input } from "../src/simulation/verticalSlice2.js";
 import { createAuthoritativeState, createIndexedExecutionState, cloneAuthoritativeState, validateAuthoritativeState,
   applyAccountingTransactionAtomically, PersistentStringIndex, activeAuthoritativeClaims, authoritativeClaimHistory } from "../src/state/index.js";
 import { authoritativeStateChangesSince, registerAuthoritativeIdentity } from "../src/state/index.js";
-import { createObligation } from "../src/semantics/claim.js";
+import { createObligation, executionSettlementHistory, appendSettlementIdentity, settlementIdentityAppendsSince, normalizeExecutionClaim, materializeClaimLifecycle, assertClaimInvariant } from "../src/semantics/claim.js";
 import { instant } from "../src/time/index.js";
 import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
 
@@ -283,6 +283,83 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(setDelta.accounts).toEqual([{ key: ids.cash, kind: "set", value: replaced.accounts[ids.cash] }]);
     expect(canonicalSerialize(setDelta)).not.toBe(canonicalSerialize(delta));
     expect((authoritativeStateChangesSince(base, base, equal) as { accounts: unknown[] }).accounts).toEqual([]);
+  });
+
+  it("appends unique settlement history through shared roots without copying the preceding entries", () => {
+    const counts: Record<string, number> = {};
+    const meter = (values: Readonly<Record<string, number>>) => { for (const [key, value] of Object.entries(values)) counts[key] = (counts[key] ?? 0) + value; };
+    const empty = executionSettlementHistory([], "history-test", meter);
+    let history = empty;
+    const expected: typeof history[number][] = [];
+    let fork = empty;
+    for (let index = 0; index < 128; index += 1) {
+      const id = `settlement:${String(index).padStart(4, "0")}` as typeof history[number];
+      const previous = history;
+      history = appendSettlementIdentity(history, id, "history-test");
+      expected.push(id);
+      expect(settlementIdentityAppendsSince(history, previous)).toEqual([id]);
+      expect(history.includes(id)).toBe(true);
+      expect(history.includes(id, history.length)).toBe(false);
+      expect(history[index]).toBe(id);
+      if (index === 63) fork = history;
+    }
+    expect([...history]).toEqual(expected);
+    expect([...fork]).toEqual(expected.slice(0, 64));
+    expect(settlementIdentityAppendsSince(history, fork)).toEqual(expected.slice(64));
+    const alternate = appendSettlementIdentity(fork, "settlement:alternate" as never, "history-test");
+    expect(alternate.includes(expected[64]!)).toBe(false);
+    expect(settlementIdentityAppendsSince(history, alternate)).toBeUndefined();
+    expect(() => appendSettlementIdentity(history, expected[0]!, "history-test")).toThrow(ValidationError);
+    expect(() => executionSettlementHistory([expected[0]!, expected[0]!], "history-test")).toThrow(ValidationError);
+    expect(counts.settlementHistoryAppendEntriesCopied).toBe(0);
+    expect(counts.fullClaimHistoryValidationsDuringHotExecution).toBe(0);
+    expect(counts.settlementHistoryColdValidations).toBe(1);
+    expect(counts.settlementHistoryAppendNodesVisited).toBeLessThan(129 * 20);
+  });
+
+  it("keeps settled history duplicate-protected while removing only active claim membership", () => {
+    const claim = createObligation({ id: "claim:long-lived" as never, category: "expense_payable",
+      originatingRecognitionId: "recognition:long-lived" as never, economicOwnerId: ids.owner,
+      balanceEntityId: ids.payable, originalAmount: money("128"), recognizedAt: start });
+    let state = createIndexedExecutionState(createAuthoritativeState({ ...opening(), obligations: { [claim.id]: claim } }));
+    const original = state;
+    for (let index = 0; index < 128; index += 1) {
+      state = cloneAuthoritativeState(state);
+      const previous = state.obligations[claim.id]!;
+      state.obligations[claim.id] = { ...previous, outstandingAmount: previous.outstandingAmount.minus(money("1")),
+        settlementIds: appendSettlementIdentity(previous.settlementIds, `settlement:monthly:${index}` as never, claim.id) };
+      validateAuthoritativeState(state);
+    }
+    state = cloneAuthoritativeState(state);
+    expect(activeAuthoritativeClaims(state, claim.category, ids.payable)).toHaveLength(0);
+    expect(activeAuthoritativeClaims(original, claim.category, ids.payable)).toHaveLength(1);
+    expect(() => createObligation({ ...claim, id: "claim:duplicate" as never }, authoritativeClaimHistory(state))).toThrow(ValidationError);
+    expect(state.identities.settlementIds).toHaveLength(128);
+    const finalClaim = state.obligations[claim.id]!;
+    const normalized = normalizeExecutionClaim(finalClaim);
+    expect(normalized.settlementIds).toBe(finalClaim.settlementIds);
+    assertClaimInvariant(normalized);
+    const output = materializeClaimLifecycle(finalClaim);
+    expect(output.settlementIds).toEqual(Array.from({ length: 128 }, (_, index) => `settlement:monthly:${index}`));
+    expect(Object.isFrozen(output.settlementIds)).toBe(true);
+    const other = createObligation({ ...claim, id: "claim:other" as never, originatingRecognitionId: "recognition:other" as never,
+      settlementIds: [finalClaim.settlementIds[0]!] });
+    expect(() => { state.obligations[other.id] = other; }).toThrow(ValidationError);
+  });
+
+  it("preserves canonical settlement order across arbitrary identity ordering and forks", () => {
+    fc.assert(fc.property(fc.uniqueArray(fc.integer({ min: 0, max: 100 }), { maxLength: 40 }), values => {
+      let history = executionSettlementHistory([], "property-history");
+      const versions = [history];
+      const ids = values.map(value => `settlement:property:${value}` as typeof history[number]);
+      for (const id of ids) { history = appendSettlementIdentity(history, id, "property-history"); versions.push(history); }
+      for (let index = 0; index < versions.length; index += 1) {
+        expect([...versions[index]!]).toEqual(ids.slice(0, index));
+        expect(settlementIdentityAppendsSince(history, versions[index]!)).toEqual(ids.slice(index));
+      }
+      expect(history.map(id => id)).toEqual(ids);
+      expect(canonicalSerialize(history)).toBe(canonicalSerialize(ids));
+    }), { numRuns: 20, seed: 68 });
   });
 
   it("isolates failed candidates and retains indexed historical claim identities", () => {

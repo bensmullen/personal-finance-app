@@ -8,7 +8,7 @@ import {
 } from "../accounting/index.js";
 import { failValidation, issueCodes } from "../diagnostics/index.js";
 import type { DomainId, GeneratedOccurrenceKey, IdempotencyKey } from "../identity/index.js";
-import { normalizeClaimLifecycle, type ObligationOrRight } from "../semantics/claim.js";
+import { normalizeExecutionClaim, materializeClaimLifecycle, settlementIdentityAppendsSince, type SettlementHistoryMeter, type ObligationOrRight } from "../semantics/claim.js";
 import type { RecognitionId, SettlementId } from "../semantics/identity.js";
 import { createRecognitionFact as createRecognitionFactWithHistory, type RecognitionFactDraft, type RecognitionFact } from "../semantics/recognition.js";
 import type { Currency, Money, Quantity, Rate } from "../values/index.js";
@@ -310,6 +310,8 @@ interface ExecutionStateIndex {
   readonly settlementClaims: PersistentStringIndex<string>;
   readonly activeClaims: PersistentStringIndex<PersistentStringIndex<ObligationOrRight>>;
   readonly pendingClaimIds: Set<string>;
+  readonly pendingSettlementIds: Set<import("../semantics/identity.js").SettlementId>;
+  readonly historyMeter?: SettlementHistoryMeter;
 }
 const executionStateIndexes = new WeakMap<AuthoritativeState, ExecutionStateIndex>();
 
@@ -330,35 +332,55 @@ export const authoritativeStateChangesSince = (
   const priorIdentities = identityIndexes.get(before.identities);
   if (identities === undefined || priorIdentities === undefined ||
       fields.some(field => !indexedRecords.has(state[field]) || !indexedRecords.has(before[field]))) return state;
-  const changes = <T>(index: PersistentStringIndex<T>, prior: PersistentStringIndex<T>) => {
+  const claimValue = (value: unknown, previous: unknown): unknown => {
+    if (previous === undefined) return value;
+    const claim = value as ObligationOrRight, base = previous as ObligationOrRight;
+    let appended = settlementIdentityAppendsSince(claim.settlementIds, base.settlementIds);
+    // Independent cold replacements can have an economically identical prefix.
+    // Only that compatibility lane scans it; indexed appends prove sharing.
+    if (appended === undefined && claim.settlementIds.length >= base.settlementIds.length &&
+        base.settlementIds.every((id, index) => claim.settlementIds[index] === id))
+      appended = claim.settlementIds.slice(base.settlementIds.length);
+    return appended === undefined ? claim : { ...claim, settlementIds: { kind: "opening_prefix", length: base.settlementIds.length, appended } };
+  };
+  const changes = <T>(index: PersistentStringIndex<T>, prior: PersistentStringIndex<T>, encode: (value: T, previous: T | undefined) => unknown = value => value) => {
     const delta = index.changesSince(prior);
     visited?.(delta.visitedNodes);
-    return delta.changes.flatMap<{ key: string; kind: "delete" } | { key: string; kind: "set"; value: T }>(change => {
+    return delta.changes.flatMap<{ key: string; kind: "delete" } | { key: string; kind: "set"; value: unknown }>(change => {
       if (change.after === undefined) return [{ key: change.key, kind: "delete" as const }];
-      if (change.before !== undefined && equal(change.before, change.after)) return [];
-      return [{ key: change.key, kind: "set" as const, value: change.after }];
+      const value = encode(change.after, change.before);
+      if (change.before !== undefined && equal(encode(change.before, change.before), value)) return [];
+      return [{ key: change.key, kind: "set" as const, value }];
     });
   };
   return {
-    ...Object.fromEntries(fields.map(field => [field, changes(indexedRecords.get(state[field])!.index, indexedRecords.get(before[field])!.index)])),
+    ...Object.fromEntries(fields.map(field => [field, changes(indexedRecords.get(state[field])!.index, indexedRecords.get(before[field])!.index,
+      field === "obligations" ? claimValue : value => value)])),
     identities: Object.fromEntries(identityKinds.map(kind => [kind, changes(identities[kind], priorIdentities[kind])])),
   };
 };
 const claimGroup = (category: string, balanceEntityId?: string): string => `${category}\u0000${balanceEntityId ?? ""}`;
 
 /** Establish indexed execution once at the opening authority boundary. */
-export const createIndexedExecutionState = (opening: AuthoritativeState): AuthoritativeState => {
+export const createIndexedExecutionState = (opening: AuthoritativeState, suppliedHistoryMeter?: SettlementHistoryMeter): AuthoritativeState => {
   const existing = executionStateIndexes.get(opening);
   if (existing === undefined) validateAuthoritativeState(opening);
   const recognitionClaims = existing?.recognitionClaims.fork() ?? new PersistentStringIndex<string>();
   const settlementClaims = existing?.settlementClaims.fork() ?? new PersistentStringIndex<string>();
   const activeClaims = existing?.activeClaims.fork() ?? new PersistentStringIndex<PersistentStringIndex<ObligationOrRight>>();
   const pendingClaimIds = new Set(existing?.pendingClaimIds);
+  const pendingSettlementIds = new Set(existing?.pendingSettlementIds);
+  const historyMeter = existing?.historyMeter ?? suppliedHistoryMeter;
   const updateClaim = (key: string, previous: ObligationOrRight | undefined, next: ObligationOrRight | undefined): void => {
     pendingClaimIds.add(key);
+    const appended = previous === undefined || next === undefined || previous.originatingRecognitionId !== next.originatingRecognitionId
+      ? undefined : settlementIdentityAppendsSince(next.settlementIds, previous.settlementIds);
+    const monotonic = appended !== undefined;
     if (previous !== undefined) {
-      recognitionClaims.delete(previous.originatingRecognitionId);
-      for (const settlement of previous.settlementIds) settlementClaims.delete(settlement);
+      if (!monotonic) {
+        recognitionClaims.delete(previous.originatingRecognitionId);
+        for (const settlement of previous.settlementIds) settlementClaims.delete(settlement);
+      }
       const groupKey = claimGroup(previous.category, previous.balanceEntityId);
       const group = activeClaims.get(groupKey)?.fork();
       if (group !== undefined) { group.delete(key); if (group.size === 0) activeClaims.delete(groupKey); else activeClaims.set(groupKey, group); }
@@ -368,13 +390,14 @@ export const createIndexedExecutionState = (opening: AuthoritativeState): Author
       if (owner !== undefined && owner !== key) failValidation({ severity: "error", code: issueCodes.duplicateRecognition,
         message: `Recognition ${next.originatingRecognitionId} is claimed by multiple claims`, entityType: "claim",
         entityId: next.id, fieldPath: "originatingRecognitionId", relatedIds: [owner, next.originatingRecognitionId] });
-      recognitionClaims.set(next.originatingRecognitionId, key);
-      for (const settlement of next.settlementIds) {
+      if (!monotonic) recognitionClaims.set(next.originatingRecognitionId, key);
+      for (const settlement of appended ?? next.settlementIds) {
         const settlementOwner = settlementClaims.get(settlement);
         if (settlementOwner !== undefined && settlementOwner !== key) failValidation({ severity: "error", code: issueCodes.duplicateSettlement,
           message: `Settlement ${settlement} is claimed by multiple claims`, entityType: "claim", entityId: next.id,
           fieldPath: "settlementIds", relatedIds: [settlementOwner, settlement] });
         settlementClaims.set(settlement, key);
+        pendingSettlementIds.add(settlement);
       }
       if (next.outstandingAmount.isPositive()) {
         const groupKey = claimGroup(next.category, next.balanceEntityId);
@@ -387,18 +410,20 @@ export const createIndexedExecutionState = (opening: AuthoritativeState): Author
     changed?: (key: string, previous: T | undefined, next: T | undefined) => void,
     normalize?: (value: T) => T): Record<string, T> => {
     const previous = indexedRecords.get(record) as IndexedRecord<T> | undefined;
-    const next = indexedRecord(previous?.index.fork() ?? new PersistentStringIndex(Object.entries(record)), mutable, changed, normalize);
+    const next = indexedRecord(previous?.index.fork() ?? new PersistentStringIndex(Object.entries(record).map(([key, value]) =>
+      [key, normalize === undefined ? value : normalize(value)] as const)), mutable, changed, normalize);
     if (previous !== undefined) for (const key of previous.dirty) next.dirty.add(key);
     return next.record;
   };
   const state: AuthoritativeState = {
     accounts: makeRecord(opening.accounts, true), positions: makeRecord(opening.positions, true),
-    liabilities: makeRecord(opening.liabilities, true), obligations: makeRecord(opening.obligations, false, updateClaim, normalizeClaimLifecycle),
+    liabilities: makeRecord(opening.liabilities, true), obligations: makeRecord(opening.obligations, false, updateClaim, value => normalizeExecutionClaim(value, historyMeter)),
     identities: indexedIdentityRegistry(opening.identities),
   };
-  if (existing === undefined) for (const [key, claim] of Object.entries(opening.obligations)) updateClaim(key, undefined, claim);
-  if (existing === undefined) pendingClaimIds.clear();
-  executionStateIndexes.set(state, { recognitionClaims, settlementClaims, activeClaims, pendingClaimIds });
+  if (existing === undefined) for (const [key, claim] of Object.entries(state.obligations)) updateClaim(key, undefined, claim);
+  if (existing === undefined) { pendingClaimIds.clear(); pendingSettlementIds.clear(); }
+  executionStateIndexes.set(state, { recognitionClaims, settlementClaims, activeClaims, pendingClaimIds, pendingSettlementIds,
+    ...(historyMeter === undefined ? {} : { historyMeter }) });
   return state;
 };
 
@@ -440,7 +465,7 @@ export const createAuthoritativeState = (draft: AuthoritativeStateDraft = {}): A
     accounts: Object.fromEntries(Object.entries(draft.accounts ?? {}).map(([key, value]) => [key, { ...value }])),
     positions: Object.fromEntries(Object.entries(draft.positions ?? {}).map(([key, value]) => [key, { ...value }])),
     liabilities: Object.fromEntries(Object.entries(draft.liabilities ?? {}).map(([key, value]) => [key, { ...value }])),
-    obligations: Object.fromEntries(Object.entries(draft.obligations ?? {}).map(([key, value]) => [key, normalizeClaimLifecycle(value)])),
+    obligations: Object.fromEntries(Object.entries(draft.obligations ?? {}).map(([key, value]) => [key, materializeClaimLifecycle(value)])),
     identities: createAuthoritativeIdentityRegistry(draft.identities),
   };
   reconcileClaimIdentityHistory(state);
@@ -459,9 +484,11 @@ export const cloneAuthoritativeState = (state: AuthoritativeState): Authoritativ
     if (claim === undefined) continue;
     if (!candidate.identities.recognitionIds.includes(claim.originatingRecognitionId))
       registerAuthoritativeIdentity(candidate.identities, "recognitionIds", claim.originatingRecognitionId);
-    for (const settlement of claim.settlementIds) if (!candidate.identities.settlementIds.includes(settlement))
-      registerAuthoritativeIdentity(candidate.identities, "settlementIds", settlement);
   }
+  const pendingSettlementIds = executionStateIndexes.get(candidate)!.pendingSettlementIds;
+  for (const settlement of pendingSettlementIds) if (!candidate.identities.settlementIds.includes(settlement))
+    registerAuthoritativeIdentity(candidate.identities, "settlementIds", settlement);
+  pendingSettlementIds.clear();
   pendingClaimIds.clear();
   validateAuthoritativeState(candidate);
   return candidate;
