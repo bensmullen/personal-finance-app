@@ -61,7 +61,7 @@ describe("Personal household projection application seam", () => {
         profile: { liabilityId: "94000000-0000-4000-8000-000000000098", kind: "vs4_fixed_monthly_fully_amortizing", paymentAnchor: "2026-01-01", totalPayments: 360, fundingAccountId: "90000000-0000-4000-8000-000000000004", settlementPriority: 2, openingContractStatus: "current" },
       },
     );
-    expect(result.status, JSON.stringify(result)).toBe("incomplete");
+    expect(result.status, JSON.stringify({ status: result.status, diagnostics: result.diagnostics })).toBe("incomplete");
     if (result.status === "unavailable") return;
     expect(result.alternatives[0]!.declaredDifference).toBe("major_asset_debt_addition");
     expect(result.alternatives[0]!.points[0]!.deltas.netWorth.amount).not.toBe("0");
