@@ -1,6 +1,6 @@
 # Portfolio & Investment Planning
 
-**Version:** 0.3.0-draft
+**Version:** 0.4.0-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-INV
 
@@ -126,6 +126,38 @@ Supported retirement rollovers SHALL be explicit transfer operations preserving 
 
 The deterministic private-alpha floor SHALL cover supported direct trustee-to-trustee/plan-to-plan rollovers plus a bounded indirect-rollover path with applicable deadline/frequency restrictions. Unsupported inherited-plan, RMD, corrective-distribution, QDRO, or plan-specific acceptance cases SHALL be capability-gated rather than approximated.
 
+
+### PFA-INV-023 — Workplace retirement plan loans remain a tracked capability
+
+Workplace retirement plan loans (for example, a participant 401(k) loan) are not required for the initial private-alpha cohort unless an enrolled household actually needs them, but they SHALL remain an explicit tracked product capability and SHALL NOT disappear from the roadmap after alpha.
+
+Before the product claims support for plan loans, the model SHALL define the applicable plan-loan contract rather than approximating the loan as an ordinary withdrawal or ordinary consumer debt. The supported contract must address, where applicable:
+
+- loan origination and participant cash proceeds;
+- the plan/account economic effect and any investment displacement or loan-receivable treatment;
+- payroll repayment of principal and interest;
+- repayment interest returning to the participant's plan/account where applicable;
+- statutory/plan borrowing limits and repayment-term constraints;
+- employment termination, loan offset, deemed-distribution/default treatment, and applicable tax consequences; and
+- lineage sufficient to distinguish plan-loan cash flows from contributions, withdrawals, distributions, and external debt.
+
+Unsupported plan-specific terms SHALL be capability-gated rather than guessed.
+
+### PFA-INV-024 — Private-alpha deterministic portfolio optimization floor
+
+Portfolio optimization is a required private-alpha planning capability, but the first useful version MAY be deterministic.
+
+After PFA-DET is complete, the product SHALL support bounded portfolio strategy generation/evaluation for already-supported investment decisions, including at minimum:
+
+- contribution priority/allocation across eligible supported accounts while respecting contribution limits and employer match opportunities;
+- movement toward an explicit user-selected target allocation or allocation range;
+- supported rebalancing choices;
+- liquidity and funding constraints;
+- fees/costs where modeled; and
+- tax-aware account/contribution/location decisions only to the extent the authoritative tax engine has complete coverage for the compared strategies.
+
+The deterministic optimizer MAY rank a bounded set of strategies using explicit user goals/constraints and deterministic return assumptions. It SHALL NOT claim uncertainty-aware, risk-adjusted, globally optimal, or efficient-frontier optimality without the stochastic/risk semantics required by PFA-PLAN and PFA-PROB.
+
 ## 3. Relationship to specialized equity capability
 
 PFA-EQ owns concentrated single-issuer and equity-compensation semantics. This specification owns the broader household portfolio-planning context into which those exposures are integrated.
@@ -134,4 +166,4 @@ The system may initially support diversified asset-class planning while capabili
 
 ## 4. Deferred decisions
 
-Detailed security tax-lot optimization, transaction-cost models, product selection, risk-tolerance elicitation, efficient-frontier methods, and automated trade generation remain future design choices unless a nearer milestone explicitly requires them.
+Detailed security tax-lot optimization, product selection, full risk-tolerance elicitation, efficient-frontier/risk-budget methods, plan-loan execution, and automated trade execution remain future design choices unless a nearer milestone explicitly requires them. The bounded deterministic portfolio optimizer in PFA-INV-024 is not deferred.
