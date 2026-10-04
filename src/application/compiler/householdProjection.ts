@@ -1,6 +1,8 @@
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { createPerformanceSession, type PerformanceObserver, type PerformanceSession } from "../../diagnostics/performance.js";
 import { canonicalSerialize } from "../../simulation/run.js";
+import { compileHouseholdKernel, type CompiledHouseholdKernel } from "../../simulation/r3/compiledHousehold.js";
+import { instant } from "../../time/index.js";
 import { reconcileHouseholdOpeningState, reconcileHouseholdPrimitiveState } from "../../simulation/householdProjection.js";
 import { buildHouseholdScheduledPlan, type HouseholdContentionPolicy } from "../../simulation/intraperiodScheduler.js";
 import { compileCashFlow, type CashFlowCompilerRequest, type CashFlowScenarioBindings, type CompiledCashFlow } from "./cashFlow.js";
@@ -25,15 +27,16 @@ export interface CompiledStandaloneAsset {
 }
 
 export interface CompiledHouseholdProjection {
-  readonly cashFlowInput?: CompiledCashFlow["input"];
-  readonly investmentInput?: CompiledInvestments["input"];
-  readonly liabilityInput?: CompiledLiabilities["input"];
+  readonly executionKernel?: CompiledHouseholdKernel;
+  readonly cashFlowInput?: CompiledCashFlow["input"] | undefined;
+  readonly investmentInput?: CompiledInvestments["input"] | undefined;
+  readonly liabilityInput?: CompiledLiabilities["input"] | undefined;
   readonly reconciledOpeningState: CompiledCashFlow["openingState"];
   readonly reconciledPrimitiveState: CompiledInvestments["primitiveState"];
   readonly standaloneAssets: readonly CompiledStandaloneAsset[];
   readonly scenarioIdentity: string;
   readonly executionMonths: number;
-  readonly contentionPolicy?: HouseholdContentionPolicy;
+  readonly contentionPolicy?: HouseholdContentionPolicy | undefined;
   readonly diagnostics: readonly CapabilityDiagnostic[];
   /** Binding names are part of the household scenario contract, never request-order slots. */
   readonly scenarioBindings: Readonly<{
@@ -168,7 +171,7 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
     ...(investments === undefined ? {} : { investments: investments.value.scenarioBindings }),
     ...(liabilities === undefined ? {} : { liabilities: liabilities.value.scenarioBindings }),
   });
-  return { status: "compiled", diagnostics: Object.freeze([]), value: Object.freeze({
+  const value: CompiledHouseholdProjection = Object.freeze({
     ...(cash === undefined ? {} : { cashFlowInput: cash.value.input }),
     ...(investments === undefined ? {} : { investmentInput: investments.value.input }),
     ...(liabilities === undefined ? {} : { liabilityInput: liabilities.value.input }),
@@ -180,6 +183,14 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
     ...(request.contentionPolicy === undefined ? {} : { contentionPolicy: Object.freeze({ ...request.contentionPolicy, rules: Object.freeze([...request.contentionPolicy.rules].sort((a, b) => canonicalSerialize(a).localeCompare(canonicalSerialize(b)))) }) }),
     diagnostics: Object.freeze(liabilities?.value.capabilityDiagnostics ?? []),
     scenarioBindings: bindings,
+  });
+  const executionKernel = performance.measure("compile.household_invariants", () =>
+    compileHouseholdKernel(value, instant(`${firstBoundary.simulationStart}T00:00:00.000Z`)));
+  return { status: "compiled", diagnostics: Object.freeze([]), value: Object.freeze({
+    ...value, ...executionKernel.executable,
+    // Keep the application-only standalone asset identities and binding type.
+    standaloneAssets: executionKernel.executable.standaloneAssets as readonly CompiledStandaloneAsset[],
+    scenarioBindings: executionKernel.executable.scenarioBindings as CompiledHouseholdProjection["scenarioBindings"], executionKernel,
   }) };
   };
   });

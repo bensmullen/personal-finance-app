@@ -115,16 +115,28 @@ describe("performance instrumentation", () => {
     let tick = 0;
     const registry = new PerformanceRegistry();
     const observed = runPersonalHouseholdForecast(fixture.model, request, createApplicationPerformanceObserver({ now: () => ++tick }, context, registry));
+    const structural = registry.latest("engine.execute")!.resources!.structuralCounters!;
+    expect(structural.summaryOperationsExecuted).toBeGreaterThan(0);
+    expect(structural.detailedPeriodResultsMaterialized).toBe(0);
+    expect(structural.detailedObjectsRetainedBySummary).toBe(0);
     expect(observed).toEqual(baseline);
     expect(registry.summary("forecast.total")?.count).toBe(1);
-    expect(registry.summary("engine.prepare")?.latest).toBeGreaterThan(1);
+    // R3 reuses fingerprint preparation for execution of this one-month fixture.
+    expect(registry.summary("engine.prepare")?.latest).toBe(1);
+    expect(registry.summary("engine.prepare")?.count).toBe(1);
     expect(registry.summary("engine.execute")?.count).toBe(1);
     // A unit-step clock proves these sibling phases cannot include each other.
     expect(registry.summary("compile.model_and_slices")?.latest).toBe(1);
     expect(registry.summary("compile.opening_reconciliation")?.latest).toBe(2);
+    for (const phase of ["compile.household_invariants", "engine.compile_invariants", "engine.fingerprint"] as const) {
+      expect(registry.latest(phase)?.availability).toBe("measured");
+      expect(registry.summary(phase)?.latest).toBe(1);
+      expect(registry.summary(phase)?.count).toBe(1);
+    }
     expect(registry.latest("transport.serialization")?.availability).toBe("not_applicable");
     expect(registry.summary("transport.serialization")).toBeUndefined();
-    for (const phase of ["forecast.total", "compile.model_and_slices", "engine.execute", "application.read_model"] as const) {
+    for (const phase of ["forecast.total", "compile.model_and_slices", "compile.household_invariants",
+      "engine.compile_invariants", "engine.fingerprint", "engine.prepare", "engine.execute", "application.read_model"] as const) {
       expect(registry.latest(phase)?.context).toMatchObject({ ...context, status: "completed" });
     }
   });
@@ -336,5 +348,20 @@ describe("performance instrumentation", () => {
     session.finish();
     expect(registry.latest("engine.execute")?.availability).toBe("unavailable");
     expect(registry.summary("engine.execute")).toBeUndefined();
+  });
+
+  it("publishes structural counts and maxima without changing financial return values", () => {
+    const registry = new PerformanceRegistry();
+    let tick = 0;
+    const session = createPerformanceSession(createApplicationPerformanceObserver({ now: () => tick++ }, context, registry));
+    expect(session.measure("engine.execute", () => 42)).toBe(42);
+    session.counters({ states: 3 });
+    session.counters({ states: 5 });
+    session.counters({ largest: 6 }, "max");
+    session.counters({ largest: 2 }, "max");
+    session.finish({ metering: "not_metered", memoryBytes: 100 });
+    expect(registry.latest("engine.execute")?.resources).toEqual({
+      metering: "not_metered", memoryBytes: 100, structuralCounters: { states: 8, largest: 6 },
+    });
   });
 });

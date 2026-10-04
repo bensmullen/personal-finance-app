@@ -9,6 +9,8 @@ export interface CalculationTraceRef {
   readonly ruleIds?: readonly import("../identity/index.js").DomainId<"tax-rule">[];
   readonly assumptionIds?: readonly import("../identity/index.js").DomainId<"assumption">[];
   readonly eventIds?: readonly import("../identity/index.js").DomainId<"event">[];
+  /** Opaque original artifacts for an explicit replay address, never calculation lineage. */
+  readonly replayArtifact?: unknown;
 }
 
 export const calculationTraceId = (value: string): CalculationTraceId => {
@@ -60,3 +62,28 @@ export const mergeTraceRefs = (
 export const freezeTraceRefs = (
   refs: readonly CalculationTraceRef[] | undefined,
 ): readonly CalculationTraceRef[] | undefined => refs === undefined ? undefined : (mergeTraceRefs(refs) ?? Object.freeze([]));
+
+const replayAnchors = new WeakMap<CalculationTraceRef, () => readonly CalculationTraceRef[]>();
+
+/** A replay address, not a synthesized financial calculation trace. */
+export const createReplayTraceAnchor = (identity: string, replay: () => readonly CalculationTraceRef[],
+  rules?: CalculationTraceRef["ruleIds"], assumptions?: CalculationTraceRef["assumptionIds"], events?: CalculationTraceRef["eventIds"], replayArtifact?: unknown): CalculationTraceRef => {
+  const anchor = Object.freeze({ ...calculationTraceRef(calculationTraceId(`household:replay:${identity}`), rules, assumptions, events),
+    ...(replayArtifact === undefined ? {} : { replayArtifact }) });
+  replayAnchors.set(anchor, replay);
+  return anchor;
+};
+
+/** Materialize authoritative detail only for an explicit explanation request. */
+export const resolveReplayTraceAnchors = (refs: readonly CalculationTraceRef[], restore?: (ref: CalculationTraceRef) => readonly CalculationTraceRef[]): readonly CalculationTraceRef[] => {
+  const groups = refs.map(ref => {
+    if (!String(ref.traceId).startsWith("household:replay:")) return [ref];
+    const replay = replayAnchors.get(ref);
+    if (replay === undefined) {
+      if (restore !== undefined && ref.replayArtifact !== undefined) return restore(ref);
+      throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNAVAILABLE: explanation requires its original forecast artifacts");
+    }
+    return replay();
+  });
+  return mergeTraceRefs(...groups) ?? Object.freeze([]);
+};

@@ -1,21 +1,23 @@
-import { evidenceBuffer, type SummaryOperationSink } from "./r3/summarySink.js";
+/** Frozen domain evaluator at 4800f6e (financial behavior inherited from pre-R3).
+ * Bounded reference tests only; never import into production execution. */
 import {
   accountingTransactionId,
   createAccountingLeg,
   createAccountingTransaction,
   type AccountingLegDraft,
   type AccountingTransaction,
-} from "../accounting/index.js";
-import { ValidationError, failValidation, issueCodes, type ValidationIssue } from "../diagnostics/index.js";
-import { isAcceptedFundingResolution, resolveFunding, type ConstraintOutcome, type FundingPolicy, type LiquidityShortfall } from "../funding/index.js";
-import { domainId, generatedOccurrenceKey, type DomainId, type GeneratedOccurrenceKey } from "../identity/index.js";
-import { calculationTraceId, calculationTraceRef, freezeTraceRefs, mergeTraceRefs, type CalculationTraceRef } from "../lineage/index.js";
-import { createFactProvenance, type ModelGeneratedFactProvenance } from "../model/provenance.js";
-import { evaluatePrimitive, primitiveEvaluationContext, type PrimitivePeriodFlow } from "../primitives/index.js";
+} from "../../accounting/index.js";
+import { ValidationError, failValidation, issueCodes, type ValidationIssue } from "../../diagnostics/index.js";
+import { isAcceptedFundingResolution, resolveFunding, type ConstraintOutcome, type FundingPolicy, type LiquidityShortfall } from "../../funding/index.js";
+import { domainId, generatedOccurrenceKey, type DomainId, type GeneratedOccurrenceKey } from "../../identity/index.js";
+import { calculationTraceId, calculationTraceRef, freezeTraceRefs, mergeTraceRefs, type CalculationTraceRef } from "../../lineage/index.js";
+import { createFactProvenance, type ModelGeneratedFactProvenance } from "../../model/provenance.js";
+import { evaluatePrimitive, primitiveEvaluationContext, type PrimitivePeriodFlow } from "../../primitives/index.js";
 import {
   applySettlement,
   claimId,
   createObligation,
+  createRecognitionFact,
   createSemanticEffect,
   createSettlement,
   createSettlementProposal,
@@ -28,17 +30,14 @@ import {
   type SemanticEffect,
   type Settlement,
   type SettlementProposal,
-} from "../semantics/index.js";
+} from "../../semantics/index.js";
 import {
   applyAccountingTransactionAtomically,
   assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
   registerAuthoritativeIdentity,
-  createIndexedRecognitionFact as createRecognitionFact,
-  authoritativeClaimHistory,
-  activeAuthoritativeClaims,
   type AuthoritativeState,
-} from "../state/index.js";
+} from "../../state/index.js";
 import {
   civilDate,
   subtractMilliseconds,
@@ -47,7 +46,7 @@ import {
   utcMonthlyPeriods,
   type Instant,
   type Period,
-} from "../time/index.js";
+} from "../../time/index.js";
 import {
   DecimalAmount,
   Money,
@@ -57,22 +56,21 @@ import {
   sumMoney,
   type Currency,
   type Rate,
-} from "../values/index.js";
+} from "../../values/index.js";
 import {
   assertRunContext,
   createInputFingerprint,
   createRunMetadata,
   type RunContext,
   type RunMetadata,
-} from "./run.js";
+} from "../run.js";
 import {
   createPrimitiveRuntimeStateStore,
-  executePeriodWorkCandidate,
-  type PeriodWorkCandidate,
+  runPeriod,
   type PeriodWork,
   type PrimitiveRuntimeStateStore,
-} from "./period.js";
-import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
+} from "./referencePeriod.js";
+import type { HouseholdWorkDescriptor } from "../intraperiodScheduler.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -458,51 +456,36 @@ const occurrenceDescriptor = (
   return Object.freeze({ descriptor, streamId: stream.id, scheduledAt });
 };
 
-const localOrderingIndexes = new WeakMap<VerticalSlice2Input, {
-  readonly incomeIds: ReadonlySet<string>;
-  readonly expenseById: ReadonlyMap<string, RecurringExpenseStream>;
-}>();
-
 const withLocalOrdering = (
   input: VerticalSlice2Input,
   occurrences: readonly PreparedVerticalSlice2Occurrence[],
 ): readonly PreparedVerticalSlice2Occurrence[] => {
   const byId = new Map(occurrences.map((item) => [item.descriptor.id, item]));
   const descriptors = new Map(occurrences.map((item) => [item.descriptor.id, item.descriptor]));
-  let indexes = Object.isFrozen(input) ? localOrderingIndexes.get(input) : undefined;
-  if (indexes === undefined) {
-    indexes = { incomeIds: new Set(input.incomes.map(stream => String(stream.id))),
-      expenseById: new Map(input.expenses.map(stream => [String(stream.id), stream])) };
-    if (Object.isFrozen(input)) localOrderingIndexes.set(input, indexes);
-  }
-  const { incomeIds, expenseById } = indexes;
-  const groups = new Map<Instant, PreparedVerticalSlice2Occurrence[]>();
-  for (const occurrence of occurrences) {
-    const group = groups.get(occurrence.scheduledAt) ?? [];
-    group.push(occurrence); groups.set(occurrence.scheduledAt, group);
-  }
-  for (const instantOccurrences of groups.values()) {
-    const incomes = instantOccurrences.filter(item => incomeIds.has(item.streamId));
-    const expenses = instantOccurrences.filter(item => expenseById.has(item.streamId));
+  for (const instantOccurrences of new Map<Instant, PreparedVerticalSlice2Occurrence[]>(
+    occurrences.reduce((map, item) => map.set(item.scheduledAt, [...(map.get(item.scheduledAt) ?? []), item]), new Map()),
+  ).values()) {
+    const incomes = instantOccurrences.filter((item) => input.incomes.some((stream) => stream.id === item.streamId));
+    const expenses = instantOccurrences.filter((item) => input.expenses.some((stream) => stream.id === item.streamId));
     if (incomes.length > 0 && expenses.length > 0 && input.sameInstantCashFlowOrder === undefined) {
       invalidInput("Same-instant income and expense actions require an explicit cash-flow order", "input.sameInstantCashFlowOrder");
     }
     if (expenses.length > 1) {
-      const priorities = expenses.map(item => expenseById.get(item.streamId)!.settlementPriority);
+      const priorities = expenses.map((item) => input.expenses.find((stream) => stream.id === item.streamId)!.settlementPriority);
       if (priorities.some((priority) => priority === undefined) || new Set(priorities).size !== priorities.length) {
         invalidInput("Same-instant expense actions require distinct settlement priorities", "expenses");
       }
     }
     const ordered = [...instantOccurrences].sort((left, right) => {
-      const leftIncome = incomeIds.has(left.streamId);
-      const rightIncome = incomeIds.has(right.streamId);
+      const leftIncome = incomes.some((item) => item.descriptor.id === left.descriptor.id);
+      const rightIncome = incomes.some((item) => item.descriptor.id === right.descriptor.id);
       if (leftIncome !== rightIncome) {
         const incomeFirst = input.sameInstantCashFlowOrder === "income_before_expense";
         return leftIncome === incomeFirst ? -1 : 1;
       }
       if (!leftIncome && !rightIncome) {
-        const leftPriority = expenseById.get(left.streamId)!.settlementPriority!;
-        const rightPriority = expenseById.get(right.streamId)!.settlementPriority!;
+        const leftPriority = input.expenses.find((stream) => stream.id === left.streamId)!.settlementPriority!;
+        const rightPriority = input.expenses.find((stream) => stream.id === right.streamId)!.settlementPriority!;
         return leftPriority - rightPriority;
       }
       return left.descriptor.id.localeCompare(right.descriptor.id);
@@ -524,11 +507,10 @@ export const prepareVerticalSlice2Period = (
   period: Period,
   currentState: AuthoritativeState,
   currentPrimitiveState: PrimitiveRuntimeStateStore,
-  summary?: SummaryOperationSink,
 ): PreparedVerticalSlice2Period => {
   const request: VerticalSlice2RunInput = { runContext, openingState: currentState, input, months: 1, primitiveState: currentPrimitiveState };
   validateInput(request, [period], true);
-  const eventResult = executePeriodWorkCandidate({ period, runContext, openingState: currentState, primitiveState: currentPrimitiveState, work: eventWork(request, period) });
+  const eventResult = runPeriod({ period, runContext, openingState: currentState, primitiveState: currentPrimitiveState, work: eventWork(request, period) });
   const eventOutputs = new Map(eventResult.primitiveOutputs.map((output) => [output.workId, output.output]));
   const occurrences: PreparedVerticalSlice2Occurrence[] = [];
   const streams: readonly (RecurringIncomeStream | RecurringExpenseStream)[] = [...input.incomes, ...input.expenses];
@@ -542,30 +524,23 @@ export const prepareVerticalSlice2Period = (
   }
   const ordered = withLocalOrdering(input, occurrences);
   const eventPrimitiveTransition = createPrimitiveRuntimeStateStore(Object.fromEntries(eventResult.primitiveOutputs.filter((output) => output.primitiveId === "P27" || output.primitiveId === "P30").map((output) => [output.primitiveInstanceId, eventResult.primitiveState[output.primitiveInstanceId]!])));
-  if (summary !== undefined) for (const output of eventResult.primitiveOutputs)
-    if (output.effects.length > 0) summary.traces(output.traceRefs ?? []);
-  return Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), eventPrimitiveTransition, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: summary !== undefined ? Object.freeze([]) : mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
+  return Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), eventPrimitiveTransition, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
 };
 
 /**
- * Executes one prepared occurrence through the shared cash-flow financial evaluator.
+ * Executes one prepared occurrence through the existing VS2 financial path.
  * The filtered input is an internal mechanic, never a caller-supplied
  * executor, so recognition, obligations, funding, settlement, accounting,
  * effects, identities, and traces remain implemented exactly once.
  */
-type CashCandidate = { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore };
-export type CashOperationSummary = Pick<VerticalSlice2PeriodResult, "recurringIncomeRecognized" | "recurringExpenseRecognized" | "expenseCashSettlement" | "outstandingExpenseObligations" | "constraintOutcomes" | "liquidityShortfalls" | "diagnostics">;
-export function executePreparedVerticalSlice2Occurrence(prepared: PreparedVerticalSlice2Period, occurrence: PreparedVerticalSlice2Occurrence, state: AuthoritativeState, primitiveState: PrimitiveRuntimeStateStore, input: VerticalSlice2Input, runContext: RunContext): CashCandidate & { readonly period: VerticalSlice2PeriodResult };
-export function executePreparedVerticalSlice2Occurrence(prepared: PreparedVerticalSlice2Period, occurrence: PreparedVerticalSlice2Occurrence, state: AuthoritativeState, primitiveState: PrimitiveRuntimeStateStore, input: VerticalSlice2Input, runContext: RunContext, summary: SummaryOperationSink): CashCandidate & { readonly summary: CashOperationSummary };
-export function executePreparedVerticalSlice2Occurrence(
+export const executePreparedVerticalSlice2Occurrence = (
   prepared: PreparedVerticalSlice2Period,
   occurrence: PreparedVerticalSlice2Occurrence,
   state: AuthoritativeState,
   primitiveState: PrimitiveRuntimeStateStore,
   input: VerticalSlice2Input,
   runContext: RunContext,
-  summary?: SummaryOperationSink,
-): CashCandidate & { readonly period?: VerticalSlice2PeriodResult; readonly summary?: CashOperationSummary } {
+): { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly period: VerticalSlice2PeriodResult } => {
   const income = input.incomes.find((stream) => stream.id === occurrence.streamId);
   const expense = input.expenses.find((stream) => stream.id === occurrence.streamId);
   if (income === undefined && expense === undefined) invalidInput(`Prepared VS2 occurrence ${occurrence.streamId} is not present in the fingerprinted input`, "input");
@@ -585,16 +560,11 @@ export function executePreparedVerticalSlice2Occurrence(
   const filtered = income === undefined
     ? { ...inputWithoutMixedOrder, incomes: Object.freeze([]), expenses: Object.freeze([executableStream as RecurringExpenseStream]), events: Object.freeze([]) }
     : { ...inputWithoutMixedOrder, incomes: Object.freeze([executableStream as RecurringIncomeStream]), expenses: Object.freeze([]), events: Object.freeze([]) };
-  const events = {
-    closingState: state, primitiveState, effects: [], transactions: [], diagnostics: [], primitiveOutputs: [],
-  };
-  const request = { runContext, openingState: state, primitiveState, input: filtered };
-  return summary === undefined ? executeCashFlowPeriodCandidate(request, prepared.period, events)
-    : executeCashFlowPeriodCandidate(request, prepared.period, events, summary);
-}
+  return executeVerticalSlice2PeriodCandidate({ runContext, openingState: state, primitiveState, input: filtered }, prepared.period, state, primitiveState);
+};
 
 const outstandingExpenses = (state: AuthoritativeState, currency: Currency): Money => sumMoney(
-  activeAuthoritativeClaims(state, "expense_payable").map((claim) => claim.outstandingAmount),
+  Object.values(state.obligations).filter((claim) => claim.category === "expense_payable").map((claim) => claim.outstandingAmount),
   currency,
 );
 
@@ -603,31 +573,47 @@ interface VerticalSlice2InternalRunInput extends VerticalSlice2RunInput {
   readonly targetPeriods?: readonly Period[];
 }
 
-/** Shared financial evaluator; a prepared occurrence passes no event work or run wrapper. */
-function executeCashFlowPeriodCandidate(request: VerticalSlice2RunInput, targetPeriod: Period, eventResult: PeriodWorkCandidate): CashCandidate & { readonly period: VerticalSlice2PeriodResult };
-function executeCashFlowPeriodCandidate(request: VerticalSlice2RunInput, targetPeriod: Period, eventResult: PeriodWorkCandidate, summary: SummaryOperationSink): CashCandidate & { readonly summary: CashOperationSummary };
-function executeCashFlowPeriodCandidate(
-  request: VerticalSlice2RunInput,
-  targetPeriod: Period,
-  eventResult: PeriodWorkCandidate,
-  summary?: SummaryOperationSink,
-): CashCandidate & { readonly period?: VerticalSlice2PeriodResult; readonly summary?: CashOperationSummary } {
+const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): VerticalSlice2RunResult => {
+  const months = request.months ?? 360;
+  const periods = request.targetPeriods ?? utcMonthlyPeriods(request.runContext.simulationStart, months);
+  validateInput(request, periods, request.targetPeriods !== undefined);
+  const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end });
+  const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({
+    runContext: request.runContext,
+    openingState: request.openingState,
+    model: request.input,
+    assumptions: { months },
+  }));
+  let committedState = cloneAuthoritativeState(request.openingState);
+  let committedPrimitiveState = createPrimitiveRuntimeStateStore(request.primitiveState);
+  const committedPeriods: VerticalSlice2PeriodResult[] = [];
+  const runDiagnostics: ValidationIssue[] = [];
+
+  for (const targetPeriod of periods) {
+    try {
+      const eventResult = runPeriod({
+        period: targetPeriod,
+        runContext: request.runContext,
+        openingState: committedState,
+        primitiveState: committedPrimitiveState,
+        work: eventWork(request, targetPeriod),
+      });
       const state = cloneAuthoritativeState(eventResult.closingState);
-      const recognitions = evidenceBuffer<RecognitionFact>(summary);
-      const proposals = evidenceBuffer<SettlementProposal>(summary);
-      const settlements = evidenceBuffer<Settlement>(summary);
-      const effects = evidenceBuffer<SemanticEffect>(summary, value => summary?.traces(value.traceRefs ?? []));
-      const transactions = evidenceBuffer<AccountingTransaction>(summary, value => summary?.transaction(value));
+      const recognitions: RecognitionFact[] = [];
+      const proposals: SettlementProposal[] = [];
+      const settlements: Settlement[] = [];
+      const effects: SemanticEffect[] = [];
+      const transactions: AccountingTransaction[] = [];
       const outcomes: ConstraintOutcome[] = [];
       const shortfalls: LiquidityShortfall[] = [];
       const diagnostics: ValidationIssue[] = [...eventResult.diagnostics];
-      const incomeOccurrences = evidenceBuffer<ProjectedCashFlowOccurrence>(summary);
-      const expenseOccurrences = evidenceBuffer<ProjectedCashFlowOccurrence>(summary);
+      const incomeOccurrences: ProjectedCashFlowOccurrence[] = [];
+      const expenseOccurrences: ProjectedCashFlowOccurrence[] = [];
       const eventOutputs = new Map(eventResult.primitiveOutputs.map((output) => [output.workId, output.output]));
       // A trace for an evaluated no-op event is not causal lineage.
-      const periodTraces: CalculationTraceRef[] = summary === undefined ? eventResult.primitiveOutputs
+      const periodTraces: CalculationTraceRef[] = eventResult.primitiveOutputs
         .filter((output) => output.effects.length > 0)
-        .flatMap((output) => [...(output.traceRefs ?? [])]) : evidenceBuffer<CalculationTraceRef>(summary, ref => summary.traces([ref]));
+        .flatMap((output) => [...(output.traceRefs ?? [])]);
       let recognizedIncome = Money.zero(request.input.baseCurrency);
       let recognizedExpense = Money.zero(request.input.baseCurrency);
       let expenseSettlement = Money.zero(request.input.baseCurrency);
@@ -698,7 +684,7 @@ function executeCashFlowPeriodCandidate(
             const recognition = createRecognitionFact({ id: recognitionId(`recognition:expense:${stream.id}:${occurrence.scheduledAt}`), category: "recurring_expense", amount, recognizedAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, provenance, traceRefs }, state.identities.recognitionIds);
             registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
             recognitions.push(recognition);
-            const obligation = createObligation({ id: claimId(`obligation:${recognition.id}`), category: "expense_payable", originatingRecognitionId: recognition.id, economicOwnerId: stream.ownerId, balanceEntityId: stream.payableLiabilityId, originalAmount: amount, recognizedAt: occurrence.scheduledAt, traceRefs }, authoritativeClaimHistory(state));
+            const obligation = createObligation({ id: claimId(`obligation:${recognition.id}`), category: "expense_payable", originatingRecognitionId: recognition.id, economicOwnerId: stream.ownerId, balanceEntityId: stream.payableLiabilityId, originalAmount: amount, recognizedAt: occurrence.scheduledAt, traceRefs }, Object.values(state.obligations));
             state.obligations[obligation.id] = obligation;
             effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "recurring_expense", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, provenance, traceRefs }));
             effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${obligation.id}`), kind: "claim", category: "recurring_expense", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, claimId: obligation.id, provenance, traceRefs }));
@@ -745,10 +731,6 @@ function executeCashFlowPeriodCandidate(
         || left.id.localeCompare(right.id));
       for (const action of actions) action.execute();
 
-      if (summary !== undefined) return Object.freeze({ state, primitiveState: eventResult.primitiveState,
-        summary: Object.freeze({ recurringIncomeRecognized: recognizedIncome, recurringExpenseRecognized: recognizedExpense,
-          expenseCashSettlement: expenseSettlement, outstandingExpenseObligations: outstandingExpenses(state, request.input.baseCurrency),
-          constraintOutcomes: Object.freeze(outcomes), liquidityShortfalls: Object.freeze(shortfalls), diagnostics: Object.freeze(diagnostics) }) });
       const periodResult: VerticalSlice2PeriodResult = Object.freeze({
         period: Object.freeze({ ...targetPeriod }),
         recurringIncomeRecognized: recognizedIncome,
@@ -768,30 +750,10 @@ function executeCashFlowPeriodCandidate(
         diagnostics: Object.freeze(diagnostics),
         traceRefs: mergeTraceRefs(periodTraces)!,
       });
-      return Object.freeze({ state, primitiveState: eventResult.primitiveState, period: periodResult });
-}
-
-const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): VerticalSlice2RunResult => {
-  const months = request.months ?? 360;
-  const periods = request.targetPeriods ?? utcMonthlyPeriods(request.runContext.simulationStart, months);
-  validateInput(request, periods, request.targetPeriods !== undefined);
-  const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end });
-  const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({
-    runContext: request.runContext, openingState: request.openingState, model: request.input, assumptions: { months },
-  }));
-  let committedState = cloneAuthoritativeState(request.openingState);
-  let committedPrimitiveState = createPrimitiveRuntimeStateStore(request.primitiveState);
-  const committedPeriods: VerticalSlice2PeriodResult[] = [];
-  const runDiagnostics: ValidationIssue[] = [];
-  for (const targetPeriod of periods) {
-    try {
-      const events = executePeriodWorkCandidate({ period: targetPeriod, runContext: request.runContext,
-        openingState: committedState, primitiveState: committedPrimitiveState, work: eventWork(request, targetPeriod) });
-      const candidate = executeCashFlowPeriodCandidate(request, targetPeriod, events);
-      committedState = candidate.state;
-      committedPrimitiveState = candidate.primitiveState;
-      committedPeriods.push(candidate.period);
-      runDiagnostics.push(...candidate.period.diagnostics);
+      committedState = state;
+      committedPrimitiveState = eventResult.primitiveState;
+      committedPeriods.push(periodResult);
+      runDiagnostics.push(...diagnostics);
     } catch (error) {
       if (!(error instanceof ValidationError)) throw error;
       const diagnostics = [...runDiagnostics, ...error.issues];

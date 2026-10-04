@@ -7,6 +7,7 @@ import { PerformanceRegistry, type PerformanceContext } from "../src/diagnostics
 import { createGoldenHouseholdDraft, createGoldenHouseholdForecastRequest, runPersonalHouseholdForecast } from "../src/application/index.js";
 import { comparePersonalHouseholdScenarioIntents } from "../src/application/householdProjection.js";
 import { createRealisticPerformanceFixture, createStressPerformanceFixture, createPerformanceScalingFixtures } from "../test/fixtures/performanceHouseholds.js";
+import { captureReusableKernelEvidence } from "./r3/captureKernel.js";
 
 const configuredCount = (name: string, fallback: number) => {
   const value = Number(process.env[name] ?? fallback);
@@ -14,6 +15,7 @@ const configuredCount = (name: string, fallback: number) => {
   return value;
 };
 const warmups = configuredCount("PERF_WARMUPS", 2);
+if (Number(process.versions.node.split(".")[0]) !== 22) throw new Error("R3 performance evidence requires the supported Node 22 runtime.");
 const measuredRuns = configuredCount("PERF_RUNS", 5);
 if (measuredRuns < 1 || measuredRuns > 20 || warmups > 10) throw new Error("Capture requires 1–20 measured runs and 0–10 warmups.");
 const outputPath = resolve(process.env.PERF_OUTPUT ?? "benchmarks/r1-engineering-reference.json");
@@ -94,7 +96,10 @@ const comparisonValidation = primaryFixtures.flatMap((fixture) => {
 });
 
 const artifact = Object.freeze({
-  schemaVersion: "r1-performance-baseline-v2", classification: "engineering-reference", budgetStatus: "non-budget-non-SLA", optimizationStatus: "pre-optimization",
+  schemaVersion: "r1-performance-baseline-v2", classification: "engineering-reference", budgetStatus: "non-budget-non-SLA", optimizationStatus: "R3 kernel; comparison pending valid Node 22 baseline",
+  comparisonPoint: Object.freeze({ preR3Head: "2d10b02e7471c8040e30ff6f4d58917c8f67d3f9",
+    status: "separate Node 22 performance capture required; historical Node 24 artifact is not a comparison baseline" }),
+  reusableKernel: Object.freeze(captureReusableKernelEvidence(fixtures, warmups, measuredRuns)),
   capturedHead, generatedAt: new Date().toISOString(),
   environment: Object.freeze({ runtime: process.version, platform: process.platform, architecture: process.arch }), capture: Object.freeze({ warmups, measuredRuns }),
   placement: Object.freeze({ localNode: "measured", browserMain: "interactive/in-memory; not a retained representative-device baseline", serverCloud: "not_implemented/not_measured", recommendation: "deferred_until_approved_budgets" }),

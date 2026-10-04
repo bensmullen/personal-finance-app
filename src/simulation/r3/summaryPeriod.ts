@@ -1,0 +1,53 @@
+import type { AuthoritativeState } from "../../state/index.js";
+import { createStatementFlowAccumulator, deriveStatementsFromFlows } from "../../statements/index.js";
+import { mergeTraceRefs } from "../../lineage/index.js";
+import { Money, type Currency } from "../../values/index.js";
+import type { Period } from "../../time/index.js";
+import type { CompiledHouseholdKernel } from "./compiledHousehold.js";
+import type { HouseholdOperationFacts } from "./domainOperations.js";
+import type { HouseholdForecastSummaryPeriod } from "./forecastSummary.js";
+import { deriveHouseholdClosingMetrics } from "../householdProjection.js";
+
+/** Materializes display facts directly, without a detailed period adapter. */
+export const createHouseholdSummaryPeriod = (period: Period, opening: AuthoritativeState, closing: AuthoritativeState,
+  facts: readonly HouseholdOperationFacts[], kernel: CompiledHouseholdKernel, currency: Currency): HouseholdForecastSummaryPeriod => {
+  const operations = facts.flatMap(fact => fact.summary === undefined ? [] : [fact.summary]);
+  const cash = operations.flatMap(op => op.cash === undefined ? [] : [op.cash]);
+  const investments = operations.flatMap(op => op.investment === undefined ? [] : [op.investment]);
+  const debts = operations.flatMap(op => op.debt === undefined ? [] : [op.debt]);
+  const flows = createStatementFlowAccumulator(currency);
+  for (const op of operations) flows.merge(op.evidence.flows);
+  // Legacy extensions are an explicit compatibility boundary, rather than a
+  // reason for built-in operations to construct detailed warehouses.
+  for (const fact of facts) for (const tx of fact.transactions ?? []) flows.add(tx);
+  const zero = Money.zero(currency);
+  const sum = (values: readonly Money[]) => values.reduce((total, value) => total.plus(value), zero);
+  const metrics = deriveHouseholdClosingMetrics(closing, currency, kernel.executable.standaloneAssets);
+  const balances = debts.flatMap(debt => debt.balances);
+  const last = new Map<string, number>();
+  balances.forEach((balance, index) => last.set(balance.loanId, index));
+  const principalBefore = sum((kernel.liabilities?.principalIds ?? []).map(id => opening.liabilities[id]?.balance ?? zero));
+  const principalAfter = sum((kernel.liabilities?.principalIds ?? []).map(id => closing.liabilities[id]?.balance ?? zero));
+  const rules = [...new Set(operations.flatMap(op => op.evidence.rules))].sort();
+  const assumptions = [...new Set(operations.flatMap(op => op.evidence.assumptions))].sort();
+  const events = [...new Set(operations.flatMap(op => op.evidence.events))].sort();
+  return Object.freeze({ period: Object.freeze({ ...period }), statements: deriveStatementsFromFlows(closing, flows.snapshot(), currency),
+    cash: metrics.cash, investmentValue: metrics.investmentValue, assets: metrics.totalAssets, liabilities: metrics.totalLiabilities, netWorth: metrics.netWorth,
+    constraintOutcomes: Object.freeze([...cash.flatMap(op => op.constraintOutcomes), ...debts.flatMap(op => op.constraintOutcomes), ...facts.flatMap(op => op.constraintOutcomes ?? [])]),
+    liquidityShortfalls: Object.freeze([...cash.flatMap(op => op.liquidityShortfalls), ...debts.flatMap(op => op.liquidityShortfalls), ...facts.flatMap(op => op.liquidityShortfalls ?? [])]),
+    explanationBindings: Object.freeze({ sources: mergeTraceRefs(...operations.map(op => op.evidence.sources)) ?? Object.freeze([]),
+      rules: Object.freeze(rules), assumptions: Object.freeze(assumptions), events: Object.freeze(events) }),
+    ...(cash.length === 0 ? {} : { recurringIncomeRecognized: sum(cash.map(op => op.recurringIncomeRecognized)),
+      recurringExpenseRecognized: sum(cash.map(op => op.recurringExpenseRecognized)), expenseCashSettlement: sum(cash.map(op => op.expenseCashSettlement)),
+      outstandingExpenseObligations: cash[cash.length - 1]!.outstandingExpenseObligations }),
+    ...(investments.length === 0 ? {} : { contributionPrincipal: sum(investments.map(op => op.contributionPrincipal)),
+      investmentFees: sum(investments.map(op => op.fees)), unrealizedGain: sum(investments.map(op => op.unrealizedGain)) }),
+    ...(debts.length === 0 ? {} : { interestExpense: sum(debts.map(op => op.interestExpense)), principalReduction: principalBefore.minus(principalAfter),
+      endingPrincipal: principalAfter, outstandingInterest: sum((kernel.liabilities?.interestIds ?? []).map(id => closing.liabilities[id]?.balance ?? zero)),
+      debtBalances: Object.freeze(balances.map((balance, index) => {
+        const loan = kernel.liabilities?.loan(balance.loanId);
+        return last.get(balance.loanId) !== index || loan === undefined ? balance : Object.freeze({ ...balance,
+          endingPrincipal: closing.liabilities[loan.principalLiabilityId]?.balance ?? zero });
+      })) }),
+  });
+};
