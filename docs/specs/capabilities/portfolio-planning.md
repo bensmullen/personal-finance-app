@@ -1,6 +1,6 @@
 # Portfolio & Investment Planning
 
-**Version:** 0.2.0-draft
+**Version:** 0.3.0-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-INV
 
@@ -106,6 +106,25 @@ Portfolio logic SHALL NOT duplicate the tax engine's liability calculation.
 ### PFA-INV-019 — Pre-stochastic deterministic verification
 
 The investment mechanics required by PFA-DET-013 SHALL be verified deterministically before R5 begins. Verification SHALL include funding-source enforcement, account/position/no-double-counting behavior, cash settlement, basis/gain effects, tax-character facts, and ending balances.
+
+
+### PFA-INV-020 — Employer workplace contributions and matching
+
+Before private alpha, deterministic workplace-plan execution SHALL support explicit employer 401(k) matching/non-elective contributions and employer HSA contributions.
+
+Employer contribution rules SHALL preserve formula, timing, destination, employee-versus-employer character, applicable vesting status when materially modeled, statutory-limit interaction, tax facts, and lineage. Employer-funded amounts SHALL NOT reduce household take-home cash.
+
+### PFA-INV-021 — Automatic tax-advantaged contribution limits
+
+For supported 401(k), HSA, and IRA flows, the product SHALL derive applicable effective-dated statutory contribution limits and catch-up capacity from authoritative rules and household facts.
+
+Employee elective deferrals, combined employer+employee annual additions, HSA combined employer+employee limits, and IRA limits SHALL remain distinct where law distinguishes them. The UI SHALL expose modeled used/remaining capacity and SHALL NOT silently cap an authored contribution unless an explicit user-selected auto-cap policy is active.
+
+### PFA-INV-022 — Retirement rollover integrity
+
+Supported retirement rollovers SHALL be explicit transfer operations preserving source/destination eligibility, ownership, pre-tax/Roth/after-tax character, basis, tax recognition, timing, withholding/cash-replacement effects where applicable, and lineage.
+
+The deterministic private-alpha floor SHALL cover supported direct trustee-to-trustee/plan-to-plan rollovers plus a bounded indirect-rollover path with applicable deadline/frequency restrictions. Unsupported inherited-plan, RMD, corrective-distribution, QDRO, or plan-specific acceptance cases SHALL be capability-gated rather than approximated.
 
 ## 3. Relationship to specialized equity capability
 
