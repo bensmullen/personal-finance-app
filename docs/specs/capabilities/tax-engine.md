@@ -1,6 +1,6 @@
 # Tax Engine Capability
 
-**Version:** 0.1.4-draft
+**Version:** 0.1.5-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-TAX
 
@@ -100,6 +100,9 @@ The supported floor includes, where applicable:
 - traditional and Roth 401(k)/IRA contribution and distribution treatment, including whether the contribution changes the applicable income-tax and/or payroll-tax base;
 - after-tax 401(k) contribution basis and supported in-plan Roth conversion treatment, preserving previously taxed basis and recognizing taxable conversion amounts only under the applicable rule;
 - HSA payroll contribution/distribution treatment required by the target jurisdiction/output, including jurisdiction-specific nonconformity where material;
+- employer 401(k) matching/non-elective and employer HSA contribution treatment, including their interaction with applicable combined contribution limits;
+- effective-dated 401(k), HSA, and IRA contribution/catch-up limits required by supported D1 flows, distinguishing employee elective-deferral limits from combined employer+employee limits where applicable;
+- supported direct and indirect retirement rollover tax treatment, including preservation of pre-tax/Roth/after-tax basis/character and applicable withholding/deadline/frequency restrictions;
 - taxable-brokerage purchases/sales and basis realization;
 - cryptocurrency dispositions;
 - supported option sale/exercise/assignment/expiration tax facts; and
