@@ -73,3 +73,15 @@ structural counters, sparse checkpoints and application defaults are pending.
 This stage does not
 meet issue 68 acceptance and supplies no new timing evidence. CI owns bounded
 verification; fresh Node 22 engineering-validation remains required for closeout.
+
+The exact contention proof remains an implementation gap. A bounded regression
+case captures a policy-free accepted overlap with scarce liquidity: an internal
+transfer of 5 between two funding-source accounts holding 10 each overlaps a
+required mortgage service of 50 using those same sources. Both orders preserve
+the funding-group availability of 20, the unfunded service outcome/shortfall,
+the claim lifecycle and the transfer postings. Scarcity and overlapping access
+therefore cannot justify rejecting this model or adding policy lineage. The
+current resolver still uses exhaustive previews to establish this equivalence;
+a replacement must prove source-group conservation and all other authoritative
+outcomes under supported state-dependent funding, rather than assume that
+insufficient aggregate liquidity implies order sensitivity.

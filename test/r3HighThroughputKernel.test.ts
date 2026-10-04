@@ -89,6 +89,36 @@ const integrated = (incomeAmount: string, withPolicy = true): CompiledHouseholdP
 };
 
 describe("R3 reusable deterministic household kernel", () => {
+  it("accepts policy-free scarce-funding overlap when a transfer preserves every funding outcome", () => {
+    const base = integrated("0", false);
+    const at = instant("2026-01-31T23:59:59.999Z");
+    const fundingPolicy = createFundingPolicy({ id: fundingPolicyId("r3:conserved-source-group"),
+      orderedSources: [{ kind: "cash_account", accountId: ids.cash }, { kind: "cash_account", accountId: ids.savings }],
+      allowPartial: false, insufficientFundsBehavior: "unfunded" });
+    const input: CompiledHouseholdProjection = {
+      ...base, cashFlowInput: undefined,
+      reconciledOpeningState: createAuthoritativeState({ ...base.reconciledOpeningState, accounts: {
+        [ids.cash]: { ...base.reconciledOpeningState.accounts[ids.cash]!, cash: money("10") },
+        [ids.savings]: { id: ids.savings, kind: "savings", ownerId: ids.owner, cash: money("10") },
+      } }),
+      liabilityInput: { ...base.liabilityInput!, loans: [{ ...base.liabilityInput!.loans[0]!, fundingPolicy,
+        paymentSchedule: { kind: "utc_monthly", anchor: at, invalidDayPolicy: "skip" } }] },
+      investmentInput: { ...base.investmentInput!, returns: [], transfers: [{
+        id: ids.transfer, sourceAccountId: ids.cash, destinationAccountId: ids.savings, amount: money("5"),
+        eligibilitySchedule: { kind: "explicit_instants", instants: [at] }, executionTiming: "end_of_period",
+        order: 1, schedulePrimitiveId: primitive("950"),
+      }] },
+    };
+    const reference = referenceRun({ compiled: input, runContext: context() });
+    const actual = runCompiledHouseholdProjection({ compiled: input, runContext: context() });
+    expect(reference.status).toBe("completed");
+    expect(actual).toEqual(reference);
+    expect(actual.periods[0]!.liability!.liabilities[0]!.scheduledFundingStatus).toBe("unfunded");
+    expect(actual.state.accounts[ids.cash]!.cash).toEqual(money("5"));
+    expect(actual.state.accounts[ids.savings]!.cash).toEqual(money("15"));
+    expect(actual.periods[0]!.traceRefs.some(ref => ref.traceId.includes("contention-policy"))).toBe(false);
+  });
+
   it("shares persistent history across forks while isolating edits and deletions", () => {
     fc.assert(fc.property(fc.array(fc.tuple(fc.integer({ min: 0, max: 200 }), fc.integer()), { maxLength: 60 }), entries => {
       const expected = new Map(entries.map(([key, value]) => [String(key), value]));
