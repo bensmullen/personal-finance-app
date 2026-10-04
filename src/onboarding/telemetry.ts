@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { candidateCategories, sourcePaths } from "./candidates.js";
+import { importOutcomeReasons, SYNTHETIC_CSV_FORMAT } from "./imports.js";
 
 export const onboardingStages = ["intake", "candidate_review", "minimum_valid_model", "first_useful_forecast", "first_stochastic_forecast"] as const;
 const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -22,10 +23,28 @@ export const onboardingTelemetrySchema = z.discriminatedUnion("event", [
   }).refine(event => candidateCategories.reduce((sum, category) => sum + BigInt(event.countsByCategory[category]), 0n)
     === sourcePaths.reduce((sum, path) => sum + BigInt(event.countsBySourcePath[path]), 0n), { message: "Candidate count totals must agree" }),
   z.strictObject({
-    event: z.literal("import_result"), format: z.enum(["pfm-onboarding-synthetic-v1", "unsupported"]),
+    event: z.literal("import_result"), format: z.enum([SYNTHETIC_CSV_FORMAT, "unsupported"]),
     status: z.enum(["success", "partial", "unsupported", "invalid"]), elapsedMs: count,
+    reason: z.enum(importOutcomeReasons),
     candidateCount: count, omittedRows: count, unresolvedHighImpactItems: count,
-  }),
+  }).refine(event => {
+    const supported = event.format === SYNTHETIC_CSV_FORMAT;
+    switch (event.status) {
+      case "success":
+        return supported && event.reason === "none" && event.candidateCount > 0
+          && event.omittedRows === 0 && event.unresolvedHighImpactItems === 0;
+      case "partial":
+        // Conflicting overlaps can require review even with zero omissions or missing inputs.
+        return supported && event.reason === "material_issues" && (event.candidateCount > 0 || event.omittedRows > 0);
+      case "unsupported":
+        return event.candidateCount === 0 && event.omittedRows === 0 && event.unresolvedHighImpactItems === 0
+          && (supported ? event.reason === "unsupported_header"
+            : ["unsupported_format", "unsupported_version", "limit_exceeded"].includes(event.reason));
+      case "invalid":
+        return supported && event.candidateCount === 0 && event.omittedRows === 0 && event.unresolvedHighImpactItems === 0
+          && ["limit_exceeded", "invalid_source_identity", "malformed_csv", "empty_import"].includes(event.reason);
+    }
+  }, { message: "Inconsistent import outcome" }),
 ]);
 export type OnboardingTelemetryEvent = z.infer<typeof onboardingTelemetrySchema>;
 export type TelemetryValidation =

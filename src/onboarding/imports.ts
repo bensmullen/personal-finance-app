@@ -1,18 +1,21 @@
 import { z } from "zod";
-import { reviewCandidate, validateCandidate, type Candidate, type CandidateReview } from "./candidates.js";
+import { opaqueIdentifierSchema, reviewCandidate, validateCandidate, type Candidate, type CandidateReview } from "./candidates.js";
 
 export const SYNTHETIC_CSV_FORMAT = "pfm-onboarding-synthetic-v1";
 export const SYNTHETIC_CSV_MARKER = `#${SYNTHETIC_CSV_FORMAT}`;
 export const SYNTHETIC_CSV_HEADER = "record_id,category,subject,concept,value_kind,value,currency,cadence,precision,qualifier,effective_date,occurrence_id";
 export const importLimits = Object.freeze({ characters: 65536, rows: 200 });
-const identitySchema = z.strictObject({ sourceId: z.string().trim().min(1).max(256), documentId: z.string().trim().min(1).max(256) });
+const identitySchema = z.strictObject({ sourceId: opaqueIdentifierSchema, documentId: opaqueIdentifierSchema });
 export interface ImportFile {
   readonly content: string;
   /** Stable opaque identities, reused on re-import; never a filename or session ID. */
   readonly sourceId: string;
   readonly documentId: string;
 }
-export type ImportIssueCode = "unsupported_format" | "limit_exceeded" | "invalid_source_identity" | "malformed_csv" | "unsupported_header" | "empty_import" | "unsupported_mapping" | "invalid_row" | "unresolved_candidate" | "candidate_overlap";
+export const importOutcomeReasons = ["none", "material_issues", "unsupported_format", "unsupported_version", "unsupported_header", "limit_exceeded", "invalid_source_identity", "malformed_csv", "empty_import"] as const;
+export type ImportOutcomeReason = typeof importOutcomeReasons[number];
+type FailureReason = Exclude<ImportOutcomeReason, "none" | "material_issues">;
+export type ImportIssueCode = FailureReason | "unsupported_mapping" | "invalid_row" | "unresolved_candidate" | "candidate_overlap";
 export interface ImportIssue {
   readonly code: ImportIssueCode;
   readonly line?: number;
@@ -22,6 +25,7 @@ export interface ImportIssue {
 export interface ImportResult {
   readonly status: "success" | "partial" | "unsupported" | "invalid";
   readonly format: typeof SYNTHETIC_CSV_FORMAT | "unsupported";
+  readonly reason: ImportOutcomeReason;
   readonly candidates: readonly Candidate[];
   readonly reviews: readonly CandidateReview[];
   readonly issues: readonly ImportIssue[];
@@ -29,14 +33,14 @@ export interface ImportResult {
 }
 export type FormatDetection =
   | { readonly status: "supported"; readonly format: typeof SYNTHETIC_CSV_FORMAT }
-  | { readonly status: "unsupported"; readonly format: "unsupported"; readonly reason: "unsupported_format" | "limit_exceeded" };
+  | { readonly status: "unsupported"; readonly format: "unsupported"; readonly reason: "unsupported_format" | "unsupported_version" | "limit_exceeded" };
 
 /** Detection is content/version based; filename extensions never establish support. */
 export function detectImportFormat(content: string): FormatDetection {
   if (content.length > importLimits.characters) return { status: "unsupported", format: "unsupported", reason: "limit_exceeded" };
   const marker = content.replace(/^\uFEFF/, "").split(/\r?\n/, 1)[0];
   return marker === SYNTHETIC_CSV_MARKER ? { status: "supported", format: SYNTHETIC_CSV_FORMAT }
-    : { status: "unsupported", format: "unsupported", reason: "unsupported_format" };
+    : { status: "unsupported", format: "unsupported", reason: marker?.startsWith("#pfm-onboarding-synthetic-") ? "unsupported_version" : "unsupported_format" };
 }
 interface CsvRow { readonly fields: readonly string[]; readonly line: number }
 
@@ -91,8 +95,8 @@ export interface ImportAdapter {
 
 export function importCandidates(file: ImportFile, existing: readonly Candidate[] = []): ImportResult {
   const detection = detectImportFormat(file.content);
-  const failure = (status: "unsupported" | "invalid", code: ImportIssueCode): ImportResult => ({
-    status, format: detection.format, candidates: [], reviews: [], issues: [{ code, fields: [], impact: "high" }], omittedRows: 0,
+  const failure = (status: "unsupported" | "invalid", code: FailureReason): ImportResult => ({
+    status, format: detection.format, reason: code, candidates: [], reviews: [], issues: [{ code, fields: [], impact: "high" }], omittedRows: 0,
   });
   if (detection.status === "unsupported") return failure("unsupported", detection.reason);
   const identity = identitySchema.safeParse({ sourceId: file.sourceId, documentId: file.documentId });
@@ -136,9 +140,10 @@ export function importCandidates(file: ImportFile, existing: readonly Candidate[
     const review = reviewCandidate(validation.candidate, [...existing, ...candidates]);
     candidates.push(validation.candidate); reviews.push(review);
     if (validation.status === "unresolved") issue("unresolved_candidate", validation.issues.map(item => item.field));
-    if (review.status === "review_required" || review.status === "exact_reimport") issue("candidate_overlap");
+    if (review.status === "review_required") issue("candidate_overlap");
   }
-  return { status: issues.length ? "partial" : "success", format: SYNTHETIC_CSV_FORMAT, candidates, reviews, issues, omittedRows };
+  return { status: issues.length ? "partial" : "success", format: SYNTHETIC_CSV_FORMAT,
+    reason: issues.length ? "material_issues" : "none", candidates, reviews, issues, omittedRows };
 }
 
 export const syntheticCsvAdapter: ImportAdapter = Object.freeze({ format: SYNTHETIC_CSV_FORMAT, importCandidates });

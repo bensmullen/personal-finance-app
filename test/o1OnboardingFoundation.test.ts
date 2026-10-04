@@ -97,12 +97,56 @@ describe("O1 candidate validation and review boundary (PFA-ONB-004 through 008)"
     expect(reviewCandidate(candidate({ category: "goal" }), [same]).status).toBe("new");
   });
 
-  it("does not collapse distinct historical occurrences or erase precision differences", () => {
+  it("preserves same-source distinct historical occurrences", () => {
     const base = candidate({ category: "historical_activity", target: { ...candidate().target, occurrenceId: "synthetic-payment-1" } });
-    const separate = otherSource({ ...base, target: { ...base.target, occurrenceId: "synthetic-payment-2" } }, "synthetic-other");
+    const separate = { ...base, source: { ...base.source, recordId: "another-record", documentId: "another-export" },
+      target: { ...base.target, occurrenceId: "synthetic-payment-2" } };
     expect(reviewCandidate(base, [separate]).status).toBe("new");
+    // Reusing the original record identity still requires review.
+    expect(reviewCandidate(base, [{ ...base, target: separate.target }]).matches[0]?.relation).toBe("identity_conflict");
+  });
+
+  it("surfaces bounded cross-source historical duplicates/conflicts despite different external occurrence IDs", () => {
+    const base = candidate({ category: "historical_activity", target: { ...candidate().target, occurrenceId: "synthetic-payment-1" } });
+    const duplicate = otherSource({ ...base, target: { ...base.target, occurrenceId: "synthetic-payment-2" } }, "synthetic-other");
+    const conflict = otherSource({ ...duplicate, value: { kind: "money", amount: "999", currency: "USD", cadence: "one_time" } }, "synthetic-third");
+    expect(reviewCandidate(base, [duplicate])).toMatchObject({ status: "review_required", matches: [{ relation: "potential_duplicate" }] });
+    expect(reviewCandidate(base, [conflict])).toMatchObject({ status: "review_required", matches: [{ relation: "potential_conflict" }] });
+    expect(reviewCandidate(base, [duplicate, conflict])).toEqual(reviewCandidate(base, [conflict, duplicate]));
+    expect(reviewCandidate(base, [{ ...duplicate, target: { ...duplicate.target, effectiveDate: "2026-01-02" } }]).status).toBe("new");
+    expect(reviewCandidate(base, [{ ...duplicate, target: { ...duplicate.target, subjectId: "another-target" } }]).status).toBe("new");
+    expect(reviewCandidate(base, [{ ...duplicate, target: { ...duplicate.target, concept: "another-concept" } }]).status).toBe("new");
+    expect(reviewCandidate(base, [{ ...duplicate, target: { subjectId: base.target.subjectId, concept: base.target.concept, occurrenceId: "different" } }]).status).toBe("new");
+    const anotherSourceType = { ...duplicate, source: { ...duplicate.source, sourceId: base.source.sourceId, sourceType: "financial_institution" as const } };
+    expect(reviewCandidate(base, [anotherSourceType]).matches[0]?.relation).toBe("potential_duplicate");
     expect(reviewCandidate(base, [otherSource({ ...base, precision: { kind: "approximate", qualifier: "roughly" } }, "synthetic-other")]).matches[0]?.relation).toBe("potential_conflict");
     expect(reviewCandidate(null, [base]).status).toBe("invalid");
+  });
+
+  it("agrees on identity through every public key path for accepted input", () => {
+    for (const input of [candidate(), candidate({ precision: { kind: "approximate", qualifier: " about " } }),
+      candidate({ source: { ...candidate().source, sourceId: "opaque:source", recordId: "opaque:record" },
+        target: { ...candidate().target, subjectId: "opaque:subject", concept: "opaque:concept", occurrenceId: "opaque:occurrence" } })]) {
+      const validation = validateCandidate(input);
+      if (validation.status === "invalid") throw new Error("Expected accepted candidate");
+      expect(candidateKey(input)).toBe(validation.key);
+      expect(candidateKey(validation.candidate)).toBe(validation.key);
+      expect(validation.candidate.source).toEqual(input.source);
+      expect(validation.candidate.target).toEqual(input.target);
+    }
+  });
+
+  it("rejects non-canonical opaque identity whitespace before validation or public key construction", () => {
+    const base = candidate();
+    const inputs = [
+      ...["sourceId", "documentId", "recordId", "format"].flatMap(field => [" padded", "padded ", " \t", ""].map(value => ({ ...base, source: { ...base.source, [field]: value } }))),
+      ...["subjectId", "concept", "occurrenceId"].flatMap(field => [" padded", "padded ", " \t", ""].map(value => ({ ...base, target: { ...base.target, [field]: value } }))),
+      { ...base, source: { ...base.source, locator: { reference: " padded " } } },
+    ];
+    for (const input of inputs) {
+      expect(validateCandidate(input).status).toBe("invalid");
+      expect(() => candidateKey(input)).toThrow("Invalid onboarding candidate identity");
+    }
   });
 
   it("uses collision-safe source/document/record/field identities", () => {
@@ -139,6 +183,19 @@ describe("bounded synthetic CSV import (PFA-ONB-003, 005, 008, 012)", () => {
     expect(duplicate.status).toBe("partial");
   });
 
+  it("keeps a clean exact repeat successful without a material overlap issue", () => {
+    const exactFile = { ...file, content: withRows(exactRow) };
+    const first = importCandidates(exactFile);
+    const repeated = importCandidates(exactFile, first.candidates);
+    expect(repeated.reviews[0]?.status).toBe("exact_reimport");
+    expect(repeated).toMatchObject({ status: "success", reason: "none", issues: [] });
+    expect(repeated.candidates).toEqual(first.candidates);
+    expect(repeated.issues.some(issue => issue.code === "candidate_overlap")).toBe(false);
+    const changed = importCandidates({ ...exactFile, content: withRows(exactRow.replace("1234.56", "999")) }, first.candidates);
+    expect(changed.reviews[0]?.matches[0]?.relation).toBe("identity_conflict");
+    expect(changed).toMatchObject({ status: "partial", reason: "material_issues", issues: [{ code: "candidate_overlap" }] });
+  });
+
   it("supports exact bounded files, CRLF/BOM and escaped quotes", () => {
     const exact = importCandidates({ ...file, content: withRows(exactRow) });
     expect(exact.status).toBe("success");
@@ -154,6 +211,7 @@ describe("bounded synthetic CSV import (PFA-ONB-003, 005, 008, 012)", () => {
       expect(importCandidates({ ...file, content })).toMatchObject({ status: "unsupported", candidates: [], reviews: [] });
     }
     expect(importCandidates({ ...file, content: csv.replace("record_id,", "unknown,") }).issues[0]?.code).toBe("unsupported_header");
+    expect(importCandidates({ ...file, content: csv.replace("synthetic-v1", "synthetic-v2") }).reason).toBe("unsupported_version");
     expect(detectImportFormat("x".repeat(importLimits.characters + 1))).toMatchObject({ reason: "limit_exceeded" });
   });
 
@@ -162,6 +220,10 @@ describe("bounded synthetic CSV import (PFA-ONB-003, 005, 008, 012)", () => {
       expect(importCandidates({ ...file, content }).candidates).toEqual([]);
     }
     expect(importCandidates({ ...file, sourceId: "" }).status).toBe("invalid");
+    for (const identity of [{ sourceId: " padded " }, { documentId: " padded " }]) {
+      expect(importCandidates({ ...file, ...identity })).toMatchObject({ status: "invalid", reason: "invalid_source_identity", candidates: [] });
+    }
+    expect(importCandidates({ ...file, content: withRows(exactRow.replace("balance-1", " balance-1 ")) }).omittedRows).toBe(1);
     expect(importCandidates({ ...file, content: withRows() }).issues[0]?.code).toBe("empty_import");
     expect(importCandidates({ ...file, content: withRows(...Array.from({ length: importLimits.rows + 1 }, () => exactRow)) }).candidates).toEqual([]);
     expect(importCandidates({ ...file, content: withRows(...Array.from({ length: importLimits.rows + 1 }, () => exactRow)) + "\n" }).issues[0]?.code).toBe("limit_exceeded");
@@ -195,8 +257,60 @@ describe("privacy-safe event boundary (PFA-ONB-001, 009, 010)", () => {
     countsBySourcePath: { guided_entry: 0, file_import: 8, conversation: 0, portable_model: 0 } };
 
   it("accepts bounded stage/duration/effort, candidate type/source mix and import status aggregates", () => {
-    for (const event of [progress, counts, { event: "import_result", format: "unsupported", status: "unsupported", elapsedMs: 1,
+    for (const event of [progress, counts, { event: "import_result", format: "unsupported", status: "unsupported", reason: "unsupported_format", elapsedMs: 1,
       candidateCount: 0, omittedRows: 0, unresolvedHighImpactItems: 0 }]) {
+      expect(validateOnboardingTelemetry(event)).toEqual({ status: "accepted", event });
+    }
+  });
+
+  const importEvent = { event: "import_result", format: "pfm-onboarding-synthetic-v1", status: "success", reason: "none", elapsedMs: 1,
+    candidateCount: 1, omittedRows: 0, unresolvedHighImpactItems: 0 };
+  it("accepts coherent closed import status/reason/count combinations", () => {
+    const inputs = [importEvent,
+      { ...importEvent, status: "partial", reason: "material_issues" }, // Overlap review without omissions.
+      { ...importEvent, status: "partial", reason: "material_issues", unresolvedHighImpactItems: 2 },
+      { ...importEvent, status: "partial", reason: "material_issues", candidateCount: 0, omittedRows: 1 },
+      { ...importEvent, status: "unsupported", reason: "unsupported_header", candidateCount: 0 },
+      ...["unsupported_format", "unsupported_version", "limit_exceeded"].map(reason => ({ ...importEvent, format: "unsupported", status: "unsupported", reason, candidateCount: 0 })),
+      ...["limit_exceeded", "invalid_source_identity", "malformed_csv", "empty_import"].map(reason => ({ ...importEvent, status: "invalid", reason, candidateCount: 0 })),
+    ];
+    for (const event of inputs) expect(validateOnboardingTelemetry(event)).toEqual({ status: "accepted", event });
+  });
+
+  it("rejects impossible import formats, reasons, statuses and counts without echoing input", () => {
+    const inputs = [
+      { ...importEvent, format: "unsupported" },
+      { ...importEvent, format: "unsupported", status: "partial", reason: "material_issues" },
+      { ...importEvent, status: "unsupported", candidateCount: 0 },
+      { ...importEvent, status: "unsupported", reason: "unsupported_format", candidateCount: 0 },
+      { ...importEvent, reason: "malformed_csv" }, { ...importEvent, reason: undefined },
+      { ...importEvent, reason: "SYNTHETIC-SENSITIVE-SENTINEL" },
+      { ...importEvent, candidateCount: 0 }, { ...importEvent, omittedRows: 1 }, { ...importEvent, unresolvedHighImpactItems: 1 },
+      { ...importEvent, status: "partial", reason: "none" },
+      { ...importEvent, status: "partial", reason: "material_issues", candidateCount: 0 },
+      { ...importEvent, status: "partial", reason: "material_issues", candidateCount: 0, unresolvedHighImpactItems: 1 },
+      { ...importEvent, status: "invalid", reason: "unsupported_header", candidateCount: 0 },
+      { ...importEvent, status: "invalid", reason: "malformed_csv" },
+      { ...importEvent, status: "invalid", reason: "malformed_csv", candidateCount: 0, omittedRows: 1 },
+      { ...importEvent, status: "invalid", reason: "malformed_csv", candidateCount: 0, unresolvedHighImpactItems: 1 },
+      { ...importEvent, format: "unsupported", status: "invalid", reason: "malformed_csv", candidateCount: 0 },
+      { ...importEvent, format: "unsupported", status: "unsupported", reason: "unsupported_header", candidateCount: 0 },
+      { ...importEvent, format: "unsupported", status: "unsupported", reason: "unsupported_version" },
+      { ...importEvent, format: "unsupported", status: "unsupported", reason: "unsupported_format", candidateCount: 0, omittedRows: 1 },
+      { ...importEvent, format: "unsupported", status: "unsupported", reason: "limit_exceeded", candidateCount: 0, unresolvedHighImpactItems: 1 },
+      { ...importEvent, filename: "SYNTHETIC-SENSITIVE-SENTINEL" },
+    ];
+    for (const input of inputs) expect(validateOnboardingTelemetry(input)).toEqual({ status: "rejected", reason: "invalid_telemetry" });
+  });
+
+  it("exposes adapter outcome reasons through the closed telemetry contract", () => {
+    for (const content of [withRows(exactRow), csv, "%PDF-synthetic", csv.replace("synthetic-v1", "synthetic-v2"),
+      csv.replace("record_id,", "unknown,"), withRows('"unclosed'), withRows(),
+      "x".repeat(importLimits.characters + 1), withRows(...Array.from({ length: importLimits.rows + 1 }, () => exactRow))]) {
+      const result = importCandidates({ ...file, content });
+      const event = { ...importEvent, format: result.format, status: result.status, reason: result.reason,
+        candidateCount: result.candidates.length, omittedRows: result.omittedRows,
+        unresolvedHighImpactItems: result.reviews.reduce((sum, review) => sum + review.validation.issues.filter(issue => issue.impact === "high").length, 0) };
       expect(validateOnboardingTelemetry(event)).toEqual({ status: "accepted", event });
     }
   });

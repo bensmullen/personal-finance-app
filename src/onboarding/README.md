@@ -14,12 +14,24 @@ style codes, not a claim of engine currency/product support.
 
 `reviewCandidate` compares against caller-supplied candidate history. It reports
 exact re-import, reused identity with changed content, and possible cross-source
-duplicates/conflicts. Categories and historical occurrence identities remain
-distinct. It neither merges nor filters candidates. Callers must retain stable
+duplicates/conflicts. Categories remain distinct. Within the same source type/ID,
+distinct historical occurrence IDs remain distinct; across source namespaces,
+matching historical category/subject/concept/effective date triggers a bounded
+potential-overlap check even if external occurrence IDs differ. Value/precision
+equality reports a potential duplicate, and differing values report a potential
+conflict. Missing dates do not establish this cross-source overlap. No fuzzy
+matching or reconciliation is performed. It neither merges nor filters candidates.
+Callers must retain stable
 source/document/record identities across imports and consume review results.
 There is no implicit content-derived institution identity. Changed metadata under
 the same key requires review; review ordering is deterministic. These keys and
 all candidate metadata are sensitive and must stay out of telemetry.
+
+Opaque identifiers (including source/document/record, target subject/concept and
+occurrence IDs) preserve their bytes and reject surrounding whitespace. The public
+key helper uses the same schema as validation and rejects malformed identities;
+it cannot derive an alternate raw identity from rejected whitespace. Human text
+and approximate qualifiers may still normalize display whitespace.
 
 ## Deliberately supported format
 
@@ -56,7 +68,10 @@ and quoted newlines. Blank interior rows are reported as omitted invalid rows.
 Input is bounded to 65,536 UTF-16 code units and 200 data records. Structural
 malformation/limit failures return no candidates. Unsupported versions/headers
 are explicit. Recognizable files with omitted, unresolved or overlapping records
-return `partial` with physical line locators and field/reason codes. A successful
+return `partial` with physical line locators and field/reason codes. Exact repeats
+remain visible as `exact_reimport` reviews without a material overlap issue; an
+otherwise clean repeat returns `success`. Reused identities with changed content
+or metadata still require review and return `partial`. A successful
 import only means candidate extraction succeeded; it never means model readiness
 or an authoritative commit. CSV planning rows are document observations of
 planning proposals, not current financial observations.
@@ -71,6 +86,21 @@ The contracts support progress/completion/abandonment, manual steps, corrections
 rejections, source/category mix, import outcomes and unresolved high-impact item
 counts. They do not persist/transmit events, set readiness targets or assert that
 a useful forecast exists. Later integration owns those measurements and dry runs.
+
+Import outcomes include a closed reason shared by extraction and telemetry:
+
+| Status | Format | Reason | Count constraints |
+| --- | --- | --- | --- |
+| success | synthetic v1 | none | At least one candidate; zero omissions/unresolved items |
+| partial | synthetic v1 | material_issues | At least one candidate or omitted row |
+| unsupported | unsupported | unsupported_format, unsupported_version, limit_exceeded | Zero candidates/omissions/unresolved items |
+| unsupported | synthetic v1 | unsupported_header | Zero candidates/omissions/unresolved items |
+| invalid | synthetic v1 | limit_exceeded, invalid_source_identity, malformed_csv, empty_import | Zero candidates/omissions/unresolved items |
+
+`material_issues` also includes conflicting candidate overlap, which can require
+review without omissions or unresolved missing inputs. Limits can be rejected
+before format recognition (character bound) or after recognition (record bound).
+These closed reasons contain no raw headers, identifiers or provider/file labels.
 
 ## Bounded synthetic evidence
 
