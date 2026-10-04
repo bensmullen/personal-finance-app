@@ -316,7 +316,8 @@ const executionStateIndexes = new WeakMap<AuthoritativeState, ExecutionStateInde
 /**
  * A complete, exact delta against one fixed comparison opening state. Callers
  * supply authoritative value equality; no financial hashing or approximation
- * belongs in the state layer. Undefined denotes a deleted entry. Legacy states
+ * belongs in the state layer. Explicit tags distinguish deletion from setting
+ * an authoritative value. Legacy states
  * without shared indexes retain the complete-state comparison representation.
  */
 export const authoritativeStateChangesSince = (
@@ -332,7 +333,11 @@ export const authoritativeStateChangesSince = (
   const changes = <T>(index: PersistentStringIndex<T>, prior: PersistentStringIndex<T>) => {
     const delta = index.changesSince(prior);
     visited?.(delta.visitedNodes);
-    return delta.changes.filter(change => !equal(change.before, change.after)).map(change => [change.key, change.after]);
+    return delta.changes.flatMap<{ key: string; kind: "delete" } | { key: string; kind: "set"; value: T }>(change => {
+      if (change.after === undefined) return [{ key: change.key, kind: "delete" as const }];
+      if (change.before !== undefined && equal(change.before, change.after)) return [];
+      return [{ key: change.key, kind: "set" as const, value: change.after }];
+    });
   };
   return {
     ...Object.fromEntries(fields.map(field => [field, changes(indexedRecords.get(state[field])!.index, indexedRecords.get(before[field])!.index)])),

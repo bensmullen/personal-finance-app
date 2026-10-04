@@ -265,6 +265,26 @@ describe("R3 reusable deterministic household kernel", () => {
     }), { numRuns: 24, seed: 68 });
   });
 
+  it("encodes state deletions separately from canonical set values without comparing absent entries", () => {
+    const base = createIndexedExecutionState(opening());
+    const deleted = cloneAuthoritativeState(base);
+    delete deleted.accounts[ids.cash];
+    const equal = (left: unknown, right: unknown): boolean => {
+      expect(left).not.toBeUndefined();
+      expect(right).not.toBeUndefined();
+      return canonicalSerialize(left) === canonicalSerialize(right);
+    };
+    const delta = authoritativeStateChangesSince(deleted, base, equal) as { accounts: unknown[] };
+    expect(delta.accounts).toEqual([{ key: ids.cash, kind: "delete" }]);
+    expect(() => canonicalSerialize(delta)).not.toThrow();
+    const replaced = cloneAuthoritativeState(base);
+    replaced.accounts[ids.cash]!.cash = money("0");
+    const setDelta = authoritativeStateChangesSince(replaced, base, equal) as { accounts: unknown[] };
+    expect(setDelta.accounts).toEqual([{ key: ids.cash, kind: "set", value: replaced.accounts[ids.cash] }]);
+    expect(canonicalSerialize(setDelta)).not.toBe(canonicalSerialize(delta));
+    expect((authoritativeStateChangesSince(base, base, equal) as { accounts: unknown[] }).accounts).toEqual([]);
+  });
+
   it("isolates failed candidates and retains indexed historical claim identities", () => {
     const source = createIndexedExecutionState(opening());
     const failed = cloneAuthoritativeState(source);
