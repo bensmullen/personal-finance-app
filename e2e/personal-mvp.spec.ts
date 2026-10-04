@@ -9,6 +9,7 @@ import {
   exportPersonalModelJson,
 } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
+import { forecastDiagnosticMessage } from "../ui/entityPresentation.js";
 
 const loadExample = async (page: import("@playwright/test").Page) => {
   await page.goto("/");
@@ -58,12 +59,90 @@ const importDraft = async (
 
 const rawUuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
+test("R4 UAT groups cash separately from investment account wrappers and holdings", async ({ page }) => {
+  await loadExample(page);
+  await useShortHorizon(page);
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Cash & bank accounts", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Everyday checking/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Workplace retirement|Brokerage|RETIREMENT-DEMO|BROKERAGE-DEMO/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Workplace retirement/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /RETIREMENT-DEMO/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Everyday checking/ })).toHaveCount(0);
+  await expect(page.getByText(/Investment holdings are assets too/)).toBeVisible();
+  await page.getByRole("button", { name: "Property & other assets", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Example home/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /RETIREMENT-DEMO/ })).toHaveCount(0);
+});
+
+test("R4 UAT baseline projected return edits the linked assumption and reruns the household forecast", async ({ page }) => {
+  await loadExample(page);
+  await useShortHorizon(page);
+  const status = page.getByRole("status", { name: "Household forecast status" });
+  await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
+  const before = await status.getAttribute("data-request-id");
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
+  const control = page.getByRole("region", { name: "Projected return for RETIREMENT-DEMO" });
+  await control.getByLabel("Projected annual return").fill("0.08");
+  await expect(control).toContainText("0.08 = 8%");
+  await control.getByRole("button", { name: "Apply projected return" }).click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
+  await expect(status).not.toHaveAttribute("data-request-id", before!);
+  await page.getByRole("button", { name: "Assumptions", exact: true }).click();
+  const assumptionName = createGoldenHouseholdDraft().objects.Assumption!.find((item: any) => item.assumption_id === GOLDEN_HOUSEHOLD_IDS.retirementReturnAssumption) as any;
+  await page.getByRole("button", { name: new RegExp(String(assumptionName.name)) }).click();
+  await expect(page.getByRole("dialog", { name: "Edit Assumption" }).getByLabel("Value", { exact: true })).toHaveValue("0.08");
+});
+
+test("R4 UAT diagnostics explain monthly-event limits and retirement remediation without raw codes", async () => {
+  const draft = createGoldenHouseholdDraft();
+  const monthly = forecastDiagnosticMessage({ code: "MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED", entityId: GOLDEN_HOUSEHOLD_IDS.income }, draft);
+  expect(monthly).toContain("no supported editor repair");
+  expect(monthly).toContain("forecast remains unsupported");
+  expect(monthly).not.toContain("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
+  const retirement = forecastDiagnosticMessage({ code: "RETIREMENT_BINDING_MISMATCH", entityId: GOLDEN_HOUSEHOLD_IDS.retirementEvent }, draft);
+  expect(retirement).toContain("Planned retirement");
+  expect(retirement).toContain("2035-01-01");
+  expect(retirement).toContain("Plan → What If? → Retire earlier/later");
+  expect(retirement).toContain("Baseline retirement date");
+  expect(retirement).not.toContain("RETIREMENT_BINDING_MISMATCH");
+});
+
+test("R4 UAT monthly event limitation remains visible with original evidence", async ({ page }) => {
+  await loadExample(page);
+  const check = page.locator("article").filter({ has: page.getByRole("heading", { name: "Model check", exact: true }) });
+  await expect(check).toContainText("monthly income or spending summary cannot yet interpret");
+  await expect(check).toContainText("keep the recorded relationship intact");
+  await expect(check.locator("pre")).not.toBeVisible();
+  await check.getByText("Technical diagnostic details", { exact: true }).click();
+  await expect(check.locator("pre")).toContainText("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
+});
+
+test("R4 UAT retirement comparison refreshes a stale session date from its recorded event", async ({ page }) => {
+  await loadExample(page);
+  await useShortHorizon(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await openPlanDetails(page);
+  await page.getByLabel("Baseline retirement date").fill("2034-01-01");
+  await page.getByRole("button", { name: "Apply retirement binding" }).click();
+  await page.getByRole("button", { name: "What If?", exact: true }).click();
+  await expect(page.getByText(/Current planned retirement date:/)).toContainText("2035-01-01");
+  await page.getByLabel("New retirement date").fill("2026-02-01");
+  await page.getByRole("button", { name: "Compare retirement date" }).click();
+  await showHouseholdDetails(page, "comparison");
+  await expect(page.getByRole("table", { name: "What-if alternative household comparison" })).toBeVisible();
+  await expect(page.getByRole("status", { name: "Household comparison status" })).not.toContainText("RETIREMENT_BINDING_MISMATCH");
+});
+
 test("R4 UAT creates asset facts deliberately and preserves them as read-only", async ({ page }) => {
   await loadExample(page);
   await useShortHorizon(page);
   await page.getByRole("button", { name: "Net Worth", exact: true }).click();
-  await page.getByRole("button", { name: "Property & Assets", exact: true }).click();
-  await expect(page.getByText(/Use Investments for securities/)).toBeVisible();
+  await page.getByRole("button", { name: "Property & other assets", exact: true }).click();
+  await expect(page.getByText(/Use Investments & retirement for securities/)).toBeVisible();
   const before = await page.locator(".object-card").count();
   await page.getByRole("button", { name: "+ Add Asset", exact: true }).click();
   const editor = page.getByRole("dialog", { name: "Create Asset" });
@@ -126,7 +205,7 @@ test("R4 UAT normal investment and spending editors cannot author known unsuppor
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
   const request = await status.getAttribute("data-request-id");
   await page.getByRole("button", { name: "Net Worth", exact: true }).click();
-  await page.getByRole("button", { name: "Investments", exact: true }).click();
+  await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
   await page.getByRole("button", { name: /RETIREMENT-DEMO/ }).click();
   const editor = page.getByRole("dialog", { name: "Edit Investment" });
   await editor.getByText("Expert model details", { exact: true }).click();
@@ -163,7 +242,7 @@ for (const [field, value, code, message] of [
     await standalone.getByText("Technical diagnostic details", { exact: true }).click();
     await expect(standalone.locator("pre")).toContainText(code);
     await page.getByRole("button", { name: "Net Worth", exact: true }).click();
-    await page.getByRole("button", { name: "Investments", exact: true }).click();
+    await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
     await page.getByRole("button", { name: /RETIREMENT-DEMO/ }).click();
     const editor = page.getByRole("dialog", { name: "Edit Investment" });
     await editor.getByText("Expert model details", { exact: true }).click();
@@ -562,10 +641,8 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await openPlanDetails(page);
   await page.getByRole("button", { name: "What If?", exact: true }).click();
-  await page.getByLabel("Retirement income").selectOption({ index: 1 });
-  await page
-    .getByLabel("Canonical retirement event")
-    .selectOption({ label: "Planned retirement" });
+  await expect(page.getByLabel("Retirement plan")).toHaveValue(GOLDEN_HOUSEHOLD_IDS.income);
+  await expect(page.getByText(/Current planned retirement date:/)).toContainText("2035-01-01");
   await page.getByLabel("New retirement date").fill("2026-02-01");
   await page.getByRole("button", { name: "Compare retirement date" }).click();
   const retirement = page.getByRole("table", {
@@ -891,10 +968,8 @@ test("What If executes retirement without mutating the baseline binding", async 
     /.+/,
   );
   await page.getByRole("button", { name: "What If?", exact: true }).click();
-  await page.getByLabel("Retirement income").selectOption({ index: 1 });
-  await page
-    .getByLabel("Canonical retirement event")
-    .selectOption({ label: "Planned retirement" });
+  await expect(page.getByLabel("Retirement plan")).toHaveValue(GOLDEN_HOUSEHOLD_IDS.income);
+  await expect(page.getByText(/Current planned retirement date:/)).toContainText("2035-01-01");
   await page.getByLabel("New retirement date").fill("2026-02-01");
   await page.getByRole("button", { name: "Compare retirement date" }).click();
   await showHouseholdDetails(page, "comparison");

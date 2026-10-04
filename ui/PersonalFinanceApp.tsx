@@ -79,7 +79,7 @@ import {
 
 import { useInteractiveForecast } from "./forecast/useInteractiveForecast.js";
 import { EditorHub } from "./EntityEditor.js";
-import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage } from "./entityPresentation.js";
+import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, type NetWorthSection } from "./entityPresentation.js";
 import { calculationFingerprint } from "../src/application/interactiveForecast.js";
 import { HouseholdChart } from "./forecast/HouseholdChart.js";
 import { ForecastDetails, LazyExplanation, ExplanationCache } from "./forecast/details.js";
@@ -123,7 +123,7 @@ const NAV: readonly Primary[] = [
 const SUBNAV: Record<Primary, readonly string[]> = {
   Overview: ["How am I doing?"],
   Money: ["Cash Flow", "Income", "Spending", "Accounts"],
-  "Net Worth": ["Overview", "Cash", "Investments", "Property & Assets", "Debt"],
+  "Net Worth": ["Overview", "Cash & bank accounts", "Investments & retirement", "Property & other assets", "Debt"],
   Plan: [
     "Current Plan",
     "Life Events",
@@ -142,9 +142,9 @@ const EDITORS: Record<string, readonly PersonalObjectType[]> = {
   Income: ["Income"],
   Spending: ["Expense"],
   Accounts: ["Account"],
-  Cash: ["Account"],
-  Investments: ["Investment"],
-  "Property & Assets": ["Asset"],
+  "Cash & bank accounts": ["Account"],
+  "Investments & retirement": ["Account", "Investment"],
+  "Property & other assets": ["Asset"],
   Debt: ["Liability"],
   Assumptions: ["Assumption"],
   "What If?": ["Scenario"],
@@ -578,8 +578,8 @@ export function PersonalFinanceApp() {
       return;
     }
     const bindings = retirementBinding === undefined
-      ? configuration.retirementBindings
-      : [retirementBinding];
+      ? effectiveHouseholdExecution!.retirementBindings
+      : [...effectiveHouseholdExecution!.retirementBindings.filter((binding) => binding.incomeId !== retirementBinding.incomeId), retirementBinding];
     const configured = { ...effectiveHouseholdExecution!, retirementBindings: bindings };
     if (!interactive.input) return;
     const request = createHouseholdForecastRequest(configured, randomId());
@@ -881,6 +881,8 @@ export function PersonalFinanceApp() {
               <EditorHub
                 currency={sessionSettings.baseCurrency}
                 types={EDITORS[subnav]!}
+                section={primary === "Net Worth" ? subnav as NetWorthSection : undefined}
+                selectedScenarioId={effectiveHouseholdExecution?.selectedRootScenarioId}
                 draft={draft}
                 setDraft={updateCanonicalModel}
                 metadata={metadata}
@@ -1161,16 +1163,12 @@ function Overview({
           <p>
             {position.monthlyCashFlow
               ? `Your modeled monthly cash flow is ${position.monthlyCashFlow.display}. Review your plan to see its supported trajectory.`
-              : "Add monthly income and spending to understand your cash flow."}
+              : position.diagnostics.length > 0 ? "The monthly summary is unavailable. Review Model check for the limitation before changing your recorded income or spending." : "Add monthly income and spending to understand your cash flow."}
           </p>
         </article>
         <article className="panel">
           <h3>Model check</h3>
-          <p>
-            {position.unavailable.length
-              ? friendlyText(position.unavailable[0])
-              : "Your current-position inputs are ready."}
-          </p>
+          {position.diagnostics.length > 0 ? <DiagnosticList diagnostics={position.diagnostics} /> : <p>Your current-position inputs are ready.</p>}
         </article>
       </section>
     </>
@@ -1653,9 +1651,7 @@ function WhatIfStarter({
   const [expenseId, setExpenseId] = useState("");
   const [rate, setRate] = useState("0.05");
   const [investmentId, setInvestmentId] = useState("");
-  const [retirementIncomeId, setRetirementIncomeId] = useState("");
-  const [retirementEventId, setRetirementEventId] = useState("");
-  const [baselineDate, setBaselineDate] = useState("");
+  const [retirementPlanId, setRetirementPlanId] = useState("");
   const [retirementDate, setRetirementDate] = useState("");
   const [liabilityId, setLiabilityId] = useState("");
   const [extraAmount, setExtraAmount] = useState("");
@@ -1694,28 +1690,33 @@ function WhatIfStarter({
   );
   const exactRate = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(rate);
   const exactExtraAmount = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(extraAmount);
-  const chosenEvent = retirementEvents.find(
-    (item) => item.event_id === retirementEventId,
-  );
+  const rootScenarios = objectEntries(draft, "Scenario").filter((item) => item.enabled === true && !item.parent_scenario_id);
+  const rootId = householdExecution?.selectedRootScenarioId ?? (rootScenarios.length === 1 ? objectId("Scenario", rootScenarios[0]!) : undefined);
+  const root = objectEntries(draft, "Scenario").find((item) => item.scenario_id === rootId);
+  const retirementPlans = incomes.flatMap((income) => {
+    const incomeId = objectId("Income", income);
+    const existing = householdExecution?.retirementBindings.find((binding) => binding.incomeId === incomeId);
+    const eventId = existing?.canonicalEventId ?? income.related_event_id;
+    const event = retirementEvents.find((item) => item.event_id === eventId && item.scenario_id === rootId &&
+      Array.isArray(root?.event_ids) && root.event_ids.includes(String(item.event_id)));
+    if (!event || typeof event.start_date !== "string" || event.probability_model_id != null || event.trigger_condition != null ||
+      (Array.isArray(event.effect_ids) && event.effect_ids.length > 0) || (Array.isArray(event.dependencies) && event.dependencies.length > 0) ||
+      event.duration_days != null || event.end_date != null || (event.precedence != null && event.precedence !== 0)) return [];
+    return [{ income, event, binding: { incomeId, canonicalEventId: String(event.event_id), baselineDate: event.start_date,
+      terminationEventId: existing?.terminationEventId ?? runtimeIds.terminationEventId } }];
+  });
+  const retirementPlan = retirementPlans.find((plan) => plan.binding.incomeId === retirementPlanId) ??
+    (retirementPlans.length === 1 ? retirementPlans[0] : undefined);
   const runRetirement = () => {
-    const runtimeEventId = runtimeIds.terminationEventId;
-    const baseline =
-      typeof chosenEvent?.start_date === "string"
-        ? chosenEvent.start_date
-        : baselineDate;
-    const binding = {
-      incomeId: retirementIncomeId,
-      terminationEventId: runtimeEventId,
-      baselineDate: baseline,
-      ...(retirementEventId ? { canonicalEventId: retirementEventId } : {}),
-    };
+    if (!retirementPlan) return;
+    const binding = retirementPlan.binding;
     onCompare(
       "cash_flow",
       {
         kind: "retirement_date",
-        incomeId: retirementIncomeId,
-        targetEventId: runtimeEventId,
-        baselineDate: baseline,
+        incomeId: binding.incomeId,
+        targetEventId: binding.terminationEventId,
+        baselineDate: binding.baselineDate,
         newDate: retirementDate,
       },
       binding,
@@ -1798,51 +1799,24 @@ function WhatIfStarter({
           </article>
           <article className="object-card">
             <h2>Retire earlier/later</h2>
-            <p>Changes only one executable income stop date.</p>
+            <p>Compare a different stop date for the income linked to your retirement plan. Your baseline plan stays intact.</p>
             <select
-              aria-label="Retirement income"
-              value={retirementIncomeId}
-              onChange={(event) => setRetirementIncomeId(event.target.value)}
+              aria-label="Retirement plan"
+              value={retirementPlan?.binding.incomeId ?? ""}
+              onChange={(event) => setRetirementPlanId(event.target.value)}
             >
-              <option value="">Select income</option>
-              {incomes.map((item) => (
+              <option value="">Choose income and retirement plan</option>
+              {retirementPlans.map((plan) => (
                 <option
-                  key={objectId("Income", item)}
-                  value={objectId("Income", item)}
+                  key={plan.binding.incomeId}
+                  value={plan.binding.incomeId}
                 >
-                  {objectLabel("Income", item)}
+                  {objectLabel("Income", plan.income)} · {friendlyText(plan.event.name ?? "Retirement")}
                 </option>
               ))}
             </select>
-            <select
-              aria-label="Canonical retirement event"
-              value={retirementEventId}
-              onChange={(event) => {
-                setRetirementEventId(event.target.value);
-                const selected = retirementEvents.find(
-                  (item) => item.event_id === event.target.value,
-                );
-                if (typeof selected?.start_date === "string")
-                  setBaselineDate(selected.start_date);
-              }}
-            >
-              <option value="">Session-only explicit binding</option>
-              {retirementEvents.map((item) => (
-                <option
-                  key={String(item.event_id)}
-                  value={String(item.event_id)}
-                >
-                  {friendlyText(item.name ?? "Unnamed retirement event")}
-                </option>
-              ))}
-            </select>
-            <input
-              aria-label="Baseline retirement date"
-              type="date"
-              value={baselineDate}
-              disabled={Boolean(retirementEventId)}
-              onChange={(event) => setBaselineDate(event.target.value)}
-            />
+            {retirementPlan ? <p>Current planned retirement date: <strong>{retirementPlan.binding.baselineDate}</strong> for {objectLabel("Income", retirementPlan.income)}.</p> :
+              <p role="note">{retirementPlans.length > 0 ? "Choose the income and retirement plan you want to compare." : "No supported income/retirement relationship is available in the current plan. Review Plan → Current Plan → Expert forecast configuration for existing retirement relationships. Creating retirement events is not supported here; import a model with a supported scheduled retirement event linked to income."}</p>}
             <input
               aria-label="New retirement date"
               type="date"
@@ -1851,7 +1825,7 @@ function WhatIfStarter({
             />
             <button
               className="primary"
-              disabled={!retirementIncomeId || !baselineDate || !retirementDate}
+              disabled={!retirementPlan || !retirementDate}
               onClick={runRetirement}
             >
               Compare retirement date

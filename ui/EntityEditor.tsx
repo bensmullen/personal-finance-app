@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { addPersonalObject, deletePersonalObject, patchPersonalObject, type getPersonalEditorMetadata, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../src/application/personalMvp.js";
-import { objectEntries, objectId, objectLabel, entitySummary, referenceLabel, referenceTargets, formatExactMoney, formatRate, isCashFlowPaymentAccount } from "./entityPresentation.js";
+import { objectEntries, objectId, objectLabel, entitySummary, referenceLabel, referenceTargets, formatExactMoney, formatRate, isCashFlowPaymentAccount, belongsToNetWorthSection, linkedReturnAssumption, type NetWorthSection } from "./entityPresentation.js";
 
 const randomId = () => crypto.randomUUID();
 interface EditorField {
@@ -207,6 +207,8 @@ export function EditorHub({
   metadata,
   setNotice,
   currency,
+  section,
+  selectedScenarioId,
 }: {
   types: readonly PersonalObjectType[];
   draft: PersonalDraft;
@@ -214,9 +216,12 @@ export function EditorHub({
   metadata: ReturnType<typeof getPersonalEditorMetadata>;
   setNotice: (message: string) => void;
   currency: string;
+  section?: NetWorthSection;
+  selectedScenarioId?: string;
 }) {
   return (
     <>
+      {section === "Investments & retirement" && <p role="note">Investment holdings are assets too. Account wrappers and their holdings appear together here because they have different forecast behavior from cash and property. An account contains its holdings; these lists are not amounts to add together.</p>}
       {types.map((type) => (
         <ObjectEditor
           key={type}
@@ -226,10 +231,29 @@ export function EditorHub({
           metadata={metadata}
           setNotice={setNotice}
           currency={currency}
+          section={section}
+          selectedScenarioId={selectedScenarioId}
         />
       ))}
     </>
   );
+}
+function ProjectedReturn({ investment, draft, setDraft, selectedScenarioId }: {
+  investment: JsonObject; draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void; selectedScenarioId?: string;
+}) {
+  const assumption = linkedReturnAssumption(draft, investment, selectedScenarioId);
+  const [rate, setRate] = useState(String(assumption?.value ?? ""));
+  useEffect(() => { setRate(String(assumption?.value ?? "")); }, [assumption?.assumption_id, assumption?.value]);
+  const valid = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(rate) && !/^-([1-9]\d*|1)(?:\.|$)/.test(rate);
+  if (!assumption) return <p role="note">Projected annual return is unavailable: this investment has no supported linked deterministic return assumption in the current plan. Plan → Assumptions can edit existing assumptions; creating the executable relationship is not supported here. Import a model with a supported linked return model to establish it.</p>;
+  return <section aria-label={`Projected return for ${objectLabel("Investment", investment)}`}>
+    <label>Projected annual return
+      <input aria-label="Projected annual return" inputMode="decimal" value={rate} onChange={(event) => setRate(event.target.value)} />
+    </label>
+    <p>Effective annual rate: {rate} = {formatRate(rate)}. Baseline assumption: {objectLabel("Assumption", assumption)}. This changes the linked assumption, including any other holdings that share it.</p>
+    {!valid && <p role="alert">Enter an exact effective annual decimal rate greater than −1, such as 0.08 = 8%.</p>}
+    <button type="button" disabled={!valid || rate === String(assumption.value)} onClick={() => setDraft(patchPersonalObject(draft, "Assumption", objectId("Assumption", assumption), { value: rate }))}>Apply projected return</button>
+  </section>;
 }
 function ObjectEditor({
   type,
@@ -238,6 +262,8 @@ function ObjectEditor({
   metadata,
   setNotice,
   currency,
+  section,
+  selectedScenarioId,
 }: {
   type: PersonalObjectType;
   draft: PersonalDraft;
@@ -245,6 +271,8 @@ function ObjectEditor({
   metadata: ReturnType<typeof getPersonalEditorMetadata>;
   setNotice: (message: string) => void;
   currency: string;
+  section?: NetWorthSection;
+  selectedScenarioId?: string;
 }) {
   const [editing, setEditing] = useState<JsonObject>();
   const [creating, setCreating] = useState(false);
@@ -262,7 +290,7 @@ function ObjectEditor({
       if (opener?.isConnected) opener.focus();
     };
   }, [editingId]);
-  const values = objectEntries(draft, type);
+  const values = objectEntries(draft, type).filter((item) => belongsToNetWorthSection(draft, type, item, section));
   const descriptor = metadata[type];
   const fields = descriptor.fields as Record<string, EditorField>;
   const close = () => { setEditing(undefined); setCreating(false); setCreationError(""); };
@@ -338,7 +366,7 @@ function ObjectEditor({
         <div>
           <h1>{TITLES[type]}</h1>
           <p>Review names, amounts, and relationships. Model details are available inside each item.</p>
-          {type === "Asset" && <p>Use Investments for securities and positions in investment accounts. Property & assets is for real estate, vehicles, businesses, personal property, and other non-security resources. Do not duplicate cash or securities here.</p>}
+          {type === "Asset" && <p>Use Investments & retirement for securities and positions in investment accounts. Property & other assets is for standalone real estate, vehicles, businesses, personal property, and other non-security resources. Do not duplicate cash or securities here.</p>}
         </div>
         <button className="primary" onClick={add}>
           + Add {type}
@@ -360,6 +388,7 @@ function ObjectEditor({
                   </small>
                 </span>
               </button>
+              {type === "Investment" && <ProjectedReturn investment={item} draft={draft} setDraft={setDraft} selectedScenarioId={selectedScenarioId} />}
               <button className="danger-link" aria-describedby={`${type}-${objectId(type, item)}-label`} onClick={() => remove(item)}>
                 Delete
               </button>
@@ -400,6 +429,7 @@ function ObjectEditor({
             </div>
             {creating && <p>Choose creation-time facts before adding this record. Once set, these facts cannot be overwritten. Closing or cancelling discards this new record.</p>}
             {(type === "Investment" || type === "Account") && <p role="note">{RETIREMENT_LIMITATION}</p>}
+            {type === "Investment" && !creating && <ProjectedReturn investment={editing} draft={draft} setDraft={setDraft} selectedScenarioId={selectedScenarioId} />}
             <form onSubmit={(event) => { event.preventDefault(); if (creating) create(); }}>
             <div className="form-grid">
               {commonFields.map((fieldName) => (
