@@ -1,0 +1,10 @@
+#pfm-onboarding-synthetic-v1
+record_id,category,subject,concept,value_kind,value,currency,cadence,precision,qualifier,effective_date,occurrence_id
+balance-1,current_fact,synthetic-cash,balance,money,1234.56,USD,one_time,exact,,2026-01-01,
+activity-1,historical_activity,synthetic-cash,transaction,money,-45.67,USD,one_time,exact,,2025-12-31,synthetic-payment-1
+goal-1,goal,synthetic-household,goal,text,"Save for a trip, then review",,,exact,,,
+constraint-1,constraint,synthetic-household,constraint,text,Keep emergency savings,,,exact,,,
+spending-1,assumption,synthetic-household,spending,money,7000,USD,monthly,approximate,roughly,,
+policy-1,decision_policy,synthetic-household,policy,text,Review allocation annually,,,exact,,,
+event-1,planned_event,synthetic-household,event,date,2027-06-01,,,exact,,,
+scenario-1,scenario,synthetic-household,scenario,text,Earlier retirement alternative,,,exact,,,
