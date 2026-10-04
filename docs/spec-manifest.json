@@ -1,5 +1,5 @@
 {
-  "manifest_version": "1.2.0",
+  "manifest_version": "1.3.0",
   "canonical_schema_version": "1.0.0",
   "model_format_version": "0.2.0-draft",
   "executable_semantics_version": "0.1.11-draft",
@@ -312,7 +312,7 @@
     {
       "id": "portfolio-planning",
       "path": "docs/specs/capabilities/portfolio-planning.md",
-      "version": "0.1.0-draft",
+      "version": "0.2.0-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -352,7 +352,7 @@
     {
       "id": "insurance-planning",
       "path": "docs/specs/capabilities/insurance-planning.md",
-      "version": "0.1.0-draft",
+      "version": "0.2.0-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -430,7 +430,7 @@
     {
       "id": "application-ux",
       "path": "docs/specs/capabilities/application-ux.md",
-      "version": "0.1.3-draft",
+      "version": "0.1.4-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -468,7 +468,7 @@
     {
       "id": "tax-engine",
       "path": "docs/specs/capabilities/tax-engine.md",
-      "version": "0.1.3-draft",
+      "version": "0.1.4-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -506,7 +506,7 @@
     {
       "id": "data-onboarding-and-import",
       "path": "docs/specs/capabilities/data-onboarding-and-import.md",
-      "version": "0.1.1-draft",
+      "version": "0.1.2-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -552,9 +552,63 @@
       ]
     },
     {
+      "id": "deterministic-household-financial-semantics",
+      "path": "docs/specs/capabilities/deterministic-household-financial-semantics.md",
+      "version": "0.1.0-draft",
+      "authority": "level-3",
+      "version_source": "markdown-version-header",
+      "status": "pre-stochastic-gate",
+      "parent_spec_ids": [
+        "system-software-architecture"
+      ],
+      "requirement_id_policy": "required",
+      "requirement_prefix": "PFA-DET",
+      "domains": [
+        "deterministic-execution",
+        "financial-semantics",
+        "private-alpha",
+        "stochastic-readiness"
+      ],
+      "keywords": [
+        "deterministic readiness",
+        "401k",
+        "Roth",
+        "IRA",
+        "HSA",
+        "brokerage",
+        "mortgage",
+        "refinance",
+        "Treasury",
+        "bond",
+        "CD",
+        "cryptocurrency",
+        "options",
+        "insurance",
+        "dividend reinvestment",
+        "capital gains",
+        "funding source",
+        "truth table",
+        "pre-stochastic gate"
+      ],
+      "applies_to": [
+        "personal-mvp",
+        "private-alpha",
+        "stochastic-readiness"
+      ],
+      "depends_on_spec_ids": [
+        "canonical-financial-schema",
+        "executable-financial-semantics",
+        "portfolio-planning",
+        "tax-engine",
+        "insurance-planning",
+        "application-ux",
+        "data-onboarding-and-import"
+      ]
+    },
+    {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.2.0-draft",
+      "version": "0.3.0-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -610,7 +664,8 @@
         "data-onboarding-and-import",
         "financial-planning-and-optimization",
         "portfolio-planning",
-        "insurance-planning"
+        "insurance-planning",
+        "deterministic-household-financial-semantics"
       ]
     }
   ],
