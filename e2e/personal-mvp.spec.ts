@@ -65,9 +65,10 @@ test("R4 UAT groups cash separately from investment account wrappers and holding
   await page.getByRole("button", { name: "Net Worth", exact: true }).click();
   await page.getByRole("button", { name: "Cash & bank accounts", exact: true }).click();
   await expect(page.getByRole("button", { name: /Everyday checking/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Workplace retirement|Brokerage|RETIREMENT-DEMO|BROKERAGE-DEMO/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Workplace retirement|brokerage|RETIREMENT-DEMO|BROKERAGE-DEMO/i })).toHaveCount(0);
   await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
-  await expect(page.getByRole("button", { name: /Workplace retirement/ })).toBeVisible();
+  const retirementAccount = page.locator(".object-card").filter({ has: page.locator("strong").filter({ hasText: /^Workplace retirement$/ }) });
+  await expect(retirementAccount.getByRole("button", { name: /Workplace retirement/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /RETIREMENT-DEMO/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Everyday checking/ })).toHaveCount(0);
   await expect(page.getByText(/Investment holdings are assets too/)).toBeVisible();
