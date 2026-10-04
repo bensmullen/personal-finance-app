@@ -610,7 +610,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.3.0-draft",
+      "version": "0.4.0-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
