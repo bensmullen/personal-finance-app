@@ -86,6 +86,14 @@ uses pairwise resource comparisons. These
 remain operation/entity-count scaling risks even though candidate forks no
 longer copy growing historical state. No near-linear operation-count claim is
 made for this intermediate stage.
+An additional lifecycle risk remains for a single active claim receiving many
+settlements: `applySettlement` checks/copies its complete settlement-ID sequence,
+claim normalization validates/copies that sequence, and the indexed claim update
+removes/re-adds its settlement ownership entries. With S settlements on one claim,
+these updates still do O(S) work per update and can accumulate quadratic work.
+The global archived-claim index improvement does not remove this per-claim risk.
+An incremental lifecycle/settlement-ownership representation is still required;
+financial duplicate, reconciliation and rollback checks must remain exact.
 This stage does not
 meet issue 68 acceptance and supplies no new timing evidence. CI owns bounded
 verification; fresh Node 22 engineering-validation remains required for closeout.
