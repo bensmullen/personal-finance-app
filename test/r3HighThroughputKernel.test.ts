@@ -128,8 +128,9 @@ describe("R3 reusable deterministic household kernel", () => {
     const counters = registry.latest("engine.schedule_contention")!.resources!.structuralCounters!;
     expect(counters.contentionAnalyticalFundingPoolConservation).toBe(1);
     expect(counters.contentionFallbackInvocations ?? 0).toBe(0);
-    // When funding becomes possible, source allocation is authoritative:
-    // transferring first changes the split between the ordered sources.
+    // Funded service can consume the transfer's source. The order in which
+    // service precedes the transfer then fails, and that failure must retain
+    // precedence over an unresolved-contention diagnostic.
     const funded = { ...input, reconciledOpeningState: createAuthoritativeState({ ...input.reconciledOpeningState,
       accounts: { ...input.reconciledOpeningState.accounts,
         [ids.cash]: { ...input.reconciledOpeningState.accounts[ids.cash]!, cash: money("48") } },
@@ -141,7 +142,7 @@ describe("R3 reusable deterministic household kernel", () => {
     });
     expect(ambiguous).toEqual(referenceRun({ compiled: funded, runContext: context() }));
     expect(ambiguous.status).toBe("incomplete");
-    expect(ambiguous.diagnostics.some(issue => issue.code === "HOUSEHOLD_CONTENTION_UNRESOLVED")).toBe(true);
+    expect(ambiguous.diagnostics.some(issue => issue.code === "HOUSEHOLD_CONTENTION_UNRESOLVED")).toBe(false);
     expect(registry.latest("engine.schedule_contention")!.resources!.structuralCounters!.contentionFallbackInvocations).toBeGreaterThan(0);
   });
 
