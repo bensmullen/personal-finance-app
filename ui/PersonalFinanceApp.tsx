@@ -2538,7 +2538,7 @@ function DiagnosticList({
     <div className="capability">
       <strong>Forecast needs attention</strong>
       {diagnostics.length === 0 ? (
-        <p>{friendlyText(fallback ?? "No richer diagnostic is available.")}</p>
+        <p>The forecast is unavailable. Review the original explanation in Technical diagnostic details; no more specific editor remedy is available.</p>
       ) : (
         diagnostics.map((item, index) => (
           <p key={`${item.code}:${item.entityId ?? index}`}>
@@ -2547,7 +2547,7 @@ function DiagnosticList({
         ))
       )}
       <details><summary>Technical diagnostic details</summary>
-        <pre>{JSON.stringify(diagnostics, null, 2)}</pre>
+        <pre>{JSON.stringify(diagnostics.length ? diagnostics : { message: fallback ?? "No richer diagnostic is available." }, null, 2)}</pre>
       </details>
     </div>
   );

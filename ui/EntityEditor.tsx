@@ -43,13 +43,16 @@ const TITLES: Record<PersonalObjectType, string> = {
   Account: "Accounts",
   Income: "Income",
   Expense: "Spending",
-  Asset: "Property & assets",
+  Asset: "Property & other assets",
   Liability: "Debt",
   Investment: "Investments",
   Assumption: "Assumptions",
   Scenario: "Plans & what-ifs",
 };
 const FIELD_LABELS: Record<string, string> = {
+  price: "Price",
+  market_value: "Market value",
+  payment_frequency: "Payment frequency",
   source: "Source / name",
   owner_id: "Owner",
   income_type: "Income type",
@@ -366,7 +369,7 @@ function ObjectEditor({
     <section>
       <div className="page-head compact">
         <div>
-          <h1>{TITLES[type]}</h1>
+          <h1>{section && type === "Account" ? section === "Cash & bank accounts" ? section : "Investment & retirement accounts" : section && type === "Investment" ? "Investment holdings" : TITLES[type]}</h1>
           <p>Review names, amounts, and relationships. Model details are available inside each item.</p>
           {type === "Asset" && <p>Use Investments & retirement for securities and positions in investment accounts. Property & other assets is for standalone real estate, vehicles, businesses, personal property, and other non-security resources. Do not duplicate cash or securities here.</p>}
         </div>

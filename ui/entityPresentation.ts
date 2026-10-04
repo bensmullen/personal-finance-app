@@ -65,6 +65,22 @@ export function forecastDiagnosticMessage(diagnostic: {
       return "The forecast dates do not form a supported monthly horizon. Under Settings → Model Settings, choose a Simulation start on the first day of a month and a later Simulation end on the first day of a month.";
     case "RETIREMENT_DATE_INVALID":
       return "The new retirement date is invalid. Under Plan → What If? → Retire earlier/later, enter a valid New retirement date.";
+    case "SCENARIO_RATE_INVALID":
+    case "SCENARIO_ASSUMPTION_VALUE_INVALID":
+      return "The comparison rate is not a valid exact decimal. Under Plan → What If?, review Exact effective annual rate before comparing income, spending, or investment returns. Enter a decimal such as 0.08 = 8%; the baseline plan stays unchanged.";
+    case "SCENARIO_FUNDING_POLICY_INCOMPLETE":
+    case "SCENARIO_FUNDING_POLICY_INVALID":
+      return "The comparison needs a complete ordered funding choice. Under Plan → What If? → Change funding behavior, choose the spending or loan target and add compatible funding accounts in the intended order. Each account must appear only once.";
+    case "SCENARIO_TARGET_UNEXECUTABLE":
+      return "The selected item cannot execute in the current comparison. Under Plan → What If?, choose a target belonging to the configured household and forecast scope. Review Plan → Current Plan → Expert forecast configuration for the execution account, owner, and debt contract setup; imported unsupported relationships require a corrected model.";
+    case "EXECUTION_OWNER_INVALID":
+    case "EXECUTION_OWNER_NOT_HOUSEHOLD_MEMBER":
+      return "The forecast needs an owner who belongs to the household. Under Plan → Current Plan → Expert forecast configuration → Investment execution configuration, choose Execution owner for investments. For debt, choose Execution owner under Net Worth → Debt → Debt execution configuration, then Apply household execution configuration in Current Plan.";
+    case "INVESTMENT_PRICE_REQUIRED":
+    case "INVESTMENT_PURCHASE_PRICE_UNSUPPORTED":
+      return `${label("Investment", diagnostic.entityId, "This investment")} needs an opening price to value its units. Under Net Worth → Investments & retirement, open the holding and enter Price in money per unit. A purchase needs a positive price; do not invent an observed price merely to run the forecast.`;
+    case "INVESTMENT_MARKET_VALUE_INCONSISTENT":
+      return `${label("Investment", diagnostic.entityId, "This investment")} has a market value that does not match its recorded quantity and price. Under Net Worth → Investments & retirement, open the holding and reconcile Quantity, Price, and Market value using your source records. The forecast will not approximate inconsistent opening positions.`;
     case "MONTHLY_FLOW_RECURRENCE_UNSUPPORTED":
     case "RECURRENCE_UNSUPPORTED":
       return `${label(diagnostic.entityType ?? "Income|Expense", diagnostic.entityId, "This income or spending item")} has a schedule this monthly forecast cannot execute. Under Money → Income or Money → Spending, review Frequency. If the actual schedule is monthly, choose monthly; other schedules currently require a separate financial capability. Do not change a recorded schedule merely to remove the warning.`;
