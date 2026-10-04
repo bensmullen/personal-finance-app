@@ -64,12 +64,15 @@ Frozen loan contracts cache exact recurrence membership. Ordinary output state
 and primitive objects are materialized at the run boundary for transport.
 
 Known remaining work: production defaults are still detailed; the evaluator still
-constructs detailed period objects before summary extraction; replay evaluates
-the full horizon and has no sparse intermediate checkpoint; full-state/history
+constructs detailed period objects before summary extraction; full-state/history
 materialization at output boundaries, rich cash/debt period assembly, complete
 final audit retention remain. Contention
 signatures still serialize full candidate state/history during previews. Broader
-structural counters, sparse checkpoints and application defaults are pending.
+structural counters and application defaults are pending. Replay now stops at
+the requested window end and can resume from private shared-root checkpoints
+every twelve periods. A transported compatibility copy can fall back to the
+immutable opening basis. Checkpoint spacing and retained reachable-tree memory
+still require heavy measurement; these are not flattened full-state copies.
 Static-entity currency/runtime consistency checks still traverse whole entity or
 primitive collections inside preparation/work evaluation. Cash local-order
 construction now uses frozen-input income/expense indexes and appends occurrence

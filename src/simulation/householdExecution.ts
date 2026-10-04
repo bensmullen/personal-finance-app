@@ -337,7 +337,14 @@ const outcomeSignature = (execution: InstantExecution): string =>
 const runCompiledHouseholdProjectionInternal = (
   request: CompiledHouseholdProjectionRunInput,
   performance: PerformanceSession,
-  periodRetention?: { readonly accept: (period: HouseholdProjectionPeriodResult) => void; readonly retain: (period: Period) => boolean },
+  periodRetention?: {
+    readonly accept: (period: HouseholdProjectionPeriodResult) => void;
+    readonly retain: (period: Period) => boolean;
+    readonly checkpoint?: (period: Period, state: AuthoritativeState, primitiveState: PrimitiveRuntimeStateStore, metadata: RunMetadata) => void;
+    readonly resume?: HouseholdReplayCheckpoint;
+    readonly stopAfter?: Instant;
+    readonly retainDiagnostics?: (period: Period) => boolean;
+  },
 ): CompiledHouseholdProjectionRunResult => {
   const { runContext } = request;
   assertRunContext(runContext);
@@ -473,11 +480,24 @@ const runCompiledHouseholdProjectionInternal = (
     },
   }));
   const runMetadata = createRunMetadata(runContext, fingerprint);
+  if (periodRetention?.resume !== undefined) {
+    if (periodRetention.resume.fingerprint !== runMetadata.inputFingerprint)
+      throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_BASIS_MISMATCH",
+        message: "Replay checkpoint belongs to a different immutable forecast basis.", entityType: "household_projection" });
+    state = cloneAuthoritativeState(periodRetention.resume.state);
+    primitiveState = createPrimitiveRuntimeStateStore(periodRetention.resume.primitiveState);
+    // The opening-period preparation is fingerprint input, not reusable work
+    // for the state at an intermediate checkpoint.
+    firstPrepared = undefined;
+  }
   const committed: HouseholdProjectionPeriodResult[] = [];
   let reachedThrough: Instant | undefined;
   const diagnostics: ValidationIssue[] = [];
-  for (const period of periods)
+  for (const period of periods.filter(period =>
+    (periodRetention?.resume === undefined || period.start >= periodRetention.resume.at) &&
+    (periodRetention?.stopAfter === undefined || period.end <= periodRetention.stopAfter)))
     try {
+      performance.counters({ householdPeriodsExecuted: 1 });
       // Domain operations return candidates; keep the previous committed authority for rollback.
       let candidateState = state;
       let candidatePrimitiveState = primitiveState;
@@ -966,7 +986,7 @@ const runCompiledHouseholdProjectionInternal = (
         ...(liability === undefined ? {} : { liability }),
       });
       });
-      diagnostics.push(
+      if (periodRetention?.retainDiagnostics === undefined || periodRetention.retainDiagnostics(period)) diagnostics.push(
         ...(prepared.cash?.diagnostics ?? []),
         ...cashPeriods.flatMap((item) => item.diagnostics),
         ...liabilityPeriods.flatMap((item) => item.diagnostics),
@@ -975,6 +995,7 @@ const runCompiledHouseholdProjectionInternal = (
       state = candidateState;
       primitiveState = candidatePrimitiveState;
       reachedThrough = period.end;
+      periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata);
       periodRetention?.accept(periodResult);
       if (periodRetention === undefined || periodRetention.retain(period)) committed.push(periodResult);
     } catch (error) {
@@ -997,7 +1018,7 @@ const runCompiledHouseholdProjectionInternal = (
     status: "completed",
     runMetadata,
     requestedHorizon,
-    reachedThrough: requestedHorizon.end,
+    reachedThrough: reachedThrough ?? requestedHorizon.end,
     state: createAuthoritativeState(state),
     primitiveState: materializePrimitiveRuntimeStateStore(primitiveState),
     periods: Object.freeze(committed),
@@ -1025,6 +1046,18 @@ export interface HouseholdForecastSummaryResult extends Omit<CompiledHouseholdPr
   readonly replay: { readonly kernel: CompiledHouseholdKernel; readonly runContext: RunContext };
 }
 
+interface HouseholdReplayCheckpoint {
+  readonly at: Instant;
+  readonly fingerprint: RunMetadata["inputFingerprint"];
+  readonly state: AuthoritativeState;
+  readonly primitiveState: PrimitiveRuntimeStateStore;
+}
+
+// Checkpoints are private persistent roots, not serialized per-period snapshots.
+// Their audit trees share unchanged nodes with the execution stream. Transported
+// forecasts without these optional roots can still replay from the opening basis.
+const forecastCheckpoints = new WeakMap<HouseholdForecastSummaryResult, readonly HouseholdReplayCheckpoint[]>();
+
 /** Summary retention boundary. Financial evaluation is shared with the detailed adapter. */
 export const runHouseholdForecastSummary = (
   request: { readonly kernel: CompiledHouseholdKernel; readonly overlay?: HouseholdExecutionOverlay; readonly runContext: RunContext },
@@ -1034,15 +1067,26 @@ export const runHouseholdForecastSummary = (
   const runContext = Object.freeze({ ...request.runContext, versions: Object.freeze({ ...request.runContext.versions }) });
   const performance = createPerformanceSession(observer);
   const summaries: HouseholdForecastSummaryPeriod[] = [];
+  const checkpoints: HouseholdReplayCheckpoint[] = [];
   try {
     const result = runCompiledHouseholdProjectionInternal({
       compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
     }, performance, {
       accept: period => { summaries.push(summarizeHouseholdPeriod(period)); },
       retain: () => false,
+      checkpoint: (period, state, primitiveState, metadata) => {
+        // Twelve display periods is the initial engineering choice, not a
+        // measured product budget. Never retain an unused terminal checkpoint.
+        if ((summaries.length + 1) % 12 !== 0 || period.end >= runContext.simulationEnd) return;
+        checkpoints.push(Object.freeze({ at: period.end, fingerprint: metadata.inputFingerprint,
+          state: cloneAuthoritativeState(state), primitiveState: createPrimitiveRuntimeStateStore(primitiveState) }));
+      },
     });
-    return Object.freeze({ ...result, resultTier: "summary", periods: Object.freeze(summaries),
+    const forecast: HouseholdForecastSummaryResult = Object.freeze({ ...result, resultTier: "summary", periods: Object.freeze(summaries),
       replay: Object.freeze({ kernel, runContext }) });
+    forecastCheckpoints.set(forecast, Object.freeze(checkpoints));
+    performance.counters({ replayCheckpointsRetained: checkpoints.length, summaryPeriodsRetained: summaries.length });
+    return forecast;
   } finally {
     performance.finish();
   }
@@ -1062,14 +1106,19 @@ export const replayHouseholdForecastWindow = (
       message: "Replay requires an aligned window of successfully committed forecast periods.", entityType: "household_projection" });
   const performance = createPerformanceSession(observer);
   try {
+    const checkpoint = (forecastCheckpoints.get(forecast) ?? []).filter(value => value.at <= selectedWindow.start).at(-1);
     const replay = runCompiledHouseholdProjectionInternal({
       compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
-    }, performance, { accept: () => {}, retain: period => period.start >= selectedWindow.start && period.end <= selectedWindow.end });
+    }, performance, { accept: () => {}, retain: period => period.start >= selectedWindow.start && period.end <= selectedWindow.end,
+      ...(checkpoint === undefined ? {} : { resume: checkpoint }), stopAfter: selectedWindow.end,
+      retainDiagnostics: period => period.start >= selectedWindow.start });
+    performance.counters({ replayCheckpointResumes: checkpoint === undefined ? 0 : 1,
+      replayDetailPeriodsMaterialized: replay.periods.length });
     if (canonicalSerialize(replay.runMetadata) !== canonicalSerialize(forecast.runMetadata) ||
         canonicalSerialize(replay.periods.map(summarizeHouseholdPeriod)) !== canonicalSerialize(selected))
       throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_BASIS_MISMATCH",
         message: "Immutable forecast artifacts did not reproduce the displayed forecast exactly.", entityType: "household_projection" });
-    return replay;
+    return Object.freeze({ ...replay, requestedHorizon: Object.freeze({ ...selectedWindow }) });
   } finally {
     performance.finish();
   }

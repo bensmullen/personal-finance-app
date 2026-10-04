@@ -318,6 +318,35 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(Object.keys(accumulator).sort()).toEqual(["add", "snapshot"]);
   });
 
+  it("replays a bounded late window from a sparse shared checkpoint", () => {
+    const input = { ...compiled(), executionMonths: 13 };
+    const runContext = createRunContext({ ...context(), simulationEnd: instant("2027-02-01T00:00:00.000Z") });
+    const reference = referenceRun({ compiled: input, runContext });
+    const summary = runHouseholdForecastSummary({ kernel: compileHouseholdKernel(input, start), runContext });
+    expect(summary.status).toBe("completed");
+    expect(summary.periods).toEqual(reference.periods.map(summarizeHouseholdPeriod));
+    const registry = new PerformanceRegistry();
+    let tick = 0;
+    const selectedWindow = reference.periods[12]!.period;
+    const explanation = replayHouseholdForecastWindow(summary, selectedWindow, {
+      clock: { now: () => tick++ }, sink: registry,
+      context: { runId: "sparse-replay", dataClassification: "synthetic", modelCounts: {},
+        executionLocation: "local_node", cacheState: "not_applicable" },
+    });
+    expect(explanation.periods).toEqual([reference.periods[12]]);
+    expect(explanation.state).toEqual(reference.state);
+    expect(explanation.primitiveState).toEqual(reference.primitiveState);
+    expect(explanation.runMetadata).toEqual(reference.runMetadata);
+    expect(explanation.requestedHorizon).toEqual(selectedWindow);
+    const counters = registry.latest("engine.execute")!.resources!.structuralCounters!;
+    expect(counters.replayCheckpointResumes).toBe(1);
+    expect(counters.householdPeriodsExecuted).toBe(1);
+    expect(counters.replayDetailPeriodsMaterialized).toBe(1);
+    // A plain compatibility copy loses optional private roots, but remains
+    // reproducible from the same immutable opening basis.
+    expect(replayHouseholdForecastWindow({ ...summary }, selectedWindow).periods).toEqual(explanation.periods);
+  });
+
   it("matches the frozen R2 reference, including fingerprint, lineage, accounting and stress outcomes", () => {
     fc.assert(fc.property(fc.integer({ min: 0, max: 140 }), amount => {
       const input = integrated(String(amount));
