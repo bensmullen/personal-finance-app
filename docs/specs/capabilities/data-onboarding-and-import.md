@@ -1,6 +1,6 @@
 # Data Onboarding, Import & Assisted Intake
 
-**Version:** 0.1.1-draft
+**Version:** 0.1.2-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-ONB
 
@@ -122,6 +122,16 @@ Private alpha does not require universal statement parsing or production bank ag
 The product SHALL explicitly identify the document/file/institution formats it supports, fail safely on unsupported formats, and track which unsupported formats are encountered during onboarding. Support SHOULD be expanded based on target-cohort frequency and onboarding value rather than attempting exhaustive compatibility up front.
 
 A partially recognized file SHALL NOT silently commit a partial authoritative model without showing which material fields/rows were omitted or unresolved.
+
+### PFA-ONB-013 — Capture the deterministic alpha model in user terms
+
+Before private alpha, onboarding SHALL support efficient capture/review of the household facts needed by the PFA-DET deterministic readiness matrix, including relevant account types, balances/positions, payroll retirement/HSA contributions, personally funded investment contributions, mortgages/refinance terms, cash-account interest, admitted fixed-income/CD/crypto/option positions, insurance premiums/coverage, and tax-relevant investment income/activity.
+
+The onboarding flow SHOULD ask for financially recognizable source facts and derive safe downstream values rather than exposing canonical storage fields one-for-one.
+
+Examples include deriving market value from quantity × price when that representation is authoritative, separating mortgage balance from original principal when both are actually needed, and collecting a payroll contribution once rather than asking the user to create an expense plus an investment purchase.
+
+Unsupported product/instrument details SHALL remain explicit instead of being coerced into the nearest available field.
 
 ## 3. Initial private-alpha intake strategy
 
