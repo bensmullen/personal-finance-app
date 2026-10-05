@@ -2584,11 +2584,11 @@ function PersonalPurchaseAuthoring({ draft, setDraft }: { draft: PersonalDraft; 
   return <section className="panel" aria-label="Saved investment purchases">
     <h2>Investment purchases</h2>
     <p>Save a one-time or monthly brokerage purchase funded from checking or savings. Holdings need an executable projected return. Each purchase is valued at the modeled month-end price.</p>
-    <label>Purchase investment<select value={investmentId} onChange={event => setInvestmentId(event.target.value)}><option value="">Choose holding</option>{investments.map(investment => <option key={objectId("Investment", investment)} value={objectId("Investment", investment)}>{objectLabel("Investment", investment)}</option>)}</select></label>
-    <label>Purchase funding account<select value={bankId} onChange={event => setBankId(event.target.value)}><option value="">Choose bank account</option>{banks.map(bank => <option key={objectId("Account", bank)} value={objectId("Account", bank)}>{objectLabel("Account", bank)}</option>)}</select></label>
+    <label>Purchase investment<select aria-label="Purchase investment" value={investmentId} onChange={event => setInvestmentId(event.target.value)}><option value="">Choose holding</option>{investments.map(investment => <option key={objectId("Investment", investment)} value={objectId("Investment", investment)}>{objectLabel("Investment", investment)}</option>)}</select></label>
+    <label>Purchase funding account<select aria-label="Purchase funding account" value={bankId} onChange={event => setBankId(event.target.value)}><option value="">Choose bank account</option>{banks.map(bank => <option key={objectId("Account", bank)} value={objectId("Account", bank)}>{objectLabel("Account", bank)}</option>)}</select></label>
     <label>Purchase amount<input value={amount} onChange={event => setAmount(event.target.value)} inputMode="decimal" /></label>
     <label>Purchase start date<input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
-    <label>Purchase frequency<select value={frequency} onChange={event => setFrequency(event.target.value === "once" ? "once" : "monthly")}><option value="once">One time</option><option value="monthly">Monthly</option></select></label>
+    <label>Purchase frequency<select aria-label="Purchase frequency" value={frequency} onChange={event => setFrequency(event.target.value === "once" ? "once" : "monthly")}><option value="once">One time</option><option value="monthly">Monthly</option></select></label>
     <label>Purchase execution order<input type="number" min="0" step="1" value={order} onChange={event => setOrder(event.target.value)} /></label>
     <button type="button" disabled={!investmentId || !bankId || !amount || !date} onClick={() => {
       const selected = investments.find(investment => objectId("Investment", investment) === investmentId);
