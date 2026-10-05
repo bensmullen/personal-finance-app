@@ -39,7 +39,7 @@ const payroll = (state: ReturnType<typeof opening>, allocations: readonly Payrol
 describe("D1 payroll recognition and shared contribution capacity", () => {
   it.each([[50, "8000"], [60, "11250"], [63, "11250"]] as const)("retains age %s catch-up after employer/after-tax additions nearly fill 415(c)", (age, catchup) => {
     const annual = { ageAtYearEnd: age, planHasRoth: true, priorYearSponsorWages: money("100000") };
-    const employer = allocation(1, "employer_401k", "70000", annual), afterTax = allocation(2, "after_tax_401k", "1000", annual);
+    const employer = { ...allocation(1, "employer_401k", "70000", annual), priority: 20 }, afterTax = { ...allocation(2, "after_tax_401k", "1000", annual), priority: 10 };
     const elective = { ...allocation(3, "traditional_401k", "15000", annual), policy: { ...policy("traditional_401k", annual), excessPolicy: "auto_cap" as const } };
     const original = opening([employer, afterTax, elective]);
     const prior = payroll(original, [employer, afterTax], "1000", "prior");

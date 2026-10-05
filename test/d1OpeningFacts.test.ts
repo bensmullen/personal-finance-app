@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createGoldenHouseholdDraft, getCurrentPosition, patchPersonalObject } from "../src/application/personalMvp.js";
+import { createGoldenHouseholdDraft, getCurrentPosition, type PersonalDraft } from "../src/application/personalMvp.js";
+import type { JsonValue } from "../src/model/modelVersion.js";
 import { GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 import { authorPayrollContributionPlan, payrollOpeningBalances, durablePayrollAllocations } from "../src/application/compiler/payrollAuthoring.js";
 import { authorPersonalPurchasePlan } from "../src/application/compiler/personalPurchases.js";
@@ -22,6 +23,12 @@ import { runHouseholdKernel } from "../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
 
 const id = (n: number) => `d1c70000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const object = (value: JsonValue): value is Readonly<Record<string, JsonValue>> => typeof value === "object" && value !== null && !Array.isArray(value);
+// Fixtures may define immutable account types and consistent derived market values;
+// the ordinary editor intentionally cannot overwrite those canonical fields.
+const fixtureFields = (model: PersonalDraft, collection: string, idField: string, id: string, fields: Readonly<Record<string, JsonValue>>): PersonalDraft => ({ ...model, objects: { ...model.objects,
+  [collection]: model.objects[collection]!.map(value => object(value) && value[idField] === id ? { ...value, ...fields } : value),
+} });
 const workplace = (openingUnvestedQuantity = "0") => authorPayrollContributionPlan(createGoldenHouseholdDraft(), {
   primitiveId: id(1), investmentId: ids.retirementInvestment, incomeId: ids.income, character: "employer_401k", priority: 10,
   calculation: { kind: "fixed", amount: "100" }, planKey: "sponsor", vestedFraction: "0.25", openingUnvestedQuantity, excessPolicy: "reject",
@@ -33,7 +40,7 @@ const cashRequest = (start = "2026-01-01") => ({ baseCurrency: "USD", simulation
 describe("D1 authoritative opening employer ownership", () => {
   it.each(["vest", "forfeit"] as const)("keeps employee/vested units owned and reclassifies opening contingent value on %s", kind => {
     const baseline = getCurrentPosition(createGoldenHouseholdDraft(), { baseCurrency: "USD", asOf: "2026-01-01" });
-    const fixture = patchPersonalObject(workplace("100"), "Investment", ids.retirementInvestment, { quantity: "500", market_value: "50000" });
+    const fixture = fixtureFields(workplace("100"), "Investment", "investment_id", ids.retirementInvestment, { quantity: "500", market_value: "50000" });
     const model = importPersonalModelJson(exportPersonalModelJson(fixture));
     const current = getCurrentPosition(model, { baseCurrency: "USD", asOf: "2026-01-01" });
     expect(current.contingentPlanValue!.exact).toBe("10000");
@@ -72,7 +79,7 @@ describe("D1 authoritative opening employer ownership", () => {
 describe("D1 prior YTD statutory usage", () => {
   it("shares prior elective usage across two paths and keeps opening facts out of forecast economics", () => {
     let model = workplace();
-    model = patchPersonalObject(model, "Account", ids.brokerageAccount, { account_type: "roth_401k", tax_treatment: "tax_free" });
+    model = fixtureFields(model, "Account", "account_id", ids.brokerageAccount, { account_type: "roth_401k", tax_treatment: "tax_free" });
     model = authorPayrollContributionPlan(model, { primitiveId: id(5), investmentId: ids.brokerageInvestment, incomeId: ids.income, character: "roth_401k", priority: 20, calculation: { kind: "fixed", amount: "1000" }, planKey: "sponsor", vestedFraction: "1", excessPolicy: "auto_cap", facts: { taxYear: 2026, ageAtYearEnd: 50, eligiblePlanCompensation: "100000", planHasRoth: true, priorYearSponsorWages: "100000" } });
     model = authorOpeningContributionUsage(model, { asOf: "2026-07-01", allPriorUsageKnown: true, entries: [
       { id: id(6), investmentId: ids.retirementInvestment, character: "traditional_401k", amount: "20000", ordinaryAmount: "20000" },
@@ -106,8 +113,8 @@ describe("D1 prior YTD statutory usage", () => {
     expect(() => compileOpeningContributionUsage(restored, "2026-08-01")).toThrow("OPENING_CONTRIBUTION_USAGE_REQUIRED");
   });
   it("includes prior Traditional and Roth usage in shared IRA capacity", () => {
-    let model = patchPersonalObject(createGoldenHouseholdDraft(), "Account", ids.brokerageAccount, { account_type: "traditional_ira", tax_treatment: "tax_deferred" });
-    model = patchPersonalObject(model, "Account", ids.retirementAccount, { account_type: "roth_ira", tax_treatment: "tax_free" });
+    let model = fixtureFields(createGoldenHouseholdDraft(), "Account", "account_id", ids.brokerageAccount, { account_type: "traditional_ira", tax_treatment: "tax_deferred" });
+    model = fixtureFields(model, "Account", "account_id", ids.retirementAccount, { account_type: "roth_ira", tax_treatment: "tax_free" });
     const facts = { taxYear: 2026, ageAtYearEnd: 40, taxableCompensation: "100000", filingStatus: "single" as const, rothMagi: "100000", workplacePlanCovered: false, deductionMagi: "100000" };
     for (const [index, investmentId] of [ids.brokerageInvestment, ids.retirementInvestment].entries()) model = authorPersonalPurchasePlan(model, { primitiveId: id(20 + index), investmentId, sourceCashAccountId: ids.checking, amount: "1000", date: "2026-07-15", frequency: "once", order: index, contributionFacts: facts, excessPolicy: "auto_cap" });
     model = authorOpeningContributionUsage(model, { asOf: "2026-07-01", allPriorUsageKnown: true, entries: [{ id: id(22), investmentId: ids.brokerageInvestment, character: "traditional_ira", amount: "4000" }, { id: id(23), investmentId: ids.retirementInvestment, character: "roth_ira", amount: "3000" }] });
@@ -121,7 +128,7 @@ describe("D1 prior YTD statutory usage", () => {
     expect(decision.accepted.amount.toString()).toBe("500");
   });
   it("shares prior HSA employee/employer usage without creating a second balance", () => {
-    let model = patchPersonalObject(createGoldenHouseholdDraft(), "Account", ids.retirementAccount, { account_type: "hsa_investment", tax_treatment: "tax_free" });
+    let model = fixtureFields(createGoldenHouseholdDraft(), "Account", "account_id", ids.retirementAccount, { account_type: "hsa_investment", tax_treatment: "tax_free" });
     model = authorPayrollContributionPlan(model, { primitiveId: id(30), investmentId: ids.retirementInvestment, incomeId: ids.income, character: "employee_hsa", priority: 10, calculation: { kind: "fixed", amount: "1000" }, vestedFraction: "1", excessPolicy: "auto_cap", facts: { taxYear: 2026, ageAtYearEnd: 55, hsaCoverage: "family", hsaFullYearEligible: true, hsaFamilyAllocation: "8750" } });
     model = authorOpeningContributionUsage(model, { asOf: "2026-07-01", allPriorUsageKnown: true, entries: [{ id: id(31), investmentId: ids.retirementInvestment, character: "employee_hsa", amount: "8000", ordinaryAmount: "8000" }, { id: id(32), investmentId: ids.retirementInvestment, character: "employer_hsa", amount: "1000", ordinaryAmount: "750" }] });
     const usage = compileOpeningContributionUsage(model, "2026-07-01"), opening = createAuthoritativeState({ ...payrollOpeningBalances(model, durablePayrollAllocations(model)), contributions: usage.contributions });
