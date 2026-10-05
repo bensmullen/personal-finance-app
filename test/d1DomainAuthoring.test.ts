@@ -158,4 +158,22 @@ describe("D1-B durable compiler boundaries", () => {
     expect(reversed.status).toBe("compiled"); if (reversed.status !== "compiled") throw new Error("reordered policies unsupported");
     expect(reversed.value.participant.prepare(context, { start: context.simulationStart, end: context.simulationEnd }, opening).operations.map(item => item.descriptor).sort((a, b) => a.id.localeCompare(b.id))).toEqual(prepared.operations.map(item => item.descriptor).sort((a, b) => a.id.localeCompare(b.id)));
   });
+  it("settles two same-day Treasury coupons deterministically in their shared wrapper", () => {
+    const original = base(), source = original.objects.Investment!.filter(record).find(item => item.investment_id === ids.brokerageInvestment)!;
+    const bonds = [ids.brokerageInvestment, id(70)].map(investment_id => ({ ...source, investment_id, investment_type: "bond", instrument_subtype: "treasury_note", quantity: "1", price: "1000", market_value: "1000", cost_basis: "1000", acquisition_date: "2025-07-01", maturity_date: "2026-07-01", face_value: "1000", coupon_rate: "0.10", interest_convention: "nominal_annual_simple", crediting_frequency: "semiannual", first_credit_date: "2026-01-01", settlement_account_id: ids.savings, return_model_id: null }));
+    const model = { ...original, objects: { ...original.objects, Investment: [...original.objects.Investment!.filter(item => !record(item) || item.investment_id !== ids.brokerageInvestment), ...bonds] } };
+    const result = compileDomainMechanics(model, { ...request, simulationEnd: "2026-02-01" });
+    expect(result.status, JSON.stringify(result)).toBe("compiled"); if (result.status !== "compiled") throw new Error("coupons unsupported");
+    const operations = [...result.value.input.operations].sort((a, b) => a.id.localeCompare(b.id));
+    expect(operations.map(item => [item.kind, item.amount])).toEqual([["treasury_interest", "50"], ["treasury_interest", "50"]]);
+    let candidate = { state: result.value.openingState, primitiveState: createPrimitiveRuntimeStateStore() };
+    for (const operation of operations) {
+      const next = executeDomainOperation(candidate, result.value.input, operation);
+      expect(next.facts.taxEconomics?.[0]?.exemptStateLocalInterest?.amount.toString()).toBe("50");
+      expect(next.facts.traceRefs?.map(ref => ref.traceId)).toEqual(["compiler:canonical:Investment:" + operation.holdingId]);
+      candidate = next;
+    }
+    expect(candidate.state.accounts[ids.brokerageAccount]!.cash.amount.toString()).toBe("100");
+    expect(candidate.state.accounts[ids.checking]!.cash.amount.toString()).toBe("20000");
+  });
 });
