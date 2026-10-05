@@ -36,10 +36,10 @@ export const createPerformanceComparisonValidation = (
   }[] },
   intents: readonly { readonly scenarioId: string; readonly baseScenarioId?: string; readonly name: string;
     readonly changes: readonly { readonly kind: string }[] }[],
-  baselineScenarioId: string,
+  baselineScenarioId: string | undefined,
   horizon: Readonly<{ start: string; end: string }>,
 ) => {
-  if (intents.length !== 1 || intents[0]!.changes.length !== 1 || intents[0]!.changes[0]!.kind !== "investment_return"
+  if (baselineScenarioId === undefined || intents.length !== 1 || intents[0]!.changes.length !== 1 || intents[0]!.changes[0]!.kind !== "investment_return"
     || intents[0]!.baseScenarioId !== baselineScenarioId || intents[0]!.scenarioId === baselineScenarioId)
     throw new Error(`${fixtureId} must declare one lower-return comparison intent with distinct scenario identity.`);
   if (comparison.executionError === true || (comparison.status !== "completed" && comparison.status !== "incomplete")

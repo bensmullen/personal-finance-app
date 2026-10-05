@@ -366,7 +366,7 @@ describe("performance instrumentation", () => {
     }
     expect(() => validate({ ...comparison, executionError: true })).toThrow();
     for (const alternatives of [[], [alternative, alternative], [{ ...alternative, name: "wrong" }],
-      [{ ...alternative, comparedThrough: undefined }], [{ ...alternative, comparedThrough: "2026-01-01T00:00:00.000Z" }],
+      [{ name: alternative.name, status: alternative.status }], [{ ...alternative, comparedThrough: "2026-01-01T00:00:00.000Z" }],
       [{ ...alternative, comparedThrough: "2026-03-01T00:00:00.000Z" }]]) {
       expect(() => validate({ ...comparison, alternatives })).toThrow();
     }
