@@ -56,4 +56,9 @@ describe("D1 durable personally funded purchases", () => {
     expect(() => authorPersonalPurchasePlan(model, { primitiveId, investmentId: ids.brokerageInvestment, sourceCashAccountId, amount: "1000", frequency: "monthly", date: "2026-01-10", order: 10 })).toThrow("PERSONAL_PURCHASE_CHECKING_OR_SAVINGS_REQUIRED");
     expect(model.objects.PrimitiveInstance!.filter(record).some(item => item.primitive_instance_id === primitiveId)).toBe(false);
   });
+  it("does not reinterpret a workplace destination as a bank-funded taxable purchase", () => {
+    const model = base();
+    expect(() => authorPersonalPurchasePlan(model, { primitiveId, investmentId: ids.retirementInvestment, sourceCashAccountId: ids.checking, amount: "1000", frequency: "monthly", date: "2026-01-10", order: 10 })).toThrow("PERSONAL_PURCHASE_DESTINATION_CHARACTER_UNSUPPORTED");
+    expect(model.objects.Investment!.filter(record).find(item => item.investment_id === ids.retirementInvestment)!.contribution_model_id).toBeUndefined();
+  });
 });
