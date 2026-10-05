@@ -64,9 +64,10 @@ export const authorPersonalPurchasePlan = (model: PortableModelEnvelope, plan: P
   if (existing && (priorId == null || !record(existing.parameters) || existing.parameters.adapter !== VERSION)) throw new Error("PERSONAL_PURCHASE_ID_COLLISION");
   const roots = objects(model, "Scenario").filter(item => item.enabled === true && item.base_scenario_id == null);
   if (roots.length !== 1) throw new Error("PERSONAL_PURCHASE_ROOT_REQUIRED");
-  const primitive = { primitive_instance_id: plan.primitiveId.toLowerCase(), primitive_id: "P03", enabled: true, scenario_id: String(roots[0]!.scenario_id),
+  const schedule: Readonly<Record<string, JsonValue>> = plan.frequency === "once" ? { kind: "explicit_dates", dates: [plan.date] } : { kind: "utc_monthly", anchor: plan.date, invalidDayPolicy: "skip" };
+  const primitive: Readonly<Record<string, JsonValue>> = { primitive_instance_id: plan.primitiveId.toLowerCase(), primitive_id: "P03", enabled: true, scenario_id: String(roots[0]!.scenario_id),
     input_bindings: { source_cash_account_id: plan.sourceCashAccountId.toLowerCase(), amount: plan.amount },
-    parameters: { adapter: VERSION, order: plan.order, schedule: plan.frequency === "once" ? { kind: "explicit_dates", dates: [plan.date] } : { kind: "utc_monthly", anchor: plan.date, invalidDayPolicy: "skip" } } };
+    parameters: { adapter: VERSION, order: plan.order, schedule } };
   const next: PortableModelEnvelope = { ...model, objects: { ...model.objects,
     Investment: objects(model, "Investment").map(item => item === investment ? { ...item, contribution_model_id: plan.primitiveId.toLowerCase() } : item),
     PrimitiveInstance: [...objects(model, "PrimitiveInstance").filter(item => canonicalId(item, "primitive_instance_id") !== plan.primitiveId.toLowerCase()), primitive],
