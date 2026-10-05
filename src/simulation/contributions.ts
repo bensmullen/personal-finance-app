@@ -6,7 +6,7 @@ import { deriveD1ContributionCapacity, D1_CONTRIBUTION_LAW_2026, contributionCha
 import { contributionBucketIdentity, evaluateContributionBuckets, type ContributionBucketDecision } from "../rules/contribution.js";
 import { resolveContributionLimitBindings } from "../rules/resolver.js";
 import type { AnnualContributionLimitRule, RuleTarget } from "../rules/contracts.js";
-import { applyAccountingTransactionAtomically, cloneAuthoritativeState, type AuthoritativeState, type ContributionState } from "../state/index.js";
+import { applyAccountingTransactionAtomically, cloneAuthoritativeState, validateAuthoritativeState, type AuthoritativeState, type ContributionState } from "../state/index.js";
 import { instant, type Instant } from "../time/index.js";
 import { Money, Quantity, RoundingPolicy, decimal } from "../values/index.js";
 
@@ -36,7 +36,7 @@ export const decideContribution = (state: AuthoritativeState, policy: Contributi
     : policy.character.includes("401k") ? ["401k_additions", ...(["traditional_401k", "roth_401k"].includes(policy.character) ? ["401k_elective" as const] : [])]
       : ["hsa_individual", ...(policy.facts.hsaCoverage === "family" ? ["hsa_family" as const] : [])];
   if (needed.some(kind => !policy.limits.some(binding => binding.kind === kind))) return invalid("Required statutory contribution bucket is missing");
-  const catalog: AnnualContributionLimitRule[] = policy.limits.map(binding => {
+  const catalog: AnnualContributionLimitRule[] = policy.limits.filter(binding => binding.includedCharacters.includes(policy.character)).map(binding => {
     if (!binding.bucketKey.trim()) return invalid("Contribution scope key is required");
     if (binding.kind !== "401k_additions" && binding.bucketKey !== binding.kind) return invalid("Statutory participant/household scope keys cannot vary between accounts");
     if (binding.kind === "401k_additions" && (!binding.bucketKey.startsWith("401k_additions:") || !binding.bucketKey.slice("401k_additions:".length).trim() || binding.target.targetType !== "person" || binding.target.targetId !== policy.personId)) return invalid("Annual additions require an explicit participant and plan/sponsor aggregation key");
@@ -50,7 +50,8 @@ export const decideContribution = (state: AuthoritativeState, policy: Contributi
     if (Object.values(state.contributions ?? {}).some(entry => entry.buckets.some(prior => prior.identity === bucket && !prior.annualLimit.equals(capacity.capacity)))) return invalid("Conflicting annual facts for the same committed statutory bucket");
     return { id: domainId("tax-rule", binding.ruleId), kind: "annual_contribution_limit", target: binding.target, bucketKey: binding.bucketKey, includedCharacters: binding.includedCharacters,
       effectiveFrom: instant(`${policy.facts.taxYear}-01-01T00:00:00.000Z`), effectiveUntil: instant(`${policy.facts.taxYear + 1}-01-01T00:00:00.000Z`), calendarYear: policy.facts.taxYear, calendar: "utc", annualLimit: capacity.capacity,
-      capacityFacts: { lawVersion: D1_CONTRIBUTION_LAW_2026.version, kind: binding.kind } };
+      capacityFacts: { lawVersion: D1_CONTRIBUTION_LAW_2026.version, kind: binding.kind,
+        ...Object.fromEntries(Object.entries(policy.facts).filter(([, value]) => value !== undefined).map(([key, value]) => [key, typeof value === "boolean" ? value : String(value)])) } };
   });
   const resolved = resolveContributionLimitBindings(catalog, catalog.map(rule => rule.id), [
     { targetType: "account", targetId: domainId("account", accountId) }, { targetType: "person", targetId: domainId("person", policy.personId) }, { targetType: "household", targetId: domainId("household", policy.householdId) },
@@ -107,6 +108,7 @@ export const recordContribution = (state: AuthoritativeState, policy: Contributi
     buckets: Object.freeze(decision.buckets.map(bucket => Object.freeze({ identity: bucket.bucketIdentity, amount: bucket.consumedAmount ?? decision.accepted, annualLimit: bucket.annualLimit, ruleIds: Object.freeze([String(bucket.ruleId)]) }))) });
   const next = cloneAuthoritativeState(state);
   next.contributions = { ...state.contributions, [id]: entry };
+  validateAuthoritativeState(next);
   return next;
 };
 
@@ -135,7 +137,9 @@ export const employerContributionCandidate = (state: AuthoritativeState, input: 
     traceRefs: [calculationTraceRef(calculationTraceId(`contribution:${input.id}`), input.policy.limits.map(binding => domainId("tax-rule", binding.ruleId)))] });
   const candidate = cloneAuthoritativeState(state);
   applyAccountingTransactionAtomically(candidate, transaction);
-  return { state: recordContribution(candidate, input.policy, input.accountId, input.id, input.at, decision), transaction, decision };
+  const committed = recordContribution(candidate, input.policy, input.accountId, input.id, input.at, decision);
+  committed.contributions![input.id] = Object.freeze({ ...committed.contributions![input.id]!, employerBenefit: Object.freeze({ positionId: input.positionId, vestedAtContribution: owned, contingentAtContribution: contingent }) });
+  return { state: committed, transaction, decision };
 };
 
 /** Full supported vesting/forfeiture reclassifies then-current contingent value only. */
@@ -147,7 +151,8 @@ export const contingentReclassificationCandidate = (state: AuthoritativeState, p
   // Carrying value is rebased to current supported value without income or owned gain.
   candidate.contingentPositions![positionId] = { ...entry, carryingValue: value };
   const debit: AccountingLegDraft = kind === "vest" ? { type: "asset", posting: "debit", amount: value, entityId: positionId, quantity: entry.quantity } : { type: "equity", posting: "debit", amount: value };
-  const transaction = createAccountingTransaction({ id: accountingTransactionId(id), date: at, type: kind === "vest" ? "workplace_vesting" : "workplace_forfeiture", legs: [debit, { type: "contingent", posting: "credit", amount: value, entityId: positionId, quantity: entry.quantity }].map(createAccountingLeg) });
+  const legs: AccountingLegDraft[] = [debit, { type: "contingent", posting: "credit", amount: value, entityId: positionId, quantity: entry.quantity }];
+  const transaction = createAccountingTransaction({ id: accountingTransactionId(id), date: at, type: kind === "vest" ? "workplace_vesting" : "workplace_forfeiture", legs: legs.map(createAccountingLeg) });
   applyAccountingTransactionAtomically(candidate, transaction);
   return { state: candidate, transaction, value };
 };

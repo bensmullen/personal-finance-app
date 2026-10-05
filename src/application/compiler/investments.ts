@@ -6,6 +6,7 @@ import {
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { normalizeContributionLimitRuleIds } from "./contributionBindings.js";
 import { durablePersonalPurchaseInstructions, personalPurchaseInstructionId } from "./personalPurchases.js";
+import { supportsD1SpouseHsaScope } from "./payrollAuthoring.js";
 import type { ContributionPolicy } from "../../simulation/contributions.js";
 import {
   createPrimitiveRuntimeStateStore,
@@ -147,6 +148,7 @@ const EXECUTABLE_ACCOUNT_KINDS: Readonly<Record<string, AccountKind>> =
     sep_ira: "retirement",
     simple_ira: "retirement",
     hsa_investment: "other",
+    hsa: "other",
     "529": "other",
   });
 const FUNDING_TYPES = new Set(["checking", "savings", "cash"]);
@@ -1075,7 +1077,7 @@ export const compileInvestments = (
   for (const [id, investment] of investments) {
     const account = accounts.get(String(investment.account_id).toLowerCase())!;
     const accountOwner = String(account.owner_id).toLowerCase();
-    if (accountOwner === ownerId) inScopeInvestmentIds.add(id);
+    if (accountOwner === ownerId || household.value.memberIds.includes(accountOwner) && ["hsa", "hsa_investment"].includes(String(account.account_type)) && supportsD1SpouseHsaScope(model, household.value.memberIds)) inScopeInvestmentIds.add(id);
     else if (accountOwner === household.value.householdId)
       return unsupportedResult(
         "HOUSEHOLD_OWNED_INVESTMENT_ACCOUNT_UNSUPPORTED",
@@ -1093,7 +1095,7 @@ export const compileInvestments = (
   const accountStates: AuthoritativeState["accounts"] = {};
   for (const id of [...referencedAccountIds].sort()) {
     const account = accounts.get(id)!;
-    if (String(account.owner_id).toLowerCase() !== ownerId)
+    if (String(account.owner_id).toLowerCase() !== ownerId && !(household.value.memberIds.includes(String(account.owner_id).toLowerCase()) && ["hsa", "hsa_investment"].includes(String(account.account_type)) && supportsD1SpouseHsaScope(model, household.value.memberIds)))
       return unsupportedResult(
         "INVESTMENT_ACCOUNT_OWNER_UNSUPPORTED",
         `Participating Account ${id} must be owned by executionOwnerId.`,
@@ -1155,7 +1157,7 @@ export const compileInvestments = (
       );
     accountStates[id] = {
       id: domainId("account", id),
-      ownerId: domainId("person", ownerId),
+      ownerId: domainId("person", String(account.owner_id).toLowerCase()),
       kind,
       cash: exactMoney(account.opening_balance, currency)!,
     };

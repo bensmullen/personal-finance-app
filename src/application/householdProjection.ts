@@ -1,4 +1,5 @@
 import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../diagnostics/index.js";
+import { contributionCapacityReadModel } from "./compiler/contributionReadModel.js";
 import type {
   LiquidityShortfall,
   AllOrNothingLiquidityShortfall,
@@ -249,6 +250,8 @@ export type PersonalHouseholdForecastReadModel =
       readonly scope: "household";
       readonly status: "completed" | "incomplete";
       readonly points: readonly HouseholdForecastPoint[];
+      readonly contributionCapacities: ReturnType<typeof contributionCapacityReadModel>;
+      readonly contingentPositions: readonly { readonly positionId: string; readonly accountId: string; readonly value: HouseholdMoneyReadModel }[];
       readonly openingSnapshot: HouseholdOpeningSnapshot;
       readonly actualHistoryAvailable: false;
       readonly retirementMilestones: readonly {
@@ -699,6 +702,8 @@ const toReadModel = (
       }),
     ),
     points: Object.freeze(points),
+    contributionCapacities: contributionCapacityReadModel(model, result.state),
+    contingentPositions: Object.freeze(Object.values(result.state.contingentPositions ?? {}).map(entry => ({ positionId: String(entry.positionId), accountId: String(result.state.positions[entry.positionId]!.accountId), value: moneyDto(result.state.positions[entry.positionId]!.price.times(entry.quantity.amount)) }))),
     liquidityShortfalls: Object.freeze(
       points.flatMap((point) => point.liquidityShortfalls),
     ),

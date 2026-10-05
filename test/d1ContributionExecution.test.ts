@@ -80,7 +80,7 @@ describe("D1 employer benefit and contingent ownership", () => {
     const rules = authoredContributionRules(ids.person, ["401k_additions"], 2026, { planKey: "example-sponsor" });
     const model = createGoldenHouseholdDraft();
     const account = model.objects.Account!.filter(object).find(item => item.account_id === accountId)!;
-    return compileContributionPolicy({ ...model, objects: { ...model.objects, TaxRule: rules } }, { ...account, contribution_limit_rule_ids: rules.map(rule => rule.tax_rule_id) }, { character: "employer_401k", personId: ids.person, householdId: ids.household, excessPolicy: "reject", facts: { taxYear: 2026, eligiblePlanCompensation: "100000" } });
+    return compileContributionPolicy({ ...model, objects: { ...model.objects, TaxRule: rules } }, { ...account, contribution_limit_rule_ids: rules.map(rule => String(rule.tax_rule_id)) }, { character: "employer_401k", personId: ids.person, householdId: ids.household, excessPolicy: "reject", facts: { taxYear: 2026, eligiblePlanCompensation: "100000" } });
   };
   it("recognizes the full benefit, values contingent units, then vests without repeat recognition or usage", () => {
     const original = opening();

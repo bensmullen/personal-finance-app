@@ -4,6 +4,8 @@ import { UUID, EXACT_DECIMAL, canonicalId, objects, utcDate, preflightCanonicalC
 import { money, Currency } from "../../values/index.js";
 import { authoredContributionRules, compileContributionPolicy, parseContributionFacts, type AuthoredContributionFacts } from "./contributionAuthoring.js";
 import { canonicalSerialize } from "../../simulation/run.js";
+import { normalizeContributionLimitRuleIds } from "./contributionBindings.js";
+import { PAYROLL_ADAPTER, durablePayrollAllocations } from "./payrollAuthoring.js";
 
 const record = (value: JsonValue | undefined): value is Readonly<Record<string, JsonValue>> => typeof value === "object" && value !== null && !Array.isArray(value);
 const VERSION = "d1-personal-purchase/v1";
@@ -17,6 +19,7 @@ export const personalPurchaseInstructionId = (id: string): string => {
 export const durablePersonalPurchaseInstructions = (model: PortableModelEnvelope): readonly InvestmentPurchaseExecutionInstruction[] => Object.freeze(objects(model, "Investment").flatMap(investment => {
   if (investment.contribution_model_id == null) return [];
   const primitive = objects(model, "PrimitiveInstance").find(item => canonicalId(item, "primitive_instance_id") === String(investment.contribution_model_id).toLowerCase());
+  if (primitive && record(primitive.parameters) && primitive.parameters.adapter === PAYROLL_ADAPTER) { durablePayrollAllocations(model); return []; }
   if (!primitive || primitive.primitive_id !== "P03" || primitive.enabled !== true || !record(primitive.parameters) || primitive.parameters.adapter !== VERSION || !record(primitive.input_bindings)) throw new Error("INVESTMENT_CONTRIBUTION_MODEL_UNSUPPORTED");
   if (primitive.start_date != null || primitive.end_date != null) throw new Error("PERSONAL_PURCHASE_PRIMITIVE_DATES_UNSUPPORTED");
   if (Object.keys(primitive.parameters).some(key => !["adapter", "order", "schedule", "contribution"].includes(key)) || Object.keys(primitive.input_bindings).some(key => !["source_cash_account_id", "amount"].includes(key))) throw new Error("PERSONAL_PURCHASE_POLICY_FIELDS_UNSUPPORTED");
@@ -96,7 +99,7 @@ export const authorPersonalPurchasePlan = (model: PortableModelEnvelope, plan: P
   const next: PortableModelEnvelope = { ...model, objects: { ...model.objects,
     Investment: objects(model, "Investment").map(item => item === investment ? { ...item, contribution_model_id: plan.primitiveId.toLowerCase() } : item),
     PrimitiveInstance: [...objects(model, "PrimitiveInstance").filter(item => canonicalId(item, "primitive_instance_id") !== plan.primitiveId.toLowerCase()), primitive],
-    ...(contribution === undefined ? {} : { Account: objects(model, "Account").map(item => item === account ? { ...item, contribution_limit_rule_id: null, contribution_limit_rule_ids: [...new Set([...((Array.isArray(item.contribution_limit_rule_ids) ? item.contribution_limit_rule_ids : [])), ...rules.map(rule => rule.tax_rule_id)])] } : item),
+    ...(contribution === undefined ? {} : { Account: objects(model, "Account").map(item => item === account ? { ...item, contribution_limit_rule_id: null, contribution_limit_rule_ids: [...new Set([...normalizeContributionLimitRuleIds(item), ...rules.map(rule => rule.tax_rule_id)])] } : item),
       TaxRule: [...objects(model, "TaxRule").filter(item => !rules.some(rule => rule.tax_rule_id === item.tax_rule_id)), ...rules] }),
   } };
   durablePersonalPurchaseInstructions(next);

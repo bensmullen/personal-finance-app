@@ -6,6 +6,7 @@ import {
 } from "../../lineage/index.js";
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { deriveCanonicalRetirementBindings } from "./retirementAuthoring.js";
+import { durablePayrollAllocations, payrollOpeningBalances, supportsD1SpouseHsaScope } from "./payrollAuthoring.js";
 import {
   createAuthoritativeState,
   type AuthoritativeState,
@@ -1218,7 +1219,9 @@ export const compileCashFlow = (
     );
     retirementEventIds.add(eventId);
   }
-  if (scope.memberIds.length !== 1)
+  let spouseHsaScope = false;
+  try { spouseHsaScope = supportsD1SpouseHsaScope(model, scope.memberIds); } catch (error) { return unsupportedResult("PAYROLL_CONTRIBUTION_UNSUPPORTED", error instanceof Error ? error.message : "Unsupported payroll policy", "Investment"); }
+  if (scope.memberIds.length !== 1 && !spouseHsaScope)
     return unsupportedResult(
       "CASH_FLOW_OWNER_AMBIGUOUS",
       `VS2 cash-flow compilation requires exactly one Household member Person; found ${scope.memberIds.length}.`,
@@ -1698,6 +1701,10 @@ export const compileCashFlow = (
   });
 
   const compiledIncomes: VerticalSlice2Input["incomes"][number][] = [];
+  let payroll: ReturnType<typeof durablePayrollAllocations>;
+  let payrollBalances: ReturnType<typeof payrollOpeningBalances>;
+  try { payroll = durablePayrollAllocations(model); payrollBalances = payrollOpeningBalances(model, payroll); }
+  catch (error) { return unsupportedResult("PAYROLL_CONTRIBUTION_UNSUPPORTED", error instanceof Error ? error.message : "Unsupported payroll policy", "Investment"); }
   for (const stream of [...incomes].sort((a, b) =>
     String(a.income_id).localeCompare(String(b.income_id)),
   )) {
@@ -1720,6 +1727,7 @@ export const compileCashFlow = (
           String(stream.owner_id),
         ),
         depositAccountId: domainId("account", accountId),
+        payrollContributions: payroll.filter(item => item.incomeId === id).map(item => item.allocation),
         baseMonthlyAmount: money(String(stream.amount), currency),
         start,
         ...(end === undefined ? {} : { end }),
@@ -1910,7 +1918,7 @@ export const compileCashFlow = (
       expenses: Object.freeze(compiledExpenses),
     });
     const openingState = createAuthoritativeState({
-      accounts: Object.fromEntries(
+      accounts: { ...payrollBalances.accounts, ...Object.fromEntries(
         eligibleAccounts.map((candidate) => {
           const candidateId = domainId(
             "account",
@@ -1933,7 +1941,8 @@ export const compileCashFlow = (
             },
           ];
         }),
-      ),
+      ) },
+      positions: payrollBalances.positions,
       liabilities: {
         [payableId]: { id: payableId, balance: money("0", currency) },
       },

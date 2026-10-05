@@ -1,4 +1,5 @@
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
+import { supportsD1SpouseHsaScope } from "./payrollAuthoring.js";
 import { createPerformanceSession, type PerformanceObserver, type PerformanceSession } from "../../diagnostics/performance.js";
 import { canonicalSerialize } from "../../simulation/run.js";
 import { compileHouseholdKernel, type CompiledHouseholdKernel } from "../../simulation/r3/compiledHousehold.js";
@@ -135,7 +136,9 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
     const owner = resolveOwnerScope(model, item.owner_id, scope.value, type, id);
     if (owner.status !== "compiled") return owner;
   }
-  if (scope.value.memberIds.length !== 1) return unsupported([capability("HOUSEHOLD_MULTI_MEMBER_UNSUPPORTED", "The existing VS2/VS3/VS4 execution-owner contracts cannot represent every member of this Household.", "household_projection", "Household", scope.value.householdId, "members")]);
+  let spouseHsaScope = false;
+  try { spouseHsaScope = supportsD1SpouseHsaScope(model, scope.value.memberIds); } catch (error) { return unsupported([capability("PAYROLL_CONTRIBUTION_UNSUPPORTED", error instanceof Error ? error.message : "Unsupported payroll policy", "household_projection")]); }
+  if (scope.value.memberIds.length !== 1 && !spouseHsaScope) return unsupported([capability("HOUSEHOLD_MULTI_MEMBER_UNSUPPORTED", "Multiple members require the supported explicit spouse-family HSA allocation contract.", "household_projection", "Household", scope.value.householdId, "members")]);
   const firstBoundary = request.investments ?? request.liabilities ?? request.cashFlow;
   if (firstBoundary === undefined) return invalid("HOUSEHOLD_PROJECTION_EMPTY", "A household projection requires at least one execution boundary.");
   const inScope = (type: "Income" | "Expense" | "Investment" | "Liability") => objects(model, type).some((item) => { const id = canonicalId(item, `${type.toLowerCase()}_id`); return id !== undefined && activeOwner(model, item, scope.value, type, id); });

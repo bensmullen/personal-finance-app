@@ -35,10 +35,27 @@ export const parseContributionFacts = (value: JsonValue | undefined): D1Contribu
   if (status !== undefined && !["single", "married_joint", "married_separate", "head_of_household", "qualifying_surviving_spouse"].includes(String(status))) return fail("CONTRIBUTION_FILING_STATUS_INVALID");
   const coverage = value.hsaCoverage;
   if (coverage !== undefined && coverage !== "self" && coverage !== "family") return fail("HSA_COVERAGE_INVALID");
-  return { taxYear: integer(value.taxYear)!, ageAtYearEnd: integer(value.ageAtYearEnd), taxableCompensation: amount(value.taxableCompensation), eligiblePlanCompensation: amount(value.eligiblePlanCompensation),
-    filingStatus: status === "single" || status === "married_joint" || status === "married_separate" || status === "head_of_household" || status === "qualifying_surviving_spouse" ? status : undefined,
+  const filingStatus: FilingStatus | undefined = status === "single" || status === "married_joint" || status === "married_separate" || status === "head_of_household" || status === "qualifying_surviving_spouse" ? status : undefined;
+  const facts = { taxYear: integer(value.taxYear)!, ageAtYearEnd: integer(value.ageAtYearEnd), taxableCompensation: amount(value.taxableCompensation), eligiblePlanCompensation: amount(value.eligiblePlanCompensation),
+    filingStatus,
     rothMagi: amount(value.rothMagi), deductionMagi: amount(value.deductionMagi), livesWithSpouse: bool(value.livesWithSpouse), workplacePlanCovered: bool(value.workplacePlanCovered), spouseWorkplacePlanCovered: bool(value.spouseWorkplacePlanCovered),
     priorYearSponsorWages: amount(value.priorYearSponsorWages), planHasRoth: bool(value.planHasRoth), hsaFullYearEligible: bool(value.hsaFullYearEligible), hsaCoverage: coverage, hsaFamilyAllocation: amount(value.hsaFamilyAllocation) };
+  return { taxYear: facts.taxYear,
+    ...(facts.ageAtYearEnd === undefined ? {} : { ageAtYearEnd: facts.ageAtYearEnd }),
+    ...(facts.taxableCompensation === undefined ? {} : { taxableCompensation: facts.taxableCompensation }),
+    ...(facts.eligiblePlanCompensation === undefined ? {} : { eligiblePlanCompensation: facts.eligiblePlanCompensation }),
+    ...(facts.filingStatus === undefined ? {} : { filingStatus: facts.filingStatus }),
+    ...(facts.rothMagi === undefined ? {} : { rothMagi: facts.rothMagi }),
+    ...(facts.deductionMagi === undefined ? {} : { deductionMagi: facts.deductionMagi }),
+    ...(facts.livesWithSpouse === undefined ? {} : { livesWithSpouse: facts.livesWithSpouse }),
+    ...(facts.workplacePlanCovered === undefined ? {} : { workplacePlanCovered: facts.workplacePlanCovered }),
+    ...(facts.spouseWorkplacePlanCovered === undefined ? {} : { spouseWorkplacePlanCovered: facts.spouseWorkplacePlanCovered }),
+    ...(facts.priorYearSponsorWages === undefined ? {} : { priorYearSponsorWages: facts.priorYearSponsorWages }),
+    ...(facts.planHasRoth === undefined ? {} : { planHasRoth: facts.planHasRoth }),
+    ...(facts.hsaFullYearEligible === undefined ? {} : { hsaFullYearEligible: facts.hsaFullYearEligible }),
+    ...(facts.hsaCoverage === undefined ? {} : { hsaCoverage: facts.hsaCoverage }),
+    ...(facts.hsaFamilyAllocation === undefined ? {} : { hsaFamilyAllocation: facts.hsaFamilyAllocation }),
+  };
 };
 export const stableContributionRuleId = (personId: string, kind: string, year: number): string => {
   let hash = 14695981039346656037n;

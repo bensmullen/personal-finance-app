@@ -29,6 +29,9 @@ export const evaluateContributionBuckets = (
 ): ContributionBucketDecision => {
   if (policy !== "reject" && policy !== "auto_cap") throw new Error("CONTRIBUTION_POLICY_INVALID");
   if (!resolved.length) throw new Error("CONTRIBUTION_LIMIT_BINDING_REQUIRED");
+  for (const qualification of Object.values(qualifications)) {
+    if (!qualification.maximumAccepted.currency.equals(requested.currency) || !qualification.qualifyingCeiling.currency.equals(requested.currency) || qualification.qualifyingCeiling.isNegative()) throw new Error("CONTRIBUTION_QUALIFICATION_INVALID");
+  }
   if (new Set(resolved.map(binding => binding.resolvedAt)).size !== 1) throw new Error("CONTRIBUTION_LIMIT_INSTANT_MISMATCH");
   const identities = new Set<string>();
   const applications = [...resolved].sort((a, b) => String(a.rule.id).localeCompare(String(b.rule.id))).map(binding => {

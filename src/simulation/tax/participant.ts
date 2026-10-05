@@ -135,7 +135,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
         finalSettlement !== undefined && other.settlement !== undefined && (other.settlement.priority ?? 0) < (finalSettlement.priority ?? 0)
       )).map(other => other.id);
       return { descriptor: { id, domain: "tax", operationClass: instruction === undefined ? "tax:close" : "tax:payment", sequencingInstant: at,
-        dependsOn: [...work.filter(item => item.sequencingInstant <= at && item.operationClass === "cash_income_settlement").map(item => item.id), ...sameInstantBefore],
+        dependsOn: [...work.filter(item => item.sequencingInstant <= at && (item.operationClass === "cash_income_settlement" || item.operationClass === "investment_purchase")).map(item => item.id), ...sameInstantBefore],
         resourceAccesses: instruction === undefined && finalSettlement === undefined ? [] : [
           ...(input.fundingPolicy?.orderedSources ?? []).map(source => ({ kind: "account_cash" as const, accountId: source.accountId, mode: "consume" as const })),
           ...(finalSettlement === undefined || input.refundAccountId === undefined ? [] : [{ kind: "account_cash" as const, accountId: input.refundAccountId, mode: "produce" as const }]),
@@ -144,9 +144,11 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           const state = opening.state;
           const runtime = opening.runtime ?? {};
           const year = finalSettlement?.taxYear ?? at.slice(0, 4), prior = yearRuntime(taxRuntime(runtime), year);
-          const material = prior.economics.some(economic => Object.values(economic.income).some(amount => !amount.isZero())) || prior.diagnostics.size > 0 || instruction !== undefined || finalSettlement !== undefined;
+          const contributions = Object.values(state.contributions ?? {}).filter(entry => entry.at.slice(0, 4) === year && entry.at <= at);
+          const material = contributions.length > 0 || prior.economics.some(economic => Object.values(economic.income).some(amount => !amount.isZero())) || prior.diagnostics.size > 0 || instruction !== undefined || finalSettlement !== undefined;
           if (!material) return { ...opening, facts: { outputCapabilities: taxOutputCapabilities([]) } };
           const diagnostics: TaxCapabilityDiagnostic[] = [...input.diagnostics, ...prior.diagnostics];
+          for (const entry of contributions) if (entry.character === "traditional_ira" && entry.eligibleDeduction === undefined) diagnostics.push(taxDiagnostic("ira_deduction_eligibility", "Traditional IRA deductibility requires explicit MAGI and workplace/spouse coverage facts.", "US:FEDERAL", entry.id));
           if (context.baseCurrency.code !== "USD") diagnostics.push(taxDiagnostic("currency", "The T1A law catalog requires USD bases and payments."));
           if (input.simulationStart !== undefined && input.simulationStart.slice(0, 4) === year && !input.simulationStart.startsWith(`${year}-01-01T00:00:00.000Z`)) diagnostics.push(taxDiagnostic("opening_tax_year", "A partial-year opening lacks prior recognized economics and payment credits."));
           const transactions: AccountingTransaction[] = [];
@@ -205,16 +207,34 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
               if (!group.local && seenAnnual.has(group.jurisdiction)) { diagnostics.push(taxDiagnostic("annual_rule_transition", "Multiple annual law versions require explicit year-transition semantics.", group.jurisdiction)); continue; }
               seenAnnual.add(group.jurisdiction);
               const incomes = group.entries.map(entry => Object.freeze(Object.fromEntries(Object.entries(entry.income).map(([key, value]) => [key, value.times(decimal(entry.allocation))]))) as unknown as TaxIncomeFacts);
-              const income = sumIncome(incomes);
+              let income = sumIncome(incomes);
+              if (group.jurisdiction === "US:FEDERAL") {
+                const people = new Set(group.entries.map(entry => sources.get(entry.sourceId)?.ownerId));
+                const applicable = contributions.filter(entry => people.has(entry.personId));
+                const hsa = applicable.filter(entry => entry.character === "employee_hsa").reduce((sum, entry) => sum.plus(entry.amount), zero());
+                if (hsa.compare(income.wages) > 0) throw new ValidationError({ severity: "error", code: "PAYROLL_HSA_WAGE_BASE_INVALID", message: "Employee HSA exclusions exceed recognized wages.", entityType: "tax_execution" });
+                income = Object.freeze({ ...income, wages: income.wages.minus(hsa),
+                  traditionalContributions: applicable.filter(entry => entry.character === "traditional_ira" || entry.character === "traditional_401k").reduce((sum, entry) => sum.plus(entry.amount), income.traditionalContributions),
+                  eligibleTraditionalDeduction: applicable.filter(entry => entry.character === "traditional_ira" || entry.character === "traditional_401k").reduce((sum, entry) => sum.plus(entry.character === "traditional_401k" ? entry.amount : entry.eligibleDeduction ?? zero()), income.eligibleTraditionalDeduction),
+                  rothContributions: applicable.filter(entry => entry.character === "roth_ira" || entry.character === "roth_401k").reduce((sum, entry) => sum.plus(entry.amount), income.rothContributions),
+                });
+              } else if (contributions.some(entry => entry.character === "traditional_401k" || entry.character.endsWith("_hsa") || entry.character === "traditional_ira" && entry.eligibleDeduction?.isPositive())) {
+                diagnostics.push(taxDiagnostic("contribution_jurisdiction_base", "This jurisdiction lacks an authoritative contribution-to-legal-base binding.", group.jurisdiction));
+              }
               for (let index = 0; index < group.entries.length; index++) recognizeTaxLegalBases(resolved.rule, incomes[index]!, group.entries[index]!.facts);
               const legalBases = recognizeTaxLegalBases(resolved.rule, income, group.facts);
               const wages = new Map<string, Money>();
               group.entries.forEach((entry, index) => { const employee = sources.get(entry.sourceId)?.ownerId ?? entry.sourceId; wages.set(employee, (wages.get(employee) ?? zero()).plus(incomes[index]!.wages)); });
+              if (group.jurisdiction === "US:FEDERAL") for (const [employee, wagesBefore] of wages) {
+                const hsa = contributions.filter(entry => entry.personId === employee && entry.character === "employee_hsa").reduce((sum, entry) => sum.plus(entry.amount), zero());
+                if (hsa.compare(wagesBefore) > 0) throw new ValidationError({ severity: "error", code: "PAYROLL_HSA_EMPLOYEE_BASE_INVALID", message: "Employee HSA exclusions exceed this employee's wages.", entityType: "tax_execution" });
+                wages.set(employee, wagesBefore.minus(hsa));
+              }
               const gross = income.wages.plus(income.taxableInterest).plus(income.ordinaryDividends).plus(income.qualifiedDividends).plus(income.shortTermGains).plus(income.longTermGains);
               const nii = income.taxableInterest.plus(income.ordinaryDividends).plus(income.qualifiedDividends).plus(income.shortTermGains).plus(income.longTermGains);
               const application = applyTaxCoreRule(resolved, { income, ...legalBases, withholding: zero(), estimatedPayments: zero(), priorPaymentCredit: zero(),
                 ...(resolved.rule.payroll === undefined ? {} : { employeeWages: [...wages].map(([employeeKey, amount]) => ({ employeeKey, wages: amount })) }),
-                ...(resolved.rule.niit === undefined ? {} : { modifiedAdjustedGrossIncome: gross, netInvestmentIncome: nii.isNegative() ? zero() : nii }),
+                ...(resolved.rule.niit === undefined ? {} : { modifiedAdjustedGrossIncome: gross.compare(income.eligibleTraditionalDeduction) < 0 ? zero() : gross.minus(income.eligibleTraditionalDeduction), netInvestmentIncome: nii.isNegative() ? zero() : nii }),
                 ...(resolved.rule.periodicEmployeeTax === undefined ? {} : { periodicWages: { unit: resolved.rule.periodicEmployeeTax.unit, wages: income.wages } }) });
               totals.set(group.jurisdiction, (totals.get(group.jurisdiction) ?? zero()).plus(application.result.totalLiability));
               appliedTraces.set(group.jurisdiction, mergeTraceRefs(appliedTraces.get(group.jurisdiction), application.traceRefs, group.entries.flatMap(entry => entry.traceRefs)) ?? []);
@@ -226,7 +246,6 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           }
           const account = input.refundAccountId ?? input.fundingPolicy?.orderedSources[0]?.accountId;
           if (!account || !input.fundingPolicy) diagnostics.push(taxDiagnostic("payment_funding", "Explicit tax funding and refund account are required."));
-          for (const [jurisdiction, total] of totals) if (total.compare(prior.liabilities[jurisdiction] ?? zero()) < 0) diagnostics.push(taxDiagnostic("liability_reversal", "A decreasing recognized tax liability requires expense-reversal statement semantics unavailable at this integration boundary.", jurisdiction));
           const uniqueDiagnostics = [...new Map(diagnostics.map(value => [canonicalSerialize(value), value])).values()];
           for (const jurisdiction of totals.keys()) if (!(input.settlements ?? []).some(item => item.taxYear === year && item.jurisdiction === jurisdiction)) uniqueDiagnostics.push(taxDiagnostic("settlement_timing", "An explicit tax-year final settlement/refund date is required; no filing/payment date is inferred.", jurisdiction));
           // Partial supported liabilities are never presented as the full tax amount.
@@ -249,6 +268,16 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
             const recognition = createRecognitionFact({ id: recognitionId(`${id}:${jurisdiction}:liability`), category: "tax_liability", amount: delta, recognizedAt: at, provenance, traceRefs: refs }, state.identities.recognitionIds);
             registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
             post(`${jurisdiction}:recognition`, "tax_liability", [{ type: "tax", posting: "debit", amount: delta }, { type: "liability", posting: "credit", amount: delta, entityId: liabilityId }], refs);
+          } else if (delta.isNegative()) {
+            const reversal = zero().minus(delta);
+            const payable = state.liabilities[liabilityId]!.balance;
+            const released = reversal.compare(payable) < 0 ? reversal : payable;
+            const prepaid = reversal.minus(released);
+            post(`${jurisdiction}:reversal`, "tax_liability_reversal", [
+              ...(released.isPositive() ? [{ type: "liability" as const, posting: "debit" as const, amount: released, entityId: liabilityId }] : []),
+              ...(prepaid.isPositive() ? [{ type: "asset" as const, posting: "debit" as const, amount: prepaid, entityId: creditPositionId }] : []),
+              { type: "tax", posting: "credit", amount: reversal },
+            ], refs);
           }
           // Previously paid credits reduce newly accrued liabilities without another cash payment.
           const creditBalance = state.positions[creditPositionId]!.carryingValue, payable = state.liabilities[liabilityId]!.balance;
@@ -281,7 +310,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
             const refund = state.positions[creditPositionId]!.carryingValue;
             if (refund.isPositive()) post(`${jurisdiction}:refund`, "tax_refund", [{ type: "cash", posting: "debit", amount: refund, accountId: account!, cashFlowClass: "operating" }, { type: "asset", posting: "credit", amount: refund, entityId: creditPositionId }], mergeTraceRefs(refs, nextPaymentRefs[jurisdiction]) ?? []);
           }
-          nextLiabilities[jurisdiction] = delta.isNegative() && uniqueDiagnostics.length ? priorLiability : total;
+          nextLiabilities[jurisdiction] = total;
           }
           sink.traces(ruleTraces);
           return { state, primitiveState: opening.primitiveState, runtime: withYear(runtime, year, { ...prior, liabilities: nextLiabilities, paymentTraceRefs: nextPaymentRefs, diagnostics: uniqueDiagnostics }), facts: { ...(tier === "summary" ? { summary: { evidence: sink.snapshot() } } : { transactions, traceRefs: mergeTraceRefs(ruleTraces, ...transactions.map(transaction => transaction.traceRefs)) ?? [] }), instrumentation: { taxRecognizedEconomicsVisited: prior.economics.size, taxRuleGroupsEvaluated: groups.size, taxJurisdictionsCalculated: totals.size }, diagnostics: uniqueDiagnostics, constraintOutcomes: outcomes, liquidityShortfalls: shortfalls, outputCapabilities: taxOutputCapabilities(uniqueDiagnostics) } };

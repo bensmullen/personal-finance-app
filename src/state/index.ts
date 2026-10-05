@@ -252,6 +252,7 @@ export interface ContributionState {
   readonly buckets: readonly { readonly identity: string; readonly amount: Money; readonly annualLimit: Money; readonly ruleIds: readonly string[] }[];
   readonly eligibleDeduction?: Money;
   readonly incomeId?: string;
+  readonly employerBenefit?: { readonly positionId: PositionId; readonly vestedAtContribution: Money; readonly contingentAtContribution: Money };
 }
 export interface ContingentPositionState {
   readonly positionId: PositionId;
@@ -583,11 +584,13 @@ const stateTargetMissing = (transaction: AccountingTransaction, targetType: stri
 
 export const validateAuthoritativeState = (state: AuthoritativeState, transactionId?: string): void => {
   for (const [id, entry] of Object.entries(state.contributions ?? {})) {
-    if (id !== entry.id || entry.amount.isNegative() || state.accounts[entry.accountId] === undefined || entry.buckets.some(bucket => bucket.amount.isNegative() || bucket.amount.compare(entry.amount) > 0))
+    const account = state.accounts[entry.accountId];
+    if (id !== entry.id || entry.amount.isNegative() || account === undefined || !entry.amount.currency.equals(account.cash.currency) || entry.buckets.some(bucket => bucket.amount.isNegative() || !bucket.amount.currency.equals(entry.amount.currency) || !bucket.annualLimit.currency.equals(entry.amount.currency) || bucket.annualLimit.isNegative() || bucket.amount.compare(entry.amount) > 0) || entry.eligibleDeduction !== undefined && (entry.eligibleDeduction.isNegative() || entry.eligibleDeduction.compare(entry.amount) > 0))
       failValidation({ severity: "error", code: issueCodes.ruleInputInvalid, message: "Invalid committed contribution ledger entry", entityType: "contribution", entityId: id });
   }
   for (const [id, entry] of Object.entries(state.contingentPositions ?? {})) {
-    if (id !== entry.positionId || !state.positions[id] || entry.quantity.amount.isNegative() || entry.carryingValue.isNegative())
+    const position = state.positions[id];
+    if (id !== entry.positionId || !position || !entry.quantity.unit.equals(position.quantity.unit) || !entry.carryingValue.currency.equals(position.price.currency) || entry.quantity.amount.isNegative() || entry.carryingValue.isNegative())
       failValidation({ severity: "error", code: issueCodes.negativePositionInvariant, message: "Invalid contingent workplace position", entityType: "position", entityId: id });
   }
   const entries = <T extends object>(record: Record<string, T>, full = false): readonly (readonly [string, T])[] => {
@@ -711,6 +714,12 @@ export const assertAuthoritativeStateCurrency = (state: AuthoritativeState, curr
     }
   };
   for (const [key, account] of Object.entries(state.accounts)) assertCurrency(account.cash, `accounts.${key}.cash`, "account", account.id);
+  for (const [key, entry] of Object.entries(state.contributions ?? {})) {
+    assertCurrency(entry.amount, `contributions.${key}.amount`, "contribution", key);
+    if (entry.eligibleDeduction) assertCurrency(entry.eligibleDeduction, `contributions.${key}.eligibleDeduction`, "contribution", key);
+    for (const bucket of entry.buckets) { assertCurrency(bucket.amount, `contributions.${key}.bucket.amount`, "contribution", key); assertCurrency(bucket.annualLimit, `contributions.${key}.bucket.annualLimit`, "contribution", key); }
+  }
+  for (const [key, entry] of Object.entries(state.contingentPositions ?? {})) assertCurrency(entry.carryingValue, `contingentPositions.${key}.carryingValue`, "position", key);
   for (const [key, liability] of Object.entries(state.liabilities)) assertCurrency(liability.balance, `liabilities.${key}.balance`, "liability", liability.id);
   for (const [key, position] of Object.entries(state.positions)) {
     assertCurrency(position.price, `positions.${key}.price`, "position", position.id);

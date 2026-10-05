@@ -36,6 +36,10 @@ import {
   getPersonalRetirementPlans,
   authorPersonalPurchasePlan,
   getPersonalPurchasePlans,
+  authorPayrollContributionPlan,
+  getPayrollContributionPlans,
+  getContributionCapacities,
+  type PayrollContributionPlan,
   createGuidedSetupDraft,
   createSyntheticPersonalDraft,
   deletePersistedPersonalModel,
@@ -2629,6 +2633,62 @@ function PersonalPurchaseAuthoring({ draft, setDraft }: { draft: PersonalDraft; 
   </section>;
 }
 
+function PayrollContributionAuthoring({ draft, setDraft }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void }) {
+  const accounts = objectEntries(draft, "Account").filter(item => ["traditional_401k", "roth_401k", "hsa", "hsa_investment"].includes(String(item.account_type)));
+  const destinations = objectEntries(draft, "Investment").filter(item => accounts.some(account => account.account_id === item.account_id));
+  const incomes = objectEntries(draft, "Income").filter(item => item.income_type === "salary" && item.gross_or_net !== "net");
+  const [investmentId, setInvestmentId] = useState(""); const [incomeId, setIncomeId] = useState("");
+  const [character, setCharacter] = useState<PayrollContributionPlan["character"]>("traditional_401k");
+  const [kind, setKind] = useState<"fixed" | "percent" | "match">("percent");
+  const [amount, setAmount] = useState(""); const [rate, setRate] = useState(""); const [capRate, setCapRate] = useState("");
+  const [priority, setPriority] = useState("10"); const [planKey, setPlanKey] = useState(""); const [vested, setVested] = useState("1");
+  const [fields, setFields] = useState<Record<string, string>>({ taxYear: "2026" });
+  const [excessPolicy, setExcessPolicy] = useState<"reject" | "auto_cap">("reject"); const [error, setError] = useState("");
+  const saved = useMemo(() => { try { return { plans: getPayrollContributionPlans(draft), error: "" }; } catch (failure) { return { plans: [], error: failure instanceof Error ? failure.message : "Unsupported saved payroll policy" }; } }, [draft]);
+  useEffect(() => {
+    const plan = saved.plans.find(item => item.allocation.positionId === investmentId); if (!plan) return;
+    const allocation = plan.allocation; setIncomeId(plan.incomeId); setCharacter(allocation.policy.character === "traditional_ira" || allocation.policy.character === "roth_ira" ? "traditional_401k" : allocation.policy.character);
+    setKind(allocation.calculation.kind); setAmount(allocation.calculation.kind === "fixed" ? allocation.calculation.amount.amount.toString() : ""); setRate(allocation.calculation.kind === "fixed" ? "" : allocation.calculation.rate); setCapRate(allocation.calculation.kind === "match" ? allocation.calculation.compensationCapRate : "");
+    setPriority(String(allocation.priority)); setPlanKey(allocation.policy.limits.find(item => item.kind === "401k_additions")?.bucketKey.slice("401k_additions:".length) ?? ""); setVested(allocation.vestedFraction); setExcessPolicy(allocation.policy.excessPolicy);
+    setFields(Object.fromEntries(Object.entries(allocation.policy.facts).map(([key, value]) => [key, typeof value === "object" ? value.amount.toString() : String(value)])));
+  }, [investmentId, saved]);
+  const input = (key: string, label: string) => <label key={key}>{label}<input value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })} /></label>;
+  const booleanInput = (key: string, label: string) => <label key={key}>{label}<select aria-label={label} value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })}><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>;
+  return <section className="panel" aria-label="Saved payroll contributions"><h2>Payroll and employer contributions</h2>
+    <p>Allocate gross salary directly to workplace holdings. Employee contributions reduce take-home cash. Employer benefits add plan value. Rates use fractions: 0.05 means 5%. Use distinct priorities, with employee allocations before employer benefits.</p>
+    <label>Payroll destination<select aria-label="Payroll destination" value={investmentId} onChange={event => setInvestmentId(event.target.value)}><option value="">Choose holding</option>{destinations.map(item => <option key={String(item.investment_id)} value={String(item.investment_id)}>{objectLabel("Investment", item)}</option>)}</select></label>
+    <label>Payroll salary<select aria-label="Payroll salary" value={incomeId} onChange={event => setIncomeId(event.target.value)}><option value="">Choose gross salary</option>{incomes.map(item => <option key={String(item.income_id)} value={String(item.income_id)}>{objectLabel("Income", item)}</option>)}</select></label>
+    <label>Payroll contribution character<select aria-label="Payroll contribution character" value={character} onChange={event => { const value = event.target.value; if (value === "traditional_401k" || value === "roth_401k" || value === "after_tax_401k" || value === "employee_hsa" || value === "employer_401k" || value === "employer_hsa") setCharacter(value); }}><option value="traditional_401k">Traditional 401(k)</option><option value="roth_401k">Roth 401(k)</option><option value="after_tax_401k">After-tax 401(k)</option><option value="employee_hsa">Employee HSA</option><option value="employer_401k">Employer 401(k)</option><option value="employer_hsa">Employer HSA</option></select></label>
+    <label>Payroll contribution method<select aria-label="Payroll contribution method" value={kind} onChange={event => setKind(event.target.value === "fixed" ? "fixed" : event.target.value === "match" ? "match" : "percent")}><option value="fixed">Fixed amount per payroll</option><option value="percent">Fraction of gross compensation</option><option value="match">Employer match of employee contribution</option></select></label>
+    {kind === "fixed" ? <label>Payroll contribution amount<input value={amount} onChange={event => setAmount(event.target.value)} /></label> : <label>Payroll contribution rate<input value={rate} onChange={event => setRate(event.target.value)} /></label>}
+    {kind === "match" && <label>Match compensation cap rate<input value={capRate} onChange={event => setCapRate(event.target.value)} /></label>}
+    <label>Payroll allocation priority<input type="number" value={priority} onChange={event => setPriority(event.target.value)} /></label>
+    {!character.endsWith("_hsa") && <label>Shared plan/sponsor key<input value={planKey} onChange={event => setPlanKey(event.target.value)} /></label>}
+    {character === "employer_401k" && <label>Currently vested fraction<input value={vested} onChange={event => setVested(event.target.value)} /></label>}
+    <fieldset><legend>Annual eligibility facts</legend>{input("taxYear", "Payroll contribution year")}{input("ageAtYearEnd", "Payroll age at year end")}
+      {character.endsWith("_hsa") ? <>{booleanInput("hsaFullYearEligible", "HSA eligible for the full year")}<label>HSA coverage<select aria-label="HSA coverage" value={fields.hsaCoverage ?? ""} onChange={event => setFields({ ...fields, hsaCoverage: event.target.value })}><option value="">Unknown</option><option value="self">Self only</option><option value="family">Family</option></select></label>{fields.hsaCoverage === "family" && input("hsaFamilyAllocation", "Individual ordinary family HSA allocation")}</> : <>{input("eligiblePlanCompensation", "Annual eligible plan compensation")}{booleanInput("planHasRoth", "Plan has a Roth feature")}{input("priorYearSponsorWages", "Prior-year wages with this sponsor")}</>}
+    </fieldset>
+    <label>Payroll excess policy<select aria-label="Payroll excess policy" value={excessPolicy} onChange={event => setExcessPolicy(event.target.value === "auto_cap" ? "auto_cap" : "reject")}><option value="reject">Reject excess</option><option value="auto_cap">Explicitly cap to available capacity</option></select></label>
+    <button type="button" disabled={!investmentId || !incomeId} onClick={() => {
+      try { const investment = destinations.find(item => item.investment_id === investmentId)!;
+        setDraft(authorPayrollContributionPlan(draft, { primitiveId: typeof investment.contribution_model_id === "string" ? investment.contribution_model_id : randomId(), investmentId, incomeId, priority: Number(priority), character, calculation: kind === "fixed" ? { kind, amount } : kind === "percent" ? { kind, rate } : { kind, rate, compensationCapRate: capRate }, planKey, vestedFraction: character === "employer_401k" ? vested : "1", excessPolicy,
+          facts: { taxYear: Number(fields.taxYear), ...(fields.ageAtYearEnd ? { ageAtYearEnd: Number(fields.ageAtYearEnd) } : {}), ...(fields.eligiblePlanCompensation ? { eligiblePlanCompensation: fields.eligiblePlanCompensation } : {}), ...(fields.priorYearSponsorWages ? { priorYearSponsorWages: fields.priorYearSponsorWages } : {}), ...(fields.planHasRoth ? { planHasRoth: fields.planHasRoth === "true" } : {}), ...(fields.hsaFullYearEligible ? { hsaFullYearEligible: fields.hsaFullYearEligible === "true" } : {}), ...(fields.hsaCoverage === "self" || fields.hsaCoverage === "family" ? { hsaCoverage: fields.hsaCoverage } : {}), ...(fields.hsaFamilyAllocation ? { hsaFamilyAllocation: fields.hsaFamilyAllocation } : {}) } })); setError("");
+      } catch (failure) { setError(failure instanceof Error ? failure.message : "Payroll plan could not be saved"); }
+    }}>Save payroll contribution</button>
+    {(error || saved.error) && <p role="alert">{error || saved.error}</p>}
+    {saved.plans.map(item => <p key={item.allocation.id}>Saved payroll: {item.allocation.policy.character.replaceAll("_", " ")} to {objectLabel("Investment", destinations.find(destination => destination.investment_id === item.allocation.positionId) ?? {})}.</p>)}
+  </section>;
+}
+
+function ContributionCapacityPanel({ draft, forecast }: { draft: PersonalDraft; forecast: PersonalHouseholdForecastReadModel | undefined }) {
+  let rows: ReturnType<typeof getContributionCapacities>;
+  try { rows = forecast && forecast.status !== "unavailable" ? forecast.contributionCapacities : getContributionCapacities(draft); } catch (failure) { return <p role="alert">{failure instanceof Error ? failure.message : "Contribution capacity is unavailable"}</p>; }
+  return <section className="panel" aria-label="Contribution capacity"><h2>Annual contribution capacity</h2><p>Modeled year-to-date usage includes committed forecast contributions across every account sharing a bucket. Run the saved plan to calculate usage.</p>
+    <table><thead><tr><th>Account / year</th><th>Shared categories</th><th>Annual USD limit</th><th>Modeled YTD</th><th>Remaining</th></tr></thead><tbody>{rows.map(row => <tr key={`${row.accountId}:${row.bucketIdentity}`}><td>{objectLabel("Account", objectEntries(draft, "Account").find(item => item.account_id === row.accountId) ?? {})} / {row.year}</td><td>{row.categories.map(value => value.replaceAll("_", " ")).join(", ")}</td><td>{row.annualLimit ?? row.diagnostics.join(", ")}</td><td>{row.yearToDate ?? "Run plan"}</td><td>{row.remaining ?? "Run plan"}</td></tr>)}</tbody></table>
+    {forecast && forecast.status !== "unavailable" && forecast.contingentPositions.map(item => <p key={item.positionId}>Unvested contingent plan value: {item.value.amount} {item.value.currency}; excluded from owned net worth.</p>)}
+  </section>;
+}
+
 function RetirementDateAuthoring({ draft, setDraft }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void }) {
   const plans = getPersonalRetirementPlans(draft);
   const [incomeId, setIncomeId] = useState("");
@@ -2700,6 +2760,8 @@ function HouseholdPlan({
       />
       <RetirementDateAuthoring draft={draft} setDraft={setDraft} />
       <PersonalPurchaseAuthoring draft={draft} setDraft={setDraft} />
+      <PayrollContributionAuthoring draft={draft} setDraft={setDraft} />
+      <ContributionCapacityPanel draft={draft} forecast={forecast} />
       <p className="muted">If the forecast needs setup, open Expert forecast configuration below. These session choices must be configured again after reloading a saved model.</p>
       <details className="panel">
       <summary>Expert forecast configuration</summary>

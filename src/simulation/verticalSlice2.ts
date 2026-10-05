@@ -73,6 +73,7 @@ import {
   type PrimitiveRuntimeStateStore,
 } from "./period.js";
 import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
+import { payrollContributionCandidate, type PayrollContributionAllocation } from "./payrollContributions.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -108,6 +109,7 @@ interface MonthlyStreamBase<Id extends IncomeId | ExpenseId> {
 }
 
 export interface RecurringIncomeStream extends MonthlyStreamBase<IncomeId> {
+  readonly payrollContributions?: readonly PayrollContributionAllocation[];
   readonly depositAccountId: AccountId;
   readonly growthRate: Rate;
   readonly growthBaseAt: Instant;
@@ -612,7 +614,7 @@ function executeCashFlowPeriodCandidate(
   eventResult: PeriodWorkCandidate,
   summary?: SummaryOperationSink,
 ): CashCandidate & { readonly period?: VerticalSlice2PeriodResult; readonly summary?: CashOperationSummary } {
-      const state = cloneAuthoritativeState(eventResult.closingState);
+      let state = cloneAuthoritativeState(eventResult.closingState);
       const recognitions = evidenceBuffer<RecognitionFact>(summary);
       const proposals = evidenceBuffer<SettlementProposal>(summary);
       const settlements = evidenceBuffer<Settlement>(summary);
@@ -665,7 +667,11 @@ function executeCashFlowPeriodCandidate(
             registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
             recognitions.push(recognition);
             effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "recurring_income", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, provenance, traceRefs }));
-            applyTransaction(transaction(`tx:${recognition.id}`, occurrence.scheduledAt, "income", [{ posting: "debit", type: "cash", amount, accountId: stream.depositAccountId, cashFlowClass: "operating" }, { posting: "credit", type: "income", amount }], traceRefs));
+            if (stream.payrollContributions?.length) {
+              const payroll = payrollContributionCandidate(state, { id: `tx:${recognition.id}`, incomeId: stream.id, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions });
+              state = payroll.state;
+              for (const posted of payroll.transactions) transactions.push(posted);
+            } else applyTransaction(transaction(`tx:${recognition.id}`, occurrence.scheduledAt, "income", [{ posting: "debit", type: "cash", amount, accountId: stream.depositAccountId, cashFlowClass: "operating" }, { posting: "credit", type: "income", amount }], traceRefs));
             recognizedIncome = recognizedIncome.plus(amount);
             incomeOccurrences.push(Object.freeze({ streamId: stream.id, occurrenceId: occurrence.occurrenceId, scheduledAt: occurrence.scheduledAt, amount, provenance, traceRefs }));
             periodTraces.push(...traceRefs);

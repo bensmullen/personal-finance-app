@@ -1407,7 +1407,7 @@ effective-dated rules and retain exact-one-active-version resolution. Scenario
 resolution never infers funding, borrowing, transfers, sales, overdraft,
 retirement consequences, rule precedence, refinancing, or new debt.
 
-A durable personally funded taxable-brokerage purchase may bind
+A durable personally funded taxable-brokerage or IRA purchase may bind
 `Investment.contribution_model_id` to an enabled root-scenario P03 instance.
 The `d1-personal-purchase/v1` adapter stores exact `amount` and explicit
 `source_cash_account_id` in `input_bindings`, and stores `schedule` and
@@ -1416,8 +1416,47 @@ date or a UTC monthly anchor with the explicit `skip` invalid-day policy.
 The source must be checking or savings. P03 generates recurrence; VS3 owns
 funding, accounting, position quantity and principal effects. It purchases at
 the modeled period-closing P23 price with explicit quantity rounding. This
-adapter does not reinterpret IRA, payroll, employer or rollover characters as
-taxable purchases. Those paths require their respective limit/tax contracts.
+adapter stores IRA character, contributor/household scope, explicit annual
+eligibility facts and reject/explicit-auto-cap policy in `parameters.contribution`.
+Canonical plural Account limit bindings identify all simultaneous statutory
+buckets. The candidate checks those buckets before posting and records usage
+only after funding and position effects succeed. Traditional IRA deductibility
+is recorded separately and enters the household tax authority; Roth principal
+does not reduce taxable compensation. Missing deduction facts leave tax results
+explicitly incomplete.
+
+The `d1-payroll-contribution/v1` P03 adapter binds an Investment to a gross
+salary Income through `input_bindings.income_id`. Its parameters persist the
+contribution policy, explicit allocation priority, fixed amount or exact
+compensation fraction, employer match fraction/compensation cap, and current
+vested fraction. Actual salary recurrence and retirement termination own timing;
+the adapter cannot generate a separate salary or bank-funded contribution.
+Employee allocations precede employer matching by an explicit validated policy.
+Gross salary posts once: debit take-home cash and employee destination principal,
+credit gross income. Traditional 401(k) allocations reduce federal ordinary
+income but preserve payroll wages; Roth and after-tax allocations preserve both
+bases. Supported cafeteria-plan employee HSA allocations reduce federal ordinary
+income and employee payroll wages. Unsupported jurisdiction-specific base
+relationships remain incomplete rather than borrowing federal treatment.
+
+Employer workplace contributions recognize the full non-cash benefit once,
+debiting vested owned principal and separate non-owned `contingent` principal.
+They never reduce take-home cash or become employee taxable wages merely because
+the benefit was recognized. Full statutory usage is recorded regardless of vesting.
+Contingent units share their position's deterministic price and remain excluded
+from owned assets/net worth. Full supported vesting reclassifies then-current
+contingent value to owned principal without new income, wages, cash or limit
+usage. Supported full forfeiture removes contingent value against equity, never
+owned loss or spending. Employer HSA contributions are fully owned; no vesting
+is inferred. Graded/service-credit/partial-forfeiture mechanics require a separate
+capability contract. Rollover operations remain outside these adapters.
+
+Accounting-derived statement totals use signed postings: income/gain credits
+increase recognition and debits reverse it; expense/tax debits increase expense
+and credits reverse it. Direct and streamed derivation MUST agree. A decreasing
+tax accrual debits unpaid liability, or recognizes a prepaid tax credit for an
+already-paid amount, and credits tax expense. This recognition reversal moves
+no cash; only an explicit separate refund/settlement can do so.
 
 A retirement-date overlay carries both `targetEventId`, which identifies the
 existing VS2 income-termination event to edit, and a distinct scenario
