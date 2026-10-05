@@ -3,6 +3,8 @@ import { authorPersonalPurchasePlan, createGoldenHouseholdDraft, type PersonalDr
 import { exportPersonalModelJson, importPersonalModelJson } from "../src/application/modelPortability.js";
 import { GOLDEN_HOUSEHOLD_IDS as ids, createGoldenHouseholdForecastRequest } from "../src/application/goldenHousehold.js";
 import { compileInvestments } from "../src/application/compiler/investments.js";
+import { compileCashFlow } from "../src/application/compiler/cashFlow.js";
+import { reconcileHouseholdOpeningState } from "../src/application/compiler/householdProjection.js";
 import { runVerticalSlice3 } from "../src/simulation/verticalSlice3.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant } from "../src/time/index.js";
@@ -30,14 +32,22 @@ describe("D1 durable personally funded purchases", () => {
     const compiled = compileInvestments(restored, { ...request, simulationEnd: "2026-03-01", months: 2, purchaseInstructions: [] });
     expect(compiled.status, JSON.stringify(compiled)).toBe("compiled");
     if (compiled.status !== "compiled") throw new Error("purchase fixture did not compile");
-    const run = runVerticalSlice3({ input: compiled.value.input, openingState: compiled.value.openingState, primitiveState: compiled.value.primitiveState, months: 2,
+    // VS3 intentionally compiles only referenced accounts. Reconcile the
+    // canonical household cash domain to assert the untouched bank as well.
+    const cash = compileCashFlow(restored, { ...createGoldenHouseholdForecastRequest().compiler.cashFlow!, simulationEnd: "2026-03-01", months: 2 });
+    expect(cash.status, JSON.stringify(cash)).toBe("compiled");
+    if (cash.status !== "compiled") throw new Error("cash fixture did not compile");
+    const opening = reconcileHouseholdOpeningState([compiled.value.openingState, cash.value.openingState]);
+    expect(opening.status).toBe("compiled");
+    if (opening.status !== "compiled") throw new Error("opening reconciliation failed");
+    const run = runVerticalSlice3({ input: compiled.value.input, openingState: opening.value, primitiveState: compiled.value.primitiveState, months: 2,
       runContext: createRunContext({ runId: runId("d1c20000-0000-4000-8000-000000000002"), scenarioId: scenarioId(ids.rootScenario), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-03-01T00:00:00.000Z"), baseCurrency: USD }) });
     expect(run.status).toBe("completed");
     expect(run.state.accounts[ids.checking]!.cash.amount.toString()).toBe(checking);
     expect(run.state.accounts[ids.savings]!.cash.amount.toString()).toBe(savings);
     expect(run.state.accounts[ids.brokerageAccount]!.cash.amount.toString()).toBe("0");
     expect(run.state.positions[ids.brokerageInvestment]!.quantity.amount.toString()).toBe(quantity);
-    expect(compiled.value.openingState.accounts[ids.checking]!.cash.amount.toString()).toBe("20000");
+    expect(opening.value.accounts[ids.checking]!.cash.amount.toString()).toBe("20000");
     expect(original.objects.Investment!.filter(record).find(item => item.investment_id === ids.brokerageInvestment)!.contribution_model_id).toBeUndefined();
     expect(run.periods.map(item => item.contributionPrincipal.amount.toString())).toEqual(frequency === "once" ? ["1000", "0"] : ["1000", "1000"]);
   });
