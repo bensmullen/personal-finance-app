@@ -17,7 +17,12 @@ import {
   getContributionCapacities,
   type JsonObject,
 } from "../src/application/personalMvp.js";
-import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
+import { GOLDEN_HOUSEHOLD_IDS, createGoldenHouseholdForecastRequest } from "../src/application/goldenHousehold.js";
+import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
+import { runHouseholdKernel } from "../src/simulation/householdExecution.js";
+import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { instant } from "../src/time/index.js";
+import { USD } from "../src/values/index.js";
 import { forecastDiagnosticMessage } from "../ui/entityPresentation.js";
 
 const loadExample = async (page: import("@playwright/test").Page) => {
@@ -29,12 +34,15 @@ const loadExample = async (page: import("@playwright/test").Page) => {
 };
 
 test("D1-B normal investment controls persist a bank-funded operation without compiler IDs", async ({ page }) => {
-  await importDraft(page, createGoldenHouseholdDraft());
+  const cryptoId = "d1b90000-0000-4000-8000-000000000001";
+  const original = createGoldenHouseholdDraft();
+  const draft = { ...original, objects: { ...original.objects, Investment: [...original.objects.Investment!, { investment_id: cryptoId, account_id: GOLDEN_HOUSEHOLD_IDS.brokerageAccount, investment_type: "crypto", name: "Spot crypto", symbol: "BTC", quantity: "0", price: "100", market_value: "0", currency: "USD" }] } };
+  await importDraft(page, draft);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   const panel = page.getByRole("region", { name: "Investment and retirement operations" });
   await panel.getByLabel("Domain operation", { exact: true }).selectOption("purchase");
-  await panel.getByLabel("Source / target holding", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
+  await panel.getByLabel("Source / target holding", { exact: true }).selectOption(cryptoId);
   await panel.getByLabel("Operation date", { exact: true }).fill("2026-01-10");
   await panel.getByLabel("Operation cash amount", { exact: true }).fill("100");
   await panel.getByLabel("Units / call contracts", { exact: true }).fill("1");
@@ -49,7 +57,16 @@ test("D1-B normal investment controls persist a bank-funded operation without co
   await page.getByRole("button", { name: "Export current model", exact: true }).click();
   const download = await pending, restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
   const primitive = (restored.objects.PrimitiveInstance ?? []).find(item => typeof item === "object" && item !== null && !Array.isArray(item) && typeof item.parameters === "object" && item.parameters !== null && !Array.isArray(item.parameters) && item.parameters.adapter === "d1-domain-operation/v1") as JsonObject;
-  expect(primitive.parameters).toMatchObject({ kind: "purchase", amount: "100", cashAccountId: GOLDEN_HOUSEHOLD_IDS.checking, holdingId: GOLDEN_HOUSEHOLD_IDS.brokerageInvestment, quantity: "1" });
+  expect(primitive.parameters).toMatchObject({ kind: "purchase", amount: "100", cashAccountId: GOLDEN_HOUSEHOLD_IDS.checking, holdingId: cryptoId, quantity: "1" });
+  const golden = createGoldenHouseholdForecastRequest().compiler;
+  const compiled = compileHouseholdProjection(restored, { ...golden, cashFlow: { ...golden.cashFlow!, simulationEnd: "2026-02-01", months: 1 }, investments: { ...golden.investments!, simulationEnd: "2026-02-01", months: 1, purchaseInstructions: [] }, liabilities: { ...golden.liabilities!, simulationEnd: "2026-02-01", months: 1 } });
+  expect(compiled.status, JSON.stringify(compiled)).toBe("compiled");
+  if (compiled.status !== "compiled") throw new Error("Exported user operation did not compile");
+  const result = runHouseholdKernel({ kernel: compiled.value.executionKernel!, resultTier: "detail", runContext: createRunContext({ runId: runId("d1b90000-0000-4000-8000-000000000002"), scenarioId: scenarioId(GOLDEN_HOUSEHOLD_IDS.rootScenario), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD }) });
+  expect(result.state.positions[cryptoId]!.quantity.amount.toString()).toBe("1");
+  expect(result.state.positions[cryptoId]!.carryingValue.amount.toString()).toBe("100");
+  const purchase = result.periods.flatMap(period => period.transactions).find(tx => tx.type === "purchase" && tx.id.startsWith("domain:"));
+  expect(purchase?.legs.filter(leg => leg.type === "cash").map(leg => [leg.accountId, leg.posting, leg.amount.amount.toString()])).toEqual([[GOLDEN_HOUSEHOLD_IDS.checking, "credit", "100"]]);
 });
 
 const showHouseholdDetails = async (page: import("@playwright/test").Page, channel: "baseline" | "comparison" = "baseline", forecastBudget = 15_000) => {

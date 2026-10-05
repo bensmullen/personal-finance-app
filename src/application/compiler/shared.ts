@@ -27,6 +27,8 @@ const PRIMARY_ID_FIELDS = Object.freeze({
   PrimitiveInstance: "primitive_instance_id",
   Assumption: "assumption_id",
   Event: "event_id",
+  EventEffect: "event_effect_id",
+  Insurance: "insurance_id",
   Transaction: "transaction_id",
   Liability: "liability_id",
   Asset: "asset_id",

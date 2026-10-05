@@ -3,7 +3,7 @@ import { assertBalanced } from "../src/accounting/index.js";
 import { domainId } from "../src/identity/index.js";
 import { createAuthoritativeState } from "../src/state/index.js";
 import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
-import { executeDomainOperation, longTermHolding, type DomainHolding, type DomainMechanicsInput, type DomainOperation } from "../src/simulation/domainMechanics.js";
+import { executeDomainOperation, domainCashAccesses, longTermHolding, type DomainHolding, type DomainMechanicsInput, type DomainOperation } from "../src/simulation/domainMechanics.js";
 import type { OperationState } from "../src/simulation/r3/operations.js";
 import { decimal, money, quantity, SHARE, USD } from "../src/values/index.js";
 import { instant } from "../src/time/index.js";
@@ -86,6 +86,7 @@ describe("D1-B independent financial effects (opening bank 10000, wrapper 0, hol
     const receipt = executeDomainOperation(opening(), configuration, operation("indirect_distribution", { amount: "1000", cashAccountId: bank }));
     const result = executeDomainOperation(receipt, configuration, operation("indirect_deposit", { id: id(11), at: "2026-03-12T00:00:00.000Z", amount: "1000", linkedOperationId: id(10), destinationHoldingId: destination, sourceAccountId: bank, replacementAmount: "200" }));
     expect(amounts(result)).toEqual(amounts(receipt)); expect(result.facts.transactions).toHaveLength(0); expect(result.facts.taxDiagnostics?.[0]?.category).toBe("rollover_deadline");
+    expect(result.facts.resolvedTaxDiagnosticSourceIds).toEqual([id(10)]);
   });
   it("credits monthly APY interest without floating-point money", () => {
     const result = executeDomainOperation(opening(), input(), operation("cash_interest", { cashAccountId: bank, amount: "0", annualEffectiveRate: "0.126825030131969720661201" }));
@@ -159,5 +160,40 @@ describe("D1-B independent financial effects (opening bank 10000, wrapper 0, hol
     expect(longTermHolding("2025-01-10", "2026-01-10")).toBe(false);
     expect(longTermHolding("2025-01-10", "2026-01-11")).toBe(true);
     expect(longTermHolding("2024-02-29", "2025-03-01")).toBe(true);
+  });
+  it.each([["200", "500", "7.5", "1500", "450"], ["50", "500", "0", "0", "300"]] as const)("moves fair value at price %s while preserving book balances and owned net worth", (price, amount, remaining, ownedValue, taxable) => {
+    const before = opening(); before.state.positions[position] = { ...before.state.positions[position]!, price: money(price, USD) };
+    const result = executeDomainOperation(before, input(), operation("conversion", { amount, destinationHoldingId: destination }));
+    expect(result.state.positions[position]!.quantity.amount.toString()).toBe(remaining);
+    expect(result.state.positions[position]!.price.times(result.state.positions[position]!.quantity.amount).amount.toString()).toBe(ownedValue);
+    expect(result.state.positions[destination]!.price.times(result.state.positions[destination]!.quantity.amount).amount.toString()).toBe(amount);
+    expect(netWorth(result)).toBe(netWorth(before)); expect(taxes(result)).toEqual({ traditionalDistributions: taxable });
+    expect(statements(result)).toEqual({ income: "0", expense: "0", gain: "0", loss: "0" });
+    expect(result.state.contributions).toEqual(before.state.contributions); balanced(result);
+  });
+  it.each([["after_tax_401k", undefined, "200"], ["roth_401k", undefined, "200"], ["traditional_401k", undefined, "0"], ["traditional_ira", "50", "150"], ["traditional_ira", "200", "0"]] as const)("updates previously taxed basis from committed %s facts once", (character, deduction, expectedBasis) => {
+    const before = opening();
+    before.state.contributions = { ...before.state.contributions, current: { id: "current", at: instant("2026-01-05T00:00:00.000Z"), personId: person, accountId: wrapper, character, amount: money("200", USD), buckets: [], ...(deduction === undefined ? {} : { eligibleDeduction: money(deduction, USD) }) } };
+    // Owned current position includes the earlier funded contribution; opening basis is zero.
+    const configuration = input({ ...holding(), afterTaxBasis: "0" });
+    const result = executeDomainOperation(before, configuration, operation("conversion", { amount: "1000", destinationHoldingId: destination }));
+    expect(taxes(result)).toEqual({ traditionalDistributions: money("1000", USD).minus(money(expectedBasis, USD)).amount.toString() });
+    expect(result.state.contributions).toEqual(before.state.contributions);
+    const replay = executeDomainOperation(result, configuration, operation("conversion", { amount: "1000", destinationHoldingId: destination }));
+    expect(replay.runtime).toEqual(result.runtime); balanced(result);
+  });
+  it("permits a partial transfer within owned value despite contingent employer units", () => {
+    const before = opening();
+    before.state.contingentPositions = { [position]: { positionId: domainId("position", position), quantity: quantity("5", SHARE), carryingValue: money("500", USD) } };
+    const result = executeDomainOperation(before, input(), operation("direct_rollover", { amount: "500", destinationHoldingId: destination }));
+    expect(result.state.positions[position]!.quantity.amount.toString()).toBe("5");
+    expect(result.state.contingentPositions).toEqual(before.state.contingentPositions); expect(netWorth(result)).toBe("11000");
+    expect(taxes(result)).toEqual({}); balanced(result);
+  });
+  it("declares proceeds as production and real funding/balance reads as consumption", () => {
+    expect(domainCashAccesses(input(), operation("ordinary_dividend"))).toEqual([{ kind: "account_cash", accountId: wrapper, mode: "produce" }]);
+    expect(domainCashAccesses(input(), operation("purchase", { cashAccountId: bank }))).toEqual([{ kind: "account_cash", accountId: bank, mode: "consume" }]);
+    expect(domainCashAccesses(input(), operation("cash_interest", { cashAccountId: bank }))).toEqual([{ kind: "account_cash", accountId: bank, mode: "consume" }]);
+    expect(domainCashAccesses(input(), operation("conversion", { destinationHoldingId: destination }))).toEqual([]);
   });
 });

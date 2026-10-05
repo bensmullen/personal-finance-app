@@ -4,7 +4,7 @@ import { authorDomainOperation, authorOpeningInvestmentLot, authorMortgageRefina
 import { objectEntries, objectId, objectLabel } from "../entityPresentation.js";
 
 const choices = [
-  ["purchase", "Buy investment / crypto / long call"], ["sale", "Sell investment"],
+  ["purchase", "Buy spot crypto / long call"], ["sale", "Sell investment"],
   ["ordinary_dividend", "Ordinary dividend"], ["qualified_dividend", "Qualified dividend (eligibility established)"],
   ["interest", "Investment interest distribution"], ["reinvest_dividend", "Reinvest dividend"], ["call_exercise", "Exercise long equity call"],
   ["conversion", "Direct in-plan Roth conversion"], ["direct_rollover", "Direct rollover / trustee transfer"],
@@ -18,7 +18,7 @@ export function DomainMechanicsPanel({ draft, setDraft }: { readonly draft: Pers
   const change = (key: string, value: string) => setFields(prior => ({ ...prior, [key]: value }));
   const text = (key: string, label: string, type = "text") => <label key={key}>{label}<input aria-label={label} type={type} value={fields[key] ?? ""} onChange={event => change(key, event.target.value)} /></label>;
   const select = (key: string, label: string, items: readonly { id: string; label: string }[]) => <label key={key}>{label}<select aria-label={label} value={fields[key] ?? ""} onChange={event => change(key, event.target.value)}><option value="">Choose {label.toLowerCase()}</option>{items.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>;
-  const investments = objectEntries(draft, "Investment").map(item => ({ id: objectId("Investment", item), label: objectLabel("Investment", item) }));
+  const investments = objectEntries(draft, "Investment").filter(item => kind !== "purchase" || item.investment_type === "crypto" || item.instrument_subtype === "long_equity_call").map(item => ({ id: objectId("Investment", item), label: objectLabel("Investment", item) }));
   const banks = objectEntries(draft, "Account").filter(item => ["checking", "savings"].includes(String(item.account_type))).map(item => ({ id: objectId("Account", item), label: objectLabel("Account", item) }));
   const retirement = ["conversion", "direct_rollover", "mixed_rollover", "indirect_distribution", "indirect_deposit"].includes(kind);
   const events = (draft.objects.Event ?? []).filter(record);
@@ -49,7 +49,7 @@ export function DomainMechanicsPanel({ draft, setDraft }: { readonly draft: Pers
     } catch (error) { setMessage(error instanceof Error ? error.message : "Operation could not be saved."); }
   };
   return <section className="panel" aria-label="Investment and retirement operations"><h2>Investment, retirement and mortgage operations</h2>
-    <p>Sales and investment income remain in investment account cash. Reinvestment uses that income. Personally funded purchases and call exercise require checking or savings. Unsupported products are diagnosed before forecast use.</p>
+    <p>Sales and investment income remain in investment account cash. Reinvestment uses that income. Spot crypto and call premiums require checking or savings. Use Investment purchases for ordinary equity/fund purchases. Unsupported products are diagnosed before forecast use.</p>
     <label>Operation<select aria-label="Domain operation" value={kind} onChange={event => { setKind(event.target.value); setMessage(""); }}>{choices.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
     {text("date", "Operation date", "date")}
     {kind === "refinance" ? <>{select("liabilityId", "Mortgage to replace", objectEntries(draft, "Liability").filter(item => item.liability_type === "mortgage").map(item => ({ id: objectId("Liability", item), label: objectLabel("Liability", item) })))}{text("annualRate", "Replacement nominal annual rate")}{text("totalPayments", "Replacement monthly payments", "number")}<p>Non-cash-out, no fees or escrow. Choose a scheduled payment date with no extra principal at that occurrence. The new loan starts a full-month schedule.</p></> : <>

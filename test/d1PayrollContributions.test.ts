@@ -23,6 +23,7 @@ import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayAr
 import { GOLDEN_HOUSEHOLD_IDS as golden } from "../src/application/goldenHousehold.js";
 import { money, Quantity, SHARE, USD } from "../src/values/index.js";
 import { instant } from "../src/time/index.js";
+import { executeDomainOperation } from "../src/simulation/domainMechanics.js";
 
 const id = (value: number) => `d1c50000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 const person = domainId("person", golden.person), household = domainId("household", golden.household), cash = domainId("account", id(1));
@@ -37,6 +38,20 @@ const opening = (allocations: readonly PayrollContributionAllocation[]) => creat
 const payroll = (state: ReturnType<typeof opening>, allocations: readonly PayrollContributionAllocation[], gross = "1000", key = "payroll:1") => payrollContributionCandidate(state, { id: key, incomeId: golden.income, at, gross: money(gross), depositAccountId: cash, allocations });
 
 describe("D1 payroll recognition and shared contribution capacity", () => {
+  it("converts a committed after-tax payroll contribution without taxing it again or consuming more capacity", () => {
+    const afterTax = allocation(1, "after_tax_401k", "200");
+    const paid = payroll(opening([afterTax]), [afterTax]);
+    const rothPosition = domainId("position", id(900));
+    const state = createAuthoritativeState({ ...paid.state, positions: { ...paid.state.positions, [rothPosition]: { id: rothPosition, accountId: afterTax.accountId, quantity: Quantity.parse("0", SHARE), price: money("100"), carryingValue: money("0") } } });
+    const result = executeDomainOperation({ state, primitiveState: createPrimitiveRuntimeStateStore() }, { currency: "USD", holdings: [{ id: afterTax.positionId, accountId: afterTax.accountId, kind: "fund", lots: [], afterTaxBasis: "0" }, { id: rothPosition, accountId: afterTax.accountId, kind: "fund", lots: [], afterTaxBasis: "0" }], operations: [] }, { id: id(901), kind: "conversion", at: "2026-02-01T00:00:00.000Z", order: 10, amount: "200", holdingId: afterTax.positionId, destinationHoldingId: rothPosition, taxFacts: { residenceJurisdictions: [], workJurisdictions: [], eligibility: {} } });
+    expect(paid.takeHomeCash.amount.toString()).toBe("800");
+    expect(result.state.positions[afterTax.positionId]!.quantity.amount.toString()).toBe("0");
+    expect(result.state.positions[rothPosition]!.quantity.amount.toString()).toBe("2");
+    expect(result.facts.taxEconomics?.[0]?.income.traditionalDistributions.amount.toString()).toBe("0");
+    expect(result.state.contributions).toEqual(paid.state.contributions);
+    expect(deriveStatements(result.state, result.facts.transactions ?? [], USD).netWorth.amount.toString()).toBe("1000");
+    result.facts.transactions?.forEach(assertBalanced);
+  });
   it.each([[50, "8000"], [60, "11250"], [63, "11250"]] as const)("retains age %s catch-up after employer/after-tax additions nearly fill 415(c)", (age, catchup) => {
     const annual = { ageAtYearEnd: age, planHasRoth: true, priorYearSponsorWages: money("100000") };
     const employer = { ...allocation(1, "employer_401k", "70000", annual), priority: 20 }, afterTax = { ...allocation(2, "after_tax_401k", "1000", annual), priority: 10 };

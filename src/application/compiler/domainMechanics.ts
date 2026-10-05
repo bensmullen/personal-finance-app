@@ -8,7 +8,6 @@ import type { HouseholdKernelParticipant } from "../../simulation/householdExecu
 import { canonicalId, capability, EXACT_DECIMAL, objects, preflightCanonicalCollections, resolveHouseholdScope, UUID, utcDate, type CanonicalObject } from "./shared.js";
 import { selectScenario } from "./scenarioSelection.js";
 import { resolveTaxEligibility } from "../../simulation/tax/facts.js";
-import { openingUnvestedQuantity } from "./workplaceOpening.js";
 import type { TaxEligibilityPeriod } from "../../simulation/tax/contracts.js";
 import type { CompileResult } from "./types.js";
 
@@ -85,6 +84,8 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
     const accounts = new Map(objects(model, "Account").map(item => [String(item.account_id), item]));
     const investments = new Map(objects(model, "Investment").map(item => [String(item.investment_id), item]));
     const ownedAccounts = new Map([...accounts].filter(([, item]) => item.owner_id === request.executionOwnerId));
+    const policyAccounts = new Set(objects(model, "Insurance").flatMap(item => [String(item.premium_account_id), String(item.benefit_account_id)]));
+    const participatingAccounts = new Map([...accounts].filter(([id, item]) => ownedAccounts.has(id) || policyAccounts.has(id) && (scope.value.memberIds.includes(String(item.owner_id)) || item.owner_id === scope.value.householdId)));
     const lookup = (id: unknown, map: ReadonlyMap<string, CanonicalObject>, label: string) => {
       const found = map.get(required(id, label)); if (!found) throw new Error(label); return found;
     };
@@ -94,16 +95,17 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
       return String(account.account_id);
     };
     const accountStates: AuthoritativeState["accounts"] = {};
-    for (const [id, account] of ownedAccounts) {
+    for (const [id, account] of participatingAccounts) {
       const kind = accountKinds[String(account.account_type)];
       if (!kind) continue;
       if (account.currency !== currency.code || date(account.opening_date, "Account opening date is required.") > request.simulationStart ||
         account.closing_date != null && date(account.closing_date, "Account closing date is invalid.") < request.simulationEnd) throw new Error("Participating accounts must use the forecast currency and be open throughout the horizon.");
-      accountStates[id] = { id: domainId("account", id), ownerId: domainId("person", request.executionOwnerId), kind, cash: money(exact(account.opening_balance, "Exact opening wrapper/bank cash is required."), currency) };
+      accountStates[id] = { id: domainId("account", id), ownerId: domainId(account.owner_id === scope.value.householdId ? "household" : "person", String(account.owner_id)), kind, cash: money(exact(account.opening_balance, "Exact opening wrapper/bank cash is required."), currency) };
     }
-    const person = scope.value.peopleById.get(request.executionOwnerId)!;
     const household = objects(model, "Household").find(item => item.household_id === scope.value.householdId)!;
-    const taxFactsAt = (at: string) => {
+    const taxFactsAt = (at: string, personId = request.executionOwnerId) => {
+      const person = scope.value.peopleById.get(personId);
+      if (!person) throw new Error("Benefit destination must identify a household member's jurisdictional facts.");
       const residences = (Array.isArray(person.residence_jurisdiction_periods) ? person.residence_jurisdiction_periods.filter(record) : []).filter(item =>
         typeof item.effective_date === "string" && item.effective_date <= at.slice(0, 10) && (item.expiration_date == null || String(item.expiration_date) > at.slice(0, 10)));
       const residence = residences[0];
@@ -113,7 +115,12 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
     };
     const taxFacts = taxFactsAt(start);
     const holdings: DomainHolding[] = [], operations: DomainOperation[] = [];
-    const add = (operation: DomainOperation) => operations.push(operation);
+    const add = (operation: DomainOperation) => {
+      if (operation.sourceRefs) { operations.push(operation); return; }
+      const policy = objects(model, "Insurance").find(item => operation.id.startsWith(String(item.insurance_id) + ":"));
+      const source = policy ? "Insurance:" + String(policy.insurance_id) : operation.holdingId ? "Investment:" + operation.holdingId : "Account:" + operation.cashAccountId;
+      operations.push({ ...operation, taxFacts: policy ? operation.taxFacts : taxFactsAt(operation.at), generated: true, sourceRefs: ["compiler:canonical:" + source, ...(operation.kind === "death_benefit" ? ["compiler:canonical:Event:" + String(policy!.death_event_id)] : [])] });
+    };
     for (const [id, investment] of investments) {
       if (!ownedAccounts.has(String(investment.account_id))) continue;
       const kind = investment.instrument_subtype ?? investment.investment_type;
@@ -141,6 +148,7 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
         if (start <= expiration && expiration < end) add({ id: id + ":expiration", at: expiration, order: 999999, kind: "call_expiration", holdingId: id, amount: "0", taxFacts });
       }
       if (["treasury_bill", "treasury_note", "treasury_bond", "cd"].includes(String(kind))) {
+        if (ownedAccounts.get(String(investment.account_id))!.account_type !== "taxable_brokerage") throw new Error("Treasury/CD contracts require a taxable brokerage wrapper; retirement funding and distribution semantics are unavailable for this floor.");
         const acquired = date(investment.acquisition_date, "Fixed-income acquisition date is required."), maturity = date(investment.maturity_date, "Maturity is required.");
         const face = money(exact(investment.face_value, "Face/deposit principal is required."), currency);
         const futurePurchase = acquired >= request.simulationStart;
@@ -152,7 +160,7 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
         if (!cost.isPositive() || kind === "treasury_bill" && (cost.compare(face) >= 0 || acquired.slice(0, 4) !== maturity.slice(0, 4)) ||
           kind !== "treasury_bill" && !cost.equals(face)) throw new Error("Bills require a same-tax-year discount; notes/bonds/CDs require par/deposit cost. Premium, OID and pre-maturity sales are unavailable.");
         if (investment.return_model_id != null) throw new Error("Held-to-maturity fixed-income contracts cannot use an equity return model.");
-        if (kind === "cd" && (Date.parse(maturity) - Date.parse(acquired)) / 86400000 > 366) throw new Error("The CD floor supports terms of one year or less without long-term OID.");
+        if (kind === "cd" && maturity > String(Number(acquired.slice(0, 4)) + 1).padStart(4, "0") + acquired.slice(4)) throw new Error("The CD floor supports terms of one year or less without long-term OID.");
         if (futurePurchase && utcDate(acquired)! < end) add({ id: id + ":acquisition", at: utcDate(acquired)!, order: 0, kind: "purchase", holdingId: id, cashAccountId: bank(investment.funding_account_id), amount: cost.amount.toString(), quantity: "1", taxFacts });
         if (start <= utcDate(maturity)! && utcDate(maturity)! < end) add({ id: id + ":maturity", at: utcDate(maturity)!, order: 900001, kind: "maturity", holdingId: id, cashAccountId: destination, amount: face.amount.toString(), taxFacts });
         if (kind !== "treasury_bill") {
@@ -183,20 +191,25 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
       for (const at of utcMonthlyOccurrences(anchor, { start, end }, "skip")) add({ id: id + ":interest:" + at, at, order: 900010, kind: "cash_interest", cashAccountId: id, amount: "0", annualEffectiveRate: rate, taxFacts });
     }
     for (const policy of objects(model, "Insurance")) {
-      if (policy.owner_id !== request.executionOwnerId) throw new Error("Term-life policies must have explicit personal ownership within the execution scope.");
+      const owner = required(policy.owner_id, "Choose the explicit personal policy owner.");
+      if (!scope.value.memberIds.includes(owner)) throw new Error("Term-life policies require a household-member personal owner.");
       if (policy.insurance_type !== "life" || policy.policy_family !== "term_life_lump_sum" || policy.premium_frequency !== "monthly" || policy.claim_probability_model_id != null) throw new Error("Only personally owned term life with monthly premiums and lump-sum scheduled death benefits is supported.");
       lookup(policy.insured_person_id, scope.value.peopleById, "Choose the insured household person.");
       const beneficiary = required(policy.beneficiary_id, "Choose an explicit beneficiary.");
       if (beneficiary !== scope.value.householdId && !scope.value.memberIds.includes(beneficiary)) throw new Error("The modeled beneficiary must be this household or one of its people.");
-      const source = bank(policy.premium_account_id), destination = bank(policy.benefit_account_id);
-      if (ownedAccounts.get(destination)!.owner_id !== beneficiary && beneficiary !== scope.value.householdId) throw new Error("Benefit destination must belong to the beneficiary.");
+      const sourceAccount = lookup(policy.premium_account_id, participatingAccounts, "Choose the policy owner's premium account."), destinationAccount = lookup(policy.benefit_account_id, participatingAccounts, "Choose the beneficiary's benefit account.");
+      if (sourceAccount.owner_id !== owner || ![sourceAccount, destinationAccount].every(item => ["checking", "savings"].includes(String(item.account_type)))) throw new Error("Premium funding must be the policy owner's checking/savings; benefits require explicit checking/savings.");
+      if (destinationAccount.owner_id !== beneficiary && beneficiary !== scope.value.householdId) throw new Error("Benefit destination must belong to the beneficiary.");
+      const source = String(sourceAccount.account_id), destination = String(destinationAccount.account_id);
+      const recipient = beneficiary === scope.value.householdId ? String(destinationAccount.owner_id) : beneficiary;
+      if (!scope.value.memberIds.includes(recipient)) throw new Error("A household beneficiary requires an explicit member-owned destination with supported jurisdictional facts.");
       const from = date(policy.start_date, "Policy start is required."), until = date(policy.end_date, "Term policy end is required."), death = objects(model, "Event").find(item => item.event_id === policy.death_event_id);
       if (!death || death.event_type !== "death" || death.enabled !== true || death.scenario_id !== selected.value.id || death.trigger_type !== "scheduled" || death.trigger_condition != null || death.probability_model_id != null) throw new Error("Choose one scheduled death event in the active scenario.");
       const deathDate = date(death.start_date, "Death event date is invalid.");
       if (until <= from || deathDate < from || deathDate >= until) throw new Error("The scheduled death must fall inside the policy's half-open coverage interval.");
       const id = String(policy.insurance_id), premium = exact(policy.premium, "Monthly premium is required."), benefit = exact(policy.coverage_amount, "Lump-sum coverage amount is required.");
-      for (const at of utcMonthlyOccurrences(utcDate(from)!, { start, end }, "skip")) if (at.slice(0, 10) < deathDate && at.slice(0, 10) < until) add({ id: id + ":premium:" + at, at, order: 900020, kind: "insurance_premium", cashAccountId: source, amount: premium, taxFacts });
-      const at = utcDate(deathDate)!; if (start <= at && at < end) add({ id: id + ":benefit", at, order: 900021, kind: "death_benefit", cashAccountId: destination, amount: benefit, taxFacts });
+      for (const at of utcMonthlyOccurrences(utcDate(from)!, { start, end }, "skip")) if (at.slice(0, 10) < deathDate && at.slice(0, 10) < until) add({ id: id + ":premium:" + at, at, order: 900020, kind: "insurance_premium", cashAccountId: source, amount: premium, taxFacts: taxFactsAt(at, owner) });
+      const at = utcDate(deathDate)!; if (start <= at && at < end) add({ id: id + ":benefit", at, order: 900021, kind: "death_benefit", cashAccountId: destination, amount: benefit, taxFacts: taxFactsAt(at, recipient) });
     }
     const effects = new Map(objects(model, "EventEffect").map(item => [String(item.event_effect_id), item]));
     const primitives = new Map(objects(model, "PrimitiveInstance").map(item => [String(item.primitive_instance_id), item]));
@@ -211,7 +224,7 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
       if (at < start || at >= end) continue;
       const kind = terms.kind as DomainOperationKind, amount = exact(terms.amount, "Operation cash amount must be explicit."), order = terms.order;
       if (typeof order !== "number" || !Number.isSafeInteger(order) || order < 0) throw new Error("Supply a nonnegative operation priority.");
-      const operation: DomainOperation = { id: String(event.event_id), at, order, kind, amount, taxFacts,
+      const operation: DomainOperation = { id: String(event.event_id), at, order, kind, amount, taxFacts: taxFactsAt(at), sourceRefs: ["compiler:canonical:Event:" + String(event.event_id), "compiler:canonical:PrimitiveInstance:" + String(primitive.primitive_instance_id)],
         ...Object.fromEntries(["holdingId", "destinationHoldingId", "rothHoldingId", "cashAccountId", "sourceAccountId", "quantity", "linkedOperationId", "replacementAmount", "lotIds", "dividendCharacter"].filter(key => terms[key] != null).map(key => [key, terms[key]])) };
       if (terms.quantity != null) exact(terms.quantity, "Enter nonnegative exact units.");
       if (terms.lotIds != null && (!Array.isArray(terms.lotIds) || terms.lotIds.some(id => typeof id !== "string"))) throw new Error("Lot selection must contain explicit lot identities.");
@@ -225,7 +238,6 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
         const destinationInvestment = kind === "indirect_distribution" ? undefined : lookup(terms.destinationHoldingId, investments, "Choose a compatible retirement destination.");
         const destination = destinationInvestment && lookup(destinationInvestment.account_id, ownedAccounts, "Destination ownership is required.");
         if (sourceInvestment && sourceInvestment.after_tax_basis == null) throw new Error("Enter actual previously taxed source basis, including explicit zero; prior-YTD contribution usage is not basis.");
-        if (sourceInvestment && openingUnvestedQuantity(model, sourceInvestment).amount.isPositive()) throw new Error("Contingent employer value cannot be rolled over or converted. Establish eligible owned value after vesting first.");
         if (sourceInvestment && destinationInvestment && sourceInvestment.investment_id === destinationInvestment.investment_id) throw new Error("Choose distinct retirement source and destination holdings.");
         if (source && [...investments.values()].filter(item => item.account_id === source.account_id && decimal(String(item.quantity)).isPositive()).length !== 1 || source && !decimal(String(source.opening_balance)).isZero()) throw new Error("The admitted rollover source must have one eligible owned holding and no wrapper cash; multi-holding pro-rata allocation is unavailable.");
         const sourceType = String(source?.account_type), destinationType = String(destination?.account_type);
@@ -241,6 +253,7 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
       } else if (operation.holdingId) {
         const holding = lookup(operation.holdingId, investments, "Choose an investment holding."), account = lookup(holding.account_id, ownedAccounts, "Holding owner is unavailable.");
         if (account.account_type !== "taxable_brokerage") throw new Error("Sales, investment purchases, dividends and options require a taxable brokerage wrapper.");
+        if (kind === "purchase" && holding.investment_type !== "crypto" && holding.instrument_subtype !== "long_equity_call") throw new Error("Use Investment purchases for ordinary equity/fund purchases. Domain purchase supports spot crypto and long listed equity-call premiums only.");
         if (["treasury_bill", "treasury_note", "treasury_bond", "cd"].includes(String(holding.instrument_subtype))) throw new Error("Use the instrument's durable acquisition, funding, coupon and maturity terms. Additional purchases, pre-maturity sales and manual distribution overrides are unavailable.");
         if (holding.investment_type === "option" && kind === "sale" && at.slice(0, 10) >= String(holding.expiration_date)) throw new Error("Close the call before expiration; use its lapse/exercise contract afterwards.");
         if (["ordinary_dividend", "qualified_dividend", "reinvest_dividend"].includes(kind) && !["equity", "fund"].includes(String(holding.investment_type))) throw new Error("Dividend character is supported only for equity/fund distributions; crypto income and special option distributions are unavailable.");
@@ -248,9 +261,9 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
       }
       add(operation);
     }
-    for (const operation of operations) if (operations.some(other => other !== operation && other.at === operation.at && other.order === operation.order &&
+    for (const operation of operations) if (operations.some(other => other !== operation && !other.generated && !operation.generated && other.at === operation.at && other.order === operation.order &&
       [operation.holdingId, operation.cashAccountId, operation.sourceAccountId].some(id => id !== undefined && [other.holdingId, other.cashAccountId, other.sourceAccountId].includes(id)))) throw new Error("Operations sharing a holding or cash source on the same date require distinct priorities.");
-    const input: DomainMechanicsInput = { currency: currency.code, holdings, operations: operations.map(operation => ({ ...operation, taxFacts: taxFactsAt(operation.at) })) };
+    const input: DomainMechanicsInput = { currency: currency.code, holdings, operations };
     return { status: "compiled", value: { input, openingState: createAuthoritativeState({ accounts: accountStates }), participant: createDomainMechanicsParticipant(input) }, diagnostics: [] };
   } catch (error) {
     return { status: "unsupported", diagnostics: [capability("D1B_DOMAIN_UNSUPPORTED", error instanceof Error ? error.message : "Domain terms are incomplete.", "domain_mechanics")] };

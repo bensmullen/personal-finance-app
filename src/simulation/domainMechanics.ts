@@ -30,11 +30,14 @@ export interface DomainOperation {
   readonly annualEffectiveRate?: string;
   readonly dividendCharacter?: "ordinary" | "qualified";
   readonly taxFacts: RecognizedTaxEconomics["facts"];
+  readonly sourceRefs?: readonly string[];
+  readonly generated?: boolean;
 }
 export interface DomainMechanicsInput { readonly currency: string; readonly holdings: readonly DomainHolding[]; readonly operations: readonly DomainOperation[] }
 interface DomainRuntime {
   readonly lots: Readonly<Record<string, readonly DomainLot[]>>;
   readonly basis: Readonly<Record<string, string>>;
+  readonly basisContributionIds?: readonly string[];
   readonly receipts: Readonly<Record<string, { readonly at: string; readonly gross: string; readonly received: string; readonly accountId: string }>>;
 }
 const fail = (code: string, message: string): never => { throw new ValidationError({ severity: "error", code, message, entityType: "domain_mechanics" }); };
@@ -57,8 +60,23 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
   if (state.identities.postedTransactionIds.some(id => id.startsWith("domain:" + operation.id + ":")))
     return { ...opening, facts: {} };
   const lots = { ...prior.lots }, basis = { ...prior.basis }, receipts = { ...prior.receipts };
+  const basisContributionIds = new Set(prior.basisContributionIds ?? []);
+  for (const contribution of Object.values(state.contributions ?? {})) {
+    if (contribution.source === "opening" || basisContributionIds.has(contribution.id)) continue;
+    const destinations = input.holdings.filter(item => item.accountId === contribution.accountId && state.positions[item.id]?.quantity.amount.isPositive());
+    if (destinations.length !== 1) continue;
+    let added = zero;
+    if (["after_tax_401k", "roth_401k", "roth_ira"].includes(contribution.character)) added = contribution.amount;
+    if (contribution.character === "traditional_ira") {
+      if (contribution.eligibleDeduction === undefined) fail("DOMAIN_RETIREMENT_BASIS_INCOMPLETE", "Authoritative IRA deduction facts are required before moving contributed value.");
+      added = contribution.amount.minus(contribution.eligibleDeduction!);
+    }
+    const destination = destinations[0]!;
+    basis[destination.id] = Money.parse(basis[destination.id] ?? "0", currency).plus(added).amount.toString();
+    basisContributionIds.add(contribution.id);
+  }
   const transactions: AccountingTransaction[] = [], taxEconomics: RecognizedTaxEconomics[] = [], taxDiagnostics: TaxCapabilityDiagnostic[] = [];
-  const traces = [calculationTraceRef(calculationTraceId("compiler:canonical:Event:" + operation.id))];
+  const traces = (operation.sourceRefs ?? ["compiler:canonical:Event:" + operation.id]).map(ref => calculationTraceRef(calculationTraceId(ref)));
   const holding = input.holdings.find(item => item.id === operation.holdingId);
   const position = holding === undefined ? undefined : state.positions[holding.id];
   const cash = (id: string | undefined, bank = false) => {
@@ -126,10 +144,10 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
     const longProceeds = proceeds.times(selected.longQuantity.amount.dividedBy(requested.amount, precision)).round(rounding);
     tax("longTermGains", longProceeds.minus(selected.longCost)); tax("shortTermGains", proceeds.minus(longProceeds).minus(selected.shortCost));
   };
-  const retireDestination = (id: string | undefined, value: Money): AccountingLegDraft => {
+  const retireDestination = (id: string | undefined, value: Money, carrying = value): AccountingLegDraft => {
     const target = id === undefined ? undefined : state.positions[id];
     if (!target || !target.price.isPositive()) return fail("DOMAIN_RETIREMENT_DESTINATION_REQUIRED", "Choose an eligible retirement destination with an explicit price.");
-    return assetLeg(target.id, value, q(value.amount.dividedBy(target.price.amount, precision).toString()), "debit");
+    return assetLeg(target.id, carrying, q(value.amount.dividedBy(target.price.amount, precision).toString()), "debit");
   };
   switch (operation.kind) {
     case "purchase": {
@@ -144,12 +162,13 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
       if (requirePosition().quantity.amount.isPositive()) dispose(requirePosition().quantity, zero); break;
     }
     case "call_exercise": {
-      if (!holding || holding.kind !== "long_equity_call" || !holding.strike || !holding.multiplier || !holding.underlyingId || at.slice(0, 10) > holding.expiration!) fail("DOMAIN_OPTION_EXERCISE_UNSUPPORTED", "Exercise requires an unexpired long listed equity call with explicit terms.");
+      const call = holding && holding.kind === "long_equity_call" && holding.strike && holding.multiplier && holding.underlyingId && holding.expiration && at.slice(0, 10) <= holding.expiration
+        ? holding : fail("DOMAIN_OPTION_EXERCISE_UNSUPPORTED", "Exercise requires an unexpired long listed equity call with explicit terms.");
       const target = requirePosition(), contracts = q(operation.quantity ?? target.quantity.amount.toString());
       if (!contracts.amount.fitsScale(0)) fail("DOMAIN_OPTION_CONTRACTS_INVALID", "Exercise whole call contracts.");
-      const stockQuantity = q(contracts.amount.times(decimal(holding.multiplier!)).toString()), strikeCash = Money.parse(holding.strike!, currency).times(stockQuantity.amount).round(rounding);
+      const stockQuantity = q(contracts.amount.times(decimal(call.multiplier!)).toString()), strikeCash = Money.parse(call.strike!, currency).times(stockQuantity.amount).round(rounding);
       if (!strikeCash.equals(amount)) fail("DOMAIN_EXERCISE_CASH_MISMATCH", "Exercise cash must equal strike times contracts times multiplier.");
-      const source = fund(operation.cashAccountId, strikeCash), selected = takeLots(contracts), stock = state.positions[holding.underlyingId!];
+      const source = fund(operation.cashAccountId, strikeCash), selected = takeLots(contracts), stock = state.positions[call.underlyingId!];
       if (!stock || stock.accountId !== target.accountId || !stock.price.isPositive()) fail("DOMAIN_OPTION_UNDERLYING_INVALID", "Acquired stock must have an explicit positive price in the same taxable wrapper.");
       const removedValue = contracts.equals(target.quantity) ? target.carryingValue : target.carryingValue.times(contracts.amount.dividedBy(target.quantity.amount, precision)).round(rounding);
       // Reverse any call mark-to-market; exercise itself recognizes no realized call gain.
@@ -194,11 +213,14 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
     }
     case "conversion": case "direct_rollover": case "mixed_rollover": case "indirect_distribution": {
       const target = requirePosition();
-      if (!amount.isPositive() || amount.compare(target.carryingValue) > 0) fail("DOMAIN_RETIREMENT_OWNED_VALUE_REQUIRED", "Only eligible owned and vested retirement value can move.");
-      const units = amount.equals(target.carryingValue) ? target.quantity : q(target.quantity.amount.times(amount.amount.dividedBy(target.carryingValue.amount, precision)).toString());
+      const fairValue = target.price.times(target.quantity.amount).round(rounding);
+      if (!amount.isPositive() || amount.compare(fairValue) > 0) fail("DOMAIN_RETIREMENT_OWNED_VALUE_REQUIRED", "Only eligible owned and vested retirement value can move.");
+      const fraction = amount.amount.dividedBy(fairValue.amount, precision);
+      const units = amount.equals(fairValue) ? target.quantity : q(amount.amount.dividedBy(target.price.amount, precision).toString());
+      const carrying = amount.equals(fairValue) ? target.carryingValue : target.carryingValue.times(fraction).round(rounding);
       const openingBasis = Money.parse(basis[target.id] ?? fail("DOMAIN_RETIREMENT_BASIS_REQUIRED", "Previously taxed basis must be explicitly established."), currency);
-      if (openingBasis.compare(target.carryingValue) > 0) fail("DOMAIN_RETIREMENT_BASIS_INVALID", "Previously taxed basis cannot exceed eligible source value in this floor.");
-      const recovered = amount.equals(target.carryingValue) ? openingBasis : openingBasis.times(amount.amount.dividedBy(target.carryingValue.amount, precision)).round(rounding);
+      const proRataBasis = openingBasis.times(fraction).round(rounding);
+      const recovered = proRataBasis.compare(amount) > 0 ? amount : proRataBasis;
       const taxable = amount.minus(recovered);
       basis[target.id] = openingBasis.minus(recovered).amount.toString();
       if (operation.kind === "indirect_distribution") {
@@ -206,15 +228,18 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
         const destination = cash(operation.cashAccountId, true), withheld = amount.times(decimal("0.20")).round(rounding), received = amount.minus(withheld);
         const creditId = taxBalanceIds("US:FEDERAL", at.slice(0, 4)).creditPositionId, unit = Unit.of("usd_tax_credit");
         state.positions[creditId] ??= { id: creditId, accountId: destination.id, quantity: Quantity.zero(unit), price: Money.parse("1", currency), carryingValue: zero };
-        post("distribution", [cashLeg(destination.id, received, "debit", true), { type: "asset", posting: "debit", amount: withheld, entityId: creditId, quantity: Quantity.parse(withheld.amount.toString(), unit) }, assetLeg(target.id, amount, units, "credit")]);
+        const valuation = amount.minus(carrying);
+        post("distribution", [cashLeg(destination.id, received, "debit", true), { type: "asset", posting: "debit", amount: withheld, entityId: creditId, quantity: Quantity.parse(withheld.amount.toString(), unit) }, assetLeg(target.id, carrying, units, "credit"),
+          { type: valuation.isNegative() ? "loss" : "gain", posting: valuation.isNegative() ? "debit" : "credit", amount: valuation.isNegative() ? valuation.negated() : valuation }]);
         receipts[operation.id] = { at, gross: amount.amount.toString(), received: received.amount.toString(), accountId: destination.id };
         tax("traditionalDistributions", amount);
         taxDiagnostics.push(taxDiagnostic("indirect_rollover_pending", "Taxation is incomplete until an eligible deposit is completed within 60 days; an unreplaced amount may incur additional tax.", undefined, operation.id));
       } else {
+        const rothCarrying = carrying.times(recovered.amount.dividedBy(amount.amount, precision)).round(rounding);
         const destinations = operation.kind === "mixed_rollover"
-          ? [retireDestination(operation.destinationHoldingId, taxable), retireDestination(operation.rothHoldingId, recovered)]
-          : [retireDestination(operation.destinationHoldingId, amount)];
-        post("retirement_transfer", [assetLeg(target.id, amount, units, "credit"), ...destinations]);
+          ? [retireDestination(operation.destinationHoldingId, taxable, carrying.minus(rothCarrying)), retireDestination(operation.rothHoldingId, recovered, rothCarrying)]
+          : [retireDestination(operation.destinationHoldingId, amount, carrying)];
+        post("retirement_transfer", [assetLeg(target.id, carrying, units, "credit"), ...destinations]);
         if (operation.kind === "mixed_rollover") basis[operation.rothHoldingId!] = Money.parse(basis[operation.rothHoldingId!] ?? "0", currency).plus(recovered).amount.toString();
         else basis[operation.destinationHoldingId!] = Money.parse(basis[operation.destinationHoldingId!] ?? "0", currency).plus(operation.kind === "conversion" ? amount : recovered).amount.toString();
         if (operation.kind === "conversion") tax("traditionalDistributions", taxable);
@@ -225,7 +250,7 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
       const receipt = receipts[operation.linkedOperationId ?? ""] ?? fail("DOMAIN_ROLLOVER_RECEIPT_REQUIRED", "Link the deposit to one eligible participant-received distribution.");
       const days = (Date.parse(at) - Date.parse(receipt.at)) / 86400000;
       if (days < 0 || days > 60) {
-        taxDiagnostics.push(taxDiagnostic("rollover_deadline", "The 60-day deadline was missed. The distribution remains taxable and additional-tax coverage is unavailable.", undefined, operation.id)); break;
+        taxDiagnostics.push(taxDiagnostic("rollover_deadline", "The 60-day deadline was missed. The distribution remains taxable and additional-tax coverage is unavailable.", undefined, operation.id)); delete receipts[operation.linkedOperationId!]; break;
       }
       if (at.slice(0, 4) !== receipt.at.slice(0, 4)) fail("DOMAIN_CROSS_YEAR_INDIRECT_UNSUPPORTED", "A cross-tax-year deposit requires prior-year tax revision semantics.");
       const gross = Money.parse(receipt.gross, currency), received = Money.parse(receipt.received, currency), replacement = Money.parse(operation.replacementAmount ?? "0", currency);
@@ -238,9 +263,9 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
       delete receipts[operation.linkedOperationId!]; break;
     }
   }
-  return { state, primitiveState: opening.primitiveState, runtime: { ...opening.runtime, domainMechanics: { lots, basis, receipts } },
+  return { state, primitiveState: opening.primitiveState, runtime: { ...opening.runtime, domainMechanics: { lots, basis, receipts, basisContributionIds: [...basisContributionIds].sort() } },
     facts: { transactions, traceRefs: traces, taxEconomics, taxDiagnostics,
-      ...(operation.kind === "indirect_deposit" && transactions.length ? { resolvedTaxDiagnosticSourceIds: [operation.linkedOperationId!] } : {}) } };
+      ...(operation.kind === "indirect_deposit" && (transactions.length || taxDiagnostics.length) ? { resolvedTaxDiagnosticSourceIds: [operation.linkedOperationId!] } : {}) } };
 };
 
 export const createDomainMechanicsParticipant = (configuration: DomainMechanicsInput): HouseholdKernelParticipant => {
@@ -257,11 +282,20 @@ export const createDomainMechanicsParticipant = (configuration: DomainMechanicsI
     },
     prepare: (_context, period, _opening, work = []) => ({ id: "domain_mechanics", operations: input.operations.filter(item => period.start <= item.at && item.at < period.end).map(operation => ({
       descriptor: { id: "domain:" + operation.id, domain: "domain_mechanics", operationClass: "domain:" + operation.kind, sequencingInstant: instant(operation.at),
-        dependsOn: [...input.operations.filter(other => other.at === operation.at && other.order < operation.order).map(other => "domain:" + other.id), ...work.filter(item => item.sequencingInstant === operation.at && item.operationClass === "cash_income_settlement").map(item => item.id)],
-        resourceAccesses: [...new Set([operation.cashAccountId, operation.sourceAccountId, input.holdings.find(item => item.id === operation.holdingId)?.accountId].filter((id): id is string => id !== undefined))]
-          .map(id => ({ kind: "account_cash" as const, accountId: domainId("account", id), mode: "consume" as const })), traceRefs: [] },
+        dependsOn: [...input.operations.filter(other => other.at === operation.at && (other.order < operation.order || other.order === operation.order && (other.generated || operation.generated) && other.id < operation.id)).map(other => "domain:" + other.id), ...work.filter(item => item.sequencingInstant === operation.at && item.operationClass === "cash_income_settlement").map(item => item.id)],
+        resourceAccesses: domainCashAccesses(input, operation), traceRefs: (operation.sourceRefs ?? []).map(ref => calculationTraceRef(calculationTraceId(ref))) },
       execute: opening => executeDomainOperation(opening, input, operation),
     })) }),
   } satisfies HouseholdKernelParticipant);
 };
 registerHouseholdParticipantCodec({ codec: "domain-mechanics/v1", restore: input => createDomainMechanicsParticipant(input as DomainMechanicsInput) });
+
+/** Cash access describes actual economic direction, including balance-sensitive interest. */
+export const domainCashAccesses = (input: DomainMechanicsInput, operation: DomainOperation) => {
+  const wrapper = input.holdings.find(item => item.id === operation.holdingId)?.accountId;
+  const produce = ["sale", "ordinary_dividend", "qualified_dividend", "interest", "treasury_interest", "maturity", "death_benefit", "indirect_distribution"].includes(operation.kind);
+  const consume = ["purchase", "call_exercise", "insurance_premium", "cash_interest", "reinvest_dividend", "indirect_deposit"].includes(operation.kind);
+  const receiptAccount = input.operations.find(item => item.id === operation.linkedOperationId)?.cashAccountId;
+  const ids = produce ? [operation.cashAccountId ?? wrapper] : consume ? operation.kind === "indirect_deposit" ? [receiptAccount, operation.sourceAccountId] : [operation.cashAccountId ?? wrapper] : [];
+  return [...new Set(ids.filter((id): id is string => id !== undefined))].map(id => ({ kind: "account_cash" as const, accountId: domainId("account", id), mode: produce ? "produce" as const : "consume" as const }));
+};

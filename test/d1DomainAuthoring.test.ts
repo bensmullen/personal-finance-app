@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createGoldenHouseholdDraft, authorDomainOperation, type PersonalDraft, type JsonObject } from "../src/application/personalMvp.js";
+import { createGoldenHouseholdDraft, authorDomainOperation, authorPersonalPurchasePlan, type PersonalDraft, type JsonObject } from "../src/application/personalMvp.js";
 import { compileDomainMechanics } from "../src/application/compiler/domainMechanics.js";
 import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { createGoldenHouseholdForecastRequest, GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
@@ -8,6 +8,8 @@ import { runHouseholdKernel } from "../src/simulation/householdExecution.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant } from "../src/time/index.js";
 import { USD } from "../src/values/index.js";
+import { executeDomainOperation } from "../src/simulation/domainMechanics.js";
+import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
 
 const id = (n: number) => `d1b30000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const record = (value: unknown): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -24,6 +26,7 @@ describe("D1-B durable compiler boundaries", () => {
     const original = base(), restored = importPersonalModelJson(exportPersonalModelJson(authorDomainOperation(original, plan)));
     const compiled = compileDomainMechanics(restored, request); expect(compiled.status, JSON.stringify(compiled)).toBe("compiled"); if (compiled.status !== "compiled") throw new Error("fixture unsupported");
     expect(compiled.value.input.operations.find(item => item.id === id(1))).toMatchObject({ kind: "sale", amount: "1500", quantity: "10", holdingId: ids.brokerageInvestment, at: "2026-01-10T00:00:00.000Z" });
+    expect(compiled.value.input.operations.find(item => item.id === id(1))!.sourceRefs).toEqual(["compiler:canonical:Event:" + id(1), "compiler:canonical:PrimitiveInstance:" + id(3)]);
     expect(original.objects.Event!.filter(record).some(item => item.event_id === id(1))).toBe(false);
   });
   it.each(["traditional_ira", "traditional_401k", "roth_ira"] as const)("persists an eligible direct retirement path to %s without annual contribution authorization", destinationType => {
@@ -64,6 +67,7 @@ describe("D1-B durable compiler boundaries", () => {
     let model = edit(base(), "Investment", item => item.investment_id === ids.brokerageInvestment, { investment_type: "bond", instrument_subtype: subtype, quantity: "0", price: subtype === "treasury_bill" ? "980" : "1000", market_value: "0", cost_basis: subtype === "treasury_bill" ? "980" : "1000", acquisition_date: "2026-01-01", maturity_date: "2026-07-01", face_value: "1000", coupon_rate: "0.10", interest_convention: "nominal_annual_simple", crediting_frequency: "semiannual", first_credit_date: "2026-07-01", funding_account_id: ids.checking, settlement_account_id: ids.savings, return_model_id: null });
     model = importPersonalModelJson(exportPersonalModelJson(model)); const result = compileDomainMechanics(model, request); expect(result.status, JSON.stringify(result)).toBe("compiled"); if (result.status !== "compiled") throw new Error("instrument fixture unsupported");
     const operations = result.value.input.operations.filter(item => item.holdingId === ids.brokerageInvestment);
+    expect(operations.every(item => item.sourceRefs?.[0] === "compiler:canonical:Investment:" + ids.brokerageInvestment)).toBe(true);
     expect(operations.map(item => [item.kind, item.amount, item.cashAccountId])).toEqual(subtype === "treasury_bill" ? [["purchase", "980", ids.checking], ["maturity", "1000", ids.savings]] : [["purchase", "1000", ids.checking], ["maturity", "1000", ids.savings], [subtype === "cd" ? "interest" : "treasury_interest", "50", ids.brokerageAccount]]);
     const missingDestination = edit(model, "Investment", item => item.investment_id === ids.brokerageInvestment, { settlement_account_id: null }); expect(compileDomainMechanics(missingDestination, request).status).toBe("unsupported");
   });
@@ -81,6 +85,7 @@ describe("D1-B durable compiler boundaries", () => {
     const restored = importPersonalModelJson(exportPersonalModelJson(model)), compiled = compileDomainMechanics(restored, request);
     expect(compiled.status, JSON.stringify(compiled)).toBe("compiled"); if (compiled.status !== "compiled") throw new Error("policy unsupported");
     expect(compiled.value.input.operations.map(item => [item.kind, item.amount, item.at.slice(0, 10), item.cashAccountId])).toEqual([["insurance_premium", "50", "2026-01-01", ids.checking], ["insurance_premium", "50", "2026-02-01", ids.checking], ["death_benefit", "100000", "2026-03-01", ids.savings]]);
+    expect(compiled.value.input.operations.find(item => item.kind === "death_benefit")!.sourceRefs).toEqual(["compiler:canonical:Insurance:" + id(20), "compiler:canonical:Event:" + id(21)]);
     expect(compileDomainMechanics(edit(restored, "Insurance", () => true, { policy_family: "cash_value" }), request).status).toBe("unsupported");
   });
   it("executes a sale through the shared household kernel after portability, with wrapper settlement and balanced reconciliation", () => {
@@ -93,5 +98,64 @@ describe("D1-B durable compiler boundaries", () => {
     expect(result.state.accounts[ids.brokerageAccount]!.cash.amount.toString()).toBe("1500"); expect(result.state.positions[ids.brokerageInvestment]!.quantity.amount.toString()).toBe("490");
     expect(result.periods[0]?.transactions.some(tx => tx.type === "sale")).toBe(true);
     expect(result.periods[0]?.investments?.unrealizedGain.amount.toString()).toBe("0");
+  });
+  it("sells the acquired D1-A lot through D1-B without duplicate ordinary purchase authoring", () => {
+    const original = edit(edit(base(), "Assumption", item => item.category === "market_return", { value: "0" }), "Investment", item => item.investment_id === ids.brokerageInvestment, { quantity: "0", market_value: "0", cost_basis: "0" });
+    const purchased = authorPersonalPurchasePlan(original, { primitiveId: id(40), investmentId: ids.brokerageInvestment, sourceCashAccountId: ids.checking, amount: "1000", frequency: "once", date: "2026-01-10", order: 10 });
+    const fifoModel = importPersonalModelJson(exportPersonalModelJson(authorDomainOperation(purchased, { ...plan, date: "2026-02-10", amount: "1100" })));
+    const golden = createGoldenHouseholdForecastRequest().compiler;
+    const compiled = compileHouseholdProjection(fifoModel, { ...golden, cashFlow: { ...golden.cashFlow!, simulationEnd: "2026-03-01", months: 2 }, investments: { ...golden.investments!, simulationEnd: "2026-03-01", months: 2, purchaseInstructions: [] }, liabilities: { ...golden.liabilities!, simulationEnd: "2026-03-01", months: 2 } });
+    expect(compiled.status, JSON.stringify(compiled)).toBe("compiled"); if (compiled.status !== "compiled") throw new Error("cross-domain fixture unsupported");
+    const result = runHouseholdKernel({ kernel: compiled.value.executionKernel!, resultTier: "detail", runContext: createRunContext({ runId: runId(id(41)), scenarioId: scenarioId(ids.rootScenario), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-03-01T00:00:00.000Z"), baseCurrency: USD }) });
+    expect(result.state.positions[ids.brokerageInvestment]!.quantity.amount.toString()).toBe("0");
+    expect(result.state.accounts[ids.brokerageAccount]!.cash.amount.toString()).toBe("1100");
+    expect(result.periods.flatMap(period => period.transactions).filter(tx => tx.type === "sale")).toHaveLength(1);
+    const duplicate = compileDomainMechanics(authorDomainOperation(original, { ...plan, kind: "purchase", cashAccountId: ids.checking }), request);
+    expect(duplicate.status).toBe("unsupported"); expect(duplicate.diagnostics[0]?.message).toContain("ordinary equity/fund");
+  });
+  it.each(["traditional_401k", "roth_ira"])("gates fixed-income retirement wrapper %s", account_type => {
+    const model = edit(edit(base(), "Account", item => item.account_id === ids.brokerageAccount, { account_type }), "Investment", item => item.investment_id === ids.brokerageInvestment, { investment_type: "bond", instrument_subtype: "cd" });
+    const result = compileDomainMechanics(model, request); expect(result.status).toBe("unsupported"); expect(result.diagnostics[0]?.message).toContain("retirement funding");
+  });
+  it.each([["2027-01-01", "compiled"], ["2027-01-02", "unsupported"]])("uses the exact calendar CD anniversary at %s", (maturity_date, expected) => {
+    const model = edit(base(), "Investment", item => item.investment_id === ids.brokerageInvestment, { investment_type: "bond", instrument_subtype: "cd", quantity: "0", price: "1000", market_value: "0", cost_basis: "1000", acquisition_date: "2026-01-01", maturity_date, face_value: "1000", coupon_rate: "0.10", interest_convention: "nominal_annual_simple", crediting_frequency: "annual", first_credit_date: "2027-01-01", funding_account_id: ids.checking, settlement_account_id: ids.savings, return_model_id: null });
+    expect(compileDomainMechanics(model, { ...request, simulationEnd: "2027-02-01" }).status).toBe(expected);
+  });
+  it("uses a different household beneficiary's explicit account and jurisdiction", () => {
+    const original = base(), other = id(50), destination = id(51);
+    const person = original.objects.Person!.filter(record)[0]!;
+    const model: PersonalDraft = { ...original, objects: { ...original.objects,
+      Household: original.objects.Household!.filter(record).map(item => ({ ...item, members: [...(item.members as string[]), other] })),
+      Person: [...original.objects.Person!, { ...person, person_id: other, residence_jurisdiction_periods: [{ effective_date: "2020-01-01", state_jurisdiction: "US-NY" }] }],
+      Account: [...original.objects.Account!, { account_id: destination, owner_id: other, account_type: "checking", currency: "USD", opening_balance: "0", opening_date: "2020-01-01" }],
+      Insurance: [{ insurance_id: id(20), owner_id: ids.person, insurance_type: "life", policy_family: "term_life_lump_sum", insured_person_id: ids.person, beneficiary_id: other, premium_account_id: ids.checking, benefit_account_id: destination, premium: "50", premium_frequency: "monthly", coverage_amount: "100000", start_date: "2026-01-01", end_date: "2027-01-01", death_event_id: id(21) }],
+      Event: [...original.objects.Event!, { event_id: id(21), event_type: "death", start_date: "2026-03-01", scenario_id: ids.rootScenario, enabled: true, trigger_type: "scheduled", effect_ids: [], dependencies: [], precedence: 0 }],
+    } };
+    const result = compileDomainMechanics(model, request); expect(result.status, JSON.stringify(result)).toBe("compiled"); if (result.status !== "compiled") throw new Error("beneficiary fixture unsupported");
+    expect(result.value.input.operations.find(item => item.kind === "death_benefit")).toMatchObject({ cashAccountId: destination, taxFacts: { residenceJurisdictions: ["US:NY"] } });
+    expect(result.value.openingState.accounts[destination]!.ownerId).toBe(other);
+    const benefit = result.value.input.operations.find(item => item.kind === "death_benefit")!;
+    const settled = executeDomainOperation({ state: result.value.openingState, primitiveState: createPrimitiveRuntimeStateStore() }, result.value.input, benefit);
+    expect(settled.state.accounts[destination]!.cash.amount.toString()).toBe("100000");
+    expect(settled.state.accounts[ids.savings]!.cash.amount.toString()).toBe("15000");
+    expect(settled.facts.taxDiagnostics?.[0]?.jurisdiction).toBe("US:NY");
+    expect(settled.facts.traceRefs?.map(ref => ref.traceId)).toEqual(benefit.sourceRefs);
+  });
+  it("orders two same-day generated policy premiums by stable identity without user priorities", () => {
+    const original = base();
+    const policies = [id(60), id(61)].map(insurance_id => ({ insurance_id, owner_id: ids.person, insurance_type: "life", policy_family: "term_life_lump_sum", insured_person_id: ids.person, beneficiary_id: ids.household, premium_account_id: ids.checking, benefit_account_id: ids.savings, premium: "50", premium_frequency: "monthly", coverage_amount: "100000", start_date: "2026-01-01", end_date: "2027-01-01", death_event_id: id(62) }));
+    const model = { ...original, objects: { ...original.objects, Insurance: policies, Event: [...original.objects.Event!, { event_id: id(62), event_type: "death", start_date: "2026-03-01", scenario_id: ids.rootScenario, enabled: true, trigger_type: "scheduled", effect_ids: [], dependencies: [], precedence: 0 }] } };
+    const compiled = compileDomainMechanics(model, request); expect(compiled.status, JSON.stringify(compiled)).toBe("compiled"); if (compiled.status !== "compiled") throw new Error("policy ordering unsupported");
+    const context = createRunContext({ runId: runId(id(63)), scenarioId: scenarioId(ids.rootScenario), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD });
+    const opening = { state: compiled.value.openingState, primitiveState: createPrimitiveRuntimeStateStore() };
+    const prepared = compiled.value.participant.prepare(context, { start: context.simulationStart, end: context.simulationEnd }, opening);
+    expect(prepared.operations).toHaveLength(2);
+    expect(prepared.operations[1]!.descriptor.dependsOn).toContain(prepared.operations[0]!.descriptor.id);
+    const first = prepared.operations[0]!.execute(opening, new Map());
+    const second = prepared.operations[1]!.execute(first, new Map());
+    expect(second.state.accounts[ids.checking]!.cash.amount.toString()).toBe("19900");
+    const reversed = compileDomainMechanics({ ...model, objects: { ...model.objects, Insurance: [...policies].reverse() } }, request);
+    expect(reversed.status).toBe("compiled"); if (reversed.status !== "compiled") throw new Error("reordered policies unsupported");
+    expect(reversed.value.participant.prepare(context, { start: context.simulationStart, end: context.simulationEnd }, opening).operations.map(item => item.descriptor).sort((a, b) => a.id.localeCompare(b.id))).toEqual(prepared.operations.map(item => item.descriptor).sort((a, b) => a.id.localeCompare(b.id)));
   });
 });
