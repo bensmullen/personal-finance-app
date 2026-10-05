@@ -6,7 +6,7 @@ import { domainId } from "../../identity/index.js";
 import { instant } from "../../time/index.js";
 import { money, USD } from "../../values/index.js";
 import { authoredContributionRules, compileContributionPolicy } from "./contributionAuthoring.js";
-import { normalizeContributionLimitRuleIds } from "./contributionBindings.js";
+import { historicalContributionScopes, historicalAccountTypes } from "./contributionHistoryScopes.js";
 import { durablePayrollAllocations } from "./payrollAuthoring.js";
 import { durablePersonalPurchaseInstructions } from "./personalPurchases.js";
 import { EXACT_DECIMAL, UUID, objects, utcDate, type CanonicalObject } from "./shared.js";
@@ -18,11 +18,12 @@ const record = (value: JsonValue | undefined): value is CanonicalObject => typeo
 const fail = (message: string): never => { throw new Error(message); };
 const exact = (value: JsonValue | undefined) => typeof value === "string" && EXACT_DECIMAL.test(value) && !money(value, USD).isNegative() && money(value, USD).amount.fitsScale(2) ? money(value, USD) : fail("OPENING_USAGE_AMOUNT_INVALID");
 const identity = (policy: ContributionPolicy, kind: D1CapacityKind, key: string) => `${kind === "hsa_family" ? "household" : "person"}:${kind === "hsa_family" ? policy.householdId : policy.personId}:${key}:${policy.facts.taxYear}`;
+const scopeConfirmation = (option: { investmentId: string; policy: ContributionPolicy }) => canonicalSerialize({ investmentId: option.investmentId, policy: option.policy });
 
 /** Historical characters may differ from the allocation currently planned for this holding. */
 export const openingContributionOptions = (model: PortableModelEnvelope) => {
-  const plans = [...durablePayrollAllocations(model).map(item => ({ investmentId: String(item.allocation.positionId), policy: item.allocation.policy })), ...durablePersonalPurchaseInstructions(model).flatMap(item => item.contribution ? [{ investmentId: item.investmentId, policy: item.contribution }] : [])];
-  return plans.flatMap(plan => {
+  const plans = [...historicalContributionScopes(model), ...durablePayrollAllocations(model).map(item => ({ investmentId: String(item.allocation.positionId), policy: item.allocation.policy })), ...durablePersonalPurchaseInstructions(model).flatMap(item => item.contribution ? [{ investmentId: item.investmentId, policy: item.contribution }] : [])];
+  const options = plans.flatMap(plan => {
     const investment = objects(model, "Investment").find(item => item.investment_id === plan.investmentId)!;
     const account = objects(model, "Account").find(item => item.account_id === investment.account_id)!;
     const characters: readonly ContributionCharacter[] = plan.policy.character.endsWith("_ira") ? [account.account_type === "roth_ira" ? "roth_ira" : "traditional_ira"] : plan.policy.character.endsWith("_hsa") ? ["employee_hsa", "employer_hsa"] : account.account_type === "roth_401k" ? ["roth_401k"] : ["traditional_401k", "after_tax_401k", "employer_401k"];
@@ -35,10 +36,37 @@ export const openingContributionOptions = (model: PortableModelEnvelope) => {
         const rule = rules.find(item => Array.isArray(item.contribution_limits) && record(item.contribution_limits[0]) && item.contribution_limits[0].kind === kind)!;
         return { kind, ruleId: String(rule.tax_rule_id), bucketKey: key, target: kind === "hsa_family" ? { targetType: "household" as const, targetId: domainId("household", plan.policy.householdId) } : { targetType: "person" as const, targetId: domainId("person", plan.policy.personId) }, includedCharacters: contributionCharacters(kind) };
       });
-      const policy: ContributionPolicy = { ...plan.policy, character, limits };
+      const policy: ContributionPolicy = { ...plan.policy, character, limits, excessPolicy: "reject" };
       return { investmentId: plan.investmentId, accountId: String(account.account_id), character, policy, rules };
     });
   });
+  const unique = new Map<string, typeof options[number]>();
+  for (const option of options) {
+    const key = `${option.investmentId}:${option.character}:${option.policy.facts.taxYear}`;
+    const previous = unique.get(key);
+    if (previous && canonicalSerialize(previous.policy) !== canonicalSerialize(option.policy)) return fail("HISTORICAL_SCOPE_CONFLICT");
+    unique.set(key, option);
+  }
+  return [...unique.values()];
+};
+
+export const unrepresentedHistoricalAccounts = (model: PortableModelEnvelope, year: number) => {
+  const options = openingContributionOptions(model).filter(option => option.policy.facts.taxYear === year);
+  return objects(model, "Account").filter(account => {
+    if (!historicalAccountTypes.includes(String(account.account_type))) return false;
+    const holdings = objects(model, "Investment").filter(row => row.account_id === account.account_id);
+    return !holdings.length || holdings.some(row => !options.some(option => option.investmentId === row.investment_id));
+  });
+};
+const requireRepresentableHistory = (model: PortableModelEnvelope, year: number) => {
+  const missing = unrepresentedHistoricalAccounts(model, year);
+  if (missing.length) return fail(`OPENING_USAGE_SCOPE_REQUIRED: Define historical legal scope and annual facts for ${missing.map(account => String(account.account_id)).join(", ")} before confirming all prior usage.`);
+  for (const option of openingContributionOptions(model).filter(row => row.policy.facts.taxYear === year)) {
+    for (const binding of option.policy.limits) {
+      const capacity = deriveD1ContributionCapacity(binding.kind, option.policy.facts);
+      if (capacity.status !== "complete") return fail(`OPENING_USAGE_SCOPE_INCOMPLETE: ${capacity.diagnostics.join(", ")}`);
+    }
+  }
 };
 
 export interface OpeningContributionUsageEntry {
@@ -77,7 +105,7 @@ export const compileOpeningContributionUsage = (model: PortableModelEnvelope, st
   if (!utcDate(start)) return fail("OPENING_USAGE_BOUNDARY_INVALID");
   const year = Number(start.slice(0, 4)), options = openingContributionOptions(model).filter(option => option.policy.facts.taxYear === year);
   const contributions: Record<string, ContributionState> = {}, accounts: AuthoritativeState["accounts"] = {};
-  if (!options.length) return { contributions, accounts };
+  if (!options.length && !snapshot(model)) return { contributions, accounts };
   const item = snapshot(model), params = item?.parameters;
   const required = [...new Set(options.flatMap(option => option.policy.limits.map(binding => identity(option.policy, binding.kind, binding.bucketKey))))].sort();
   const missingFacts = [...new Set(options.flatMap(option => {
@@ -96,8 +124,10 @@ export const compileOpeningContributionUsage = (model: PortableModelEnvelope, st
     if (start === `${year}-01-01`) return { contributions, accounts };
     return fail(`OPENING_CONTRIBUTION_USAGE_REQUIRED: Supply ${year} prior YTD history.`);
   }
+  requireRepresentableHistory(model, year);
   const confirmedBuckets = params.confirmedBuckets;
   if (saved.asOf !== start || required.some(key => !confirmedBuckets.includes(key))) return fail(`OPENING_CONTRIBUTION_USAGE_REQUIRED: Confirm complete prior YTD usage at forecast boundary ${start} for all current scopes.`);
+  if (params.confirmedScopes !== undefined ? !Array.isArray(params.confirmedScopes) || options.some(option => !Array.isArray(params.confirmedScopes) || !params.confirmedScopes.includes(scopeConfirmation(option))) : historicalContributionScopes(model).length > 0) return fail("OPENING_CONTRIBUTION_USAGE_REQUIRED: Reconfirm prior history after adding or changing historical scopes.");
   const at = instant(new Date(Date.parse(`${start}T00:00:00.000Z`) - 1).toISOString());
   const entries = params.entries;
   if (!Array.isArray(entries)) return fail("OPENING_USAGE_ENTRIES_INVALID");
@@ -107,7 +137,12 @@ export const compileOpeningContributionUsage = (model: PortableModelEnvelope, st
     const investment = objects(model, "Investment").find(row => row.investment_id === value.investmentId);
     const account = objects(model, "Account").find(row => row.account_id === investment?.account_id);
     if (!account || !investment || account.currency !== "USD") return fail("OPENING_USAGE_ACCOUNT_REQUIRED");
-    const policy = compileContributionPolicy(model, account, value.contribution);
+    if (!record(value.contribution)) return fail("OPENING_USAGE_ENTRY_INVALID");
+    const character = value.contribution.character;
+    const option = options.find(row => row.investmentId === value.investmentId && row.character === character);
+    if (!option) return fail("OPENING_USAGE_CHARACTER_INVALID");
+    const policy = compileContributionPolicy({ ...model, objects: { ...model.objects, TaxRule: option.rules } }, { ...account, contribution_limit_rule_id: null, contribution_limit_rule_ids: option.rules.map(rule => String(rule.tax_rule_id)) }, value.contribution);
+    if (canonicalSerialize(policy) !== canonicalSerialize(option.policy)) return fail("OPENING_USAGE_SCOPE_CHANGED");
     if (policy.facts.taxYear !== year || !options.some(option => option.investmentId === value.investmentId && option.character === policy.character)) return fail("OPENING_USAGE_CHARACTER_INVALID");
     const amount = exact(value.amount), split = policy.character === "traditional_401k" || policy.character === "roth_401k" || policy.character.endsWith("_hsa") && policy.facts.hsaCoverage === "family";
     const ordinary = split ? exact(value.ordinaryAmount) : amount;
@@ -138,6 +173,7 @@ export const compileOpeningContributionUsage = (model: PortableModelEnvelope, st
 export const authorOpeningContributionUsage = (model: PortableModelEnvelope, plan: OpeningContributionUsagePlan): PortableModelEnvelope => {
   if (!utcDate(plan.asOf) || plan.allPriorUsageKnown !== true) return fail("OPENING_USAGE_CONFIRMATION_REQUIRED");
   const year = Number(plan.asOf.slice(0, 4)), options = openingContributionOptions(model).filter(option => option.policy.facts.taxYear === year);
+  requireRepresentableHistory(model, year);
   const prior = objects(model, "PrimitiveInstance").find(item => item.primitive_instance_id === SNAPSHOT_ID);
   if (prior && (!record(prior.parameters) || prior.parameters.adapter !== ADAPTER)) return fail("OPENING_USAGE_ID_COLLISION");
   const roots = objects(model, "Scenario").filter(item => item.enabled === true && item.base_scenario_id == null);
@@ -154,10 +190,10 @@ export const authorOpeningContributionUsage = (model: PortableModelEnvelope, pla
     return { id: entry.id, investmentId: entry.investmentId, amount: entry.amount, ...(entry.ordinaryAmount === undefined ? {} : { ordinaryAmount: entry.ordinaryAmount }), contribution: { character: entry.character, personId: option.policy.personId, householdId: option.policy.householdId, facts, excessPolicy: "reject" } };
   });
   const confirmedBuckets = [...new Set(options.flatMap(option => option.policy.limits.map(binding => identity(option.policy, binding.kind, binding.bucketKey))))].sort();
+  const confirmedScopes = options.map(scopeConfirmation).sort();
   const next: PortableModelEnvelope = { ...model, objects: { ...model.objects,
-    Account: objects(model, "Account").map(account => ({ ...account, ...(options.some(option => option.accountId === account.account_id) ? { contribution_limit_rule_id: null, contribution_limit_rule_ids: [...new Set([...normalizeContributionLimitRuleIds(account), ...options.filter(option => option.accountId === account.account_id).flatMap(option => option.rules.map(rule => String(rule.tax_rule_id)))])] } : {}) })),
     TaxRule: [...objects(model, "TaxRule").filter(item => !rules.some(rule => rule.tax_rule_id === item.tax_rule_id)), ...rules],
-    PrimitiveInstance: [...objects(model, "PrimitiveInstance").filter(item => item.primitive_instance_id !== SNAPSHOT_ID), { primitive_instance_id: SNAPSHOT_ID, primitive_id: "P03", scenario_id: roots[0]!.scenario_id!, enabled: true, input_bindings: {}, parameters: { adapter: ADAPTER, asOf: plan.asOf, allPriorUsageKnown: true, confirmedBuckets, entries } }],
+    PrimitiveInstance: [...objects(model, "PrimitiveInstance").filter(item => item.primitive_instance_id !== SNAPSHOT_ID), { primitive_instance_id: SNAPSHOT_ID, primitive_id: "P03", scenario_id: roots[0]!.scenario_id!, enabled: true, input_bindings: {}, parameters: { adapter: ADAPTER, asOf: plan.asOf, allPriorUsageKnown: true, confirmedBuckets, confirmedScopes, entries } }],
   } };
   compileOpeningContributionUsage(next, plan.asOf);
   return next;

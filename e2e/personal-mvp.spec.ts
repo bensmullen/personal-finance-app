@@ -12,6 +12,9 @@ import {
   getPayrollContributionPlans,
   getOpeningContributionUsage,
   getPayrollOpeningUnvestedUnits,
+  authorPayrollContributionPlan,
+  getHistoricalContributionScopes,
+  getContributionCapacities,
   type JsonObject,
 } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
@@ -64,6 +67,41 @@ const importDraft = async (
 };
 
 const rawUuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+test("D1 authors former-employer YTD history without a future contribution instruction", async ({ page }) => {
+  page.setDefaultTimeout(5_000);
+  const golden = createGoldenHouseholdDraft();
+  const object = (value: unknown): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
+  const model = authorPayrollContributionPlan({ ...golden, objects: { ...golden.objects, Account: golden.objects.Account!.map(value => object(value) && value.account_id === GOLDEN_HOUSEHOLD_IDS.brokerageAccount ? { ...value, account_type: "traditional_401k", tax_treatment: "tax_deferred" } : value) } }, { primitiveId: "d1c80000-0000-4000-8000-000000000001", investmentId: GOLDEN_HOUSEHOLD_IDS.retirementInvestment, incomeId: GOLDEN_HOUSEHOLD_IDS.income, priority: 10, character: "traditional_401k", calculation: { kind: "fixed", amount: "1000" }, planKey: "employer-b", vestedFraction: "1", excessPolicy: "auto_cap", facts: { taxYear: 2026, ageAtYearEnd: 36, eligiblePlanCompensation: "100000" } });
+  await importDraft(page, model); await useShortHorizon(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  const prior = page.getByRole("region", { name: "Prior year-to-date contributions" });
+  await prior.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
+  await prior.getByRole("checkbox").check();
+  await prior.getByRole("button", { name: "Save prior YTD usage", exact: true }).click();
+  await expect(prior.getByRole("alert")).toContainText("OPENING_USAGE_SCOPE_REQUIRED");
+  await prior.getByLabel("Historical holding", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
+  await prior.getByLabel("Historical contributor age at year end", { exact: true }).fill("36");
+  await prior.getByLabel("Historical plan/sponsor key", { exact: true }).fill("employer-a");
+  await prior.getByLabel("Historical eligible plan compensation", { exact: true }).fill("100000");
+  await prior.getByRole("button", { name: "Save historical scope", exact: true }).click();
+  await prior.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
+  await prior.getByLabel(/traditional 401k prior YTD total$/).first().fill("20000");
+  await prior.getByLabel(/traditional 401k prior YTD amount excluding catch-up$/).first().fill("20000");
+  await prior.getByRole("checkbox").check();
+  await prior.getByRole("button", { name: "Save prior YTD usage", exact: true }).click();
+  await expect(prior.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("4500");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  const promise = page.waitForEvent("download"); await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const download = await promise, restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
+  expect(getPayrollContributionPlans(restored)).toHaveLength(1);
+  expect(getPersonalPurchasePlans(restored)).toEqual([]);
+  expect(getHistoricalContributionScopes(restored)).toMatchObject([{ investmentId: GOLDEN_HOUSEHOLD_IDS.brokerageInvestment }]);
+  expect(getContributionCapacities(restored).find(row => row.accountId === GOLDEN_HOUSEHOLD_IDS.retirementAccount && row.bucketIdentity.includes("401k_additions:employer-b"))).toMatchObject({ openingUsage: "0", remaining: "72000" });
+});
 
 test("D1 saves an authored brokerage purchase in the canonical export", async ({ page }) => {
   page.setDefaultTimeout(5_000);

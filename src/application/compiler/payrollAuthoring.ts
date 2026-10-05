@@ -9,6 +9,7 @@ import { normalizeContributionLimitRuleIds } from "./contributionBindings.js";
 import { objects, canonicalId, UUID, EXACT_DECIMAL, utcDate, type CanonicalObject } from "./shared.js";
 import type { WorkplaceReclassification } from "../../simulation/workplaceEvents.js";
 import { openingUnvestedQuantity } from "./workplaceOpening.js";
+import { historicalContributionScopes } from "./contributionHistoryScopes.js";
 
 export const PAYROLL_ADAPTER = "d1-payroll-contribution/v1";
 const record = (value: JsonValue | undefined): value is CanonicalObject => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -29,7 +30,8 @@ export const payrollOpeningUnvestedUnits = (model: PortableModelEnvelope, invest
 export const supportsD1SpouseHsaScope = (model: PortableModelEnvelope, members: readonly string[]): boolean => {
   if (members.length !== 2) return false;
   const plans = durablePayrollAllocations(model);
-  return members.every(member => plans.some(item => item.allocation.policy.personId === member && item.allocation.policy.character.endsWith("_hsa") && item.allocation.policy.facts.hsaCoverage === "family" && item.allocation.policy.facts.hsaFullYearEligible === true));
+  const policies = [...plans.map(item => item.allocation.policy), ...historicalContributionScopes(model).map(item => item.policy)];
+  return members.every(member => policies.some(policy => policy.personId === member && policy.character.endsWith("_hsa") && policy.facts.hsaCoverage === "family" && policy.facts.hsaFullYearEligible === true));
 };
 
 /** A linked P03 adapter allocates actual gross payroll occurrences; it creates no independent cash schedule. */

@@ -8,6 +8,7 @@ export { authorPersonalPurchasePlan, type PersonalPurchasePlan } from "./compile
 export { contributionCapacityReadModel as getContributionCapacities, type ContributionCapacityReadModel } from "./compiler/contributionReadModel.js";
 export { authorPayrollContributionPlan, durablePayrollAllocations as getPayrollContributionPlans, payrollOpeningUnvestedUnits as getPayrollOpeningUnvestedUnits, type PayrollContributionPlan } from "./compiler/payrollAuthoring.js";
 export { authorOpeningContributionUsage, savedOpeningContributionUsage as getOpeningContributionUsage, openingContributionOptions as getOpeningContributionOptions, type OpeningContributionUsageEntry } from "./compiler/contributionOpening.js";
+export { authorHistoricalContributionScope, historicalContributionScopes as getHistoricalContributionScopes } from "./compiler/contributionHistoryScopes.js";
 export type { AuthoredContributionFacts } from "./compiler/contributionAuthoring.js";
 export { durablePersonalPurchaseInstructions as getPersonalPurchasePlans } from "./compiler/personalPurchases.js";
 import {

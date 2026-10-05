@@ -6,6 +6,7 @@ import { durablePersonalPurchaseInstructions } from "./personalPurchases.js";
 import { durablePayrollAllocations } from "./payrollAuthoring.js";
 import { objects } from "./shared.js";
 import { compileOpeningContributionUsage, savedOpeningContributionUsage } from "./contributionOpening.js";
+import { historicalContributionScopes } from "./contributionHistoryScopes.js";
 
 export interface ContributionCapacityReadModel {
   readonly accountId: string; readonly year: number; readonly bucketIdentity: string; readonly categories: readonly string[];
@@ -14,7 +15,7 @@ export interface ContributionCapacityReadModel {
 }
 /** Capacity uses the same law facts and committed ledger as execution, never the account balance. */
 export const contributionCapacityReadModel = (model: PortableModelEnvelope, state?: AuthoritativeState): readonly ContributionCapacityReadModel[] => {
-  const plans = [...durablePersonalPurchaseInstructions(model).flatMap(item => item.contribution === undefined ? [] : [{ accountId: String(item.contribution.limits.find(binding => binding.target.targetType === "account")?.target.targetId ?? ""), investmentId: item.investmentId, policy: item.contribution }]),
+  const plans = [...historicalContributionScopes(model).map(item => ({ ...item, accountId: "" })), ...durablePersonalPurchaseInstructions(model).flatMap(item => item.contribution === undefined ? [] : [{ accountId: String(item.contribution.limits.find(binding => binding.target.targetType === "account")?.target.targetId ?? ""), investmentId: item.investmentId, policy: item.contribution }]),
     ...durablePayrollAllocations(model).map(item => ({ accountId: String(item.allocation.accountId), investmentId: String(item.allocation.positionId), policy: item.allocation.policy }))];
   const rows = new Map<string, ContributionCapacityReadModel>();
   let opening: AuthoritativeState["contributions"];

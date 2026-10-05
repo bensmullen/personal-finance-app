@@ -43,6 +43,8 @@ import {
   authorOpeningContributionUsage,
   getOpeningContributionUsage,
   getOpeningContributionOptions,
+  authorHistoricalContributionScope,
+  getHistoricalContributionScopes,
   type PayrollContributionPlan,
   createGuidedSetupDraft,
   createSyntheticPersonalDraft,
@@ -2693,9 +2695,41 @@ function PayrollContributionAuthoring({ draft, setDraft }: { draft: PersonalDraf
   </section>;
 }
 
+function HistoricalContributionScopeAuthoring({ draft, setDraft }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void }) {
+  const accounts = objectEntries(draft, "Account").filter(item => ["traditional_401k", "roth_401k", "traditional_ira", "roth_ira", "hsa", "hsa_investment"].includes(String(item.account_type)));
+  const holdings = objectEntries(draft, "Investment").filter(item => accounts.some(account => account.account_id === item.account_id));
+  const [investmentId, setInvestmentId] = useState("");
+  const [fields, setFields] = useState<Record<string, string>>({ taxYear: "2026" });
+  const [planKey, setPlanKey] = useState(""), [error, setError] = useState("");
+  const saved = useMemo(() => { try { return getHistoricalContributionScopes(draft); } catch { return []; } }, [draft]);
+  const holding = holdings.find(item => item.investment_id === investmentId);
+  const account = accounts.find(item => item.account_id === holding?.account_id);
+  const hsa = String(account?.account_type).startsWith("hsa"), ira = String(account?.account_type).endsWith("_ira");
+  useEffect(() => {
+    const scope = saved.find(item => item.investmentId === investmentId);
+    setFields(scope ? Object.fromEntries(Object.entries(scope.policy.facts).map(([key, value]) => [key, typeof value === "object" ? value.amount.toString() : String(value)])) : { taxYear: "2026" });
+    setPlanKey(scope?.policy.limits.find(item => item.kind === "401k_additions")?.bucketKey.slice("401k_additions:".length) ?? "");
+  }, [saved, investmentId]);
+  const input = (key: string, label: string) => <label>{label}<input value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })} /></label>;
+  const booleanInput = (key: string, label: string) => <label>{label}<select value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })}><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>;
+  return <fieldset><legend>Historical account or employer plan</legend>
+    <p>Define prior contribution scopes even when this holding has no future contribution plan. For a former employer, use that employer's plan/sponsor key; the active employer keeps its own annual-additions bucket. Add a historical account and holding in the model editor if absent.</p>
+    <label>Historical holding<select value={investmentId} onChange={event => setInvestmentId(event.target.value)}><option value="">Choose holding</option>{holdings.map(item => <option key={String(item.investment_id)} value={String(item.investment_id)}>{objectLabel("Investment", item)}</option>)}</select></label>
+    {input("taxYear", "Historical contribution year")}{input("ageAtYearEnd", "Historical contributor age at year end")}
+    {investmentId && (hsa ? <>{booleanInput("hsaFullYearEligible", "Historical HSA full-year eligibility")}<label>Historical HSA coverage<select value={fields.hsaCoverage ?? ""} onChange={event => setFields({ ...fields, hsaCoverage: event.target.value })}><option value="">Unknown</option><option value="self">Self only</option><option value="family">Family</option></select></label>{input("hsaFamilyAllocation", "Historical individual family HSA allocation")}</> : ira ? <>{input("taxableCompensation", "Historical annual taxable compensation")}{account?.account_type === "roth_ira" && <>{input("rothMagi", "Historical Roth IRA MAGI")}<label>Historical filing status<select value={fields.filingStatus ?? ""} onChange={event => setFields({ ...fields, filingStatus: event.target.value })}><option value="">Unknown</option><option value="single">Single</option><option value="married_joint">Married jointly</option><option value="married_separate">Married separately</option><option value="head_of_household">Head of household</option><option value="qualifying_surviving_spouse">Qualifying surviving spouse</option></select></label>{booleanInput("livesWithSpouse", "Historical lived with spouse")}</>}</> : <><label>Historical plan/sponsor key<input value={planKey} onChange={event => setPlanKey(event.target.value)} /></label>{input("eligiblePlanCompensation", "Historical eligible plan compensation")}{booleanInput("planHasRoth", "Historical plan has Roth feature")}{input("priorYearSponsorWages", "Historical prior-year sponsor wages")}</>)}
+    <button type="button" disabled={!investmentId} onClick={() => {
+      try {
+        const facts: PayrollContributionPlan["facts"] = { taxYear: Number(fields.taxYear), ...(fields.ageAtYearEnd ? { ageAtYearEnd: Number(fields.ageAtYearEnd) } : {}), ...(fields.taxableCompensation ? { taxableCompensation: fields.taxableCompensation } : {}), ...(fields.eligiblePlanCompensation ? { eligiblePlanCompensation: fields.eligiblePlanCompensation } : {}), ...(fields.rothMagi ? { rothMagi: fields.rothMagi } : {}), ...(fields.filingStatus === "single" || fields.filingStatus === "married_joint" || fields.filingStatus === "married_separate" || fields.filingStatus === "head_of_household" || fields.filingStatus === "qualifying_surviving_spouse" ? { filingStatus: fields.filingStatus } : {}), ...(fields.livesWithSpouse ? { livesWithSpouse: fields.livesWithSpouse === "true" } : {}), ...(fields.priorYearSponsorWages ? { priorYearSponsorWages: fields.priorYearSponsorWages } : {}), ...(fields.planHasRoth ? { planHasRoth: fields.planHasRoth === "true" } : {}), ...(fields.hsaFullYearEligible ? { hsaFullYearEligible: fields.hsaFullYearEligible === "true" } : {}), ...(fields.hsaCoverage === "self" || fields.hsaCoverage === "family" ? { hsaCoverage: fields.hsaCoverage } : {}), ...(fields.hsaFamilyAllocation ? { hsaFamilyAllocation: fields.hsaFamilyAllocation } : {}) };
+        setDraft(authorHistoricalContributionScope(draft, { id: saved.find(item => item.investmentId === investmentId)?.id ?? randomId(), investmentId, facts, ...(!hsa && !ira ? { planKey } : {}) })); setError("");
+      } catch (failure) { setError(failure instanceof Error ? failure.message : "Historical scope could not be saved"); }
+    }}>Save historical scope</button>{error && <p role="alert">{error}</p>}
+  </fieldset>;
+}
+
 function OpeningContributionUsageAuthoring({ draft, setDraft }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void }) {
   const saved = useMemo(() => { try { return getOpeningContributionUsage(draft); } catch { return undefined; } }, [draft]);
-  const options = useMemo(() => { try { return getOpeningContributionOptions(draft); } catch { return []; } }, [draft]);
+  const available = useMemo(() => { try { return { options: getOpeningContributionOptions(draft), error: "" }; } catch (failure) { return { options: [], error: failure instanceof Error ? failure.message : "Historical scopes unavailable" }; } }, [draft]);
+  const options = available.options;
   const [date, setDate] = useState(saved?.asOf ?? "");
   const [fields, setFields] = useState<Record<string, { amount: string; ordinary: string }>>({});
   const [confirmed, setConfirmed] = useState(false), [error, setError] = useState("");
@@ -2706,8 +2740,9 @@ function OpeningContributionUsageAuthoring({ draft, setDraft }: { draft: Persona
       return [`${option.investmentId}:${option.character}`, { amount: entry?.amount ?? "0", ordinary: entry?.ordinaryAmount ?? entry?.amount ?? "0" }];
     })));
   }, [saved, options]);
-  if (!options.length) return null;
   return <section className="panel" aria-label="Prior year-to-date contributions"><h2>Prior year-to-date contributions</h2>
+    <HistoricalContributionScopeAuthoring draft={draft} setDraft={setDraft} />
+    {available.error && <p role="alert">{available.error}</p>}
     <p>Enter contributions already made before the forecast start, across every account sharing these limits, including employer amounts. These facts consume annual capacity without adding cash flow or changing opening balances. Include any other prior contributions in the same scope; omitted categories are confirmed as zero.</p>
     <label>YTD forecast boundary<input type="date" value={date} onChange={event => { setDate(event.target.value); setConfirmed(false); }} /></label>
     {options.map(option => { const key = `${option.investmentId}:${option.character}`, value = fields[key] ?? { amount: "0", ordinary: "0" };
@@ -2717,7 +2752,7 @@ function OpeningContributionUsageAuthoring({ draft, setDraft }: { draft: Persona
         {split && <label>Prior YTD amount excluding catch-up<input aria-label={`${label} prior YTD amount excluding catch-up`} value={value.ordinary} onChange={event => { setFields({ ...fields, [key]: { ...value, ordinary: event.target.value } }); setConfirmed(false); }} /></label>}</fieldset>;
     })}
     <label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />I confirm all prior YTD usage in these shared scopes is known, including zero for omitted categories.</label>
-    <button type="button" disabled={!confirmed || !date} onClick={() => {
+    <button type="button" disabled={!confirmed || !date || !!available.error} onClick={() => {
       try { setDraft(authorOpeningContributionUsage(draft, { asOf: date, allPriorUsageKnown: true, entries: options.filter(option => option.policy.facts.taxYear === Number(date.slice(0, 4))).map(option => {
         const key = `${option.investmentId}:${option.character}`, value = fields[key] ?? { amount: "0", ordinary: "0" };
         const prior = saved?.entries.find(item => item.investmentId === option.investmentId && item.character === option.character);
