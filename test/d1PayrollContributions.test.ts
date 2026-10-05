@@ -5,6 +5,7 @@ import { deriveStatements, createStatementFlowAccumulator, deriveStatementsFromF
 import { createAccountingLeg, createAccountingTransaction, accountingTransactionId, assertBalanced } from "../src/accounting/index.js";
 import { payrollContributionCandidate, type PayrollContributionAllocation } from "../src/simulation/payrollContributions.js";
 import type { ContributionCharacter, ContributionPolicy } from "../src/simulation/contributions.js";
+import { decideContribution, recordContribution } from "../src/simulation/contributions.js";
 import { contributionCharacters, type D1CapacityKind, type D1ContributionFacts } from "../src/rules/contribution2026.js";
 import { authoredContributionRules, stableContributionRuleId } from "../src/application/compiler/contributionAuthoring.js";
 import { authorPayrollContributionPlan, durablePayrollAllocations } from "../src/application/compiler/payrollAuthoring.js";
@@ -36,6 +37,42 @@ const opening = (allocations: readonly PayrollContributionAllocation[]) => creat
 const payroll = (state: ReturnType<typeof opening>, allocations: readonly PayrollContributionAllocation[], gross = "1000", key = "payroll:1") => payrollContributionCandidate(state, { id: key, incomeId: golden.income, at, gross: money(gross), depositAccountId: cash, allocations });
 
 describe("D1 payroll recognition and shared contribution capacity", () => {
+  it.each([[50, "8000"], [60, "11250"], [63, "11250"]] as const)("retains age %s catch-up after employer/after-tax additions nearly fill 415(c)", (age, catchup) => {
+    const annual = { ageAtYearEnd: age, planHasRoth: true, priorYearSponsorWages: money("100000") };
+    const employer = allocation(1, "employer_401k", "70000", annual), afterTax = allocation(2, "after_tax_401k", "1000", annual);
+    const elective = { ...allocation(3, "traditional_401k", "15000", annual), policy: { ...policy("traditional_401k", annual), excessPolicy: "auto_cap" as const } };
+    const original = opening([employer, afterTax, elective]);
+    const prior = payroll(original, [employer, afterTax], "1000", "prior");
+    const rejected = decideContribution(prior.state, { ...elective.policy, excessPolicy: "reject" }, elective.accountId, at, money("15000"));
+    expect(rejected.accepted.isZero()).toBe(true);
+    expect(rejected.buckets.every(bucket => (bucket.consumedAmount ?? rejected.accepted).isZero())).toBe(true);
+    const result = payroll(prior.state, [elective], "20000", "later");
+    const accepted = money("1000").plus(money(catchup));
+    expect(result.takeHomeCash.equals(money("20000").minus(accepted))).toBe(true);
+    const entry = Object.values(result.state.contributions!).find(item => item.character === "traditional_401k")!;
+    expect(entry.amount.equals(accepted)).toBe(true);
+    expect(entry.buckets.find(bucket => bucket.identity.includes(":401k_additions:"))!.amount.amount.toString()).toBe("1000");
+    expect(entry.buckets.find(bucket => bucket.identity.includes(":401k_elective:"))!.amount.equals(accepted)).toBe(true);
+    expect(Object.values(result.state.contributions!).flatMap(item => item.buckets.filter(bucket => bucket.identity.includes(":401k_additions:"))).reduce((sum, bucket) => sum.plus(bucket.amount), money("0")).amount.toString()).toBe("72000");
+    expect(deriveStatements(result.state, result.transactions, USD).income.amount.toString()).toBe("20000");
+    expect(deriveStatements(result.state, result.transactions, USD).netWorth.amount.toString()).toBe("91000");
+    expect(Object.values(prior.state.contributions!)).toHaveLength(2);
+    expect(original.contributions).toBeUndefined();
+    result.transactions.forEach(assertBalanced);
+  });
+  it("requires Roth for catch-up triggered by exhausted additions, before ordinary 402(g) is exhausted", () => {
+    const annual = { ageAtYearEnd: 50, planHasRoth: true, priorYearSponsorWages: money("150001") };
+    const employer = allocation(1, "employer_401k", "71000", annual), traditional = allocation(2, "traditional_401k", "9000", annual), roth = allocation(3, "roth_401k", "8000", annual);
+    const prior = payroll(opening([employer, traditional, roth]), [employer], "1000", "prior");
+    expect(() => decideContribution(prior.state, traditional.policy, traditional.accountId, at, money("9000"))).toThrow("Applicable catch-up deferrals must be Roth");
+    const capped = decideContribution(prior.state, { ...traditional.policy, excessPolicy: "auto_cap" }, traditional.accountId, at, money("9000"));
+    expect(capped.accepted.amount.toString()).toBe("1000");
+    const committed = recordContribution(prior.state, traditional.policy, traditional.accountId, "later:traditional", at, capped);
+    const catchup = decideContribution(committed, roth.policy, roth.accountId, at, money("8000"));
+    expect(catchup.accepted.amount.toString()).toBe("8000");
+    expect(catchup.buckets.find(bucket => bucket.bucketIdentity.includes(":401k_additions:"))!.consumedAmount!.isZero()).toBe(true);
+    expect(Object.values(prior.state.contributions!)).toHaveLength(1);
+  });
   it("balances gross salary, four employee characters, match, fixed employer benefit and HSA seed", () => {
     const allocations = [allocation(1, "traditional_401k", "100"), allocation(2, "roth_401k", "50"), allocation(3, "after_tax_401k", "25"), allocation(4, "employee_hsa", "50"),
       { ...allocation(5, "employer_401k", "0"), calculation: { kind: "match" as const, rate: "0.5", compensationCapRate: "0.06" } }, allocation(6, "employer_401k", "40"), allocation(7, "employer_hsa", "25")];

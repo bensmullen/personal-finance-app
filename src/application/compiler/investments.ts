@@ -8,6 +8,8 @@ import { normalizeContributionLimitRuleIds } from "./contributionBindings.js";
 import { durablePersonalPurchaseInstructions, personalPurchaseInstructionId } from "./personalPurchases.js";
 import { supportsD1SpouseHsaScope } from "./payrollAuthoring.js";
 import type { ContributionPolicy } from "../../simulation/contributions.js";
+import { openingUnvestedQuantity } from "./workplaceOpening.js";
+import { compileOpeningContributionUsage } from "./contributionOpening.js";
 import {
   createPrimitiveRuntimeStateStore,
   type PrimitiveRuntimeStateStore,
@@ -1250,12 +1252,15 @@ export const compileInvestments = (
         "price",
       );
     const positionId = domainId("position", id);
+    let unvested: Quantity;
+    try { unvested = openingUnvestedQuantity(model, investment); }
+    catch (error) { return invalidResult("OPENING_EMPLOYER_UNVESTED_QUANTITY_INVALID", String(error), "Investment", id); }
     positions[positionId] = {
       id: positionId,
       accountId: domainId("account", accountId),
-      quantity,
+      quantity: quantity.minus(unvested),
       price,
-      carryingValue: marketValue,
+      carryingValue: marketValue.minus(price.times(unvested.amount)),
     };
     if (
       investment.return_model_id !== undefined &&
@@ -1614,6 +1619,9 @@ export const compileInvestments = (
     }
   }
 
+  let openingUsage: ReturnType<typeof compileOpeningContributionUsage>;
+  try { openingUsage = compileOpeningContributionUsage(model, request.simulationStart); }
+  catch (error) { return unsupportedResult("OPENING_CONTRIBUTION_USAGE_INCOMPLETE", String(error), "contribution"); }
   const input: VerticalSlice3Input = Object.freeze({
     householdId: domainId("household", household.value.householdId), ownerId: domainId("person", ownerId), baseCurrency: currency,
     valuationAccountingPolicy: "economic_only", ruleCatalog: Object.freeze([]),
@@ -1625,8 +1633,15 @@ export const compileInvestments = (
     value: Object.freeze({
       input,
       openingState: createAuthoritativeState({
-        accounts: accountStates,
+        accounts: { ...openingUsage.accounts, ...accountStates },
         positions,
+        contributions: openingUsage.contributions,
+        contingentPositions: Object.fromEntries(objects(model, "Investment").flatMap(investment => {
+          const id = String(investment.investment_id), position = positions[id];
+          if (!position) return [];
+          const unvested = openingUnvestedQuantity(model, investment);
+          return unvested.amount.isZero() ? [] : [[id, { positionId: position.id, quantity: unvested, carryingValue: position.price.times(unvested.amount) }]];
+        })),
       }),
       primitiveState: createPrimitiveRuntimeStateStore(),
       scenarioIdentity: scenario.value.id,

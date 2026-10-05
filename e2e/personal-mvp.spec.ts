@@ -10,6 +10,8 @@ import {
   importPersonalModelJson,
   getPersonalPurchasePlans,
   getPayrollContributionPlans,
+  getOpeningContributionUsage,
+  getPayrollOpeningUnvestedUnits,
   type JsonObject,
 } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
@@ -97,9 +99,17 @@ test("D1 normal payroll authoring preserves allocations and shared limit identit
   await form.getByLabel("Shared plan/sponsor key", { exact: true }).fill("example-sponsor");
   await form.getByLabel("Payroll age at year end", { exact: true }).fill("36");
   await form.getByLabel("Annual eligible plan compensation", { exact: true }).fill("120000");
+  await form.getByLabel("Opening unvested employer units", { exact: true }).fill("100");
   await form.getByRole("button", { name: "Save payroll contribution", exact: true }).click();
   await expect(form.getByText(/Saved payroll: traditional 401k/)).toBeVisible();
   await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("24500");
+  const priorUsage = page.getByRole("region", { name: "Prior year-to-date contributions" });
+  await priorUsage.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
+  await priorUsage.getByLabel(/traditional 401k prior YTD total$/).fill("10000");
+  await priorUsage.getByLabel(/traditional 401k prior YTD amount excluding catch-up$/).fill("10000");
+  await priorUsage.getByRole("checkbox").check();
+  await priorUsage.getByRole("button", { name: "Save prior YTD usage", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("14500");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Import / Export", exact: true }).click();
   const promise = page.waitForEvent("download"); await page.getByRole("button", { name: "Export current model", exact: true }).click();
@@ -107,6 +117,8 @@ test("D1 normal payroll authoring preserves allocations and shared limit identit
   const plans = getPayrollContributionPlans(restored);
   expect(plans).toMatchObject([{ incomeId: GOLDEN_HOUSEHOLD_IDS.income, allocation: { positionId: GOLDEN_HOUSEHOLD_IDS.retirementInvestment, calculation: { kind: "percent", rate: "0.05" }, policy: { character: "traditional_401k", excessPolicy: "reject" } } }]);
   expect(plans[0]!.allocation.policy.limits.some(binding => binding.bucketKey === "401k_additions:example-sponsor")).toBe(true);
+  expect(getPayrollOpeningUnvestedUnits(restored, GOLDEN_HOUSEHOLD_IDS.retirementInvestment)).toBe("100");
+  expect(getOpeningContributionUsage(restored)).toMatchObject({ asOf: "2026-07-01", allPriorUsageKnown: true, entries: expect.arrayContaining([{ id: expect.any(String), investmentId: GOLDEN_HOUSEHOLD_IDS.retirementInvestment, character: "traditional_401k", amount: "10000", ordinaryAmount: "10000" }]) });
 });
 
 test("D1 normal IRA authoring saves annual facts and explicit auto-cap", async ({ page }) => {
@@ -245,7 +257,8 @@ test("R4 UAT immutable account, income, and debt facts are not fake editable con
   await useShortHorizon(page);
   await page.getByRole("button", { name: "Money", exact: true }).click();
   await page.getByRole("button", { name: "Accounts", exact: true }).click();
-  await expect(page.getByText(/Recurring retirement contributions are not currently authorable/)).toBeVisible();
+  await expect(page.getByText(/Use Investment purchases for checking\/savings-funded IRA contributions/)).toBeVisible();
+  await expect(page.getByText(/Recurring retirement contributions are not currently authorable/)).toHaveCount(0);
   await page.getByRole("button", { name: /Everyday checking/ }).click();
   let editor = page.getByRole("dialog", { name: "Edit Account" });
   await expect(editor.getByRole("group", { name: "Account type", exact: true })).toContainText("checking");

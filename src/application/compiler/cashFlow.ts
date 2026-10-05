@@ -7,6 +7,7 @@ import {
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { deriveCanonicalRetirementBindings } from "./retirementAuthoring.js";
 import { durablePayrollAllocations, payrollOpeningBalances, supportsD1SpouseHsaScope } from "./payrollAuthoring.js";
+import { compileOpeningContributionUsage } from "./contributionOpening.js";
 import {
   createAuthoritativeState,
   type AuthoritativeState,
@@ -1703,7 +1704,8 @@ export const compileCashFlow = (
   const compiledIncomes: VerticalSlice2Input["incomes"][number][] = [];
   let payroll: ReturnType<typeof durablePayrollAllocations>;
   let payrollBalances: ReturnType<typeof payrollOpeningBalances>;
-  try { payroll = durablePayrollAllocations(model); payrollBalances = payrollOpeningBalances(model, payroll); }
+  let openingUsage: ReturnType<typeof compileOpeningContributionUsage>;
+  try { payroll = durablePayrollAllocations(model); payrollBalances = payrollOpeningBalances(model, payroll); openingUsage = compileOpeningContributionUsage(model, request.simulationStart); }
   catch (error) { return unsupportedResult("PAYROLL_CONTRIBUTION_UNSUPPORTED", error instanceof Error ? error.message : "Unsupported payroll policy", "Investment"); }
   for (const stream of [...incomes].sort((a, b) =>
     String(a.income_id).localeCompare(String(b.income_id)),
@@ -1918,7 +1920,7 @@ export const compileCashFlow = (
       expenses: Object.freeze(compiledExpenses),
     });
     const openingState = createAuthoritativeState({
-      accounts: { ...payrollBalances.accounts, ...Object.fromEntries(
+      accounts: { ...openingUsage.accounts, ...payrollBalances.accounts, ...Object.fromEntries(
         eligibleAccounts.map((candidate) => {
           const candidateId = domainId(
             "account",
@@ -1943,6 +1945,8 @@ export const compileCashFlow = (
         }),
       ) },
       positions: payrollBalances.positions,
+      contingentPositions: payrollBalances.contingentPositions,
+      contributions: openingUsage.contributions,
       liabilities: {
         [payableId]: { id: payableId, balance: money("0", currency) },
       },

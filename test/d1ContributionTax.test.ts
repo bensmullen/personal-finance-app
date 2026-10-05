@@ -29,6 +29,21 @@ const fixture2026 = (months = 1, payment = false) => {
 };
 
 describe("D1 committed contribution tax integration", () => {
+  it("does not recognize opening capacity history as new payroll or IRA tax economics", () => {
+    const fixture = fixture2026();
+    const opening = cloneAuthoritativeState(fixture.compiled.reconciledOpeningState);
+    opening.contributions = {
+      historical: { source: "opening", id: "historical", at: instant("2026-01-10T00:00:00.000Z"), personId: ids.person, accountId, character: "traditional_ira", amount: money("500"), eligibleDeduction: money("500"), buckets: [] },
+    };
+    const compiled = { ...fixture.compiled, reconciledOpeningState: opening };
+    const result = runHouseholdKernel({ kernel: compileHouseholdKernel(compiled, start), runContext: fixture.context, resultTier: "detail" });
+    expect(result.status).toBe("completed");
+    expect(result.periods[0]!.statements.income.amount.toString()).toBe("1000");
+    expect(result.periods[0]!.statements.expenses.amount.toString()).toBe("100");
+    expect(result.periods[0]!.cash.amount.toString()).toBe("1000");
+    expect(result.state.positions[positionId]!.carryingValue.isZero()).toBe(true);
+    expect(Object.values(result.state.contributions!)).toHaveLength(1);
+  });
   it.each([false, true])("reverses earlier accrued IRA tax without a second payment (already paid: %s)", paid => {
     const fixture = fixture2026(2, paid), at = instant("2026-02-10T00:00:00.000Z"), contributionPolicy = policy("traditional_ira");
     const participant: HouseholdKernelParticipant = { id: "ira", version: "test-v1", economicInputs: { contributionPolicy }, prepare: (_context, period) => ({ id: "ira", operations: period.start <= at && at < period.end ? [{ descriptor: { id: "ira:purchase", domain: "investments", operationClass: "investment_purchase", sequencingInstant: at, dependsOn: [], resourceAccesses: [], traceRefs: [] }, execute: opening => {

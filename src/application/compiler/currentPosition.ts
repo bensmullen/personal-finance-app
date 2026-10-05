@@ -11,6 +11,7 @@ import {
   Money,
   RoundingPolicy,
   SHARE,
+  type Quantity,
   money,
   quantity,
   sumMoney,
@@ -35,6 +36,7 @@ import {
   type CanonicalObject,
 } from "./shared.js";
 import { resolveGrowth } from "./cashFlow.js";
+import { openingUnvestedQuantity } from "./workplaceOpening.js";
 import { selectScenario } from "./scenarioSelection.js";
 import type { CapabilityDiagnostic, CompileResult } from "./types.js";
 
@@ -47,6 +49,7 @@ export interface CurrentPositionCompilation {
   readonly cash?: Money;
   /** Internal wrapper cash is an asset but is not household spending cash. */
   readonly wrapperCash?: Money;
+  readonly contingentPlanValue?: Money;
   readonly assets?: Money;
   readonly liabilities?: Money;
   readonly netWorth?: Money;
@@ -346,6 +349,7 @@ export const compileCurrentPosition = (
   const investments = objects(model, "Investment");
   const linkedAssetIds = new Set<string>();
   const nonCashAssets: Money[] = [];
+  const contingentValues: Money[] = [];
   let assetsComplete = cashComplete && wrapperCashComplete;
   for (const investment of investments) {
     const id = canonicalId(investment, "investment_id");
@@ -454,7 +458,12 @@ export const compileCurrentPosition = (
       }
       continue;
     }
-    nonCashAssets.push(derivedValue);
+    let unvested: Quantity;
+    try { unvested = openingUnvestedQuantity(model, investment); }
+    catch (error) { return invalidResult("OPENING_EMPLOYER_UNVESTED_QUANTITY_INVALID", String(error), "Investment", id); }
+    const contingent = openingPrice.times(unvested.amount);
+    contingentValues.push(contingent);
+    nonCashAssets.push(derivedValue.minus(contingent));
   }
 
   for (const asset of objects(model, "Asset")) {
@@ -906,6 +915,7 @@ export const compileCurrentPosition = (
     value: Object.freeze({
       ...(cash ? { cash } : {}),
       ...(wrapperCashComplete ? { wrapperCash: sumMoney(wrapperCashBalances, currency) } : {}),
+      contingentPlanValue: sumMoney(contingentValues, currency),
       ...(totals ? { assets: totals.assets } : {}),
       ...(totals && liabilitiesComplete ? { netWorth: totals.netWorth } : {}),
       ...(liabilities ? { liabilities } : {}),

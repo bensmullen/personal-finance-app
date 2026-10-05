@@ -243,6 +243,7 @@ export interface AuthoritativeIdentityRegistry {
 
 /** Committed statutory usage is independent of account balances and later vesting. */
 export interface ContributionState {
+  readonly source?: "opening";
   readonly id: string;
   readonly at: Instant;
   readonly personId: string;

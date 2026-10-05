@@ -6,7 +6,8 @@ export { authorCanonicalRetirementDate as editPersonalRetirementDate } from "./c
 export { canonicalRetirementPlans as getPersonalRetirementPlans } from "./compiler/retirementAuthoring.js";
 export { authorPersonalPurchasePlan, type PersonalPurchasePlan } from "./compiler/personalPurchases.js";
 export { contributionCapacityReadModel as getContributionCapacities, type ContributionCapacityReadModel } from "./compiler/contributionReadModel.js";
-export { authorPayrollContributionPlan, durablePayrollAllocations as getPayrollContributionPlans, type PayrollContributionPlan } from "./compiler/payrollAuthoring.js";
+export { authorPayrollContributionPlan, durablePayrollAllocations as getPayrollContributionPlans, payrollOpeningUnvestedUnits as getPayrollOpeningUnvestedUnits, type PayrollContributionPlan } from "./compiler/payrollAuthoring.js";
+export { authorOpeningContributionUsage, savedOpeningContributionUsage as getOpeningContributionUsage, openingContributionOptions as getOpeningContributionOptions, type OpeningContributionUsageEntry } from "./compiler/contributionOpening.js";
 export type { AuthoredContributionFacts } from "./compiler/contributionAuthoring.js";
 export { durablePersonalPurchaseInstructions as getPersonalPurchasePlans } from "./compiler/personalPurchases.js";
 import {
@@ -109,6 +110,7 @@ export interface CurrentPositionReadModel {
   readonly netWorth?: MoneyReadModel;
   readonly cash?: MoneyReadModel;
   readonly wrapperCash?: MoneyReadModel;
+  readonly contingentPlanValue?: MoneyReadModel;
   readonly assets?: MoneyReadModel;
   readonly liabilities?: MoneyReadModel;
   readonly monthlyIncome?: MoneyReadModel;
@@ -653,6 +655,7 @@ export const getCurrentPosition = (
     ...(value.netWorth ? { netWorth: moneyDto(value.netWorth) } : {}),
     ...(value.cash ? { cash: moneyDto(value.cash) } : {}),
     ...(value.wrapperCash ? { wrapperCash: moneyDto(value.wrapperCash) } : {}),
+    ...(value.contingentPlanValue ? { contingentPlanValue: moneyDto(value.contingentPlanValue) } : {}),
     ...(value.assets ? { assets: moneyDto(value.assets) } : {}),
     ...(value.liabilities ? { liabilities: moneyDto(value.liabilities) } : {}),
     ...(value.monthlyIncome

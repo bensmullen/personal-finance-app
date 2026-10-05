@@ -144,7 +144,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           const state = opening.state;
           const runtime = opening.runtime ?? {};
           const year = finalSettlement?.taxYear ?? at.slice(0, 4), prior = yearRuntime(taxRuntime(runtime), year);
-          const contributions = Object.values(state.contributions ?? {}).filter(entry => entry.at.slice(0, 4) === year && entry.at <= at);
+          const contributions = Object.values(state.contributions ?? {}).filter(entry => entry.source !== "opening" && entry.at.slice(0, 4) === year && entry.at <= at);
           const material = contributions.length > 0 || prior.economics.some(economic => Object.values(economic.income).some(amount => !amount.isZero())) || prior.diagnostics.size > 0 || instruction !== undefined || finalSettlement !== undefined;
           if (!material) return { ...opening, facts: { outputCapabilities: taxOutputCapabilities([]) } };
           const diagnostics: TaxCapabilityDiagnostic[] = [...input.diagnostics, ...prior.diagnostics];

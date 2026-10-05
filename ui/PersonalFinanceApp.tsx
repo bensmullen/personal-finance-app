@@ -38,7 +38,11 @@ import {
   getPersonalPurchasePlans,
   authorPayrollContributionPlan,
   getPayrollContributionPlans,
+  getPayrollOpeningUnvestedUnits,
   getContributionCapacities,
+  authorOpeningContributionUsage,
+  getOpeningContributionUsage,
+  getOpeningContributionOptions,
   type PayrollContributionPlan,
   createGuidedSetupDraft,
   createSyntheticPersonalDraft,
@@ -1108,6 +1112,7 @@ function Overview({
     ["Net worth", position.netWorth],
     ["Household cash", position.cash],
     ["Cash inside investment accounts", position.wrapperCash],
+    ["Unvested employer plan value (contingent)", position.contingentPlanValue],
     ["Monthly cash flow", position.monthlyCashFlow],
     ["Debt", position.liabilities],
   ] as const;
@@ -2642,11 +2647,13 @@ function PayrollContributionAuthoring({ draft, setDraft }: { draft: PersonalDraf
   const [kind, setKind] = useState<"fixed" | "percent" | "match">("percent");
   const [amount, setAmount] = useState(""); const [rate, setRate] = useState(""); const [capRate, setCapRate] = useState("");
   const [priority, setPriority] = useState("10"); const [planKey, setPlanKey] = useState(""); const [vested, setVested] = useState("1");
+  const [openingUnvested, setOpeningUnvested] = useState("0");
   const [vestDate, setVestDate] = useState(""); const [forfeitDate, setForfeitDate] = useState("");
   const [fields, setFields] = useState<Record<string, string>>({ taxYear: "2026" });
   const [excessPolicy, setExcessPolicy] = useState<"reject" | "auto_cap">("reject"); const [error, setError] = useState("");
   const saved = useMemo(() => { try { return { plans: getPayrollContributionPlans(draft), error: "" }; } catch (failure) { return { plans: [], error: failure instanceof Error ? failure.message : "Unsupported saved payroll policy" }; } }, [draft]);
   useEffect(() => {
+    setOpeningUnvested(getPayrollOpeningUnvestedUnits(draft, investmentId));
     const plan = saved.plans.find(item => item.allocation.positionId === investmentId); if (!plan) return;
     const allocation = plan.allocation; setIncomeId(plan.incomeId); setCharacter(allocation.policy.character === "traditional_ira" || allocation.policy.character === "roth_ira" ? "traditional_401k" : allocation.policy.character);
     setKind(allocation.calculation.kind); setAmount(allocation.calculation.kind === "fixed" ? allocation.calculation.amount.amount.toString() : ""); setRate(allocation.calculation.kind === "fixed" ? "" : allocation.calculation.rate); setCapRate(allocation.calculation.kind === "match" ? allocation.calculation.compensationCapRate : "");
@@ -2666,7 +2673,8 @@ function PayrollContributionAuthoring({ draft, setDraft }: { draft: PersonalDraf
     {kind === "match" && <label>Match compensation cap rate<input value={capRate} onChange={event => setCapRate(event.target.value)} /></label>}
     <label>Payroll allocation priority<input type="number" value={priority} onChange={event => setPriority(event.target.value)} /></label>
     {!character.endsWith("_hsa") && <label>Shared plan/sponsor key<input value={planKey} onChange={event => setPlanKey(event.target.value)} /></label>}
-    {character === "employer_401k" && <label>Currently vested fraction<input value={vested} onChange={event => setVested(event.target.value)} /></label>}
+    {character === "employer_401k" && <label>Vested fraction of future employer contributions<input value={vested} onChange={event => setVested(event.target.value)} /></label>}
+    {!character.endsWith("_hsa") && <label>Opening unvested employer units<input aria-label="Opening unvested employer units" value={openingUnvested} onChange={event => setOpeningUnvested(event.target.value)} /><small>Subset of this holding's total opening units funded by the employer and still unvested. Employee-funded units remain fully owned.</small></label>}
     {character === "employer_401k" && <fieldset><legend>Optional full contingent reclassification</legend><p>These dates reclassify all then-current unvested value in this holding. Complex schedules and partial forfeiture are unsupported. A forfeiture date does not infer a salary end date; author the employment-income end separately.</p><label>Full vesting date<input type="date" value={vestDate} onChange={event => setVestDate(event.target.value)} /></label><label>Full contingent forfeiture date<input type="date" value={forfeitDate} onChange={event => setForfeitDate(event.target.value)} /></label></fieldset>}
     <fieldset><legend>Annual eligibility facts</legend>{input("taxYear", "Payroll contribution year")}{input("ageAtYearEnd", "Payroll age at year end")}
       {character.endsWith("_hsa") ? <>{booleanInput("hsaFullYearEligible", "HSA eligible for the full year")}<label>HSA coverage<select aria-label="HSA coverage" value={fields.hsaCoverage ?? ""} onChange={event => setFields({ ...fields, hsaCoverage: event.target.value })}><option value="">Unknown</option><option value="self">Self only</option><option value="family">Family</option></select></label>{fields.hsaCoverage === "family" && input("hsaFamilyAllocation", "Individual ordinary family HSA allocation")}</> : <>{input("eligiblePlanCompensation", "Annual eligible plan compensation")}{booleanInput("planHasRoth", "Plan has a Roth feature")}{input("priorYearSponsorWages", "Prior-year wages with this sponsor")}</>}
@@ -2675,7 +2683,7 @@ function PayrollContributionAuthoring({ draft, setDraft }: { draft: PersonalDraf
     <button type="button" disabled={!investmentId || !incomeId} onClick={() => {
       try { const investment = destinations.find(item => item.investment_id === investmentId)!;
         const existing = saved.plans.find(item => item.allocation.positionId === investmentId);
-        setDraft(authorPayrollContributionPlan(draft, { primitiveId: typeof investment.contribution_model_id === "string" ? investment.contribution_model_id : randomId(), investmentId, incomeId, priority: Number(priority), character, calculation: kind === "fixed" ? { kind, amount } : kind === "percent" ? { kind, rate } : { kind, rate, compensationCapRate: capRate }, planKey, vestedFraction: character === "employer_401k" ? vested : "1", excessPolicy,
+        setDraft(authorPayrollContributionPlan(draft, { primitiveId: typeof investment.contribution_model_id === "string" ? investment.contribution_model_id : randomId(), investmentId, incomeId, priority: Number(priority), character, calculation: kind === "fixed" ? { kind, amount } : kind === "percent" ? { kind, rate } : { kind, rate, compensationCapRate: capRate }, planKey, vestedFraction: character === "employer_401k" ? vested : "1", excessPolicy, ...(!character.endsWith("_hsa") ? { openingUnvestedQuantity: openingUnvested } : {}),
           contingentEvents: character !== "employer_401k" ? [] : [...(vestDate ? [{ eventId: existing?.events.find(event => event.kind === "vest")?.eventId ?? randomId(), kind: "vest" as const, date: vestDate }] : []), ...(forfeitDate ? [{ eventId: existing?.events.find(event => event.kind === "forfeit")?.eventId ?? randomId(), kind: "forfeit" as const, date: forfeitDate }] : [])],
           facts: { taxYear: Number(fields.taxYear), ...(fields.ageAtYearEnd ? { ageAtYearEnd: Number(fields.ageAtYearEnd) } : {}), ...(fields.eligiblePlanCompensation ? { eligiblePlanCompensation: fields.eligiblePlanCompensation } : {}), ...(fields.priorYearSponsorWages ? { priorYearSponsorWages: fields.priorYearSponsorWages } : {}), ...(fields.planHasRoth ? { planHasRoth: fields.planHasRoth === "true" } : {}), ...(fields.hsaFullYearEligible ? { hsaFullYearEligible: fields.hsaFullYearEligible === "true" } : {}), ...(fields.hsaCoverage === "self" || fields.hsaCoverage === "family" ? { hsaCoverage: fields.hsaCoverage } : {}), ...(fields.hsaFamilyAllocation ? { hsaFamilyAllocation: fields.hsaFamilyAllocation } : {}) } })); setError("");
       } catch (failure) { setError(failure instanceof Error ? failure.message : "Payroll plan could not be saved"); }
@@ -2685,11 +2693,45 @@ function PayrollContributionAuthoring({ draft, setDraft }: { draft: PersonalDraf
   </section>;
 }
 
+function OpeningContributionUsageAuthoring({ draft, setDraft }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void }) {
+  const saved = useMemo(() => { try { return getOpeningContributionUsage(draft); } catch { return undefined; } }, [draft]);
+  const options = useMemo(() => { try { return getOpeningContributionOptions(draft); } catch { return []; } }, [draft]);
+  const [date, setDate] = useState(saved?.asOf ?? "");
+  const [fields, setFields] = useState<Record<string, { amount: string; ordinary: string }>>({});
+  const [confirmed, setConfirmed] = useState(false), [error, setError] = useState("");
+  useEffect(() => {
+    setDate(saved?.asOf ?? ""); setConfirmed(false);
+    setFields(Object.fromEntries(options.map(option => {
+      const entry = saved?.entries.find(item => item.investmentId === option.investmentId && item.character === option.character);
+      return [`${option.investmentId}:${option.character}`, { amount: entry?.amount ?? "0", ordinary: entry?.ordinaryAmount ?? entry?.amount ?? "0" }];
+    })));
+  }, [saved, options]);
+  if (!options.length) return null;
+  return <section className="panel" aria-label="Prior year-to-date contributions"><h2>Prior year-to-date contributions</h2>
+    <p>Enter contributions already made before the forecast start, across every account sharing these limits, including employer amounts. These facts consume annual capacity without adding cash flow or changing opening balances. Include any other prior contributions in the same scope; omitted categories are confirmed as zero.</p>
+    <label>YTD forecast boundary<input type="date" value={date} onChange={event => { setDate(event.target.value); setConfirmed(false); }} /></label>
+    {options.map(option => { const key = `${option.investmentId}:${option.character}`, value = fields[key] ?? { amount: "0", ordinary: "0" };
+      const split = option.character === "traditional_401k" || option.character === "roth_401k" || option.character.endsWith("_hsa") && option.policy.facts.hsaCoverage === "family";
+      const label = `${objectLabel("Investment", objectEntries(draft, "Investment").find(item => item.investment_id === option.investmentId) ?? {})} — ${option.character.replaceAll("_", " ")}`;
+      return <fieldset key={key}><legend>{label}</legend><label>Prior YTD total<input aria-label={`${label} prior YTD total`} value={value.amount} onChange={event => { setFields({ ...fields, [key]: { ...value, amount: event.target.value } }); setConfirmed(false); }} /></label>
+        {split && <label>Prior YTD amount excluding catch-up<input aria-label={`${label} prior YTD amount excluding catch-up`} value={value.ordinary} onChange={event => { setFields({ ...fields, [key]: { ...value, ordinary: event.target.value } }); setConfirmed(false); }} /></label>}</fieldset>;
+    })}
+    <label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />I confirm all prior YTD usage in these shared scopes is known, including zero for omitted categories.</label>
+    <button type="button" disabled={!confirmed || !date} onClick={() => {
+      try { setDraft(authorOpeningContributionUsage(draft, { asOf: date, allPriorUsageKnown: true, entries: options.filter(option => option.policy.facts.taxYear === Number(date.slice(0, 4))).map(option => {
+        const key = `${option.investmentId}:${option.character}`, value = fields[key] ?? { amount: "0", ordinary: "0" };
+        const prior = saved?.entries.find(item => item.investmentId === option.investmentId && item.character === option.character);
+        return { id: prior?.id ?? randomId(), investmentId: option.investmentId, character: option.character, amount: value.amount, ordinaryAmount: value.ordinary };
+      }) })); setError(""); } catch (failure) { setError(failure instanceof Error ? failure.message : "Prior usage could not be saved"); }
+    }}>Save prior YTD usage</button>{error && <p role="alert">{error}</p>}
+  </section>;
+}
+
 function ContributionCapacityPanel({ draft, forecast }: { draft: PersonalDraft; forecast: PersonalHouseholdForecastReadModel | undefined }) {
   let rows: ReturnType<typeof getContributionCapacities>;
   try { rows = forecast && forecast.status !== "unavailable" ? forecast.contributionCapacities : getContributionCapacities(draft); } catch (failure) { return <p role="alert">{failure instanceof Error ? failure.message : "Contribution capacity is unavailable"}</p>; }
-  return <section className="panel" aria-label="Contribution capacity"><h2>Annual contribution capacity</h2><p>Modeled year-to-date usage includes committed forecast contributions across every account sharing a bucket. Run the saved plan to calculate usage.</p>
-    <table><thead><tr><th>Account / year</th><th>Shared categories</th><th>Annual USD limit</th><th>Modeled YTD</th><th>Remaining</th></tr></thead><tbody>{rows.map(row => <tr key={`${row.accountId}:${row.bucketIdentity}`}><td>{objectLabel("Account", objectEntries(draft, "Account").find(item => item.account_id === row.accountId) ?? {})} / {row.year}</td><td>{row.categories.map(value => value.replaceAll("_", " ")).join(", ")}</td><td>{row.annualLimit ?? row.diagnostics.join(", ")}</td><td>{row.yearToDate ?? "Run plan"}</td><td>{row.remaining ?? "Run plan"}</td></tr>)}</tbody></table>
+  return <section className="panel" aria-label="Contribution capacity"><h2>Annual contribution capacity</h2><p>Modeled YTD combines authoritative opening usage and committed forecast contributions across every account sharing a bucket.</p>
+    <table><thead><tr><th>Account / year</th><th>Shared categories</th><th>Annual USD limit</th><th>Opening YTD</th><th>Forecast usage</th><th>Modeled YTD</th><th>Remaining</th></tr></thead><tbody>{rows.map(row => <tr key={`${row.accountId}:${row.bucketIdentity}`}><td>{objectLabel("Account", objectEntries(draft, "Account").find(item => item.account_id === row.accountId) ?? {})} / {row.year}</td><td>{row.categories.map(value => value.replaceAll("_", " ")).join(", ")}</td><td>{row.annualLimit ?? "Incomplete"}{row.diagnostics.length > 0 && <p role="status">{row.diagnostics.join(", ")}</p>}</td><td>{row.openingUsage ?? "Unknown"}</td><td>{row.forecastUsage ?? "Run plan"}</td><td>{row.yearToDate ?? "Incomplete"}</td><td>{row.remaining ?? "Incomplete"}</td></tr>)}</tbody></table>
     {forecast && forecast.status !== "unavailable" && forecast.contingentPositions.map(item => <p key={item.positionId}>Unvested contingent plan value: {item.value.amount} {item.value.currency}; excluded from owned net worth.</p>)}
   </section>;
 }
@@ -2766,6 +2808,7 @@ function HouseholdPlan({
       <RetirementDateAuthoring draft={draft} setDraft={setDraft} />
       <PersonalPurchaseAuthoring draft={draft} setDraft={setDraft} />
       <PayrollContributionAuthoring draft={draft} setDraft={setDraft} />
+      <OpeningContributionUsageAuthoring draft={draft} setDraft={setDraft} />
       <ContributionCapacityPanel draft={draft} forecast={forecast} />
       <p className="muted">If the forecast needs setup, open Expert forecast configuration below. These session choices must be configured again after reloading a saved model.</p>
       <details className="panel">

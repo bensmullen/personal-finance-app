@@ -8,6 +8,7 @@ import { authoredContributionRules, compileContributionPolicy, type AuthoredCont
 import { normalizeContributionLimitRuleIds } from "./contributionBindings.js";
 import { objects, canonicalId, UUID, EXACT_DECIMAL, utcDate, type CanonicalObject } from "./shared.js";
 import type { WorkplaceReclassification } from "../../simulation/workplaceEvents.js";
+import { openingUnvestedQuantity } from "./workplaceOpening.js";
 
 export const PAYROLL_ADAPTER = "d1-payroll-contribution/v1";
 const record = (value: JsonValue | undefined): value is CanonicalObject => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -21,6 +22,10 @@ const fixed = (value: JsonValue | undefined) => {
   return money(value);
 };
 export interface DurablePayrollAllocation { readonly incomeId: string; readonly allocation: PayrollContributionAllocation; readonly events: readonly WorkplaceReclassification[] }
+export const payrollOpeningUnvestedUnits = (model: PortableModelEnvelope, investmentId: string): string => {
+  const investment = objects(model, "Investment").find(item => item.investment_id === investmentId);
+  return investment === undefined ? "0" : openingUnvestedQuantity(model, investment).amount.toString();
+};
 export const supportsD1SpouseHsaScope = (model: PortableModelEnvelope, members: readonly string[]): boolean => {
   if (members.length !== 2) return false;
   const plans = durablePayrollAllocations(model);
@@ -35,12 +40,13 @@ export const durablePayrollAllocations = (model: PortableModelEnvelope): readonl
   if (primitive.primitive_id !== "P03" || primitive.enabled !== true || primitive.start_date != null || primitive.end_date != null || !record(primitive.input_bindings)) return fail("PAYROLL_PRIMITIVE_UNSUPPORTED");
   const roots = objects(model, "Scenario").filter(item => item.enabled === true && item.base_scenario_id == null);
   if (roots.length !== 1 || primitive.scenario_id !== roots[0]!.scenario_id || investment.scenario_id != null && investment.scenario_id !== primitive.scenario_id) return fail("PAYROLL_ROOT_SCENARIO_REQUIRED");
-  if (Object.keys(primitive.parameters).some(key => !["adapter", "priority", "contribution", "calculation", "vestedFraction", "contingentEvents"].includes(key)) || Object.keys(primitive.input_bindings).some(key => key !== "income_id")) return fail("PAYROLL_POLICY_FIELDS_UNSUPPORTED");
+  if (Object.keys(primitive.parameters).some(key => !["adapter", "priority", "contribution", "calculation", "vestedFraction", "contingentEvents", "openingUnvestedQuantity"].includes(key)) || Object.keys(primitive.input_bindings).some(key => key !== "income_id")) return fail("PAYROLL_POLICY_FIELDS_UNSUPPORTED");
   const incomeId = primitive.input_bindings.income_id;
   const income = objects(model, "Income").find(item => item.income_id === incomeId);
   const account = objects(model, "Account").find(item => item.account_id === investment.account_id);
   if (typeof incomeId !== "string" || !UUID.test(incomeId) || !income || income.income_type !== "salary" || income.gross_or_net === "net" || !account || account.currency !== "USD" || income.owner_id !== account.owner_id || investment.owner_id !== account.owner_id) return fail("PAYROLL_GROSS_SALARY_OWNER_REQUIRED");
   const policy = compileContributionPolicy(model, account, primitive.parameters.contribution);
+  openingUnvestedQuantity(model, investment);
   const hsa = policy.character.endsWith("_hsa");
   if (hsa ? !["hsa", "hsa_investment"].includes(String(account.account_type)) || account.tax_treatment !== "tax_free" : !["traditional_401k", "roth_401k"].includes(String(account.account_type))) return fail("PAYROLL_DESTINATION_CHARACTER_UNSUPPORTED");
   if (!hsa && (policy.character === "traditional_401k" || policy.character === "after_tax_401k" || policy.character === "employer_401k") && account.account_type !== "traditional_401k" || policy.character === "roth_401k" && account.account_type !== "roth_401k") return fail("PAYROLL_DESTINATION_CHARACTER_MISMATCH");
@@ -72,7 +78,7 @@ export const durablePayrollAllocations = (model: PortableModelEnvelope): readonl
 };
 
 export const payrollOpeningBalances = (model: PortableModelEnvelope, allocations: readonly DurablePayrollAllocation[]) => {
-  const accounts: AuthoritativeState["accounts"] = {}, positions: AuthoritativeState["positions"] = {};
+  const accounts: AuthoritativeState["accounts"] = {}, positions: AuthoritativeState["positions"] = {}, contingentPositions: NonNullable<AuthoritativeState["contingentPositions"]> = {};
   for (const { allocation } of allocations) {
     const account = objects(model, "Account").find(item => item.account_id === allocation.accountId)!;
     const investment = objects(model, "Investment").find(item => item.investment_id === allocation.positionId)!;
@@ -80,9 +86,11 @@ export const payrollOpeningBalances = (model: PortableModelEnvelope, allocations
     const price = money(String(investment.price), USD), quantity = Quantity.parse(investment.quantity, SHARE), value = price.times(quantity.amount);
     if (investment.market_value != null && !fixed(investment.market_value).equals(value)) return fail("PAYROLL_MARKET_VALUE_INCONSISTENT");
     accounts[allocation.accountId] = { id: allocation.accountId, ownerId: domainId("person", String(account.owner_id)), kind: allocation.policy.character.endsWith("_hsa") ? "other" : "retirement", cash: money(account.opening_balance, USD) };
-    positions[allocation.positionId] = { id: allocation.positionId, accountId: allocation.accountId, quantity, price, carryingValue: value };
+    const unvested = openingUnvestedQuantity(model, investment);
+    positions[allocation.positionId] = { id: allocation.positionId, accountId: allocation.accountId, quantity: quantity.minus(unvested), price, carryingValue: value.minus(price.times(unvested.amount)) };
+    if (!unvested.amount.isZero()) contingentPositions[allocation.positionId] = { positionId: allocation.positionId, quantity: unvested, carryingValue: price.times(unvested.amount) };
   }
-  return { accounts, positions };
+  return { accounts, positions, contingentPositions };
 };
 
 export interface PayrollContributionPlan {
@@ -91,6 +99,7 @@ export interface PayrollContributionPlan {
   readonly calculation: { readonly kind: "fixed"; readonly amount: string } | { readonly kind: "percent"; readonly rate: string } | { readonly kind: "match"; readonly rate: string; readonly compensationCapRate: string };
   readonly facts: AuthoredContributionFacts; readonly planKey?: string; readonly vestedFraction: string; readonly excessPolicy: "reject" | "auto_cap";
   readonly contingentEvents?: readonly { readonly eventId: string; readonly kind: "vest" | "forfeit"; readonly date: string }[];
+  readonly openingUnvestedQuantity?: string;
 }
 export const authorPayrollContributionPlan = (model: PortableModelEnvelope, plan: PayrollContributionPlan): PortableModelEnvelope => {
   if (!UUID.test(plan.primitiveId)) return fail("PAYROLL_POLICY_ID_INVALID");
@@ -117,8 +126,9 @@ export const authorPayrollContributionPlan = (model: PortableModelEnvelope, plan
     if (existing && !(record(prior?.parameters) && Array.isArray(prior.parameters.contingentEvents) && prior.parameters.contingentEvents.some(binding => record(binding) && binding.eventId === item.eventId))) return fail("WORKPLACE_EVENT_ID_COLLISION");
     return { event_id: item.eventId, name: item.kind === "vest" ? "Workplace full vesting" : "Workplace contingent forfeiture", event_type: "other", start_date: item.date, trigger_type: "scheduled", effect_ids: [], dependencies: [], precedence: 0, enabled: true, scenario_id: String(root[0]!.scenario_id) };
   });
+  const openingUnvested = plan.openingUnvestedQuantity ?? (record(prior?.parameters) ? prior.parameters.openingUnvestedQuantity : undefined);
   const primitive: CanonicalObject = { primitive_instance_id: plan.primitiveId.toLowerCase(), primitive_id: "P03", enabled: true, scenario_id: String(root[0]!.scenario_id), input_bindings: { income_id: plan.incomeId },
-    parameters: { adapter: PAYROLL_ADAPTER, priority: plan.priority, calculation: { ...plan.calculation }, vestedFraction: plan.vestedFraction, ...(plan.contingentEvents === undefined && record(prior?.parameters) && prior.parameters.contingentEvents !== undefined ? { contingentEvents: prior.parameters.contingentEvents } : { contingentEvents: events.map(item => ({ eventId: item.event_id, kind: plan.contingentEvents!.find(binding => binding.eventId === item.event_id)!.kind })) }), contribution: { character: plan.character, personId: String(person.person_id), householdId: String(person.household_id), facts, excessPolicy: plan.excessPolicy } } };
+    parameters: { adapter: PAYROLL_ADAPTER, priority: plan.priority, calculation: { ...plan.calculation }, vestedFraction: plan.vestedFraction, ...(openingUnvested === undefined ? {} : { openingUnvestedQuantity: openingUnvested }), ...(plan.contingentEvents === undefined && record(prior?.parameters) && prior.parameters.contingentEvents !== undefined ? { contingentEvents: prior.parameters.contingentEvents } : { contingentEvents: events.map(item => ({ eventId: item.event_id, kind: plan.contingentEvents!.find(binding => binding.eventId === item.event_id)!.kind })) }), contribution: { character: plan.character, personId: String(person.person_id), householdId: String(person.household_id), facts, excessPolicy: plan.excessPolicy } } };
   const next = { ...model, objects: { ...model.objects,
     Investment: objects(model, "Investment").map(item => item === investment ? { ...item, contribution_model_id: plan.primitiveId.toLowerCase() } : item),
     Account: objects(model, "Account").map(item => item === account ? { ...item, contribution_limit_rule_id: null, contribution_limit_rule_ids: [...new Set([...normalizeContributionLimitRuleIds(item), ...rules.map(rule => String(rule.tax_rule_id))]) ] } : item),

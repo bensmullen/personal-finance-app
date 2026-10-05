@@ -66,14 +66,16 @@ export const decideContribution = (state: AuthoritativeState, policy: Contributi
   if (elective) {
     const capacity = deriveD1ContributionCapacity("401k_elective", policy.facts);
     if (capacity.status !== "complete") return invalid("Elective-deferral facts are incomplete");
-    const ordinaryRemaining = remaining(capacity.ordinaryCapacity, used(elective));
-    if (capacity.rothCatchupRequired && policy.character === "traditional_401k" && requested.compare(ordinaryRemaining) > 0) {
-      if (policy.excessPolicy === "reject") return invalid("Applicable catch-up deferrals must be Roth");
-      qualifications[elective.id] = { maximumAccepted: min(requested, ordinaryRemaining), qualifyingCeiling: requested };
-    }
+    const priorElective = Object.values(state.contributions ?? {}).filter(entry => entry.buckets.some(bucket => bucket.identity === contributionBucketIdentity(elective)));
+    const ordinaryUsed = priorElective.reduce((sum, entry) => sum.plus(entry.buckets.find(bucket => bucket.identity.includes(":401k_additions:"))?.amount ?? entry.amount), Money.zero(requested.currency));
+    const ordinaryRemaining = remaining(capacity.ordinaryCapacity, ordinaryUsed);
+    const catchupRemaining = remaining(capacity.catchupCapacity, used(elective).minus(ordinaryUsed));
     for (const rule of catalog.filter(rule => rule.capacityFacts?.kind === "401k_additions")) {
       const additionsRemaining = remaining(rule.annualLimit, used(rule));
-      qualifications[rule.id] = { maximumAccepted: min(requested, additionsRemaining.compare(ordinaryRemaining) >= 0 ? requested : additionsRemaining), qualifyingCeiling: ordinaryRemaining };
+      const nonCatchup = min(additionsRemaining, ordinaryRemaining);
+      const mandatoryRoth = capacity.rothCatchupRequired && policy.character === "traditional_401k";
+      if (mandatoryRoth && policy.excessPolicy === "reject" && requested.compare(nonCatchup) > 0) return invalid("Applicable catch-up deferrals must be Roth");
+      qualifications[rule.id] = { maximumAccepted: min(requested, mandatoryRoth ? nonCatchup : nonCatchup.plus(catchupRemaining)), qualifyingCeiling: nonCatchup };
     }
   }
   const individual = catalog.find(rule => rule.capacityFacts?.kind === "hsa_individual");

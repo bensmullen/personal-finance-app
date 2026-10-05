@@ -108,7 +108,7 @@ const FIELD_LABELS: Record<string, string> = {
   distribution_parameters: "Distribution parameters",
   volatility: "Volatility",
 };
-const RETIREMENT_LIMITATION = "Recurring retirement contributions are not currently authorable through this editor. Do not model a contribution as Spending paid to a retirement account. Supported investment operations must be explicitly configured; this is a pre-alpha capability limitation.";
+const RETIREMENT_LIMITATION = "Do not model a contribution as Spending paid to a retirement account. Use Investment purchases for checking/savings-funded IRA contributions, and Payroll and employer contributions for workplace 401(k) and HSA allocations.";
 const PRIMARY_FIELDS: Record<PersonalObjectType, readonly string[]> = {
   Household: [
     "name",
