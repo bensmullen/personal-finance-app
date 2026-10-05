@@ -88,9 +88,11 @@ describe("run context and deterministic reproduction metadata", () => {
   it("has a stable fingerprint vector and ignores object insertion order", () => {
     const input = { runContext: context(), openingState: { cash: money("1.20"), nested: { z: "last", a: "first" } } };
     const reordered = { runContext: context(), openingState: { nested: { a: "first", z: "last" }, cash: money("1.2") } };
-    // Only the authoritative financial specification version changed from 0.1.11.
+    // The specification version is an authoritative fingerprint input. This
+    // vector changes from 0.1.12 to 0.1.13; its economic payload is unchanged.
     expect(input.runContext.versions.financialSpecificationVersion).toBe("0.1.13-draft");
-    expect(createInputFingerprint(input)).toBe("fnv1a64:v1:7073d18ff4f06833");
+    expect(createInputFingerprint(input)).toBe("fnv1a64:v1:8abb6166d0e268e2");
+    expect(createInputFingerprint(input)).not.toBe("fnv1a64:v1:7073d18ff4f06833");
     expect(createInputFingerprint(reordered)).toBe(createInputFingerprint(input));
   });
 
