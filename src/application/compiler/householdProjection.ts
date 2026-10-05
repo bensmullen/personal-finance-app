@@ -1,4 +1,5 @@
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
+import { compileDomainMechanics, hasDomainMechanics } from "./domainMechanics.js";
 import { supportsD1SpouseHsaScope, durablePayrollAllocations } from "./payrollAuthoring.js";
 import { createWorkplaceEventParticipant } from "../../simulation/workplaceEvents.js";
 import { createPerformanceSession, type PerformanceObserver, type PerformanceSession } from "../../diagnostics/performance.js";
@@ -173,8 +174,14 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   if (standalone.status !== "compiled") return standalone;
   const tax = compileHouseholdTax(model, request.tax);
   if (tax.status !== "compiled") return tax;
+  const domains = hasDomainMechanics(model) ? compileDomainMechanics(model, {
+    baseCurrency: firstBoundary.baseCurrency, asOf: firstBoundary.asOf ?? firstBoundary.simulationStart,
+    simulationStart: firstBoundary.simulationStart, simulationEnd: firstBoundary.simulationEnd,
+    executionOwnerId: String(compiled[0]!.input.ownerId), ...(firstBoundary.scenarioId === undefined ? {} : { scenarioId: firstBoundary.scenarioId }),
+  }) : undefined;
+  if (domains !== undefined && domains.status !== "compiled") return domains;
   return () => {
-  const opening = performance.measure("compile.opening_reconciliation", () => reconcileHouseholdOpeningState(compiled.map((value) => value.openingState)));
+  const opening = performance.measure("compile.opening_reconciliation", () => reconcileHouseholdOpeningState([...compiled.map((value) => value.openingState), ...(domains?.status === "compiled" ? [domains.value.openingState] : [])]));
   if (opening.status === "invalid_model") return opening;
   const primitive = performance.measure("compile.opening_reconciliation", () => reconcileHouseholdPrimitiveState(compiled.map((value) => "primitiveState" in value ? value.primitiveState : undefined)));
   if (primitive.status === "invalid_model") return primitive;
@@ -185,7 +192,10 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   });
   const value: CompiledHouseholdProjection = Object.freeze({
     nonInvestmentPositionIds: taxCreditPositionIds(tax.value),
-    participants: Object.freeze([createHouseholdTaxParticipant({ ...tax.value, simulationStart: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`) }), ...(durablePayrollAllocations(model).some(item => item.events.length > 0) ? [createWorkplaceEventParticipant(durablePayrollAllocations(model).flatMap(item => item.events))] : [])]),
+    participants: Object.freeze([createHouseholdTaxParticipant({ ...tax.value, simulationStart: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`),
+      domainOperations: domains?.status === "compiled" ? domains.value.input.operations.map(item => ({ id: item.id, at: instant(item.at) })) : [] }),
+      ...(domains?.status === "compiled" ? [domains.value.participant] : []),
+      ...(durablePayrollAllocations(model).some(item => item.events.length > 0) ? [createWorkplaceEventParticipant(durablePayrollAllocations(model).flatMap(item => item.events))] : [])]),
     ...(cash === undefined ? {} : { cashFlowInput: cash.value.input }),
     ...(investments === undefined ? {} : { investmentInput: investments.value.input }),
     ...(liabilities === undefined ? {} : { liabilityInput: liabilities.value.input }),

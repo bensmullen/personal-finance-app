@@ -7,6 +7,8 @@ import { createDomainMechanicsParticipant, type DomainHolding, type DomainLot, t
 import type { HouseholdKernelParticipant } from "../../simulation/householdExecution.js";
 import { canonicalId, capability, EXACT_DECIMAL, objects, preflightCanonicalCollections, resolveHouseholdScope, UUID, utcDate, type CanonicalObject } from "./shared.js";
 import { selectScenario } from "./scenarioSelection.js";
+import { activeTaxFact, resolveTaxEligibility } from "../../simulation/tax/facts.js";
+import type { TaxEligibilityPeriod } from "../../simulation/tax/contracts.js";
 import type { CompileResult } from "./types.js";
 
 const ADAPTER = "d1-domain-operation/v1";
@@ -61,7 +63,7 @@ export const authorDomainOperation = (model: PortableModelEnvelope, plan: Author
 export const compileDomainMechanics = (model: PortableModelEnvelope, request: DomainCompilerRequest): CompileResult<CompiledDomainMechanics> => {
   const preflight = preflightCanonicalCollections(model, ["Account", "Investment", "Insurance", "Event", "EventEffect", "PrimitiveInstance"]);
   if (preflight.status !== "compiled") return preflight;
-  const selected = selectScenario(model, { scenarioId: request.scenarioId, simulationStart: request.simulationStart, simulationEnd: request.simulationEnd });
+  const selected = selectScenario(model, { capabilityName: "domain_mechanics", executionLabel: "Domain mechanics", ...(request.scenarioId === undefined ? {} : { scenarioId: request.scenarioId }), simulationStart: request.simulationStart, simulationEnd: request.simulationEnd });
   if (selected.status !== "compiled") return selected;
   const scope = resolveHouseholdScope(model); if (scope.status !== "compiled") return scope;
   try {
@@ -89,8 +91,16 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
       accountStates[id] = { id: domainId("account", id), ownerId: domainId("person", request.executionOwnerId), kind, cash: money(exact(account.opening_balance, "Exact opening wrapper/bank cash is required."), currency) };
     }
     const person = scope.value.peopleById.get(request.executionOwnerId)!;
-    const residence = typeof person.tax_jurisdiction === "string" ? [person.tax_jurisdiction.replace(/^US-/, "US:")] : [];
-    const taxFacts = { residenceJurisdictions: residence, workJurisdictions: [], eligibility: {} };
+    const household = objects(model, "Household").find(item => item.household_id === scope.value.householdId)!;
+    const taxFactsAt = (at: string) => {
+      const residences = (Array.isArray(person.residence_jurisdiction_periods) ? person.residence_jurisdiction_periods.filter(record) : []).filter(item =>
+        typeof item.effective_date === "string" && item.effective_date <= at.slice(0, 10) && (item.expiration_date == null || String(item.expiration_date) > at.slice(0, 10)));
+      const residence = residences[0];
+      const eligibility = [household, person].flatMap(item => Array.isArray(item.tax_eligibility_periods) ? item.tax_eligibility_periods : []) as unknown as readonly TaxEligibilityPeriod[];
+      return { residenceJurisdictions: residence ? [String(residence.state_jurisdiction).replace(/^US-/, "US:"), ...(residence.local_jurisdiction == null ? [] : [String(residence.local_jurisdiction)])] : [], workJurisdictions: [],
+        eligibility: resolveTaxEligibility(eligibility, at.slice(0, 10)), ...(typeof residence?.municipality === "string" ? { residenceMunicipality: residence.municipality } : {}), ...(typeof residence?.psd_code === "string" ? { residencePsdCode: residence.psd_code } : {}) };
+    };
+    const taxFacts = taxFactsAt(start);
     const holdings: DomainHolding[] = [], operations: DomainOperation[] = [];
     const add = (operation: DomainOperation) => operations.push(operation);
     for (const [id, investment] of investments) {
@@ -115,6 +125,57 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
         const expiration = utcDate(investment.expiration_date)!;
         if (start <= expiration && expiration < end) add({ id: id + ":expiration", at: expiration, order: 999999, kind: "call_expiration", holdingId: id, amount: "0", taxFacts });
       }
+      if (["treasury_bill", "treasury_note", "treasury_bond", "cd"].includes(String(kind))) {
+        const acquired = date(investment.acquisition_date, "Fixed-income acquisition date is required."), maturity = date(investment.maturity_date, "Maturity is required.");
+        const face = money(exact(investment.face_value, "Face/deposit principal is required."), currency);
+        const futurePurchase = acquired >= request.simulationStart;
+        if (maturity <= acquired || !decimal(quantity).equals(decimal(futurePurchase ? "0" : "1"))) throw new Error("Use one opening contract, or zero opening units for a future bank-funded acquisition.");
+        const cost = money(exact(investment.cost_basis, "Purchase/deposit cost is required."), currency), destination = required(investment.settlement_account_id, "Choose a durable maturity settlement destination.");
+        lookup(destination, ownedAccounts, "Settlement destination must be an owned account.");
+        if (!cost.isPositive() || kind === "treasury_bill" && (cost.compare(face) >= 0 || acquired.slice(0, 4) !== maturity.slice(0, 4)) ||
+          kind !== "treasury_bill" && !cost.equals(face)) throw new Error("Bills require a same-tax-year discount; notes/bonds/CDs require par/deposit cost. Premium, OID and pre-maturity sales are unavailable.");
+        if (investment.return_model_id != null) throw new Error("Held-to-maturity fixed-income contracts cannot use an equity return model.");
+        if (kind === "cd" && (Date.parse(maturity) - Date.parse(acquired)) / 86400000 > 366) throw new Error("The CD floor supports terms of one year or less without long-term OID.");
+        if (futurePurchase && utcDate(acquired)! < end) add({ id: id + ":acquisition", at: utcDate(acquired)!, order: 0, kind: "purchase", holdingId: id, cashAccountId: bank(investment.funding_account_id), amount: cost.amount.toString(), quantity: "1", taxFacts });
+        if (start <= utcDate(maturity)! && utcDate(maturity)! < end) add({ id: id + ":maturity", at: utcDate(maturity)!, order: 900001, kind: "maturity", holdingId: id, cashAccountId: destination, amount: face.amount.toString(), taxFacts });
+        if (kind !== "treasury_bill") {
+          const annual = decimal(exact(investment.coupon_rate, "Explicit coupon/CD interest rate is required."));
+          if (investment.interest_convention !== "nominal_annual_simple") throw new Error("The fixed-income floor requires explicit nominal annual simple coupon/interest convention.");
+          const frequency = investment.crediting_frequency, months = frequency === "monthly" ? 1 : frequency === "semiannual" ? 6 : frequency === "annual" ? 12 : undefined;
+          if (!months || kind !== "cd" && months !== 6) throw new Error("Treasury coupons credit semiannually; CDs credit monthly, semiannually or annually.");
+          const anchor = date(investment.first_credit_date, "First contractual interest credit date is required.");
+          const scheduled = utcMonthlyOccurrences(utcDate(anchor)!, { start: utcDate(anchor)!, end: instant(maturity + "T00:00:00.001Z") }, "skip");
+          if (anchor <= acquired || scheduled.length === 0 || !scheduled.some(item => item.slice(0, 10) === maturity && (Number(item.slice(0, 4)) * 12 + Number(item.slice(5, 7)) - Number(anchor.slice(0, 4)) * 12 - Number(anchor.slice(5, 7))) % months === 0)) throw new Error("Coupon/interest schedule must end at maturity without an unsupported stub period.");
+          const coupon = money(face.amount.times(annual).times(decimal(String(months))).dividedBy(decimal("12"), new RoundingPolicy(2, "half_even")).toString(), currency);
+          for (const at of scheduled) {
+            const offset = Number(at.slice(0, 4)) * 12 + Number(at.slice(5, 7)) - Number(anchor.slice(0, 4)) * 12 - Number(anchor.slice(5, 7));
+            if (offset % months === 0 && start <= at && at < end) add({ id: id + ":coupon:" + at, at, order: 900000, kind: kind === "cd" ? "interest" : "treasury_interest", holdingId: id, cashAccountId: String(investment.account_id), amount: coupon.amount.toString(), taxFacts });
+          }
+        }
+      }
+    }
+    for (const [id, account] of ownedAccounts) if (account.interest_rate != null) {
+      bank(id);
+      const rate = exact(account.interest_rate, "Enter the credited annual effective rate.");
+      if (account.interest_convention !== "effective_annual_monthly") throw new Error("Cash interest requires explicit effective annual/APY rate with monthly crediting.");
+      const anchor = utcDate(date(account.first_credit_date, "Choose the first monthly credit date."))!;
+      for (const at of utcMonthlyOccurrences(anchor, { start, end }, "skip")) add({ id: id + ":interest:" + at, at, order: 900010, kind: "cash_interest", cashAccountId: id, amount: "0", annualEffectiveRate: rate, taxFacts });
+    }
+    for (const policy of objects(model, "Insurance")) {
+      if (policy.owner_id !== request.executionOwnerId) throw new Error("Term-life policies must have explicit personal ownership within the execution scope.");
+      if (policy.insurance_type !== "life" || policy.policy_family !== "term_life_lump_sum" || policy.premium_frequency !== "monthly" || policy.claim_probability_model_id != null) throw new Error("Only personally owned term life with monthly premiums and lump-sum scheduled death benefits is supported.");
+      lookup(policy.insured_person_id, scope.value.peopleById, "Choose the insured household person.");
+      const beneficiary = required(policy.beneficiary_id, "Choose an explicit beneficiary.");
+      if (beneficiary !== scope.value.householdId && !scope.value.memberIds.includes(beneficiary)) throw new Error("The modeled beneficiary must be this household or one of its people.");
+      const source = bank(policy.premium_account_id), destination = bank(policy.benefit_account_id);
+      if (ownedAccounts.get(destination)!.owner_id !== beneficiary && beneficiary !== scope.value.householdId) throw new Error("Benefit destination must belong to the beneficiary.");
+      const from = date(policy.start_date, "Policy start is required."), until = date(policy.end_date, "Term policy end is required."), death = objects(model, "Event").find(item => item.event_id === policy.death_event_id);
+      if (!death || death.event_type !== "death" || death.enabled !== true || death.scenario_id !== selected.value.id || death.trigger_type !== "scheduled" || death.trigger_condition != null || death.probability_model_id != null) throw new Error("Choose one scheduled death event in the active scenario.");
+      const deathDate = date(death.start_date, "Death event date is invalid.");
+      if (until <= from || deathDate < from || deathDate >= until) throw new Error("The scheduled death must fall inside the policy's half-open coverage interval.");
+      const id = String(policy.insurance_id), premium = exact(policy.premium, "Monthly premium is required."), benefit = exact(policy.coverage_amount, "Lump-sum coverage amount is required.");
+      for (const at of utcMonthlyOccurrences(utcDate(from)!, { start, end }, "skip")) if (at.slice(0, 10) < deathDate && at.slice(0, 10) < until) add({ id: id + ":premium:" + at, at, order: 900020, kind: "insurance_premium", cashAccountId: source, amount: premium, taxFacts });
+      const at = utcDate(deathDate)!; if (start <= at && at < end) add({ id: id + ":benefit", at, order: 900021, kind: "death_benefit", cashAccountId: destination, amount: benefit, taxFacts });
     }
     const effects = new Map(objects(model, "EventEffect").map(item => [String(item.event_effect_id), item]));
     const primitives = new Map(objects(model, "PrimitiveInstance").map(item => [String(item.primitive_instance_id), item]));
@@ -159,7 +220,7 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
       }
       add(operation);
     }
-    const input: DomainMechanicsInput = { currency: currency.code, holdings, operations };
+    const input: DomainMechanicsInput = { currency: currency.code, holdings, operations: operations.map(operation => ({ ...operation, taxFacts: taxFactsAt(operation.at) })) };
     return { status: "compiled", value: { input, openingState: createAuthoritativeState({ accounts: accountStates }), participant: createDomainMechanicsParticipant(input) }, diagnostics: [] };
   } catch (error) {
     return { status: "unsupported", diagnostics: [capability("D1B_DOMAIN_UNSUPPORTED", error instanceof Error ? error.message : "Domain terms are incomplete.", "domain_mechanics")] };

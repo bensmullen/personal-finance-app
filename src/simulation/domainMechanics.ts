@@ -137,7 +137,7 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
     case "sale": dispose(q(operation.quantity ?? fail("DOMAIN_QUANTITY_REQUIRED", "Enter units to sell.")), amount); break;
     case "call_expiration": {
       if (!holding || holding.kind !== "long_equity_call" || at.slice(0, 10) !== holding.expiration) fail("DOMAIN_OPTION_EXPIRATION_INVALID", "Call lapse must occur on its expiration date.");
-      dispose(requirePosition().quantity, zero); break;
+      if (requirePosition().quantity.amount.isPositive()) dispose(requirePosition().quantity, zero); break;
     }
     case "call_exercise": {
       if (!holding || holding.kind !== "long_equity_call" || !holding.strike || !holding.multiplier || !holding.underlyingId || at.slice(0, 10) > holding.expiration!) fail("DOMAIN_OPTION_EXERCISE_UNSUPPORTED", "Exercise requires an unexpired long listed equity call with explicit terms.");

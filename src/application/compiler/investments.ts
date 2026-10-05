@@ -1205,7 +1205,9 @@ export const compileInvestments = (
       );
     if (
       investment.investment_type !== "equity" &&
-      investment.investment_type !== "fund"
+      investment.investment_type !== "fund" &&
+      !(investment.investment_type === "crypto" || investment.investment_type === "option" && investment.instrument_subtype === "long_equity_call" ||
+        investment.investment_type === "bond" && ["treasury_bill", "treasury_note", "treasury_bond", "cd"].includes(String(investment.instrument_subtype)))
     )
       return unsupportedResult(
         "INVESTMENT_TYPE_UNSUPPORTED",

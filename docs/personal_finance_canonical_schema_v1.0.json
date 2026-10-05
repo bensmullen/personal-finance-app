@@ -1,7 +1,7 @@
 {
   "specification": {
     "name": "Personal Financial Modeling Canonical Schema",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "status": "draft-canonical",
     "namespace": "pfm",
     "description": "Canonical domain and simulation specification from which database schemas, validation code, dependency resolution, accounting postings, and simulation-engine interfaces can be derived.",
@@ -941,6 +941,33 @@
           "derived": false,
           "mutable": false,
           "ref": "Transaction"
+        },
+        "interest_rate": {
+          "type": "rate",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "interest_convention": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "first_credit_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
         }
       },
       "required_fields": [
@@ -2388,6 +2415,163 @@
           "derived": false,
           "mutable": true,
           "ref": "Rule"
+        },
+        "instrument_subtype": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "acquisition_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "cost_basis": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "after_tax_basis": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "tax_lots": {
+          "type": "object",
+          "required": false,
+          "cardinality": "0..*",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "description": "Structured opening lot entries: stable id, acquired ISO date, exact quantity and exact economic basis, scoped to this investment account/wallet."
+        },
+        "face_value": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "maturity_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "coupon_rate": {
+          "type": "rate",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "interest_convention": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "crediting_frequency": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "first_credit_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "settlement_account_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Account"
+        },
+        "funding_account_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Account"
+        },
+        "underlying_investment_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Investment"
+        },
+        "strike_price": {
+          "type": "money",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "expiration_date": {
+          "type": "date",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "contract_multiplier": {
+          "type": "decimal",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
         }
       },
       "required_fields": [
@@ -2557,6 +2741,65 @@
           "derived": false,
           "mutable": true,
           "ref": "EventEffect"
+        },
+        "policy_family": {
+          "type": "string",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true
+        },
+        "insured_person_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Person"
+        },
+        "beneficiary_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Person|Household"
+        },
+        "benefit_account_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Account"
+        },
+        "premium_account_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Account"
+        },
+        "death_event_id": {
+          "type": "uuid",
+          "required": false,
+          "cardinality": "1",
+          "default": null,
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "Event"
         }
       },
       "required_fields": [
