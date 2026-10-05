@@ -1,7 +1,7 @@
 {
   "specification": {
     "name": "Personal Financial Modeling Canonical Schema",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "status": "draft-canonical",
     "namespace": "pfm",
     "description": "Canonical domain and simulation specification from which database schemas, validation code, dependency resolution, accounting postings, and simulation-engine interfaces can be derived.",
@@ -532,6 +532,76 @@
           "temporal_behavior": "static",
           "derived": false,
           "mutable": true
+        },
+        "residence_jurisdiction_periods": {
+          "type": "object[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "effective-dated",
+          "derived": false,
+          "mutable": true,
+          "fields": {
+            "state_jurisdiction": {
+              "type": "jurisdiction",
+              "required": true
+            },
+            "local_jurisdiction": {
+              "type": "jurisdiction",
+              "required": false
+            },
+            "municipality": {
+              "type": "string",
+              "required": false
+            },
+            "psd_code": {
+              "type": "string",
+              "required": false,
+              "pattern": "^[0-9]{6}$"
+            },
+            "effective_date": {
+              "type": "date",
+              "required": true
+            },
+            "expiration_date": {
+              "type": "date",
+              "required": false
+            }
+          },
+          "invariants": [
+            "Intervals are half-open and must not overlap contradictorily.",
+            "Missing local identity, municipality or PSD is unknown; never infer it from a coarse jurisdiction or mailing label."
+          ]
+        },
+        "tax_eligibility_periods": {
+          "type": "object[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "effective-dated",
+          "derived": false,
+          "mutable": true,
+          "fields": {
+            "key": {
+              "type": "string",
+              "required": true
+            },
+            "value": {
+              "type": "boolean",
+              "required": true
+            },
+            "effective_date": {
+              "type": "date",
+              "required": true
+            },
+            "expiration_date": {
+              "type": "date",
+              "required": false
+            }
+          },
+          "invariants": [
+            "Applicable facts for the same key must agree; absence is unknown."
+          ]
         }
       },
       "required_fields": [
@@ -650,6 +720,36 @@
           "temporal_behavior": "time-series",
           "derived": true,
           "mutable": false
+        },
+        "tax_eligibility_periods": {
+          "type": "object[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "effective-dated",
+          "derived": false,
+          "mutable": true,
+          "fields": {
+            "key": {
+              "type": "string",
+              "required": true
+            },
+            "value": {
+              "type": "boolean",
+              "required": true
+            },
+            "effective_date": {
+              "type": "date",
+              "required": true
+            },
+            "expiration_date": {
+              "type": "date",
+              "required": false
+            }
+          },
+          "invariants": [
+            "Applicable facts for the same key must agree; absence is unknown."
+          ]
         }
       },
       "required_fields": [
@@ -1338,6 +1438,82 @@
           "derived": false,
           "mutable": true,
           "ref": "Event"
+        },
+        "tax_eligibility_periods": {
+          "type": "object[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "effective-dated",
+          "derived": false,
+          "mutable": true,
+          "fields": {
+            "key": {
+              "type": "string",
+              "required": true
+            },
+            "value": {
+              "type": "boolean",
+              "required": true
+            },
+            "effective_date": {
+              "type": "date",
+              "required": true
+            },
+            "expiration_date": {
+              "type": "date",
+              "required": false
+            }
+          },
+          "invariants": [
+            "Applicable facts for the same key must agree; absence is unknown."
+          ]
+        },
+        "work_service_jurisdiction_allocations": {
+          "type": "object[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "effective-dated",
+          "derived": false,
+          "mutable": true,
+          "fields": {
+            "state_jurisdiction": {
+              "type": "jurisdiction",
+              "required": true
+            },
+            "local_jurisdiction": {
+              "type": "jurisdiction",
+              "required": false
+            },
+            "municipality": {
+              "type": "string",
+              "required": false
+            },
+            "psd_code": {
+              "type": "string",
+              "required": false,
+              "pattern": "^[0-9]{6}$"
+            },
+            "allocation": {
+              "type": "rate",
+              "required": true,
+              "exclusive_minimum": "0",
+              "maximum": "1"
+            },
+            "effective_date": {
+              "type": "date",
+              "required": true
+            },
+            "expiration_date": {
+              "type": "date",
+              "required": false
+            }
+          },
+          "invariants": [
+            "Active allocations sum exactly to one in every applicable Income/tax slice.",
+            "Services physically performed determine jurisdiction, including remote/hybrid worksites; never infer employer headquarters or residence."
+          ]
         }
       },
       "required_fields": [

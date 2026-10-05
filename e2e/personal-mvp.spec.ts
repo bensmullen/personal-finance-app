@@ -463,7 +463,8 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toHaveCount(0);
   await releaseCurrent();
-  await expect(status).toHaveAttribute("data-lifecycle", "completed");
+  await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
+  await expect(status).toContainText("financially incomplete");
   await expect(page.getByRole("button", { name: "Show forecast details" })).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toHaveCount(0);
   await showHouseholdDetails(page);
@@ -499,7 +500,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await expect(status).toHaveAttribute("data-lifecycle", "stale");
   await expect(status).toHaveAttribute("data-pending", "true");
   await waitQueued(); await releaseCurrent();
-  await expect(status).toHaveAttribute("data-lifecycle", "completed");
+  await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
   await expect(page.getByText(/Requested 2026-01-01 → 2026-03-01/)).toBeVisible();
   await showHouseholdDetails(page);
   await expect(table.locator("tbody tr")).toHaveCount(2);
@@ -525,7 +526,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("309330.29");
   await expect(page.getByText(/Requested 2026-01-01 → 2026-03-01/)).toBeVisible();
   await waitQueued(); await releaseCurrent();
-  await expect(status).toHaveAttribute("data-lifecycle", "completed");
+  await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
   await expect(page.getByText(/Requested 2026-01-01 → 2026-04-01/)).toBeVisible();
 });
 
@@ -565,7 +566,7 @@ test("Technical diagnostics exposes in-memory performance diagnostics", async ({
   await expect(diagnostics).toBeVisible();
   await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).not.toContainText("N/A");
   await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).toContainText("browser_worker");
-  await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).toContainText("completed");
+  await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).toContainText("incomplete");
   await expect(diagnostics.getByRole("row", { name: /forecast\.total/ })).toContainText("modelCounts");
   await expect(diagnostics.getByRole("row", { name: /transport\.serialization/ })).toContainText("not_measured");
   await expect(diagnostics.getByRole("row", { name: /transport\.serialization/ })).toContainText("N/A");
@@ -591,7 +592,9 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   });
   await showHouseholdDetails(page, "baseline", 60_000);
   await expect(forecast).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText("Completed through 2036-01-01")).toBeVisible();
+  // The Golden model lacks authoritative tax facts; its complete economic horizon remains inspectable.
+  await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-lifecycle", "incomplete");
+  await expect(page.getByText(/Requested 2026-01-01 → 2036-01-01/)).toBeVisible();
   await expect(forecast.locator("tbody tr")).toHaveCount(24);
   const requestBeforePaging = await page.getByRole("status", { name: "Household forecast status" }).getAttribute("data-request-id");
   await page.getByRole("button", { name: "Next page", exact: true }).click();

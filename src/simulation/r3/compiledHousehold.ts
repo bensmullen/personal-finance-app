@@ -108,6 +108,7 @@ const assemble = (
     cashFlowInput: cash?.input, investmentInput: investments?.input, liabilityInput: liabilities?.input,
     scenarioBindings: immutableConfiguration(executable.scenarioBindings),
     standaloneAssets: immutableConfiguration(executable.standaloneAssets ?? []),
+    ...(executable.nonInvestmentPositionIds === undefined ? {} : { nonInvestmentPositionIds: immutableConfiguration(executable.nonInvestmentPositionIds) }),
     contentionPolicy: immutableConfiguration(executable.contentionPolicy),
   });
   return Object.freeze({ schemaVersion: "household-kernel-v1", horizon, cash, investments, liabilities,
@@ -115,6 +116,7 @@ const assemble = (
     canonicalInputs: Object.freeze({
       cashFlowInput: cash?.canonical, investmentInput: investments?.canonical, liabilityInput: liabilities?.canonical,
       scenarioBindings: snapshot.scenarioBindings, standaloneAssets: snapshot.standaloneAssets,
+      ...(snapshot.nonInvestmentPositionIds === undefined ? {} : { nonInvestmentPositionIds: snapshot.nonInvestmentPositionIds }),
     }),
   });
 };
@@ -143,7 +145,9 @@ export const applyHouseholdExecutionOverlay = (
       next.scenarioIdentity === kernel.executable.scenarioIdentity &&
       next.scenarioBindings === kernel.executable.scenarioBindings &&
       next.standaloneAssets === kernel.executable.standaloneAssets &&
-      next.contentionPolicy === kernel.executable.contentionPolicy) return kernel;
+      next.contentionPolicy === kernel.executable.contentionPolicy &&
+      next.participants === kernel.executable.participants &&
+      next.nonInvestmentPositionIds === kernel.executable.nonInvestmentPositionIds) return kernel;
   // A different execution length changes the horizon; unrelated domain structure still survives.
   const horizon = next.executionMonths === kernel.horizon.months ? kernel.horizon : Object.freeze({
     start: kernel.horizon.start, months: next.executionMonths,

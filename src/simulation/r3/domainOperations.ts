@@ -22,6 +22,8 @@ export type InvestmentOperationFacts = Pick<HouseholdInvestmentPeriodSummary,
 
 /** Existing summaries remain intact. New domains contribute common audit/accounting facts. */
 export interface HouseholdOperationFacts {
+  readonly instrumentation?: Readonly<Record<string, number>>;
+  readonly outputCapabilities?: import("../tax/contracts.js").TaxOutputCapabilities;
   readonly summary?: HouseholdSummaryOperationFacts;
   readonly cash?: VerticalSlice2PeriodResult;
   readonly investment?: InvestmentOperationFacts;

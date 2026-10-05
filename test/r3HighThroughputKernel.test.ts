@@ -511,8 +511,10 @@ describe("R3 reusable deterministic household kernel", () => {
       investments: { ...golden.compiler.investments!, simulationEnd: "2026-02-01", months: 1 },
       liabilities: { ...golden.compiler.liabilities!, simulationEnd: "2026-02-01", months: 1 },
     } });
-    expect(read.status).toBe("completed");
-    if (read.status !== "completed") throw new Error("Expected a completed bounded Golden forecast");
+    expect(read.status).toBe("incomplete");
+    if (read.status === "unavailable") throw new Error("Expected an inspectable bounded Golden forecast");
+    expect(read.points[0]!.outputCapabilities?.cash?.status).toBe("incomplete");
+    expect(read.openingSnapshot.outputCapabilities?.netWorth?.status).toBe("complete");
     const point = read.points[0]!;
     expect(point.traceIds.some(id => id.startsWith("compiler:canonical:Income:"))).toBe(true);
     expect(point.traceIds.some(id => id.endsWith(":salary-growth-assumption"))).toBe(true);
@@ -576,8 +578,15 @@ describe("R3 reusable deterministic household kernel", () => {
     const runContext = createRunContext({ ...context(), scenarioId: scenarioId(compiledInput.scenarioIdentity),
       asOf: instant(request.asOf + "T00:00:00.000Z"), dataCutoff: instant(request.dataCutoff + "T00:00:00.000Z") });
     const actual = runCompiledHouseholdProjection({ compiled: compiledInput, runContext });
-    expect(actual).toEqual(referenceRun({ compiled: compiledInput, runContext }));
-    expect(actual.status).toBe("completed");
+    const { participants: _participants, nonInvestmentPositionIds: _positions, executionKernel: _kernel, ...participantFree } = compiledInput;
+    const reference = referenceRun({ compiled: participantFree, runContext });
+    const pure = runCompiledHouseholdProjection({ compiled: participantFree, runContext });
+    expect(pure).toEqual(reference);
+    expect(pure.status).toBe("completed");
+    expect(actual.status).toBe("incomplete");
+    expect(actual.state).toEqual(pure.state);
+    expect(actual.periods.map(({ outputCapabilities: _capabilities, ...period }) => period)).toEqual(pure.periods);
+    expect(actual.outputCapabilities?.cash?.status).toBe("incomplete");
     expect(compiledInput.executionKernel).toBeDefined();
   });
 

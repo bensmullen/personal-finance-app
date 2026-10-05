@@ -1,11 +1,12 @@
 import { compileHouseholdKernel, applyHouseholdExecutionOverlay, canonicalDescriptorOrder, type CompiledHouseholdKernel, type HouseholdExecutionOverlay } from "./r3/compiledHousehold.js";
-import { indexPreparedOperations, type OperationState, type PreparedOperationParticipant } from "./r3/operations.js";
+import { indexPreparedOperations, operationRuntime, restoreOperationRuntime, type OperationState, type PreparedOperationParticipant } from "./r3/operations.js";
 import { householdDomainParticipants, type HouseholdOperationFacts } from "./r3/domainOperations.js";
 import { summarizeHouseholdPeriod, type HouseholdForecastSummaryPeriod } from "./r3/forecastSummary.js";
 import { createHouseholdSummaryPeriod } from "./r3/summaryPeriod.js";
 import { SummaryOperationSink, type SummaryAccountingEvidence } from "./r3/summarySink.js";
 import { firstDependencyOrder, indexReachability, indexSequencingInstants } from "./r3/ordering.js";
 import { compareReachableStates, createReachableStateCounters } from "./r3/reachableStates.js";
+import { mergeOutputCapabilities } from "./r3/capabilities.js";
 import { fundingPoolConservationProof, guaranteedFundingIncomeProof } from "./r3/commutativity.js";
 import type { AccountingTransaction } from "../accounting/index.js";
 import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../diagnostics/index.js";
@@ -32,7 +33,7 @@ import {
 import { deriveStatements, type Statements } from "../statements/index.js";
 import { type Instant, type Period } from "../time/index.js";
 import { Money } from "../values/index.js";
-import { deriveHouseholdClosingMetrics } from "./householdProjection.js";
+import { householdExecutionMetrics } from "./r3/metrics.js";
 import {
   buildHouseholdScheduledPlan,
   type HouseholdContentionPolicy,
@@ -81,6 +82,7 @@ import type {
 } from "./verticalSlice4.js";
 
 export interface HouseholdProjectionPeriodResult {
+  readonly outputCapabilities?: import("./tax/contracts.js").TaxOutputCapabilities;
   readonly period: Period;
   readonly statements: Statements;
   readonly cash: Money;
@@ -127,6 +129,8 @@ export interface HouseholdInvestmentPeriodSummary {
 
 /** Inward-facing structural execution contract; application compilers satisfy it without an engine-to-application dependency. */
 export interface ExecutableHouseholdProjection {
+  readonly nonInvestmentPositionIds?: readonly string[];
+  readonly participants?: readonly HouseholdKernelParticipant[];
   readonly executionKernel?: CompiledHouseholdKernel;
   readonly cashFlowInput?: VerticalSlice2Input | undefined;
   readonly investmentInput?: VerticalSlice3Input | undefined;
@@ -150,10 +154,13 @@ export type { CompiledHouseholdKernel, HouseholdExecutionOverlay } from "./r3/co
 
 /** Pure period preparation for future domain participants. No central dispatch changes required. */
 export interface HouseholdKernelParticipant {
+  readonly portableCodec?: string;
   readonly id: string;
   readonly version: string;
   readonly economicInputs: unknown;
-  readonly prepare: (context: RunContext, period: Period, opening: OperationState) => PreparedOperationParticipant<HouseholdOperationFacts>;
+  readonly prepare: (context: RunContext, period: Period, opening: OperationState, work?: readonly HouseholdWorkDescriptor[], tier?: "summary" | "detail") => PreparedOperationParticipant<HouseholdOperationFacts>;
+  /** Pure observer of actual executed economics, including summary execution. */
+  readonly observe?: (descriptor: HouseholdWorkDescriptor, facts: HouseholdOperationFacts, runtime: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>;
 }
 
 /** Explicit reusable boundary for repeated deterministic evaluations. */
@@ -167,15 +174,17 @@ export function runHouseholdKernel(
   request: HouseholdKernelRunInput & { readonly resultTier?: "detail" },
   observer?: PerformanceObserver,
 ): CompiledHouseholdProjectionRunResult | HouseholdForecastSummaryResult {
-  const kernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
-  if (request.resultTier !== "detail") return runHouseholdForecastSummary({ kernel, runContext: request.runContext,
-    ...(request.participants === undefined ? {} : { participants: request.participants }) }, observer);
+  const baseKernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
+  const kernel = request.participants === undefined ? baseKernel : applyHouseholdExecutionOverlay(baseKernel, {
+    participants: [...(baseKernel.executable.participants ?? []), ...request.participants],
+  });
+  if (request.resultTier !== "detail") return runHouseholdForecastSummary({ kernel, runContext: request.runContext }, observer);
   return runCompiledHouseholdProjection({
     runContext: request.runContext, compiled: { ...kernel.executable, executionKernel: kernel },
-    ...(request.participants === undefined ? {} : { participants: request.participants }),
   }, observer);
 }
 export interface CompiledHouseholdProjectionRunResult {
+  readonly outputCapabilities?: import("./tax/contracts.js").TaxOutputCapabilities;
   readonly status: "completed" | "incomplete";
   readonly runMetadata: RunMetadata;
   readonly requestedHorizon: Period;
@@ -204,6 +213,7 @@ const mergeEventPreparationIdentities = (
   prepared: PreparedVerticalSlice2Period,
 ): AuthoritativeState => {
   const candidate = cloneAuthoritativeState(state);
+  restoreOperationRuntime(candidate, operationRuntime(state));
   for (const entry of Object.values(prepared.eventPrimitiveTransition)) {
     if (entry.primitiveId !== "P27" && entry.primitiveId !== "P30") continue;
     const occurrence = entry.state.occurrenceId;
@@ -317,6 +327,7 @@ const policyPrecedes = (
 
 const outcomeSignature = (execution: InstantExecution, opening?: AuthoritativeState, visited?: (nodes: number) => void): string =>
   canonicalSerialize({
+    runtime: operationRuntime(execution.state),
     state: opening === undefined ? execution.state : authoritativeStateChangesSince(execution.state, opening,
       (left, right) => left === right || canonicalSerialize(left) === canonicalSerialize(right), visited),
     primitiveState: execution.primitiveState,
@@ -358,7 +369,7 @@ const runCompiledHouseholdProjectionInternal = (
   periodRetention?: {
     readonly accept: (period: HouseholdProjectionPeriodResult) => void;
     readonly retain: (period: Period) => boolean;
-    readonly checkpoint?: (period: Period, state: AuthoritativeState, primitiveState: PrimitiveRuntimeStateStore, metadata: RunMetadata) => void;
+    readonly checkpoint?: (period: Period, state: AuthoritativeState, primitiveState: PrimitiveRuntimeStateStore, metadata: RunMetadata, capabilities: import("./tax/contracts.js").TaxOutputCapabilities | undefined) => void;
     readonly resume?: HouseholdReplayCheckpoint;
     readonly stopAfter?: Instant;
     readonly retainDiagnostics?: (period: Period) => boolean;
@@ -381,7 +392,7 @@ const runCompiledHouseholdProjectionInternal = (
     ? compileHouseholdKernel(source, runContext.simulationStart)
     : applyHouseholdExecutionOverlay(reusable, source));
   const compiled = kernel.executable;
-  const participants = [...(request.participants ?? [])].sort((a, b) => a.id.localeCompare(b.id));
+  const participants = [...(compiled.participants ?? []), ...(request.participants ?? [])].sort((a, b) => a.id.localeCompare(b.id));
   if (String(runContext.scenarioId) !== compiled.scenarioIdentity)
     throw new ValidationError({
       severity: "error",
@@ -465,7 +476,8 @@ const runCompiledHouseholdProjectionInternal = (
       const prepared = participant.prepare(periodContext, period, {
         state: cloneAuthoritativeState(investmentOpening),
         primitiveState: createPrimitiveRuntimeStateStore(investmentPrimitiveOpening),
-      });
+        runtime: operationRuntime(opening),
+      }, builtins.flatMap(item => item.operations.map(operation => operation.descriptor)), tier);
       if (prepared.id !== participant.id)
         throw new ValidationError({ severity: "error", code: "HOUSEHOLD_PARTICIPANT_MISMATCH",
           message: "Prepared participant identity must match its registration.", entityType: "household_projection" });
@@ -474,6 +486,7 @@ const runCompiledHouseholdProjectionInternal = (
         execute: (opening: OperationState, statuses: Map<string, string>) => operation.execute({
           state: cloneAuthoritativeState(opening.state),
           primitiveState: createPrimitiveRuntimeStateStore(opening.primitiveState),
+          runtime: opening.runtime,
         }, statuses),
       })) };
     });
@@ -512,6 +525,7 @@ const runCompiledHouseholdProjectionInternal = (
       throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_BASIS_MISMATCH",
         message: "Replay checkpoint belongs to a different immutable forecast basis.", entityType: "household_projection" });
     state = cloneAuthoritativeState(periodRetention.resume.state);
+    restoreOperationRuntime(state, periodRetention.resume.runtime);
     primitiveState = createPrimitiveRuntimeStateStore(periodRetention.resume.primitiveState);
     // The opening-period preparation is fingerprint input, not reusable work
     // for the state at an intermediate checkpoint.
@@ -520,6 +534,7 @@ const runCompiledHouseholdProjectionInternal = (
   const committed: HouseholdProjectionPeriodResult[] = [];
   let reachedThrough: Instant | undefined;
   const diagnostics: ValidationIssue[] = [];
+  let outputCapabilities = periodRetention?.resume?.outputCapabilities;
   for (const period of periods.filter(period =>
     (periodRetention?.resume === undefined || period.start >= periodRetention.resume.at) &&
     (periodRetention?.stopAfter === undefined || period.end <= periodRetention.stopAfter)))
@@ -589,8 +604,16 @@ const runCompiledHouseholdProjectionInternal = (
         const requiredStatuses = new Map<string, string>(prefix?.requiredStatuses);
         for (const descriptor of order) {
           const result = prepared.operations.execute(descriptor,
-            { state: nextState, primitiveState: nextPrimitiveState }, requiredStatuses);
+            { state: participants.some(participant => participant.observe !== undefined) ? cloneAuthoritativeState(nextState) : nextState, primitiveState: nextPrimitiveState, runtime: operationRuntime(nextState) }, requiredStatuses);
+          performance.counters({ [`participant.${descriptor.domain}.operations`]: 1 });
           nextState = result.state; nextPrimitiveState = result.primitiveState;
+          if (result.facts.instrumentation !== undefined) performance.counters(result.facts.instrumentation);
+          let runtime = operationRuntime(nextState);
+          for (const participant of participants) if (participant.observe !== undefined) {
+            performance.counters({ [`participant.${participant.id}.observations`]: 1 });
+            runtime = participant.observe(descriptor, result.facts, runtime);
+          }
+          restoreOperationRuntime(nextState, runtime);
           if (tier === "summary") performance.counters({ summaryOperationsExecuted: 1 });
           else performance.counters({ detailedPeriodResultsMaterialized: (result.facts.cash === undefined ? 0 : 1) + (result.facts.liability === undefined ? 0 : 1) });
           if (result.facts.cash !== undefined) cashResults.push(result.facts.cash);
@@ -598,7 +621,7 @@ const runCompiledHouseholdProjectionInternal = (
           if (result.facts.liability !== undefined) liabilityResults.push(result.facts.liability);
           if (result.facts.transactions !== undefined || result.facts.constraintOutcomes !== undefined ||
               result.facts.liquidityShortfalls !== undefined || result.facts.diagnostics !== undefined ||
-              result.facts.traceRefs !== undefined || result.facts.summary !== undefined) additionalFacts.push(result.facts);
+              result.facts.traceRefs !== undefined || result.facts.summary !== undefined || result.facts.outputCapabilities !== undefined) additionalFacts.push(result.facts);
         }
         return Object.freeze({ state: nextState, primitiveState: nextPrimitiveState, requiredStatuses,
           cashPeriods: Object.freeze(cashResults), investmentPeriods: Object.freeze(investmentResults),
@@ -698,7 +721,11 @@ const runCompiledHouseholdProjectionInternal = (
             try {
               return compareReachableStates({ items: group, edges,
                 opening: executeAt(at, [], candidateState, candidatePrimitiveState),
-                advance: (prefix, item) => executeAt(at, [item], cloneAuthoritativeState(prefix.state), prefix.primitiveState, prefix),
+                advance: (prefix, item) => {
+                  const candidate = cloneAuthoritativeState(prefix.state);
+                  restoreOperationRuntime(candidate, operationRuntime(prefix.state));
+                  return executeAt(at, [item], candidate, prefix.primitiveState, prefix);
+                },
                 equivalenceKey: prefix => canonicalSerialize({
                   outcome: signature(prefix), statuses: [...prefix.requiredStatuses].sort(([a], [b]) => a.localeCompare(b)),
                 }),
@@ -812,13 +839,15 @@ const runCompiledHouseholdProjectionInternal = (
         validateAuthoritativeState(candidateState);
         assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
         assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
-        const summary = performance.measure("engine.statements_metrics", () =>
+        const currentSummary = performance.measure("engine.statements_metrics", () =>
           createHouseholdSummaryPeriod(period, state, candidateState, additionalFacts, kernel, runContext.baseCurrency));
+        outputCapabilities = mergeOutputCapabilities([outputCapabilities, currentSummary.outputCapabilities]);
+        const summary = Object.freeze({ ...currentSummary, ...(outputCapabilities === undefined ? {} : { outputCapabilities }) });
         diagnostics.push(...(prepared.cash?.diagnostics ?? []), ...additionalFacts.flatMap(fact => [
           ...(fact.summary?.cash?.diagnostics ?? []), ...(fact.summary?.debt?.diagnostics ?? []), ...(fact.diagnostics ?? []),
         ]));
         state = candidateState; primitiveState = candidatePrimitiveState; reachedThrough = period.end;
-        periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata);
+        periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata, outputCapabilities);
         periodRetention?.acceptSummary?.(summary);
         continue;
       }
@@ -939,10 +968,10 @@ const runCompiledHouseholdProjectionInternal = (
         transactions,
         runContext.baseCurrency,
       ));
-      const metrics = performance.measure("engine.statements_metrics", () => deriveHouseholdClosingMetrics(
+      const metrics = performance.measure("engine.statements_metrics", () => householdExecutionMetrics(
         candidateState,
         runContext.baseCurrency,
-        compiled.standaloneAssets,
+        compiled,
       ));
       const periodResult: HouseholdProjectionPeriodResult = performance.measure("engine.trace_result", () => {
       performance.counters({ detailedPeriodResultsMaterialized: 1 });
@@ -1010,8 +1039,10 @@ const runCompiledHouseholdProjectionInternal = (
                   ...investmentPeriods.map((item) => item.traceRefs),
                 ) ?? Object.freeze([]),
             });
+      const periodCapabilities = mergeOutputCapabilities([outputCapabilities, ...additionalFacts.map(fact => fact.outputCapabilities)]);
       return Object.freeze({
         period: Object.freeze({ ...period }),
+        ...(periodCapabilities === undefined ? {} : { outputCapabilities: periodCapabilities }),
         statements,
         cash: metrics.cash,
         investmentValue: metrics.investmentValue,
@@ -1049,9 +1080,10 @@ const runCompiledHouseholdProjectionInternal = (
         ...additionalFacts.flatMap(facts => facts.diagnostics ?? []),
       );
       state = candidateState;
+      outputCapabilities = periodResult.outputCapabilities ?? outputCapabilities;
       primitiveState = candidatePrimitiveState;
       reachedThrough = period.end;
-      periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata);
+      periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata, outputCapabilities);
       periodRetention?.accept(periodResult);
       if (periodRetention === undefined || periodRetention.retain(period)) committed.push(periodResult);
     } catch (error) {
@@ -1059,6 +1091,7 @@ const runCompiledHouseholdProjectionInternal = (
       diagnostics.push(...error.issues);
       return performance.measure("engine.trace_result", () => Object.freeze({
         status: "incomplete",
+        ...(outputCapabilities === undefined ? {} : { outputCapabilities }),
         runMetadata,
         requestedHorizon,
         stoppedAt: period.start,
@@ -1071,7 +1104,8 @@ const runCompiledHouseholdProjectionInternal = (
       }));
     }
   return performance.measure("engine.trace_result", () => Object.freeze({
-    status: "completed",
+    status: Object.values(outputCapabilities ?? {}).some(value => value.status === "incomplete") ? "incomplete" : "completed",
+    ...(outputCapabilities === undefined ? {} : { outputCapabilities }),
     runMetadata,
     requestedHorizon,
     reachedThrough: reachedThrough ?? requestedHorizon.end,
@@ -1103,6 +1137,8 @@ export interface HouseholdForecastSummaryResult extends Omit<CompiledHouseholdPr
 }
 
 interface HouseholdReplayCheckpoint {
+  readonly outputCapabilities?: import("./tax/contracts.js").TaxOutputCapabilities;
+  readonly runtime: Readonly<Record<string, unknown>>;
   readonly at: Instant;
   readonly fingerprint: RunMetadata["inputFingerprint"];
   readonly state: AuthoritativeState;
@@ -1119,7 +1155,10 @@ export const runHouseholdForecastSummary = (
   request: { readonly kernel: CompiledHouseholdKernel; readonly overlay?: HouseholdExecutionOverlay; readonly runContext: RunContext; readonly participants?: readonly HouseholdKernelParticipant[] },
   observer?: PerformanceObserver,
 ): HouseholdForecastSummaryResult => {
-  const kernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
+  const baseKernel = request.overlay === undefined ? request.kernel : applyHouseholdExecutionOverlay(request.kernel, request.overlay);
+  const kernel = request.participants === undefined ? baseKernel : applyHouseholdExecutionOverlay(baseKernel, {
+    participants: [...(baseKernel.executable.participants ?? []), ...request.participants],
+  });
   const runContext = Object.freeze({ ...request.runContext, versions: Object.freeze({ ...request.runContext.versions }) });
   const performance = createPerformanceSession(observer);
   const summaries: HouseholdForecastSummaryPeriod[] = [];
@@ -1127,15 +1166,16 @@ export const runHouseholdForecastSummary = (
   try {
     const result = runCompiledHouseholdProjectionInternal({
       compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
-      ...(request.participants === undefined ? {} : { participants: request.participants }),
     }, performance, {
       accept: () => {}, acceptSummary: period => { summaries.push(period); },
       retain: () => false,
-      checkpoint: (period, state, primitiveState, metadata) => {
+      checkpoint: (period, state, primitiveState, metadata, outputCapabilities) => {
         // Twelve display periods is the initial engineering choice, not a
         // measured product budget. Never retain an unused terminal checkpoint.
         if ((summaries.length + 1) % 12 !== 0 || period.end >= runContext.simulationEnd) return;
         checkpoints.push(Object.freeze({ at: period.end, fingerprint: metadata.inputFingerprint,
+          ...(outputCapabilities === undefined ? {} : { outputCapabilities }),
+          runtime: operationRuntime(state),
           state: cloneAuthoritativeState(state), primitiveState: createPrimitiveRuntimeStateStore(primitiveState) }));
       },
     });

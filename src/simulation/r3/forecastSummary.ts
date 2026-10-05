@@ -7,6 +7,7 @@ import { SummaryOperationSink, type SummaryAccountingEvidence } from "./summaryS
 
 /** Display metrics and capability outcomes, with no transaction or lineage warehouse. */
 export interface HouseholdForecastSummaryPeriod {
+  readonly outputCapabilities?: import("../tax/contracts.js").TaxOutputCapabilities;
   readonly period: Period;
   readonly statements: Statements;
   readonly cash: Money;
@@ -36,6 +37,7 @@ export const summarizeHouseholdPeriod = (result: HouseholdProjectionPeriodResult
   sink.traces(result.traceRefs);
   const { sources, rules, assumptions, events } = sink.snapshot();
   return Object.freeze({
+    ...(result.outputCapabilities === undefined ? {} : { outputCapabilities: result.outputCapabilities }),
     period: result.period,
     statements: result.statements,
     cash: result.cash,

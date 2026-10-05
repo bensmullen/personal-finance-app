@@ -61,15 +61,18 @@ describe("Personal household projection application seam", () => {
         profile: { liabilityId: "94000000-0000-4000-8000-000000000098", kind: "vs4_fixed_monthly_fully_amortizing", paymentAnchor: "2026-01-01", totalPayments: 360, fundingAccountId: "90000000-0000-4000-8000-000000000004", settlementPriority: 2, openingContractStatus: "current" },
       },
     );
-    expect(result.status, JSON.stringify(result)).toBe("completed");
+    expect(result.status, JSON.stringify({ status: result.status, diagnostics: result.diagnostics })).toBe("incomplete");
     if (result.status === "unavailable") return;
     expect(result.alternatives[0]!.declaredDifference).toBe("major_asset_debt_addition");
     expect(result.alternatives[0]!.points[0]!.deltas.netWorth.amount).not.toBe("0");
   }, 60_000);
   it("exposes reconciled household metrics and completion boundaries", () => {
     const result = runPersonalHouseholdForecast(model(), request("94000000-0000-4000-8000-000000000001"));
-    expect(result.status).toBe("completed");
-    if (result.status !== "completed") return;
+    expect(result.status).toBe("incomplete");
+    if (result.status === "unavailable") return;
+    expect(result.points[0]!.outputCapabilities?.cash?.status).toBe("incomplete");
+    expect(result.points[0]!.outputCapabilities?.statementIncome?.status).toBe("complete");
+    expect(result.openingSnapshot.outputCapabilities?.netWorth?.status).toBe("complete");
     expect(result.scope).toBe("household");
     expect(result.points).toHaveLength(3);
     expect(result.reachedThrough).toBe("2026-04-01T00:00:00.000Z");
@@ -79,7 +82,7 @@ describe("Personal household projection application seam", () => {
   it("compares independently executed reconciled household runs", () => {
     const value = model();
     const result = comparePersonalHouseholdScenarios({ baseline: { name: "Baseline", model: value, request: request("94000000-0000-4000-8000-000000000002") }, alternatives: [{ name: "Equivalent", model: value, request: request("94000000-0000-4000-8000-000000000003") }] });
-    expect(result.status, JSON.stringify(result)).toBe("completed");
+    expect(result.status, JSON.stringify(result)).toBe("incomplete");
     expect(result.alternatives[0]!.points).toHaveLength(3);
     expect(result.alternatives[0]!.points.every((point) => point.deltas.netWorth.amount === "0")).toBe(true);
   });
@@ -134,7 +137,7 @@ describe("Personal household projection application seam", () => {
     const base = request("94000000-0000-4000-8000-000000000022");
     const withInvestments: HouseholdForecastRequest = { ...base, compiler: { ...base.compiler, investments: { ...base.compiler.investments!, scenarioId: String(root) } } };
     const result = comparePersonalHouseholdScenarios({ scenarios, baselineScenarioId: root, baseline: { name: "Base", model: investmentModel(), request: withInvestments }, alternatives: [{ name: "Higher return", model: investmentModel(), request: { ...withInvestments, runIdentity: "94000000-0000-4000-8000-000000000023" }, scenarioId: leaf }] });
-    expect(result.status, JSON.stringify(result)).toBe("completed");
+    expect(result.status, JSON.stringify(result)).toBe("incomplete");
     const difference = result.alternatives[0]!.configurationDifferences.find((item) => item.changeKind === "investment_return");
     expect(difference?.before).not.toBeNull();
     expect(difference?.after).not.toBeNull();
