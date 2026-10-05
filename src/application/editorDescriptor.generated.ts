@@ -411,6 +411,27 @@ export const PERSONAL_EDITOR_DESCRIPTOR = {
         "ref": "Transaction",
         "derived": false,
         "mutable": false
+      },
+      "interest_rate": {
+        "type": "rate",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "interest_convention": {
+        "type": "string",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "first_credit_date": {
+        "type": "date",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
       }
     }
   },
@@ -1133,6 +1154,128 @@ export const PERSONAL_EDITOR_DESCRIPTOR = {
         "required": false,
         "default": null,
         "ref": "Rule",
+        "derived": false,
+        "mutable": true
+      },
+      "instrument_subtype": {
+        "type": "string",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "acquisition_date": {
+        "type": "date",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "cost_basis": {
+        "type": "money",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "after_tax_basis": {
+        "type": "money",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "tax_lots": {
+        "type": "object",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "face_value": {
+        "type": "money",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "maturity_date": {
+        "type": "date",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "coupon_rate": {
+        "type": "rate",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "interest_convention": {
+        "type": "string",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "crediting_frequency": {
+        "type": "string",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "first_credit_date": {
+        "type": "date",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "settlement_account_id": {
+        "type": "uuid",
+        "required": false,
+        "default": null,
+        "ref": "Account",
+        "derived": false,
+        "mutable": true
+      },
+      "funding_account_id": {
+        "type": "uuid",
+        "required": false,
+        "default": null,
+        "ref": "Account",
+        "derived": false,
+        "mutable": true
+      },
+      "underlying_investment_id": {
+        "type": "uuid",
+        "required": false,
+        "default": null,
+        "ref": "Investment",
+        "derived": false,
+        "mutable": true
+      },
+      "strike_price": {
+        "type": "money",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "expiration_date": {
+        "type": "date",
+        "required": false,
+        "default": null,
+        "derived": false,
+        "mutable": true
+      },
+      "contract_multiplier": {
+        "type": "decimal",
+        "required": false,
+        "default": null,
         "derived": false,
         "mutable": true
       }

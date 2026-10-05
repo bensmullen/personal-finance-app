@@ -52,12 +52,13 @@ const incomeFacts = (source: CompiledTaxIncome, amount: Money): TaxIncomeFacts |
 };
 const jurisdictionKey = (value: string): string => /^US-[A-Z]{2}$/.test(value) ? value.replace("-", ":") : value;
 /** Stable per-regime balance identities, independent of rule version/catalog ordering. */
-const balanceIds = (jurisdiction: string, year: string) => {
+export const taxBalanceIds = (jurisdiction: string, year: string) => {
   let hash = 14695981039346656037n;
   for (const character of `${jurisdiction}:${year}`) hash = BigInt.asUintN(64, (hash ^ BigInt(character.codePointAt(0)!)) * 1099511628211n);
   const suffix = (hash & 0xffffffffffffn).toString(16).padStart(12, "0");
   return { liabilityId: domainId("liability", `f15c0000-0000-4000-8a01-${suffix}`), creditPositionId: domainId("position", `f15c0000-0000-4000-8a02-${suffix}`) };
 };
+const balanceIds = taxBalanceIds;
 export const taxCreditPositionIds = (input: HouseholdTaxInput) => {
   const jurisdictions = [...new Set([...input.catalog.map(rule => rule.jurisdiction), ...input.payments.map(payment => payment.jurisdiction), ...(input.settlements ?? []).map(item => item.jurisdiction)])].sort();
   const years = [...new Set([...input.catalog.flatMap(rule => [rule.effectiveFrom.slice(0, 4), subtractMilliseconds(rule.effectiveUntil, 1).slice(0, 4)]), ...input.payments.map(payment => payment.at.slice(0, 4)), ...(input.settlements ?? []).map(item => item.taxYear)])].sort();
@@ -85,6 +86,13 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
   return Object.freeze({
     id: "tax", version: "t1a-household-v1", portableCodec: "household-tax/v1", economicInputs: Object.freeze({ ...input, catalogFingerprint: fingerprint }),
     observe: (descriptor, facts, runtime) => {
+      if (facts.taxEconomics !== undefined || facts.taxDiagnostics !== undefined) {
+        const year = descriptor.sequencingInstant.slice(0, 4), prior = yearRuntime(taxRuntime(runtime), year);
+        const diagnostics = [...(facts.taxDiagnostics ?? [])];
+        for (const economic of facts.taxEconomics ?? []) if (economic.facts.residenceJurisdictions.length === 0 &&
+          Object.values(economic.income).some(value => !value.isZero())) diagnostics.push(taxDiagnostic("residence_jurisdiction_periods", "Supply effective residence tax facts for this operation.", undefined, economic.sourceId));
+        return withYear(runtime, year, { ...prior, economics: prior.economics.with(facts.taxEconomics ?? []), diagnostics: prior.diagnostics.withoutSources(facts.resolvedTaxDiagnosticSourceIds ?? []).with(diagnostics) });
+      }
       if (descriptor.operationClass !== "cash_income_settlement") return runtime;
       const id = descriptor.id.split(":")[1]!;
       const source = sources.get(id);
@@ -135,7 +143,8 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
         finalSettlement !== undefined && other.settlement !== undefined && (other.settlement.priority ?? 0) < (finalSettlement.priority ?? 0)
       )).map(other => other.id);
       return { descriptor: { id, domain: "tax", operationClass: instruction === undefined ? "tax:close" : "tax:payment", sequencingInstant: at,
-        dependsOn: [...work.filter(item => item.sequencingInstant <= at && (item.operationClass === "cash_income_settlement" || item.operationClass === "investment_purchase")).map(item => item.id), ...sameInstantBefore],
+        dependsOn: [...work.filter(item => item.sequencingInstant <= at && (item.operationClass === "cash_income_settlement" || item.operationClass === "investment_purchase")).map(item => item.id),
+          ...(input.domainOperations ?? []).filter(item => period.start <= item.at && item.at <= at).map(item => "domain:" + item.id), ...sameInstantBefore],
         resourceAccesses: instruction === undefined && finalSettlement === undefined ? [] : [
           ...(input.fundingPolicy?.orderedSources ?? []).map(source => ({ kind: "account_cash" as const, accountId: source.accountId, mode: "consume" as const })),
           ...(finalSettlement === undefined || input.refundAccountId === undefined ? [] : [{ kind: "account_cash" as const, accountId: input.refundAccountId, mode: "produce" as const }]),
@@ -206,7 +215,8 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
               const resolved = binding(group.jurisdiction, group.at, group.facts);
               if (!group.local && seenAnnual.has(group.jurisdiction)) { diagnostics.push(taxDiagnostic("annual_rule_transition", "Multiple annual law versions require explicit year-transition semantics.", group.jurisdiction)); continue; }
               seenAnnual.add(group.jurisdiction);
-              const incomes = group.entries.map(entry => Object.freeze(Object.fromEntries(Object.entries(entry.income).map(([key, value]) => [key, value.times(decimal(entry.allocation))]))) as unknown as TaxIncomeFacts);
+              const incomes = group.entries.map(entry => Object.freeze(Object.fromEntries(Object.entries(entry.income).map(([key, value]) => [key,
+                (key === "taxableInterest" && group.jurisdiction !== "US:FEDERAL" ? value.minus(entry.exemptStateLocalInterest ?? zero()) : value).times(decimal(entry.allocation))]))) as unknown as TaxIncomeFacts);
               let income = sumIncome(incomes);
               if (group.jurisdiction === "US:FEDERAL") {
                 const people = new Set(group.entries.map(entry => sources.get(entry.sourceId)?.ownerId));
@@ -230,7 +240,8 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
                 if (hsa.compare(wagesBefore) > 0) throw new ValidationError({ severity: "error", code: "PAYROLL_HSA_EMPLOYEE_BASE_INVALID", message: "Employee HSA exclusions exceed this employee's wages.", entityType: "tax_execution" });
                 wages.set(employee, wagesBefore.minus(hsa));
               }
-              const gross = income.wages.plus(income.taxableInterest).plus(income.ordinaryDividends).plus(income.qualifiedDividends).plus(income.shortTermGains).plus(income.longTermGains);
+              const gross = income.wages.plus(income.taxableInterest).plus(income.ordinaryDividends).plus(income.qualifiedDividends).plus(income.shortTermGains).plus(income.longTermGains)
+                .plus(income.traditionalDistributions).minus(income.traditionalDistributionBasisRecovered).plus(income.taxableRothDistributions);
               const nii = income.taxableInterest.plus(income.ordinaryDividends).plus(income.qualifiedDividends).plus(income.shortTermGains).plus(income.longTermGains);
               const application = applyTaxCoreRule(resolved, { income, ...legalBases, withholding: zero(), estimatedPayments: zero(), priorPaymentCredit: zero(),
                 ...(resolved.rule.payroll === undefined ? {} : { employeeWages: [...wages].map(([employeeKey, amount]) => ({ employeeKey, wages: amount })) }),

@@ -1,4 +1,4 @@
--- Derived from personal_finance_canonical_schema_v1.0.json (source version 1.0.3)
+-- Derived from personal_finance_canonical_schema_v1.0.json (source version 1.0.4)
 -- PostgreSQL 16+
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -67,6 +67,9 @@ CREATE TABLE household (
 );
 
 CREATE TABLE account (
+    interest_rate numeric,
+    interest_convention text,
+    first_credit_date date,
     account_id uuid NOT NULL,
     name text NOT NULL,
     account_type pf_account_type NOT NULL,
@@ -226,6 +229,23 @@ CREATE TABLE assumption (
 );
 
 CREATE TABLE investment (
+    instrument_subtype text,
+    acquisition_date date,
+    cost_basis numeric(19,4),
+    after_tax_basis numeric(19,4),
+    tax_lots jsonb,
+    face_value numeric(19,4),
+    maturity_date date,
+    coupon_rate numeric,
+    interest_convention text,
+    crediting_frequency text,
+    first_credit_date date,
+    settlement_account_id uuid,
+    funding_account_id uuid,
+    underlying_investment_id uuid,
+    strike_price numeric(19,4),
+    expiration_date date,
+    contract_multiplier numeric,
     investment_id uuid NOT NULL,
     account_id uuid NOT NULL,
     asset_id uuid,
@@ -242,6 +262,12 @@ CREATE TABLE investment (
 );
 
 CREATE TABLE insurance (
+    policy_family text,
+    insured_person_id uuid,
+    beneficiary_id uuid,
+    benefit_account_id uuid,
+    premium_account_id uuid,
+    death_event_id uuid,
     insurance_id uuid NOT NULL,
     owner_id uuid NOT NULL,
     insurance_type pf_insurance_type NOT NULL,

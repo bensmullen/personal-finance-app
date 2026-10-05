@@ -12,6 +12,7 @@ import type { VerticalSlice2Input } from "../src/simulation/verticalSlice2.js";
 import { createAuthoritativeState } from "../src/state/index.js";
 import { instant } from "../src/time/index.js";
 import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
+import { createDomainMechanicsParticipant } from "../src/simulation/domainMechanics.js";
 
 const ids = {
   household: domainId("household", "93000000-0000-4000-8000-000000000001"), owner: domainId("person", "93000000-0000-4000-8000-000000000002"),
@@ -32,6 +33,28 @@ const context = (months = 1) => createRunContext({ runId: runId("93000000-0000-4
 const compiled = (lateFailure = false, withAsset = false): CompiledHouseholdProjection => ({ cashFlowInput: cashFlow, ...(lateFailure ? { liabilityInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [{ id: ids.loan, principalLiabilityId: ids.missingPrincipal, interestPayableLiabilityId: ids.missingInterest, primitiveIds: { schedule: primitive("20"), amortization: primitive("21"), accrual: primitive("22") } } as never] } } : {}), reconciledOpeningState: opening(), reconciledPrimitiveState: createPrimitiveRuntimeStateStore(), standaloneAssets: withAsset ? [{ id: ids.standaloneAsset, value: money("7") }] : [], scenarioIdentity: scenario, executionMonths: 1, contentionPolicy: { id: "pr20-order", version: "1", rules: [] }, diagnostics: [], scenarioBindings: { cashFlow: { incomeIds: {}, expenseIds: {}, accountIds: {}, retirementEvents: {} } } });
 
 describe("compiled household execution", () => {
+  it("combines a pure D1-B dividend with household income without artificial liquidity contention", () => {
+    const participant = createDomainMechanicsParticipant({ currency: "USD", holdings: [{ id: ids.position, accountId: ids.cash, kind: "equity", lots: [] }], operations: [{ id: "dividend", kind: "ordinary_dividend", at: "2026-01-15T00:00:00.000Z", order: 10, amount: "50", holdingId: ids.position, taxFacts: { residenceJurisdictions: [], workJurisdictions: [], eligibility: {} }, sourceRefs: ["compiler:canonical:Investment:" + ids.position] }] });
+    const result = runCompiledHouseholdProjection({ compiled: compiled(), runContext: context(), participants: [participant] });
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.state.accounts[ids.cash]!.cash.amount.toString()).toBe("160");
+    expect(result.periods[0]!.statements.income.amount.toString()).toBe("150");
+    expect(result.diagnostics.some(issue => issue.code === "HOUSEHOLD_CONTENTION_UNRESOLVED")).toBe(false);
+  });
+  it("requires explicit ordering for balance-sensitive D1-B interest sharing household spending", () => {
+    const at = instant("2026-01-15T00:00:00.000Z");
+    const funding = createFundingPolicy({ id: fundingPolicyId("d1b:interest-spending"), orderedSources: [{ kind: "cash_account", accountId: ids.cash }], allowPartial: false, insufficientFundsBehavior: "unfunded" });
+    const spending: VerticalSlice2Input = { ...cashFlow, incomes: [], expenses: [{ id: ids.expense, ownerId: ids.household, paymentAccountId: ids.cash, payableLiabilityId: ids.payable, baseMonthlyAmount: money("50"), start, recurrence: { kind: "utc_monthly", anchor: at, invalidDayPolicy: "skip" }, inflationRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()), inflationBaseAt: at, fundingPolicy: funding, settlementPriority: 1, primitiveIds: { indexGrowth: primitive("101"), inflationLink: primitive("102"), recurrence: primitive("103") } }] };
+    const participant = createDomainMechanicsParticipant({ currency: "USD", holdings: [], operations: [{ id: "interest", kind: "cash_interest", at, order: 10, amount: "0", cashAccountId: ids.cash, annualEffectiveRate: "0.126825030131969720661201", taxFacts: { residenceJurisdictions: [], workJurisdictions: [], eligibility: {} }, sourceRefs: ["compiler:canonical:Account:" + ids.cash] }] });
+    const input = { ...compiled(), cashFlowInput: spending, reconciledOpeningState: createAuthoritativeState({ ...opening(), accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.owner, cash: money("100") } } }) };
+    const unresolved = runCompiledHouseholdProjection({ compiled: input, runContext: context(), participants: [participant] });
+    expect(unresolved.status).toBe("incomplete");
+    expect(unresolved.diagnostics.some(issue => issue.code === "HOUSEHOLD_CONTENTION_UNRESOLVED")).toBe(true);
+    expect(unresolved.state.accounts[ids.cash]!.cash.amount.toString()).toBe("100");
+    const ordered = runCompiledHouseholdProjection({ compiled: { ...input, contentionPolicy: { id: "spend-before-interest", version: "1", rules: [{ before: "cash_expense_settlement", after: "domain_mechanics:cash_interest" }] } }, runContext: context(), participants: [participant] });
+    expect(ordered.status, JSON.stringify(ordered.diagnostics)).toBe("completed");
+    expect(ordered.state.accounts[ids.cash]!.cash.amount.toString()).toBe("50.5");
+  });
   it("derives one closing authority and never double counts the account container", () => {
     const result = runCompiledHouseholdProjection({ runContext: context(), compiled: compiled() });
     expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");

@@ -22,6 +22,11 @@ export type InvestmentOperationFacts = Pick<HouseholdInvestmentPeriodSummary,
 
 /** Existing summaries remain intact. New domains contribute common audit/accounting facts. */
 export interface HouseholdOperationFacts {
+  readonly debtReplacements?: readonly { readonly oldLoanId: string; readonly amount: import("../../values/index.js").Money }[];
+  readonly acquiredLots?: readonly { readonly holdingId: string; readonly id: string; readonly acquired: string; readonly quantity: string; readonly basis: string }[];
+  readonly taxEconomics?: readonly import("../tax/contracts.js").RecognizedTaxEconomics[];
+  readonly taxDiagnostics?: readonly import("../tax/contracts.js").TaxCapabilityDiagnostic[];
+  readonly resolvedTaxDiagnosticSourceIds?: readonly string[];
   readonly instrumentation?: Readonly<Record<string, number>>;
   readonly outputCapabilities?: import("../tax/contracts.js").TaxOutputCapabilities;
   readonly summary?: HouseholdSummaryOperationFacts;
@@ -91,17 +96,22 @@ export const householdDomainParticipants = (
         primitiveIds: [operation.operation.schedulePrimitiveId],
       } : undefined,
       execute: (opening: OperationState) => {
+        const acquired = (state: OperationState["state"]): NonNullable<HouseholdOperationFacts["acquiredLots"]> => operation.kind !== "purchase" ? [] : [{
+          holdingId: operation.operation.targetPositionId, id: operation.descriptor.id + ":lot", acquired: operation.descriptor.sequencingInstant.slice(0, 10),
+          quantity: state.positions[operation.operation.targetPositionId]!.quantity.minus(opening.state.positions[operation.operation.targetPositionId]!.quantity).amount.toString(),
+          basis: state.positions[operation.operation.targetPositionId]!.carryingValue.minus(opening.state.positions[operation.operation.targetPositionId]!.carryingValue).amount.toString(),
+        }].filter(item => item.quantity !== "0");
         if (tier === "summary") {
           const sink = new SummaryOperationSink(context.baseCurrency);
           const result = executePreparedVerticalSlice3Operation(prepared.investments!, operation,
             opening.state, opening.primitiveState, input.investmentInput!, context, sink);
-          return { state: result.state, primitiveState: result.primitiveState, facts: { summary: { evidence: sink.snapshot(), investment: {
+          return { state: result.state, primitiveState: result.primitiveState, facts: { acquiredLots: acquired(result.state), summary: { evidence: sink.snapshot(), investment: {
             contributionPrincipal: result.contributionPrincipal, fees: result.fees, unrealizedGain: result.unrealizedGain,
           } } } };
         }
         const result = executePreparedVerticalSlice3Operation(prepared.investments!, operation,
           opening.state, opening.primitiveState, input.investmentInput!, context);
-        return { state: result.state, primitiveState: result.primitiveState, facts: { investment: Object.freeze({
+        return { state: result.state, primitiveState: result.primitiveState, facts: { acquiredLots: acquired(result.state), investment: Object.freeze({
           transactions: result.transactions, contributionPrincipal: result.contributionPrincipal,
           fees: result.fees, unrealizedGain: result.unrealizedGain,
           traceRefs: mergeTraceRefs(result.effects.flatMap(effect => effect.traceRefs ?? [])) ?? Object.freeze([]),

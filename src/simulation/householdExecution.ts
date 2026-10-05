@@ -3,6 +3,7 @@ import { indexPreparedOperations, operationRuntime, restoreOperationRuntime, typ
 import { householdDomainParticipants, type HouseholdOperationFacts } from "./r3/domainOperations.js";
 import { summarizeHouseholdPeriod, type HouseholdForecastSummaryPeriod } from "./r3/forecastSummary.js";
 import { createHouseholdSummaryPeriod } from "./r3/summaryPeriod.js";
+import { realizedMortgageLoans } from "./mortgageLifecycle.js";
 import { SummaryOperationSink, type SummaryAccountingEvidence } from "./r3/summarySink.js";
 import { firstDependencyOrder, indexReachability, indexSequencingInstants } from "./r3/ordering.js";
 import { compareReachableStates, createReachableStateCounters } from "./r3/reachableStates.js";
@@ -868,7 +869,7 @@ const runCompiledHouseholdProjectionInternal = (
           const lastForLoan = lastIndexByLoan.get(item.loanId) === index;
           if (!lastForLoan || compiled.liabilityInput === undefined)
             return item;
-          const loan = kernel.liabilities?.loan(item.loanId);
+          const loan = kernel.liabilities?.loan(item.loanId) ?? realizedMortgageLoans(candidateState).find(loan => loan.id === item.loanId);
           if (loan === undefined) return item;
           const opening =
             state.liabilities[loan.principalLiabilityId]?.balance ?? zero;
@@ -877,6 +878,7 @@ const runCompiledHouseholdProjectionInternal = (
             zero;
           const extraPaid = opening
             .minus(closing)
+            .minus(additionalFacts.flatMap(fact => fact.debtReplacements ?? []).filter(replacement => replacement.oldLoanId === item.loanId).reduce((sum, replacement) => sum.plus(replacement.amount), zero))
             .minus(
               scheduledPrincipalByLoan.get(item.loanId) ?? zero,
             );
@@ -890,8 +892,9 @@ const runCompiledHouseholdProjectionInternal = (
           (total, item) => total.plus(item.interestExpense),
           zero,
         );
-        const principalIds = kernel.liabilities?.principalIds ?? [];
-        const interestIds = kernel.liabilities?.interestIds ?? [];
+        const realizedLoans = realizedMortgageLoans(candidateState);
+        const principalIds = [...(kernel.liabilities?.principalIds ?? []), ...realizedLoans.map(loan => loan.principalLiabilityId)];
+        const interestIds = [...(kernel.liabilities?.interestIds ?? []), ...realizedLoans.map(loan => loan.interestPayableLiabilityId)];
         const principalBefore = [...principalIds].reduce(
           (total, id) => total.plus(state.liabilities[id]?.balance ?? zero),
           zero,

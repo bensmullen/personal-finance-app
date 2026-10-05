@@ -1289,7 +1289,9 @@ export const executePreparedVerticalSlice3Operation = (
       price: operation.closingPrice,
       generatedOccurrenceKey: provenance.generatedOccurrenceKey,
     });
-    const change = operation.marketValue.minus(before);
+    // Intraperiod disposition/purchase may change units after preparation.
+    // Valuation changes the explicit security price on the units still owned.
+    const change = positionMarketValue(next.positions[operation.returnConfiguration.targetPositionId]!).minus(before);
     const effect = createSemanticEffect({
       id: semanticEffectId(
         `effect:valuation:${operation.returnConfiguration.targetPositionId}:${prepared.period.end}`,

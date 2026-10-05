@@ -14,6 +14,11 @@ export class TaxDiagnosticLedger {
   }
   static empty(): TaxDiagnosticLedger { return new TaxDiagnosticLedger(new PersistentStringIndex<TaxCapabilityDiagnostic>()); }
   get size(): number { return this.#index.size; }
+  withoutSources(sourceIds: readonly string[]): TaxDiagnosticLedger {
+    const next = this.#index.fork();
+    for (const [key, entry] of this.#index.entries()) if (entry.category === "indirect_rollover_pending" && entry.entityId !== undefined && sourceIds.includes(entry.entityId)) next.delete(key);
+    return new TaxDiagnosticLedger(next);
+  }
   with(entries: readonly TaxCapabilityDiagnostic[]): TaxDiagnosticLedger {
     if (!entries.length) return this;
     const next = this.#index.fork();

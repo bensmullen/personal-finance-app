@@ -1,4 +1,4 @@
-/** Derived from personal_finance_canonical_schema_v1.0.json (source version 1.0.3). */
+/** Derived from personal_finance_canonical_schema_v1.0.json (source version 1.0.4). */
 export type UUID = string;
 export type Money = number;
 export type Rate = number;
@@ -81,6 +81,9 @@ export interface Household {
 }
 
 export interface Account {
+  interest_rate?: string;
+  interest_convention?: string;
+  first_credit_date?: string;
   account_id: UUID;
   name: string;
   account_type: AccountType;
@@ -247,6 +250,23 @@ export interface Assumption {
 }
 
 export interface Investment {
+  instrument_subtype?: string;
+  acquisition_date?: string;
+  cost_basis?: string;
+  after_tax_basis?: string;
+  tax_lots?: readonly { id: string; acquired: string; quantity: string; basis: string }[];
+  face_value?: string;
+  maturity_date?: string;
+  coupon_rate?: string;
+  interest_convention?: string;
+  crediting_frequency?: string;
+  first_credit_date?: string;
+  settlement_account_id?: UUID;
+  funding_account_id?: UUID;
+  underlying_investment_id?: UUID;
+  strike_price?: string;
+  expiration_date?: string;
+  contract_multiplier?: string;
   investment_id: UUID;
   account_id: UUID;
   asset_id?: UUID;
@@ -266,6 +286,12 @@ export interface Investment {
 }
 
 export interface Insurance {
+  policy_family?: string;
+  insured_person_id?: UUID;
+  beneficiary_id?: UUID;
+  benefit_account_id?: UUID;
+  premium_account_id?: UUID;
+  death_event_id?: UUID;
   insurance_id: UUID;
   owner_id: UUID;
   insurance_type: InsuranceType;
