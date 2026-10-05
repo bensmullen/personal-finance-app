@@ -43,6 +43,7 @@ export interface TaxSettlementInstruction {
   readonly at: Instant;
 }
 export interface HouseholdTaxInput {
+  readonly domainOperations?: readonly { readonly id: string; readonly at: Instant }[];
   readonly accountTaxTreatments?: Readonly<Record<string, string>>;
   readonly taxRuleReferences?: readonly { readonly id: string; readonly jurisdiction: string; readonly taxType: string; readonly effective_date: string; readonly expiration_date?: string; readonly embeddedDefinition: boolean }[];
   readonly simulationStart?: Instant;
@@ -83,6 +84,8 @@ export const taxOutputCapabilities = (diagnostics: readonly TaxCapabilityDiagnos
   ...["statementIncome", "recurringIncomeRecognized", "recurringExpenseRecognized", "currentPosition"].map(field => [field, Object.freeze({ dependency: "tax_independent", status: "complete", diagnostics: Object.freeze([]) })]),
 ]));
 export interface RecognizedTaxEconomics {
+  /** Treasury interest remains in the federal base and is excluded from state/local bases. */
+  readonly exemptStateLocalInterest?: Money;
   readonly sourceId: string;
   readonly at: Instant;
   readonly income: TaxIncomeFacts;
