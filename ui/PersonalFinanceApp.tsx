@@ -93,6 +93,7 @@ import {
 
 import { useInteractiveForecast } from "./forecast/useInteractiveForecast.js";
 import { EditorHub } from "./EntityEditor.js";
+import { DomainMechanicsPanel } from "./forecast/DomainMechanicsPanel.js";
 import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, type NetWorthSection } from "./entityPresentation.js";
 import { calculationFingerprint } from "../src/application/interactiveForecast.js";
 import { HouseholdChart } from "./forecast/HouseholdChart.js";
@@ -819,6 +820,7 @@ export function PersonalFinanceApp() {
                   setRunSettingsError("");
                 }}
               />
+              <DomainMechanicsPanel draft={draft} setDraft={updateCanonicalModel} />
               <details className="panel">
               <summary>Expert standalone forecasts</summary>
               <p>Inspect a supported scope independently. These results are separate from the reconciled household outlook.</p>

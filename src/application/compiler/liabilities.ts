@@ -33,6 +33,7 @@ import {
   type Money,
 } from "../../values/index.js";
 import { selectScenario } from "./scenarioSelection.js";
+import { durableMortgageExtras } from "./mortgageLifecycle.js";
 import {
   EXACT_DECIMAL,
   UUID,
@@ -96,7 +97,7 @@ export interface CompiledLiabilities {
 }
 
 const GENERATED_PREFIX = "f16c0000-0000-4000-8001-";
-const CASH_TYPES = new Set(["checking", "savings", "cash"]);
+const CASH_TYPES = new Set(["checking", "savings"]);
 const ACCOUNT_TYPES = new Set(["checking", "savings", "cash", "taxable_brokerage", "traditional_401k", "roth_401k", "traditional_ira", "roth_ira", "hsa", "hsa_investment", "529", "403b", "457b", "sep_ira", "simple_ira", "pension", "cash_value_insurance", "other"]);
 
 const invalidResult = <T>(
@@ -258,6 +259,11 @@ export const compileLiabilities = (
   const scenarioResult = selectScenario(model, { capabilityName: "liability_forecast", executionLabel: "Liability", ...(request.scenarioId === undefined ? {} : { scenarioId: request.scenarioId }), simulationStart: request.simulationStart, simulationEnd: request.simulationEnd });
   if (scenarioResult.status !== "compiled") return scenarioResult;
   const selectedScenario = scenarioResult.value;
+  try {
+    const extras = durableMortgageExtras(model, selectedScenario.id);
+    request = { ...request, executionProfiles: request.executionProfiles.map(profile => ({ ...profile, extraPrincipalPayments: [...(profile.extraPrincipalPayments ?? []), ...extras.filter(extra => extra.liabilityId === profile.liabilityId).map(({ liabilityId: _liabilityId, ...extra }) => extra)] })) };
+    if (extras.some(extra => !request.executionProfiles.some(profile => profile.liabilityId === extra.liabilityId))) return { status: "unsupported", diagnostics: [diagnostic("MORTGAGE_EXTRA_PROFILE_REQUIRED", "Configure scheduled payments for the mortgage before adding extra principal.")] };
+  } catch (error) { return { status: "unsupported", diagnostics: [diagnostic("MORTGAGE_EXTRA_UNSUPPORTED", error instanceof Error ? error.message : "Extra principal terms are incomplete.")] }; }
   const allLiabilities = objects(model, "Liability");
   const liabilityById = new Map(
     allLiabilities.map((value) => [canonicalId(value, "liability_id")!, value]),
@@ -541,7 +547,7 @@ export const compileLiabilities = (
     if (behavior.status === "invalid_model") return behavior;
     for (const reason of fundingCapabilityReasons(fundingAccount, fundingOwner.value, accountOpening, fundingAccount.closing_date === undefined || fundingAccount.closing_date === null ? undefined : utcDate(fundingAccount.closing_date)!, behavior)) {
       const details = reason === "scope" ? ["LIABILITY_FUNDING_ACCOUNT_OUT_OF_SCOPE", "funding Account is outside Household scope.", "owner_id"] as const
-        : reason === "type" ? ["LIABILITY_FUNDING_ACCOUNT_TYPE_UNSUPPORTED", "funding Account is not checking, savings, or cash.", "account_type"] as const
+        : reason === "type" ? ["LIABILITY_FUNDING_ACCOUNT_TYPE_UNSUPPORTED", "funding Account is not checking or savings.", "account_type"] as const
         : reason === "currency" ? ["LIABILITY_FUNDING_ACCOUNT_CURRENCY_UNSUPPORTED", "funding Account currency differs from the run.", "currency"] as const
         : reason === "opening" ? ["LIABILITY_FUNDING_ACCOUNT_LIFECYCLE_UNSUPPORTED", "funding Account does not exist at forecast opening.", "opening_date"] as const
         : reason === "closing" ? ["LIABILITY_FUNDING_ACCOUNT_LIFECYCLE_UNSUPPORTED", "funding Account closes inside the forecast horizon.", "closing_date"] as const

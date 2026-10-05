@@ -28,6 +28,7 @@ export interface DomainOperation {
   readonly cashAccountId?: string; readonly amount: string; readonly quantity?: string; readonly lotIds?: readonly string[];
   readonly linkedOperationId?: string; readonly sourceAccountId?: string; readonly replacementAmount?: string;
   readonly annualEffectiveRate?: string;
+  readonly dividendCharacter?: "ordinary" | "qualified";
   readonly taxFacts: RecognizedTaxEconomics["facts"];
 }
 export interface DomainMechanicsInput { readonly currency: string; readonly holdings: readonly DomainHolding[]; readonly operations: readonly DomainOperation[] }
@@ -53,6 +54,8 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
   const at = instant(operation.at), amount = Money.parse(operation.amount, currency);
   if (amount.isNegative() || !amount.amount.fitsScale(currency.minorUnitScale)) fail("DOMAIN_AMOUNT_INVALID", "Use nonnegative money at cash settlement precision.");
   const state = cloneAuthoritativeState(opening.state), prior = runtimeFor(opening, input);
+  if (state.identities.postedTransactionIds.some(id => id.startsWith("domain:" + operation.id + ":")))
+    return { ...opening, facts: {} };
   const lots = { ...prior.lots }, basis = { ...prior.basis }, receipts = { ...prior.receipts };
   const transactions: AccountingTransaction[] = [], taxEconomics: RecognizedTaxEconomics[] = [], taxDiagnostics: TaxCapabilityDiagnostic[] = [];
   const traces = [calculationTraceRef(calculationTraceId("compiler:canonical:Event:" + operation.id))];
@@ -88,7 +91,7 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
   const settleIncome = (value: Money, field: "taxableInterest" | "ordinaryDividends" | "qualifiedDividends", treasury = false) => {
     const destination = cash(operation.cashAccountId ?? holding?.accountId);
     if (holding && destination.id !== holding.accountId) fail("DOMAIN_WRAPPER_SETTLEMENT_REQUIRED", "Investment income settles in its owning wrapper. Author a separate transfer to move it to household cash.");
-    post("income", [cashLeg(destination.id, value, "debit"), { type: "income", posting: "credit", amount: value }]);
+    post("income", [{ type: "cash", posting: "debit", amount: value, accountId: destination.id, cashFlowClass: holding ? "investing" : "operating" }, { type: "income", posting: "credit", amount: value }]);
     tax(field, value, treasury); return destination;
   };
   const takeLots = (requested: Quantity) => {
@@ -131,6 +134,7 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
   switch (operation.kind) {
     case "purchase": {
       const target = requirePosition(), source = fund(operation.cashAccountId, amount), units = q(operation.quantity ?? fail("DOMAIN_QUANTITY_REQUIRED", "Enter purchased units."));
+      if (holding?.kind === "long_equity_call" && (!units.amount.fitsScale(0) || at.slice(0, 10) >= holding.expiration!)) fail("DOMAIN_OPTION_PURCHASE_INVALID", "Buy whole call contracts before expiration.");
       if (!units.amount.isPositive() || !target.price.times(units.amount).equals(amount)) fail("DOMAIN_PURCHASE_PRICE_MISMATCH", "Purchased units times price must equal cash cost.");
       post("purchase", [assetLeg(target.id, amount, units, "debit"), cashLeg(source.id, amount, "credit")]); addLot(target.id, units, amount); break;
     }
@@ -142,10 +146,11 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
     case "call_exercise": {
       if (!holding || holding.kind !== "long_equity_call" || !holding.strike || !holding.multiplier || !holding.underlyingId || at.slice(0, 10) > holding.expiration!) fail("DOMAIN_OPTION_EXERCISE_UNSUPPORTED", "Exercise requires an unexpired long listed equity call with explicit terms.");
       const target = requirePosition(), contracts = q(operation.quantity ?? target.quantity.amount.toString());
+      if (!contracts.amount.fitsScale(0)) fail("DOMAIN_OPTION_CONTRACTS_INVALID", "Exercise whole call contracts.");
       const stockQuantity = q(contracts.amount.times(decimal(holding.multiplier!)).toString()), strikeCash = Money.parse(holding.strike!, currency).times(stockQuantity.amount).round(rounding);
       if (!strikeCash.equals(amount)) fail("DOMAIN_EXERCISE_CASH_MISMATCH", "Exercise cash must equal strike times contracts times multiplier.");
       const source = fund(operation.cashAccountId, strikeCash), selected = takeLots(contracts), stock = state.positions[holding.underlyingId!];
-      if (!stock || stock.accountId !== target.accountId) fail("DOMAIN_OPTION_UNDERLYING_INVALID", "Acquired stock must be in the same taxable wrapper.");
+      if (!stock || stock.accountId !== target.accountId || !stock.price.isPositive()) fail("DOMAIN_OPTION_UNDERLYING_INVALID", "Acquired stock must have an explicit positive price in the same taxable wrapper.");
       const removedValue = contracts.equals(target.quantity) ? target.carryingValue : target.carryingValue.times(contracts.amount.dividedBy(target.quantity.amount, precision)).round(rounding);
       // Reverse any call mark-to-market; exercise itself recognizes no realized call gain.
       const reversal = removedValue.minus(selected.cost);
@@ -164,7 +169,7 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
     }
     case "treasury_interest": settleIncome(amount, "taxableInterest", true); break;
     case "reinvest_dividend": {
-      const target = requirePosition(), destination = settleIncome(amount, "ordinaryDividends"), units = q(operation.quantity ?? fail("DOMAIN_QUANTITY_REQUIRED", "Enter reinvested units."));
+      const target = requirePosition(), destination = settleIncome(amount, operation.dividendCharacter === "qualified" ? "qualifiedDividends" : "ordinaryDividends"), units = q(operation.quantity ?? fail("DOMAIN_QUANTITY_REQUIRED", "Enter reinvested units."));
       if (!units.amount.isPositive() || !target.price.times(units.amount).equals(amount)) fail("DOMAIN_REINVESTMENT_PRICE_MISMATCH", "Reinvested units times price must equal recognized income.");
       post("reinvestment", [assetLeg(target.id, amount, units, "debit"), cashLeg(destination.id, amount, "credit")]); addLot(target.id, units, amount); break;
     }
@@ -181,7 +186,11 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
     }
     case "death_benefit": {
       const destination = cash(operation.cashAccountId, true);
-      post("benefit", [{ type: "cash", posting: "debit", amount, accountId: destination.id, cashFlowClass: "operating" }, { type: "income", posting: "credit", amount }]); break;
+      post("benefit", [{ type: "cash", posting: "debit", amount, accountId: destination.id, cashFlowClass: "operating" }, { type: "income", posting: "credit", amount }]);
+      taxEconomics.push({ sourceId: operation.id, at, income: emptyTaxIncome(), allocation: "1", facts: operation.taxFacts, traceRefs: traces, excludedFederalTermLifeBenefit: amount });
+      for (const jurisdiction of operation.taxFacts.residenceJurisdictions) if (jurisdiction !== "US:FEDERAL")
+        taxDiagnostics.push(taxDiagnostic("term_life_state_exclusion", "Federal lump-sum death-benefit exclusion is supported; this destination jurisdiction needs explicit death-benefit tax coverage.", jurisdiction, operation.id));
+      break;
     }
     case "conversion": case "direct_rollover": case "mixed_rollover": case "indirect_distribution": {
       const target = requirePosition();
@@ -238,6 +247,14 @@ export const createDomainMechanicsParticipant = (configuration: DomainMechanicsI
   const input = immutableConfiguration(configuration);
   if (new Set(input.operations.map(item => item.id)).size !== input.operations.length) fail("DOMAIN_ID_DUPLICATE", "Each operation requires one stable identity.");
   return Object.freeze({ id: "domain_mechanics", version: "d1b-v1", portableCodec: "domain-mechanics/v1", economicInputs: input,
+    observe: (_descriptor, facts, runtime) => {
+      if (!facts.acquiredLots?.length) return runtime;
+      const prior = (runtime.domainMechanics as DomainRuntime | undefined) ?? { lots: Object.fromEntries(input.holdings.map(item => [item.id, item.lots])), basis: Object.fromEntries(input.holdings.map(item => [item.id, item.afterTaxBasis ?? "0"])), receipts: {} };
+      const lots = { ...prior.lots };
+      for (const lot of facts.acquiredLots) if (input.holdings.some(item => item.id === lot.holdingId) && !lots[lot.holdingId]?.some(item => item.id === lot.id))
+        lots[lot.holdingId] = [...(lots[lot.holdingId] ?? []), { id: lot.id, acquired: lot.acquired, quantity: lot.quantity, basis: lot.basis }];
+      return { ...runtime, domainMechanics: { ...prior, lots } };
+    },
     prepare: (_context, period, _opening, work = []) => ({ id: "domain_mechanics", operations: input.operations.filter(item => period.start <= item.at && item.at < period.end).map(operation => ({
       descriptor: { id: "domain:" + operation.id, domain: "domain_mechanics", operationClass: "domain:" + operation.kind, sequencingInstant: instant(operation.at),
         dependsOn: [...input.operations.filter(other => other.at === operation.at && other.order < operation.order).map(other => "domain:" + other.id), ...work.filter(item => item.sequencingInstant === operation.at && item.operationClass === "cash_income_settlement").map(item => item.id)],

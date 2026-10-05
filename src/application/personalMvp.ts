@@ -5,6 +5,8 @@ export { classifyAccountEconomics, isHouseholdCashAccount };
 export { authorCanonicalRetirementDate as editPersonalRetirementDate } from "./compiler/retirementAuthoring.js";
 export { canonicalRetirementPlans as getPersonalRetirementPlans } from "./compiler/retirementAuthoring.js";
 export { authorPersonalPurchasePlan, type PersonalPurchasePlan } from "./compiler/personalPurchases.js";
+export { authorDomainOperation, authorOpeningInvestmentLot, type AuthoredDomainOperation } from "./compiler/domainMechanics.js";
+export { authorMortgageRefinance, authorMortgageExtra, type AuthoredRefinance } from "./compiler/mortgageLifecycle.js";
 export { contributionCapacityReadModel as getContributionCapacities, type ContributionCapacityReadModel } from "./compiler/contributionReadModel.js";
 export { authorPayrollContributionPlan, durablePayrollAllocations as getPayrollContributionPlans, payrollOpeningUnvestedUnits as getPayrollOpeningUnvestedUnits, type PayrollContributionPlan } from "./compiler/payrollAuthoring.js";
 export { authorOpeningContributionUsage, savedOpeningContributionUsage as getOpeningContributionUsage, openingContributionOptions as getOpeningContributionOptions, type OpeningContributionUsageEntry } from "./compiler/contributionOpening.js";

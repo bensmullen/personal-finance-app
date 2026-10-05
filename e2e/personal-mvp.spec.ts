@@ -28,6 +28,30 @@ const loadExample = async (page: import("@playwright/test").Page) => {
   ).toBeVisible();
 };
 
+test("D1-B normal investment controls persist a bank-funded operation without compiler IDs", async ({ page }) => {
+  await importDraft(page, createGoldenHouseholdDraft());
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  const panel = page.getByRole("region", { name: "Investment and retirement operations" });
+  await panel.getByLabel("Domain operation", { exact: true }).selectOption("purchase");
+  await panel.getByLabel("Source / target holding", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
+  await panel.getByLabel("Operation date", { exact: true }).fill("2026-01-10");
+  await panel.getByLabel("Operation cash amount", { exact: true }).fill("100");
+  await panel.getByLabel("Units / call contracts", { exact: true }).fill("1");
+  const funding = panel.getByLabel("Purchase / exercise funding account", { exact: true });
+  await expect(funding.locator(`option[value="${GOLDEN_HOUSEHOLD_IDS.brokerageAccount}"]`)).toHaveCount(0);
+  await funding.selectOption(GOLDEN_HOUSEHOLD_IDS.checking);
+  await panel.getByRole("button", { name: "Save domain operation", exact: true }).click();
+  await expect(panel.getByRole("status")).toContainText("Operation saved in the plan");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  const pending = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const download = await pending, restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
+  const primitive = (restored.objects.PrimitiveInstance ?? []).find(item => typeof item === "object" && item !== null && !Array.isArray(item) && typeof item.parameters === "object" && item.parameters !== null && !Array.isArray(item.parameters) && item.parameters.adapter === "d1-domain-operation/v1") as JsonObject;
+  expect(primitive.parameters).toMatchObject({ kind: "purchase", amount: "100", cashAccountId: GOLDEN_HOUSEHOLD_IDS.checking, holdingId: GOLDEN_HOUSEHOLD_IDS.brokerageInvestment, quantity: "1" });
+});
+
 const showHouseholdDetails = async (page: import("@playwright/test").Page, channel: "baseline" | "comparison" = "baseline", forecastBudget = 15_000) => {
   const status = page.getByRole("status", { name: channel === "baseline" ? "Household forecast status" : "Household comparison status" });
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: forecastBudget });

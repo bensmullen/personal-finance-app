@@ -84,6 +84,8 @@ export const taxOutputCapabilities = (diagnostics: readonly TaxCapabilityDiagnos
   ...["statementIncome", "recurringIncomeRecognized", "recurringExpenseRecognized", "currentPosition"].map(field => [field, Object.freeze({ dependency: "tax_independent", status: "complete", diagnostics: Object.freeze([]) })]),
 ]));
 export interface RecognizedTaxEconomics {
+  /** Bounded ordinary lump-sum term-life proceeds excluded from federal gross income. */
+  readonly excludedFederalTermLifeBenefit?: Money;
   /** Treasury interest remains in the federal base and is excluded from state/local bases. */
   readonly exemptStateLocalInterest?: Money;
   readonly sourceId: string;

@@ -133,6 +133,7 @@ const PRIMARY_FIELDS: Record<PersonalObjectType, readonly string[]> = {
     "liquidity_class",
     "tax_treatment",
     "opening_date",
+    "interest_rate", "interest_convention", "first_credit_date",
   ],
   Income: [
     "source",
@@ -183,6 +184,9 @@ const PRIMARY_FIELDS: Record<PersonalObjectType, readonly string[]> = {
     "quantity",
     "expected_return",
     "tax_treatment",
+    "price", "market_value", "acquisition_date", "cost_basis", "after_tax_basis",
+    "instrument_subtype", "face_value", "maturity_date", "coupon_rate", "interest_convention", "crediting_frequency", "first_credit_date", "funding_account_id", "settlement_account_id",
+    "underlying_investment_id", "strike_price", "expiration_date", "contract_multiplier",
   ],
   Assumption: [
     "name",
@@ -549,6 +553,13 @@ function FieldControl({ fieldName, field, value, draft, currency, entityType, cr
     </>}
   </div>;
   const required = creating && field.required;
+  const domainOptions: Readonly<Record<string, readonly { value: string; label: string }[]>> = {
+    instrument_subtype: [{ value: "treasury_bill", label: "Treasury bill · discount, held to maturity" }, { value: "treasury_note", label: "Treasury note · par, fixed coupon" }, { value: "treasury_bond", label: "Treasury bond · par, fixed coupon" }, { value: "cd", label: "Certificate of deposit · one year or less" }, { value: "long_equity_call", label: "Long listed equity call" }],
+    interest_convention: [{ value: "effective_annual_monthly", label: "Effective annual / APY · monthly cash credit" }, { value: "nominal_annual_simple", label: "Nominal annual simple · fixed coupon / CD interest" }],
+    crediting_frequency: [{ value: "monthly", label: "Monthly (CD)" }, { value: "semiannual", label: "Every six months (Treasury / CD)" }, { value: "annual", label: "Annual (CD)" }],
+  };
+  const domainChoices = domainOptions[fieldName];
+  if (domainChoices) return <label>{label}<select aria-label={label} value={String(value ?? "")} onChange={event => onChange(event.target.value || null)}><option value="">Not set</option>{domainChoices.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}{value && !domainChoices.some(option => option.value === value) ? <option value={String(value)}>Stored unsupported variant</option> : null}</select></label>;
   if (field.type === "boolean") return <label className="check">
     <input aria-label={label} type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} />
     <span>{label}{FIELD_HELP[fieldName] && <small>{FIELD_HELP[fieldName]}</small>}</span>

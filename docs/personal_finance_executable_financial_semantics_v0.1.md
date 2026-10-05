@@ -1505,7 +1505,80 @@ Any integrated household scheduler MUST implement the shared temporal,
 dependency, contention, and stable-order contracts in Sections 3.4–3.5 and 9;
 serial slice order is not authoritative composition.
 
-## 21. Remaining v0.2 decisions
+## 21. D1-B bounded deterministic domain operations
+
+The canonical patch `1.0.4` adds optional instrument terms, economic opening
+lots/basis, explicit credited-interest conventions, and term-life identities.
+The portable envelope remains `0.2.0-draft`; these optional facts are durable
+inputs, not generated results. A scheduled Event, its EventEffect and a typed
+PrimitiveInstance adapter share one operation identity. Forecast compilation
+diagnoses unavailable paths before execution; unknown product variants and
+missing tax law never imply a supported approximation or zero tax.
+
+- Direct retirement transfers preserve previously taxed basis independently of
+  contribution history. In-plan conversion requires explicit same-plan,
+  owned/vested eligibility and acceptance facts. Its taxable amount is transferred
+  value less pro-rata previously taxed basis, with no withholding or additional
+  early-distribution tax on the conversion itself. Direct rollovers preserve
+  compatible pre-tax/Roth character. A mixed qualified-plan rollover allocates
+  source basis pro rata, then simultaneously directs pre-tax value and after-tax
+  basis to Traditional and Roth IRA destinations. These operations never write
+  ContributionState or consume annual/YTD contribution capacity. The admitted
+  retirement source has one eligible holding and no wrapper cash; multi-holding
+  pro-rata allocation and opening contingent employer value are capability-gated.
+- The bounded participant-received employer-plan path withholds 20% of eligible
+  pre-tax principal as a federal tax credit, not principal or expense. One linked
+  Traditional IRA deposit within 60 days may use received proceeds and explicit
+  checking/savings replacement cash. Tax facts reverse only deposited principal;
+  unreplaced principal remains a distribution with additional-tax completeness
+  diagnostics. Late deposits do not move cash. Cross-tax-year revision, waivers,
+  RMD, hardship, inherited, corrective, QDRO, NUA and loan-offset cases are gated.
+- Brokerage and investment-crypto dispositions consume scoped lots using specific
+  identification or earliest-acquired/FIFO within the represented holding/account.
+  Basis is separate from carrying value; tax capital gain is proceeds less basis.
+  Long-term character requires a holding period exceeding one calendar year.
+  Sale proceeds and investment income stay in wrapper cash; an explicit separate
+  transfer is necessary to reach household banks. Reinvestment recognizes the
+  authored ordinary/qualified dividend first and then purchases a linked lot from
+  wrapper proceeds, with no invented contribution or bank spending. Shared D1-A
+  purchases supply acquisition-lot facts in both execution tiers.
+- Checking/savings interest uses an explicit effective annual/APY convention and
+  monthly effective conversion, credited at currency precision. Treasury bills
+  support same-tax-year discount purchase and face-value maturity. Par Treasury
+  notes/bonds pay nominal simple semiannual coupons; CDs support at most one year
+  and full monthly/semiannual/annual credit intervals. Acquisition is bank-funded;
+  contractual coupon credits and an explicit maturity destination remain durable.
+  Principal return is not income. Treasury interest is federal income with an
+  explicit state/local exemption; CD and bank interest have ordinary character.
+  Premium/OID, coupon stubs and pre-maturity sales are gated.
+- Long listed equity calls have whole contracts, explicit multiplier, strike,
+  underlying, expiration and capitalized premium basis. Sale/lapse recognizes
+  capital gain/loss. Bank-funded exercise transfers remaining call basis plus
+  strike cash into stock basis without a separate call realization. Puts, writers,
+  margin, assignment, straddles and Section 1256 products are unavailable.
+- Personally owned term life has explicit insured person, beneficiary, coverage
+  interval, premium source and benefit destination. Monthly premiums before the
+  scheduled death are insurance expense; one lump-sum ordinary death benefit is
+  economic income excluded from federal gross income, never wages. Other policy
+  families and specialized tax exceptions are gated. Missing state/local
+  death-benefit exclusion coverage is diagnosed separately from the supported
+  federal exclusion rather than silently assuming no destination-jurisdiction tax.
+- Non-cash-out, fee-free fixed mortgage refinance occurs only at a contractual
+  monthly payment boundary after successful old-loan required service. The old
+  principal is replaced using its post-payment balance; no cash or duplicate debt
+  is created. Replacement accrual/amortization/settlement delegates to VS4 and
+  starts a new full-month schedule. Same-occurrence optional extra principal and
+  off-cycle/stub-period closings are rejected. Required and voluntary service use
+  explicit durable checking/savings funding; mortgage interest is not assumed
+  tax-deductible.
+
+All transactions balance by currency and operate on isolated candidates. Domain
+tax facts feed T1A rather than a second liability calculator. Operation replay
+preserves identity and cannot duplicate settled benefits or investment effects.
+The D1-B expected-effect fixtures accompany the unchanged D1-A and VS4 suites;
+GitHub CI and semantic audit remain the merge-readiness boundary.
+
+## 22. Remaining v0.2 decisions
 
 The foundational semantic contract is now sufficiently constrained for deterministic-kernel implementation. The following may remain follow-up work:
 

@@ -1,5 +1,6 @@
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { compileDomainMechanics, hasDomainMechanics } from "./domainMechanics.js";
+import { compileMortgageLifecycle } from "./mortgageLifecycle.js";
 import { supportsD1SpouseHsaScope, durablePayrollAllocations } from "./payrollAuthoring.js";
 import { createWorkplaceEventParticipant } from "../../simulation/workplaceEvents.js";
 import { createPerformanceSession, type PerformanceObserver, type PerformanceSession } from "../../diagnostics/performance.js";
@@ -180,6 +181,8 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
     executionOwnerId: String(compiled[0]!.input.ownerId), ...(firstBoundary.scenarioId === undefined ? {} : { scenarioId: firstBoundary.scenarioId }),
   }) : undefined;
   if (domains !== undefined && domains.status !== "compiled") return domains;
+  const mortgages = compileMortgageLifecycle(model, liabilities?.value.input, compiled[0]!.scenarioIdentity, firstBoundary.simulationStart, firstBoundary.simulationEnd);
+  if (mortgages.status !== "compiled") return mortgages;
   return () => {
   const opening = performance.measure("compile.opening_reconciliation", () => reconcileHouseholdOpeningState([...compiled.map((value) => value.openingState), ...(domains?.status === "compiled" ? [domains.value.openingState] : [])]));
   if (opening.status === "invalid_model") return opening;
@@ -195,6 +198,7 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
     participants: Object.freeze([createHouseholdTaxParticipant({ ...tax.value, simulationStart: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`),
       domainOperations: domains?.status === "compiled" ? domains.value.input.operations.map(item => ({ id: item.id, at: instant(item.at) })) : [] }),
       ...(domains?.status === "compiled" ? [domains.value.participant] : []),
+      ...(mortgages.value ? [mortgages.value] : []),
       ...(durablePayrollAllocations(model).some(item => item.events.length > 0) ? [createWorkplaceEventParticipant(durablePayrollAllocations(model).flatMap(item => item.events))] : [])]),
     ...(cash === undefined ? {} : { cashFlowInput: cash.value.input }),
     ...(investments === undefined ? {} : { investmentInput: investments.value.input }),

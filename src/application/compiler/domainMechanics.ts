@@ -7,7 +7,8 @@ import { createDomainMechanicsParticipant, type DomainHolding, type DomainLot, t
 import type { HouseholdKernelParticipant } from "../../simulation/householdExecution.js";
 import { canonicalId, capability, EXACT_DECIMAL, objects, preflightCanonicalCollections, resolveHouseholdScope, UUID, utcDate, type CanonicalObject } from "./shared.js";
 import { selectScenario } from "./scenarioSelection.js";
-import { activeTaxFact, resolveTaxEligibility } from "../../simulation/tax/facts.js";
+import { resolveTaxEligibility } from "../../simulation/tax/facts.js";
+import { openingUnvestedQuantity } from "./workplaceOpening.js";
 import type { TaxEligibilityPeriod } from "../../simulation/tax/contracts.js";
 import type { CompileResult } from "./types.js";
 
@@ -24,12 +25,20 @@ const date = (value: unknown, message: string): string => {
 };
 export interface DomainCompilerRequest { readonly baseCurrency: string; readonly asOf: string; readonly simulationStart: string; readonly simulationEnd: string; readonly executionOwnerId: string; readonly scenarioId?: string }
 export interface CompiledDomainMechanics { readonly openingState: AuthoritativeState; readonly input: DomainMechanicsInput; readonly participant: HouseholdKernelParticipant }
+export const authorOpeningInvestmentLot = (model: PortableModelEnvelope, investmentId: string, lot: DomainLot): PortableModelEnvelope => {
+  if (!UUID.test(lot.id) || !utcDate(lot.acquired) || !EXACT_DECIMAL.test(lot.quantity) || !decimal(lot.quantity).isPositive() || !EXACT_DECIMAL.test(lot.basis) || decimal(lot.basis).isNegative()) throw new Error("Enter a valid acquisition date, positive units and nonnegative exact lot basis.");
+  const investment = objects(model, "Investment").find(item => item.investment_id === investmentId);
+  if (!investment) throw new Error("Choose an investment for this opening lot.");
+  const prior = Array.isArray(investment.tax_lots) ? investment.tax_lots : [];
+  if (prior.some(item => record(item) && item.id === lot.id)) throw new Error("Opening lot identity already exists.");
+  return { ...model, objects: { ...model.objects, Investment: objects(model, "Investment").map(item => item === investment ? { ...item, tax_lots: [...prior, { ...lot }] } : item) } };
+};
 const accountKinds: Readonly<Record<string, AccountKind>> = { checking: "checking", savings: "savings", cash: "cash", taxable_brokerage: "brokerage", traditional_401k: "retirement", roth_401k: "retirement", traditional_ira: "retirement", roth_ira: "retirement", "403b": "retirement", "457b": "retirement" };
 const kinds: readonly DomainOperationKind[] = ["purchase", "sale", "ordinary_dividend", "qualified_dividend", "interest", "reinvest_dividend", "call_exercise", "conversion", "direct_rollover", "mixed_rollover", "indirect_distribution", "indirect_deposit"];
 const subtypeKinds = new Set(["treasury_bill", "treasury_note", "treasury_bond", "cd", "long_equity_call"]);
 export const hasDomainMechanics = (model: PortableModelEnvelope): boolean =>
   objects(model, "PrimitiveInstance").some(item => record(item.parameters) && item.parameters.adapter === ADAPTER && item.enabled === true) ||
-  objects(model, "Account").some(item => item.interest_rate != null) || objects(model, "Investment").some(item => item.instrument_subtype != null) || objects(model, "Insurance").length > 0;
+  objects(model, "Account").some(item => item.interest_rate != null) || objects(model, "Investment").some(item => item.instrument_subtype != null || ["crypto", "option", "bond"].includes(String(item.investment_type))) || objects(model, "Insurance").length > 0;
 
 /** One event/effect/primitive is one economic operation, including a linked rollover deposit. */
 export interface AuthoredDomainOperation {
@@ -39,12 +48,14 @@ export interface AuthoredDomainOperation {
   readonly cashAccountId?: string; readonly sourceAccountId?: string; readonly quantity?: string;
   readonly linkedOperationId?: string; readonly replacementAmount?: string; readonly lotIds?: readonly string[];
   readonly eligibility?: "eligible_owned_direct" | "eligible_owned_participant"; readonly destinationAcceptance?: boolean;
+  readonly dividendCharacter?: "ordinary" | "qualified";
+  readonly samePlanConfirmed?: boolean;
 }
 export const authorDomainOperation = (model: PortableModelEnvelope, plan: AuthoredDomainOperation): PortableModelEnvelope => {
   for (const id of [plan.eventId, plan.effectId, plan.primitiveId]) if (!UUID.test(id)) throw new Error("DOMAIN_OPERATION_ID_INVALID");
-  if (!kinds.includes(plan.kind) || !utcDate(plan.date) || !Number.isSafeInteger(plan.order) || plan.order < 0 || !EXACT_DECIMAL.test(plan.amount)) throw new Error("DOMAIN_OPERATION_INPUT_INVALID");
+  if (!kinds.includes(plan.kind) || !utcDate(plan.date) || !Number.isSafeInteger(plan.order) || plan.order < 0 || !EXACT_DECIMAL.test(plan.amount) || decimal(plan.amount).isNegative()) throw new Error("Choose a supported operation, valid date, nonnegative priority and exact nonnegative cash amount.");
   const roots = objects(model, "Scenario").filter(item => item.enabled === true && item.base_scenario_id == null);
-  if (roots.length !== 1) throw new Error("DOMAIN_ROOT_REQUIRED");
+  if (roots.length !== 1) throw new Error("Choose one enabled root plan before adding a domain operation.");
   const priorEvent = objects(model, "Event").find(item => item.event_id === plan.eventId);
   if (priorEvent && (!Array.isArray(priorEvent.effect_ids) || priorEvent.effect_ids.length !== 1 || priorEvent.effect_ids[0] !== plan.effectId)) throw new Error("DOMAIN_OPERATION_ID_COLLISION");
   for (const [collection, idField, id] of [["EventEffect", "event_effect_id", plan.effectId], ["PrimitiveInstance", "primitive_instance_id", plan.primitiveId]] as const) {
@@ -53,7 +64,7 @@ export const authorDomainOperation = (model: PortableModelEnvelope, plan: Author
   const parameters: Record<string, JsonValue> = { adapter: ADAPTER, kind: plan.kind, amount: plan.amount, order: plan.order };
   for (const [key, value] of Object.entries(plan)) if (!["eventId", "effectId", "primitiveId", "date", "name"].includes(key) && value !== undefined) parameters[key] = value as JsonValue;
   const event: Record<string, JsonValue> = { event_id: plan.eventId, name: plan.name, event_type: "other", start_date: plan.date, trigger_type: "scheduled", effect_ids: [plan.effectId], dependencies: [], precedence: plan.order, scenario_id: String(roots[0]!.scenario_id), enabled: true };
-  const effect: Record<string, JsonValue> = { event_effect_id: plan.effectId, target_entity_type: plan.holdingId ? "Investment" : "Account", target_entity_id: plan.holdingId ?? plan.cashAccountId ?? plan.destinationHoldingId ?? plan.eventId, operation: "d1_domain", primitive_instance_id: plan.primitiveId };
+  const effect: Record<string, JsonValue> = { event_effect_id: plan.effectId, target_entity_type: plan.holdingId || plan.destinationHoldingId ? "Investment" : "Account", target_entity_id: plan.holdingId ?? plan.destinationHoldingId ?? plan.cashAccountId ?? plan.eventId, operation: "d1_domain", primitive_instance_id: plan.primitiveId };
   const primitive: Record<string, JsonValue> = { primitive_instance_id: plan.primitiveId, primitive_id: "P27", enabled: true, scenario_id: String(roots[0]!.scenario_id), input_bindings: {}, parameters };
   const replace = (collection: string, field: string, item: CanonicalObject) => [...objects(model, collection).filter(old => old[field] !== item[field]), item];
   return { ...model, objects: { ...model.objects, Event: replace("Event", "event_id", event), EventEffect: replace("EventEffect", "event_effect_id", effect), PrimitiveInstance: replace("PrimitiveInstance", "primitive_instance_id", primitive),
@@ -106,8 +117,11 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
     for (const [id, investment] of investments) {
       if (!ownedAccounts.has(String(investment.account_id))) continue;
       const kind = investment.instrument_subtype ?? investment.investment_type;
-      if (!["equity", "fund", "crypto", ...subtypeKinds].includes(String(kind))) continue;
+      if (investment.investment_type === "crypto" && [...investments.values()].some(other => other !== investment && other.investment_type === "crypto" && other.account_id === investment.account_id && other.symbol === investment.symbol)) throw new Error("Represent each spot cryptocurrency once per actual wallet/account so FIFO cannot omit another holding's earlier lots.");
       if (investment.investment_type === "option" && kind !== "long_equity_call" || investment.investment_type === "bond" && !["treasury_bill", "treasury_note", "treasury_bond", "cd"].includes(String(kind))) throw new Error("Only admitted fixed-income products and long listed equity calls are supported.");
+      if (investment.investment_type === "crypto" && kind !== "crypto") throw new Error("Only spot investment crypto is supported; mining, staking, DeFi and exchanges are unavailable.");
+      if (!["equity", "fund", "crypto", ...subtypeKinds].includes(String(kind))) continue;
+      if (["crypto", "long_equity_call"].includes(String(kind)) && investment.return_model_id != null) throw new Error("Crypto and call contracts require their explicit deterministic prices; equity return models are unavailable.");
       const quantity = exact(investment.quantity, "Holding quantity must be explicit."), lots: DomainLot[] = [];
       if (Array.isArray(investment.tax_lots)) for (const lot of investment.tax_lots) {
         if (!record(lot)) throw new Error("Opening lots require identity, acquisition date, quantity and cost basis.");
@@ -115,13 +129,14 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
       }
       else if (investment.acquisition_date != null && investment.cost_basis != null && decimal(quantity).isPositive()) lots.push({ id: id + ":opening", acquired: date(investment.acquisition_date, "Acquisition date is required."), quantity, basis: exact(investment.cost_basis, "Economic basis is required.") });
       if (lots.length && (new Set(lots.map(lot => lot.id)).size !== lots.length || !lots.reduce((sum, lot) => sum.plus(decimal(lot.quantity)), decimal("0")).equals(decimal(quantity)))) throw new Error("Opening lot identities must be unique and quantities reconcile to the holding.");
+      if (lots.some(lot => !decimal(lot.quantity).isPositive() || lot.acquired > request.asOf)) throw new Error("Opening lots require positive owned units and acquisition dates on or before the opening position.");
       holdings.push({ id, accountId: String(investment.account_id), kind: kind as DomainHolding["kind"], lots,
         ...(investment.after_tax_basis == null ? {} : { afterTaxBasis: exact(investment.after_tax_basis, "Previously taxed retirement basis must be explicit.") }),
         ...(kind !== "long_equity_call" ? {} : { underlyingId: String(investment.underlying_investment_id), strike: exact(investment.strike_price, "Strike is required."), multiplier: exact(investment.contract_multiplier, "Multiplier is required."), expiration: date(investment.expiration_date, "Expiration is required.") }) });
       if (kind === "long_equity_call") {
         const underlying = lookup(investment.underlying_investment_id, investments, "Choose an underlying equity holding.");
         if (underlying.investment_type !== "equity" || underlying.account_id !== investment.account_id || ownedAccounts.get(String(investment.account_id))!.account_type !== "taxable_brokerage" ||
-          !decimal(String(investment.contract_multiplier)).isPositive() || !decimal(quantity).fitsScale(0)) throw new Error("Options require whole long listed equity call contracts in a taxable brokerage wrapper.");
+          !decimal(String(investment.contract_multiplier)).isPositive() || !decimal(String(investment.contract_multiplier)).fitsScale(0) || !decimal(quantity).fitsScale(0) || decimal(quantity).isPositive() && !lots.length) throw new Error("Options require whole long listed equity call contracts, acquisition dates and premium basis in a taxable brokerage wrapper.");
         const expiration = utcDate(investment.expiration_date)!;
         if (start <= expiration && expiration < end) add({ id: id + ":expiration", at: expiration, order: 999999, kind: "call_expiration", holdingId: id, amount: "0", taxFacts });
       }
@@ -131,7 +146,9 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
         const futurePurchase = acquired >= request.simulationStart;
         if (maturity <= acquired || !decimal(quantity).equals(decimal(futurePurchase ? "0" : "1"))) throw new Error("Use one opening contract, or zero opening units for a future bank-funded acquisition.");
         const cost = money(exact(investment.cost_basis, "Purchase/deposit cost is required."), currency), destination = required(investment.settlement_account_id, "Choose a durable maturity settlement destination.");
-        lookup(destination, ownedAccounts, "Settlement destination must be an owned account.");
+        if (investment.price !== cost.amount.toString() && (typeof investment.price !== "string" || !money(investment.price, currency).equals(cost))) throw new Error("Held-to-maturity contract price must equal its explicit purchase/deposit cost.");
+        const maturityDestination = lookup(destination, ownedAccounts, "Settlement destination must be an owned account.");
+        if (destination !== investment.account_id && !["checking", "savings"].includes(String(maturityDestination.account_type))) throw new Error("Maturity settles to the owning wrapper or an explicitly selected checking/savings account; implicit retirement contributions are unavailable.");
         if (!cost.isPositive() || kind === "treasury_bill" && (cost.compare(face) >= 0 || acquired.slice(0, 4) !== maturity.slice(0, 4)) ||
           kind !== "treasury_bill" && !cost.equals(face)) throw new Error("Bills require a same-tax-year discount; notes/bonds/CDs require par/deposit cost. Premium, OID and pre-maturity sales are unavailable.");
         if (investment.return_model_id != null) throw new Error("Held-to-maturity fixed-income contracts cannot use an equity return model.");
@@ -144,6 +161,9 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
           const frequency = investment.crediting_frequency, months = frequency === "monthly" ? 1 : frequency === "semiannual" ? 6 : frequency === "annual" ? 12 : undefined;
           if (!months || kind !== "cd" && months !== 6) throw new Error("Treasury coupons credit semiannually; CDs credit monthly, semiannually or annually.");
           const anchor = date(investment.first_credit_date, "First contractual interest credit date is required.");
+          const targetMonth = Number(acquired.slice(0, 4)) * 12 + Number(acquired.slice(5, 7)) - 1 + months;
+          const expectedFirstCredit = String(Math.floor(targetMonth / 12)).padStart(4, "0") + "-" + String(targetMonth % 12 + 1).padStart(2, "0") + acquired.slice(7);
+          if (anchor !== expectedFirstCredit || !utcDate(expectedFirstCredit)) throw new Error("The first coupon/interest credit must follow one full explicit crediting interval; stub periods are unavailable.");
           const scheduled = utcMonthlyOccurrences(utcDate(anchor)!, { start: utcDate(anchor)!, end: instant(maturity + "T00:00:00.001Z") }, "skip");
           if (anchor <= acquired || scheduled.length === 0 || !scheduled.some(item => item.slice(0, 10) === maturity && (Number(item.slice(0, 4)) * 12 + Number(item.slice(5, 7)) - Number(anchor.slice(0, 4)) * 12 - Number(anchor.slice(5, 7))) % months === 0)) throw new Error("Coupon/interest schedule must end at maturity without an unsupported stub period.");
           const coupon = money(face.amount.times(annual).times(decimal(String(months))).dividedBy(decimal("12"), new RoundingPolicy(2, "half_even")).toString(), currency);
@@ -159,6 +179,7 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
       const rate = exact(account.interest_rate, "Enter the credited annual effective rate.");
       if (account.interest_convention !== "effective_annual_monthly") throw new Error("Cash interest requires explicit effective annual/APY rate with monthly crediting.");
       const anchor = utcDate(date(account.first_credit_date, "Choose the first monthly credit date."))!;
+      if (anchor < utcDate(account.opening_date)!) throw new Error("Cash interest cannot credit before the account opens.");
       for (const at of utcMonthlyOccurrences(anchor, { start, end }, "skip")) add({ id: id + ":interest:" + at, at, order: 900010, kind: "cash_interest", cashAccountId: id, amount: "0", annualEffectiveRate: rate, taxFacts });
     }
     for (const policy of objects(model, "Insurance")) {
@@ -191,7 +212,10 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
       const kind = terms.kind as DomainOperationKind, amount = exact(terms.amount, "Operation cash amount must be explicit."), order = terms.order;
       if (typeof order !== "number" || !Number.isSafeInteger(order) || order < 0) throw new Error("Supply a nonnegative operation priority.");
       const operation: DomainOperation = { id: String(event.event_id), at, order, kind, amount, taxFacts,
-        ...Object.fromEntries(["holdingId", "destinationHoldingId", "rothHoldingId", "cashAccountId", "sourceAccountId", "quantity", "linkedOperationId", "replacementAmount", "lotIds"].filter(key => terms[key] != null).map(key => [key, terms[key]])) };
+        ...Object.fromEntries(["holdingId", "destinationHoldingId", "rothHoldingId", "cashAccountId", "sourceAccountId", "quantity", "linkedOperationId", "replacementAmount", "lotIds", "dividendCharacter"].filter(key => terms[key] != null).map(key => [key, terms[key]])) };
+      if (terms.quantity != null) exact(terms.quantity, "Enter nonnegative exact units.");
+      if (terms.lotIds != null && (!Array.isArray(terms.lotIds) || terms.lotIds.some(id => typeof id !== "string"))) throw new Error("Lot selection must contain explicit lot identities.");
+      if (kind === "reinvest_dividend" && !["ordinary", "qualified"].includes(String(terms.dividendCharacter))) throw new Error("Choose ordinary or qualified dividend character explicitly before reinvesting.");
       if (["purchase", "call_exercise"].includes(kind)) bank(terms.cashAccountId);
       if (terms.sourceAccountId != null) bank(terms.sourceAccountId);
       if (kind.includes("rollover") || kind === "conversion" || kind === "indirect_distribution" || kind === "indirect_deposit") {
@@ -201,11 +225,13 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
         const destinationInvestment = kind === "indirect_distribution" ? undefined : lookup(terms.destinationHoldingId, investments, "Choose a compatible retirement destination.");
         const destination = destinationInvestment && lookup(destinationInvestment.account_id, ownedAccounts, "Destination ownership is required.");
         if (sourceInvestment && sourceInvestment.after_tax_basis == null) throw new Error("Enter actual previously taxed source basis, including explicit zero; prior-YTD contribution usage is not basis.");
+        if (sourceInvestment && openingUnvestedQuantity(model, sourceInvestment).amount.isPositive()) throw new Error("Contingent employer value cannot be rolled over or converted. Establish eligible owned value after vesting first.");
+        if (sourceInvestment && destinationInvestment && sourceInvestment.investment_id === destinationInvestment.investment_id) throw new Error("Choose distinct retirement source and destination holdings.");
         if (source && [...investments.values()].filter(item => item.account_id === source.account_id && decimal(String(item.quantity)).isPositive()).length !== 1 || source && !decimal(String(source.opening_balance)).isZero()) throw new Error("The admitted rollover source must have one eligible owned holding and no wrapper cash; multi-holding pro-rata allocation is unavailable.");
         const sourceType = String(source?.account_type), destinationType = String(destination?.account_type);
         const directCompatible = sourceType === "traditional_401k" && ["traditional_ira", "traditional_401k"].includes(destinationType) || sourceType === "roth_401k" && destinationType === "roth_ira" || sourceType === "traditional_ira" && destinationType === "traditional_ira";
         if (kind === "direct_rollover" && !directCompatible) throw new Error("Choose a supported direct rollover/trustee transfer with compatible pre-tax/Roth character.");
-        if (kind === "conversion" && (sourceType !== "traditional_401k" || destinationType !== "roth_401k" || source!.institution == null || source!.institution !== destination!.institution)) throw new Error("In-plan conversion requires traditional and Roth 401(k) holdings in the same explicitly identified plan.");
+        if (kind === "conversion" && (sourceType !== "traditional_401k" || destinationType !== "roth_401k" || terms.samePlanConfirmed !== true)) throw new Error("Confirm that the eligible traditional and Roth 401(k) holdings belong to the same plan; institution names do not establish plan identity.");
         if (kind === "mixed_rollover") {
           const roth = lookup(lookup(terms.rothHoldingId, investments, "Choose the Roth IRA for the after-tax share.").account_id, ownedAccounts, "Roth destination ownership is required.");
           if (sourceType !== "traditional_401k" || destinationType !== "traditional_ira" || roth.account_type !== "roth_ira") throw new Error("Mixed rollover directs the pro-rata pre-tax share to Traditional IRA and after-tax share to Roth IRA.");
@@ -215,11 +241,15 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
       } else if (operation.holdingId) {
         const holding = lookup(operation.holdingId, investments, "Choose an investment holding."), account = lookup(holding.account_id, ownedAccounts, "Holding owner is unavailable.");
         if (account.account_type !== "taxable_brokerage") throw new Error("Sales, investment purchases, dividends and options require a taxable brokerage wrapper.");
-        if (["treasury_bill", "treasury_note", "treasury_bond", "cd"].includes(String(holding.instrument_subtype)) && kind !== "purchase") throw new Error("Fixed-income pre-maturity sales and manual distribution overrides are unavailable.");
+        if (["treasury_bill", "treasury_note", "treasury_bond", "cd"].includes(String(holding.instrument_subtype))) throw new Error("Use the instrument's durable acquisition, funding, coupon and maturity terms. Additional purchases, pre-maturity sales and manual distribution overrides are unavailable.");
         if (holding.investment_type === "option" && kind === "sale" && at.slice(0, 10) >= String(holding.expiration_date)) throw new Error("Close the call before expiration; use its lapse/exercise contract afterwards.");
+        if (["ordinary_dividend", "qualified_dividend", "reinvest_dividend"].includes(kind) && !["equity", "fund"].includes(String(holding.investment_type))) throw new Error("Dividend character is supported only for equity/fund distributions; crypto income and special option distributions are unavailable.");
+        if (kind === "call_exercise" && holding.instrument_subtype !== "long_equity_call") throw new Error("Exercise requires a long listed equity call.");
       }
       add(operation);
     }
+    for (const operation of operations) if (operations.some(other => other !== operation && other.at === operation.at && other.order === operation.order &&
+      [operation.holdingId, operation.cashAccountId, operation.sourceAccountId].some(id => id !== undefined && [other.holdingId, other.cashAccountId, other.sourceAccountId].includes(id)))) throw new Error("Operations sharing a holding or cash source on the same date require distinct priorities.");
     const input: DomainMechanicsInput = { currency: currency.code, holdings, operations: operations.map(operation => ({ ...operation, taxFacts: taxFactsAt(operation.at) })) };
     return { status: "compiled", value: { input, openingState: createAuthoritativeState({ accounts: accountStates }), participant: createDomainMechanicsParticipant(input) }, diagnostics: [] };
   } catch (error) {
