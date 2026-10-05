@@ -2,15 +2,15 @@ import { accountingTransactionId, createAccountingLeg, createAccountingTransacti
 import { failValidation, issueCodes } from "../diagnostics/index.js";
 import { domainId } from "../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../lineage/index.js";
-import { deriveD1ContributionCapacity, D1_CONTRIBUTION_LAW_2026, type D1CapacityKind, type D1ContributionFacts } from "../rules/contribution2026.js";
+import { deriveD1ContributionCapacity, D1_CONTRIBUTION_LAW_2026, contributionCharacters, type ContributionCharacter, type D1CapacityKind, type D1ContributionFacts } from "../rules/contribution2026.js";
 import { contributionBucketIdentity, evaluateContributionBuckets, type ContributionBucketDecision } from "../rules/contribution.js";
 import { resolveContributionLimitBindings } from "../rules/resolver.js";
 import type { AnnualContributionLimitRule, RuleTarget } from "../rules/contracts.js";
 import { applyAccountingTransactionAtomically, cloneAuthoritativeState, type AuthoritativeState, type ContributionState } from "../state/index.js";
-import type { Instant } from "../time/index.js";
+import { instant, type Instant } from "../time/index.js";
 import { Money, Quantity, RoundingPolicy, decimal } from "../values/index.js";
 
-export type ContributionCharacter = "traditional_ira" | "roth_ira" | "traditional_401k" | "roth_401k" | "after_tax_401k" | "employee_hsa" | "employer_401k" | "employer_hsa";
+export type { ContributionCharacter } from "../rules/contribution2026.js";
 export interface ContributionLimitBinding {
   readonly ruleId: string;
   readonly kind: D1CapacityKind;
@@ -38,12 +38,18 @@ export const decideContribution = (state: AuthoritativeState, policy: Contributi
   if (needed.some(kind => !policy.limits.some(binding => binding.kind === kind))) return invalid("Required statutory contribution bucket is missing");
   const catalog: AnnualContributionLimitRule[] = policy.limits.map(binding => {
     if (!binding.bucketKey.trim()) return invalid("Contribution scope key is required");
+    if (binding.kind !== "401k_additions" && binding.bucketKey !== binding.kind) return invalid("Statutory participant/household scope keys cannot vary between accounts");
+    if (binding.kind === "401k_additions" && (!binding.bucketKey.startsWith("401k_additions:") || !binding.bucketKey.slice("401k_additions:".length).trim() || binding.target.targetType !== "person" || binding.target.targetId !== policy.personId)) return invalid("Annual additions require an explicit participant and plan/sponsor aggregation key");
+    const characters = contributionCharacters(binding.kind);
+    if (binding.includedCharacters.length !== characters.length || characters.some(character => !binding.includedCharacters.includes(character))) return invalid("Statutory bucket must include all legally shared contribution characters");
     if (["ira_shared", "roth_ira", "401k_elective", "hsa_individual"].includes(binding.kind) && (binding.target.targetType !== "person" || binding.target.targetId !== policy.personId)) return invalid("Participant statutory bucket must target the contributor");
     if (binding.kind === "hsa_family" && (binding.target.targetType !== "household" || binding.target.targetId !== policy.householdId)) return invalid("Family HSA bucket must target the household");
     const capacity = deriveD1ContributionCapacity(binding.kind, policy.facts);
     if (capacity.status !== "complete") return invalid(capacity.diagnostics.join(", "));
+    const bucket = `${binding.target.targetType}:${binding.target.targetId}:${binding.bucketKey}:${policy.facts.taxYear}`;
+    if (Object.values(state.contributions ?? {}).some(entry => entry.buckets.some(prior => prior.identity === bucket && !prior.annualLimit.equals(capacity.capacity)))) return invalid("Conflicting annual facts for the same committed statutory bucket");
     return { id: domainId("tax-rule", binding.ruleId), kind: "annual_contribution_limit", target: binding.target, bucketKey: binding.bucketKey, includedCharacters: binding.includedCharacters,
-      effectiveFrom: `${policy.facts.taxYear}-01-01T00:00:00.000Z`, effectiveUntil: `${policy.facts.taxYear + 1}-01-01T00:00:00.000Z`, calendarYear: policy.facts.taxYear, calendar: "utc", annualLimit: capacity.capacity,
+      effectiveFrom: instant(`${policy.facts.taxYear}-01-01T00:00:00.000Z`), effectiveUntil: instant(`${policy.facts.taxYear + 1}-01-01T00:00:00.000Z`), calendarYear: policy.facts.taxYear, calendar: "utc", annualLimit: capacity.capacity,
       capacityFacts: { lawVersion: D1_CONTRIBUTION_LAW_2026.version, kind: binding.kind } };
   });
   const resolved = resolveContributionLimitBindings(catalog, catalog.map(rule => rule.id), [

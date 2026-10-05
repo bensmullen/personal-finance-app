@@ -1,6 +1,6 @@
 import type { JsonValue, PortableModelEnvelope } from "../../model/modelVersion.js";
 import type { FilingStatus } from "../../rules/tax/contracts.js";
-import type { D1ContributionFacts, D1CapacityKind } from "../../rules/contribution2026.js";
+import { contributionCharacters, type D1ContributionFacts, type D1CapacityKind } from "../../rules/contribution2026.js";
 import type { ContributionCharacter, ContributionPolicy, ContributionLimitBinding } from "../../simulation/contributions.js";
 import { domainId } from "../../identity/index.js";
 import { money, USD } from "../../values/index.js";
@@ -45,13 +45,16 @@ export const stableContributionRuleId = (personId: string, kind: string, year: n
   for (const character of `${personId.toLowerCase()}:${kind}:${year}`) hash = BigInt.asUintN(64, (hash ^ BigInt(character.codePointAt(0)!)) * 1099511628211n);
   return `d1c30000-0000-4000-8000-${(hash & 0xffffffffffffn).toString(16).padStart(12, "0")}`;
 };
-export const contributionCharacters = (kind: D1CapacityKind): readonly ContributionCharacter[] => kind === "ira_shared" ? ["traditional_ira", "roth_ira"] : kind === "roth_ira" ? ["roth_ira"] : kind === "401k_elective" ? ["traditional_401k", "roth_401k"] : kind === "401k_additions" ? ["traditional_401k", "roth_401k", "after_tax_401k", "employer_401k"] : ["employee_hsa", "employer_hsa"];
 
 /** References published law by kind; canonical rows contain identities/scopes, not copied IRS tables. */
-export const authoredContributionRules = (personId: string, kinds: readonly D1CapacityKind[], taxYear: number): readonly CanonicalObject[] => kinds.map(kind => ({
-  tax_rule_id: stableContributionRuleId(personId, kind, taxYear), jurisdiction: "US", tax_type: "other", effective_date: `${taxYear}-01-01`, expiration_date: `${taxYear + 1}-01-01`, calculation_method: "custom",
-  contribution_limits: [{ adapter: "d1-contribution-law/v1", kind, target_type: "person", target_id: personId, bucket_key: kind, included_characters: [...contributionCharacters(kind)] }],
-}));
+export const authoredContributionRules = (personId: string, kinds: readonly D1CapacityKind[], taxYear: number, scope: { readonly planKey?: string; readonly householdId?: string } = {}): readonly CanonicalObject[] => kinds.map(kind => {
+  if (kind === "401k_additions" && !scope.planKey?.trim()) return fail("ANNUAL_ADDITIONS_PLAN_SCOPE_REQUIRED");
+  if (kind === "hsa_family" && (!scope.householdId || !UUID.test(scope.householdId))) return fail("HSA_FAMILY_HOUSEHOLD_SCOPE_REQUIRED");
+  const target = kind === "hsa_family" ? scope.householdId! : personId;
+  const key = kind === "401k_additions" ? `${kind}:${scope.planKey}` : kind;
+  return { tax_rule_id: stableContributionRuleId(target, key, taxYear), jurisdiction: "US", tax_type: "other", effective_date: `${taxYear}-01-01`, expiration_date: `${taxYear + 1}-01-01`, calculation_method: "custom",
+    contribution_limits: [{ adapter: "d1-contribution-law/v1", kind, target_type: kind === "hsa_family" ? "household" : "person", target_id: target, bucket_key: key, included_characters: [...contributionCharacters(kind)] }] };
+});
 
 export const compileContributionPolicy = (model: PortableModelEnvelope, account: CanonicalObject, value: JsonValue | undefined): ContributionPolicy => {
   if (!record(value) || typeof value.personId !== "string" || !UUID.test(value.personId) || typeof value.householdId !== "string" || !UUID.test(value.householdId)) return fail("CONTRIBUTION_SCOPE_INVALID");

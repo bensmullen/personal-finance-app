@@ -94,6 +94,7 @@ import {
   type VerticalSlice2RunInput,
 } from "./verticalSlice2.js";
 import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
+import { decideContribution, recordContribution, type ContributionPolicy } from "./contributions.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -130,6 +131,7 @@ export interface InvestmentPurchase extends ScheduledOperation {
   readonly destinationAccountId: AccountId;
   readonly targetPositionId: PositionId;
   readonly amount: Money;
+  readonly contribution?: ContributionPolicy;
   readonly quantityRounding: RoundingPolicy;
 }
 export interface InvestmentFee extends ScheduledOperation {
@@ -1316,10 +1318,14 @@ export const executePreparedVerticalSlice3Operation = (
       unrealizedGain: change,
     });
   }
+  const contribution = operation.kind === "purchase" ? operation.operation.contribution : undefined;
+  const purchase = operation.kind === "purchase" ? operation.operation : undefined;
+  const contributionDecision = contribution !== undefined && purchase !== undefined ? decideContribution(state, contribution, purchase.destinationAccountId, operation.descriptor.sequencingInstant, purchase.amount) : undefined;
+  if (contributionDecision?.accepted.isZero()) failValidation({ severity: "error", code: issueCodes.contributionLimitApplied, message: "Contribution exceeds its applicable statutory capacity; select auto-cap explicitly to permit a partial amount.", entityType: "contribution", entityId: purchase!.id });
   const filtered: VerticalSlice3Input = Object.freeze({
     ...input,
     transfers: operation.kind === "transfer" ? [operation.operation] : [],
-    purchases: operation.kind === "purchase" ? [operation.operation] : [],
+    purchases: purchase === undefined ? [] : [{ ...purchase, amount: contributionDecision?.accepted ?? purchase.amount }],
     fees: operation.kind === "fee" ? [operation.operation] : [],
     returns: [],
   });
@@ -1349,7 +1355,7 @@ export const executePreparedVerticalSlice3Operation = (
     work: generatedWork.work,
   }, summary);
   return Object.freeze({
-    state: result.closingState,
+    state: contribution !== undefined && purchase !== undefined && contributionDecision !== undefined ? recordContribution(result.closingState, contribution, purchase.destinationAccountId, operation.descriptor.id, operation.descriptor.sequencingInstant, contributionDecision) : result.closingState,
     primitiveState: result.primitiveState,
     effects: result.effects,
     transactions: result.transactions,

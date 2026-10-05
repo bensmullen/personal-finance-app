@@ -2561,7 +2561,7 @@ function DiagnosticList({
 
 function PersonalPurchaseAuthoring({ draft, setDraft }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void }) {
   const banks = objectEntries(draft, "Account").filter(account => ["checking", "savings"].includes(String(account.account_type)));
-  const brokerageIds = new Set(objectEntries(draft, "Account").filter(account => account.account_type === "taxable_brokerage" && account.tax_treatment === "taxable").map(account => objectId("Account", account)));
+  const brokerageIds = new Set(objectEntries(draft, "Account").filter(account => ["taxable_brokerage", "traditional_ira", "roth_ira"].includes(String(account.account_type))).map(account => objectId("Account", account)));
   const investments = objectEntries(draft, "Investment").filter(investment => brokerageIds.has(String(investment.account_id)));
   const [investmentId, setInvestmentId] = useState("");
   const [bankId, setBankId] = useState("");
@@ -2570,6 +2570,18 @@ function PersonalPurchaseAuthoring({ draft, setDraft }: { draft: PersonalDraft; 
   const [frequency, setFrequency] = useState<"once" | "monthly">("monthly");
   const [order, setOrder] = useState("10");
   const [error, setError] = useState("");
+  const [age, setAge] = useState("");
+  const [compensation, setCompensation] = useState("");
+  const [rothMagi, setRothMagi] = useState("");
+  const [deductionMagi, setDeductionMagi] = useState("");
+  const [filingStatus, setFilingStatus] = useState<"" | "single" | "married_joint" | "married_separate" | "head_of_household" | "qualifying_surviving_spouse">("");
+  const [covered, setCovered] = useState("");
+  const [spouseCovered, setSpouseCovered] = useState("");
+  const [livesWithSpouse, setLivesWithSpouse] = useState("");
+  const [excessPolicy, setExcessPolicy] = useState<"reject" | "auto_cap">("reject");
+  const selectedInvestment = investments.find(item => objectId("Investment", item) === investmentId);
+  const destination = objectEntries(draft, "Account").find(item => objectId("Account", item) === selectedInvestment?.account_id);
+  const ira = destination?.account_type === "traditional_ira" || destination?.account_type === "roth_ira";
   const savedPurchases = useMemo(() => {
     try { return { plans: getPersonalPurchasePlans(draft), error: "" }; }
     catch (failure) { return { plans: [], error: failure instanceof Error ? failure.message : "Saved purchase policy is unsupported" }; }
@@ -2580,20 +2592,34 @@ function PersonalPurchaseAuthoring({ draft, setDraft }: { draft: PersonalDraft; 
     setBankId(plan.sourceCashAccountId); setAmount(plan.amount); setOrder(String(plan.order));
     setFrequency(plan.schedule.kind === "utc_monthly" ? "monthly" : "once");
     setDate(plan.schedule.kind === "utc_monthly" ? plan.schedule.anchor : plan.schedule.dates[0] ?? "");
+    const facts = plan.contribution?.facts;
+    setAge(facts?.ageAtYearEnd === undefined ? "" : String(facts.ageAtYearEnd));
+    setCompensation(facts?.taxableCompensation?.amount.toString() ?? ""); setRothMagi(facts?.rothMagi?.amount.toString() ?? ""); setDeductionMagi(facts?.deductionMagi?.amount.toString() ?? "");
+    setFilingStatus(facts?.filingStatus ?? ""); setCovered(facts?.workplacePlanCovered === undefined ? "" : String(facts.workplacePlanCovered)); setSpouseCovered(facts?.spouseWorkplacePlanCovered === undefined ? "" : String(facts.spouseWorkplacePlanCovered));
+    setLivesWithSpouse(facts?.livesWithSpouse === undefined ? "" : String(facts.livesWithSpouse)); setExcessPolicy(plan.contribution?.excessPolicy ?? "reject");
   }, [investmentId, savedPurchases]);
   return <section className="panel" aria-label="Saved investment purchases">
     <h2>Investment purchases</h2>
-    <p>Save a one-time or monthly brokerage purchase funded from checking or savings. Holdings need an executable projected return. Each purchase is valued at the modeled month-end price.</p>
+    <p>Save a one-time or monthly brokerage or IRA purchase funded from checking or savings. Holdings need an executable projected return. Each purchase is valued at the modeled month-end price. IRA eligibility and deductions require explicit annual facts; missing facts remain incomplete.</p>
     <label>Purchase investment<select aria-label="Purchase investment" value={investmentId} onChange={event => setInvestmentId(event.target.value)}><option value="">Choose holding</option>{investments.map(investment => <option key={objectId("Investment", investment)} value={objectId("Investment", investment)}>{objectLabel("Investment", investment)}</option>)}</select></label>
     <label>Purchase funding account<select aria-label="Purchase funding account" value={bankId} onChange={event => setBankId(event.target.value)}><option value="">Choose bank account</option>{banks.map(bank => <option key={objectId("Account", bank)} value={objectId("Account", bank)}>{objectLabel("Account", bank)}</option>)}</select></label>
     <label>Purchase amount<input value={amount} onChange={event => setAmount(event.target.value)} inputMode="decimal" /></label>
     <label>Purchase start date<input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
     <label>Purchase frequency<select aria-label="Purchase frequency" value={frequency} onChange={event => setFrequency(event.target.value === "once" ? "once" : "monthly")}><option value="once">One time</option><option value="monthly">Monthly</option></select></label>
     <label>Purchase execution order<input type="number" min="0" step="1" value={order} onChange={event => setOrder(event.target.value)} /></label>
+    {ira && <fieldset><legend>IRA contribution facts for {date.slice(0, 4) || "the contribution year"}</legend>
+      <label>Age at year end<input type="number" min="0" value={age} onChange={event => setAge(event.target.value)} /></label>
+      <label>Annual taxable compensation<input inputMode="decimal" value={compensation} onChange={event => setCompensation(event.target.value)} /></label>
+      <label>Contribution filing status<select aria-label="Contribution filing status" value={filingStatus} onChange={event => { const value = event.target.value; if (value === "" || value === "single" || value === "married_joint" || value === "married_separate" || value === "head_of_household" || value === "qualifying_surviving_spouse") setFilingStatus(value); }}><option value="">Unknown</option><option value="single">Single</option><option value="married_joint">Married filing jointly</option><option value="married_separate">Married filing separately</option><option value="head_of_household">Head of household</option><option value="qualifying_surviving_spouse">Qualifying surviving spouse</option></select></label>
+      <label>Roth IRA MAGI<input inputMode="decimal" value={rothMagi} onChange={event => setRothMagi(event.target.value)} /></label>
+      <label>Traditional IRA deduction MAGI<input inputMode="decimal" value={deductionMagi} onChange={event => setDeductionMagi(event.target.value)} /></label>
+      {[["Workplace plan coverage", covered, setCovered], ["Spouse workplace plan coverage", spouseCovered, setSpouseCovered], ["Lived with spouse during the year", livesWithSpouse, setLivesWithSpouse]].map(([label, value, setter]) => <label key={String(label)}>{String(label)}<select aria-label={String(label)} value={String(value)} onChange={event => { if (typeof setter === "function") setter(event.target.value); }}><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>)}
+      <label>Excess contribution policy<select aria-label="Excess contribution policy" value={excessPolicy} onChange={event => setExcessPolicy(event.target.value === "auto_cap" ? "auto_cap" : "reject")}><option value="reject">Reject excess</option><option value="auto_cap">Explicitly cap to available capacity</option></select></label>
+    </fieldset>}
     <button type="button" disabled={!investmentId || !bankId || !amount || !date} onClick={() => {
       const selected = investments.find(investment => objectId("Investment", investment) === investmentId);
       try {
-        setDraft(authorPersonalPurchasePlan(draft, { primitiveId: typeof selected?.contribution_model_id === "string" ? selected.contribution_model_id : randomId(), investmentId, sourceCashAccountId: bankId, amount, date, frequency, order: Number(order) }));
+        setDraft(authorPersonalPurchasePlan(draft, { primitiveId: typeof selected?.contribution_model_id === "string" ? selected.contribution_model_id : randomId(), investmentId, sourceCashAccountId: bankId, amount, date, frequency, order: Number(order), ...(ira ? { excessPolicy, contributionFacts: { taxYear: Number(date.slice(0, 4)), ...(age === "" ? {} : { ageAtYearEnd: Number(age) }), ...(compensation === "" ? {} : { taxableCompensation: compensation }), ...(filingStatus === "" ? {} : { filingStatus }), ...(rothMagi === "" ? {} : { rothMagi }), ...(deductionMagi === "" ? {} : { deductionMagi }), ...(covered === "" ? {} : { workplacePlanCovered: covered === "true" }), ...(spouseCovered === "" ? {} : { spouseWorkplacePlanCovered: spouseCovered === "true" }), ...(livesWithSpouse === "" ? {} : { livesWithSpouse: livesWithSpouse === "true" }) } } : {}) }));
         setError("");
       } catch (failure) { setError(failure instanceof Error ? failure.message : "Purchase plan could not be saved"); }
     }}>Save investment purchase</button>

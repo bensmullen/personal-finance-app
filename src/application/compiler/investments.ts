@@ -6,6 +6,7 @@ import {
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { normalizeContributionLimitRuleIds } from "./contributionBindings.js";
 import { durablePersonalPurchaseInstructions, personalPurchaseInstructionId } from "./personalPurchases.js";
+import type { ContributionPolicy } from "../../simulation/contributions.js";
 import {
   createPrimitiveRuntimeStateStore,
   type PrimitiveRuntimeStateStore,
@@ -74,6 +75,7 @@ export interface InvestmentPurchaseExecutionInstruction {
   readonly investmentId: string;
   readonly sourceCashAccountId: string;
   readonly amount: string;
+  readonly contribution?: ContributionPolicy;
   readonly schedule: InvestmentOperationSchedule;
   readonly order: number;
   readonly quantityRounding: {
@@ -889,6 +891,7 @@ export const compileInvestments = (
   }
 
   try {
+    if (request.purchaseInstructions.some(item => item.contribution !== undefined)) return unsupportedResult("CONTRIBUTION_CANONICAL_POLICY_REQUIRED", "Tax-advantaged contributions must use their durable canonical policy rather than a session instruction.", "InvestmentPurchaseExecutionInstruction");
     request = { ...request, purchaseInstructions: [...request.purchaseInstructions, ...durablePersonalPurchaseInstructions(model)] };
   } catch (error) {
     return unsupportedResult(error instanceof Error ? error.message : "INVESTMENT_CONTRIBUTION_MODEL_UNSUPPORTED", "The durable purchase policy is unsupported or incomplete.", "Investment");
@@ -1491,7 +1494,7 @@ export const compileInvestments = (
     const destinationAccount = accounts.get(accountId)!;
     if (
       !sameAccountPurchase &&
-      sourceAccount.tax_treatment !== destinationAccount.tax_treatment
+      sourceAccount.tax_treatment !== destinationAccount.tax_treatment && item.contribution === undefined
     )
       return unsupportedResult(
         "INVESTMENT_PURCHASE_TAX_BOUNDARY_UNSUPPORTED",
@@ -1503,7 +1506,7 @@ export const compileInvestments = (
       );
     if (
       !sameAccountPurchase &&
-      normalizeContributionLimitRuleIds(destinationAccount).length > 0
+      normalizeContributionLimitRuleIds(destinationAccount).length > 0 && item.contribution === undefined
     )
       return unsupportedResult(
         "ACCOUNT_CONTRIBUTION_LIMIT_UNSUPPORTED",
@@ -1545,6 +1548,7 @@ export const compileInvestments = (
           sourceTraceRefs: Object.freeze([calculationTraceRef(calculationTraceId(`compiler:canonical:PrimitiveInstance:${investment.contribution_model_id}`))]),
         } : {}),
         amount: exactMoney(item.amount, currency)!,
+        ...(item.contribution === undefined ? {} : { contribution: item.contribution }),
         eligibilitySchedule: compiledSchedules.get(id)!,
         executionTiming: "end_of_period" as const,
         order: item.order,

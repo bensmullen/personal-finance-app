@@ -30,6 +30,8 @@ export interface D1ContributionFacts {
   readonly hsaFamilyAllocation?: Money;
 }
 export type D1CapacityKind = "401k_elective" | "401k_additions" | "ira_shared" | "roth_ira" | "traditional_ira_deduction" | "hsa_individual" | "hsa_family";
+export type ContributionCharacter = "traditional_ira" | "roth_ira" | "traditional_401k" | "roth_401k" | "after_tax_401k" | "employee_hsa" | "employer_401k" | "employer_hsa";
+export const contributionCharacters = (kind: D1CapacityKind): readonly ContributionCharacter[] => kind === "ira_shared" ? ["traditional_ira", "roth_ira"] : kind === "roth_ira" ? ["roth_ira"] : kind === "401k_elective" ? ["traditional_401k", "roth_401k"] : kind === "401k_additions" ? ["traditional_401k", "roth_401k", "after_tax_401k", "employer_401k"] : ["employee_hsa", "employer_hsa"];
 export type D1Capacity =
   | { readonly status: "incomplete"; readonly kind: D1CapacityKind; readonly diagnostics: readonly string[] }
   | { readonly status: "complete"; readonly kind: D1CapacityKind; readonly capacity: Money; readonly ordinaryCapacity: Money; readonly catchupCapacity: Money; readonly rothCatchupRequired?: boolean; readonly lawVersion: string; readonly facts: D1ContributionFacts };
