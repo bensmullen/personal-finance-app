@@ -17,7 +17,7 @@ export interface ContributionBucketDecision {
   readonly accepted: Money;
   readonly excess: Money;
   readonly policy: "reject" | "auto_cap";
-  readonly buckets: readonly (ContributionLimitDecision & { readonly bucketIdentity: string; readonly facts: Readonly<Record<string, string | boolean>> })[];
+  readonly buckets: readonly (ContributionLimitDecision & { readonly bucketIdentity: string; readonly consumedAmount?: Money; readonly facts: Readonly<Record<string, string | boolean>> })[];
   readonly applications: readonly RuleApplication<ContributionLimitDecision>[];
 }
 
@@ -25,6 +25,7 @@ export interface ContributionBucketDecision {
 export const evaluateContributionBuckets = (
   resolved: readonly ResolvedRule<"annual_contribution_limit">[], requested: Money, character: string,
   usage: readonly CommittedContributionUsage[], policy: "reject" | "auto_cap" = "reject",
+  qualifications: Readonly<Record<string, { readonly maximumAccepted: Money; readonly qualifyingCeiling: Money }>> = {},
 ): ContributionBucketDecision => {
   if (policy !== "reject" && policy !== "auto_cap") throw new Error("CONTRIBUTION_POLICY_INVALID");
   if (!resolved.length) throw new Error("CONTRIBUTION_LIMIT_BINDING_REQUIRED");
@@ -46,7 +47,11 @@ export const evaluateContributionBuckets = (
     }
     return evaluateAnnualContributionLimit(binding, requested, used);
   });
-  const maximum = applications.reduce((amount, application) => application.result.accepted.compare(amount) < 0 ? application.result.accepted : amount, requested);
+  const maximum = applications.reduce((amount, application) => {
+    const capacity = qualifications[application.ruleId]?.maximumAccepted ?? application.result.accepted;
+    if (capacity.isNegative() || capacity.compare(requested) > 0) throw new Error("CONTRIBUTION_QUALIFICATION_INVALID");
+    return capacity.compare(amount) < 0 ? capacity : amount;
+  }, requested);
   const accepted = policy === "reject" && !maximum.equals(requested) ? Money.zero(requested.currency) : maximum;
   const finalApplications = applications.map(application => Object.freeze({ ...application, result: Object.freeze({ ...application.result, accepted, excess: requested.minus(accepted),
     decision: accepted.equals(requested) ? "allowed" as const : accepted.isPositive() ? "partially_allowed" as const : "rejected" as const }) }));
@@ -55,14 +60,16 @@ export const evaluateContributionBuckets = (
       const rule = [...resolved].sort((a, b) => String(a.rule.id).localeCompare(String(b.rule.id)))[index]!.rule;
       return Object.freeze({ ...application.result, accepted, excess: requested.minus(accepted),
         decision: accepted.equals(requested) ? "allowed" as const : accepted.isPositive() ? "partially_allowed" as const : "rejected" as const,
-        bucketIdentity: contributionBucketIdentity(rule), facts: Object.freeze({ ...rule.capacityFacts }) });
+        bucketIdentity: contributionBucketIdentity(rule),
+        ...(qualifications[rule.id] === undefined ? {} : { consumedAmount: accepted.compare(qualifications[rule.id]!.qualifyingCeiling) < 0 ? accepted : qualifications[rule.id]!.qualifyingCeiling }),
+        facts: Object.freeze({ ...rule.capacityFacts }) });
     })) });
 };
 
 /** Called only after the accepted financial transaction has committed. */
 export const committedContributionUsage = (decision: ContributionBucketDecision, contributionId: string, character: string): readonly CommittedContributionUsage[] => {
   if (!contributionId.trim()) throw new Error("CONTRIBUTION_ID_REQUIRED");
-  return Object.freeze(decision.accepted.isZero() ? [] : decision.buckets.map(bucket => Object.freeze({ contributionId, character, bucketIdentity: bucket.bucketIdentity, amount: decision.accepted })));
+  return Object.freeze(decision.accepted.isZero() ? [] : decision.buckets.map(bucket => Object.freeze({ contributionId, character, bucketIdentity: bucket.bucketIdentity, amount: bucket.consumedAmount ?? decision.accepted })));
 };
 
 export type ContributionLimitDecisionKind = "allowed" | "partially_allowed" | "rejected";

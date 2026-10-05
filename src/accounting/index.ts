@@ -9,7 +9,7 @@ export type PositionId = DomainId<"position">;
 export type LiabilityId = DomainId<"liability">;
 export type StatementTargetId = DomainId<string>;
 export type PostingSign = "debit" | "credit";
-export type AccountingEffectType = "cash" | "asset" | "liability" | "income" | "expense" | "equity" | "gain" | "loss" | "tax";
+export type AccountingEffectType = "cash" | "asset" | "contingent" | "liability" | "income" | "expense" | "equity" | "gain" | "loss" | "tax";
 export type CashFlowClass = "operating" | "investing" | "financing" | "non_cash";
 export type CashFlowSummary = CashFlowClass | "mixed";
 
@@ -39,7 +39,7 @@ export interface CashLegDraft extends AccountingLegBase {
 }
 
 export interface AssetLegDraft extends AccountingLegBase {
-  readonly type: "asset";
+  readonly type: "asset" | "contingent";
   readonly entityId: PositionId;
   readonly quantity?: Quantity;
 }
@@ -73,7 +73,7 @@ export const createAccountingLeg = (draft: AccountingLegDraft): AccountingLeg =>
   if (draft.type === "cash" && !("accountId" in draft) || draft.type === "cash" && draft.accountId === undefined) {
     missingTarget(draft, "accountId");
   }
-  if ((draft.type === "asset" || draft.type === "liability") && (!("entityId" in draft) || draft.entityId === undefined)) {
+  if ((draft.type === "asset" || draft.type === "contingent" || draft.type === "liability") && (!("entityId" in draft) || draft.entityId === undefined)) {
     missingTarget(draft, "entityId");
   }
   if (draft.type === "cash" && (!("cashFlowClass" in draft) || draft.cashFlowClass === undefined)) {

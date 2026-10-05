@@ -1,7 +1,7 @@
 {
   "specification": {
     "name": "Personal Financial Modeling Canonical Schema",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "status": "draft-canonical",
     "namespace": "pfm",
     "description": "Canonical domain and simulation specification from which database schemas, validation code, dependency resolution, accounting postings, and simulation-engine interfaces can be derived.",
@@ -367,6 +367,7 @@
     ],
     "accounting_effect_type": [
       "asset",
+      "contingent",
       "liability",
       "income",
       "expense",
@@ -4164,6 +4165,7 @@
       },
       "effect_type_semantics": {
         "asset": "Economic resource owned.",
+        "contingent": "Non-owned workplace-plan value; excluded from owned assets and net worth until an explicit vesting reclassification.",
         "liability": "Economic obligation owed.",
         "income": "Recognized inflow affecting current-period income.",
         "expense": "Recognized outflow/consumption affecting current-period income.",

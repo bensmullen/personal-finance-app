@@ -1833,6 +1833,7 @@
           "type": "string",
           "enum": [
             "asset",
+            "contingent",
             "liability",
             "income",
             "expense",
