@@ -95,5 +95,6 @@ export const compileContributionPolicy = (model: PortableModelEnvelope, account:
     if (rule.effective_date !== `${facts.taxYear}-01-01` || rule.expiration_date !== `${facts.taxYear + 1}-01-01`) return fail("CONTRIBUTION_RULE_YEAR_MISMATCH");
     return { ruleId, kind, target: { targetType, targetId: domainId(targetType, targetId) }, bucketKey, includedCharacters: included.map(String) };
   });
+  if (character.includes("401k") && limits.filter(binding => binding.kind === "401k_additions").length !== 1) return fail("ANNUAL_ADDITIONS_ACCOUNT_PLAN_AMBIGUOUS");
   return { character, personId: value.personId, householdId: value.householdId, facts: parseContributionFacts(value.facts), excessPolicy: value.excessPolicy, limits };
 };

@@ -91,6 +91,14 @@ describe("D1 authoritative contribution execution", () => {
     expect(result.periods[0]!.statements.expenses.isZero()).toBe(true);
     expect(Object.values(result.state.contributions!)[0]!.amount.equals(money("1000"))).toBe(true);
   });
+  it("explicit zero-cap policy completes without funding, principal, or usage", () => {
+    const result = run(authorPersonalPurchasePlan(base("roth_ira"), { primitiveId: "d1c40000-0000-4000-8000-000000000014", investmentId: ids.brokerageInvestment, sourceCashAccountId: ids.checking, amount: "1000", frequency: "once", date: "2026-01-10", order: 10, contributionFacts: { ...facts, rothMagi: "168000" }, excessPolicy: "auto_cap" }));
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.state.accounts[ids.checking]!.cash.amount.toString()).toBe("20000");
+    expect(Object.values(result.state.contributions ?? {})).toHaveLength(0);
+    expect(result.periods[0]!.contributionPrincipal.isZero()).toBe(true);
+    expect(result.periods[0]!.transactions).toHaveLength(0);
+  });
 });
 
 describe("D1 employer benefit and contingent ownership", () => {

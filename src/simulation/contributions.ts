@@ -31,6 +31,7 @@ const usage = (state: AuthoritativeState) => Object.values(state.contributions ?
 
 /** All applicable scope buckets are resolved before any financial candidate is posted. */
 export const decideContribution = (state: AuthoritativeState, policy: ContributionPolicy, accountId: string, at: Instant, requested: Money): ContributionBucketDecision => {
+  if (state.accounts[accountId]?.ownerId !== policy.personId) return invalid("Contribution must reach its contributor's own account");
   if (policy.facts.taxYear !== Number(at.slice(0, 4))) return invalid("Contribution facts do not cover this UTC year");
   const needed: D1CapacityKind[] = policy.character.endsWith("_ira") ? ["ira_shared", ...(policy.character === "roth_ira" ? ["roth_ira" as const] : [])]
     : policy.character.includes("401k") ? ["401k_additions", ...(["traditional_401k", "roth_401k"].includes(policy.character) ? ["401k_elective" as const] : [])]
@@ -51,7 +52,7 @@ export const decideContribution = (state: AuthoritativeState, policy: Contributi
     return { id: domainId("tax-rule", binding.ruleId), kind: "annual_contribution_limit", target: binding.target, bucketKey: binding.bucketKey, includedCharacters: binding.includedCharacters,
       effectiveFrom: instant(`${policy.facts.taxYear}-01-01T00:00:00.000Z`), effectiveUntil: instant(`${policy.facts.taxYear + 1}-01-01T00:00:00.000Z`), calendarYear: policy.facts.taxYear, calendar: "utc", annualLimit: capacity.capacity,
       capacityFacts: { lawVersion: D1_CONTRIBUTION_LAW_2026.version, kind: binding.kind,
-        ...Object.fromEntries(Object.entries(policy.facts).filter(([, value]) => value !== undefined).map(([key, value]) => [key, typeof value === "boolean" ? value : String(value)])) } };
+        ...Object.fromEntries(Object.entries(policy.facts).filter(([, value]) => value !== undefined).map(([key, value]) => [key, typeof value === "boolean" ? value : value instanceof Money ? `${value.amount.toString()} ${value.currency.code}` : String(value)])) } };
   });
   const resolved = resolveContributionLimitBindings(catalog, catalog.map(rule => rule.id), [
     { targetType: "account", targetId: domainId("account", accountId) }, { targetType: "person", targetId: domainId("person", policy.personId) }, { targetType: "household", targetId: domainId("household", policy.householdId) },

@@ -61,10 +61,12 @@ export const evaluateContributionBuckets = (
   return Object.freeze({ requested, accepted, excess: requested.minus(accepted), policy,
     applications: Object.freeze(finalApplications), buckets: Object.freeze(finalApplications.map((application, index) => {
       const rule = [...resolved].sort((a, b) => String(a.rule.id).localeCompare(String(b.rule.id)))[index]!.rule;
+      const consumedAmount = qualifications[rule.id] === undefined ? accepted : accepted.compare(qualifications[rule.id]!.qualifyingCeiling) < 0 ? accepted : qualifications[rule.id]!.qualifyingCeiling;
+      if (consumedAmount.compare(application.result.remainingBefore) > 0) throw new Error("CONTRIBUTION_QUALIFICATION_INVALID");
       return Object.freeze({ ...application.result, accepted, excess: requested.minus(accepted),
         decision: accepted.equals(requested) ? "allowed" as const : accepted.isPositive() ? "partially_allowed" as const : "rejected" as const,
         bucketIdentity: contributionBucketIdentity(rule),
-        ...(qualifications[rule.id] === undefined ? {} : { consumedAmount: accepted.compare(qualifications[rule.id]!.qualifyingCeiling) < 0 ? accepted : qualifications[rule.id]!.qualifyingCeiling }),
+        ...(qualifications[rule.id] === undefined ? {} : { consumedAmount }),
         facts: Object.freeze({ ...rule.capacityFacts }) });
     })) });
 };

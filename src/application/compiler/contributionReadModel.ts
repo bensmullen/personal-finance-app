@@ -26,5 +26,9 @@ export const contributionCapacityReadModel = (model: PortableModelEnvelope, stat
         : { accountId, year, bucketIdentity: identity, categories: binding.includedCharacters, annualLimit: capacity.capacity.amount.toString(), ...(state === undefined ? {} : { yearToDate: used.amount.toString(), remaining: used.compare(capacity.capacity) >= 0 ? "0" : capacity.capacity.minus(used).amount.toString() }), diagnostics: [] });
     }
   }
+  for (const account of objects(model, "Account")) if (["traditional_ira", "roth_ira", "traditional_401k", "roth_401k", "hsa", "hsa_investment"].includes(String(account.account_type)) && ![...rows.values()].some(row => row.accountId === account.account_id)) {
+    const accountId = String(account.account_id);
+    rows.set(accountId, { accountId, year: 2026, bucketIdentity: "unconfigured", categories: [], diagnostics: ["Author annual eligibility facts and contribution scope to determine capacity."] });
+  }
   return Object.freeze([...rows.values()].sort((a, b) => `${a.accountId}:${a.bucketIdentity}`.localeCompare(`${b.accountId}:${b.bucketIdentity}`)));
 };

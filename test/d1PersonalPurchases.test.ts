@@ -56,9 +56,14 @@ describe("D1 durable personally funded purchases", () => {
     expect(() => authorPersonalPurchasePlan(model, { primitiveId, investmentId: ids.brokerageInvestment, sourceCashAccountId, amount: "1000", frequency: "monthly", date: "2026-01-10", order: 10 })).toThrow("PERSONAL_PURCHASE_CHECKING_OR_SAVINGS_REQUIRED");
     expect(model.objects.PrimitiveInstance!.filter(record).some(item => item.primitive_instance_id === primitiveId)).toBe(false);
   });
-  it("does not reinterpret a workplace destination as a bank-funded taxable purchase", () => {
+  it.each([ids.checking, ids.savings])("does not reinterpret workplace destinations as bank-funded purchases from %s", sourceCashAccountId => {
     const model = base();
-    expect(() => authorPersonalPurchasePlan(model, { primitiveId, investmentId: ids.retirementInvestment, sourceCashAccountId: ids.checking, amount: "1000", frequency: "monthly", date: "2026-01-10", order: 10 })).toThrow("PERSONAL_PURCHASE_DESTINATION_CHARACTER_UNSUPPORTED");
+    expect(() => authorPersonalPurchasePlan(model, { primitiveId, investmentId: ids.retirementInvestment, sourceCashAccountId, amount: "1000", frequency: "monthly", date: "2026-01-10", order: 10 })).toThrow("PERSONAL_PURCHASE_DESTINATION_CHARACTER_UNSUPPORTED");
     expect(model.objects.Investment!.filter(record).find(item => item.investment_id === ids.retirementInvestment)!.contribution_model_id).toBeUndefined();
+  });
+  it.each([ids.checking, ids.savings])("rejects a bank-funded HSA contribution from %s", sourceCashAccountId => {
+    const original = base();
+    const model = { ...original, objects: { ...original.objects, Account: original.objects.Account!.map(value => record(value) && value.account_id === ids.retirementAccount ? { ...value, account_type: "hsa_investment", tax_treatment: "tax_free" } : value) } };
+    expect(() => authorPersonalPurchasePlan(model, { primitiveId, investmentId: ids.retirementInvestment, sourceCashAccountId, amount: "1000", frequency: "monthly", date: "2026-01-10", order: 10 })).toThrow("PERSONAL_PURCHASE_DESTINATION_CHARACTER_UNSUPPORTED");
   });
 });

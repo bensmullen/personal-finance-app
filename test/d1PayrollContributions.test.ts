@@ -76,6 +76,21 @@ describe("D1 payroll recognition and shared contribution capacity", () => {
     expect(result.state.positions[employer.positionId]!.carryingValue.amount.toString()).toBe("50");
     expect(result.takeHomeCash.amount.toString()).toBe("750");
   });
+  it("posts a non-elective employer percentage without reducing take-home cash", () => {
+    const employer = { ...allocation(1, "employer_401k", "0"), calculation: { kind: "percent" as const, rate: "0.03" } };
+    const result = payroll(opening([employer]), [employer], "2000");
+    expect(result.takeHomeCash.amount.toString()).toBe("2000");
+    expect(result.state.positions[employer.positionId]!.carryingValue.amount.toString()).toBe("60");
+    expect(deriveStatements(result.state, result.transactions, USD).income.amount.toString()).toBe("2060");
+  });
+  it.each([[36, "400"], [55, "1400"]])("shares age %s self-only HSA capacity between employee and employer", (age, employerAccepted) => {
+    const employee = allocation(1, "employee_hsa", "4000", { ageAtYearEnd: age });
+    const employer = { ...allocation(2, "employer_hsa", "1500", { ageAtYearEnd: age }), policy: { ...policy("employer_hsa", { ageAtYearEnd: age }), excessPolicy: "auto_cap" as const } };
+    const result = payroll(opening([employee, employer]), [employee, employer], "5000");
+    expect(result.state.positions[employer.positionId]!.carryingValue.amount.toString()).toBe(employerAccepted);
+    expect(result.takeHomeCash.amount.toString()).toBe("1000");
+    expect(Object.values(result.state.contributions!).reduce((sum, entry) => sum.plus(entry.amount), money("0")).equals(money("4000").plus(money(employerAccepted)))).toBe(true);
+  });
   it("shares ordinary HSA family capacity while each spouse keeps an individual catch-up", () => {
     const first = allocation(1, "employee_hsa", "5500", { ageAtYearEnd: 55, hsaCoverage: "family", hsaFamilyAllocation: money("4500") });
     const spouse = { ...allocation(2, "employee_hsa", "5250", { ageAtYearEnd: 55, hsaCoverage: "family", hsaFamilyAllocation: money("4250") }), policy: policy("employee_hsa", { ageAtYearEnd: 55, hsaCoverage: "family", hsaFamilyAllocation: money("4250") }, id(999)) };
@@ -119,14 +134,15 @@ describe("D1 payroll recognition and shared contribution capacity", () => {
     expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
     expect(result.state.accounts[golden.checking]!.cash.amount.toString()).toBe("22450");
     expect(Object.values(result.state.contributions!).reduce((sum, entry) => sum.plus(entry.amount), money("0")).amount.toString()).toBe("10750");
-    expect(result.periods[0]!.statements.income.amount.toString()).toBe("18000");
-    expect(result.periods[0]!.statements.expenses.amount.toString()).toBe("4800");
+    const statements = deriveStatements(result.state, result.periods[0]!.transactions, USD);
+    expect(statements.income.amount.toString()).toBe("18000");
+    expect(statements.expenses.amount.toString()).toBe("4800");
   });
   it.each(["vest", "forfeit"] as const)("round-trips an explicit full %s event and replays its committed effects", kind => {
     const employer = { ...allocation(1, "employer_401k", "400"), vestedFraction: "0.25" };
     const contributed = payroll(opening([employer]), [employer]);
     const state = contributed.state;
-    state.positions[employer.positionId]!.price = money("110");
+    state.positions[employer.positionId] = { ...state.positions[employer.positionId]!, price: money("110") };
     const event = { eventId: id(987), positionId: employer.positionId, at: instant("2026-02-10T00:00:00.000Z"), kind };
     const context = createRunContext({ runId: runId(id(986)), scenarioId: scenarioId(golden.rootScenario), asOf: instant("2026-02-01T00:00:00.000Z"), dataCutoff: instant("2026-02-01T00:00:00.000Z"), simulationStart: instant("2026-02-01T00:00:00.000Z"), simulationEnd: instant("2026-03-01T00:00:00.000Z"), baseCurrency: USD });
     const kernel = compileHouseholdKernel({ reconciledOpeningState: state, reconciledPrimitiveState: createPrimitiveRuntimeStateStore(), executionMonths: 1, scenarioIdentity: context.scenarioId, scenarioBindings: {}, standaloneAssets: [], participants: [createWorkplaceEventParticipant([event])] }, context.simulationStart);
