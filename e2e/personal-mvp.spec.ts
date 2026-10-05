@@ -62,24 +62,39 @@ const importDraft = async (
 const rawUuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
 test("D1 saves an authored brokerage purchase in the canonical export", async ({ page }) => {
+  page.setDefaultTimeout(5_000);
+  let stage = "load example";
+  try {
   await loadExample(page);
+  stage = "shorten horizon";
   await useShortHorizon(page);
+  stage = "open Current Plan";
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  stage = "select purchase investment";
   await page.getByLabel("Purchase investment", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
+  stage = "select funding account";
   await page.getByLabel("Purchase funding account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.savings);
+  stage = "enter purchase terms";
   await page.getByLabel("Purchase amount", { exact: true }).fill("125");
   await page.getByLabel("Purchase start date", { exact: true }).fill("2026-02-10");
   await page.getByLabel("Purchase frequency", { exact: true }).selectOption("monthly");
+  stage = "save purchase";
   await page.getByRole("button", { name: "Save investment purchase", exact: true }).click();
   await expect(page.getByText(/Saved purchase:.*125.*monthly/)).toBeVisible();
+  stage = "open export";
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  stage = "download canonical model";
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export current model", exact: true }).click();
   const download = await downloadPromise;
+  stage = "restore exported policy";
   const restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
   expect(getPersonalPurchasePlans(restored)).toMatchObject([{ investmentId: GOLDEN_HOUSEHOLD_IDS.brokerageInvestment, sourceCashAccountId: GOLDEN_HOUSEHOLD_IDS.savings, amount: "125", schedule: { kind: "utc_monthly", anchor: "2026-02-10", invalidDayPolicy: "skip" } }]);
+  } catch (failure) {
+    throw new Error(`D1 purchase authoring (${stage}): ${failure instanceof Error ? failure.message : String(failure)}`);
+  }
 });
 
 test("R4 UAT groups cash separately from investment account wrappers and holdings", async ({ page }) => {
