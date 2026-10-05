@@ -99,7 +99,7 @@ export const authorPersonalPurchasePlan = (model: PortableModelEnvelope, plan: P
   const next: PortableModelEnvelope = { ...model, objects: { ...model.objects,
     Investment: objects(model, "Investment").map(item => item === investment ? { ...item, contribution_model_id: plan.primitiveId.toLowerCase() } : item),
     PrimitiveInstance: [...objects(model, "PrimitiveInstance").filter(item => canonicalId(item, "primitive_instance_id") !== plan.primitiveId.toLowerCase()), primitive],
-    ...(contribution === undefined ? {} : { Account: objects(model, "Account").map(item => item === account ? { ...item, contribution_limit_rule_id: null, contribution_limit_rule_ids: [...new Set([...normalizeContributionLimitRuleIds(item), ...rules.map(rule => rule.tax_rule_id)])] } : item),
+    ...(contribution === undefined ? {} : { Account: objects(model, "Account").map(item => item === account ? { ...item, contribution_limit_rule_id: null, contribution_limit_rule_ids: [...new Set([...normalizeContributionLimitRuleIds(item), ...rules.map(rule => String(rule.tax_rule_id))])] } : item),
       TaxRule: [...objects(model, "TaxRule").filter(item => !rules.some(rule => rule.tax_rule_id === item.tax_rule_id)), ...rules] }),
   } };
   durablePersonalPurchaseInstructions(next);

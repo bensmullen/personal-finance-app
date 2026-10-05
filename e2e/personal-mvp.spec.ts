@@ -9,6 +9,7 @@ import {
   exportPersonalModelJson,
   importPersonalModelJson,
   getPersonalPurchasePlans,
+  getPayrollContributionPlans,
 } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
 import { forecastDiagnosticMessage } from "../ui/entityPresentation.js";
@@ -81,6 +82,49 @@ test("D1 saves an authored brokerage purchase in the canonical export", async ({
   const download = await downloadPromise;
   const restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
   expect(getPersonalPurchasePlans(restored)).toMatchObject([{ investmentId: GOLDEN_HOUSEHOLD_IDS.brokerageInvestment, sourceCashAccountId: GOLDEN_HOUSEHOLD_IDS.savings, amount: "125", schedule: { kind: "utc_monthly", anchor: "2026-02-10", invalidDayPolicy: "skip" } }]);
+});
+
+test("D1 normal payroll authoring preserves allocations and shared limit identities", async ({ page }) => {
+  page.setDefaultTimeout(5_000);
+  await loadExample(page); await useShortHorizon(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  const form = page.getByRole("region", { name: "Saved payroll contributions" });
+  await form.getByLabel("Payroll destination", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.retirementInvestment);
+  await form.getByLabel("Payroll salary", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.income);
+  await form.getByLabel("Payroll contribution rate", { exact: true }).fill("0.05");
+  await form.getByLabel("Shared plan/sponsor key", { exact: true }).fill("example-sponsor");
+  await form.getByLabel("Payroll age at year end", { exact: true }).fill("36");
+  await form.getByLabel("Annual eligible plan compensation", { exact: true }).fill("120000");
+  await form.getByRole("button", { name: "Save payroll contribution", exact: true }).click();
+  await expect(form.getByText(/Saved payroll: traditional 401k/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("24500");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  const promise = page.waitForEvent("download"); await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const download = await promise, restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
+  const plans = getPayrollContributionPlans(restored);
+  expect(plans).toMatchObject([{ incomeId: GOLDEN_HOUSEHOLD_IDS.income, allocation: { positionId: GOLDEN_HOUSEHOLD_IDS.retirementInvestment, calculation: { kind: "percent", rate: "0.05" }, policy: { character: "traditional_401k", excessPolicy: "reject" } } }]);
+  expect(plans[0]!.allocation.policy.limits.some(binding => binding.bucketKey === "401k_additions:example-sponsor")).toBe(true);
+});
+
+test("D1 normal IRA authoring saves annual facts and explicit auto-cap", async ({ page }) => {
+  page.setDefaultTimeout(5_000);
+  const draft = patchPersonalObject(createGoldenHouseholdDraft(), "Account", GOLDEN_HOUSEHOLD_IDS.brokerageAccount, { account_type: "roth_ira", tax_treatment: "tax_free" });
+  await importDraft(page, draft); await useShortHorizon(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click(); await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  const form = page.getByRole("region", { name: "Saved investment purchases" });
+  await form.getByLabel("Purchase investment", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
+  await form.getByLabel("Purchase funding account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.savings);
+  await form.getByLabel("Purchase amount", { exact: true }).fill("8000"); await form.getByLabel("Purchase start date", { exact: true }).fill("2026-02-10");
+  await form.getByLabel("Purchase frequency", { exact: true }).selectOption("once"); await form.getByLabel("Age at year end", { exact: true }).fill("36");
+  await form.getByLabel("Annual taxable compensation", { exact: true }).fill("120000"); await form.getByLabel("Contribution filing status", { exact: true }).selectOption("single");
+  await form.getByLabel("Roth IRA MAGI", { exact: true }).fill("120000"); await form.getByLabel("Excess contribution policy", { exact: true }).selectOption("auto_cap");
+  await form.getByRole("button", { name: "Save investment purchase", exact: true }).click(); await expect(form.getByText(/Saved purchase:.*8000.*one time/)).toBeVisible();
+  await page.getByRole("button", { name: "Settings", exact: true }).click(); await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  const promise = page.waitForEvent("download"); await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const download = await promise, restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
+  expect(getPersonalPurchasePlans(restored)).toMatchObject([{ amount: "8000", contribution: { character: "roth_ira", excessPolicy: "auto_cap", facts: { ageAtYearEnd: 36 } } }]);
 });
 
 test("R4 UAT groups cash separately from investment account wrappers and holdings", async ({ page }) => {

@@ -4,6 +4,7 @@ import { deriveD1ContributionCapacity } from "../../rules/contribution2026.js";
 import { Money, USD } from "../../values/index.js";
 import { durablePersonalPurchaseInstructions } from "./personalPurchases.js";
 import { durablePayrollAllocations } from "./payrollAuthoring.js";
+import { objects } from "./shared.js";
 
 export interface ContributionCapacityReadModel {
   readonly accountId: string; readonly year: number; readonly bucketIdentity: string; readonly categories: readonly string[];
@@ -15,8 +16,8 @@ export const contributionCapacityReadModel = (model: PortableModelEnvelope, stat
     ...durablePayrollAllocations(model).map(item => ({ accountId: String(item.allocation.accountId), investmentId: String(item.allocation.positionId), policy: item.allocation.policy }))];
   const rows = new Map<string, ContributionCapacityReadModel>();
   for (const plan of plans) {
-    const investment = model.objects.Investment?.find(value => typeof value === "object" && value !== null && !Array.isArray(value) && value.investment_id === plan.investmentId);
-    const accountId = plan.accountId || (typeof investment === "object" && investment !== null && !Array.isArray(investment) ? String(investment.account_id) : "");
+    const investment = objects(model, "Investment").find(value => value.investment_id === plan.investmentId);
+    const accountId = plan.accountId || String(investment?.account_id ?? "");
     for (const binding of plan.policy.limits.filter(item => item.includedCharacters.includes(plan.policy.character))) {
       const year = plan.policy.facts.taxYear, identity = `${binding.target.targetType}:${binding.target.targetId}:${binding.bucketKey}:${year}`;
       const capacity = deriveD1ContributionCapacity(binding.kind, plan.policy.facts);
