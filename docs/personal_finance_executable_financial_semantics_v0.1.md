@@ -1,6 +1,6 @@
 # Personal Finance App — Executable Financial Semantics Specification
 
-**Version:** 0.1.14-draft
+**Version:** 0.1.15-draft
 **Status:** Draft implementation contract  
 **Namespace:** `pfm`  
 **Depends on:** `personal_finance_canonical_schema_v1.0.json`, `personal_finance_model.schema.json`, `personal_finance_simulation_interfaces_v1.0.ts`
@@ -1525,13 +1525,21 @@ missing tax law never imply a supported approximation or zero tax.
   basis to Traditional and Roth IRA destinations. These operations never write
   ContributionState or consume annual/YTD contribution capacity. The admitted
   retirement source has one eligible holding and no wrapper cash; multi-holding
-  pro-rata allocation and opening contingent employer value are capability-gated.
+  pro-rata allocation is capability-gated. Transfer eligibility and quantities use
+  current owned fair value (price times owned units), excluding contingent units.
+  The presence of contingent units does not prohibit moving a smaller owned amount.
+  Carrying value moves proportionally and remains balanced independently of fair
+  value. Basis recovery is pro rata against owned fair value, capped by transferred
+  value and remaining basis. Committed D1-A after-tax/Roth contributions add basis
+  once; Traditional IRA basis adds only the amount not deducted under authoritative
+  contribution facts. Opening/YTD capacity metadata does not add basis.
 - The bounded participant-received employer-plan path withholds 20% of eligible
   pre-tax principal as a federal tax credit, not principal or expense. One linked
   Traditional IRA deposit within 60 days may use received proceeds and explicit
   checking/savings replacement cash. Tax facts reverse only deposited principal;
   unreplaced principal remains a distribution with additional-tax completeness
-  diagnostics. Late deposits do not move cash. Cross-tax-year revision, waivers,
+  diagnostics. Late deposits do not move cash and replace the linked pending
+  diagnostic with deadline/additional-tax incompleteness. Cross-tax-year revision, waivers,
   RMD, hardship, inherited, corrective, QDRO, NUA and loan-offset cases are gated.
 - Brokerage and investment-crypto dispositions consume scoped lots using specific
   identification or earliest-acquired/FIFO within the represented holding/account.
@@ -1542,6 +1550,8 @@ missing tax law never imply a supported approximation or zero tax.
   authored ordinary/qualified dividend first and then purchases a linked lot from
   wrapper proceeds, with no invented contribution or bank spending. Shared D1-A
   purchases supply acquisition-lot facts in both execution tiers.
+  Manually authored D1-B purchases admit spot crypto and long listed equity-call
+  premiums only; ordinary equity/fund purchases remain under D1-A.
 - Checking/savings interest uses an explicit effective annual/APY convention and
   monthly effective conversion, credited at currency precision. Treasury bills
   support same-tax-year discount purchase and face-value maturity. Par Treasury
@@ -1550,7 +1560,9 @@ missing tax law never imply a supported approximation or zero tax.
   contractual coupon credits and an explicit maturity destination remain durable.
   Principal return is not income. Treasury interest is federal income with an
   explicit state/local exemption; CD and bank interest have ordinary character.
-  Premium/OID, coupon stubs and pre-maturity sales are gated.
+  One year means the calendar anniversary, not a fixed 366-day allowance.
+  Treasury/CD retirement wrappers, premium/OID, coupon stubs and pre-maturity
+  sales are gated in this floor.
 - Long listed equity calls have whole contracts, explicit multiplier, strike,
   underlying, expiration and capitalized premium basis. Sale/lapse recognizes
   capital gain/loss. Bank-funded exercise transfers remaining call basis plus
@@ -1563,6 +1575,10 @@ missing tax law never imply a supported approximation or zero tax.
   families and specialized tax exceptions are gated. Missing state/local
   death-benefit exclusion coverage is diagnosed separately from the supported
   federal exclusion rather than silently assuming no destination-jurisdiction tax.
+  Premiums consume the explicit policy owner's bank account; benefits settle to
+  the explicit beneficiary's bank account. A household beneficiary selects a
+  household member's bank destination. Benefit tax facts use that beneficiary or
+  destination member's jurisdictions rather than the execution owner's facts.
 - Non-cash-out, fee-free fixed mortgage refinance occurs only at a contractual
   monthly payment boundary after successful old-loan required service. The old
   principal is replaced using its post-payment balance; no cash or duplicate debt
@@ -1575,6 +1591,11 @@ missing tax law never imply a supported approximation or zero tax.
 All transactions balance by currency and operate on isolated candidates. Domain
 tax facts feed T1A rather than a second liability calculator. Operation replay
 preserves identity and cannot duplicate settled benefits or investment effects.
+Generated operations trace their Investment, Account or Insurance authority;
+benefits also trace their death Event. Authored operations trace Event/Primitive.
+Same-date generated operations with equal category priority follow stable canonical
+identity order. Pure cash settlements declare production; funding and
+balance-sensitive interest declare consumption for cross-domain ordering.
 The D1-B expected-effect fixtures accompany the unchanged D1-A and VS4 suites;
 GitHub CI and semantic audit remain the merge-readiness boundary.
 

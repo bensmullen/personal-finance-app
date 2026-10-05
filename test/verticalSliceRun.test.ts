@@ -3,6 +3,7 @@ import { ValidationError, issueCodes } from "../src/diagnostics.js";
 import { idempotencyKey } from "../src/identity.js";
 import { createFactProvenance } from "../src/provenance.js";
 import { Currency, Quantity, SHARE } from "../src/values.js";
+import { CURRENT_RUN_VERSIONS } from "../src/model/version.js";
 import {
   Percentage,
   RoundingPolicy,
@@ -88,7 +89,7 @@ describe("Vertical Slice 1 run/state integration", () => {
       dataCutoff: context(1).dataCutoff,
       engineVersion: "0.1.0",
       resultSchemaVersion: "0.1.0",
-      financialSpecificationVersion: "0.1.13-draft",
+      financialSpecificationVersion: CURRENT_RUN_VERSIONS.financialSpecificationVersion,
       modelFormatVersion: "0.2.0-draft",
     }));
     expect(result.recognitions.every((fact) => fact.provenance?.factKind === "model_generated")).toBe(true);

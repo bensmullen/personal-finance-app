@@ -57,7 +57,7 @@ export const createMortgageLifecycleParticipant = (configuration: MortgageLifecy
         if (period.start <= plan.at && plan.at < period.end && principals[plan.id] === undefined) {
           const service = work.find(item => item.operationClass === "liability_required_service" && item.sequencingInstant === plan.at && item.id.startsWith("liability-required:" + plan.oldLoan.id + ":"));
           if (!service) continue;
-          operations.push({ descriptor: { id: "refinance:" + plan.id, domain: "mortgage_lifecycle", operationClass: "mortgage_refinance", sequencingInstant: instant(plan.at), dependsOn: [service.id], resourceAccesses: [], traceRefs: [] },
+          operations.push({ descriptor: { id: "refinance:" + plan.id, domain: "mortgage_lifecycle", operationClass: "mortgage_lifecycle:refinance", sequencingInstant: instant(plan.at), dependsOn: [service.id], resourceAccesses: [], traceRefs: [] },
             execute: (candidate, statuses) => {
               if (statuses.get(service.id) !== "fully_satisfied") return { ...candidate, facts: {} };
               const state = cloneAuthoritativeState(candidate.state), balance = state.liabilities[plan.oldLoan.principalLiabilityId]!.balance;

@@ -38,6 +38,7 @@ interface DomainRuntime {
   readonly lots: Readonly<Record<string, readonly DomainLot[]>>;
   readonly basis: Readonly<Record<string, string>>;
   readonly basisContributionIds?: readonly string[];
+  readonly completedOperationIds?: readonly string[];
   readonly receipts: Readonly<Record<string, { readonly at: string; readonly gross: string; readonly received: string; readonly accountId: string }>>;
 }
 const fail = (code: string, message: string): never => { throw new ValidationError({ severity: "error", code, message, entityType: "domain_mechanics" }); };
@@ -57,7 +58,7 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
   const at = instant(operation.at), amount = Money.parse(operation.amount, currency);
   if (amount.isNegative() || !amount.amount.fitsScale(currency.minorUnitScale)) fail("DOMAIN_AMOUNT_INVALID", "Use nonnegative money at cash settlement precision.");
   const state = cloneAuthoritativeState(opening.state), prior = runtimeFor(opening, input);
-  if (state.identities.postedTransactionIds.some(id => id.startsWith("domain:" + operation.id + ":")))
+  if (prior.completedOperationIds?.includes(operation.id) || state.identities.postedTransactionIds.some(id => id.startsWith("domain:" + operation.id + ":")))
     return { ...opening, facts: {} };
   const lots = { ...prior.lots }, basis = { ...prior.basis }, receipts = { ...prior.receipts };
   const basisContributionIds = new Set(prior.basisContributionIds ?? []);
@@ -263,7 +264,7 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
       delete receipts[operation.linkedOperationId!]; break;
     }
   }
-  return { state, primitiveState: opening.primitiveState, runtime: { ...opening.runtime, domainMechanics: { lots, basis, receipts, basisContributionIds: [...basisContributionIds].sort() } },
+  return { state, primitiveState: opening.primitiveState, runtime: { ...opening.runtime, domainMechanics: { lots, basis, receipts, basisContributionIds: [...basisContributionIds].sort(), completedOperationIds: [...(prior.completedOperationIds ?? []), operation.id].sort() } },
     facts: { transactions, traceRefs: traces, taxEconomics, taxDiagnostics,
       ...(operation.kind === "indirect_deposit" && (transactions.length || taxDiagnostics.length) ? { resolvedTaxDiagnosticSourceIds: [operation.linkedOperationId!] } : {}) } };
 };
@@ -281,8 +282,8 @@ export const createDomainMechanicsParticipant = (configuration: DomainMechanicsI
       return { ...runtime, domainMechanics: { ...prior, lots } };
     },
     prepare: (_context, period, _opening, work = []) => ({ id: "domain_mechanics", operations: input.operations.filter(item => period.start <= item.at && item.at < period.end).map(operation => ({
-      descriptor: { id: "domain:" + operation.id, domain: "domain_mechanics", operationClass: "domain:" + operation.kind, sequencingInstant: instant(operation.at),
-        dependsOn: [...input.operations.filter(other => other.at === operation.at && (other.order < operation.order || other.order === operation.order && (other.generated || operation.generated) && other.id < operation.id)).map(other => "domain:" + other.id), ...work.filter(item => item.sequencingInstant === operation.at && item.operationClass === "cash_income_settlement").map(item => item.id)],
+      descriptor: { id: "domain:" + operation.id, domain: "domain_mechanics", operationClass: "domain_mechanics:" + operation.kind, sequencingInstant: instant(operation.at),
+        dependsOn: [...input.operations.filter(other => other.at === operation.at && (other.order < operation.order || other.order === operation.order && (other.generated || operation.generated) && other.id < operation.id)).map(other => "domain:" + other.id), ...work.filter(item => item.sequencingInstant === operation.at && item.operationClass === "cash_income_settlement").map(item => item.id)].sort(),
         resourceAccesses: domainCashAccesses(input, operation), traceRefs: (operation.sourceRefs ?? []).map(ref => calculationTraceRef(calculationTraceId(ref))) },
       execute: opening => executeDomainOperation(opening, input, operation),
     })) }),

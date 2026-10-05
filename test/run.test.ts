@@ -85,15 +85,17 @@ describe("run context and deterministic reproduction metadata", () => {
     expect(canonicalSerialize({ values: ["a", "b"] })).not.toBe(canonicalSerialize({ values: ["b", "a"] }));
   });
 
-  it("has a stable fingerprint vector and ignores object insertion order", () => {
-    const input = { runContext: context(), openingState: { cash: money("1.20"), nested: { z: "last", a: "first" } } };
-    const reordered = { runContext: context(), openingState: { nested: { a: "first", z: "last" }, cash: money("1.2") } };
-    // The specification version is an authoritative fingerprint input. This
-    // vector changes from 0.1.12 to 0.1.13; its economic payload is unchanged.
+  it("preserves the historical fingerprint vector and ignores object insertion order", () => {
+    const historical = context({ versions: { engineVersion: "0.1.0", resultSchemaVersion: "0.1.0", financialSpecificationVersion: "0.1.13-draft", modelFormatVersion: "0.2.0-draft" } });
+    const input = { runContext: historical, openingState: { cash: money("1.20"), nested: { z: "last", a: "first" } } };
+    const reordered = { runContext: historical, openingState: { nested: { a: "first", z: "last" }, cash: money("1.2") } };
+    // Pin the historical contract so a current version bump does not rewrite golden evidence.
     expect(input.runContext.versions.financialSpecificationVersion).toBe("0.1.13-draft");
     expect(createInputFingerprint(input)).toBe("fnv1a64:v1:8abb6166d0e268e2");
     expect(createInputFingerprint(input)).not.toBe("fnv1a64:v1:7073d18ff4f06833");
     expect(createInputFingerprint(reordered)).toBe(createInputFingerprint(input));
+    expect(context().versions.financialSpecificationVersion).toBe(CURRENT_RUN_VERSIONS.financialSpecificationVersion);
+    expect(createInputFingerprint({ ...input, runContext: context() })).not.toBe(createInputFingerprint(input));
   });
 
   it("changes for economic, temporal, scenario, and policy changes but not runId alone", () => {

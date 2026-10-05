@@ -36,7 +36,7 @@ const loadExample = async (page: import("@playwright/test").Page) => {
 test("D1-B normal investment controls persist a bank-funded operation without compiler IDs", async ({ page }) => {
   const cryptoId = "d1b90000-0000-4000-8000-000000000001";
   const original = createGoldenHouseholdDraft();
-  const draft = { ...original, objects: { ...original.objects, Investment: [...original.objects.Investment!, { investment_id: cryptoId, account_id: GOLDEN_HOUSEHOLD_IDS.brokerageAccount, investment_type: "crypto", name: "Spot crypto", symbol: "BTC", quantity: "0", price: "100", market_value: "0", currency: "USD" }] } };
+  const draft = { ...original, objects: { ...original.objects, Investment: [...original.objects.Investment!, { investment_id: cryptoId, owner_id: GOLDEN_HOUSEHOLD_IDS.person, account_id: GOLDEN_HOUSEHOLD_IDS.brokerageAccount, investment_type: "crypto", name: "Spot crypto", symbol: "BTC", quantity: "0", price: "100", market_value: "0", currency: "USD" }] } };
   await importDraft(page, draft);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
