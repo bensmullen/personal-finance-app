@@ -34,6 +34,8 @@ import {
   createGoldenHouseholdDraft,
   editPersonalRetirementDate,
   getPersonalRetirementPlans,
+  authorPersonalPurchasePlan,
+  getPersonalPurchasePlans,
   createGuidedSetupDraft,
   createSyntheticPersonalDraft,
   deletePersistedPersonalModel,
@@ -2557,6 +2559,50 @@ function DiagnosticList({
   );
 }
 
+function PersonalPurchaseAuthoring({ draft, setDraft }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void }) {
+  const banks = objectEntries(draft, "Account").filter(account => ["checking", "savings"].includes(String(account.account_type)));
+  const brokerageIds = new Set(objectEntries(draft, "Account").filter(account => account.account_type === "taxable_brokerage" && account.tax_treatment === "taxable").map(account => objectId("Account", account)));
+  const investments = objectEntries(draft, "Investment").filter(investment => brokerageIds.has(String(investment.account_id)));
+  const [investmentId, setInvestmentId] = useState("");
+  const [bankId, setBankId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState("");
+  const [frequency, setFrequency] = useState<"once" | "monthly">("monthly");
+  const [order, setOrder] = useState("10");
+  const [error, setError] = useState("");
+  const savedPurchases = useMemo(() => {
+    try { return { plans: getPersonalPurchasePlans(draft), error: "" }; }
+    catch (failure) { return { plans: [], error: failure instanceof Error ? failure.message : "Saved purchase policy is unsupported" }; }
+  }, [draft]);
+  useEffect(() => {
+    const plan = savedPurchases.plans.find(item => item.investmentId === investmentId);
+    if (!plan) return;
+    setBankId(plan.sourceCashAccountId); setAmount(plan.amount); setOrder(String(plan.order));
+    setFrequency(plan.schedule.kind === "utc_monthly" ? "monthly" : "once");
+    setDate(plan.schedule.kind === "utc_monthly" ? plan.schedule.anchor : plan.schedule.dates[0] ?? "");
+  }, [investmentId, savedPurchases]);
+  return <section className="panel" aria-label="Saved investment purchases">
+    <h2>Investment purchases</h2>
+    <p>Save a one-time or monthly brokerage purchase funded from checking or savings. Holdings need an executable projected return. Each purchase is valued at the modeled month-end price.</p>
+    <label>Purchase investment<select value={investmentId} onChange={event => setInvestmentId(event.target.value)}><option value="">Choose holding</option>{investments.map(investment => <option key={objectId("Investment", investment)} value={objectId("Investment", investment)}>{objectLabel("Investment", investment)}</option>)}</select></label>
+    <label>Purchase funding account<select value={bankId} onChange={event => setBankId(event.target.value)}><option value="">Choose bank account</option>{banks.map(bank => <option key={objectId("Account", bank)} value={objectId("Account", bank)}>{objectLabel("Account", bank)}</option>)}</select></label>
+    <label>Purchase amount<input value={amount} onChange={event => setAmount(event.target.value)} inputMode="decimal" /></label>
+    <label>Purchase start date<input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
+    <label>Purchase frequency<select value={frequency} onChange={event => setFrequency(event.target.value === "once" ? "once" : "monthly")}><option value="once">One time</option><option value="monthly">Monthly</option></select></label>
+    <label>Purchase execution order<input type="number" min="0" step="1" value={order} onChange={event => setOrder(event.target.value)} /></label>
+    <button type="button" disabled={!investmentId || !bankId || !amount || !date} onClick={() => {
+      const selected = investments.find(investment => objectId("Investment", investment) === investmentId);
+      try {
+        setDraft(authorPersonalPurchasePlan(draft, { primitiveId: typeof selected?.contribution_model_id === "string" ? selected.contribution_model_id : randomId(), investmentId, sourceCashAccountId: bankId, amount, date, frequency, order: Number(order) }));
+        setError("");
+      } catch (failure) { setError(failure instanceof Error ? failure.message : "Purchase plan could not be saved"); }
+    }}>Save investment purchase</button>
+    {error && <p role="alert">{error}</p>}
+    {savedPurchases.error && <p role="alert">{savedPurchases.error}</p>}
+    {savedPurchases.plans.map(plan => <p key={plan.id}>Saved purchase: {objectLabel("Investment", investments.find(investment => objectId("Investment", investment) === plan.investmentId) ?? {})} — {plan.amount} {String(banks.find(bank => objectId("Account", bank) === plan.sourceCashAccountId)?.currency ?? "")} {plan.schedule.kind === "utc_monthly" ? "monthly" : "one time"} from {objectLabel("Account", banks.find(bank => objectId("Account", bank) === plan.sourceCashAccountId) ?? {})}.</p>)}
+  </section>;
+}
+
 function RetirementDateAuthoring({ draft, setDraft }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void }) {
   const plans = getPersonalRetirementPlans(draft);
   const [incomeId, setIncomeId] = useState("");
@@ -2627,6 +2673,7 @@ function HouseholdPlan({
         text="One execution carries cash flow, investments, debt, property, and retirement through the same state transition."
       />
       <RetirementDateAuthoring draft={draft} setDraft={setDraft} />
+      <PersonalPurchaseAuthoring draft={draft} setDraft={setDraft} />
       <p className="muted">If the forecast needs setup, open Expert forecast configuration below. These session choices must be configured again after reloading a saved model.</p>
       <details className="panel">
       <summary>Expert forecast configuration</summary>

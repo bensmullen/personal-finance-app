@@ -1407,6 +1407,18 @@ effective-dated rules and retain exact-one-active-version resolution. Scenario
 resolution never infers funding, borrowing, transfers, sales, overdraft,
 retirement consequences, rule precedence, refinancing, or new debt.
 
+A durable personally funded taxable-brokerage purchase may bind
+`Investment.contribution_model_id` to an enabled root-scenario P03 instance.
+The `d1-personal-purchase/v1` adapter stores exact `amount` and explicit
+`source_cash_account_id` in `input_bindings`, and stores `schedule` and
+nonnegative integer `order` in `parameters`. The adapter admits one explicit
+date or a UTC monthly anchor with the explicit `skip` invalid-day policy.
+The source must be checking or savings. P03 generates recurrence; VS3 owns
+funding, accounting, position quantity and principal effects. It purchases at
+the modeled period-closing P23 price with explicit quantity rounding. This
+adapter does not reinterpret IRA, payroll, employer or rollover characters as
+taxable purchases. Those paths require their respective limit/tax contracts.
+
 A retirement-date overlay carries both `targetEventId`, which identifies the
 existing VS2 income-termination event to edit, and a distinct scenario
 `eventId`, which identifies the explanatory scenario decision in calculation

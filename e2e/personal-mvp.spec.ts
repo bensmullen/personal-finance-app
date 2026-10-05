@@ -7,6 +7,8 @@ import {
   createSyntheticPersonalDraft,
   patchPersonalObject,
   exportPersonalModelJson,
+  importPersonalModelJson,
+  getPersonalPurchasePlans,
 } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
 import { forecastDiagnosticMessage } from "../ui/entityPresentation.js";
@@ -58,6 +60,26 @@ const importDraft = async (
 };
 
 const rawUuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+test("D1 saves an authored brokerage purchase in the canonical export", async ({ page }) => {
+  await loadExample(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  await page.getByLabel("Purchase investment", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
+  await page.getByLabel("Purchase funding account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.savings);
+  await page.getByLabel("Purchase amount", { exact: true }).fill("125");
+  await page.getByLabel("Purchase start date", { exact: true }).fill("2026-02-10");
+  await page.getByLabel("Purchase frequency", { exact: true }).selectOption("monthly");
+  await page.getByRole("button", { name: "Save investment purchase", exact: true }).click();
+  await expect(page.getByText(/Saved purchase:.*125.*monthly/)).toBeVisible();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const download = await downloadPromise;
+  const restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
+  expect(getPersonalPurchasePlans(restored)).toMatchObject([{ investmentId: GOLDEN_HOUSEHOLD_IDS.brokerageInvestment, sourceCashAccountId: GOLDEN_HOUSEHOLD_IDS.savings, amount: "125", schedule: { kind: "utc_monthly", anchor: "2026-02-10", invalidDayPolicy: "skip" } }]);
+});
 
 test("R4 UAT groups cash separately from investment account wrappers and holdings", async ({ page }) => {
   await loadExample(page);

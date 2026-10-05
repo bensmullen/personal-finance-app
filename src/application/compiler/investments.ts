@@ -5,6 +5,7 @@ import {
 } from "../../lineage/index.js";
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { normalizeContributionLimitRuleIds } from "./contributionBindings.js";
+import { durablePersonalPurchaseInstructions, personalPurchaseInstructionId } from "./personalPurchases.js";
 import {
   createPrimitiveRuntimeStateStore,
   type PrimitiveRuntimeStateStore,
@@ -887,6 +888,11 @@ export const compileInvestments = (
     if (checked.status !== "compiled") return checked;
   }
 
+  try {
+    request = { ...request, purchaseInstructions: [...request.purchaseInstructions, ...durablePersonalPurchaseInstructions(model)] };
+  } catch (error) {
+    return unsupportedResult(error instanceof Error ? error.message : "INVESTMENT_CONTRIBUTION_MODEL_UNSUPPORTED", "The durable purchase policy is unsupported or incomplete.", "Investment");
+  }
   const allInstructions = [
     ...request.transferInstructions.map((item) => ({
       type: "transfer" as const,
@@ -1178,17 +1184,6 @@ export const compileInvestments = (
         "Investment",
         id,
         "volatility",
-      );
-    if (
-      investment.contribution_model_id !== undefined &&
-      investment.contribution_model_id !== null
-    )
-      return unsupportedResult(
-        "INVESTMENT_CONTRIBUTION_MODEL_UNSUPPORTED",
-        `Investment ${id} contribution_model_id lacks explicit funding, schedule, amount, and order semantics.`,
-        "Investment",
-        id,
-        "contribution_model_id",
       );
     if (
       investment.rebalancing_rule_id !== undefined &&
@@ -1546,6 +1541,9 @@ export const compileInvestments = (
         sourceCashAccountId: domainId("account", sourceId),
         destinationAccountId: domainId("account", accountId),
         targetPositionId: domainId("position", investmentId),
+        ...(typeof investment.contribution_model_id === "string" && personalPurchaseInstructionId(investment.contribution_model_id) === id ? {
+          sourceTraceRefs: Object.freeze([calculationTraceRef(calculationTraceId(`compiler:canonical:PrimitiveInstance:${investment.contribution_model_id}`))]),
+        } : {}),
         amount: exactMoney(item.amount, currency)!,
         eligibilitySchedule: compiledSchedules.get(id)!,
         executionTiming: "end_of_period" as const,

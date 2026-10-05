@@ -4,6 +4,8 @@ import { classifyAccountEconomics, isHouseholdCashAccount } from "../model/econo
 export { classifyAccountEconomics, isHouseholdCashAccount };
 export { authorCanonicalRetirementDate as editPersonalRetirementDate } from "./compiler/retirementAuthoring.js";
 export { canonicalRetirementPlans as getPersonalRetirementPlans } from "./compiler/retirementAuthoring.js";
+export { authorPersonalPurchasePlan, type PersonalPurchasePlan } from "./compiler/personalPurchases.js";
+export { durablePersonalPurchaseInstructions as getPersonalPurchasePlans } from "./compiler/personalPurchases.js";
 import {
   CURRENT_MODEL_FORMAT_VERSION,
   type JsonValue,
