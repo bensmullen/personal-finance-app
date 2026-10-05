@@ -86,7 +86,7 @@ describe("run context and deterministic reproduction metadata", () => {
   });
 
   it("preserves the historical fingerprint vector and ignores object insertion order", () => {
-    const historical = context({ versions: { engineVersion: "0.1.0", resultSchemaVersion: "0.1.0", financialSpecificationVersion: "0.1.13-draft", modelFormatVersion: "0.2.0-draft" } });
+    const historical = { ...context(), versions: { engineVersion: "0.1.0", resultSchemaVersion: "0.1.0", financialSpecificationVersion: "0.1.13-draft", modelFormatVersion: "0.2.0-draft" } };
     const input = { runContext: historical, openingState: { cash: money("1.20"), nested: { z: "last", a: "first" } } };
     const reordered = { runContext: historical, openingState: { nested: { a: "first", z: "last" }, cash: money("1.2") } };
     // Pin the historical contract so a current version bump does not rewrite golden evidence.
