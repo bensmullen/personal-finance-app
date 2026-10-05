@@ -90,7 +90,8 @@ describe("run context and deterministic reproduction metadata", () => {
     const reordered = { runContext: context(), openingState: { nested: { a: "first", z: "last" }, cash: money("1.2") } };
     // The version is an authoritative input; the unchanged economic payload receives a new vector.
     expect(input.runContext.versions.financialSpecificationVersion).toBe("0.1.15-draft");
-    expect(createInputFingerprint(input)).toBe("fnv1a64:v1:8abb6166d0e268e2");
+    expect(createInputFingerprint(input)).toBe("fnv1a64:v1:8ed026a7e5b733b8");
+    expect(createInputFingerprint(input)).not.toBe("fnv1a64:v1:8abb6166d0e268e2");
     expect(createInputFingerprint(input)).not.toBe("fnv1a64:v1:7073d18ff4f06833");
     expect(createInputFingerprint(reordered)).toBe(createInputFingerprint(input));
     expect(context().versions.financialSpecificationVersion).toBe(CURRENT_RUN_VERSIONS.financialSpecificationVersion);
