@@ -1,4 +1,5 @@
 import { PERSONAL_OBJECT_TYPES, getPersonalEditorMetadata, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../src/application/personalMvp.js";
+import { isHouseholdCashAccount } from "../src/application/personalMvp.js";
 
 export const objectEntries = (draft: PersonalDraft, type: PersonalObjectType): readonly JsonObject[] =>
   (draft.objects[type] ?? []).filter((value): value is JsonObject =>
@@ -6,7 +7,7 @@ export const objectEntries = (draft: PersonalDraft, type: PersonalObjectType): r
 export const objectId = (type: PersonalObjectType, value: JsonObject) => String(value[`${type.toLowerCase()}_id`]);
 /** Mirrors the supported payment-account choices for display/authoring only. */
 export const isCashFlowPaymentAccount = (account: JsonObject): boolean =>
-  ["checking", "savings", "cash"].includes(String(account.account_type));
+  isHouseholdCashAccount(account.account_type);
 export type NetWorthSection = "Cash & bank accounts" | "Investments & retirement" | "Property & other assets";
 export function belongsToNetWorthSection(draft: PersonalDraft, type: PersonalObjectType, item: JsonObject, section?: NetWorthSection): boolean {
   if (!section) return true;
@@ -45,7 +46,7 @@ export function forecastDiagnosticMessage(diagnostic: {
     case "INVESTMENT_STOCHASTIC_RETURN_UNSUPPORTED":
       return `${label("Investment", diagnostic.entityId, "This investment")} has stored Volatility. Volatility belongs to future probabilistic forecasting and is not supported in this deterministic forecast. Under Net Worth → Investments & retirement → Expert model details, clear the stored Volatility to remove this blocker.`;
     case "MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED":
-      return "The monthly income or spending summary cannot yet interpret this plan’s linked event or probability behavior. This is a current calculation capability limitation, including the Golden Household retirement example. There is no supported editor repair for this summary; keep the recorded relationship intact. This forecast remains unsupported until the financial calculation is repaired.";
+      return "The current monthly summary cannot interpret this linked event or probability behavior. Supported future scheduled retirement events preserve current income; other event behavior requires a separate financial capability. Keep the recorded relationship intact.";
     case "RETIREMENT_BINDING_MISMATCH": {
       const event = draft?.objects.Event?.filter(isJsonObject).find((item) => item.event_id === diagnostic.entityId);
       return `${label("Event", diagnostic.entityId, "The retirement plan")} does not match the selected plan’s retirement date${event?.start_date ? ` (${String(event.start_date)})` : ""}. Under Plan → What If? → Retire earlier/later, choose the income and retirement plan belonging to the current plan, then enter the new date. For imported plans, review Plan → Current Plan → Expert forecast configuration → Baseline canonical retirement event and Baseline retirement date; the date must match the selected event. Event enablement and plan membership cannot be repaired in this editor; an invalid imported relationship needs a corrected model.`;

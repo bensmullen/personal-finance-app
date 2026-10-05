@@ -7,6 +7,15 @@ import {
   createSyntheticPersonalDraft,
   patchPersonalObject,
   exportPersonalModelJson,
+  importPersonalModelJson,
+  getPersonalPurchasePlans,
+  getPayrollContributionPlans,
+  getOpeningContributionUsage,
+  getPayrollOpeningUnvestedUnits,
+  authorPayrollContributionPlan,
+  getHistoricalContributionScopes,
+  getContributionCapacities,
+  type JsonObject,
 } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
 import { forecastDiagnosticMessage } from "../ui/entityPresentation.js";
@@ -59,6 +68,118 @@ const importDraft = async (
 
 const rawUuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
+test("D1 authors former-employer YTD history without a future contribution instruction", async ({ page }) => {
+  page.setDefaultTimeout(5_000);
+  const golden = createGoldenHouseholdDraft();
+  const object = (value: unknown): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
+  const model = authorPayrollContributionPlan({ ...golden, objects: { ...golden.objects, Account: golden.objects.Account!.map(value => object(value) && value.account_id === GOLDEN_HOUSEHOLD_IDS.brokerageAccount ? { ...value, account_type: "traditional_401k", tax_treatment: "tax_deferred" } : value) } }, { primitiveId: "d1c80000-0000-4000-8000-000000000001", investmentId: GOLDEN_HOUSEHOLD_IDS.retirementInvestment, incomeId: GOLDEN_HOUSEHOLD_IDS.income, priority: 10, character: "traditional_401k", calculation: { kind: "fixed", amount: "1000" }, planKey: "employer-b", vestedFraction: "1", excessPolicy: "auto_cap", facts: { taxYear: 2026, ageAtYearEnd: 36, eligiblePlanCompensation: "100000" } });
+  await importDraft(page, model); await useShortHorizon(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  const prior = page.getByRole("region", { name: "Prior year-to-date contributions" });
+  await prior.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
+  await prior.getByRole("checkbox").check();
+  await prior.getByRole("button", { name: "Save prior YTD usage", exact: true }).click();
+  await expect(prior.getByRole("alert")).toContainText("OPENING_USAGE_SCOPE_REQUIRED");
+  await prior.getByLabel("Historical holding", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
+  await prior.getByLabel("Historical contributor age at year end", { exact: true }).fill("36");
+  await prior.getByLabel("Historical plan/sponsor key", { exact: true }).fill("employer-a");
+  await prior.getByLabel("Historical eligible plan compensation", { exact: true }).fill("100000");
+  await prior.getByRole("button", { name: "Save historical scope", exact: true }).click();
+  await prior.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
+  await prior.getByLabel(/traditional 401k prior YTD total$/).first().fill("20000");
+  await prior.getByLabel(/traditional 401k prior YTD amount excluding catch-up$/).first().fill("20000");
+  await prior.getByRole("checkbox").check();
+  await prior.getByRole("button", { name: "Save prior YTD usage", exact: true }).click();
+  await expect(prior.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("4500");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  const promise = page.waitForEvent("download"); await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const download = await promise, restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
+  expect(getPayrollContributionPlans(restored)).toHaveLength(1);
+  expect(getPersonalPurchasePlans(restored)).toEqual([]);
+  expect(getHistoricalContributionScopes(restored)).toMatchObject([{ investmentId: GOLDEN_HOUSEHOLD_IDS.brokerageInvestment }]);
+  expect(getContributionCapacities(restored).find(row => row.accountId === GOLDEN_HOUSEHOLD_IDS.retirementAccount && row.bucketIdentity.includes("401k_additions:employer-b"))).toMatchObject({ openingUsage: "0", remaining: "72000" });
+});
+
+test("D1 saves an authored brokerage purchase in the canonical export", async ({ page }) => {
+  page.setDefaultTimeout(5_000);
+  await loadExample(page);
+  await useShortHorizon(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  await page.getByLabel("Purchase investment", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
+  await page.getByLabel("Purchase funding account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.savings);
+  await page.getByLabel("Purchase amount", { exact: true }).fill("125");
+  await page.getByLabel("Purchase start date", { exact: true }).fill("2026-02-10");
+  await page.getByLabel("Purchase frequency", { exact: true }).selectOption("monthly");
+  await page.getByRole("button", { name: "Save investment purchase", exact: true }).click();
+  await expect(page.getByText(/Saved purchase:.*125.*monthly/)).toBeVisible();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const download = await downloadPromise;
+  const restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
+  expect(getPersonalPurchasePlans(restored)).toMatchObject([{ investmentId: GOLDEN_HOUSEHOLD_IDS.brokerageInvestment, sourceCashAccountId: GOLDEN_HOUSEHOLD_IDS.savings, amount: "125", schedule: { kind: "utc_monthly", anchor: "2026-02-10", invalidDayPolicy: "skip" } }]);
+});
+
+test("D1 normal payroll authoring preserves allocations and shared limit identities", async ({ page }) => {
+  page.setDefaultTimeout(5_000);
+  await loadExample(page); await useShortHorizon(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  const form = page.getByRole("region", { name: "Saved payroll contributions" });
+  await form.getByLabel("Payroll destination", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.retirementInvestment);
+  await form.getByLabel("Payroll salary", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.income);
+  await form.getByLabel("Payroll contribution rate", { exact: true }).fill("0.05");
+  await form.getByLabel("Shared plan/sponsor key", { exact: true }).fill("example-sponsor");
+  await form.getByLabel("Payroll age at year end", { exact: true }).fill("36");
+  await form.getByLabel("Annual eligible plan compensation", { exact: true }).fill("120000");
+  await form.getByLabel("Opening unvested employer units", { exact: true }).fill("100");
+  await form.getByRole("button", { name: "Save payroll contribution", exact: true }).click();
+  await expect(form.getByText(/Saved payroll: traditional 401k/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("24500");
+  const priorUsage = page.getByRole("region", { name: "Prior year-to-date contributions" });
+  await priorUsage.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
+  await priorUsage.getByLabel(/traditional 401k prior YTD total$/).fill("10000");
+  await priorUsage.getByLabel(/traditional 401k prior YTD amount excluding catch-up$/).fill("10000");
+  await priorUsage.getByRole("checkbox").check();
+  await priorUsage.getByRole("button", { name: "Save prior YTD usage", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("14500");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  const promise = page.waitForEvent("download"); await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const download = await promise, restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
+  const plans = getPayrollContributionPlans(restored);
+  expect(plans).toMatchObject([{ incomeId: GOLDEN_HOUSEHOLD_IDS.income, allocation: { positionId: GOLDEN_HOUSEHOLD_IDS.retirementInvestment, calculation: { kind: "percent", rate: "0.05" }, policy: { character: "traditional_401k", excessPolicy: "reject" } } }]);
+  expect(plans[0]!.allocation.policy.limits.some(binding => binding.bucketKey === "401k_additions:example-sponsor")).toBe(true);
+  expect(getPayrollOpeningUnvestedUnits(restored, GOLDEN_HOUSEHOLD_IDS.retirementInvestment)).toBe("100");
+  expect(getOpeningContributionUsage(restored)).toMatchObject({ asOf: "2026-07-01", allPriorUsageKnown: true, entries: expect.arrayContaining([{ id: expect.any(String), investmentId: GOLDEN_HOUSEHOLD_IDS.retirementInvestment, character: "traditional_401k", amount: "10000", ordinaryAmount: "10000" }]) });
+});
+
+test("D1 normal IRA authoring saves annual facts and explicit auto-cap", async ({ page }) => {
+  page.setDefaultTimeout(5_000);
+  const original = createGoldenHouseholdDraft();
+  const object = (value: unknown): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
+  const draft = { ...original, objects: { ...original.objects, Account: original.objects.Account!.map(value => object(value) && value.account_id === GOLDEN_HOUSEHOLD_IDS.brokerageAccount ? { ...value, account_type: "roth_ira", tax_treatment: "tax_free" } : value) } };
+  await importDraft(page, draft); await useShortHorizon(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click(); await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  const form = page.getByRole("region", { name: "Saved investment purchases" });
+  await form.getByLabel("Purchase investment", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
+  await form.getByLabel("Purchase funding account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.savings);
+  await form.getByLabel("Purchase amount", { exact: true }).fill("8000"); await form.getByLabel("Purchase start date", { exact: true }).fill("2026-02-10");
+  await form.getByLabel("Purchase frequency", { exact: true }).selectOption("once"); await form.getByLabel("Age at year end", { exact: true }).fill("36");
+  await form.getByLabel("Annual taxable compensation", { exact: true }).fill("120000"); await form.getByLabel("Contribution filing status", { exact: true }).selectOption("single");
+  await form.getByLabel("Roth IRA MAGI", { exact: true }).fill("120000"); await form.getByLabel("Excess contribution policy", { exact: true }).selectOption("auto_cap");
+  await form.getByRole("button", { name: "Save investment purchase", exact: true }).click(); await expect(form.getByText(/Saved purchase:.*8000.*one time/)).toBeVisible();
+  await page.getByRole("button", { name: "Settings", exact: true }).click(); await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  const promise = page.waitForEvent("download"); await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const download = await promise, restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
+  expect(getPersonalPurchasePlans(restored)).toMatchObject([{ amount: "8000", contribution: { character: "roth_ira", excessPolicy: "auto_cap", facts: { ageAtYearEnd: 36 } } }]);
+});
+
 test("R4 UAT groups cash separately from investment account wrappers and holdings", async ({ page }) => {
   await loadExample(page);
   await useShortHorizon(page);
@@ -101,8 +222,8 @@ test("R4 UAT baseline projected return edits the linked assumption and reruns th
 test("R4 UAT diagnostics explain monthly-event limits and retirement remediation without raw codes", async () => {
   const draft = createGoldenHouseholdDraft();
   const monthly = forecastDiagnosticMessage({ code: "MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED", entityId: GOLDEN_HOUSEHOLD_IDS.income }, draft);
-  expect(monthly).toContain("no supported editor repair");
-  expect(monthly).toContain("forecast remains unsupported");
+  expect(monthly).toContain("Supported future scheduled retirement events preserve current income");
+  expect(monthly).toContain("other event behavior requires a separate financial capability");
   expect(monthly).not.toContain("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
   const retirement = forecastDiagnosticMessage({ code: "RETIREMENT_BINDING_MISMATCH", entityId: GOLDEN_HOUSEHOLD_IDS.retirementEvent }, draft);
   expect(retirement).toContain("Planned retirement");
@@ -112,14 +233,12 @@ test("R4 UAT diagnostics explain monthly-event limits and retirement remediation
   expect(retirement).not.toContain("RETIREMENT_BINDING_MISMATCH");
 });
 
-test("R4 UAT monthly event limitation remains visible with original evidence", async ({ page }) => {
+test("D1-A Golden Household has no spurious retirement-event warning", async ({ page }) => {
   await loadExample(page);
   const check = page.locator("article").filter({ has: page.getByRole("heading", { name: "Model check", exact: true }) });
-  await expect(check).toContainText("monthly income or spending summary cannot yet interpret");
-  await expect(check).toContainText("keep the recorded relationship intact");
-  await expect(check.locator("pre")).not.toBeVisible();
-  await check.getByText("Technical diagnostic details", { exact: true }).click();
-  await expect(check.locator("pre")).toContainText("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
+  await expect(check).toContainText("Your current-position inputs are ready.");
+  await expect(check).not.toContainText("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
+  await expect(check.getByText("Technical diagnostic details", { exact: true })).toHaveCount(0);
 });
 
 test("R4 UAT retirement comparison refreshes a stale session date from its recorded event", async ({ page }) => {
@@ -176,7 +295,8 @@ test("R4 UAT immutable account, income, and debt facts are not fake editable con
   await useShortHorizon(page);
   await page.getByRole("button", { name: "Money", exact: true }).click();
   await page.getByRole("button", { name: "Accounts", exact: true }).click();
-  await expect(page.getByText(/Recurring retirement contributions are not currently authorable/)).toBeVisible();
+  await expect(page.getByText(/Use Investment purchases for checking\/savings-funded IRA contributions/)).toBeVisible();
+  await expect(page.getByText(/Recurring retirement contributions are not currently authorable/)).toHaveCount(0);
   await page.getByRole("button", { name: /Everyday checking/ }).click();
   let editor = page.getByRole("dialog", { name: "Edit Account" });
   await expect(editor.getByRole("group", { name: "Account type", exact: true })).toContainText("checking");

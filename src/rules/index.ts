@@ -72,5 +72,6 @@ export * from "./tax/catalog.js";
 export * from "./tax/calculator.js";
 export * from "./tax/lawCatalog.js";
 export * from "./contribution.js";
+export * from "./contribution2026.js";
 export * from "./product.js";
 export * from "./fee.js";

@@ -1,4 +1,4 @@
--- Derived from personal_finance_canonical_schema_v1.0.json
+-- Derived from personal_finance_canonical_schema_v1.0.json (source version 1.0.3)
 -- PostgreSQL 16+
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -34,7 +34,7 @@ CREATE TYPE pf_primitive_class AS ENUM ('temporal', 'functional', 'dependency', 
 CREATE TYPE pf_aggregation AS ENUM ('sum', 'mean', 'median', 'min', 'max', 'ending', 'beginning', 'rate_of_change', 'ratio');
 CREATE TYPE pf_statement_type AS ENUM ('income_statement', 'balance_sheet', 'cash_flow_statement');
 CREATE TYPE pf_statement_section AS ENUM ('operating', 'investing', 'financing', 'assets', 'liabilities', 'equity', 'income', 'expense');
-CREATE TYPE pf_accounting_effect_type AS ENUM ('asset', 'liability', 'income', 'expense', 'equity', 'gain', 'loss', 'tax', 'cash');
+CREATE TYPE pf_accounting_effect_type AS ENUM ('asset', 'contingent', 'liability', 'income', 'expense', 'equity', 'gain', 'loss', 'tax', 'cash');
 CREATE TYPE pf_posting_sign AS ENUM ('debit', 'credit');
 CREATE TYPE pf_comparison_operator AS ENUM ('eq', 'neq', 'lt', 'lte', 'gt', 'gte', 'in', 'not_in', 'contains', 'starts_with', 'between');
 CREATE TYPE pf_logical_operator AS ENUM ('and', 'or', 'not');
@@ -78,6 +78,7 @@ CREATE TABLE account (
     opening_balance numeric(19,4) NOT NULL,
     liquidity_class pf_liquidity_class NOT NULL,
     tax_treatment pf_tax_treatment NOT NULL,
+    contribution_limit_rule_ids jsonb,
     contribution_limit_rule_id uuid,
     withdrawal_rule_ids jsonb,
     fee_rule_id uuid,

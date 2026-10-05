@@ -364,6 +364,14 @@ export const PERSONAL_EDITOR_DESCRIPTOR = {
         "derived": false,
         "mutable": false
       },
+      "contribution_limit_rule_ids": {
+        "type": "uuid[]",
+        "required": false,
+        "default": [],
+        "ref": "TaxRule",
+        "derived": false,
+        "mutable": true
+      },
       "contribution_limit_rule_id": {
         "type": "uuid",
         "required": false,

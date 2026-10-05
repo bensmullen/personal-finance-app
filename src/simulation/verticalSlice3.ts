@@ -41,6 +41,7 @@ import {
   positionValuationCandidate,
   assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
+  registerAuthoritativeIdentity,
   type AuthoritativeState,
 } from "../state/index.js";
 import { deriveStatements, type Statements } from "../statements/index.js";
@@ -94,6 +95,7 @@ import {
   type VerticalSlice2RunInput,
 } from "./verticalSlice2.js";
 import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
+import { decideContribution, recordContribution, type ContributionPolicy } from "./contributions.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -130,6 +132,7 @@ export interface InvestmentPurchase extends ScheduledOperation {
   readonly destinationAccountId: AccountId;
   readonly targetPositionId: PositionId;
   readonly amount: Money;
+  readonly contribution?: ContributionPolicy;
   readonly quantityRounding: RoundingPolicy;
 }
 export interface InvestmentFee extends ScheduledOperation {
@@ -1316,10 +1319,21 @@ export const executePreparedVerticalSlice3Operation = (
       unrealizedGain: change,
     });
   }
+  const contribution = operation.kind === "purchase" ? operation.operation.contribution : undefined;
+  const purchase = operation.kind === "purchase" ? operation.operation : undefined;
+  const contributionDecision = contribution !== undefined && purchase !== undefined ? decideContribution(state, contribution, purchase.destinationAccountId, operation.descriptor.sequencingInstant, purchase.amount) : undefined;
+  const contributionApplications = contributionDecision?.applications.map(application => Object.freeze({ ...application, result: application.result.accepted })) ?? [];
+  summary?.traces(contributionApplications.flatMap(application => application.traceRefs ?? []));
+  if (contributionDecision?.accepted.isZero()) {
+    if (contributionDecision.policy === "reject") failValidation({ severity: "error", code: issueCodes.contributionLimitApplied, message: "Contribution exceeds its applicable statutory capacity; select auto-cap explicitly to permit a partial amount.", entityType: "contribution", entityId: purchase!.id });
+    const next = cloneAuthoritativeState(state);
+    if (operation.descriptor.occurrenceIdentity !== undefined) registerAuthoritativeIdentity(next.identities, "generatedOccurrenceKeys", operation.descriptor.occurrenceIdentity);
+    return Object.freeze({ state: next, primitiveState, effects: Object.freeze([]), transactions: Object.freeze([]), contributionPrincipal: Money.zero(input.baseCurrency), fees: Money.zero(input.baseCurrency), ruleApplications: Object.freeze(contributionApplications), unrealizedGain: Money.zero(input.baseCurrency) });
+  }
   const filtered: VerticalSlice3Input = Object.freeze({
     ...input,
     transfers: operation.kind === "transfer" ? [operation.operation] : [],
-    purchases: operation.kind === "purchase" ? [operation.operation] : [],
+    purchases: purchase === undefined ? [] : [{ ...purchase, amount: contributionDecision?.accepted ?? purchase.amount }],
     fees: operation.kind === "fee" ? [operation.operation] : [],
     returns: [],
   });
@@ -1349,13 +1363,13 @@ export const executePreparedVerticalSlice3Operation = (
     work: generatedWork.work,
   }, summary);
   return Object.freeze({
-    state: result.closingState,
+    state: contribution !== undefined && purchase !== undefined && contributionDecision !== undefined ? recordContribution(result.closingState, contribution, purchase.destinationAccountId, operation.descriptor.id, operation.descriptor.sequencingInstant, contributionDecision) : result.closingState,
     primitiveState: result.primitiveState,
     effects: result.effects,
     transactions: result.transactions,
     contributionPrincipal: generatedWork.contributionPrincipal,
     fees: generatedWork.fees,
-    ruleApplications: generatedWork.ruleApplications,
+    ruleApplications: Object.freeze([...generatedWork.ruleApplications, ...contributionApplications]),
     unrealizedGain: Money.zero(input.baseCurrency),
   });
 };

@@ -4,6 +4,12 @@ import {
   calculationTraceRef,
 } from "../../lineage/index.js";
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
+import { normalizeContributionLimitRuleIds } from "./contributionBindings.js";
+import { durablePersonalPurchaseInstructions, personalPurchaseInstructionId } from "./personalPurchases.js";
+import { supportsD1SpouseHsaScope } from "./payrollAuthoring.js";
+import type { ContributionPolicy } from "../../simulation/contributions.js";
+import { openingUnvestedQuantity } from "./workplaceOpening.js";
+import { compileOpeningContributionUsage } from "./contributionOpening.js";
 import {
   createPrimitiveRuntimeStateStore,
   type PrimitiveRuntimeStateStore,
@@ -72,6 +78,7 @@ export interface InvestmentPurchaseExecutionInstruction {
   readonly investmentId: string;
   readonly sourceCashAccountId: string;
   readonly amount: string;
+  readonly contribution?: ContributionPolicy;
   readonly schedule: InvestmentOperationSchedule;
   readonly order: number;
   readonly quantityRounding: {
@@ -143,6 +150,7 @@ const EXECUTABLE_ACCOUNT_KINDS: Readonly<Record<string, AccountKind>> =
     sep_ira: "retirement",
     simple_ira: "retirement",
     hsa_investment: "other",
+    hsa: "other",
     "529": "other",
   });
 const FUNDING_TYPES = new Set(["checking", "savings", "cash"]);
@@ -571,6 +579,13 @@ export const compileInvestments = (
         id,
         "withdrawal_rule_ids",
       );
+    try {
+      for (const ruleId of normalizeContributionLimitRuleIds(account)) {
+        if (!taxRules.has(ruleId)) return invalidResult("ACCOUNT_TAX_RULE_REFERENCE_INVALID", `Account ${id} contribution_limit_rule_ids must resolve to TaxRule.`, "Account", id, "contribution_limit_rule_ids");
+      }
+    } catch {
+      return invalidResult("ACCOUNT_TAX_RULE_REFERENCE_INVALID", `Account ${id} contribution-limit bindings require UUID identities.`, "Account", id, "contribution_limit_rule_ids");
+    }
     const seenRules = new Set<string>();
     for (const raw of (account.withdrawal_rule_ids ??
       []) as readonly unknown[]) {
@@ -879,6 +894,12 @@ export const compileInvestments = (
     if (checked.status !== "compiled") return checked;
   }
 
+  try {
+    if (request.purchaseInstructions.some(item => item.contribution !== undefined)) return unsupportedResult("CONTRIBUTION_CANONICAL_POLICY_REQUIRED", "Tax-advantaged contributions must use their durable canonical policy rather than a session instruction.", "InvestmentPurchaseExecutionInstruction");
+    request = { ...request, purchaseInstructions: [...request.purchaseInstructions, ...durablePersonalPurchaseInstructions(model)] };
+  } catch (error) {
+    return unsupportedResult(error instanceof Error ? error.message : "INVESTMENT_CONTRIBUTION_MODEL_UNSUPPORTED", "The durable purchase policy is unsupported or incomplete.", "Investment");
+  }
   const allInstructions = [
     ...request.transferInstructions.map((item) => ({
       type: "transfer" as const,
@@ -1058,7 +1079,7 @@ export const compileInvestments = (
   for (const [id, investment] of investments) {
     const account = accounts.get(String(investment.account_id).toLowerCase())!;
     const accountOwner = String(account.owner_id).toLowerCase();
-    if (accountOwner === ownerId) inScopeInvestmentIds.add(id);
+    if (accountOwner === ownerId || household.value.memberIds.includes(accountOwner) && ["hsa", "hsa_investment"].includes(String(account.account_type)) && supportsD1SpouseHsaScope(model, household.value.memberIds)) inScopeInvestmentIds.add(id);
     else if (accountOwner === household.value.householdId)
       return unsupportedResult(
         "HOUSEHOLD_OWNED_INVESTMENT_ACCOUNT_UNSUPPORTED",
@@ -1076,7 +1097,7 @@ export const compileInvestments = (
   const accountStates: AuthoritativeState["accounts"] = {};
   for (const id of [...referencedAccountIds].sort()) {
     const account = accounts.get(id)!;
-    if (String(account.owner_id).toLowerCase() !== ownerId)
+    if (String(account.owner_id).toLowerCase() !== ownerId && !(household.value.memberIds.includes(String(account.owner_id).toLowerCase()) && ["hsa", "hsa_investment"].includes(String(account.account_type)) && supportsD1SpouseHsaScope(model, household.value.memberIds)))
       return unsupportedResult(
         "INVESTMENT_ACCOUNT_OWNER_UNSUPPORTED",
         `Participating Account ${id} must be owned by executionOwnerId.`,
@@ -1138,7 +1159,7 @@ export const compileInvestments = (
       );
     accountStates[id] = {
       id: domainId("account", id),
-      ownerId: domainId("person", ownerId),
+      ownerId: domainId("person", String(account.owner_id).toLowerCase()),
       kind,
       cash: exactMoney(account.opening_balance, currency)!,
     };
@@ -1170,17 +1191,6 @@ export const compileInvestments = (
         "Investment",
         id,
         "volatility",
-      );
-    if (
-      investment.contribution_model_id !== undefined &&
-      investment.contribution_model_id !== null
-    )
-      return unsupportedResult(
-        "INVESTMENT_CONTRIBUTION_MODEL_UNSUPPORTED",
-        `Investment ${id} contribution_model_id lacks explicit funding, schedule, amount, and order semantics.`,
-        "Investment",
-        id,
-        "contribution_model_id",
       );
     if (
       investment.rebalancing_rule_id !== undefined &&
@@ -1242,12 +1252,15 @@ export const compileInvestments = (
         "price",
       );
     const positionId = domainId("position", id);
+    let unvested: Quantity;
+    try { unvested = openingUnvestedQuantity(model, investment); }
+    catch (error) { return invalidResult("OPENING_EMPLOYER_UNVESTED_QUANTITY_INVALID", String(error), "Investment", id); }
     positions[positionId] = {
       id: positionId,
       accountId: domainId("account", accountId),
-      quantity,
+      quantity: quantity.minus(unvested),
       price,
-      carryingValue: marketValue,
+      carryingValue: marketValue.minus(price.times(unvested.amount)),
     };
     if (
       investment.return_model_id !== undefined &&
@@ -1443,8 +1456,7 @@ export const compileInvestments = (
         "withdrawal_rule_ids",
       );
     if (
-      destination.contribution_limit_rule_id !== undefined &&
-      destination.contribution_limit_rule_id !== null
+      normalizeContributionLimitRuleIds(destination).length > 0
     )
       return unsupportedResult(
         "ACCOUNT_CONTRIBUTION_LIMIT_UNSUPPORTED",
@@ -1489,7 +1501,7 @@ export const compileInvestments = (
     const destinationAccount = accounts.get(accountId)!;
     if (
       !sameAccountPurchase &&
-      sourceAccount.tax_treatment !== destinationAccount.tax_treatment
+      sourceAccount.tax_treatment !== destinationAccount.tax_treatment && item.contribution === undefined
     )
       return unsupportedResult(
         "INVESTMENT_PURCHASE_TAX_BOUNDARY_UNSUPPORTED",
@@ -1501,8 +1513,7 @@ export const compileInvestments = (
       );
     if (
       !sameAccountPurchase &&
-      destinationAccount.contribution_limit_rule_id !== undefined &&
-      destinationAccount.contribution_limit_rule_id !== null
+      normalizeContributionLimitRuleIds(destinationAccount).length > 0 && item.contribution === undefined
     )
       return unsupportedResult(
         "ACCOUNT_CONTRIBUTION_LIMIT_UNSUPPORTED",
@@ -1540,7 +1551,11 @@ export const compileInvestments = (
         sourceCashAccountId: domainId("account", sourceId),
         destinationAccountId: domainId("account", accountId),
         targetPositionId: domainId("position", investmentId),
+        ...(typeof investment.contribution_model_id === "string" && personalPurchaseInstructionId(investment.contribution_model_id) === id ? {
+          sourceTraceRefs: Object.freeze([calculationTraceRef(calculationTraceId(`compiler:canonical:PrimitiveInstance:${investment.contribution_model_id}`))]),
+        } : {}),
         amount: exactMoney(item.amount, currency)!,
+        ...(item.contribution === undefined ? {} : { contribution: item.contribution }),
         eligibilitySchedule: compiledSchedules.get(id)!,
         executionTiming: "end_of_period" as const,
         order: item.order,
@@ -1604,6 +1619,9 @@ export const compileInvestments = (
     }
   }
 
+  let openingUsage: ReturnType<typeof compileOpeningContributionUsage>;
+  try { openingUsage = compileOpeningContributionUsage(model, request.simulationStart); }
+  catch (error) { return unsupportedResult("OPENING_CONTRIBUTION_USAGE_INCOMPLETE", String(error), "contribution"); }
   const input: VerticalSlice3Input = Object.freeze({
     householdId: domainId("household", household.value.householdId), ownerId: domainId("person", ownerId), baseCurrency: currency,
     valuationAccountingPolicy: "economic_only", ruleCatalog: Object.freeze([]),
@@ -1615,8 +1633,15 @@ export const compileInvestments = (
     value: Object.freeze({
       input,
       openingState: createAuthoritativeState({
-        accounts: accountStates,
+        accounts: { ...openingUsage.accounts, ...accountStates },
         positions,
+        contributions: openingUsage.contributions,
+        contingentPositions: Object.fromEntries(objects(model, "Investment").flatMap(investment => {
+          const id = String(investment.investment_id), position = positions[id];
+          if (!position) return [];
+          const unvested = openingUnvestedQuantity(model, investment);
+          return unvested.amount.isZero() ? [] : [[id, { positionId: position.id, quantity: unvested, carryingValue: position.price.times(unvested.amount) }]];
+        })),
       }),
       primitiveState: createPrimitiveRuntimeStateStore(),
       scenarioIdentity: scenario.value.id,

@@ -30,7 +30,11 @@ export interface ProportionalIncomeTaxRule extends EffectiveDatedRule {
 
 export interface AnnualContributionLimitRule extends EffectiveDatedRule {
   readonly kind: "annual_contribution_limit";
-  readonly target: RuleTarget & { readonly targetType: "account" };
+  readonly target: RuleTarget & { readonly targetType: "account" | "person" | "household" };
+  /** Required for new shared bindings; legacy account rules default to their account identity. */
+  readonly bucketKey?: string;
+  readonly includedCharacters?: readonly string[];
+  readonly capacityFacts?: Readonly<Record<string, string | boolean>>;
   readonly calendarYear: number;
   readonly calendar: "utc";
   readonly annualLimit: Money;

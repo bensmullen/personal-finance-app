@@ -1,4 +1,4 @@
-/** Derived from personal_finance_canonical_schema_v1.0.json. */
+/** Derived from personal_finance_canonical_schema_v1.0.json (source version 1.0.3). */
 export type UUID = string;
 export type Money = number;
 export type Rate = number;
@@ -39,7 +39,7 @@ export type PrimitiveClass = "temporal" | "functional" | "dependency" | "financi
 export type Aggregation = "sum" | "mean" | "median" | "min" | "max" | "ending" | "beginning" | "rate_of_change" | "ratio";
 export type StatementType = "income_statement" | "balance_sheet" | "cash_flow_statement";
 export type StatementSection = "operating" | "investing" | "financing" | "assets" | "liabilities" | "equity" | "income" | "expense";
-export type AccountingEffectType = "asset" | "liability" | "income" | "expense" | "equity" | "gain" | "loss" | "tax" | "cash";
+export type AccountingEffectType = "asset" | "contingent" | "liability" | "income" | "expense" | "equity" | "gain" | "loss" | "tax" | "cash";
 export type PostingSign = "debit" | "credit";
 export type ComparisonOperator = "eq" | "neq" | "lt" | "lte" | "gt" | "gte" | "in" | "not_in" | "contains" | "starts_with" | "between";
 export type LogicalOperator = "and" | "or" | "not";
@@ -89,11 +89,14 @@ export interface Account {
   currency: string;
   opening_date: string;
   closing_date?: string;
+  /** Internal account cash, excluding separately valued holdings. */
   opening_balance: number;
   /** derived; recompute rather than treat as authoritative. */
   current_balance: number;
   liquidity_class: LiquidityClass;
   tax_treatment: TaxTreatment;
+  contribution_limit_rule_ids?: UUID[];
+  /** Legacy singular binding; readers combine and de-duplicate it with the plural field. */
   contribution_limit_rule_id?: UUID;
   withdrawal_rule_ids?: UUID[];
   fee_rule_id?: UUID;

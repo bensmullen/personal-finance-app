@@ -73,6 +73,7 @@ import {
   type PrimitiveRuntimeStateStore,
 } from "./period.js";
 import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
+import { payrollContributionCandidate, type PayrollContributionAllocation } from "./payrollContributions.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -108,6 +109,7 @@ interface MonthlyStreamBase<Id extends IncomeId | ExpenseId> {
 }
 
 export interface RecurringIncomeStream extends MonthlyStreamBase<IncomeId> {
+  readonly payrollContributions?: readonly PayrollContributionAllocation[];
   readonly depositAccountId: AccountId;
   readonly growthRate: Rate;
   readonly growthBaseAt: Instant;
@@ -462,6 +464,7 @@ const localOrderingIndexes = new WeakMap<VerticalSlice2Input, {
   readonly incomeIds: ReadonlySet<string>;
   readonly expenseById: ReadonlyMap<string, RecurringExpenseStream>;
 }>();
+const payrollPriority = (stream: RecurringIncomeStream): number | undefined => stream.payrollContributions?.length ? Math.min(...stream.payrollContributions.map(item => item.priority)) : undefined;
 
 const withLocalOrdering = (
   input: VerticalSlice2Input,
@@ -483,6 +486,8 @@ const withLocalOrdering = (
   }
   for (const instantOccurrences of groups.values()) {
     const incomes = instantOccurrences.filter(item => incomeIds.has(item.streamId));
+    const payrollIncomes = incomes.map(item => input.incomes.find(stream => stream.id === item.streamId)!).filter(stream => stream.payrollContributions?.length);
+    if (payrollIncomes.length > 1 && new Set(payrollIncomes.map(payrollPriority)).size !== payrollIncomes.length) invalidInput("Same-instant payroll streams require distinct authored allocation priorities", "incomes.payrollContributions");
     const expenses = instantOccurrences.filter(item => expenseById.has(item.streamId));
     if (incomes.length > 0 && expenses.length > 0 && input.sameInstantCashFlowOrder === undefined) {
       invalidInput("Same-instant income and expense actions require an explicit cash-flow order", "input.sameInstantCashFlowOrder");
@@ -505,6 +510,9 @@ const withLocalOrdering = (
         const rightPriority = expenseById.get(right.streamId)!.settlementPriority!;
         return leftPriority - rightPriority;
       }
+      const leftPayroll = payrollPriority(input.incomes.find(stream => stream.id === left.streamId)!);
+      const rightPayroll = payrollPriority(input.incomes.find(stream => stream.id === right.streamId)!);
+      if (leftPayroll !== undefined && rightPayroll !== undefined) return leftPayroll - rightPayroll;
       return left.descriptor.id.localeCompare(right.descriptor.id);
     });
     for (let index = 1; index < ordered.length; index += 1) {
@@ -612,7 +620,7 @@ function executeCashFlowPeriodCandidate(
   eventResult: PeriodWorkCandidate,
   summary?: SummaryOperationSink,
 ): CashCandidate & { readonly period?: VerticalSlice2PeriodResult; readonly summary?: CashOperationSummary } {
-      const state = cloneAuthoritativeState(eventResult.closingState);
+      let state = cloneAuthoritativeState(eventResult.closingState);
       const recognitions = evidenceBuffer<RecognitionFact>(summary);
       const proposals = evidenceBuffer<SettlementProposal>(summary);
       const settlements = evidenceBuffer<Settlement>(summary);
@@ -659,13 +667,17 @@ function executeCashFlowPeriodCandidate(
           if (!amount.isPositive()) continue;
           const traceRefs = freezeTraceRefs([...recurrenceTraces, ...eventEligibility.traceRefs])!;
           const provenance = generatedProvenance(stream.primitiveIds.recurrence, occurrence.scheduledAt, occurrence.occurrenceId);
-          actions.push({ scheduledAt: occurrence.scheduledAt, kind: "income", priority: 0, id: `${stream.id}:${occurrence.occurrenceId}`, execute: () => {
+          actions.push({ scheduledAt: occurrence.scheduledAt, kind: "income", priority: payrollPriority(stream) ?? Number.MAX_SAFE_INTEGER, id: `${stream.id}:${occurrence.occurrenceId}`, execute: () => {
             registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", occurrence.occurrenceId);
             const recognition = createRecognitionFact({ id: recognitionId(`recognition:income:${stream.id}:${occurrence.scheduledAt}`), category: "recurring_income", amount, recognizedAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, provenance, traceRefs }, state.identities.recognitionIds);
             registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
             recognitions.push(recognition);
             effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "recurring_income", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, provenance, traceRefs }));
-            applyTransaction(transaction(`tx:${recognition.id}`, occurrence.scheduledAt, "income", [{ posting: "debit", type: "cash", amount, accountId: stream.depositAccountId, cashFlowClass: "operating" }, { posting: "credit", type: "income", amount }], traceRefs));
+            if (stream.payrollContributions?.length) {
+              const payroll = payrollContributionCandidate(state, { id: `tx:${recognition.id}`, incomeId: stream.id, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions });
+              state = payroll.state;
+              for (const posted of payroll.transactions) transactions.push(posted);
+            } else applyTransaction(transaction(`tx:${recognition.id}`, occurrence.scheduledAt, "income", [{ posting: "debit", type: "cash", amount, accountId: stream.depositAccountId, cashFlowClass: "operating" }, { posting: "credit", type: "income", amount }], traceRefs));
             recognizedIncome = recognizedIncome.plus(amount);
             incomeOccurrences.push(Object.freeze({ streamId: stream.id, occurrenceId: occurrence.occurrenceId, scheduledAt: occurrence.scheduledAt, amount, provenance, traceRefs }));
             periodTraces.push(...traceRefs);
@@ -728,6 +740,8 @@ function executeCashFlowPeriodCandidate(
       const actionsAt = new Map<Instant, CashFlowAction[]>();
       for (const action of actions) actionsAt.set(action.scheduledAt, [...(actionsAt.get(action.scheduledAt) ?? []), action]);
       for (const sameInstant of actionsAt.values()) {
+        const payrolls = sameInstant.filter(action => action.kind === "income" && action.priority !== Number.MAX_SAFE_INTEGER);
+        if (payrolls.length > 1 && new Set(payrolls.map(action => action.priority)).size !== payrolls.length) invalidInput("Same-instant payroll streams require distinct authored allocation priorities", "incomes.payrollContributions");
         const expenses = sameInstant.filter((action) => action.kind === "expense");
         if (expenses.length > 1 && (expenses.some((action) => action.priority === Number.MAX_SAFE_INTEGER) || new Set(expenses.map((action) => action.priority)).size !== expenses.length)) {
           invalidInput("Same-instant expense actions require distinct settlement priorities", "expenses");
@@ -741,7 +755,7 @@ function executeCashFlowPeriodCandidate(
         : (kind === "income" ? 0 : 1);
       actions.sort((left, right) => left.scheduledAt.localeCompare(right.scheduledAt)
         || kindRank(left.kind) - kindRank(right.kind)
-        || (left.kind === "expense" && right.kind === "expense" ? left.priority - right.priority : 0)
+        || (left.kind === "expense" && right.kind === "expense" || left.kind === "income" && right.kind === "income" && left.priority !== Number.MAX_SAFE_INTEGER && right.priority !== Number.MAX_SAFE_INTEGER ? left.priority - right.priority : 0)
         || left.id.localeCompare(right.id));
       for (const action of actions) action.execute();
 

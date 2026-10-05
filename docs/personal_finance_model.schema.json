@@ -373,6 +373,12 @@
           ],
           "default": "taxable"
         },
+        "contribution_limit_rule_ids": {
+          "type": "array",
+          "items": { "type": "string", "format": "uuid" },
+          "default": [],
+          "x-ref": "TaxRule"
+        },
         "contribution_limit_rule_id": {
           "type": "string",
           "format": "uuid",
@@ -1827,6 +1833,7 @@
           "type": "string",
           "enum": [
             "asset",
+            "contingent",
             "liability",
             "income",
             "expense",

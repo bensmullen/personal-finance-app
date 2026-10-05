@@ -1,5 +1,16 @@
 import { domainId } from "../identity/index.js";
 import { ValidationError, type ValidationIssue } from "../diagnostics/index.js";
+import { classifyAccountEconomics, isHouseholdCashAccount } from "../model/economicClassification.js";
+export { classifyAccountEconomics, isHouseholdCashAccount };
+export { authorCanonicalRetirementDate as editPersonalRetirementDate } from "./compiler/retirementAuthoring.js";
+export { canonicalRetirementPlans as getPersonalRetirementPlans } from "./compiler/retirementAuthoring.js";
+export { authorPersonalPurchasePlan, type PersonalPurchasePlan } from "./compiler/personalPurchases.js";
+export { contributionCapacityReadModel as getContributionCapacities, type ContributionCapacityReadModel } from "./compiler/contributionReadModel.js";
+export { authorPayrollContributionPlan, durablePayrollAllocations as getPayrollContributionPlans, payrollOpeningUnvestedUnits as getPayrollOpeningUnvestedUnits, type PayrollContributionPlan } from "./compiler/payrollAuthoring.js";
+export { authorOpeningContributionUsage, savedOpeningContributionUsage as getOpeningContributionUsage, openingContributionOptions as getOpeningContributionOptions, type OpeningContributionUsageEntry } from "./compiler/contributionOpening.js";
+export { authorHistoricalContributionScope, historicalContributionScopes as getHistoricalContributionScopes } from "./compiler/contributionHistoryScopes.js";
+export type { AuthoredContributionFacts } from "./compiler/contributionAuthoring.js";
+export { durablePersonalPurchaseInstructions as getPersonalPurchasePlans } from "./compiler/personalPurchases.js";
 import {
   CURRENT_MODEL_FORMAT_VERSION,
   type JsonValue,
@@ -7,6 +18,7 @@ import {
   type PortableModelObjects,
 } from "../model/modelVersion.js";
 import { CURRENT_RUN_VERSIONS } from "../model/version.js";
+import { normalizeContributionLimitRuleIds } from "./compiler/contributionBindings.js";
 import { createRunContext, runId, scenarioId } from "../simulation/run.js";
 import {
   compareVerticalSlice2Scenarios,
@@ -98,6 +110,8 @@ export interface CurrentPositionReadModel {
   readonly status: "complete" | "partial" | "unsupported" | "invalid";
   readonly netWorth?: MoneyReadModel;
   readonly cash?: MoneyReadModel;
+  readonly wrapperCash?: MoneyReadModel;
+  readonly contingentPlanValue?: MoneyReadModel;
   readonly assets?: MoneyReadModel;
   readonly liabilities?: MoneyReadModel;
   readonly monthlyIncome?: MoneyReadModel;
@@ -490,6 +504,10 @@ export const patchPersonalObject = (
       )
         applied[fieldName] = fieldValue;
     }
+    if (type === "Account" && ("contribution_limit_rule_id" in patch || "contribution_limit_rule_ids" in patch)) {
+      applied.contribution_limit_rule_ids = normalizeContributionLimitRuleIds(applied);
+      delete applied.contribution_limit_rule_id;
+    }
     return deepFreeze(applied);
   });
   if (!found) throw new Error(`${type} ${canonicalId} was not found`);
@@ -637,6 +655,8 @@ export const getCurrentPosition = (
     status,
     ...(value.netWorth ? { netWorth: moneyDto(value.netWorth) } : {}),
     ...(value.cash ? { cash: moneyDto(value.cash) } : {}),
+    ...(value.wrapperCash ? { wrapperCash: moneyDto(value.wrapperCash) } : {}),
+    ...(value.contingentPlanValue ? { contingentPlanValue: moneyDto(value.contingentPlanValue) } : {}),
     ...(value.assets ? { assets: moneyDto(value.assets) } : {}),
     ...(value.liabilities ? { liabilities: moneyDto(value.liabilities) } : {}),
     ...(value.monthlyIncome

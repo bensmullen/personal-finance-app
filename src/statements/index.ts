@@ -1,4 +1,4 @@
-import { cashFlowAmount, type AccountingLeg, type AccountingTransaction } from "../accounting/index.js";
+import { cashFlowAmount, type AccountingTransaction } from "../accounting/index.js";
 import type { AuthoritativeState } from "../state/index.js";
 import { totalPositionMarketValue } from "../valuation/index.js";
 import { type Currency, Money, sumMoney } from "../values/index.js";
@@ -29,9 +29,9 @@ export const createStatementFlowAccumulator = (currency: Currency) => {
   return {
     add(transaction: AccountingTransaction): void {
       for (const leg of transaction.legs) {
-        if (leg.type === "income" && leg.posting === "credit") income = income.plus(leg.amount);
-        if ((leg.type === "expense" || leg.type === "tax") && leg.posting === "debit") expenses = expenses.plus(leg.amount);
-        if (leg.type === "gain" && leg.posting === "credit") gains = gains.plus(leg.amount);
+        if (leg.type === "income") income = leg.posting === "credit" ? income.plus(leg.amount) : income.minus(leg.amount);
+        if (leg.type === "expense" || leg.type === "tax") expenses = leg.posting === "debit" ? expenses.plus(leg.amount) : expenses.minus(leg.amount);
+        if (leg.type === "gain") gains = leg.posting === "credit" ? gains.plus(leg.amount) : gains.minus(leg.amount);
       }
       operatingCashFlow = operatingCashFlow.plus(cashFlowAmount(transaction, "operating", currency));
       investingCashFlow = investingCashFlow.plus(cashFlowAmount(transaction, "investing", currency));
@@ -79,14 +79,6 @@ export const deriveCurrentPositionTotals = (
   return Object.freeze({ cash, assets, liabilities, netWorth: assets.minus(liabilities) });
 };
 
-const totalByLeg = (
-  transactions: readonly AccountingTransaction[],
-  currency: Currency,
-  type: AccountingLeg["type"],
-  side: AccountingLeg["posting"],
-): Money => sumMoney(transactions.flatMap((transaction) =>
-  transaction.legs.filter((leg) => leg.type === type && leg.posting === side).map((leg) => leg.amount)), currency);
-
 const balanceSheet = (state: AuthoritativeState, currency: Currency) => {
   const cash = sumMoney(Object.values(state.accounts).map((account) => account.cash), currency);
   const assets = cash.plus(totalPositionMarketValue(Object.values(state.positions), currency));
@@ -125,8 +117,9 @@ export const deriveVerticalSliceStatements = (
   currency: Currency,
 ): VerticalSliceStatements => {
   const balances = balanceSheet(state, currency);
-  const income = totalByLeg(transactions, currency, "income", "credit");
-  const expenses = totalByLeg(transactions, currency, "expense", "debit").plus(totalByLeg(transactions, currency, "tax", "debit"));
+  const accumulator = createStatementFlowAccumulator(currency);
+  for (const transaction of transactions) accumulator.add(transaction);
+  const { income, expenses, operatingCashFlow } = accumulator.snapshot();
   return Object.freeze({
     assets: balances.assets,
     liabilities: balances.liabilities,
@@ -134,6 +127,6 @@ export const deriveVerticalSliceStatements = (
     income,
     expenses,
     netIncome: income.minus(expenses),
-    operatingCashFlow: sumMoney(transactions.map((transaction) => cashFlowAmount(transaction, "operating", currency)), currency),
+    operatingCashFlow,
   });
 };

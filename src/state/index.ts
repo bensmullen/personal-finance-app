@@ -11,7 +11,8 @@ import type { DomainId, GeneratedOccurrenceKey, IdempotencyKey } from "../identi
 import { normalizeExecutionClaim, materializeClaimLifecycle, settlementIdentityAppendsSince, type SettlementHistoryMeter, type ObligationOrRight } from "../semantics/claim.js";
 import type { RecognitionId, SettlementId } from "../semantics/identity.js";
 import { createRecognitionFact as createRecognitionFactWithHistory, type RecognitionFactDraft, type RecognitionFact } from "../semantics/recognition.js";
-import type { Currency, Money, Quantity, Rate } from "../values/index.js";
+import { Money, Quantity, decimal, type Currency, type Rate } from "../values/index.js";
+import type { Instant } from "../time/index.js";
 
 interface IndexNode<T> {
   readonly key: string;
@@ -240,12 +241,35 @@ export interface AuthoritativeIdentityRegistry {
   readonly externalIdempotencyKeys: readonly IdempotencyKey[];
 }
 
+/** Committed statutory usage is independent of account balances and later vesting. */
+export interface ContributionState {
+  readonly source?: "opening";
+  readonly id: string;
+  readonly at: Instant;
+  readonly personId: string;
+  readonly accountId: string;
+  readonly character: string;
+  readonly amount: Money;
+  readonly requested?: Money;
+  readonly excess?: Money;
+  readonly buckets: readonly { readonly identity: string; readonly amount: Money; readonly annualLimit: Money; readonly ruleIds: readonly string[]; readonly usedBefore?: Money; readonly remainingBefore?: Money; readonly facts?: Readonly<Record<string, string | boolean>> }[];
+  readonly eligibleDeduction?: Money;
+  readonly incomeId?: string;
+  readonly employerBenefit?: { readonly positionId: PositionId; readonly vestedAtContribution: Money; readonly contingentAtContribution: Money };
+}
+export interface ContingentPositionState {
+  readonly positionId: PositionId;
+  quantity: Quantity;
+  carryingValue: Money;
+}
 export interface AuthoritativeState {
   accounts: Record<string, AccountState>;
   positions: Record<string, PositionState>;
   liabilities: Record<string, LiabilityState>;
   obligations: Record<string, ObligationOrRight>;
   identities: AuthoritativeIdentityRegistry;
+  contributions?: Record<string, ContributionState>;
+  contingentPositions?: Record<string, ContingentPositionState>;
 }
 
 export interface AuthoritativeStateDraft {
@@ -254,6 +278,8 @@ export interface AuthoritativeStateDraft {
   readonly liabilities?: Record<string, LiabilityState>;
   readonly obligations?: Record<string, ObligationOrRight>;
   readonly identities?: Partial<AuthoritativeIdentityRegistry>;
+  readonly contributions?: Record<string, ContributionState>;
+  readonly contingentPositions?: Record<string, ContingentPositionState>;
 }
 
 const identityIndexes = new WeakMap<AuthoritativeIdentityRegistry, Record<keyof AuthoritativeIdentityRegistry, PersistentStringIndex<string>>>();
@@ -419,6 +445,8 @@ export const createIndexedExecutionState = (opening: AuthoritativeState, supplie
     accounts: makeRecord(opening.accounts, true), positions: makeRecord(opening.positions, true),
     liabilities: makeRecord(opening.liabilities, true), obligations: makeRecord(opening.obligations, false, updateClaim, value => normalizeExecutionClaim(value, historyMeter)),
     identities: indexedIdentityRegistry(opening.identities),
+    ...(opening.contributions === undefined ? {} : { contributions: { ...opening.contributions } }),
+    ...(opening.contingentPositions === undefined ? {} : { contingentPositions: Object.fromEntries(Object.entries(opening.contingentPositions).map(([key, value]) => [key, { ...value }])) }),
   };
   if (existing === undefined) for (const [key, claim] of Object.entries(state.obligations)) updateClaim(key, undefined, claim);
   if (existing === undefined) { pendingClaimIds.clear(); pendingSettlementIds.clear(); }
@@ -467,6 +495,8 @@ export const createAuthoritativeState = (draft: AuthoritativeStateDraft = {}): A
     liabilities: Object.fromEntries(Object.entries(draft.liabilities ?? {}).map(([key, value]) => [key, { ...value }])),
     obligations: Object.fromEntries(Object.entries(draft.obligations ?? {}).map(([key, value]) => [key, materializeClaimLifecycle(value)])),
     identities: createAuthoritativeIdentityRegistry(draft.identities),
+    ...(draft.contributions === undefined ? {} : { contributions: { ...draft.contributions } }),
+    ...(draft.contingentPositions === undefined ? {} : { contingentPositions: Object.fromEntries(Object.entries(draft.contingentPositions).map(([key, value]) => [key, { ...value }])) }),
   };
   reconcileClaimIdentityHistory(state);
   validateAuthoritativeState(state);
@@ -556,6 +586,16 @@ const stateTargetMissing = (transaction: AccountingTransaction, targetType: stri
   });
 
 export const validateAuthoritativeState = (state: AuthoritativeState, transactionId?: string): void => {
+  for (const [id, entry] of Object.entries(state.contributions ?? {})) {
+    const account = state.accounts[entry.accountId];
+    if (id !== entry.id || entry.amount.isNegative() || account === undefined || !entry.amount.currency.equals(account.cash.currency) || entry.buckets.some(bucket => bucket.amount.isNegative() || !bucket.amount.currency.equals(entry.amount.currency) || !bucket.annualLimit.currency.equals(entry.amount.currency) || bucket.annualLimit.isNegative() || bucket.amount.compare(entry.amount) > 0) || entry.eligibleDeduction !== undefined && (entry.eligibleDeduction.isNegative() || entry.eligibleDeduction.compare(entry.amount) > 0))
+      failValidation({ severity: "error", code: issueCodes.ruleInputInvalid, message: "Invalid committed contribution ledger entry", entityType: "contribution", entityId: id });
+  }
+  for (const [id, entry] of Object.entries(state.contingentPositions ?? {})) {
+    const position = state.positions[id];
+    if (id !== entry.positionId || !position || !entry.quantity.unit.equals(position.quantity.unit) || !entry.carryingValue.currency.equals(position.price.currency) || entry.quantity.amount.isNegative() || entry.carryingValue.isNegative())
+      failValidation({ severity: "error", code: issueCodes.negativePositionInvariant, message: "Invalid contingent workplace position", entityType: "position", entityId: id });
+  }
   const entries = <T extends object>(record: Record<string, T>, full = false): readonly (readonly [string, T])[] => {
     const indexed = executionStateIndexes.has(state) && !full ? indexedRecords.get(record) : undefined;
     return indexed === undefined ? Object.entries(record)
@@ -677,6 +717,12 @@ export const assertAuthoritativeStateCurrency = (state: AuthoritativeState, curr
     }
   };
   for (const [key, account] of Object.entries(state.accounts)) assertCurrency(account.cash, `accounts.${key}.cash`, "account", account.id);
+  for (const [key, entry] of Object.entries(state.contributions ?? {})) {
+    assertCurrency(entry.amount, `contributions.${key}.amount`, "contribution", key);
+    if (entry.eligibleDeduction) assertCurrency(entry.eligibleDeduction, `contributions.${key}.eligibleDeduction`, "contribution", key);
+    for (const bucket of entry.buckets) { assertCurrency(bucket.amount, `contributions.${key}.bucket.amount`, "contribution", key); assertCurrency(bucket.annualLimit, `contributions.${key}.bucket.annualLimit`, "contribution", key); }
+  }
+  for (const [key, entry] of Object.entries(state.contingentPositions ?? {})) assertCurrency(entry.carryingValue, `contingentPositions.${key}.carryingValue`, "position", key);
   for (const [key, liability] of Object.entries(state.liabilities)) assertCurrency(liability.balance, `liabilities.${key}.balance`, "liability", liability.id);
   for (const [key, position] of Object.entries(state.positions)) {
     assertCurrency(position.price, `positions.${key}.price`, "position", position.id);
@@ -690,6 +736,8 @@ const commitCandidate = (target: AuthoritativeState, candidate: AuthoritativeSta
   target.liabilities = candidate.liabilities;
   target.obligations = candidate.obligations;
   target.identities = candidate.identities;
+  if (candidate.contributions !== undefined) target.contributions = candidate.contributions;
+  if (candidate.contingentPositions !== undefined) target.contingentPositions = candidate.contingentPositions;
   const indexed = executionStateIndexes.get(candidate);
   if (indexed === undefined) executionStateIndexes.delete(target);
   else executionStateIndexes.set(target, indexed);
@@ -756,6 +804,14 @@ export const applyAccountingTransactionAtomically = (
           ? position.quantity.plus(leg.quantity)
           : position.quantity.minus(leg.quantity);
       }
+    } else if (leg.type === "contingent") {
+      const position = candidate.positions[leg.entityId];
+      if (position === undefined) return stateTargetMissing(transaction, "position", leg.entityId);
+      const entry = candidate.contingentPositions?.[leg.entityId] ?? { positionId: leg.entityId, quantity: new Quantity(decimal("0"), position.quantity.unit), carryingValue: Money.zero(leg.amount.currency) };
+      candidate.contingentPositions = { ...candidate.contingentPositions, [leg.entityId]: {
+        ...entry, carryingValue: entry.carryingValue.plus(signedAmount),
+        quantity: leg.quantity === undefined ? entry.quantity : leg.posting === "debit" ? entry.quantity.plus(leg.quantity) : entry.quantity.minus(leg.quantity),
+      } };
     }
   }
 

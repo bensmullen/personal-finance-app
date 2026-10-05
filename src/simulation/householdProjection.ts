@@ -13,11 +13,11 @@ const invalid = <T>(code: string, message: string, ids: readonly string[]): Hous
 
 /** Exact, identity-preserving merge; neither slice position nor request order is meaningful. */
 export const reconcileHouseholdOpeningState = (states: readonly AuthoritativeState[]): HouseholdReconciliationResult<AuthoritativeState> => {
-  const collections: (keyof Pick<AuthoritativeState, "accounts" | "positions" | "liabilities" | "obligations">)[] = ["accounts", "positions", "liabilities", "obligations"];
+  const collections: (keyof Pick<AuthoritativeState, "accounts" | "positions" | "liabilities" | "obligations" | "contributions" | "contingentPositions">)[] = ["accounts", "positions", "liabilities", "obligations", "contributions", "contingentPositions"];
   const merged: Record<string, Record<string, unknown>> = Object.fromEntries(collections.map((key) => [key, {}]));
   const identities: { [K in keyof AuthoritativeIdentityRegistry]: AuthoritativeIdentityRegistry[K][number][] } = { postedTransactionIds: [], recognitionIds: [], settlementIds: [], generatedOccurrenceKeys: [], externalIdempotencyKeys: [] };
   for (const state of states) {
-    for (const collection of collections) for (const [id, value] of Object.entries(state[collection])) {
+    for (const collection of collections) for (const [id, value] of Object.entries(state[collection] ?? {})) {
       const existing = merged[collection]![id];
       if (existing !== undefined && canonicalSerialize(existing) !== canonicalSerialize(value)) return invalid("HOUSEHOLD_OPENING_STATE_CONFLICT", `Conflicting ${collection} entity ${id} across household compilers.`, [id]);
       merged[collection]![id] = value;
@@ -29,7 +29,9 @@ export const reconcileHouseholdOpeningState = (states: readonly AuthoritativeSta
     identities.externalIdempotencyKeys.push(...state.identities.externalIdempotencyKeys);
   }
   try {
-    return { status: "compiled", value: createAuthoritativeState({ accounts: merged.accounts as AuthoritativeState["accounts"], positions: merged.positions as AuthoritativeState["positions"], liabilities: merged.liabilities as AuthoritativeState["liabilities"], obligations: merged.obligations as AuthoritativeState["obligations"], identities: createAuthoritativeIdentityRegistry(identities) }) };
+    return { status: "compiled", value: createAuthoritativeState({ accounts: merged.accounts as AuthoritativeState["accounts"], positions: merged.positions as AuthoritativeState["positions"], liabilities: merged.liabilities as AuthoritativeState["liabilities"], obligations: merged.obligations as AuthoritativeState["obligations"],
+      ...(states.some(state => state.contributions !== undefined) ? { contributions: merged.contributions as NonNullable<AuthoritativeState["contributions"]> } : {}),
+      ...(states.some(state => state.contingentPositions !== undefined) ? { contingentPositions: merged.contingentPositions as NonNullable<AuthoritativeState["contingentPositions"]> } : {}), identities: createAuthoritativeIdentityRegistry(identities) }) };
   } catch (error) { return invalid("HOUSEHOLD_OPENING_STATE_INVALID", error instanceof Error ? error.message : "Merged household state is invalid.", []); }
 };
 

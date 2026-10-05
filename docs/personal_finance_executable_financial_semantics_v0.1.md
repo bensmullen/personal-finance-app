@@ -1,6 +1,6 @@
 # Personal Finance App — Executable Financial Semantics Specification
 
-**Version:** 0.1.11-draft
+**Version:** 0.1.13-draft
 **Status:** Draft implementation contract  
 **Namespace:** `pfm`  
 **Depends on:** `personal_finance_canonical_schema_v1.0.json`, `personal_finance_model.schema.json`, `personal_finance_simulation_interfaces_v1.0.ts`
@@ -457,11 +457,25 @@ Every application records the exact rule identity, kind, target, evaluation inst
 The initial supported methods are deliberately narrow:
 
 - proportional income tax is `round(taxableBase × effectiveRate)` using nonnegative `Money`, a `Ratio` from zero through one, and explicit posting rounding;
-- an annual contribution-limit rule targets one account and one UTC civil year whose effective range is exactly `[Jan 1 00:00Z, next Jan 1 00:00Z)`. For nonnegative requested and prior-used amounts, `remaining=max(limit-used,0)`, `accepted=min(requested,remaining)`, and `excess=requested-accepted`;
+- an annual contribution-limit rule targets an account, person, or household according to its legal/economic scope and one UTC civil year whose effective range is exactly `[Jan 1 00:00Z, next Jan 1 00:00Z)`. Account targets represent genuinely account/plan-local constraints. Shared statutory capacity MUST NOT become a separate allowance per account. New bindings carry a stable bucket/scope identity and explicit included contribution characters; where the target alone does not identify the scope, an explicit aggregation key is required. The fixed-money method remains `remaining=max(limit-used,0)`;
 - a product eligibility rule explicitly allows or rejects a named operation for one account or liability. A valid deny rule is a modeled decision, not malformed input;
 - a fixed-fee rule targets one account and assesses a nonnegative `Money` amount. A zero fee is valid and produces a recorded application but no posting.
 
-Contribution-limit and product-eligibility rejections are policy outcomes separate from funding outcomes. They MUST NOT be classified as liquidity failures, defaults, or accounting invariant failures. Comprehensive tax law, shared cross-account contribution limits, and percentage/tiered fees are outside this version.
+Multiple buckets MAY constrain the same contribution. Resolve all applicable rules before evaluation, calculate every bucket's pre-contribution usage independently, and accept no more than the tightest applicable remaining capacity. Catalog/binding iteration order conveys no precedence. Default policy rejects an excess request; partial acceptance requires an explicitly selected auto-cap policy. The authored request is preserved.
+
+Usage is the aggregate of qualifying committed contributions in the legal scope and UTC civil year, never an account balance. An accepted committed amount consumes each applicable bucket; rejected, failed, rolled-back or uncommitted amounts consume none. A partially accepted amount consumes only its accepted portion. Stable contribution identities prevent replay from consuming capacity twice. Splitting contributions across accounts cannot bypass shared capacity. Every result exposes effective annual capacity, prior usage, remaining capacity, accepted amount, excess, exact applied rule identities and the explicit facts that changed capacity.
+
+Bounded D1-A 2026 rules MAY derive capacity from explicit age, compensation, MAGI, workplace-plan coverage, HSA coverage and prior-year wages plus effective-dated parameters. Missing required facts produce explicit incompleteness; they never imply zero or unlimited capacity. Traditional IRA deductibility is separate from the shared gross IRA contribution capacity. Catch-up and non-catch-up annual-additions consumption remain distinct. Full-year HSA family capacity is shared between eligible spouses; individual age-55 catch-up must reach that individual's own HSA.
+
+An eligible elective deferral MAY enter catch-up because ordinary 402(g) capacity or applicable 415(c) annual-additions capacity is exhausted. Its non-catch-up portion is bounded by both remaining ordinary elective capacity and remaining annual-additions capacity. Only that portion consumes annual additions; the full accepted amount consumes elective capacity. Remaining catch-up capacity subtracts prior committed catch-up across the participant's supported paths. Where Roth catch-up is mandatory, a Traditional request entering either catch-up boundary is rejected by default; explicit auto-cap accepts only the non-catch-up portion. An authored Roth path may use remaining catch-up. Compensation still bounds annual additions.
+
+For a partial-year forecast, authoritative opening YTD statutory usage MUST be supplied or safely derived for every applicable legal scope before contribution enforcement may execute. Unknown prior usage MUST produce explicit incompleteness, never an implicit zero. A January 1 opening may use zero. The durable `d1-opening-contribution-usage/v1` policy adapter uses canonical PrimitiveInstance parameters to store the exact forecast boundary, confirmed scope/bucket identities (including explicit confirmation of zero omitted usage), stable history identities, destination holdings, contribution characters, annual eligibility facts and money amounts. Elective and family HSA history explicitly identifies ordinary versus catch-up amounts. This adapter is opening metadata and is never scheduled as a new contribution. Opening entries seed the committed capacity ledger with `source: opening`; they do not post income, deductions, cash movements or purchases, and do not reconstruct current balances. Existing partial-year tax completeness gates remain applicable because statutory usage alone is not prior recognized tax economics. History and forecast schedules are separated by the opening boundary, and duplicate history identities are rejected. Capacity presentation exposes opening usage and forecast usage separately and their shared total.
+
+Opening workplace quantities represent total economic plan units. A linked payroll policy may durably identify `openingUnvestedQuantity`, an explicit employer-funded contingent subset of those units. Owned opening quantity is total minus contingent quantity; employee-funded units MUST remain owned. The future-employer-contribution `vestedFraction` MUST NOT be applied to total opening value. Current position and all forecast slices use the same split, with contingent value displayed separately from owned assets/net worth. The common then-current position price values both portions. Full vesting moves contingent units/value into owned value without repeated income, tax, cash flow or contribution usage; forfeiture removes only contingent value. Canonical schema and model format versions are unchanged because these additive policy facts use the existing parameter objects.
+
+Account.contribution_limit_rule_ids is the new plural binding. Legacy contribution_limit_rule_id remains readable. Normalization combines and de-duplicates identities, rejects conflicting/ambiguous active versions, and never resolves conflicts by order.
+
+Contribution-limit and product-eligibility rejections are policy outcomes separate from funding outcomes. They MUST NOT be classified as liquidity failures, defaults, or accounting invariant failures. Comprehensive tax law remains outside this subsystem except for the bounded D1-A 2026 contribution rules. Percentage/tiered fees remain outside this version. D1-B rollover/conversion operations require their own domain contracts and MUST NOT be encoded as generic contributions.
 
 ## 6. Typed primitive composition
 
@@ -1117,6 +1131,14 @@ conforming to `0.1.11-draft` MAY therefore classify `0.1.9-draft`,
 explicit compatibility declaration for those versions only and does not
 generalize to later revisions.
 
+Version `0.1.12-draft` explicitly supports `0.1.9-draft`, `0.1.10-draft`, and
+`0.1.11-draft` models directly. Existing account-local fixed-limit rules keep
+their meaning; the plural binding and shared-scope identities are additive.
+New D1 contributions require their explicit character, scope, facts and policy
+contracts. Missing new facts gate materially affected new operations rather
+than assigning new financial meaning to legacy authored records. The portable
+model-format version remains unchanged for these optional additions.
+
 The former `0.1.0-draft` root used `specification_version` without
 unambiguously identifying whether that value represented financial semantics or
 the model serialization format. It is therefore read-only legacy in this
@@ -1390,6 +1412,67 @@ order is preserved exactly. Rule changes alter only bindings to existing,
 effective-dated rules and retain exact-one-active-version resolution. Scenario
 resolution never infers funding, borrowing, transfers, sales, overdraft,
 retirement consequences, rule precedence, refinancing, or new debt.
+
+A durable personally funded taxable-brokerage or IRA purchase may bind
+`Investment.contribution_model_id` to an enabled root-scenario P03 instance.
+The `d1-personal-purchase/v1` adapter stores exact `amount` and explicit
+`source_cash_account_id` in `input_bindings`, and stores `schedule` and
+nonnegative integer `order` in `parameters`. The adapter admits one explicit
+date or a UTC monthly anchor with the explicit `skip` invalid-day policy.
+The source must be checking or savings. P03 generates recurrence; VS3 owns
+funding, accounting, position quantity and principal effects. It purchases at
+the modeled period-closing P23 price with explicit quantity rounding. This
+adapter stores IRA character, contributor/household scope, explicit annual
+eligibility facts and reject/explicit-auto-cap policy in `parameters.contribution`.
+Canonical plural Account limit bindings identify all simultaneous statutory
+buckets. The candidate checks those buckets before posting and records usage
+only after funding and position effects succeed. Traditional IRA deductibility
+is recorded separately and enters the household tax authority; Roth principal
+does not reduce taxable compensation. Missing deduction facts leave tax results
+explicitly incomplete.
+
+The `d1-payroll-contribution/v1` P03 adapter binds an Investment to a gross
+salary Income through `input_bindings.income_id`. Its parameters persist the
+contribution policy, explicit allocation priority, fixed amount or exact
+compensation fraction, employer match fraction/compensation cap, and current
+vested fraction. Actual salary recurrence and retirement termination own timing;
+the adapter cannot generate a separate salary or bank-funded contribution.
+Employee allocations precede employer matching by an explicit validated policy.
+Gross salary posts once: debit take-home cash and employee destination principal,
+credit gross income. Traditional 401(k) allocations reduce federal ordinary
+income but preserve payroll wages; Roth and after-tax allocations preserve both
+bases. Supported cafeteria-plan employee HSA allocations reduce federal ordinary
+income and employee payroll wages. Unsupported jurisdiction-specific base
+relationships remain incomplete rather than borrowing federal treatment.
+
+Employer workplace contributions recognize the full non-cash benefit once,
+debiting vested owned principal and separate non-owned `contingent` principal.
+They never reduce take-home cash or become employee taxable wages merely because
+the benefit was recognized. Full statutory usage is recorded regardless of vesting.
+Contingent units share their position's deterministic price and remain excluded
+from owned assets/net worth. Full supported vesting reclassifies then-current
+contingent value to owned principal without new income, wages, cash or limit
+usage. Supported full forfeiture removes contingent value against equity, never
+owned loss or spending. Employer HSA contributions are fully owned; no vesting
+is inferred. Graded/service-credit/partial-forfeiture mechanics require a separate
+capability contract. Rollover operations remain outside these adapters.
+
+Optional `contingentEvents` bindings on an employer 401(k) payroll adapter link
+explicit scheduled canonical Events to a full `vest` or `forfeit` operation on
+that holding. These events follow native contribution/value operations at the
+same instant, and use the committed then-current value. A zero contingent
+balance produces no financial recognition. They neither infer employment-income
+termination nor rewrite other Event effects; the user must author those facts
+separately. Conditional/probabilistic triggers, unrelated effects, dependencies,
+graded vesting and partial forfeiture remain capability-gated. Event identities
+and the participant's portable replay codec preserve deterministic reclassification.
+
+Accounting-derived statement totals use signed postings: income/gain credits
+increase recognition and debits reverse it; expense/tax debits increase expense
+and credits reverse it. Direct and streamed derivation MUST agree. A decreasing
+tax accrual debits unpaid liability, or recognizes a prepaid tax credit for an
+already-paid amount, and credits tax expense. This recognition reversal moves
+no cash; only an explicit separate refund/settlement can do so.
 
 A retirement-date overlay carries both `targetEventId`, which identifies the
 existing VS2 income-termination event to edit, and a distinct scenario
