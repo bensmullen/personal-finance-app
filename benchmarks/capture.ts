@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
-import { createApplicationPerformanceObserver, requireCompletedPerformanceForecast, createPerformanceEvidenceSample } from "../src/application/performance.js";
+import { createApplicationPerformanceObserver, requireFullHorizonPerformanceForecast, createPerformanceComparisonValidation, createPerformanceEvidenceSample } from "../src/application/performance.js";
 import { PerformanceRegistry, type PerformanceContext } from "../src/diagnostics/performance.js";
 import { createGoldenHouseholdDraft, createGoldenHouseholdForecastRequest, runPersonalHouseholdForecast } from "../src/application/index.js";
 import { comparePersonalHouseholdScenarioIntents } from "../src/application/householdProjection.js";
@@ -21,7 +21,7 @@ if (measuredRuns < 1 || measuredRuns > 20 || warmups > 10) throw new Error("Capt
 const outputPath = resolve(process.env.PERF_OUTPUT ?? "benchmarks/r1-engineering-reference.json");
 const countObjects = (model: ReturnType<typeof createGoldenHouseholdDraft>) => Object.freeze(Object.fromEntries(Object.entries(model.objects).map(([name, values]) => [name, values.length])));
 const primaryFixtures = [
-  { id: "golden-household", model: createGoldenHouseholdDraft(), request: createGoldenHouseholdForecastRequest("93000000-0000-4000-8000-000000000001"), coverage: { class: "golden", unsupportedGaps: ["multi-member", "tax execution", "stochastic execution", "worker execution"] } },
+  { id: "golden-household", model: createGoldenHouseholdDraft(), request: createGoldenHouseholdForecastRequest("93000000-0000-4000-8000-000000000001"), coverage: { class: "golden", executionMechanics: ["T1A tax execution and output completeness gating"], unsupportedGaps: ["multi-member", "full target-cohort tax completeness when authored facts or verified law are missing", "stochastic execution", "worker execution"] } },
   createRealisticPerformanceFixture(),
   createStressPerformanceFixture(),
 ] as const;
@@ -32,7 +32,7 @@ if (!/^[a-f0-9]{40}$/.test(capturedHead)) throw new Error("Captured Git head is 
 
 const captured = [];
 for (const fixture of fixtures) {
-  for (let index = 0; index < warmups; index += 1) requireCompletedPerformanceForecast(runPersonalHouseholdForecast(fixture.model, fixture.request), fixture.id);
+  for (let index = 0; index < warmups; index += 1) requireFullHorizonPerformanceForecast(runPersonalHouseholdForecast(fixture.model, fixture.request), fixture.id);
   const runs = [];
   for (let index = 0; index < measuredRuns; index += 1) {
     const registry = new PerformanceRegistry();
@@ -46,8 +46,7 @@ for (const fixture of fixtures) {
     const cpuStart = process.cpuUsage();
     const memoryStart = process.memoryUsage().heapUsed;
     const result = runPersonalHouseholdForecast(fixture.model, fixture.request, createApplicationPerformanceObserver({ now: () => performance.now() }, context, registry));
-    requireCompletedPerformanceForecast(result, fixture.id);
-    if (result.status !== "completed") throw new Error(`${fixture.id} did not complete.`);
+    requireFullHorizonPerformanceForecast(result, fixture.id);
     const cpu = process.cpuUsage(cpuStart);
     const sampledHeapUsedBytes = process.memoryUsage().heapUsed;
     runs.push(Object.freeze({ run: index + 1, ...createPerformanceEvidenceSample(registry, result, {
@@ -81,18 +80,8 @@ const comparisonValidation = primaryFixtures.flatMap((fixture) => {
     liabilities: { ...fixture.request.compiler.liabilities!, simulationEnd: end, months: 1 },
   } };
   const comparison = comparePersonalHouseholdScenarioIntents(fixture.model, request, fixture.comparisonIntents);
-  if (comparison.status !== "completed" || comparison.alternatives.length !== fixture.comparisonIntents.length
-    || comparison.alternatives.some((alternative, index) => alternative.status !== "completed"
-      || alternative.name !== fixture.comparisonIntents[index]!.name || alternative.comparedThrough !== `${end}T00:00:00.000Z`))
-    throw new Error(`${fixture.id} bounded lower-return comparison did not complete (${comparison.status}).`);
-  return [Object.freeze({ fixtureId: fixture.id, applicability: "applicable", status: comparison.status,
-    measurement: "not_measured; validation outside baseline timing/resource samples", horizon: Object.freeze({ start, end }),
-    alternatives: Object.freeze(comparison.alternatives.map((alternative, index) => Object.freeze({
-      scenarioId: fixture.comparisonIntents[index]!.scenarioId,
-      changeKinds: Object.freeze(fixture.comparisonIntents[index]!.changes.map((change) => change.kind)),
-      status: alternative.status, comparedThrough: alternative.comparedThrough,
-    }))),
-  })];
+  return [createPerformanceComparisonValidation(fixture.id, comparison, fixture.comparisonIntents,
+    fixture.request.compiler.investments!.scenarioId, { start, end })];
 });
 
 const artifact = Object.freeze({
