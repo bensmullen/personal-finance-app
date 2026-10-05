@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createApplicationPerformanceObserver, translateMeteredCost, requireCompletedPerformanceForecast, createPerformanceEvidenceSample } from "../src/application/performance.js";
+import { createApplicationPerformanceObserver, translateMeteredCost, requireCompletedPerformanceForecast, requireFullHorizonPerformanceForecast, createPerformanceComparisonValidation, createPerformanceEvidenceSample } from "../src/application/performance.js";
 import { PerformanceRegistry, createPerformanceSession, type PerformanceContext } from "../src/diagnostics/performance.js";
 import { runPersonalHouseholdForecast, comparePersonalHouseholdScenarioIntents } from "../src/application/householdProjection.js";
 import { createRealisticPerformanceFixture, createStressPerformanceFixture, createPerformanceScalingFixtures } from "./fixtures/performanceHouseholds.js";
@@ -184,6 +184,7 @@ describe("performance instrumentation", () => {
       const result = runPersonalHouseholdForecast(fixture.model, boundedRequest);
       expect(result.status, JSON.stringify(result.diagnostics)).toBe("incomplete");
       expect(() => requireCompletedPerformanceForecast(result, fixture.id)).toThrow("did not complete");
+      expect(requireFullHorizonPerformanceForecast(result, fixture.id)).toBe(result);
       if (result.status === "unavailable") throw new Error("Fixture failed.");
       expect(result.points).toHaveLength(1);
       expect(result.reachedThrough).toBe(result.requestedHorizon.end);
@@ -222,6 +223,9 @@ describe("performance instrumentation", () => {
     }
     expect(stress.coverage.canonicalObjectCounts.Expense).toBeGreaterThan(realistic.coverage.canonicalObjectCounts.Expense!);
     expect(realistic.coverage.unsupportedGaps.join(" ")).toContain("multi-member");
+    expect(realistic.coverage.unsupportedGaps).not.toContain("tax execution");
+    expect(realistic.coverage.unsupportedGaps.join(" ")).toContain("tax completeness");
+    expect(realistic.coverage.executionMechanics).toContain("T1A tax participant execution and capability diagnostics");
     for (const type of ["Account", "Income", "Expense", "Investment", "Liability", "Event", "PrimitiveInstance"] as const) {
       expect(stress.coverage.canonicalObjectCounts[type]).toBeGreaterThan(realistic.coverage.canonicalObjectCounts[type]!);
     }
@@ -264,6 +268,12 @@ describe("performance instrumentation", () => {
       expect(comparison.alternatives).toHaveLength(1);
       expect(comparison.alternatives[0]!.status).toBe("incomplete");
       expect(comparison.alternatives[0]!.points.some((point) => point.deltas.netWorth.amount !== "0")).toBe(true);
+      const evidence = createPerformanceComparisonValidation(fixture.id, comparison, fixture.comparisonIntents,
+        fixture.request.compiler.investments!.scenarioId, { start: "2026-01-01", end: "2026-02-01" });
+      expect(evidence.status).toBe("incomplete");
+      expect(evidence.alternatives[0]).toEqual({ scenarioId: fixture.comparisonIntents[0]!.scenarioId,
+        changeKinds: ["investment_return"], status: "incomplete", comparedThrough: "2026-02-01T00:00:00.000Z" });
+      expect(JSON.stringify(evidence)).not.toMatch(/points|deltas|configurationDifferences|amount/);
     }
     const stress = createStressPerformanceFixture();
     expect(stress.comparisonIntents).toHaveLength(1);
@@ -321,25 +331,76 @@ describe("performance instrumentation", () => {
     expect(() => requireCompletedPerformanceForecast({ status: "completed", requestedHorizon: { start: "2026-01-01", end: "2027-01-01" }, reachedThrough: "2026-02-01" }, "fixture")).toThrow();
   });
 
+  it("separates full-horizon benchmarkability from strict financial completion", () => {
+    const horizon = { start: "2026-01-01", end: "2026-02-01" };
+    for (const status of ["completed", "incomplete"]) {
+      const full = { status, requestedHorizon: horizon, reachedThrough: horizon.end };
+      expect(requireFullHorizonPerformanceForecast(full, "fixture")).toBe(full);
+      if (status === "completed") expect(requireCompletedPerformanceForecast(full, "fixture")).toBe(full);
+      else expect(() => requireCompletedPerformanceForecast(full, "fixture")).toThrow();
+      for (const partial of [
+        { status }, { status, requestedHorizon: horizon }, { status, reachedThrough: horizon.end },
+        { ...full, reachedThrough: horizon.start }, { ...full, reachedThrough: "2026-03-01" },
+      ]) expect(() => requireFullHorizonPerformanceForecast(partial, "fixture")).toThrow();
+    }
+    for (const status of ["unavailable", "unsupported", "error", "unknown"]) {
+      expect(() => requireFullHorizonPerformanceForecast({ status, requestedHorizon: horizon, reachedThrough: horizon.end }, "fixture")).toThrow();
+    }
+  });
+
+  it("requires bounded comparison statuses, boundary, intent identity and alternative structure", () => {
+    const fixture = createRealisticPerformanceFixture();
+    const intents = fixture.comparisonIntents;
+    const alternative = { name: intents[0]!.name, status: "incomplete", comparedThrough: "2026-02-01T00:00:00.000Z" };
+    const comparison = { status: "incomplete", alternatives: [alternative] };
+    const validate = (result: Parameters<typeof createPerformanceComparisonValidation>[1],
+      declared: Parameters<typeof createPerformanceComparisonValidation>[2] = intents) =>
+      createPerformanceComparisonValidation(fixture.id, result, declared, fixture.request.compiler.investments!.scenarioId,
+        { start: "2026-01-01", end: "2026-02-01" });
+    for (const status of ["completed", "incomplete"]) {
+      expect(validate({ status, alternatives: [{ ...alternative, status }] })).toMatchObject({ status, alternatives: [{ status }] });
+    }
+    for (const status of ["unavailable", "unsupported", "error"]) {
+      expect(() => validate({ ...comparison, status })).toThrow();
+      expect(() => validate({ ...comparison, alternatives: [{ ...alternative, status }] })).toThrow();
+    }
+    expect(() => validate({ ...comparison, executionError: true })).toThrow();
+    for (const alternatives of [[], [alternative, alternative], [{ ...alternative, name: "wrong" }],
+      [{ ...alternative, comparedThrough: undefined }], [{ ...alternative, comparedThrough: "2026-01-01T00:00:00.000Z" }],
+      [{ ...alternative, comparedThrough: "2026-03-01T00:00:00.000Z" }]]) {
+      expect(() => validate({ ...comparison, alternatives })).toThrow();
+    }
+    expect(() => validate(comparison, [])).toThrow();
+    expect(() => validate(comparison, [intents[0]!, intents[0]!])).toThrow();
+    expect(() => validate(comparison, [{ ...intents[0]!, changes: [] }])).toThrow();
+    expect(() => validate(comparison, [{ ...intents[0]!, changes: [{ kind: "retirement_date" }] }])).toThrow();
+    expect(() => validate(comparison, [{ ...intents[0]!, baseScenarioId: "wrong" }])).toThrow();
+    expect(() => validate(comparison, [{ ...intents[0]!, scenarioId: intents[0]!.baseScenarioId! }])).toThrow();
+  });
+
   it("retains record/summary/artifact context and absolute memory without retaining financial results", () => {
     const fixture = createRealisticPerformanceFixture();
     const registry = new PerformanceRegistry();
     const sampleContext: PerformanceContext = { ...context, horizon: { start: "2026-01-01", end: "2026-02-01" }, modelCounts: fixture.coverage.canonicalObjectCounts,
       modelVersion: fixture.model.modelFormatVersion, specificationVersion: fixture.model.financialSpecificationVersion, engineVersion: "0.1.0", scalingDimensions: { ...fixture.dimensions, horizonMonths: 1 } };
     let tick = 0;
-    const taxFreeModel = { ...fixture.model, objects: { ...fixture.model.objects, Income: (fixture.model.objects.Income ?? []).map(item => {
-      if (item === null || typeof item !== "object" || Array.isArray(item)) throw new Error("Expected canonical Income");
-      return { ...item, tax_character: "tax_free" };
-    }) } };
-    const result = runPersonalHouseholdForecast(taxFreeModel, oneMonth(fixture.request), createApplicationPerformanceObserver({ now: () => ++tick }, sampleContext, registry));
+    const result = runPersonalHouseholdForecast(fixture.model, oneMonth(fixture.request), createApplicationPerformanceObserver({ now: () => ++tick }, sampleContext, registry));
     const sample = createPerformanceEvidenceSample(registry, result, { cpuTimeMs: 1, memoryBytes: 1024, memoryDeltaBytes: -64, metering: "not_metered" });
-    expect(sample.context).toMatchObject({ ...sampleContext, status: "completed" });
+    expect(result.status).toBe("incomplete");
+    if (result.status === "unavailable") throw new Error("Fixture failed.");
+    expect(sample.status).toBe("incomplete");
+    expect(sample.context).toMatchObject({ ...sampleContext, status: "incomplete" });
     expect(sample.phases["forecast.total"]!.summary?.contexts).toEqual([sample.context]);
     expect(sample.phases["transport.serialization"]!.availability).toBe("not_applicable");
     expect(sample.resources).toEqual({ cpuTimeMs: 1, memoryBytes: 1024, memoryDeltaBytes: -64, metering: "not_metered" });
     expect(sample.requestedHorizon?.end).toBe(sample.reachedThrough);
     expect(sample).not.toHaveProperty("points");
     expect(sample).not.toHaveProperty("openingSnapshot");
+    const serialized = JSON.parse(JSON.stringify(sample));
+    expect(serialized).toMatchObject({ status: "incomplete", requestedHorizon: result.requestedHorizon, reachedThrough: result.reachedThrough });
+    expect(serialized).not.toHaveProperty("points");
+    expect(serialized).not.toHaveProperty("openingSnapshot");
+    expect(JSON.stringify(serialized)).not.toMatch(/"(balances|transactions|amount|taxAmount)":/);
     expect(() => createPerformanceEvidenceSample(registry, { status: "incomplete" }, { metering: "not_metered" })).toThrow();
   });
 

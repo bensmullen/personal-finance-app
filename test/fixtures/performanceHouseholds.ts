@@ -63,8 +63,8 @@ const coverage = (model: PersonalDraft, stress: boolean, id: string): Performanc
     ? "lower investment returns (bounded CI and controlled heavy validation)"
     : id === "stress-household" ? "lower investment returns (bounded controlled heavy validation; CI structure only)"
       : "lower investment returns (intent structure only for scaling probes; no probe comparison execution claim)"]),
-  executionMechanics: Object.freeze(["opening reconciliation", "monthly recurrence", "funding/settlement", "recurring investment purchase", "owned-account transfer", "mark-to-market", "debt amortization", "extra principal with required-service dependency", ...(stress ? ["long horizon", "high recurring-flow count"] : [])]),
-  unsupportedGaps: Object.freeze(["multi-member household (HOUSEHOLD_MULTI_MEMBER_UNSUPPORTED)", "tax execution", "stochastic execution", "worker execution"]),
+  executionMechanics: Object.freeze(["opening reconciliation", "monthly recurrence", "funding/settlement", "recurring investment purchase", "owned-account transfer", "mark-to-market", "debt amortization", "extra principal with required-service dependency", "T1A tax participant execution and capability diagnostics", "tax-affected output completeness gating (financially incomplete can execute the full horizon)", ...(stress ? ["long horizon", "high recurring-flow count"] : [])]),
+  unsupportedGaps: Object.freeze(["multi-member household (HOUSEHOLD_MULTI_MEMBER_UNSUPPORTED)", "full target-cohort tax completeness when authored facts or verified law are missing", "stochastic execution", "worker execution"]),
   executableEvidence: Object.freeze([
     id === "realistic-household"
       ? "test/performanceInstrumentation.test.ts: provides executable distinct synthetic fixtures with explicit gaps (bounded realistic execution)"
@@ -72,7 +72,7 @@ const coverage = (model: PersonalDraft, stress: boolean, id: string): Performanc
         : "test/performanceInstrumentation.test.ts: declares an independent horizon and recurring-operation scaling matrix with bounded compilation",
     ...(id === "realistic-household" ? ["test/performanceInstrumentation.test.ts: executes the declared lower-return comparison intent (realistic execution only)"] : []),
     ...(id === "realistic-household" || id === "stress-household" ? ["benchmarks/capture.ts: bounded lower-return comparison validation (controlled execution; not timed)"] : []),
-    "benchmarks/capture.ts: completed primary/scaling forecast requests",
+    "benchmarks/capture.ts: full-horizon deterministic primary/scaling forecast execution including T1A tax participant work; actual financial completeness status retained",
   ]),
 });
 
