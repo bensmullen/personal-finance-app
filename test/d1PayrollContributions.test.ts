@@ -108,6 +108,20 @@ describe("D1 payroll recognition and shared contribution capacity", () => {
     expect(durablePayrollAllocations(imported)).toEqual(durablePayrollAllocations(authored));
     expect(authoredContributionRules(golden.person, ["401k_additions"], 2026, { planKey: "sponsor" })[0]!.contribution_limits).toMatchObject([{ bucket_key: "401k_additions:sponsor" }]);
   });
+  it("rejects a taxable workplace wrapper before authoring an allocation", () => {
+    const original = createGoldenHouseholdDraft();
+    const object = (value: unknown): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
+    const model = { ...original, objects: { ...original.objects, Account: original.objects.Account!.map(value => object(value) && value.account_id === golden.retirementAccount ? { ...value, tax_treatment: "taxable" } : value) } };
+    expect(() => authorPayrollContributionPlan(model, { primitiveId: id(888), investmentId: golden.retirementInvestment, incomeId: golden.income, priority: 10, character: "traditional_401k", calculation: { kind: "fixed", amount: "100" }, planKey: "sponsor", vestedFraction: "1", excessPolicy: "reject", facts: { taxYear: 2026, ageAtYearEnd: 36, eligiblePlanCompensation: "100000" } })).toThrow("PAYROLL_DESTINATION_TAX_TREATMENT_MISMATCH");
+    expect(model.objects.Investment).toEqual(original.objects.Investment);
+  });
+  it("rejects duplicate event identities and same-instant vest/forfeit before changing the baseline", () => {
+    const model = createGoldenHouseholdDraft();
+    const plan = { primitiveId: id(888), investmentId: golden.retirementInvestment, incomeId: golden.income, priority: 10, character: "employer_401k" as const, calculation: { kind: "fixed" as const, amount: "400" }, planKey: "sponsor", vestedFraction: "0.25", excessPolicy: "reject" as const, facts: { taxYear: 2026, eligiblePlanCompensation: "100000" } };
+    expect(() => authorPayrollContributionPlan(model, { ...plan, contingentEvents: [{ eventId: id(987), date: "2026-02-10", kind: "vest" }, { eventId: id(987), date: "2026-02-11", kind: "forfeit" }] })).toThrow("WORKPLACE_EVENT_AMBIGUOUS");
+    expect(() => authorPayrollContributionPlan(model, { ...plan, contingentEvents: [{ eventId: id(987), date: "2026-02-10", kind: "vest" }, { eventId: id(988), date: "2026-02-10", kind: "forfeit" }] })).toThrow("WORKPLACE_EVENT_AMBIGUOUS");
+    expect(durablePayrollAllocations(model)).toEqual([]);
+  });
   it("authors and executes both spouses' family HSA allocations through the canonical compilers", () => {
     let model = createGoldenHouseholdDraft();
     model = patchPersonalObject(model, "Household", golden.household, { members: [golden.person, id(999)], filing_status: "married_joint", household_type: "couple" });

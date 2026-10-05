@@ -28,7 +28,8 @@ export const supportsD1SpouseHsaScope = (model: PortableModelEnvelope, members: 
 };
 
 /** A linked P03 adapter allocates actual gross payroll occurrences; it creates no independent cash schedule. */
-export const durablePayrollAllocations = (model: PortableModelEnvelope): readonly DurablePayrollAllocation[] => objects(model, "Investment").flatMap(investment => {
+export const durablePayrollAllocations = (model: PortableModelEnvelope): readonly DurablePayrollAllocation[] => {
+ const allocations = objects(model, "Investment").flatMap(investment => {
   const primitive = objects(model, "PrimitiveInstance").find(item => item.primitive_instance_id === investment.contribution_model_id);
   if (!primitive || !record(primitive.parameters) || primitive.parameters.adapter !== PAYROLL_ADAPTER) return [];
   if (primitive.primitive_id !== "P03" || primitive.enabled !== true || primitive.start_date != null || primitive.end_date != null || !record(primitive.input_bindings)) return fail("PAYROLL_PRIMITIVE_UNSUPPORTED");
@@ -43,6 +44,7 @@ export const durablePayrollAllocations = (model: PortableModelEnvelope): readonl
   const hsa = policy.character.endsWith("_hsa");
   if (hsa ? !["hsa", "hsa_investment"].includes(String(account.account_type)) || account.tax_treatment !== "tax_free" : !["traditional_401k", "roth_401k"].includes(String(account.account_type))) return fail("PAYROLL_DESTINATION_CHARACTER_UNSUPPORTED");
   if (!hsa && (policy.character === "traditional_401k" || policy.character === "after_tax_401k" || policy.character === "employer_401k") && account.account_type !== "traditional_401k" || policy.character === "roth_401k" && account.account_type !== "roth_401k") return fail("PAYROLL_DESTINATION_CHARACTER_MISMATCH");
+  if (!hsa && account.tax_treatment !== (account.account_type === "roth_401k" ? "tax_free" : "tax_deferred")) return fail("PAYROLL_DESTINATION_TAX_TREATMENT_MISMATCH");
   const calculation = primitive.parameters.calculation;
   if (!record(calculation)) return fail("PAYROLL_CALCULATION_REQUIRED");
   const parsed: PayrollContributionAllocation["calculation"] = calculation.kind === "fixed" ? { kind: "fixed", amount: fixed(calculation.amount) }
@@ -63,6 +65,11 @@ export const durablePayrollAllocations = (model: PortableModelEnvelope): readonl
   });
   return [{ incomeId, events, allocation: { id: String(primitive.primitive_instance_id), priority, accountId: domainId("account", String(account.account_id)), positionId: domainId("position", String(investment.investment_id)), policy, calculation: parsed, vestedFraction: fraction } }];
 });
+ const events = allocations.flatMap(item => item.events);
+ if (new Set(allocations.map(item => item.allocation.id)).size !== allocations.length) return fail("PAYROLL_POLICY_BINDING_AMBIGUOUS");
+ if (new Set(events.map(event => event.eventId)).size !== events.length || events.some(event => events.some(other => other !== event && other.positionId === event.positionId && other.at === event.at))) return fail("WORKPLACE_EVENT_AMBIGUOUS");
+ return allocations;
+};
 
 export const payrollOpeningBalances = (model: PortableModelEnvelope, allocations: readonly DurablePayrollAllocation[]) => {
   const accounts: AuthoritativeState["accounts"] = {}, positions: AuthoritativeState["positions"] = {};
