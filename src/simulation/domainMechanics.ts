@@ -61,6 +61,10 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
   if (prior.completedOperationIds?.includes(operation.id) || state.identities.postedTransactionIds.some(id => id.startsWith("domain:" + operation.id + ":")))
     return { ...opening, facts: {} };
   const lots = { ...prior.lots }, basis = { ...prior.basis }, receipts = { ...prior.receipts };
+  const retirementMovement = ["conversion", "direct_rollover", "mixed_rollover", "indirect_distribution"].includes(operation.kind);
+  const sourceAccountId = input.holdings.find(item => item.id === operation.holdingId)?.accountId;
+  if (retirementMovement && input.holdings.filter(item => item.accountId === sourceAccountId && state.positions[item.id]?.quantity.amount.isPositive()).length !== 1)
+    fail("DOMAIN_RETIREMENT_ALLOCATION_UNSUPPORTED", "Retirement movement requires one eligible owned source holding; multi-holding allocation is unavailable.");
   const basisContributionIds = new Set(prior.basisContributionIds ?? []);
   for (const contribution of Object.values(state.contributions ?? {})) {
     if (contribution.source === "opening" || basisContributionIds.has(contribution.id)) continue;
@@ -69,7 +73,10 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
     let added = zero;
     if (["after_tax_401k", "roth_401k", "roth_ira"].includes(contribution.character)) added = contribution.amount;
     if (contribution.character === "traditional_ira") {
-      if (contribution.eligibleDeduction === undefined) fail("DOMAIN_RETIREMENT_BASIS_INCOMPLETE", "Authoritative IRA deduction facts are required before moving contributed value.");
+      if (contribution.eligibleDeduction === undefined) {
+        if (retirementMovement && contribution.accountId === sourceAccountId) fail("DOMAIN_RETIREMENT_BASIS_INCOMPLETE", "Authoritative IRA deduction facts are required before moving contributed value.");
+        continue;
+      }
       added = contribution.amount.minus(contribution.eligibleDeduction!);
     }
     const destination = destinations[0]!;

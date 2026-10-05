@@ -196,4 +196,12 @@ describe("D1-B independent financial effects (opening bank 10000, wrapper 0, hol
     expect(domainCashAccesses(input(), operation("cash_interest", { cashAccountId: bank }))).toEqual([{ kind: "account_cash", accountId: bank, mode: "consume" }]);
     expect(domainCashAccesses(input(), operation("conversion", { destinationHoldingId: destination }))).toEqual([]);
   });
+  it("keeps missing IRA deduction facts scoped to retirement movement rather than unrelated bank interest", () => {
+    const before = opening();
+    before.state.contributions = { ira: { id: "ira", at: instant("2026-01-05T00:00:00.000Z"), personId: person, accountId: wrapper, character: "traditional_ira", amount: money("200", USD), buckets: [] } };
+    const interest = executeDomainOperation(before, input(), operation("cash_interest", { cashAccountId: bank, amount: "0", annualEffectiveRate: "0.126825030131969720661201" }));
+    expect(interest.state.accounts[bank]!.cash.amount.toString()).toBe("10100");
+    expect(() => executeDomainOperation(before, input(), operation("direct_rollover", { amount: "1000", destinationHoldingId: destination }))).toThrow("Authoritative IRA deduction facts");
+    expect(before.state.positions[position]!.quantity.amount.toString()).toBe("10");
+  });
 });
