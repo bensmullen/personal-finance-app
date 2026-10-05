@@ -98,6 +98,7 @@ export interface CurrentPositionReadModel {
   readonly status: "complete" | "partial" | "unsupported" | "invalid";
   readonly netWorth?: MoneyReadModel;
   readonly cash?: MoneyReadModel;
+  readonly wrapperCash?: MoneyReadModel;
   readonly assets?: MoneyReadModel;
   readonly liabilities?: MoneyReadModel;
   readonly monthlyIncome?: MoneyReadModel;
@@ -637,6 +638,7 @@ export const getCurrentPosition = (
     status,
     ...(value.netWorth ? { netWorth: moneyDto(value.netWorth) } : {}),
     ...(value.cash ? { cash: moneyDto(value.cash) } : {}),
+    ...(value.wrapperCash ? { wrapperCash: moneyDto(value.wrapperCash) } : {}),
     ...(value.assets ? { assets: moneyDto(value.assets) } : {}),
     ...(value.liabilities ? { liabilities: moneyDto(value.liabilities) } : {}),
     ...(value.monthlyIncome

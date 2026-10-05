@@ -1097,7 +1097,8 @@ function Overview({
 }) {
   const cards = [
     ["Net worth", position.netWorth],
-    ["Cash", position.cash],
+    ["Household cash", position.cash],
+    ["Cash inside investment accounts", position.wrapperCash],
     ["Monthly cash flow", position.monthlyCashFlow],
     ["Debt", position.liabilities],
   ] as const;

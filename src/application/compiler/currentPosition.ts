@@ -1,4 +1,5 @@
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
+import { classifyAccountEconomics } from "../../model/economicClassification.js";
 import { applyGeometricGrowth } from "../../primitives/index.js";
 import { deriveCurrentPositionTotals } from "../../statements/index.js";
 import {
@@ -44,6 +45,8 @@ export interface CurrentPositionCompilerRequest {
 
 export interface CurrentPositionCompilation {
   readonly cash?: Money;
+  /** Internal wrapper cash is an asset but is not household spending cash. */
+  readonly wrapperCash?: Money;
   readonly assets?: Money;
   readonly liabilities?: Money;
   readonly netWorth?: Money;
@@ -154,6 +157,7 @@ export const compileCurrentPosition = (
   }
   const diagnostics: CapabilityDiagnostic[] = [];
   const cashBalances: Money[] = [];
+  const wrapperCashBalances: Money[] = [];
   let cashComplete = true;
   const accountsById = new Map<string, CanonicalObject>();
   const accountStatus = new Map<
@@ -275,7 +279,15 @@ export const compileCurrentPosition = (
       }
       continue;
     }
-    cashBalances.push(balance);
+    const economicClass = classifyAccountEconomics(account.account_type);
+    if (economicClass === "unsupported") {
+      cashComplete = false;
+      diagnostics.push(diagnostic("ACCOUNT_ECONOMIC_CLASS_UNSUPPORTED", `Account ${id} has no supported economic classification.`, "assets", "Account", id, "account_type"));
+      continue;
+    }
+    // opening_balance is internal cash, not the market-value total of the wrapper.
+    if (economicClass === "household_cash") cashBalances.push(balance);
+    else wrapperCashBalances.push(balance);
   }
 
   const liabilityBalances: Money[] = [];
@@ -712,6 +724,23 @@ export const compileCurrentPosition = (
             id,
             field,
           );
+        if (type === "Income" && field === "related_event_id") {
+          const event = objects(model, "Event").find(candidate => canonicalId(candidate, "event_id") === raw.toLowerCase())!;
+          selectedScenario ??= selectScenario(model);
+          if (selectedScenario.status === "invalid_model") return selectedScenario;
+          const eventDate = utcDate(event.start_date);
+          const supportedFutureRetirement = selectedScenario.status === "compiled" &&
+            event.enabled === true && event.event_type === "retirement" && event.trigger_type === "scheduled" &&
+            eventDate !== undefined && eventDate > asOf &&
+            String(event.scenario_id).toLowerCase() === selectedScenario.value.id &&
+            Array.isArray(selectedScenario.value.object?.event_ids) &&
+            selectedScenario.value.object.event_ids.some(value => typeof value === "string" && value.toLowerCase() === raw.toLowerCase()) &&
+            event.probability_model_id == null && event.trigger_condition == null && event.duration_days == null && event.end_date == null &&
+            (event.precedence == null || event.precedence === 0) &&
+            Array.isArray(event.effect_ids) && event.effect_ids.length === 0 &&
+            Array.isArray(event.dependencies) && event.dependencies.length === 0;
+          if (supportedFutureRetirement) continue;
+        }
         return {
           status: "unsupported",
           diagnostics: Object.freeze([
@@ -857,7 +886,7 @@ export const compileCurrentPosition = (
   const totals =
     cashComplete && assetsComplete
       ? deriveCurrentPositionTotals(
-          cashBalances,
+          [...cashBalances, ...wrapperCashBalances],
           nonCashAssets,
           liabilityBalances,
           currency,
@@ -871,6 +900,7 @@ export const compileCurrentPosition = (
     status: "compiled",
     value: Object.freeze({
       ...(cash ? { cash } : {}),
+      ...(cashComplete ? { wrapperCash: sumMoney(wrapperCashBalances, currency) } : {}),
       ...(totals ? { assets: totals.assets } : {}),
       ...(totals && liabilitiesComplete ? { netWorth: totals.netWorth } : {}),
       ...(liabilities ? { liabilities } : {}),

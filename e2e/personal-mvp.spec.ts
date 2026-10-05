@@ -101,8 +101,8 @@ test("R4 UAT baseline projected return edits the linked assumption and reruns th
 test("R4 UAT diagnostics explain monthly-event limits and retirement remediation without raw codes", async () => {
   const draft = createGoldenHouseholdDraft();
   const monthly = forecastDiagnosticMessage({ code: "MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED", entityId: GOLDEN_HOUSEHOLD_IDS.income }, draft);
-  expect(monthly).toContain("no supported editor repair");
-  expect(monthly).toContain("forecast remains unsupported");
+  expect(monthly).toContain("Supported future scheduled retirement events preserve current income");
+  expect(monthly).toContain("other event behavior requires a separate financial capability");
   expect(monthly).not.toContain("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
   const retirement = forecastDiagnosticMessage({ code: "RETIREMENT_BINDING_MISMATCH", entityId: GOLDEN_HOUSEHOLD_IDS.retirementEvent }, draft);
   expect(retirement).toContain("Planned retirement");
@@ -112,14 +112,12 @@ test("R4 UAT diagnostics explain monthly-event limits and retirement remediation
   expect(retirement).not.toContain("RETIREMENT_BINDING_MISMATCH");
 });
 
-test("R4 UAT monthly event limitation remains visible with original evidence", async ({ page }) => {
+test("D1-A Golden Household has no spurious retirement-event warning", async ({ page }) => {
   await loadExample(page);
   const check = page.locator("article").filter({ has: page.getByRole("heading", { name: "Model check", exact: true }) });
-  await expect(check).toContainText("monthly income or spending summary cannot yet interpret");
-  await expect(check).toContainText("keep the recorded relationship intact");
-  await expect(check.locator("pre")).not.toBeVisible();
-  await check.getByText("Technical diagnostic details", { exact: true }).click();
-  await expect(check.locator("pre")).toContainText("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
+  await expect(check).toContainText("Your current-position inputs are ready.");
+  await expect(check).not.toContainText("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
+  await expect(check.getByText("Technical diagnostic details", { exact: true })).toHaveCount(0);
 });
 
 test("R4 UAT retirement comparison refreshes a stale session date from its recorded event", async ({ page }) => {
