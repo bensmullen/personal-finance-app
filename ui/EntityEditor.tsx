@@ -22,7 +22,7 @@ const EXPERT_FIELDS = new Set([
 const internalReference = (field: EditorField) => field.type === "object" || Boolean(field.ref && referenceTargets(field.ref).length === 0);
 const FIELD_HELP: Record<string, string> = {
   amount: "Amount per occurrence, using the frequency selected here.",
-  opening_balance: "Opening position; changing this does not represent a new deposit or withdrawal.",
+  opening_balance: "Internal account cash at the opening position, excluding holdings valued separately. Changing this does not represent a new deposit or withdrawal.",
   acquisition_cost: "Recorded acquisition cost. Valuation depends on the supported model.",
   principal: "Original borrowed amount, distinct from the remaining balance.",
   current_balance: "Remaining debt at the model's opening position.",

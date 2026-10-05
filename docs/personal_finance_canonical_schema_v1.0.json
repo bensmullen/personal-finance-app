@@ -844,6 +844,7 @@
         },
         "opening_balance": {
           "type": "money",
+          "description": "Internal account cash, excluding separately valued holdings; this is not an account-wrapper market-value total.",
           "required": true,
           "cardinality": "1",
           "default": "0.0000",

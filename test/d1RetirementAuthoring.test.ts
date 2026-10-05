@@ -4,8 +4,22 @@ import { createGoldenHouseholdForecastRequest, GOLDEN_HOUSEHOLD_IDS as ids } fro
 import { comparePersonalHouseholdScenarioIntents, runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
 import { compileCashFlow } from "../src/application/compiler/cashFlow.js";
 import { exportPersonalModelJson, importPersonalModelJson } from "../src/application/modelPortability.js";
+import type { JsonValue } from "../src/model/modelVersion.js";
+
+const record = (value: JsonValue): value is Readonly<Record<string, JsonValue>> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 describe("D1-A durable baseline retirement date", () => {
+  it("selects the canonical root when an enabled child scenario also exists", () => {
+    const original = createGoldenHouseholdDraft();
+    const root = original.objects.Scenario!.filter(record).find(value => value.scenario_id === ids.rootScenario);
+    if (!root) throw new Error("fixture root missing");
+    const model = { ...original, objects: { ...original.objects, Scenario: [...original.objects.Scenario!, {
+      ...root, scenario_id: "d1000000-0000-4000-8000-000000000060", base_scenario_id: ids.rootScenario, enabled: true,
+    }] } };
+    const edited = editPersonalRetirementDate(model, ids.income, "2026-02-01");
+    expect(getPersonalRetirementPlans(edited)[0]!.date).toBe("2026-02-01");
+    expect(getPersonalRetirementPlans(model)[0]!.date).toBe("2035-01-01");
+  });
   it("updates canonical baseline and derives its binding despite an older session date", () => {
     const original = createGoldenHouseholdDraft();
     const edited = editPersonalRetirementDate(original, ids.income, "2026-02-01");
@@ -34,7 +48,14 @@ describe("D1-A durable baseline retirement date", () => {
     expect(baseline.status, JSON.stringify(baseline)).not.toBe("unavailable");
     if (baseline.status === "unavailable") throw new Error(baseline.message);
     expect(baseline.points.map(point => point.statementIncome.amount)).toEqual(["9000", "0"]);
-    const result = comparePersonalHouseholdScenarioIntents(model, request, [{ scenarioId: "d1000000-0000-4000-8000-000000000050", name: "Retire in March", changes: [{
+    // Compare through March so the alternative event is inside [start, end).
+    // Keep the independent January/February baseline oracle above unchanged.
+    const comparisonRequest = { ...request, compiler: { ...request.compiler,
+      cashFlow: { ...request.compiler.cashFlow!, simulationEnd: "2026-04-01", months: 3 },
+      investments: { ...request.compiler.investments!, simulationEnd: "2026-04-01", months: 3 },
+      liabilities: { ...request.compiler.liabilities!, simulationEnd: "2026-04-01", months: 3 },
+    } };
+    const result = comparePersonalHouseholdScenarioIntents(model, comparisonRequest, [{ scenarioId: "d1000000-0000-4000-8000-000000000050", name: "Retire in March", changes: [{
       kind: "retirement_date", incomeId: ids.income, targetEventId: ids.retirementEvent, baselineDate: "2026-02-01", newDate: "2026-03-01",
       eventId: "d1000000-0000-4000-8000-000000000051",
     }] }]);

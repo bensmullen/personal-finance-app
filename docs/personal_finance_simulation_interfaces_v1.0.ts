@@ -89,6 +89,7 @@ export interface Account {
   currency: string;
   opening_date: string;
   closing_date?: string;
+  /** Internal account cash, excluding separately valued holdings. */
   opening_balance: number;
   /** derived; recompute rather than treat as authoritative. */
   current_balance: number;

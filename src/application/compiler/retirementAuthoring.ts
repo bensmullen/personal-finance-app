@@ -33,13 +33,13 @@ export const authorCanonicalRetirementDate = (model: PortableModelEnvelope, inco
     event.probability_model_id != null || event.trigger_condition != null || event.duration_days != null || event.end_date != null ||
     (Array.isArray(event.effect_ids) && event.effect_ids.length) || (Array.isArray(event.dependencies) && event.dependencies.length) || (event.precedence != null && event.precedence !== 0)) throw new Error("RETIREMENT_AUTHORING_UNSUPPORTED");
   if (income?.end_date != null) throw new Error("RETIREMENT_INDEPENDENT_INCOME_END_UNSUPPORTED");
-  const roots = objects(model, "Scenario").filter(item => item.enabled === true && item.parent_scenario_id == null);
+  const roots = objects(model, "Scenario").filter(item => item.enabled === true && item.base_scenario_id == null);
   if (roots.length !== 1 || canonicalId(roots[0]!, "scenario_id") !== String(event.scenario_id).toLowerCase() || !Array.isArray(roots[0]!.event_ids) || !roots[0]!.event_ids.some(value => typeof value === "string" && value.toLowerCase() === eventId)) throw new Error("RETIREMENT_BASELINE_RELATIONSHIP_UNSUPPORTED");
   return Object.freeze({ ...model, objects: Object.freeze({ ...model.objects, Event: Object.freeze(objects(model, "Event").map(item => canonicalId(item, "event_id") === eventId ? Object.freeze({ ...item, start_date: date }) : item)) }) });
 };
 
 export const canonicalRetirementPlans = (model: PortableModelEnvelope): readonly { readonly incomeId: string; readonly label: string; readonly date: string }[] => {
-  const roots = objects(model, "Scenario").filter(item => item.enabled === true && item.parent_scenario_id == null);
+  const roots = objects(model, "Scenario").filter(item => item.enabled === true && item.base_scenario_id == null);
   if (roots.length !== 1) return Object.freeze([]);
   const bindings = deriveCanonicalRetirementBindings(model, String(roots[0]!.scenario_id));
   return Object.freeze(bindings.map(binding => {
