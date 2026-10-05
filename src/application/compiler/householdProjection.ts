@@ -1,5 +1,6 @@
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
-import { supportsD1SpouseHsaScope } from "./payrollAuthoring.js";
+import { supportsD1SpouseHsaScope, durablePayrollAllocations } from "./payrollAuthoring.js";
+import { createWorkplaceEventParticipant } from "../../simulation/workplaceEvents.js";
 import { createPerformanceSession, type PerformanceObserver, type PerformanceSession } from "../../diagnostics/performance.js";
 import { canonicalSerialize } from "../../simulation/run.js";
 import { compileHouseholdKernel, type CompiledHouseholdKernel } from "../../simulation/r3/compiledHousehold.js";
@@ -184,7 +185,7 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   });
   const value: CompiledHouseholdProjection = Object.freeze({
     nonInvestmentPositionIds: taxCreditPositionIds(tax.value),
-    participants: Object.freeze([createHouseholdTaxParticipant({ ...tax.value, simulationStart: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`) })]),
+    participants: Object.freeze([createHouseholdTaxParticipant({ ...tax.value, simulationStart: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`) }), ...(durablePayrollAllocations(model).some(item => item.events.length > 0) ? [createWorkplaceEventParticipant(durablePayrollAllocations(model).flatMap(item => item.events))] : [])]),
     ...(cash === undefined ? {} : { cashFlowInput: cash.value.input }),
     ...(investments === undefined ? {} : { investmentInput: investments.value.input }),
     ...(liabilities === undefined ? {} : { liabilityInput: liabilities.value.input }),

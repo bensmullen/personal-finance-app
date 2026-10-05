@@ -249,7 +249,9 @@ export interface ContributionState {
   readonly accountId: string;
   readonly character: string;
   readonly amount: Money;
-  readonly buckets: readonly { readonly identity: string; readonly amount: Money; readonly annualLimit: Money; readonly ruleIds: readonly string[] }[];
+  readonly requested?: Money;
+  readonly excess?: Money;
+  readonly buckets: readonly { readonly identity: string; readonly amount: Money; readonly annualLimit: Money; readonly ruleIds: readonly string[]; readonly usedBefore?: Money; readonly remainingBefore?: Money; readonly facts?: Readonly<Record<string, string | boolean>> }[];
   readonly eligibleDeduction?: Money;
   readonly incomeId?: string;
   readonly employerBenefit?: { readonly positionId: PositionId; readonly vestedAtContribution: Money; readonly contingentAtContribution: Money };

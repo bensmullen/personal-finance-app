@@ -70,6 +70,27 @@ describe("D1 authoritative contribution execution", () => {
     expect(Object.values(result.state.contributions ?? {})).toHaveLength(0);
     expect(result.state.positions[ids.brokerageInvestment]!.quantity.amount.toString()).toBe("500");
   });
+  it.each([["2000", "3750"], ["6000", "1500"]])("shares IRA capacity across accounts and applies the Roth worksheet after a %s Traditional contribution", (traditional, rothAccepted) => {
+    const original = base("traditional_ira");
+    const mixed = { ...original, objects: { ...original.objects, Account: original.objects.Account!.map(value => object(value) && value.account_id === ids.retirementAccount ? { ...value, account_type: "roth_ira", tax_treatment: "tax_free" } : value) } };
+    const annualFacts = { ...facts, rothMagi: "160500" };
+    const first = authorPersonalPurchasePlan(mixed, { primitiveId: "d1c40000-0000-4000-8000-000000000011", investmentId: ids.brokerageInvestment, sourceCashAccountId: ids.checking, amount: traditional, frequency: "once", date: "2026-01-10", order: 10, contributionFacts: annualFacts });
+    const authored = authorPersonalPurchasePlan(first, { primitiveId: "d1c40000-0000-4000-8000-000000000012", investmentId: ids.retirementInvestment, sourceCashAccountId: ids.checking, amount: "5000", frequency: "once", date: "2026-01-10", order: 20, contributionFacts: annualFacts, excessPolicy: "auto_cap" });
+    const result = run(importPersonalModelJson(exportPersonalModelJson(authored)));
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    const contributions = Object.values(result.state.contributions!);
+    expect(contributions.find(entry => entry.character === "roth_ira")!.amount.amount.toString()).toBe(rothAccepted);
+    expect(contributions.flatMap(entry => entry.buckets.filter(bucket => bucket.identity.includes(":ira_shared:"))).reduce((sum, bucket) => sum.plus(bucket.amount), money("0")).equals(money(traditional).plus(money(rothAccepted)))).toBe(true);
+    expect(result.state.accounts[ids.checking]!.cash.equals(money("20000").minus(money(traditional)).minus(money(rothAccepted)))).toBe(true);
+    expect(result.periods[0]!.statements.netWorth.amount.toString()).toBe("170000");
+  });
+  it.each(["traditional_ira", "roth_ira"] as const)("funds %s from savings without expense recognition", character => {
+    const result = run(authorPersonalPurchasePlan(base(character), { primitiveId: "d1c40000-0000-4000-8000-000000000013", investmentId: ids.brokerageInvestment, sourceCashAccountId: ids.savings, amount: "1000", frequency: "once", date: "2026-01-10", order: 10, contributionFacts: facts }));
+    expect(result.status).toBe("completed");
+    expect(result.state.accounts[ids.savings]!.cash.equals(money("14000"))).toBe(true);
+    expect(result.periods[0]!.statements.expenses.isZero()).toBe(true);
+    expect(Object.values(result.state.contributions!)[0]!.amount.equals(money("1000"))).toBe(true);
+  });
 });
 
 describe("D1 employer benefit and contingent ownership", () => {

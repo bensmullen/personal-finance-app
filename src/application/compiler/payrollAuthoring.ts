@@ -6,7 +6,8 @@ import type { PayrollContributionAllocation } from "../../simulation/payrollCont
 import { canonicalSerialize } from "../../simulation/run.js";
 import { authoredContributionRules, compileContributionPolicy, type AuthoredContributionFacts } from "./contributionAuthoring.js";
 import { normalizeContributionLimitRuleIds } from "./contributionBindings.js";
-import { objects, canonicalId, UUID, EXACT_DECIMAL, type CanonicalObject } from "./shared.js";
+import { objects, canonicalId, UUID, EXACT_DECIMAL, utcDate, type CanonicalObject } from "./shared.js";
+import type { WorkplaceReclassification } from "../../simulation/workplaceEvents.js";
 
 export const PAYROLL_ADAPTER = "d1-payroll-contribution/v1";
 const record = (value: JsonValue | undefined): value is CanonicalObject => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -19,7 +20,7 @@ const fixed = (value: JsonValue | undefined) => {
   if (typeof value !== "string" || !EXACT_DECIMAL.test(value) || money(value).isNegative() || !money(value).amount.fitsScale(2)) return fail("PAYROLL_FIXED_AMOUNT_INVALID");
   return money(value);
 };
-export interface DurablePayrollAllocation { readonly incomeId: string; readonly allocation: PayrollContributionAllocation }
+export interface DurablePayrollAllocation { readonly incomeId: string; readonly allocation: PayrollContributionAllocation; readonly events: readonly WorkplaceReclassification[] }
 export const supportsD1SpouseHsaScope = (model: PortableModelEnvelope, members: readonly string[]): boolean => {
   if (members.length !== 2) return false;
   const plans = durablePayrollAllocations(model);
@@ -33,7 +34,7 @@ export const durablePayrollAllocations = (model: PortableModelEnvelope): readonl
   if (primitive.primitive_id !== "P03" || primitive.enabled !== true || primitive.start_date != null || primitive.end_date != null || !record(primitive.input_bindings)) return fail("PAYROLL_PRIMITIVE_UNSUPPORTED");
   const roots = objects(model, "Scenario").filter(item => item.enabled === true && item.base_scenario_id == null);
   if (roots.length !== 1 || primitive.scenario_id !== roots[0]!.scenario_id || investment.scenario_id != null && investment.scenario_id !== primitive.scenario_id) return fail("PAYROLL_ROOT_SCENARIO_REQUIRED");
-  if (Object.keys(primitive.parameters).some(key => !["adapter", "priority", "contribution", "calculation", "vestedFraction"].includes(key)) || Object.keys(primitive.input_bindings).some(key => key !== "income_id")) return fail("PAYROLL_POLICY_FIELDS_UNSUPPORTED");
+  if (Object.keys(primitive.parameters).some(key => !["adapter", "priority", "contribution", "calculation", "vestedFraction", "contingentEvents"].includes(key)) || Object.keys(primitive.input_bindings).some(key => key !== "income_id")) return fail("PAYROLL_POLICY_FIELDS_UNSUPPORTED");
   const incomeId = primitive.input_bindings.income_id;
   const income = objects(model, "Income").find(item => item.income_id === incomeId);
   const account = objects(model, "Account").find(item => item.account_id === investment.account_id);
@@ -52,7 +53,15 @@ export const durablePayrollAllocations = (model: PortableModelEnvelope): readonl
   const employer = policy.character.startsWith("employer_");
   if (!employer && fraction !== "1" || policy.character === "employer_hsa" && fraction !== "1" || !employer && parsed.kind === "match") return fail("PAYROLL_VESTING_OR_MATCH_UNSUPPORTED");
   if (investment.investment_type !== "equity" && investment.investment_type !== "fund" || typeof investment.price !== "string" || !EXACT_DECIMAL.test(investment.price) || !money(investment.price).isPositive()) return fail("PAYROLL_EXECUTABLE_POSITION_REQUIRED");
-  return [{ incomeId, allocation: { id: String(primitive.primitive_instance_id), priority, accountId: domainId("account", String(account.account_id)), positionId: domainId("position", String(investment.investment_id)), policy, calculation: parsed, vestedFraction: fraction } }];
+  const eventBindings = primitive.parameters.contingentEvents ?? [];
+  if (!Array.isArray(eventBindings) || policy.character !== "employer_401k" && eventBindings.length > 0) return fail("WORKPLACE_EVENT_CHARACTER_UNSUPPORTED");
+  const events: WorkplaceReclassification[] = eventBindings.map(binding => {
+    if (!record(binding) || typeof binding.eventId !== "string" || binding.kind !== "vest" && binding.kind !== "forfeit") return fail("WORKPLACE_EVENT_BINDING_INVALID");
+    const event = objects(model, "Event").find(item => item.event_id === binding.eventId);
+    if (!event || event.enabled !== true || event.scenario_id !== primitive.scenario_id || event.trigger_type !== "scheduled" || event.trigger_condition != null || event.probability_model_id != null || event.end_date != null || !Array.isArray(event.effect_ids) || event.effect_ids.length > 0 || !Array.isArray(event.dependencies) || event.dependencies.length > 0 || typeof event.start_date !== "string" || !utcDate(event.start_date)) return fail("WORKPLACE_EVENT_COMPLEXITY_UNSUPPORTED");
+    return { eventId: binding.eventId, positionId: domainId("position", String(investment.investment_id)), at: utcDate(event.start_date)!, kind: binding.kind };
+  });
+  return [{ incomeId, events, allocation: { id: String(primitive.primitive_instance_id), priority, accountId: domainId("account", String(account.account_id)), positionId: domainId("position", String(investment.investment_id)), policy, calculation: parsed, vestedFraction: fraction } }];
 });
 
 export const payrollOpeningBalances = (model: PortableModelEnvelope, allocations: readonly DurablePayrollAllocation[]) => {
@@ -74,6 +83,7 @@ export interface PayrollContributionPlan {
   readonly character: "traditional_401k" | "roth_401k" | "after_tax_401k" | "employee_hsa" | "employer_401k" | "employer_hsa";
   readonly calculation: { readonly kind: "fixed"; readonly amount: string } | { readonly kind: "percent"; readonly rate: string } | { readonly kind: "match"; readonly rate: string; readonly compensationCapRate: string };
   readonly facts: AuthoredContributionFacts; readonly planKey?: string; readonly vestedFraction: string; readonly excessPolicy: "reject" | "auto_cap";
+  readonly contingentEvents?: readonly { readonly eventId: string; readonly kind: "vest" | "forfeit"; readonly date: string }[];
 }
 export const authorPayrollContributionPlan = (model: PortableModelEnvelope, plan: PayrollContributionPlan): PortableModelEnvelope => {
   if (!UUID.test(plan.primitiveId)) return fail("PAYROLL_POLICY_ID_INVALID");
@@ -94,13 +104,20 @@ export const authorPayrollContributionPlan = (model: PortableModelEnvelope, plan
   for (const [key, value] of Object.entries(plan.facts)) if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") facts[key] = value;
   const root = objects(model, "Scenario").filter(item => item.enabled === true && item.base_scenario_id == null);
   if (root.length !== 1) return fail("PAYROLL_ROOT_SCENARIO_REQUIRED");
+  const events = plan.contingentEvents === undefined ? [] : plan.contingentEvents.map(item => {
+    if (!UUID.test(item.eventId) || !utcDate(item.date)) return fail("WORKPLACE_EVENT_INVALID");
+    const existing = objects(model, "Event").find(event => event.event_id === item.eventId);
+    if (existing && !(record(prior?.parameters) && Array.isArray(prior.parameters.contingentEvents) && prior.parameters.contingentEvents.some(binding => record(binding) && binding.eventId === item.eventId))) return fail("WORKPLACE_EVENT_ID_COLLISION");
+    return { event_id: item.eventId, name: item.kind === "vest" ? "Workplace full vesting" : "Workplace contingent forfeiture", event_type: "other", start_date: item.date, trigger_type: "scheduled", effect_ids: [], dependencies: [], precedence: 0, enabled: true, scenario_id: String(root[0]!.scenario_id) };
+  });
   const primitive: CanonicalObject = { primitive_instance_id: plan.primitiveId.toLowerCase(), primitive_id: "P03", enabled: true, scenario_id: String(root[0]!.scenario_id), input_bindings: { income_id: plan.incomeId },
-    parameters: { adapter: PAYROLL_ADAPTER, priority: plan.priority, calculation: { ...plan.calculation }, vestedFraction: plan.vestedFraction, contribution: { character: plan.character, personId: String(person.person_id), householdId: String(person.household_id), facts, excessPolicy: plan.excessPolicy } } };
+    parameters: { adapter: PAYROLL_ADAPTER, priority: plan.priority, calculation: { ...plan.calculation }, vestedFraction: plan.vestedFraction, ...(plan.contingentEvents === undefined && record(prior?.parameters) && prior.parameters.contingentEvents !== undefined ? { contingentEvents: prior.parameters.contingentEvents } : { contingentEvents: events.map(item => ({ eventId: item.event_id, kind: plan.contingentEvents!.find(binding => binding.eventId === item.event_id)!.kind })) }), contribution: { character: plan.character, personId: String(person.person_id), householdId: String(person.household_id), facts, excessPolicy: plan.excessPolicy } } };
   const next = { ...model, objects: { ...model.objects,
     Investment: objects(model, "Investment").map(item => item === investment ? { ...item, contribution_model_id: plan.primitiveId.toLowerCase() } : item),
     Account: objects(model, "Account").map(item => item === account ? { ...item, contribution_limit_rule_id: null, contribution_limit_rule_ids: [...new Set([...normalizeContributionLimitRuleIds(item), ...rules.map(rule => String(rule.tax_rule_id))]) ] } : item),
     TaxRule: [...objects(model, "TaxRule").filter(item => !rules.some(rule => rule.tax_rule_id === item.tax_rule_id)), ...rules],
     PrimitiveInstance: [...objects(model, "PrimitiveInstance").filter(item => item.primitive_instance_id !== plan.primitiveId.toLowerCase()), primitive],
+    Event: [...objects(model, "Event").filter(item => !events.some(event => event.event_id === item.event_id)), ...events],
   } };
   durablePayrollAllocations(next);
   return next;

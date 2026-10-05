@@ -10,6 +10,7 @@ import {
   importPersonalModelJson,
   getPersonalPurchasePlans,
   getPayrollContributionPlans,
+  type JsonObject,
 } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
 import { forecastDiagnosticMessage } from "../ui/entityPresentation.js";
@@ -110,7 +111,9 @@ test("D1 normal payroll authoring preserves allocations and shared limit identit
 
 test("D1 normal IRA authoring saves annual facts and explicit auto-cap", async ({ page }) => {
   page.setDefaultTimeout(5_000);
-  const draft = patchPersonalObject(createGoldenHouseholdDraft(), "Account", GOLDEN_HOUSEHOLD_IDS.brokerageAccount, { account_type: "roth_ira", tax_treatment: "tax_free" });
+  const original = createGoldenHouseholdDraft();
+  const object = (value: unknown): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
+  const draft = { ...original, objects: { ...original.objects, Account: original.objects.Account!.map(value => object(value) && value.account_id === GOLDEN_HOUSEHOLD_IDS.brokerageAccount ? { ...value, account_type: "roth_ira", tax_treatment: "tax_free" } : value) } };
   await importDraft(page, draft); await useShortHorizon(page);
   await page.getByRole("button", { name: "Plan", exact: true }).click(); await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   const form = page.getByRole("region", { name: "Saved investment purchases" });

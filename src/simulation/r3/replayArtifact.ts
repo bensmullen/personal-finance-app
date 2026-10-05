@@ -6,6 +6,7 @@ import { compileHouseholdKernel } from "./compiledHousehold.js";
 import { portableHouseholdParticipant, restoreHouseholdParticipant, type PortableHouseholdParticipant } from "./participantCodec.js";
 // Composition boundary: domain codecs register factories; replay dispatch stays generic.
 import "../tax/replayCodec.js";
+import "../workplaceEvents.js";
 
 type Wire = null | boolean | number | string | { readonly kind: string; readonly value: unknown };
 interface EncodingGraph { readonly identities: Map<object, Wire>; readonly content: Map<string, Wire>; readonly active: Set<object> }

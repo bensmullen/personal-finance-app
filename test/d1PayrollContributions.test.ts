@@ -9,7 +9,16 @@ import { contributionCharacters, type D1CapacityKind, type D1ContributionFacts }
 import { authoredContributionRules, stableContributionRuleId } from "../src/application/compiler/contributionAuthoring.js";
 import { authorPayrollContributionPlan, durablePayrollAllocations } from "../src/application/compiler/payrollAuthoring.js";
 import { exportPersonalModelJson, importPersonalModelJson } from "../src/application/modelPortability.js";
-import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
+import { createGoldenHouseholdDraft, addPersonalObject, patchPersonalObject, type JsonObject } from "../src/application/personalMvp.js";
+import { compileCashFlow } from "../src/application/compiler/cashFlow.js";
+import { compileInvestments } from "../src/application/compiler/investments.js";
+import { runVerticalSlice2 } from "../src/simulation/verticalSlice2.js";
+import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { createWorkplaceEventParticipant } from "../src/simulation/workplaceEvents.js";
+import { runHouseholdKernel } from "../src/simulation/householdExecution.js";
+import { compileHouseholdKernel } from "../src/simulation/r3/compiledHousehold.js";
+import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
+import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
 import { GOLDEN_HOUSEHOLD_IDS as golden } from "../src/application/goldenHousehold.js";
 import { money, Quantity, SHARE, USD } from "../src/values/index.js";
 import { instant } from "../src/time/index.js";
@@ -84,9 +93,64 @@ describe("D1 payroll recognition and shared contribution capacity", () => {
     expect(durablePayrollAllocations(imported)).toEqual(durablePayrollAllocations(authored));
     expect(authoredContributionRules(golden.person, ["401k_additions"], 2026, { planKey: "sponsor" })[0]!.contribution_limits).toMatchObject([{ bucket_key: "401k_additions:sponsor" }]);
   });
+  it("authors and executes both spouses' family HSA allocations through the canonical compilers", () => {
+    let model = createGoldenHouseholdDraft();
+    model = patchPersonalObject(model, "Household", golden.household, { members: [golden.person, id(999)], filing_status: "married_joint", household_type: "couple" });
+    model = patchPersonalObject(model, "Person", golden.person, { date_of_birth: "1971-01-01" });
+    model = addPersonalObject(model, "Person", id(999), { household_id: golden.household, first_name: "Spouse", last_name: "Example", date_of_birth: "1971-01-01", residence_jurisdiction: "US-NY" });
+    model = addPersonalObject(model, "Income", id(998), { owner_id: id(999), income_type: "salary", source: "Spouse salary", amount: "9000", frequency: "monthly", start_date: "2026-01-02", gross_or_net: "gross" });
+    const object = (value: unknown): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
+    model = { ...model, objects: { ...model.objects,
+      Person: model.objects.Person!.map(value => object(value) && value.person_id === golden.person ? { ...value, date_of_birth: "1971-01-01" } : value),
+      Account: model.objects.Account!.map(value => object(value) && (value.account_id === golden.retirementAccount || value.account_id === golden.brokerageAccount) ? { ...value, account_type: "hsa_investment", tax_treatment: "tax_free", owner_id: value.account_id === golden.brokerageAccount ? id(999) : golden.person } : value),
+      Investment: model.objects.Investment!.map(value => object(value) && value.investment_id === golden.brokerageInvestment ? { ...value, owner_id: id(999), tax_treatment: "tax_free" } : value),
+    } };
+    const annual = { taxYear: 2026, ageAtYearEnd: 55, hsaFullYearEligible: true, hsaCoverage: "family" as const };
+    model = authorPayrollContributionPlan(model, { primitiveId: id(888), investmentId: golden.retirementInvestment, incomeId: golden.income, priority: 10, character: "employee_hsa", calculation: { kind: "fixed", amount: "5500" }, vestedFraction: "1", excessPolicy: "reject", facts: { ...annual, hsaFamilyAllocation: "4500" } });
+    model = authorPayrollContributionPlan(model, { primitiveId: id(889), investmentId: golden.brokerageInvestment, incomeId: id(998), priority: 20, character: "employee_hsa", calculation: { kind: "fixed", amount: "5250" }, vestedFraction: "1", excessPolicy: "reject", facts: { ...annual, hsaFamilyAllocation: "4250" } });
+    model = importPersonalModelJson(exportPersonalModelJson(model));
+    const cashFlow = compileCashFlow(model, { baseCurrency: "USD", simulationStart: "2026-01-01", simulationEnd: "2026-02-01", months: 1, sameInstantCashFlowOrder: "income_before_expense", executionAccountId: golden.checking });
+    expect(cashFlow.status, JSON.stringify(cashFlow)).toBe("compiled"); if (cashFlow.status !== "compiled") throw new Error("Spouse HSA compilation failed");
+    const investments = compileInvestments(model, { baseCurrency: "USD", asOf: "2026-01-01", simulationStart: "2026-01-01", simulationEnd: "2026-02-01", months: 1, executionOwnerId: golden.person, purchaseInstructions: [], transferInstructions: [] });
+    expect(investments.status, JSON.stringify(investments)).toBe("compiled");
+    if (investments.status !== "compiled") throw new Error("Spouse positions failed compilation");
+    expect(investments.value.openingState.accounts[golden.brokerageAccount]!.ownerId).toBe(id(999));
+    const result = runVerticalSlice2({ input: cashFlow.value.input, openingState: cashFlow.value.openingState, months: 1, runContext: createRunContext({ runId: runId(id(990)), scenarioId: scenarioId(golden.rootScenario), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"), baseCurrency: USD }) });
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.state.accounts[golden.checking]!.cash.amount.toString()).toBe("22450");
+    expect(Object.values(result.state.contributions!).reduce((sum, entry) => sum.plus(entry.amount), money("0")).amount.toString()).toBe("10750");
+    expect(result.periods[0]!.statements.income.amount.toString()).toBe("18000");
+    expect(result.periods[0]!.statements.expenses.amount.toString()).toBe("4800");
+  });
+  it.each(["vest", "forfeit"] as const)("round-trips an explicit full %s event and replays its committed effects", kind => {
+    const employer = { ...allocation(1, "employer_401k", "400"), vestedFraction: "0.25" };
+    const contributed = payroll(opening([employer]), [employer]);
+    const state = contributed.state;
+    state.positions[employer.positionId]!.price = money("110");
+    const event = { eventId: id(987), positionId: employer.positionId, at: instant("2026-02-10T00:00:00.000Z"), kind };
+    const context = createRunContext({ runId: runId(id(986)), scenarioId: scenarioId(golden.rootScenario), asOf: instant("2026-02-01T00:00:00.000Z"), dataCutoff: instant("2026-02-01T00:00:00.000Z"), simulationStart: instant("2026-02-01T00:00:00.000Z"), simulationEnd: instant("2026-03-01T00:00:00.000Z"), baseCurrency: USD });
+    const kernel = compileHouseholdKernel({ reconciledOpeningState: state, reconciledPrimitiveState: createPrimitiveRuntimeStateStore(), executionMonths: 1, scenarioIdentity: context.scenarioId, scenarioBindings: {}, standaloneAssets: [], participants: [createWorkplaceEventParticipant([event])] }, context.simulationStart);
+    const result = runHouseholdKernel({ kernel, runContext: context });
+    expect(result.status).toBe("completed");
+    expect(result.periods[0]!.statements.income.isZero()).toBe(true); expect(result.periods[0]!.statements.expenses.isZero()).toBe(true);
+    expect(result.periods[0]!.netWorth.amount.toString()).toBe(kind === "vest" ? "1440" : "1110");
+    expect(Object.values(result.state.contributions!)).toHaveLength(1);
+    const restored = restorePortableHouseholdReplayArtifact(createPortableHouseholdReplayArtifact(result));
+    expect(runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext }).state).toEqual(result.state);
+    const authored = authorPayrollContributionPlan(createGoldenHouseholdDraft(), { primitiveId: id(888), investmentId: golden.retirementInvestment, incomeId: golden.income, priority: 10, character: "employer_401k", calculation: { kind: "fixed", amount: "400" }, planKey: "sponsor", vestedFraction: "0.25", excessPolicy: "reject", facts: { taxYear: 2026, eligiblePlanCompensation: "100000" }, contingentEvents: [{ eventId: id(987), date: "2026-02-10", kind }] });
+    expect(durablePayrollAllocations(importPersonalModelJson(exportPersonalModelJson(authored)))[0]!.events).toMatchObject([{ eventId: id(987), kind, at: "2026-02-10T00:00:00.000Z" }]);
+  });
 });
 
 describe("signed statement postings", () => {
+  it.each(["income", "gain", "expense", "tax"] as const)("nets both posting directions for %s", type => {
+    const normal = type === "income" || type === "gain" ? "credit" as const : "debit" as const;
+    const reverse = normal === "credit" ? "debit" as const : "credit" as const;
+    const transaction = (key: string, posting: "credit" | "debit", amount: string) => createAccountingTransaction({ id: accountingTransactionId(key), date: at, type: "recognition", legs: [createAccountingLeg({ type, posting, amount: money(amount) }), createAccountingLeg({ type: "equity", posting: posting === "credit" ? "debit" : "credit", amount: money(amount) })] });
+    const statements = deriveStatements(createAuthoritativeState({}), [transaction("first", normal, "100"), transaction("reverse", reverse, "40")], USD);
+    expect((type === "income" ? statements.income : type === "gain" ? statements.gains : statements.expenses).amount.toString()).toBe("60");
+    expect(statements.operatingCashFlow.isZero()).toBe(true);
+  });
   it("reconciles a tax accrual and partial credit reversal in direct and streamed derivation", () => {
     const liability = domainId("liability", id(777));
     const state = createAuthoritativeState({ liabilities: { [liability]: { id: liability, balance: money("60") } } });

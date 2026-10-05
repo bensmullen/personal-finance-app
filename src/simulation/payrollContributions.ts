@@ -2,6 +2,8 @@ import { accountingTransactionId, createAccountingLeg, createAccountingTransacti
 import { failValidation, issueCodes } from "../diagnostics/index.js";
 import { cloneAuthoritativeState, applyAccountingTransactionAtomically, type AuthoritativeState } from "../state/index.js";
 import type { Instant } from "../time/index.js";
+import { domainId } from "../identity/index.js";
+import { calculationTraceId, calculationTraceRef } from "../lineage/index.js";
 import { Money, Quantity, RoundingPolicy, decimal } from "../values/index.js";
 import { decideContribution, recordContribution, employerContributionCandidate, type ContributionPolicy } from "./contributions.js";
 
@@ -55,7 +57,7 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
     if (allocation.policy.character === "traditional_401k" || allocation.policy.character === "roth_401k" || allocation.policy.character === "employee_hsa") matchedContributions.set(matchKey(allocation), (matchedContributions.get(matchKey(allocation)) ?? Money.zero(input.gross.currency)).plus(decision.accepted));
   }
   const net = input.gross.minus(employee);
-  const transaction = createAccountingTransaction({ id: accountingTransactionId(input.id), date: input.at, type: "payroll_income", legs: [
+  const transaction = createAccountingTransaction({ id: accountingTransactionId(input.id), date: input.at, type: "payroll_income", traceRefs: [calculationTraceRef(calculationTraceId(`payroll:${input.id}:gross:${input.incomeId}`), input.allocations.flatMap(allocation => allocation.policy.limits.map(binding => domainId("tax-rule", binding.ruleId))))], legs: [
     ...employeeLegs,
     ...(net.isPositive() ? [{ type: "cash" as const, posting: "debit" as const, amount: net, accountId: input.depositAccountId, cashFlowClass: "operating" as const }] : []),
     { type: "income" as const, posting: "credit" as const, amount: input.gross },

@@ -1451,6 +1451,16 @@ owned loss or spending. Employer HSA contributions are fully owned; no vesting
 is inferred. Graded/service-credit/partial-forfeiture mechanics require a separate
 capability contract. Rollover operations remain outside these adapters.
 
+Optional `contingentEvents` bindings on an employer 401(k) payroll adapter link
+explicit scheduled canonical Events to a full `vest` or `forfeit` operation on
+that holding. These events follow native contribution/value operations at the
+same instant, and use the committed then-current value. A zero contingent
+balance produces no financial recognition. They neither infer employment-income
+termination nor rewrite other Event effects; the user must author those facts
+separately. Conditional/probabilistic triggers, unrelated effects, dependencies,
+graded vesting and partial forfeiture remain capability-gated. Event identities
+and the participant's portable replay codec preserve deterministic reclassification.
+
 Accounting-derived statement totals use signed postings: income/gain credits
 increase recognition and debits reverse it; expense/tax debits increase expense
 and credits reverse it. Direct and streamed derivation MUST agree. A decreasing

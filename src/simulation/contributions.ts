@@ -103,9 +103,9 @@ export const recordContribution = (state: AuthoritativeState, policy: Contributi
       eligibleDeduction = remaining.compare(decision.accepted) < 0 ? remaining : decision.accepted;
     }
   }
-  const entry: ContributionState = Object.freeze({ id, at, personId: policy.personId, accountId, character: policy.character, amount: decision.accepted,
+  const entry: ContributionState = Object.freeze({ id, at, personId: policy.personId, accountId, character: policy.character, amount: decision.accepted, requested: decision.requested, excess: decision.excess,
     ...(incomeId === undefined ? {} : { incomeId }), ...(eligibleDeduction === undefined ? {} : { eligibleDeduction }),
-    buckets: Object.freeze(decision.buckets.map(bucket => Object.freeze({ identity: bucket.bucketIdentity, amount: bucket.consumedAmount ?? decision.accepted, annualLimit: bucket.annualLimit, ruleIds: Object.freeze([String(bucket.ruleId)]) }))) });
+    buckets: Object.freeze(decision.buckets.map(bucket => Object.freeze({ identity: bucket.bucketIdentity, amount: bucket.consumedAmount ?? decision.accepted, annualLimit: bucket.annualLimit, usedBefore: bucket.usedBefore, remainingBefore: bucket.remainingBefore, facts: bucket.facts, ruleIds: Object.freeze([String(bucket.ruleId)]) }))) });
   const next = cloneAuthoritativeState(state);
   next.contributions = { ...state.contributions, [id]: entry };
   validateAuthoritativeState(next);

@@ -237,7 +237,8 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
                 ...(resolved.rule.niit === undefined ? {} : { modifiedAdjustedGrossIncome: gross.compare(income.eligibleTraditionalDeduction) < 0 ? zero() : gross.minus(income.eligibleTraditionalDeduction), netInvestmentIncome: nii.isNegative() ? zero() : nii }),
                 ...(resolved.rule.periodicEmployeeTax === undefined ? {} : { periodicWages: { unit: resolved.rule.periodicEmployeeTax.unit, wages: income.wages } }) });
               totals.set(group.jurisdiction, (totals.get(group.jurisdiction) ?? zero()).plus(application.result.totalLiability));
-              appliedTraces.set(group.jurisdiction, mergeTraceRefs(appliedTraces.get(group.jurisdiction), application.traceRefs, group.entries.flatMap(entry => entry.traceRefs)) ?? []);
+              const contributionTraces = contributions.map(entry => calculationTraceRef(calculationTraceId(`tax:contribution:${entry.id}`), entry.buckets.flatMap(bucket => bucket.ruleIds.map(ruleId => domainId("tax-rule", ruleId)))));
+              appliedTraces.set(group.jurisdiction, mergeTraceRefs(appliedTraces.get(group.jurisdiction), application.traceRefs, group.entries.flatMap(entry => entry.traceRefs), contributionTraces) ?? []);
               ruleTraces.push(...application.traceRefs, ...group.entries.flatMap(entry => entry.traceRefs));
             } catch (error) {
               if (!(error instanceof ValidationError)) throw error;
