@@ -6,6 +6,7 @@ import {
   type ValidationIssue,
 } from "../diagnostics/index.js";
 import { domainId } from "../identity/index.js";
+import { normalizeModelContributionBindings } from "./compiler/contributionBindings.js";
 import {
   CURRENT_MODEL_FORMAT_VERSION,
   DEFAULT_MODEL_MIGRATIONS,
@@ -252,7 +253,7 @@ export const importPersonalModelJson = (
   if (report.modelFormatCompatibility === "migratable") failValidation(migrationRequiredIssue());
   if (!report.directlyImportable) failValidation(report.issues.length > 0 ? report.issues : documentIssue(undefined));
   const parsed = JSON.parse(json) as SerializedPortableModelEnvelope;
-  const imported = deserializePortableModelEnvelope(parsed);
+  const imported = normalizeModelContributionBindings(deserializePortableModelEnvelope(parsed));
   return Object.freeze({
     ...imported,
     objects: deepCloneFrozenJson(imported.objects) as PortableModelObjects,

@@ -1,7 +1,7 @@
 {
   "specification": {
     "name": "Personal Financial Modeling Canonical Schema",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "status": "draft-canonical",
     "namespace": "pfm",
     "description": "Canonical domain and simulation specification from which database schemas, validation code, dependency resolution, accounting postings, and simulation-engine interfaces can be derived.",
@@ -879,6 +879,16 @@
           "derived": false,
           "mutable": false,
           "enum": "tax_treatment"
+        },
+        "contribution_limit_rule_ids": {
+          "type": "uuid[]",
+          "required": false,
+          "cardinality": "0..*",
+          "default": [],
+          "temporal_behavior": "static",
+          "derived": false,
+          "mutable": true,
+          "ref": "TaxRule"
         },
         "contribution_limit_rule_id": {
           "type": "uuid",

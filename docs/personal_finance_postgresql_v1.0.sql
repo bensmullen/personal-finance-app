@@ -1,4 +1,4 @@
--- Derived from personal_finance_canonical_schema_v1.0.json
+-- Derived from personal_finance_canonical_schema_v1.0.json (source version 1.0.2)
 -- PostgreSQL 16+
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -78,6 +78,7 @@ CREATE TABLE account (
     opening_balance numeric(19,4) NOT NULL,
     liquidity_class pf_liquidity_class NOT NULL,
     tax_treatment pf_tax_treatment NOT NULL,
+    contribution_limit_rule_ids jsonb,
     contribution_limit_rule_id uuid,
     withdrawal_rule_ids jsonb,
     fee_rule_id uuid,

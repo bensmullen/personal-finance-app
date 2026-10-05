@@ -32,6 +32,8 @@ import {
 import { z } from "zod";
 import {
   createGoldenHouseholdDraft,
+  editPersonalRetirementDate,
+  getPersonalRetirementPlans,
   createGuidedSetupDraft,
   createSyntheticPersonalDraft,
   deletePersistedPersonalModel,
@@ -766,6 +768,7 @@ export function PersonalFinanceApp() {
             <>
               <HouseholdPlan
                 draft={draft}
+                setDraft={updateCanonicalModel}
                 forecast={householdForecast}
                 run={runHouseholdForecast}
                 error={runSettingsError}
@@ -2554,8 +2557,33 @@ function DiagnosticList({
   );
 }
 
+function RetirementDateAuthoring({ draft, setDraft }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void }) {
+  const plans = getPersonalRetirementPlans(draft);
+  const [incomeId, setIncomeId] = useState("");
+  const selected = plans.find(plan => plan.incomeId === incomeId) ?? (plans.length === 1 ? plans[0] : undefined);
+  const [date, setDate] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => { setDate(selected?.date ?? ""); setError(""); }, [selected?.incomeId, selected?.date]);
+  return <section className="panel" aria-label="Saved retirement plan">
+    <h2>Planned retirement date</h2>
+    <p>This edits your saved baseline plan. Use What If? to compare an alternative date.</p>
+    <label>Retirement income<select value={selected?.incomeId ?? ""} onChange={event => setIncomeId(event.target.value)}>
+      <option value="">Choose income</option>{plans.map(plan => <option key={plan.incomeId} value={plan.incomeId}>{plan.label}</option>)}
+    </select></label>
+    <label>Planned retirement date<input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
+    <button type="button" disabled={!selected || !date || date === selected.date} onClick={() => {
+      if (!selected) return;
+      try { setDraft(editPersonalRetirementDate(draft, selected.incomeId, date)); setError(""); }
+      catch (failure) { setError(failure instanceof Error ? failure.message : "Retirement date could not be updated"); }
+    }}>Save planned retirement date</button>
+    {!plans.length && <p>No supported scheduled retirement event is linked to income in the baseline plan.</p>}
+    {error && <p role="alert">{error}</p>}
+  </section>;
+}
+
 function HouseholdPlan({
   draft,
+  setDraft,
   forecast,
   run,
   error,
@@ -2570,6 +2598,7 @@ function HouseholdPlan({
   setHouseholdExecution,
 }: {
   draft: PersonalDraft;
+  setDraft: (draft: PersonalDraft) => void;
   forecast: PersonalHouseholdForecastReadModel | undefined;
   run: () => void;
   error: string;
@@ -2597,6 +2626,7 @@ function HouseholdPlan({
         title="Your reconciled household plan"
         text="One execution carries cash flow, investments, debt, property, and retirement through the same state transition."
       />
+      <RetirementDateAuthoring draft={draft} setDraft={setDraft} />
       <p className="muted">If the forecast needs setup, open Expert forecast configuration below. These session choices must be configured again after reloading a saved model.</p>
       <details className="panel">
       <summary>Expert forecast configuration</summary>

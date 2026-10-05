@@ -159,6 +159,7 @@ export const compileCurrentPosition = (
   const cashBalances: Money[] = [];
   const wrapperCashBalances: Money[] = [];
   let cashComplete = true;
+  let wrapperCashComplete = true;
   const accountsById = new Map<string, CanonicalObject>();
   const accountStatus = new Map<
     string,
@@ -183,6 +184,11 @@ export const compileCurrentPosition = (
         "account_id",
       );
     accountsById.set(id, account);
+    const economicClass = classifyAccountEconomics(account.account_type);
+    const markAccountIncomplete = () => {
+      if (economicClass === "household_cash") cashComplete = false;
+      else wrapperCashComplete = false;
+    };
     const owner = resolveOwnerScope(model, account.owner_id, scope, "Account", id);
     if (owner.status !== "compiled") return owner;
     if (typeof account.currency !== "string" || !/^[A-Z]{3}$/.test(account.currency))
@@ -223,7 +229,7 @@ export const compileCurrentPosition = (
     if (closing !== undefined) {
       if (closing <= asOf) {
         accountStatus.set(id, "closed");
-        cashComplete = false;
+        markAccountIncomplete();
         diagnostics.push(
           diagnostic(
             "CLOSED_ACCOUNT_RECONCILIATION_UNSUPPORTED",
@@ -251,7 +257,7 @@ export const compileCurrentPosition = (
       balanceBehavior.status === "unsupported" ||
       (balanceBehavior.status === "compiled" && balanceBehavior.value.hasAuthoredBehavior)
     ) {
-      cashComplete = false;
+      markAccountIncomplete();
       diagnostics.push(
         diagnostic(
           "OPENING_BALANCE_AUTHORITY_UNSUPPORTED",
@@ -265,7 +271,7 @@ export const compileCurrentPosition = (
     }
     if (account.currency !== currency.code) {
       if (!balance.amount.isZero()) {
-        cashComplete = false;
+        markAccountIncomplete();
         diagnostics.push(
           diagnostic(
             "FX_UNSUPPORTED",
@@ -279,9 +285,8 @@ export const compileCurrentPosition = (
       }
       continue;
     }
-    const economicClass = classifyAccountEconomics(account.account_type);
     if (economicClass === "unsupported") {
-      cashComplete = false;
+      wrapperCashComplete = false;
       diagnostics.push(diagnostic("ACCOUNT_ECONOMIC_CLASS_UNSUPPORTED", `Account ${id} has no supported economic classification.`, "assets", "Account", id, "account_type"));
       continue;
     }
@@ -341,7 +346,7 @@ export const compileCurrentPosition = (
   const investments = objects(model, "Investment");
   const linkedAssetIds = new Set<string>();
   const nonCashAssets: Money[] = [];
-  let assetsComplete = cashComplete;
+  let assetsComplete = cashComplete && wrapperCashComplete;
   for (const investment of investments) {
     const id = canonicalId(investment, "investment_id");
     if (!id)
@@ -900,7 +905,7 @@ export const compileCurrentPosition = (
     status: "compiled",
     value: Object.freeze({
       ...(cash ? { cash } : {}),
-      ...(cashComplete ? { wrapperCash: sumMoney(wrapperCashBalances, currency) } : {}),
+      ...(wrapperCashComplete ? { wrapperCash: sumMoney(wrapperCashBalances, currency) } : {}),
       ...(totals ? { assets: totals.assets } : {}),
       ...(totals && liabilitiesComplete ? { netWorth: totals.netWorth } : {}),
       ...(liabilities ? { liabilities } : {}),

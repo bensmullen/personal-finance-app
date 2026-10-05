@@ -5,6 +5,7 @@ import {
   calculationTraceRef,
 } from "../../lineage/index.js";
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
+import { deriveCanonicalRetirementBindings } from "./retirementAuthoring.js";
 import {
   createAuthoritativeState,
   type AuthoritativeState,
@@ -1104,6 +1105,7 @@ export const compileCashFlow = (
   });
   if (scenarioResult.status !== "compiled") return scenarioResult;
   const selected = scenarioResult.value;
+  request = { ...request, retirementBindings: deriveCanonicalRetirementBindings(model, selected.id, request.retirementBindings) };
   const retirementByIncome = new Map<string, RetirementTerminationBinding>();
   const retirementEventIds = new Set<string>();
   const authoredIdentityIds = new Set(

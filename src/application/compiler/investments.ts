@@ -4,6 +4,7 @@ import {
   calculationTraceRef,
 } from "../../lineage/index.js";
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
+import { normalizeContributionLimitRuleIds } from "./contributionBindings.js";
 import {
   createPrimitiveRuntimeStateStore,
   type PrimitiveRuntimeStateStore,
@@ -571,6 +572,13 @@ export const compileInvestments = (
         id,
         "withdrawal_rule_ids",
       );
+    try {
+      for (const ruleId of normalizeContributionLimitRuleIds(account)) {
+        if (!taxRules.has(ruleId)) return invalidResult("ACCOUNT_TAX_RULE_REFERENCE_INVALID", `Account ${id} contribution_limit_rule_ids must resolve to TaxRule.`, "Account", id, "contribution_limit_rule_ids");
+      }
+    } catch {
+      return invalidResult("ACCOUNT_TAX_RULE_REFERENCE_INVALID", `Account ${id} contribution-limit bindings require UUID identities.`, "Account", id, "contribution_limit_rule_ids");
+    }
     const seenRules = new Set<string>();
     for (const raw of (account.withdrawal_rule_ids ??
       []) as readonly unknown[]) {
@@ -1443,8 +1451,7 @@ export const compileInvestments = (
         "withdrawal_rule_ids",
       );
     if (
-      destination.contribution_limit_rule_id !== undefined &&
-      destination.contribution_limit_rule_id !== null
+      normalizeContributionLimitRuleIds(destination).length > 0
     )
       return unsupportedResult(
         "ACCOUNT_CONTRIBUTION_LIMIT_UNSUPPORTED",
@@ -1501,8 +1508,7 @@ export const compileInvestments = (
       );
     if (
       !sameAccountPurchase &&
-      destinationAccount.contribution_limit_rule_id !== undefined &&
-      destinationAccount.contribution_limit_rule_id !== null
+      normalizeContributionLimitRuleIds(destinationAccount).length > 0
     )
       return unsupportedResult(
         "ACCOUNT_CONTRIBUTION_LIMIT_UNSUPPORTED",

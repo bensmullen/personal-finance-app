@@ -1,6 +1,6 @@
 # Personal Finance App — Executable Financial Semantics Specification
 
-**Version:** 0.1.11-draft
+**Version:** 0.1.12-draft
 **Status:** Draft implementation contract  
 **Namespace:** `pfm`  
 **Depends on:** `personal_finance_canonical_schema_v1.0.json`, `personal_finance_model.schema.json`, `personal_finance_simulation_interfaces_v1.0.ts`
@@ -457,11 +457,19 @@ Every application records the exact rule identity, kind, target, evaluation inst
 The initial supported methods are deliberately narrow:
 
 - proportional income tax is `round(taxableBase × effectiveRate)` using nonnegative `Money`, a `Ratio` from zero through one, and explicit posting rounding;
-- an annual contribution-limit rule targets one account and one UTC civil year whose effective range is exactly `[Jan 1 00:00Z, next Jan 1 00:00Z)`. For nonnegative requested and prior-used amounts, `remaining=max(limit-used,0)`, `accepted=min(requested,remaining)`, and `excess=requested-accepted`;
+- an annual contribution-limit rule targets an account, person, or household according to its legal/economic scope and one UTC civil year whose effective range is exactly `[Jan 1 00:00Z, next Jan 1 00:00Z)`. Account targets represent genuinely account/plan-local constraints. Shared statutory capacity MUST NOT become a separate allowance per account. New bindings carry a stable bucket/scope identity and explicit included contribution characters; where the target alone does not identify the scope, an explicit aggregation key is required. The fixed-money method remains `remaining=max(limit-used,0)`;
 - a product eligibility rule explicitly allows or rejects a named operation for one account or liability. A valid deny rule is a modeled decision, not malformed input;
 - a fixed-fee rule targets one account and assesses a nonnegative `Money` amount. A zero fee is valid and produces a recorded application but no posting.
 
-Contribution-limit and product-eligibility rejections are policy outcomes separate from funding outcomes. They MUST NOT be classified as liquidity failures, defaults, or accounting invariant failures. Comprehensive tax law, shared cross-account contribution limits, and percentage/tiered fees are outside this version.
+Multiple buckets MAY constrain the same contribution. Resolve all applicable rules before evaluation, calculate every bucket's pre-contribution usage independently, and accept no more than the tightest applicable remaining capacity. Catalog/binding iteration order conveys no precedence. Default policy rejects an excess request; partial acceptance requires an explicitly selected auto-cap policy. The authored request is preserved.
+
+Usage is the aggregate of qualifying committed contributions in the legal scope and UTC civil year, never an account balance. An accepted committed amount consumes each applicable bucket; rejected, failed, rolled-back or uncommitted amounts consume none. A partially accepted amount consumes only its accepted portion. Stable contribution identities prevent replay from consuming capacity twice. Splitting contributions across accounts cannot bypass shared capacity. Every result exposes effective annual capacity, prior usage, remaining capacity, accepted amount, excess, exact applied rule identities and the explicit facts that changed capacity.
+
+Bounded D1-A 2026 rules MAY derive capacity from explicit age, compensation, MAGI, workplace-plan coverage, HSA coverage and prior-year wages plus effective-dated parameters. Missing required facts produce explicit incompleteness; they never imply zero or unlimited capacity. Traditional IRA deductibility is separate from the shared gross IRA contribution capacity. Catch-up and non-catch-up annual-additions consumption remain distinct. Full-year HSA family capacity is shared between eligible spouses; individual age-55 catch-up must reach that individual's own HSA.
+
+Account.contribution_limit_rule_ids is the new plural binding. Legacy contribution_limit_rule_id remains readable. Normalization combines and de-duplicates identities, rejects conflicting/ambiguous active versions, and never resolves conflicts by order.
+
+Contribution-limit and product-eligibility rejections are policy outcomes separate from funding outcomes. They MUST NOT be classified as liquidity failures, defaults, or accounting invariant failures. Comprehensive tax law remains outside this subsystem except for the bounded D1-A 2026 contribution rules. Percentage/tiered fees remain outside this version. D1-B rollover/conversion operations require their own domain contracts and MUST NOT be encoded as generic contributions.
 
 ## 6. Typed primitive composition
 
@@ -1116,6 +1124,14 @@ conforming to `0.1.11-draft` MAY therefore classify `0.1.9-draft`,
 `0.1.10-draft`, and `0.1.11-draft` as `supported_directly`. This is an
 explicit compatibility declaration for those versions only and does not
 generalize to later revisions.
+
+Version `0.1.12-draft` explicitly supports `0.1.9-draft`, `0.1.10-draft`, and
+`0.1.11-draft` models directly. Existing account-local fixed-limit rules keep
+their meaning; the plural binding and shared-scope identities are additive.
+New D1 contributions require their explicit character, scope, facts and policy
+contracts. Missing new facts gate materially affected new operations rather
+than assigning new financial meaning to legacy authored records. The portable
+model-format version remains unchanged for these optional additions.
 
 The former `0.1.0-draft` root used `specification_version` without
 unambiguously identifying whether that value represented financial semantics or

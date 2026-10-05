@@ -9,10 +9,11 @@ import type { JsonValue } from "../src/model/modelVersion.js";
 import { belongsToNetWorthSection } from "../ui/entityPresentation.js";
 
 const boundary = { baseCurrency: "USD", asOf: "2026-01-03" };
+const record = (value: JsonValue): value is Readonly<Record<string, JsonValue>> => typeof value === "object" && value !== null && !Array.isArray(value);
 const change = (model: PersonalDraft, collection: string, id: string, patch: Record<string, JsonValue>): PersonalDraft => ({
   ...model,
   objects: { ...model.objects, [collection]: model.objects[collection]!.map(value => {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+    if (!record(value)) return value;
     return value[`${collection.toLowerCase()}_id`] === id ? { ...value, ...patch } : value;
   }) },
 });
@@ -59,8 +60,8 @@ describe("D1-A current-position economic meaning", () => {
     expect(current.assets?.exact).toBe("540000");
     expect(current.liabilities?.exact).toBe("225669.71");
     expect(current.netWorth?.exact).toBe("314330.29");
-    const wrapper = model.objects.Account!.find(value => typeof value === "object" && value !== null && !Array.isArray(value) && value.account_id === ids.retirementAccount)!;
-    if (typeof wrapper !== "object" || wrapper === null || Array.isArray(wrapper)) throw new Error("missing fixture wrapper");
+    const wrapper = model.objects.Account!.filter(record).find(value => value.account_id === ids.retirementAccount);
+    if (!wrapper) throw new Error("missing fixture wrapper");
     expect(belongsToNetWorthSection(model, "Account", wrapper, "Cash & bank accounts")).toBe(false);
     expect(belongsToNetWorthSection(model, "Account", wrapper, "Investments & retirement")).toBe(true);
     const restored = importPersonalModelJson(exportPersonalModelJson(model));
@@ -87,10 +88,22 @@ describe("D1-A current-position economic meaning", () => {
     for (const type of ["checking", "savings", "cash"]) expect(classifyAccountEconomics(type)).toBe("household_cash");
   });
 
+  it("preserves known household cash when a non-cash account class is unsupported", () => {
+    const model = change(createGoldenHouseholdDraft(), "Account", ids.retirementAccount, { account_type: "other", opening_balance: "2000" });
+    const current = getCurrentPosition(model, boundary);
+    expect(current.status).toBe("partial");
+    expect(current.cash?.exact).toBe("35000");
+    expect(current.monthlyIncome?.exact).toBe("9000");
+    expect(current.wrapperCash).toBeUndefined();
+    expect(current.assets).toBeUndefined();
+    expect(current.netWorth).toBeUndefined();
+    expect(current.diagnostics).toContainEqual(expect.objectContaining({ code: "ACCOUNT_ECONOMIC_CLASS_UNSUPPORTED", entityId: ids.retirementAccount }));
+  });
+
   it("executes a baseline linked return edit without changing current holdings or unrelated assumptions", () => {
     let baseline = createGoldenHouseholdDraft();
     for (const assumption of baseline.objects.Assumption!) {
-      if (typeof assumption === "object" && assumption !== null && !Array.isArray(assumption) && assumption.category === "market_return")
+      if (record(assumption) && assumption.category === "market_return")
         baseline = patchPersonalObject(baseline, "Assumption", String(assumption.assumption_id), { value: "0" });
     }
     // (1 + 4095)^(1/12) = 2 exactly: a deliberately synthetic oracle without floating-point expectations.

@@ -1,5 +1,5 @@
 import { PERSONAL_OBJECT_TYPES, getPersonalEditorMetadata, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../src/application/personalMvp.js";
-import { isHouseholdCashAccount } from "../src/model/economicClassification.js";
+import { isHouseholdCashAccount } from "../src/application/personalMvp.js";
 
 export const objectEntries = (draft: PersonalDraft, type: PersonalObjectType): readonly JsonObject[] =>
   (draft.objects[type] ?? []).filter((value): value is JsonObject =>

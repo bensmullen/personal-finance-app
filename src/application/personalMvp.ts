@@ -1,5 +1,9 @@
 import { domainId } from "../identity/index.js";
 import { ValidationError, type ValidationIssue } from "../diagnostics/index.js";
+import { classifyAccountEconomics, isHouseholdCashAccount } from "../model/economicClassification.js";
+export { classifyAccountEconomics, isHouseholdCashAccount };
+export { authorCanonicalRetirementDate as editPersonalRetirementDate } from "./compiler/retirementAuthoring.js";
+export { canonicalRetirementPlans as getPersonalRetirementPlans } from "./compiler/retirementAuthoring.js";
 import {
   CURRENT_MODEL_FORMAT_VERSION,
   type JsonValue,
@@ -7,6 +11,7 @@ import {
   type PortableModelObjects,
 } from "../model/modelVersion.js";
 import { CURRENT_RUN_VERSIONS } from "../model/version.js";
+import { normalizeContributionLimitRuleIds } from "./compiler/contributionBindings.js";
 import { createRunContext, runId, scenarioId } from "../simulation/run.js";
 import {
   compareVerticalSlice2Scenarios,
@@ -490,6 +495,10 @@ export const patchPersonalObject = (
         fieldName !== descriptor.idField
       )
         applied[fieldName] = fieldValue;
+    }
+    if (type === "Account" && ("contribution_limit_rule_id" in patch || "contribution_limit_rule_ids" in patch)) {
+      applied.contribution_limit_rule_ids = normalizeContributionLimitRuleIds(applied);
+      delete applied.contribution_limit_rule_id;
     }
     return deepFreeze(applied);
   });

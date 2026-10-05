@@ -1,4 +1,4 @@
-/** Derived from personal_finance_canonical_schema_v1.0.json. */
+/** Derived from personal_finance_canonical_schema_v1.0.json (source version 1.0.2). */
 export type UUID = string;
 export type Money = number;
 export type Rate = number;
@@ -94,6 +94,8 @@ export interface Account {
   current_balance: number;
   liquidity_class: LiquidityClass;
   tax_treatment: TaxTreatment;
+  contribution_limit_rule_ids?: UUID[];
+  /** Legacy singular binding; readers combine and de-duplicate it with the plural field. */
   contribution_limit_rule_id?: UUID;
   withdrawal_rule_ids?: UUID[];
   fee_rule_id?: UUID;
