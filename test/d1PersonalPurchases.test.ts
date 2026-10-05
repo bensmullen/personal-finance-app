@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authorPersonalPurchasePlan, createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
+import { authorPersonalPurchasePlan, createGoldenHouseholdDraft, type PersonalDraft } from "../src/application/personalMvp.js";
 import { exportPersonalModelJson, importPersonalModelJson } from "../src/application/modelPortability.js";
 import { GOLDEN_HOUSEHOLD_IDS as ids, createGoldenHouseholdForecastRequest } from "../src/application/goldenHousehold.js";
 import { compileInvestments } from "../src/application/compiler/investments.js";
@@ -11,7 +11,7 @@ import type { JsonValue } from "../src/model/modelVersion.js";
 
 const record = (value: JsonValue): value is Readonly<Record<string, JsonValue>> => typeof value === "object" && value !== null && !Array.isArray(value);
 const primitiveId = "d1c20000-0000-4000-8000-000000000001";
-const base = () => {
+const base = (): PersonalDraft => {
   const original = createGoldenHouseholdDraft();
   return { ...original, objects: { ...original.objects, Assumption: original.objects.Assumption!.map(value => record(value) && value.category === "market_return" ? { ...value, value: "0" } : value) } };
 };

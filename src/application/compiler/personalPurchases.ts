@@ -34,7 +34,8 @@ export const durablePersonalPurchaseInstructions = (model: PortableModelEnvelope
   if (schedule.kind === "utc_monthly" && typeof schedule.anchor === "string" && utcDate(schedule.anchor) && schedule.invalidDayPolicy === "skip") executionSchedule = { kind: "utc_monthly", anchor: schedule.anchor, invalidDayPolicy: "skip" };
   else if (schedule.kind === "explicit_dates" && Array.isArray(schedule.dates) && schedule.dates.length === 1 && typeof schedule.dates[0] === "string" && utcDate(schedule.dates[0])) executionSchedule = { kind: "explicit_dates", dates: [schedule.dates[0]] };
   else throw new Error("PERSONAL_PURCHASE_SCHEDULE_UNSUPPORTED");
-  return [{ id: personalPurchaseInstructionId(String(primitive.primitive_instance_id)), investmentId: String(investment.investment_id), sourceCashAccountId: source.toLowerCase(), amount, order, schedule: executionSchedule, quantityRounding: { scale: 12, mode: "half_even" } }];
+  const instruction: InvestmentPurchaseExecutionInstruction = { id: personalPurchaseInstructionId(String(primitive.primitive_instance_id)), investmentId: String(investment.investment_id), sourceCashAccountId: source.toLowerCase(), amount, order, schedule: executionSchedule, quantityRounding: { scale: 12, mode: "half_even" } };
+  return [instruction];
 }));
 
 export interface PersonalPurchasePlan {
