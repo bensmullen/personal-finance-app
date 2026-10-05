@@ -4,7 +4,7 @@ import { exportPersonalModelJson, importPersonalModelJson } from "../src/applica
 import { GOLDEN_HOUSEHOLD_IDS as ids, createGoldenHouseholdForecastRequest } from "../src/application/goldenHousehold.js";
 import { compileInvestments } from "../src/application/compiler/investments.js";
 import { compileCashFlow } from "../src/application/compiler/cashFlow.js";
-import { reconcileHouseholdOpeningState } from "../src/application/compiler/householdProjection.js";
+import { reconcileHouseholdOpeningState } from "../src/simulation/householdProjection.js";
 import { runVerticalSlice3 } from "../src/simulation/verticalSlice3.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant } from "../src/time/index.js";
