@@ -111,7 +111,7 @@ describe("D1 payroll recognition and shared contribution capacity", () => {
   it("rejects a taxable workplace wrapper before authoring an allocation", () => {
     const original = createGoldenHouseholdDraft();
     const object = (value: unknown): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
-    const model = { ...original, objects: { ...original.objects, Account: original.objects.Account!.map(value => object(value) && value.account_id === golden.retirementAccount ? { ...value, tax_treatment: "taxable" } : value) } };
+    const model: typeof original = { ...original, objects: { ...original.objects, Account: original.objects.Account!.map(value => object(value) && value.account_id === golden.retirementAccount ? { ...value, tax_treatment: "taxable" } : value) } };
     expect(() => authorPayrollContributionPlan(model, { primitiveId: id(888), investmentId: golden.retirementInvestment, incomeId: golden.income, priority: 10, character: "traditional_401k", calculation: { kind: "fixed", amount: "100" }, planKey: "sponsor", vestedFraction: "1", excessPolicy: "reject", facts: { taxYear: 2026, ageAtYearEnd: 36, eligiblePlanCompensation: "100000" } })).toThrow("PAYROLL_DESTINATION_TAX_TREATMENT_MISMATCH");
     expect(model.objects.Investment).toEqual(original.objects.Investment);
   });
