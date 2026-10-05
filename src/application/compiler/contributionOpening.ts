@@ -18,7 +18,7 @@ const record = (value: JsonValue | undefined): value is CanonicalObject => typeo
 const fail = (message: string): never => { throw new Error(message); };
 const exact = (value: JsonValue | undefined) => typeof value === "string" && EXACT_DECIMAL.test(value) && !money(value, USD).isNegative() && money(value, USD).amount.fitsScale(2) ? money(value, USD) : fail("OPENING_USAGE_AMOUNT_INVALID");
 const identity = (policy: ContributionPolicy, kind: D1CapacityKind, key: string) => `${kind === "hsa_family" ? "household" : "person"}:${kind === "hsa_family" ? policy.householdId : policy.personId}:${key}:${policy.facts.taxYear}`;
-const scopeConfirmation = (option: { investmentId: string; policy: ContributionPolicy }) => canonicalSerialize({ investmentId: option.investmentId, policy: option.policy });
+const scopeConfirmation = (option: { investmentId: string; policy: ContributionPolicy }) => canonicalSerialize({ investmentId: option.investmentId, policy: { ...option.policy, limits: [...option.policy.limits].sort((a, b) => a.ruleId.localeCompare(b.ruleId)) } });
 
 /** Historical characters may differ from the allocation currently planned for this holding. */
 export const openingContributionOptions = (model: PortableModelEnvelope) => {
@@ -44,7 +44,7 @@ export const openingContributionOptions = (model: PortableModelEnvelope) => {
   for (const option of options) {
     const key = `${option.investmentId}:${option.character}:${option.policy.facts.taxYear}`;
     const previous = unique.get(key);
-    if (previous && canonicalSerialize(previous.policy) !== canonicalSerialize(option.policy)) return fail("HISTORICAL_SCOPE_CONFLICT");
+    if (previous && scopeConfirmation(previous) !== scopeConfirmation(option)) return fail("HISTORICAL_SCOPE_CONFLICT");
     unique.set(key, option);
   }
   return [...unique.values()];
@@ -142,7 +142,7 @@ export const compileOpeningContributionUsage = (model: PortableModelEnvelope, st
     const option = options.find(row => row.investmentId === value.investmentId && row.character === character);
     if (!option) return fail("OPENING_USAGE_CHARACTER_INVALID");
     const policy = compileContributionPolicy({ ...model, objects: { ...model.objects, TaxRule: option.rules } }, { ...account, contribution_limit_rule_id: null, contribution_limit_rule_ids: option.rules.map(rule => String(rule.tax_rule_id)) }, value.contribution);
-    if (canonicalSerialize(policy) !== canonicalSerialize(option.policy)) return fail("OPENING_USAGE_SCOPE_CHANGED");
+    if (scopeConfirmation({ investmentId: option.investmentId, policy }) !== scopeConfirmation(option)) return fail("OPENING_USAGE_SCOPE_CHANGED");
     if (policy.facts.taxYear !== year || !options.some(option => option.investmentId === value.investmentId && option.character === policy.character)) return fail("OPENING_USAGE_CHARACTER_INVALID");
     const amount = exact(value.amount), split = policy.character === "traditional_401k" || policy.character === "roth_401k" || policy.character.endsWith("_hsa") && policy.facts.hsaCoverage === "family";
     const ordinary = split ? exact(value.ordinaryAmount) : amount;

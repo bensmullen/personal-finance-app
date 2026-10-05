@@ -95,7 +95,8 @@ describe("D1 prior YTD statutory usage", () => {
     expect(rows.find(row => row.bucketIdentity.includes("401k_additions:employer-a"))!.openingUsage).toBe(character === "traditional_401k" ? "60000" : "20000");
     expect(rows.find(row => row.bucketIdentity.includes("401k_additions:employer-b"))).toMatchObject({ openingUsage: "0", remaining: "72000" });
     expect(rows.filter(row => row.bucketIdentity.includes(":401k_elective:")).every(row => row.openingUsage === "20000" && row.remaining === "12500")).toBe(true);
-    const opening = createAuthoritativeState({ ...payrollOpeningBalances(restored, durablePayrollAllocations(restored)), contributions: usage.contributions });
+    const balances = payrollOpeningBalances(restored, durablePayrollAllocations(restored));
+    const opening = createAuthoritativeState({ ...balances, accounts: { ...usage.accounts, ...balances.accounts }, contributions: usage.contributions });
     const allocation = durablePayrollAllocations(restored)[0]!.allocation;
     const decision = decideContribution(opening, allocation.policy, allocation.accountId, instant("2026-07-15T00:00:00.000Z"), money("20000"));
     expect(decision.accepted.amount.toString()).toBe("12500");
