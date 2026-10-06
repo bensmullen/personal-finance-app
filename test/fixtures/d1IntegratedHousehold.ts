@@ -27,7 +27,7 @@ export const createD1IntegratedHousehold = (): PersonalDraft => {
     model = patchPersonalObject(model, "Assumption", assumption.assumption_id, { value: "0" });
   }
   model = patchPersonalObject(model, "Person", golden.person, { filing_status: "single", residence_jurisdiction_periods: [{ effective_date: "2026-01-01", state_jurisdiction: "US-NY" }], tax_eligibility_periods: [{ effective_date: "2026-01-01", key: federalBaseDeductionOnlyEligibilityKey, value: true }] });
-  model = patchPersonalObject(model, "Income", golden.income, { work_service_jurisdiction_allocations: [{ effective_date: "2026-01-02", state_jurisdiction: "US-NY", allocation: "1" }] });
+  model = patchPersonalObject(model, "Income", golden.income, { work_service_jurisdiction_allocations: [{ effective_date: "2026-01-01", state_jurisdiction: "US-NY", allocation: "1" }] });
   for (const investmentId of [golden.retirementInvestment, golden.brokerageInvestment]) {
     model = patchPersonalObject(model, "Investment", investmentId, { acquisition_date: "2024-01-01", cost_basis: investmentId === golden.retirementInvestment ? "100000" : "50000", after_tax_basis: "0" });
   }

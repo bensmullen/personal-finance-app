@@ -202,7 +202,7 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   const value: CompiledHouseholdProjection = Object.freeze({
     nonInvestmentPositionIds: taxCreditPositionIds(tax.value),
     participants: Object.freeze([createHouseholdTaxParticipant({ ...tax.value, simulationStart: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`),
-      domainOperations: domains?.status === "compiled" ? domains.value.input.operations.map(item => ({ id: item.id, at: instant(item.at) })) : [] }),
+      domainOperations: domains?.status === "compiled" ? domains.value.input.operations.map(item => ({ id: item.id, at: instant(item.at) })).sort((a, b) => a.id.localeCompare(b.id)) : [] }),
       ...(domains?.status === "compiled" ? [domains.value.participant] : []),
       ...(mortgages.value ? [mortgages.value] : []),
       ...(durablePayrollAllocations(model).some(item => item.events.length > 0) ? [createWorkplaceEventParticipant(durablePayrollAllocations(model).flatMap(item => item.events))] : [])]),
