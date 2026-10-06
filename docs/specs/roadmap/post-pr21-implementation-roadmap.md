@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.5.0-draft
+**Version:** 0.6.0-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -8,7 +8,7 @@
 
 This roadmap controls stabilization, forecasting, and the foundations of financial-planning/decision support after PR21. R11 is the gate before private-alpha infrastructure; explicitly identified planning/optimization tracks may continue beyond that gate. Milestone IDs are planning identities; GitHub PR numbers may differ.
 
-The sequence intentionally measures and improves the current deterministic path before multiplying it through stochastic simulation or strategy search. It also separates engineering enablement from user-facing completeness: stochastic infrastructure and planning infrastructure may develop against synthetic calibration and bounded domain coverage, while affected user-facing outputs remain capability-gated until their required tax, investment, insurance, calibration, and other semantics are ready.
+The sequence intentionally measures and improves the current deterministic path before multiplying it through stochastic simulation or strategy search. Calibration, onboarding, and deterministic planning foundations may develop in parallel where their boundaries are isolated, but stochastic household runtime implementation does not begin until the D1 and D2 deterministic gates are complete. User-facing outputs remain capability-gated until their required tax, investment, insurance, calibration, and other semantics are ready.
 
 The long-term architecture is a comprehensive financial-planning system, not only a forecast viewer. Forecasting remains the authoritative evaluation engine; planning layers define decisions, goals, constraints, candidate strategies, and comparisons without duplicating financial formulas.
 
@@ -46,20 +46,23 @@ R2  Interactive deterministic execution foundation
                        |
                        +--> A1 concentration safeguard implementation
                        |
-                       +--> R5 Stochastic runtime foundation <---- C1
-                            |
-                            v
-                         R6 Monte Carlo orchestration
-                            |
-                            v
-                         R7 Baseline probabilistic household engine
-                            | \
-                            |  +--> P2 Stochastic strategy evaluation /
-                            |       progressive optimization
-                            |
-                            +--> R10 Probabilistic + planning decision UX
+                       +--> D2 Common-household deterministic breadth
+                              |
+                              +--> R5 Stochastic runtime foundation <---- C1
+                                   |
+                                   v
+                                R6 Monte Carlo orchestration
+                                   |
+                                   v
+                                R7 Baseline probabilistic household engine
+                                   | \
+                                   |  +--> P2 Stochastic strategy evaluation /
+                                   |       progressive optimization
+                                   |
+                                   +--> R10 Probabilistic + planning decision UX
 
-D1 + O1 + P1 + T1A target-cohort coverage + A1
+D1 + D2 + O1 + P1 + T1A target-cohort coverage +
+T1B private-alpha tax floor + A1
                          |
                          v
               R11 Private-alpha readiness /
@@ -75,7 +78,9 @@ R9  Full issuer/RSU/employer-risk stochastic modeling is conditional
     it remains an explicit tracked post-alpha capability.
 
 T1B Advanced/specialized tax domains progress with the capabilities that need
-    them and gate only affected outputs.
+    them. PFA-TAX-016 (wash sale, capital-loss carryforward, tax-loss
+    harvesting, and bounded 1031 exchange) is mandatory before private alpha;
+    other T1B domains gate only affected outputs unless the cohort requires them.
 ~~~
 
 ### 2.1 Parallel-development coordination contract
@@ -95,15 +100,16 @@ For the currently planned lanes, ownership is:
 | Lane | Safe parallel scope | Shared integration boundary |
 | --- | --- | --- |
 | T1A Phase B | Household tax integration after R3 + Phase A | Owns tax household execution until merged; D1 does not start against an unmerged T1A-B branch |
-| D1 | Deterministic authoring, account/funding/current-position and remaining PFA-DET mechanics | Owns shared deterministic compiler/execution/editor semantics until D1 closeout |
+| D1 | Deterministic authoring, account/funding/current-position and original PFA-DET mechanics | Owns shared deterministic compiler/execution/editor semantics until D1 closeout |
+| D2 | After D1: Social Security/pensions, expanded retirement plans/conversions, common debt, healthcare/FSA, TIPS/EE, and 529 domain modules/fixtures | Owns expanded deterministic household semantics until D2 closeout; isolated domain work may parallelize only behind stable contracts |
 | C1 | Normalized calibration contract, immutable fingerprints, synthetic calibration | Must not change household financial semantics or stochastic runtime behavior; safe alongside T1A-B/D1 |
 | O1 | During D1: candidate/import schemas, parsers, provenance, idempotency, telemetry, synthetic fixtures | Authoritative model mutation and shared editor/compiler integration wait for D1 merge |
 | P1 | Planning-owned orchestration and decision/strategy configuration | Starts after D1; consumes the merged decision-overlay/execution boundary and does not change financial formulas |
 | A1 | Before D1 merge: analysis/spec/fixtures only | Executable concentration classification/compiler/UI integration starts after D1 because it shares investment/read-model semantics |
-| R5/R6 | Stochastic runtime/orchestration only after D1 + C1 | Own stochastic stream/run/orchestration contracts; ordinary deterministic semantics are frozen inputs |
+| R5/R6 | Stochastic runtime/orchestration only after D2 + C1 | Own stochastic stream/run/orchestration contracts; D1+D2 deterministic semantics are frozen inputs |
 | R7 | After R5/R6 contracts are stable, disjoint stochastic process modules may proceed in parallel | Correlation model, shared process identities, aggregation contracts, and orchestration remain single-owner synchronization surfaces |
 | R8 | Provider adapters against the merged C1 boundary | Adapter work may proceed independently; it must not redefine CalibrationSet or silently change user-facing forecast assumptions |
-| T1B | Isolated effective-dated rule/catalog work may proceed with consuming capabilities | Household/execution integration waits for the consuming domain's stable boundary or uses a dedicated synchronization change |
+| T1B | Isolated effective-dated rule/catalog work may proceed with consuming capabilities; PFA-TAX-016 is mandatory before R11 | Household/execution integration waits for the consuming domain's stable boundary or uses a dedicated synchronization change |
 
 This coordination contract controls implementation sequencing only. It does not move financial authority out of the canonical schema, executable financial semantics, or capability specifications.
 
@@ -225,13 +231,49 @@ Completion of Issue #70 alone SHALL NOT satisfy the D1 gate unless a merged-main
 
 If a named subfeature cannot be supported safely for the initial alpha contract, its exact unsupported boundary must be explicit and the private-alpha scope cannot claim that use case complete.
 
-**R5 gate:** do not begin stochastic household runtime implementation until the full D1 matrix, including D1-C integrated closeout, is complete and its deterministic verification/UAT are green. Isolated C1 calibration work and other explicitly parallel-safe foundation work may continue because they do not assume unresolved household financial semantics.
+**D2 handoff:** D1 completion no longer opens R5 directly. After D1-C is green and merged, D2 expands the deterministic household breadth before any stochastic household runtime begins. Isolated C1 calibration work and other explicitly parallel-safe foundation work may continue because they do not assume unresolved household financial semantics.
 
 **User validation:** required. D1 closeout SHALL include a focused user walkthrough proving that the required use cases can be entered in financially recognizable terms and that the resulting deterministic cash/state/tax behavior is understandable.
 
+
+## 5B. D2 — Common-household deterministic breadth before stochastic runtime
+
+D2 is a new hard gate between D1 and R5. It exists because the canonical vocabulary already anticipates several common household instruments/benefits that would materially distort a long-horizon forecast if stochastic simulation began before their deterministic mechanics were trustworthy.
+
+D2 SHALL implement and verify PFA-DET-016 through PFA-DET-023 and the corresponding PFA-INV, PFA-INS, and PFA-TAX requirements. Required pre-stochastic breadth includes:
+
+1. **Social Security retirement, spousal, and survivor benefits** with claiming/start-date, household coordination, COLA, and applicable tax semantics.
+2. **Defined-benefit pensions** with basic benefit/formula or quoted-benefit authoring, beneficiary/joint-survivor behavior, commencement, COLA, and applicable tax semantics.
+3. **403(b), governmental 457(b), and TSP** ordinary contribution/limit/rollover/distribution mechanics without flattening their legally distinct rules into a generic 401(k).
+4. **SEP IRA and SIMPLE IRA** ordinary employee/employer contribution, limit, rollover/distribution, and tax-character mechanics.
+5. **Auto loans, student loans, credit-card balances, and HELOCs** with real principal, interest, payment, extra-payment/payoff, and revolving/variable-rate behavior where applicable.
+6. **Basic Medicare costs and premiums**, including materially applicable income-related premium adjustments.
+7. **Basic health-insurance premium mechanics** with household coverage, employer/employee share, effective dates, and pre-tax versus after-tax funding character.
+8. **529 plans**, including contributions, qualified/non-qualified distributions, beneficiary/owner identity, ordinary plan-to-plan rollovers/beneficiary changes, and a bounded 529-to-Roth-IRA rollover path under effective-dated statutory constraints.
+9. **Backdoor Roth and mega-backdoor Roth mechanics**, preserving basis, pro-rata treatment, plan eligibility, contribution limits, and conversion/rollover tax character.
+10. **TIPS and Series EE savings bonds** with their distinct principal/accrual/redemption and tax-character mechanics.
+11. **Health FSA mechanics** with payroll contributions, plan-year limits, reimbursements, and supported carryover/grace/use-it-or-lose-it terms.
+12. **Traditional IRA to Roth IRA conversion** as a first-class conversion path with basis/tax recognition and separate settlement.
+
+D2 is not permission to make every rare statutory or plan-specific exception a universal pre-stochastic requirement. The ordinary household contract for each named family must be complete and testable; uncommon variants may be capability-gated only when the boundary is explicit and cannot silently change a supported result.
+
+D2 should be implemented as seam-safe slices after D1 merges:
+
+1. **D2-A — retirement/public-benefit breadth.** Social Security, pensions, 403(b)/457(b)/TSP, SEP/SIMPLE, IRA→Roth, backdoor Roth, mega-backdoor Roth, and their common tax/limit semantics.
+2. **D2-B — debt, special fixed income, and education savings.** Auto/student/credit-card/HELOC mechanics, TIPS, Series EE bonds, and 529 plans/rollovers.
+3. **D2-C — healthcare cash-flow breadth.** Health-insurance premium mechanics, Medicare premium/cost mechanics, and health FSA behavior.
+4. **D2-D — integrated closeout.** Combined deterministic truth table, realistic household reconciliation, normal-user authoring/UAT, and semantic audit across all D2 slices.
+
+Domain modules and fixtures may proceed in parallel after D1 when they consume stable merged contracts. Shared compiler/editor/execution/accounting/tax-settlement integration remains a single-owner lane; sibling branches SHALL NOT invent competing representations to avoid synchronization.
+
+**R5 gate:** do not begin stochastic household runtime implementation until D1 and D2 are complete on merged main, D2-D integrated verification/UAT is green, the applicable PFA-TAX-015 tax characterization is complete, and C1 is merged.
+
+**User validation:** required at D2 closeout. The user walkthrough SHALL prove the named common-household capabilities are authorable in recognizable financial terms and that unsupported special cases are surfaced before a forecast is trusted.
+
+
 ## 6. P1 — Deterministic planning / strategy-evaluation foundation
 
-P1 begins after D1 confirms that the deterministic financial mechanics used by private-alpha planning decisions are semantically correct and testable. Because T1A Phase B is already a D1 prerequisite, P1 may use authoritative tax evaluation for supported tax-sensitive decisions. P1 may begin **before R5 stochastic implementation** and should proceed in parallel with C1/later stochastic work.
+P1 begins after D1 confirms that the original deterministic financial mechanics used by private-alpha planning decisions are semantically correct and testable. Because T1A Phase B is already a D1 prerequisite, P1 may use authoritative tax evaluation for supported tax-sensitive decisions. P1 may proceed in parallel with D2 and C1, but it SHALL capability-gate any strategy conclusion that depends on a D2 domain until that domain is merged and verified.
 
 P1 now includes a required **deterministic portfolio-optimization floor for private alpha**. Implement the initial PFA-PLAN contract with a deliberately bounded supported decision set:
 
@@ -313,7 +355,7 @@ A production Plaid/bank-aggregation integration is not required for O1 or privat
 
 ### T1A — Target-cohort/common-household tax floor
 
-T1A Phase A begins after R2 and may develop in parallel with R3/C1. T1A Phase B household integration begins only after R3 and Phase A are merged, and the applicable target-cohort tax integration is a prerequisite to D1 closeout. R5/R6 do not begin before D1.
+T1A Phase A begins after R2 and may develop in parallel with R3/C1. T1A Phase B household integration begins only after R3 and Phase A are merged, and the applicable target-cohort tax integration is a prerequisite to D1 closeout. D2 extends the common-household tax floor through PFA-TAX-015 for its added retirement/benefit/account families. R5/R6 do not begin before D2.
 
 T1A is not “all tax law.” It is the deterministic per-realization tax coverage materially required by the households and outputs targeted for personal use/private alpha. Tax-affected stochastic outputs remain blocked/scoped until their required tax semantics are covered.
 
@@ -327,7 +369,7 @@ Examples of tax-independent results may continue to display in accordance with P
 
 ### T1B — Advanced/specialized tax domains
 
-Add specialized capital-gains, retirement, equity-compensation, and other jurisdiction/product mechanics alongside the capabilities that require them. Missing T1B behavior gates only materially affected outputs.
+Add specialized capital-gains, retirement, equity-compensation, real-estate, and other jurisdiction/product mechanics alongside the capabilities that require them. T1B now contains one mandatory private-alpha slice under PFA-TAX-016: wash-sale handling, capital-loss netting/carryforward, tax-loss harvesting evaluation, and a bounded Section 1031 real-property exchange contract. These four mechanics SHALL be complete before R11/private alpha. Other T1B behavior gates only materially affected outputs unless the alpha cohort requires it.
 
 T1B may parallelize safely at the rule/catalog layer when it adds isolated effective-dated rules behind the existing tax contract. A T1B slice that changes household compilation, recognition ordering, funding/settlement, or shared tax-execution interfaces SHALL wait for the current owner of that shared boundary to merge, or use a dedicated synchronization change before both lanes continue.
 
@@ -335,7 +377,7 @@ T1B may parallelize safely at the rule/catalog layer when it adds isolated effec
 
 ## 11. R5 — Stochastic runtime foundation
 
-**Start condition:** the full D1 deterministic household financial-semantic readiness gate is complete on merged main, including D1-C integrated truth-table verification, semantic audit, and accepted D1 UAT; C1's calibration contract is also merged. Issue #70/D1-A by itself is not sufficient. Do not use R5 to discover or patch unresolved ordinary household financial semantics.
+**Start condition:** the full D1 gate and the full D2 common-household breadth gate are complete on merged main, including D1-C and D2-D integrated truth-table verification, semantic audits, and accepted UAT; PFA-TAX-015 is complete for the admitted D2 scope; and C1's calibration contract is merged. Issue #70/D1-A or D1 by itself is not sufficient. Do not use R5 to discover or patch unresolved ordinary household financial semantics.
 
 Implement the higher-authority stochastic semantics before Monte Carlo orchestration:
 
@@ -499,12 +541,14 @@ Before private-alpha infrastructure:
 - the assisted-input architecture preserves factual-versus-planning semantic categories, candidate review, provenance, ambiguity handling, idempotency, and the privacy boundary required by PFA-ONB;
 - performance, convergence, memory, and per-run compute-cost budgets are documented and met for supported realistic use, with explicit cost-per-rerun measurement/estimation for every enabled stochastic execution placement;
 - Golden, realistic-household, and computationally complex/stress fixtures pass their applicable correctness/performance checks and their coverage inventories show the supported product is exercised materially beyond the simple Golden Household;
-- D1 is complete on merged main: every required PFA-DET deterministic use case has an independently specified truth-table test, the combined realistic household reconciles, source-of-funds constraints are enforced, and product-owner D1 UAT is accepted; completion of Issue #70 alone does not satisfy this gate unless the full matrix is covered;
+- D1 is complete on merged main: every original PFA-DET deterministic use case has an independently specified truth-table test, the combined realistic household reconciles, source-of-funds constraints are enforced, and product-owner D1 UAT is accepted; completion of Issue #70 alone does not satisfy this gate unless the full D1 matrix is covered;
+- D2 is complete on merged main: Social Security/pensions, expanded retirement plans and Roth-conversion paths, common consumer debt, Medicare/health premiums/FSA, TIPS/EE bonds, and 529 plans/rollovers have independent deterministic evidence plus D2-D combined-household reconciliation and accepted UAT;
 - current-state UI is responsive;
 - deterministic forecasts do not block the UI;
 - stochastic forecasts are reproducible and convergence metadata is interpretable;
 - common-random-number scenario comparison works where applicable and comparison UX distinguishes shared-Forecast-Basis decision comparisons from non-normalized historical snapshots;
 - user-facing stochastic outputs have applicable tax/calibration completeness;
+- the mandatory PFA-TAX-016 private-alpha tax slice is complete: wash-sale rules, capital-loss netting/carryforward, tax-loss harvesting evaluation, and bounded 1031 exchange mechanics are authoritative and verified;
 - major UAT editor/UX defects are resolved;
 - caching/persistence cannot make stale results look current or destroy the last successful result on failed rerun; saved plans are independent from derived results; recovery/grace-period behavior, snapshot limits, deduplication, and aggregate-only stochastic storage are exercised;
 - A1 concentration safeguards exist;
@@ -549,8 +593,8 @@ The portfolio capability (PFA-INV) and insurance capability (PFA-INS) may be imp
 The following items SHALL remain visible until closed:
 
 - **Full concentrated issuer + RSU/employer-risk stochastic modeling (R9):** conditional pre-alpha, but mandatory future capability if not completed before alpha. Trigger earlier if an intended participant has material concentrated stock or equity compensation.
-- **Advanced portfolio-planning depth (PFA-INV):** allocation optimization, broad rebalancing policy, account-location optimization, security selection, and other advanced planning may remain incremental. The deterministic account/instrument/contribution/conversion/funding mechanics named by PFA-DET are **not deferred** and are required before R5/private alpha.
-- **Advanced insurance planning (PFA-INS):** probabilistic claims, coverage optimization, underwriting/product-specific recommendation logic, and unsupported policy families may remain incremental. Deterministic premiums plus explicitly modeled payout/stress-event behavior required by PFA-DET are **not deferred** and are required before R5/private alpha.
+- **Advanced portfolio-planning depth (PFA-INV):** allocation optimization beyond the required deterministic floor, broad rebalancing policy, account-location optimization, security selection, and other advanced planning may remain incremental. The D1+D2 deterministic account/instrument/contribution/conversion/funding mechanics named by PFA-DET/PFA-INV are **not deferred** and are required before R5.
+- **Advanced insurance planning (PFA-INS):** probabilistic claims, coverage optimization, underwriting/product-specific recommendation logic, and unsupported policy families may remain incremental. D1 deterministic premiums/payouts plus D2 health-insurance and Medicare premium mechanics required by PFA-DET/PFA-INS are **not deferred** and are required before R5.
 - **Stochastic strategy optimization (P2):** may remain post-alpha if alpha offers explicit scenario/strategy comparison rather than automated optimization; trigger before exposing an automated stochastic strategy recommendation.
 - **Integrated cross-domain optimization (P3):** long-term product capability spanning the supported tax, investment, insurance, retirement, debt, liquidity, and future planning domains. It is intentionally not a blanket private-alpha prerequisite.
 
