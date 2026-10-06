@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import fnmatch
+import fcntl
 import hashlib
 import json
 import os
@@ -31,7 +32,7 @@ def emit(value):
 
 
 def run_git(args, cwd):
-    return subprocess.run(["git", *args], cwd=cwd, text=True, capture_output=True)
+    return subprocess.run(["git", *args], cwd=cwd, text=True, errors="surrogateescape", capture_output=True)
 
 
 def git_value(args, cwd):
@@ -84,6 +85,176 @@ def load_state(root, payload):
         return json.loads(path.read_text())
     except Exception:
         return None
+
+
+def save_state(root, payload, state):
+    path = state_path(root, payload)
+    data = json.dumps(state, indent=2) + "\n"
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(data)
+    temporary.replace(path)
+    latest = path.parent / "latest-task.json"
+    temporary = latest.with_suffix(".tmp")
+    temporary.write_text(json.dumps({
+        "path": path.name, "sha256": hashlib.sha256(data.encode()).hexdigest(),
+    }))
+    temporary.replace(latest)
+
+
+def prior_state(root):
+    # A single durable receipt avoids guessing among sessions or tied mtimes.
+    directory = root / ".codex" / "runtime"
+    try:
+        receipt = json.loads((directory / "latest-task.json").read_text())
+        name = receipt["path"]
+        if Path(name).name != name or name == "latest-task.json":
+            return None
+        data = (directory / name).read_bytes()
+        if hashlib.sha256(data).hexdigest() != receipt["sha256"]:
+            return None
+        state = json.loads(data)
+        if state.get("WORKTREE") != str(root.resolve()) or not state.get("ACTIVE"):
+            return None
+        return state
+    except Exception:
+        return None
+
+
+def task_identity(prompt, metadata):
+    issue = (metadata or {}).get("issue")
+    if issue:
+        return f"issue:{APPROVED_REPOSITORY}#{issue['number']}"
+    return "contract:" + hashlib.sha256(prompt.strip().encode()).hexdigest()
+
+
+def git_paths(args, root):
+    result = run_git(args, root)
+    if result.returncode:
+        raise ValueError("cannot enumerate Git paths safely")
+    return {value for value in result.stdout.split("\0") if value}
+
+
+def checkpoint_guard(root, state):
+    target = state["TARGET_BRANCH"]
+    if current_branch(root) != target or not state.get("ACTIVE"):
+        return "branch changed/detached or task state is inactive"
+    for marker in ("MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD",
+                   "REVERT_HEAD", "sequencer", "BISECT_LOG", "AUTO_MERGE"):
+        location = git_value(["rev-parse", "--git-path", marker], root)
+        if not location or (root / location).exists():
+            return f"ambiguous Git operation: {marker}"
+    if git_paths(["ls-files", "-u", "-z"], root):
+        return "unmerged/conflicted index"
+    if run_git(["merge-base", "--is-ancestor", state["BASE_HEAD"], "HEAD"], root).returncode:
+        return "prior BASE_HEAD is not an ancestor of HEAD"
+    paths = set()
+    for args in (["diff", "--no-renames", "--name-only", "-z", f"{state['BASE_HEAD']}..HEAD"],
+                 ["diff", "--no-renames", "--name-only", "-z"],
+                 ["diff", "--cached", "--no-renames", "--name-only", "-z"],
+                 ["ls-files", "--others", "--exclude-standard", "-z"]):
+        paths.update(git_paths(args, root))
+    commits = run_git(["log", "--format=%H", f"{state['BASE_HEAD']}..HEAD"], root)
+    if commits.returncode:
+        return "cannot enumerate prior task commits"
+    for commit in commits.stdout.splitlines():
+        paths.update(git_paths(["diff-tree", "--no-commit-id", "--no-renames", "-m", "-r", "--name-only", "-z", commit], root))
+    for path in sorted(paths):
+        if not allowed(path, state["ALLOWED_PATHS"]):
+            return f"out-of-scope path: {path}"
+        if is_control_path(path) and state["TASK_KIND"] != "framework":
+            return f"protected control path: {path}"
+        file = root / path
+        if file.is_file() and not file.is_symlink():
+            if re.search(rb"(?m)^(?:<{7}|={7}|>{7})(?: |\r?$)", file.read_bytes()):
+                return f"conflict markers: {path}"
+        staged = run_git(["show", f":{path}"], root)
+        if staged.returncode == 0 and re.search(r"(?m)^(?:<{7}|={7}|>{7})(?: |\r?$)", staged.stdout):
+            return f"staged conflict markers: {path}"
+    if state["DEPENDENCY_POLICY"] == "locked":
+        if dependency_declarations_changed(root, state["BASE_HEAD"]):
+            return "locked dependency declarations changed"
+        base = run_git(["show", f"{state['BASE_HEAD']}:package.json"], root)
+        staged = run_git(["show", ":package.json"], root)
+        if base.returncode == 0:
+            if staged.returncode or not (root / "package.json").is_file():
+                return "locked package.json removed"
+            try:
+                before, after = json.loads(base.stdout), json.loads(staged.stdout)
+                keys = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies", "packageManager")
+                if any(before.get(key) != after.get(key) for key in keys):
+                    return "locked staged dependency declarations changed"
+            except Exception:
+                return "unreadable locked dependency declarations"
+    error = attachment_integrity_error(state)
+    if error:
+        return error
+    ok, reason = safe_push(f"git push origin {target}", root, target)
+    if not ok:
+        return reason
+    # Validate push destinations as well as fetch origin; do not trust stale tracking refs.
+    urls = run_git(["remote", "get-url", "--push", "--all", "origin"], root)
+    if urls.returncode or (not os.environ.get("PFM_POLICY_TEST_ORIGIN") and
+                           urls.stdout.splitlines() != [origin_url(root)]):
+        return "origin push destination differs or is ambiguous"
+    upstream = git_value(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], root)
+    if upstream and upstream != f"origin/{target}":
+        return "tracking branch differs from task branch"
+    remote = run_git(["ls-remote", "--exit-code", "origin", f"refs/heads/{target}"], root)
+    if remote.returncode not in (0, 2):
+        return "cannot read origin task branch"
+    if remote.returncode == 0:
+        lines = remote.stdout.splitlines()
+        if len(lines) != 1 or lines[0].split()[1] != f"refs/heads/{target}":
+            return "ambiguous remote task branch"
+        if run_git(["merge-base", "--is-ancestor", lines[0].split()[0], "HEAD"], root).returncode:
+            return "origin task branch has unknown or divergent commits"
+    return None
+
+
+def checkpoint(root, state, incoming=None):
+    latest = prior_state(root)
+    if not latest or any(latest.get(key) != state.get(key) for key in
+                         ("AUTHORIZATION_ID", "TASK_IDENTITY", "TARGET_BRANCH", "BASE_HEAD", "ALLOWED_PATHS", "TASK_KIND", "DEPENDENCY_POLICY")):
+        return "STATE_RECOVERY_REQUIRED: missing/ambiguous active task receipt"
+    for authorization in (state, incoming):
+        if authorization is not None:
+            error = checkpoint_guard(root, authorization)
+            if error:
+                return "STATE_RECOVERY_REQUIRED: " + error
+    dirty = set()
+    for args in (["diff", "--no-renames", "--name-only", "-z"],
+                 ["diff", "--cached", "--no-renames", "--name-only", "-z"],
+                 ["ls-files", "--others", "--exclude-standard", "-z"]):
+        dirty.update(git_paths(args, root))
+    if dirty:
+        result = run_git(["--literal-pathspecs", "add", "--", *sorted(dirty)], root)
+        if result.returncode:
+            return "STATE_RECOVERY_REQUIRED: checkpoint staging failed; all work preserved"
+        issue = state.get("TASK_ISSUE", {}).get("number")
+        label = f" #{issue}" if issue else ""
+        result = run_git(["commit", "-m", f"WIP: checkpoint blocked PFM task{label}",
+                          "-m", "PFM-Checkpoint: true"], root)
+        if result.returncode:
+            return "STATE_RECOVERY_REQUIRED: checkpoint commit failed; staged work preserved"
+    for authorization in (state, incoming):
+        if authorization is not None:
+            error = checkpoint_guard(root, authorization)
+            if error:
+                return "STATE_RECOVERY_REQUIRED: post-commit " + error + "; local work preserved"
+    if git_value(["status", "--porcelain=v1", "--untracked-files=all"], root):
+        return "STATE_RECOVERY_REQUIRED: worktree changed during checkpoint; local work preserved"
+    target = state["TARGET_BRANCH"]
+    result = run_git(["-c", "push.followTags=false", "-c", "remote.origin.mirror=false",
+                      "push", "--no-follow-tags", "-u", "origin", f"HEAD:refs/heads/{target}"], root)
+    if result.returncode:
+        return "STATE_RECOVERY_REQUIRED: checkpoint push failed; local commit/data preserved; retry ordinary feature-branch push"
+    head = git_value(["rev-parse", "HEAD"], root)
+    remote = run_git(["ls-remote", "--exit-code", "origin", f"refs/heads/{target}"], root)
+    if (remote.returncode or remote.stdout.split() != [head, f"refs/heads/{target}"] or
+            git_value(["rev-parse", "@{u}"], root) != head or
+            git_value(["status", "--porcelain=v1", "--untracked-files=all"], root)):
+        return "STATE_RECOVERY_REQUIRED: checkpoint post-push clean/tracking/remote verification failed; work preserved"
+    return None
 
 
 def scalar(prompt, key):
@@ -623,6 +794,13 @@ def session_start(payload, root):
             "Do not run tools/codex/bootstrap-pr.sh inside the implementation turn; "
             "UserPromptSubmit will validate task/branch alignment."
         )
+    elif linked_worktree and branch.startswith(APPROVED_BRANCH_PREFIXES) and dirty:
+        bootstrap_context = (
+            "This linked feature worktree contains interrupted or unknown changes. "
+            "Resubmit the same PFM task; UserPromptSubmit will attempt guarded continuation recovery "
+            "only when active task provenance and authorization can be proven. "
+            "Do not run bootstrap or discard work inside the implementation turn."
+        )
     else:
         bootstrap_context = (
             "This checkout is not a prepared clean linked feature worktree. "
@@ -688,24 +866,39 @@ def user_prompt(payload, root):
         )
         return
 
-    dirty = git_value(["status", "--porcelain=v1", "--untracked-files=normal"], root)
-    if dirty:
-        emit({"decision": "block", "reason": f"STATE_DIRTY: root={root} task branch must be clean before implementation begins."})
-        return
-
     state = {
         **values,
         "ALLOWED_PATHS": writes,
         "BASE_HEAD": git_value(["rev-parse", "HEAD"], root),
         "OBJECTIVE": section(task_prompt, "OBJECTIVE"),
         "ACCEPTANCE": section(task_prompt, "ACCEPTANCE"),
+        "WORKTREE": str(root.resolve()),
+        "ACTIVE": True,
+        "TASK_IDENTITY": task_identity(task_prompt, attachment_metadata),
+        "AUTHORIZATION_ID": os.urandom(16).hex(),
     }
     if attachment_metadata:
         if attachment_metadata.get("attachment") is not None:
             state["TASK_ATTACHMENT"] = attachment_metadata["attachment"]
         if attachment_metadata.get("issue") is not None:
             state["TASK_ISSUE"] = attachment_metadata["issue"]
-    state_path(root, payload).write_text(json.dumps(state, indent=2) + "\n")
+    dirty = git_value(["status", "--porcelain=v1", "--untracked-files=all"], root)
+    prior = prior_state(root)
+    # Also retry an interrupted checkpoint push when its local commit is clean.
+    pending = (prior and prior.get("TASK_IDENTITY") == state["TASK_IDENTITY"] and
+               git_value(["rev-parse", "HEAD"], root) != git_value(["rev-parse", "@{u}"], root) and
+               "PFM-Checkpoint: true" in git_value(["log", "-1", "--format=%B"], root))
+    if dirty or pending:
+        if not prior or prior.get("TASK_IDENTITY") != state["TASK_IDENTITY"] or prior.get("TARGET_BRANCH") != target:
+            emit({"decision": "block", "reason": "STATE_RECOVERY_REQUIRED: STATE_DIRTY has no matching active prior task provenance; preserve work for operator recovery."})
+            return
+        state["BASE_HEAD"] = prior["BASE_HEAD"]
+        error = checkpoint(root, prior, state)
+        if error:
+            emit({"decision": "block", "reason": error})
+            return
+        state["BASE_HEAD"] = git_value(["rev-parse", "HEAD"], root)
+    save_state(root, payload, state)
 
     issue_metadata = state.get("TASK_ISSUE")
     attachment_source = state.get("TASK_ATTACHMENT") is not None
@@ -926,7 +1119,9 @@ def completion_problems(root, state):
         problems.append(f"final branch is {branch}, expected {state['TARGET_BRANCH']}")
     if git_value(["status", "--porcelain=v1", "--untracked-files=normal"], root):
         problems.append("working tree is dirty")
-    if head == state["BASE_HEAD"]:
+    commits = git_value(["log", "--format=%H", f"{state['BASE_HEAD']}..HEAD"], root).splitlines()
+    if not any("PFM-Checkpoint: true" not in git_value(["show", "-s", "--format=%B", commit], root)
+               for commit in commits):
         problems.append("no implementation commit exists")
 
     changed = changed_paths(root, state["BASE_HEAD"])
@@ -967,6 +1162,11 @@ def stop(payload, root):
         emit({"continue": True})
         return
 
+    latest = prior_state(root)
+    if state.get("ACTIVE") and (not latest or latest.get("AUTHORIZATION_ID") != state.get("AUTHORIZATION_ID")):
+        block_or_stop(payload, "STATE_RECOVERY_REQUIRED: active task receipt was superseded or became ambiguous")
+        return
+
     message = str(payload.get("last_assistant_message") or "")
     attachment_error = attachment_integrity_error(state)
     if attachment_error:
@@ -984,6 +1184,11 @@ def stop(payload, root):
         if "BLOCKER:" not in message and "LOOKUP_REQUIRED:" not in message:
             block_or_stop(payload, "BLOCKED status requires BLOCKER: or LOOKUP_REQUIRED:")
             return
+        if git_value(["status", "--porcelain=v1", "--untracked-files=all"], root):
+            error = checkpoint(root, state)
+            if error:
+                block_or_stop(payload, error)
+                return
         blocked_problems = []
         if current_branch(root) != state["TARGET_BRANCH"]:
             blocked_problems.append("task branch changed")
@@ -997,6 +1202,8 @@ def stop(payload, root):
         if blocked_problems:
             block_or_stop(payload, "Blocked task must leave shared Git state understandable: " + "; ".join(blocked_problems))
             return
+        state["ACTIVE"] = False
+        save_state(root, payload, state)
         emit({"continue": True})
         return
 
@@ -1016,6 +1223,8 @@ def stop(payload, root):
         block_or_stop(payload, "Cannot report COMPLETE: " + "; ".join(problems))
         return
 
+    state["ACTIVE"] = False
+    save_state(root, payload, state)
     emit({"continue": True})
 
 
@@ -1045,7 +1254,18 @@ def main():
         return
 
     try:
-        handler(payload, root)
+        if payload.get("hook_event_name") in {"UserPromptSubmit", "Stop"}:
+            directory = root / ".codex" / "runtime"
+            directory.mkdir(parents=True, exist_ok=True)
+            with (directory / "policy.lock").open("a") as lock:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    emit({"decision": "block", "reason": "STATE_RECOVERY_REQUIRED: another task authorization/checkpoint is in progress"})
+                    return
+                handler(payload, root)
+        else:
+            handler(payload, root)
     except Exception as exc:
         event = payload.get("hook_event_name")
         if event == "PreToolUse":

@@ -83,8 +83,63 @@ conditions when useful. Their exact headings are not parser requirements.
 - Do not run tests, typecheck, builds, validators, E2E, benchmarks, dev servers,
   performance captures, or other verification locally.
 - GitHub CI owns ordinary verification.
-- Read implementation resources as needed. If a missing semantic decision makes
-  correct implementation impossible, stop with `LOOKUP_REQUIRED:`.
+- Resolve implementation questions from repository authority: canonical financial
+  specification, executable financial semantics, capability/slice specifications,
+  ADRs, then implementation. Choose the smallest architecture-consistent option
+  inside ALLOWED_PATHS when it does not change user-visible financial meaning.
+  Do not escalate type shapes, accumulators, module placement, or code structure
+  merely because the handoff does not prescribe them.
+- Escalate only unresolved product/financial meaning, unavailable external facts,
+  missing authorization, unsafe prerequisites, or alternatives that materially
+  change user-visible economic behavior. Use the PM-oriented block below.
+
+## Interrupted task continuation
+
+Resubmit the same task issue (or the identical inline/attachment contract) in the
+same worktree and branch after a usage-limit/manual interruption. UserPromptSubmit
+uses a durable active-task receipt to prove provenance, checks both prior and
+incoming authorization, and checkpoints/pushes eligible dirty work before setting
+the new BASE_HEAD. No Stop event is required. A failed checkpoint push preserves
+the local commit and can be retried by resubmitting the same task.
+
+Unknown, unrelated, out-of-scope, protected, dependency-violating, conflicted, or
+ambiguous Git state blocks recovery with `STATE_RECOVERY_REQUIRED`. Preserve work
+and report the exact reason. Do not reset, clean, stash, switch branches, amend,
+rebase, force-push, or rerun bootstrap to bypass recovery checks.
+
+For a normal valid BLOCKED/LOOKUP_REQUIRED stop, the hook checkpoints eligible
+dirty paths and pushes them before permitting the stop. WIP checkpoints preserve
+work; they are not implementation acceptance, verified evidence, or merge-ready
+commits and cannot alone satisfy COMPLETE.
+
+## Product-manager escalation
+
+Before escalating, inspect the narrow authoritative sources and state the actual
+user/financial decision first. Include this block with BLOCKED and the precise
+LOOKUP_REQUIRED/BLOCKER reason:
+
+```text
+DECISION_NEEDED: <one sentence stating the product decision or missing fact>
+PRODUCT_IMPACT: <effect on users or financial behavior>
+OPTIONS: <only materially different choices>
+RECOMMENDATION: <preferred option, or why no preference is supportable>
+TECHNICAL_REASON: <short explanation>
+```
+
+For authorization-only requests, give the exact additional scope path needed.
+Do not ask a product owner to select implementation mechanics. Hooks do not call
+ChatGPT/OpenAI automatically; the block is suitable for a human relay to ChatGPT.
+
+Refinance timing is a genuine product decision, even though it arises from engine
+constraints. For the D1-B private-alpha floor, use this form:
+
+```text
+DECISION_NEEDED: For the private-alpha refinance floor, should users be able to refinance only on a scheduled monthly mortgage payment date, or on any calendar date?
+PRODUCT_IMPACT: Payment-date-only refinancing is narrower but deterministic with the existing mortgage model; arbitrary dates are more realistic but require new partial-month interest semantics.
+OPTIONS: (A) scheduled payment dates only; (B) arbitrary dates with new stub/per-diem interest support.
+RECOMMENDATION: A for D1-B; defer arbitrary-date refinance to a later mortgage capability.
+TECHNICAL_REASON: the current authoritative mortgage engine models whole contractual months only.
+```
 
 ## Publication
 
@@ -133,8 +188,10 @@ TASK_STATUS: BLOCKED
 LOOKUP_REQUIRED: <exact missing fact>
 ```
 
-Blocked partial commits must be pushed; otherwise restore them so the shared Git
-state remains understandable.
+Blocked partial commits must be pushed. Eligible dirty work is checkpointed by the
+Stop hook. If checkpoint/push fails, preserve all local work and report the precise
+recovery condition; never discard or rewrite history automatically. Issue-specific
+CI/audit acceptance gates must also pass before reporting COMPLETE.
 
 ## Compatibility
 

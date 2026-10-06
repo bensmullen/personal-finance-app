@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { candidateKey } from "./agent-candidate-key.mjs";
 
@@ -78,10 +79,13 @@ fs.writeFileSync(
 mustRun("git", ["init", "-b", "main"], { cwd: hookRepo });
 mustRun("git", ["config", "user.name", "PFM Test"], { cwd: hookRepo });
 mustRun("git", ["config", "user.email", "pfm@example.test"], { cwd: hookRepo });
-mustRun("git", ["remote", "add", "origin", "https://github.com/bensmullen/personal-finance-app.git"], { cwd: hookRepo });
+const hookRemote = path.join(temp, "hook-remote.git");
+mustRun("git", ["init", "--bare", hookRemote]);
+mustRun("git", ["remote", "add", "origin", hookRemote], { cwd: hookRepo });
 mustRun("git", ["add", "."], { cwd: hookRepo });
 mustRun("git", ["commit", "-m", "base"], { cwd: hookRepo });
 mustRun("git", ["switch", "-c", "codex/policy-self-test"], { cwd: hookRepo });
+mustRun("git", ["push", "origin", "codex/policy-self-test"], { cwd: hookRepo });
 const baseHead = mustRun("git", ["rev-parse", "HEAD"], { cwd: hookRepo }).stdout.trim();
 
 const sessionId = "policy-self-test";
@@ -95,7 +99,8 @@ const hook = (event, extra = {}, env = {}) => {
     permission_mode: "default",
     ...extra,
   });
-  const result = run("python3", [policy], { cwd: hookRepo, input: payload, env });
+  const result = run("python3", [policy], { cwd: hookRepo, input: payload,
+    env: { PFM_POLICY_TEST_ORIGIN: "https://github.com/bensmullen/personal-finance-app.git", ...env } });
   assert(result.status === 0, event + " hook failed: " + result.stderr);
   return JSON.parse(result.stdout || "{}");
 };
@@ -316,16 +321,245 @@ const blockedStop = hook("Stop", {
 });
 assert(blockedStop?.continue === true, "explicit clean BLOCKED state should be allowed");
 
+hook("UserPromptSubmit", { prompt });
 fs.writeFileSync(path.join(hookRepo, "src", "allowed.ts"), "export const value = 3;\n");
 const dirtyBlocked = hook("Stop", {
   last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: external semantic decision required",
   stop_hook_active: false,
 });
 assert(
-  dirtyBlocked.decision === "block" && String(dirtyBlocked.reason).includes("working tree is dirty"),
-  "BLOCKED must leave a clean/shared state",
+  dirtyBlocked.continue === true
+    && mustRun("git", ["status", "--porcelain"], { cwd: hookRepo }).stdout === ""
+    && mustRun("git", ["log", "-1", "--format=%B"], { cwd: hookRepo }).stdout.includes("PFM-Checkpoint: true")
+    && mustRun("git", ["rev-parse", "HEAD"], { cwd: hookRepo }).stdout
+      === mustRun("git", ["rev-parse", "@{u}"], { cwd: hookRepo }).stdout,
+  "normal BLOCKED must checkpoint authorized work and push it",
 );
-mustRun("git", ["restore", "src/allowed.ts"], { cwd: hookRepo });
+const checkpointComplete = hook("Stop", {
+  last_assistant_message: "TASK_STATUS: COMPLETE\nACCEPTANCE_STATUS: SATISFIED",
+});
+assert(checkpointComplete.decision === "block" && checkpointComplete.reason.includes("no implementation commit"),
+  "checkpoint alone must never satisfy COMPLETE");
+
+// Each recovery scenario has an isolated local bare origin; no network publication.
+const realGit = mustRun("sh", ["-c", "command -v git"]).stdout.trim();
+let recoveryIndex = 0;
+const recoveryFixture = () => {
+  const directory = path.join(temp, "recovery-" + ++recoveryIndex);
+  const repository = path.join(directory, "repo");
+  const remote = path.join(directory, "remote.git");
+  fs.mkdirSync(directory);
+  mustRun("git", ["clone", "--branch", "codex/policy-self-test", hookRepo, repository]);
+  const git = (...args) => mustRun("git", args, { cwd: repository }).stdout.trim();
+  git("config", "user.name", "PFM Test");
+  git("config", "user.email", "pfm@example.test");
+  mustRun("git", ["init", "--bare", remote]);
+  git("remote", "set-url", "origin", remote);
+  git("push", "-u", "origin", "codex/policy-self-test");
+  const bin = path.join(directory, "bin");
+  const log = path.join(directory, "git-calls.txt");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "git"),
+    '#!/bin/sh\nprintf "%s\\n" "$*" >> "$PFM_TEST_GIT_LOG"\nexec "' + realGit + '" "$@"\n', { mode: 0o755 });
+  const issue = path.join(directory, "issue.md");
+  fs.writeFileSync(issue, prompt);
+  const invoke = (event, extra = {}, env = {}) => {
+    const result = mustRun("python3", [policy], { cwd: repository,
+      input: JSON.stringify({ cwd: repository, session_id: "recovery", turn_id: "first",
+        hook_event_name: event, ...extra }),
+      env: { PFM_POLICY_TEST_ORIGIN: "https://github.com/bensmullen/personal-finance-app.git",
+        PFM_POLICY_TEST_ISSUE_BODY_FILE: issue, PFM_TEST_GIT_LOG: log,
+        PATH: bin + path.delimiter + process.env.PATH, ...env } });
+    return JSON.parse(result.stdout);
+  };
+  const start = (extra = {}) => invoke("UserPromptSubmit", { prompt: "PFM_TASK_ISSUE: 85", ...extra });
+  const accepted = start();
+  assert(accepted.hookSpecificOutput?.additionalContext.includes("authorization accepted"), "clean starts unchanged");
+  const dirty = () => fs.appendFileSync(path.join(repository, "src/allowed.ts"), "// interrupted work\n");
+  const snapshot = () => ({ head: git("rev-parse", "HEAD"), status: git("status", "--porcelain=v1"),
+    diff: git("diff"), staged: git("diff", "--cached") });
+  const assertNoUnsafeCommands = () => {
+    const calls = fs.readFileSync(log, "utf8").split("\n");
+    assert(!calls.some((line) => /^(reset|clean|stash|checkout|switch|rebase|merge |cherry-pick|restore)\b/.test(line)
+      || /--force|--amend|--delete/.test(line)), "recovery must not discard/rewrite/force work");
+  };
+  return { repository, remote, git, invoke, start, dirty, snapshot, issue, assertNoUnsafeCommands };
+};
+
+{
+  const f = recoveryFixture();
+  f.dirty();
+  const dirtySession = f.invoke("SessionStart");
+  assert(dirtySession.hookSpecificOutput?.additionalContext.includes("dirty=yes"), "interrupted session exposes dirty state");
+  f.git("add", "src/allowed.ts");
+  f.dirty();
+  fs.mkdirSync(path.join(f.repository, "src/new"), { recursive: true });
+  fs.writeFileSync(path.join(f.repository, "src/new", "space and\nnewline.ts"), "// preserved\n");
+  const resumed = f.start({ session_id: "after-limit", turn_id: "second" });
+  assert(resumed.hookSpecificOutput?.additionalContext.includes("authorization accepted"),
+    "matching issue provenance must recover without any Stop event");
+  const state = JSON.parse(fs.readFileSync(path.join(f.repository, ".codex/runtime/after-limit-second.json")));
+  assert(state.BASE_HEAD === f.git("rev-parse", "HEAD") && f.git("status", "--porcelain") === "",
+    "new BASE_HEAD must be checkpoint HEAD with a clean tree");
+  assert(f.git("rev-parse", "HEAD") === f.git("rev-parse", "@{u}"), "checkpoint must be pushed");
+  assert(f.git("log", "-1", "--format=%B").includes("WIP: checkpoint blocked PFM task #85"), "checkpoint label");
+  const stop = f.invoke("Stop", { session_id: "after-limit", turn_id: "second",
+    last_assistant_message: "TASK_STATUS: COMPLETE\nACCEPTANCE_STATUS: SATISFIED" });
+  assert(stop.decision === "block" && stop.reason.includes("no implementation commit"),
+    "recovery checkpoint cannot become the next turn's implementation");
+  f.assertNoUnsafeCommands();
+}
+
+const rejectedRecovery = (label, arrange, expected, extra = {}, env = {}) => {
+  const f = recoveryFixture();
+  f.dirty();
+  arrange(f);
+  const before = f.snapshot();
+  const response = f.invoke("UserPromptSubmit", { prompt: "PFM_TASK_ISSUE: 85", turn_id: "next", ...extra }, env);
+  assert(response.decision === "block" && response.reason.includes(expected), label + ": " + JSON.stringify(response));
+  assert(JSON.stringify(before) === JSON.stringify(f.snapshot()), label + " must not mutate Git/data");
+  f.assertNoUnsafeCommands();
+};
+rejectedRecovery("outside dirty path", (f) => fs.writeFileSync(path.join(f.repository, "outside.txt"), "outside\n"), "outside.txt");
+rejectedRecovery("protected product dirt", (f) => fs.writeFileSync(path.join(f.repository, ".codex/control.txt"), "control\n"), ".codex/control.txt");
+rejectedRecovery("protected dirt despite broad product scope", (f) => {
+  f.git("restore", "src/allowed.ts");
+  fs.writeFileSync(f.issue, prompt.replace("- src/allowed.ts", "- ."));
+  f.start();
+  f.dirty();
+  fs.writeFileSync(path.join(f.repository, ".codex/control.txt"), "control\n");
+}, "protected control path");
+rejectedRecovery("different task issue", () => {}, "provenance", { prompt: "PFM_TASK_ISSUE: 86" });
+rejectedRecovery("different task branch", () => {}, "TASK_BRANCH_MISMATCH", {}, { PFM_POLICY_TEST_BRANCH: "codex/other" });
+rejectedRecovery("missing prior provenance", (f) => fs.rmSync(path.join(f.repository, ".codex/runtime/latest-task.json")), "provenance");
+rejectedRecovery("ambiguous prior provenance", (f) => fs.appendFileSync(path.join(f.repository, ".codex/runtime/recovery-first.json"), " "), "provenance");
+rejectedRecovery("different worktree provenance", (f) => {
+  const file = path.join(f.repository, ".codex/runtime/recovery-first.json");
+  // A copied receipt/state is insufficient even with a valid digest.
+  const data = JSON.parse(fs.readFileSync(file));
+  data.WORKTREE = path.join(temp, "other-worktree");
+  const serialized = JSON.stringify(data);
+  fs.writeFileSync(file, serialized);
+  fs.writeFileSync(path.join(f.repository, ".codex/runtime/latest-task.json"), JSON.stringify({
+    path: "recovery-first.json", sha256: createHash("sha256").update(serialized).digest("hex"),
+  }));
+}, "provenance");
+rejectedRecovery("conflict markers", (f) => fs.appendFileSync(path.join(f.repository, "src/allowed.ts"), "<<<<<<< ours\n=======\n>>>>>>> theirs\n"), "conflict markers");
+rejectedRecovery("Git operation", (f) => fs.writeFileSync(path.join(f.repository, ".git/MERGE_HEAD"), f.git("rev-parse", "HEAD")), "MERGE_HEAD");
+rejectedRecovery("unmerged index", (f) => {
+  const blob = f.git("rev-parse", "HEAD:src/allowed.ts");
+  mustRun("git", ["update-index", "--index-info"], { cwd: f.repository,
+    input: `0 ${"0".repeat(40)}\tsrc/allowed.ts\n100644 ${blob} 1\tsrc/allowed.ts\n100644 ${blob} 2\tsrc/allowed.ts\n100644 ${blob} 3\tsrc/allowed.ts\n` });
+}, "unmerged");
+rejectedRecovery("locked dependencies", (f) => {
+  fs.writeFileSync(path.join(f.repository, "package.json"), JSON.stringify({ dependencies: { unauthorized: "1.0.0" } }));
+}, "locked dependency");
+rejectedRecovery("locked staged dependencies", (f) => {
+  const file = path.join(f.repository, "package.json");
+  const original = fs.readFileSync(file);
+  fs.writeFileSync(file, JSON.stringify({ dependencies: { unauthorized: "1.0.0" } }));
+  f.git("add", "package.json");
+  fs.writeFileSync(file, original);
+}, "locked staged dependency");
+rejectedRecovery("incoming scope narrower", (f) => fs.writeFileSync(f.issue, prompt.replace("- src/allowed.ts\n", "")), "src/allowed.ts");
+rejectedRecovery("prior scope narrower", (f) => {
+  fs.writeFileSync(f.issue, prompt.replace("- src/new/**\n", ""));
+  // Reauthorize cleanly before interruption under a narrower prior contract.
+  f.git("restore", "src/allowed.ts");
+  f.start();
+  fs.mkdirSync(path.join(f.repository, "src/new"), { recursive: true });
+  fs.writeFileSync(path.join(f.repository, "src/new/new.ts"), "// outside prior scope\n");
+  fs.writeFileSync(f.issue, prompt);
+}, "src/new/new.ts");
+rejectedRecovery("wrong origin", () => {}, "origin", {}, { PFM_POLICY_TEST_ORIGIN: "https://github.com/other/repository.git" });
+rejectedRecovery("unknown/divergent remote", (f) => {
+  const other = path.join(temp, "divergent-peer");
+  mustRun("git", ["clone", "--branch", "codex/policy-self-test", f.remote, other]);
+  mustRun("git", ["config", "user.name", "PFM Test"], { cwd: other });
+  mustRun("git", ["config", "user.email", "pfm@example.test"], { cwd: other });
+  fs.appendFileSync(path.join(other, "src/allowed.ts"), "// peer work\n");
+  mustRun("git", ["add", "src/allowed.ts"], { cwd: other });
+  mustRun("git", ["commit", "-m", "peer work"], { cwd: other });
+  mustRun("git", ["push", "origin", "codex/policy-self-test"], { cwd: other });
+}, "unknown or divergent");
+rejectedRecovery("committed then reverted out-of-scope work", (f) => {
+  fs.appendFileSync(path.join(f.repository, "src/outside.ts"), "// unrelated work\n");
+  f.git("add", "src/outside.ts");
+  f.git("commit", "-m", "unrelated commit");
+  fs.writeFileSync(path.join(f.repository, "src/outside.ts"), f.git("show", "HEAD~1:src/outside.ts") + "\n");
+  f.git("add", "src/outside.ts");
+  f.git("commit", "-m", "undo unrelated work");
+}, "src/outside.ts");
+
+{
+  const f = recoveryFixture();
+  // Identical inline contracts have stable identity; different semantics do not.
+  f.invoke("UserPromptSubmit", { prompt });
+  f.dirty();
+  const rejected = f.invoke("UserPromptSubmit", { prompt: prompt.replace("implementation only", "implementation differently"), turn_id: "different" });
+  assert(rejected.decision === "block" && rejected.reason.includes("provenance"), "changed inline identity blocks");
+  const recovered = f.invoke("UserPromptSubmit", { prompt, turn_id: "same" });
+  assert(recovered.hookSpecificOutput?.additionalContext.includes("authorization accepted"), "identical inline task recovers");
+  f.assertNoUnsafeCommands();
+}
+
+{
+  const f = recoveryFixture();
+  f.start({ turn_id: "superseding" });
+  f.dirty();
+  const before = f.snapshot();
+  const staleStop = f.invoke("Stop", { last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: external decision" });
+  assert(staleStop.decision === "block" && staleStop.reason.includes("superseded"), "old active turns cannot checkpoint a newer turn's work");
+  assert(JSON.stringify(before) === JSON.stringify(f.snapshot()), "stale Stop must preserve all work");
+  f.assertNoUnsafeCommands();
+}
+
+{
+  const f = recoveryFixture();
+  f.dirty();
+  const rejectHook = path.join(f.remote, "hooks/pre-receive");
+  fs.writeFileSync(rejectHook, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const before = f.git("rev-parse", "HEAD");
+  const failed = f.invoke("Stop", { last_assistant_message: "TASK_STATUS: BLOCKED\nLOOKUP_REQUIRED: external product decision" });
+  assert(failed.decision === "block" && failed.reason.includes("checkpoint push failed")
+    && failed.reason.includes("local commit/data preserved"), "push failure must report recoverable local work");
+  const preserved = f.git("rev-parse", "HEAD");
+  assert(before !== preserved && f.git("show", "HEAD:src/allowed.ts").includes("interrupted work"), "local checkpoint preserved");
+  fs.rmSync(rejectHook);
+  const retried = f.start({ turn_id: "retry" });
+  assert(retried.hookSpecificOutput?.additionalContext.includes("authorization accepted")
+    && f.git("rev-parse", "HEAD") === preserved && f.git("rev-parse", "@{u}") === preserved,
+  "same task retries failed checkpoint push without another commit");
+  f.assertNoUnsafeCommands();
+}
+
+{
+  const f = recoveryFixture();
+  const closed = f.invoke("Stop", { last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: external decision" });
+  assert(closed.continue === true, "clean blocked behavior remains unchanged");
+  f.dirty();
+  const response = f.start({ turn_id: "after-closed" });
+  assert(response.decision === "block" && response.reason.includes("provenance"), "closed old tasks cannot authorize fresh dirt");
+  f.assertNoUnsafeCommands();
+}
+
+const taskSkill = fs.readFileSync(path.join(root, ".agents/skills/pfm-pr-task/SKILL.md"), "utf8");
+const handoffPolicy = fs.readFileSync(path.join(root, "docs/development/handoff-authoring-policy.md"), "utf8");
+const refinanceEscalation = [
+  "DECISION_NEEDED: For the private-alpha refinance floor, should users be able to refinance only on a scheduled monthly mortgage payment date, or on any calendar date?",
+  "PRODUCT_IMPACT: Payment-date-only refinancing is narrower but deterministic with the existing mortgage model; arbitrary dates are more realistic but require new partial-month interest semantics.",
+  "OPTIONS: (A) scheduled payment dates only; (B) arbitrary dates with new stub/per-diem interest support.",
+  "RECOMMENDATION: A for D1-B; defer arbitrary-date refinance to a later mortgage capability.",
+  "TECHNICAL_REASON: the current authoritative mortgage engine models whole contractual months only.",
+].join("\n");
+assert(taskSkill.includes(refinanceEscalation), "refinance escalation must state product decision before technical constraints");
+for (const text of [taskSkill, handoffPolicy]) {
+  for (const field of ["DECISION_NEEDED:", "PRODUCT_IMPACT:", "OPTIONS:", "RECOMMENDATION:", "TECHNICAL_REASON:"]) {
+    assert(text.includes(field), "PM escalation contract must include " + field);
+  }
+  assert(text.includes("user-visible financial meaning") && text.includes("ALLOWED_PATHS"),
+    "implementation autonomy must preserve financial meaning and authorization");
+}
 
 const codexHome = path.join(temp, "codex-home");
 const attachmentDir = path.join(codexHome, "attachments", "generated");
@@ -472,5 +706,5 @@ assert(
 
 fs.rmSync(temp, { recursive: true, force: true });
 console.log(
-  "PASS codex tooling — V3 scope authorization, issue-pointer transport, completion enforcement, untracked scope detection, publication safety, attachment compatibility, and origin-based PR bootstrap",
+  "PASS codex tooling — V3 scope authorization, issue-pointer transport, guarded interruption recovery/checkpoints, PM escalation policy, completion enforcement, untracked scope detection, publication safety, attachment compatibility, and origin-based PR bootstrap",
 );

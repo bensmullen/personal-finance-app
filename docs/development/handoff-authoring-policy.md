@@ -168,6 +168,55 @@ to rerun bootstrap from inside the prepared worktree.
 
 ## 7. Completion protocol
 
+### Continuation and preservation
+
+Usage-limit/manual interruptions may bypass Stop. Resubmitting the same task issue
+in the same worktree/branch permits guarded recovery only with a persisted active
+task receipt. Inline/attachment continuations require an identical contract hash.
+The most recent receipt is bound to the worktree and task state; missing, stale,
+closed, or ambiguous provenance does not authorize inherited dirty work.
+
+All dirty and prior committed paths must satisfy both prior and incoming scope,
+TASK_KIND control-path rules, and dependency policy. Detached/drifted branches,
+unmerged/conflict-marker state, active Git operations, or unknown/divergent remote
+state block recovery. The hook stages only verified dirty paths, creates a labeled
+WIP checkpoint, pushes ordinarily to the authorized origin branch, and verifies
+cleanliness and remote/tracking equality. Recovery sets BASE_HEAD after the
+checkpoint so preservation cannot satisfy the next turn's implementation guard.
+
+Normal BLOCKED/LOOKUP_REQUIRED stops use the same checkpoint safety checks for
+eligible dirty work. Checkpoints never imply acceptance or verified/merge-ready
+work. Failed staging, commits, or pushes preserve data and give an actionable
+STATE_RECOVERY_REQUIRED reason. No automatic stash, reset, clean, branch switch,
+force push, amend, rebase, or history rewrite is permitted.
+
+### Escalation boundary
+
+Codex SHALL self-resolve implementation-only choices using repository authority
+and the smallest architecture-consistent implementation inside ALLOWED_PATHS,
+provided the choice does not change user-visible financial meaning. Code structure,
+type shapes, accumulators, and module placement are not product-owner decisions.
+
+LOOKUP_REQUIRED/BLOCKED is appropriate for unresolved product/financial semantics,
+unavailable external authoritative facts, additional authorization, unsafe
+prerequisite state, or materially different user-visible economic outcomes.
+Inspect the relevant authority before escalating; then provide:
+
+```text
+DECISION_NEEDED: <one sentence describing the product decision>
+PRODUCT_IMPACT: <what changes for users or financial behavior>
+OPTIONS: <only materially different choices>
+RECOMMENDATION: <preferred option when supportable>
+TECHNICAL_REASON: <short explanation>
+```
+
+Authorization-only requests include the exact scope path needed. State product
+meaning before implementation vocabulary. The task skill's D1-B refinance example
+illustrates a valid decision: scheduled monthly payment dates versus arbitrary
+calendar dates requiring partial-month interest semantics. That choice changes
+the supported user capability and must not be silently decided as a code detail.
+Hooks do not call ChatGPT/OpenAI; the concise block supports human relay.
+
 Acceptance is enforced mechanically where the repository can prove it.
 
 Codex may report:
