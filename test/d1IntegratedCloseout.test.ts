@@ -26,6 +26,8 @@ const detail = (model = createD1IntegratedHousehold(), request = d1IntegratedCom
 describe("D1-C bounded Golden Household integration", () => {
   it("reconciles beginning/ending cash, owned positions, debt, tax and net worth independently", () => {
     const compiled = compile(), before = compiled.reconciledOpeningState;
+    // Normal-created holdings carry account_id, not a non-schema owner_id.
+    expect(createD1IntegratedHousehold().objects.Investment!.find(value => (value as { investment_id: string }).investment_id === ids.match)).not.toHaveProperty("owner_id");
     expect(compiled.standaloneAssets.map(asset => asset.id)).toEqual([golden.home]);
     const opening = deriveHouseholdClosingMetrics(before, USD, compiled.standaloneAssets);
     expect(Object.fromEntries(Object.entries(opening).map(([key, value]) => [key, value.amount.toString()]))).toEqual({

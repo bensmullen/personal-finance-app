@@ -60,8 +60,14 @@ const invalid = <T>(code: string, message: string): CompileResult<T> => ({ statu
 const unsupported = <T>(diagnostics: readonly CapabilityDiagnostic[]): CompileResult<T> => ({ status: "unsupported", diagnostics: Object.freeze([...diagnostics]) });
 
 const domainDiagnostic = (domain: string): CapabilityDiagnostic => capability("HOUSEHOLD_DOMAIN_REQUEST_REQUIRED", `The in-scope ${domain} domain has authored economics but no execution configuration was supplied.`, "household_projection", "Household", undefined, domain);
+// Canonical Investment ownership is through Account. Preserve validation of
+// explicit legacy owner facts, but do not require that non-schema extension.
+const ownerFact = (model: PortableModelEnvelope, object: CanonicalObject, type: string) =>
+  type === "Investment" && object.owner_id == null
+    ? objects(model, "Account").find(account => canonicalId(account, "account_id") === canonicalId(object, "account_id"))?.owner_id
+    : object.owner_id;
 const activeOwner = (model: PortableModelEnvelope, object: CanonicalObject, scope: HouseholdScope, type: string, id: string): boolean => {
-  const result = resolveOwnerScope(model, object.owner_id, scope, type, id);
+  const result = resolveOwnerScope(model, ownerFact(model, object, type), scope, type, id);
   return result.status === "compiled" && result.value === "in_scope";
 };
 
@@ -73,7 +79,7 @@ const compileStandaloneAssets = (model: PortableModelEnvelope, baseCurrency: str
   for (const type of ["Investment", "Asset"] as const) for (const item of objects(model, type)) {
     const id = canonicalId(item, `${type.toLowerCase()}_id`);
     if (id === undefined) continue;
-    const owner = resolveOwnerScope(model, item.owner_id, scopeResult.value, type, id);
+    const owner = resolveOwnerScope(model, ownerFact(model, item, type), scopeResult.value, type, id);
     if (owner.status !== "compiled") return owner;
   }
   let currency: Currency;
@@ -136,7 +142,7 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   for (const type of ["Income", "Expense", "Investment", "Liability"] as const) for (const item of objects(model, type)) {
     const id = canonicalId(item, `${type.toLowerCase()}_id`);
     if (id === undefined) continue;
-    const owner = resolveOwnerScope(model, item.owner_id, scope.value, type, id);
+    const owner = resolveOwnerScope(model, ownerFact(model, item, type), scope.value, type, id);
     if (owner.status !== "compiled") return owner;
   }
   let spouseHsaScope = false;
