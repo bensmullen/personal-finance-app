@@ -1,5 +1,5 @@
 {
-  "manifest_version": "1.2.0",
+  "manifest_version": "1.2.1",
   "canonical_schema_version": "1.0.4",
   "model_format_version": "0.2.0-draft",
   "executable_semantics_version": "0.1.15-draft",
@@ -274,7 +274,7 @@
     {
       "id": "financial-planning-and-optimization",
       "path": "docs/specs/capabilities/financial-planning-and-optimization.md",
-      "version": "0.2.0-draft",
+      "version": "0.3.0-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -300,7 +300,10 @@
         "tradeoff",
         "portfolio optimization",
         "deterministic optimization",
-        "stochastic optimization"
+        "stochastic optimization",
+        "capability-scoped optimization",
+        "composable optimization",
+        "product entitlements"
       ],
       "applies_to": [
         "personal-mvp",
@@ -317,7 +320,7 @@
     {
       "id": "portfolio-planning",
       "path": "docs/specs/capabilities/portfolio-planning.md",
-      "version": "0.4.0-draft",
+      "version": "0.4.1-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -345,7 +348,9 @@
         "contribution limit",
         "rollover",
         "plan loan",
-        "deterministic portfolio optimization"
+        "deterministic portfolio optimization",
+        "pre-tax portfolio optimization",
+        "tax-aware portfolio optimization"
       ],
       "applies_to": [
         "personal-mvp",
@@ -478,7 +483,7 @@
     {
       "id": "tax-engine",
       "path": "docs/specs/capabilities/tax-engine.md",
-      "version": "0.1.5-draft",
+      "version": "0.2.0-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -501,7 +506,11 @@
         "private alpha",
         "tax rule catalog",
         "tax floor",
-        "rule fingerprint"
+        "rule fingerprint",
+        "tax optimization",
+        "multi-period tax state",
+        "legal predicates",
+        "jurisdiction composition"
       ],
       "applies_to": [
         "personal-mvp",
@@ -621,7 +630,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.5.0-draft",
+      "version": "0.5.1-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -660,7 +669,10 @@
         "optimization",
         "portfolio planning",
         "insurance planning",
-        "simulation kernel"
+        "simulation kernel",
+        "capability-scoped optimization",
+        "comprehensive tax optimization",
+        "product tiers"
       ],
       "applies_to": [
         "personal-mvp",
