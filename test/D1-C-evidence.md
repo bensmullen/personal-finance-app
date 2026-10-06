@@ -83,6 +83,9 @@ bank interest and annual edges instead of turning this into a mega-household.
   operation dependencies and lot-selection order retain their economic meaning.
 - Summary explanation aggregation includes domain extension evidence, using
   the existing compact evidence sink rather than a second financial calculator.
+  Detail compaction retains posted payroll rule provenance, and the shared
+  investment adapter retains applied contribution-cap rule provenance. Explicit
+  replay compares the same explanations across both tiers.
 - Off-cycle refinance guidance is visible in the primary forecast explanation,
   including the scheduled-payment-date boundary and normal authoring location.
 

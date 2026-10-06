@@ -114,7 +114,8 @@ export const householdDomainParticipants = (
         return { state: result.state, primitiveState: result.primitiveState, facts: { acquiredLots: acquired(result.state), investment: Object.freeze({
           transactions: result.transactions, contributionPrincipal: result.contributionPrincipal,
           fees: result.fees, unrealizedGain: result.unrealizedGain,
-          traceRefs: mergeTraceRefs(result.effects.flatMap(effect => effect.traceRefs ?? [])) ?? Object.freeze([]),
+          traceRefs: mergeTraceRefs(result.effects.flatMap(effect => effect.traceRefs ?? []),
+            result.ruleApplications.flatMap(application => application.traceRefs ?? [])) ?? Object.freeze([]),
         }) } };
       },
     })) },
