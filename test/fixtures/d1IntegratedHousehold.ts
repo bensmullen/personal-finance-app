@@ -43,6 +43,7 @@ export const createD1IntegratedHousehold = (): PersonalDraft => {
     const returnId = integratedId(200 + Number(investmentId.slice(-12)));
     model = { ...model, objects: { ...model.objects, PrimitiveInstance: [...model.objects.PrimitiveInstance!, { primitive_instance_id: returnId, primitive_id: "P23", input_bindings: { rate: "90000000-0000-4000-8000-000000000019" }, parameters: {}, scenario_id: golden.rootScenario, enabled: true }] } };
     model = addPersonalObject(model, "Investment", investmentId, { owner_id: golden.person, account_id: accountId, investment_type: "fund", symbol, quantity: "0", price: "100", market_value: "0", return_model_id: returnId, after_tax_basis: "0" });
+    model = { ...model, objects: { ...model.objects, Investment: model.objects.Investment!.map(value => (value as { investment_id: string }).investment_id === investmentId ? { ...(value as Record<string, import("../../src/model/modelVersion.js").JsonValue>), owner_id: golden.person, price: "100", market_value: "0" } : value) } };
   }
   const facts = { taxYear: 2026, ageAtYearEnd: 36, eligiblePlanCompensation: "108000", hsaFullYearEligible: true, hsaCoverage: "self" as const };
   for (const [investmentId, character, calculation, priority] of [
@@ -70,7 +71,7 @@ export const createD1IntegratedHousehold = (): PersonalDraft => {
   const prices = new Map<string, string>([[integratedIds.ira, "100"], [integratedIds.match, "100"], [integratedIds.hsaEmployee, "100"], [integratedIds.hsaEmployer, "100"], [integratedIds.treasury, "980"], [integratedIds.crypto, "100"]]);
   return { ...model, objects: { ...model.objects, Investment: model.objects.Investment!.map(value => {
     const item = value as { investment_id: string };
-    return prices.has(item.investment_id) ? { ...item, price: prices.get(item.investment_id)!, market_value: "0" } : value;
+    return prices.has(item.investment_id) ? { ...item, owner_id: golden.person, price: prices.get(item.investment_id)!, market_value: "0" } : value;
   }) } };
 };
 
