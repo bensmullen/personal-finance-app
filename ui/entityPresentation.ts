@@ -89,6 +89,8 @@ export function forecastDiagnosticMessage(diagnostic: {
       return `${label("Liability", diagnostic.entityId, "This debt")} has a payment schedule the fixed monthly debt forecast cannot execute. Under Net Worth → Debt, open the debt and review payment frequency. Choose monthly only if that is the actual contract; other payment schedules are unsupported.`;
     case "LIABILITY_EXECUTION_PROFILE_REQUIRED":
       return `${label("Liability", diagnostic.entityId, "This debt")} needs its contractual payment setup. Under Net Worth → Debt → Debt execution configuration, choose Execution owner and enter the debt’s Payment anchor, Total payment count, Funding account, and Settlement priority. Under Plan → Current Plan → Expert forecast configuration, use Apply household execution configuration. Only the supported fixed monthly mortgage contract can execute.`;
+    case "MORTGAGE_REFINANCE_UNSUPPORTED":
+      return `Under Plan → Current Plan → Investment and retirement operations, review the saved refinance. ${friendlyText(diagnostic.message ?? "Use one supported fixed monthly mortgage replacement.")} The supported refinance has no cash-out, fees or escrow and starts a full-month payment schedule.`;
     case "INVESTMENT_RETURN_MODEL_UNSUPPORTED":
     case "INVESTMENT_RETURN_BINDING_UNSUPPORTED":
     case "INVESTMENT_RETURN_ASSUMPTION_UNSUPPORTED":
