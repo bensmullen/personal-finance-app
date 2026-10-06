@@ -96,7 +96,14 @@ describe("D1-C bounded Golden Household integration", () => {
     const summary = runHouseholdKernel({ kernel, runContext });
     expect(detailed.periods).toHaveLength(1);
     const expected = detailed.periods.map(summarizeHouseholdPeriod);
-    const differences = expected.map((period, index) => Object.keys(period).filter(key => canonicalSerialize(period[key as keyof typeof period]) !== canonicalSerialize(summary.periods[index]?.[key as keyof typeof period])).map(key => ({ key, detail: period[key as keyof typeof period], summary: summary.periods[index]?.[key as keyof typeof period] })));
+    const differences = expected.map((period, index) => Object.keys(period).filter(key => canonicalSerialize(period[key as keyof typeof period]) !== canonicalSerialize(summary.periods[index]?.[key as keyof typeof period])).map(key => {
+      if (key !== "explanationBindings") return { key, detail: period[key as keyof typeof period], summary: summary.periods[index]?.[key as keyof typeof period] };
+      const detailBindings = period.explanationBindings!, summaryBindings = summary.periods[index]!.explanationBindings!;
+      return { key, components: (["sources", "rules", "assumptions", "events"] as const).map(component => ({ component,
+        detailOnly: detailBindings[component].filter(value => !summaryBindings[component].some(other => canonicalSerialize(value) === canonicalSerialize(other))),
+        summaryOnly: summaryBindings[component].filter(value => !detailBindings[component].some(other => canonicalSerialize(value) === canonicalSerialize(other))),
+      })) };
+    }));
     expect(summary.periods, JSON.stringify(differences)).toEqual(expected);
     expect(summary.state).toEqual(detailed.state);
     expect(summary.primitiveState).toEqual(detailed.primitiveState);

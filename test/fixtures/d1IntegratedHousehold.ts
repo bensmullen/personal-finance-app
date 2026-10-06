@@ -7,6 +7,7 @@ import { federalBaseDeductionOnlyEligibilityKey } from "../../src/rules/tax/cont
 import { createRunContext, runId, scenarioId } from "../../src/simulation/run.js";
 import { instant } from "../../src/time/index.js";
 import { money, USD } from "../../src/values/index.js";
+import type { JsonValue } from "../../src/model/modelVersion.js";
 
 export const integratedId = (n: number) => `d1cc0000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 export const integratedIds = {
@@ -27,6 +28,9 @@ export const createD1IntegratedHousehold = (): PersonalDraft => {
     model = patchPersonalObject(model, "Assumption", assumption.assumption_id, { value: "0" });
   }
   model = patchPersonalObject(model, "Person", golden.person, { filing_status: "single", residence_jurisdiction_periods: [{ effective_date: "2026-01-01", state_jurisdiction: "US-NY" }], tax_eligibility_periods: [{ effective_date: "2026-01-01", key: federalBaseDeductionOnlyEligibilityKey, value: true }] });
+  // Filing status, like opening valuation, is an observed canonical fact; the
+  // generic editor excludes derived fields from patchPersonalObject.
+  model = { ...model, objects: { ...model.objects, Person: model.objects.Person!.map(value => ({ ...(value as Record<string, JsonValue>), filing_status: "single" })) } };
   model = patchPersonalObject(model, "Income", golden.income, { work_service_jurisdiction_allocations: [{ effective_date: "2026-01-01", state_jurisdiction: "US-NY", allocation: "1" }] });
   for (const investmentId of [golden.retirementInvestment, golden.brokerageInvestment]) {
     model = patchPersonalObject(model, "Investment", investmentId, { acquisition_date: "2024-01-01", cost_basis: investmentId === golden.retirementInvestment ? "100000" : "50000", after_tax_basis: "0" });
@@ -45,7 +49,7 @@ export const createD1IntegratedHousehold = (): PersonalDraft => {
     model = addPersonalObject(model, "Investment", investmentId, { owner_id: golden.person, account_id: accountId, investment_type: "fund", symbol, quantity: "0", price: "100", market_value: "0", return_model_id: returnId, after_tax_basis: "0" });
     // Observed opening valuation is supplied as in the Golden builder. The
     // normal editor supplies ownership through Account, not an Investment owner.
-    model = { ...model, objects: { ...model.objects, Investment: model.objects.Investment!.map(value => (value as { investment_id: string }).investment_id === investmentId ? { ...(value as Record<string, import("../../src/model/modelVersion.js").JsonValue>), price: "100", market_value: "0" } : value) } };
+    model = { ...model, objects: { ...model.objects, Investment: model.objects.Investment!.map(value => (value as { investment_id: string }).investment_id === investmentId ? { ...(value as Record<string, JsonValue>), price: "100", market_value: "0" } : value) } };
   }
   const facts = { taxYear: 2026, ageAtYearEnd: 36, eligiblePlanCompensation: "108000", hsaFullYearEligible: true, hsaCoverage: "self" as const };
   for (const [investmentId, character, calculation, priority] of [

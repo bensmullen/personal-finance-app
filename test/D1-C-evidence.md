@@ -72,6 +72,25 @@ is expanded to conceal unsupported law.
 Isolated existing cases retain options, conversion/rollover, refinance, CD,
 bank interest and annual edges instead of turning this into a mega-household.
 
+## Integration repairs exposed by the combined proof
+
+- Normal-created holdings resolve ownership through their Account, as the
+  canonical Investment contract requires. Payroll and household compilation
+  no longer require a non-schema Investment owner extension; explicit legacy
+  owner facts retain their validation.
+- Payroll allocations and domain participant identity/transport inputs are
+  canonicalized independently of model collection order. Authored priorities,
+  operation dependencies and lot-selection order retain their economic meaning.
+- Summary explanation aggregation includes domain extension evidence, using
+  the existing compact evidence sink rather than a second financial calculator.
+- Off-cycle refinance guidance is visible in the primary forecast explanation,
+  including the scheduled-payment-date boundary and normal authoring location.
+
+Observed opening valuation and filing status are explicit synthetic fixture
+facts, as in the Golden builder; generic editor patching excludes derived
+fields. Employment service facts cover the whole January interval. Employer
+priorities follow both employee allocations under the existing payroll contract.
+
 ## PFA-DET-014 and focused product-owner UAT
 
 The existing `e2e/personal-mvp.spec.ts` covers cash/investment/property grouping,
