@@ -263,7 +263,12 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
     }
     for (const operation of operations) if (operations.some(other => other !== operation && !other.generated && !operation.generated && other.at === operation.at && other.order === operation.order &&
       [operation.holdingId, operation.cashAccountId, operation.sourceAccountId].some(id => id !== undefined && [other.holdingId, other.cashAccountId, other.sourceAccountId].includes(id)))) throw new Error("Operations sharing a holding or cash source on the same date require distinct priorities.");
-    const input: DomainMechanicsInput = { currency: currency.code, holdings, operations };
+    // Canonical collections must not make model array order part of run identity.
+    // Execution precedence still comes from each operation's instant/order policy.
+    const input: DomainMechanicsInput = { currency: currency.code,
+      holdings: holdings.sort((a, b) => a.id.localeCompare(b.id)),
+      operations: operations.sort((a, b) => a.at.localeCompare(b.at) || a.order - b.order || a.id.localeCompare(b.id)),
+    };
     return { status: "compiled", value: { input, openingState: createAuthoritativeState({ accounts: accountStates }), participant: createDomainMechanicsParticipant(input) }, diagnostics: [] };
   } catch (error) {
     return { status: "unsupported", diagnostics: [capability("D1B_DOMAIN_UNSUPPORTED", error instanceof Error ? error.message : "Domain terms are incomplete.", "domain_mechanics")] };

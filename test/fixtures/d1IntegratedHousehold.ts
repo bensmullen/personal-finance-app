@@ -48,9 +48,9 @@ export const createD1IntegratedHousehold = (): PersonalDraft => {
   const facts = { taxYear: 2026, ageAtYearEnd: 36, eligiblePlanCompensation: "108000", hsaFullYearEligible: true, hsaCoverage: "self" as const };
   for (const [investmentId, character, calculation, priority] of [
     [golden.retirementInvestment, "traditional_401k", { kind: "percent", rate: "0.05" }, 10],
-    [integratedIds.match, "employer_401k", { kind: "match", rate: "0.5", compensationCapRate: "0.06" }, 20],
+    [integratedIds.match, "employer_401k", { kind: "match", rate: "0.5", compensationCapRate: "0.06" }, 40],
     [integratedIds.hsaEmployee, "employee_hsa", { kind: "fixed", amount: "100" }, 30],
-    [integratedIds.hsaEmployer, "employer_hsa", { kind: "fixed", amount: "25" }, 40],
+    [integratedIds.hsaEmployer, "employer_hsa", { kind: "fixed", amount: "25" }, 50],
   ] as const) model = authorPayrollContributionPlan(model, { primitiveId: integratedId(100 + priority), investmentId, character, calculation, priority, incomeId: golden.income, planKey: "golden-employer", vestedFraction: "1", excessPolicy: "auto_cap", facts });
   model = authorPersonalPurchasePlan(model, { primitiveId: integratedId(30), investmentId: integratedIds.ira, sourceCashAccountId: golden.savings, amount: "500", frequency: "once", date: "2026-01-10", order: 10, excessPolicy: "auto_cap", contributionFacts: { taxYear: 2026, ageAtYearEnd: 36, taxableCompensation: "108000", filingStatus: "single", rothMagi: "108000", workplacePlanCovered: true } });
   model = authorPersonalPurchasePlan(model, { primitiveId: integratedId(31), investmentId: golden.brokerageInvestment, sourceCashAccountId: golden.checking, amount: "1000", frequency: "once", date: "2026-01-10", order: 20 });
