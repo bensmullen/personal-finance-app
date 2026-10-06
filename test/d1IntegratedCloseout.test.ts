@@ -11,6 +11,7 @@ import { replayHouseholdForecastWindow, runHouseholdKernel } from "../src/simula
 import { summarizeHouseholdPeriod } from "../src/simulation/r3/forecastSummary.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
 import { taxBalanceIds } from "../src/simulation/tax.js";
+import { canonicalSerialize } from "../src/simulation/run.js";
 import { USD } from "../src/values/index.js";
 import { createD1IntegratedHousehold, d1IntegratedCompilerRequest, d1IntegratedRunContext, integratedId, integratedIds as ids } from "./fixtures/d1IntegratedHousehold.js";
 
@@ -59,7 +60,7 @@ describe("D1-C bounded Golden Household integration", () => {
     const federal = taxBalanceIds("US:FEDERAL", "2026");
     // Below base standard deduction: income/NIIT tax 0; employee FICA
     // (9000 - HSA 100) * (6.2% + 1.45%) = 680.85, less the explicit 500 payment.
-    expect(result.state.liabilities[federal.liabilityId]!.balance.amount.toString()).toBe("180.85");
+    expect(result.state.liabilities[federal.liabilityId]!.balance.amount.toString(), JSON.stringify(result.diagnostics)).toBe("180.85");
     expect(result.state.positions[federal.creditPositionId]!.carryingValue.isZero()).toBe(true);
     expect(period.cash.amount.toString()).toBe("136494.71");
     expect(period.investmentValue.amount.toString()).toBe("151400");
@@ -94,7 +95,9 @@ describe("D1-C bounded Golden Household integration", () => {
     const detailed = runHouseholdKernel({ kernel, runContext, resultTier: "detail" });
     const summary = runHouseholdKernel({ kernel, runContext });
     expect(detailed.periods).toHaveLength(1);
-    expect(summary.periods).toEqual(detailed.periods.map(summarizeHouseholdPeriod));
+    const expected = detailed.periods.map(summarizeHouseholdPeriod);
+    const differences = expected.map((period, index) => Object.keys(period).filter(key => canonicalSerialize(period[key as keyof typeof period]) !== canonicalSerialize(summary.periods[index]?.[key as keyof typeof period])).map(key => ({ key, detail: period[key as keyof typeof period], summary: summary.periods[index]?.[key as keyof typeof period] })));
+    expect(summary.periods, JSON.stringify(differences)).toEqual(expected);
     expect(summary.state).toEqual(detailed.state);
     expect(summary.primitiveState).toEqual(detailed.primitiveState);
     expect(summary.runMetadata).toEqual(detailed.runMetadata);
