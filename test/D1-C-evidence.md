@@ -76,8 +76,18 @@ bank interest and annual edges instead of turning this into a mega-household.
 
 - Normal-created holdings resolve ownership through their Account, as the
   canonical Investment contract requires. Payroll and household compilation
-  no longer require a non-schema Investment owner extension; explicit legacy
-  owner facts retain their validation.
+  no longer require a non-schema Investment owner extension. Account ownership
+  remains authoritative even when legacy owner data is present; matching legacy
+  owners preserve economics, conflicting valid owners fail with
+  `INVESTMENT_LEGACY_OWNER_CONFLICT`, and malformed/unresolved owners retain
+  explicit reference diagnostics. The integrated regressions cover a linked
+  Asset whose conflicting legacy owner is a valid outside Person.
+- Portable replay explicitly loads all four built-in participant codecs at its
+  composition boundary. Fresh-module regressions reset the Vitest module cache
+  after JSON serialization and import replay before any compiler. The integrated
+  domain/workplace/tax case and the two-month mortgage refinance case compare
+  full state, primitive state, period economics, metadata and aligned window
+  replay with their original execution.
 - Payroll allocations and domain participant identity/transport inputs are
   canonicalized independently of model collection order. Authored priorities,
   operation dependencies and lot-selection order retain their economic meaning.
@@ -102,15 +112,29 @@ baseline retirement and What-If, and supported diagnostic remediation.
 The D1-C browser case imports this combined household, authors a sale through
 normal controls, saves/exports/reloads, proves session execution data is not
 restored, explicitly reconfigures/runs, and diagnoses off-cycle refinancing.
-It attaches the synthetic exported UAT model to the Playwright test output.
-Successful CI does not currently publish E2E attachments; the same model can
-be exported during the product-owner walkthrough. No private data is needed.
+It attaches the synthetic exported model after the additional authored sale to
+the Playwright test output. The stable starting household is checked in at
+`test/fixtures/d1-integrated-uat-model.json`; select this file directly in the
+app's Import flow. `d1IntegratedCloseout.test.ts` asserts exact canonical export
+equality with `createD1IntegratedHousehold`, import round-trip equality and
+recomputed economic equality. The TypeScript builder remains the source of
+truth. The JSON contains synthetic facts only and no execution runtime.
 
 After CI and ChatGPT semantic audit, product-owner UAT should use this synthetic
-household and the existing Golden example. Import/save/reload and configure
-January 2026 through February 1, Taylor Example as execution owner, Everyday
-checking as cash/debt source, mortgage anchor 2022-02-01/360 payments/priority 1,
-and the Planned retirement binding. Check grouping, return edits, payroll
+household and the existing Golden example. Open Settings → Import / Export,
+choose `test/fixtures/d1-integrated-uat-model.json`, and click Import into
+session. In Model Settings set simulation start/as-of/data cutoff to
+2026-01-01 and simulation end to 2026-02-01. In Plan → Current Plan → Expert
+forecast configuration, select Everyday checking as cash-flow account and
+Taylor Example as both investment and debt execution owner. For Example
+mortgage set payment anchor 2022-02-01, total payment count 360, funding account
+Everyday checking and settlement priority 1. Select Example salary and Planned
+retirement, apply the retirement binding, apply household execution
+configuration, and Recalculate. Save/load preserves the model; reapply this
+session configuration after load. Explicit tax payment/settlement and contention
+policies in the unit compiler request are execution evidence, not saved model
+facts; the browser walkthrough does not promise the unit tax balances.
+Check grouping, return edits, payroll
 and personal contributions/capacity, retirement What-If, one supported
 rollover/conversion, mortgage extra principal/refinance, bank interest and
 Treasury/CD maturity, taxable sale/reinvestment/crypto/long call, and term life.

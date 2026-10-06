@@ -60,12 +60,21 @@ const invalid = <T>(code: string, message: string): CompileResult<T> => ({ statu
 const unsupported = <T>(diagnostics: readonly CapabilityDiagnostic[]): CompileResult<T> => ({ status: "unsupported", diagnostics: Object.freeze([...diagnostics]) });
 
 const domainDiagnostic = (domain: string): CapabilityDiagnostic => capability("HOUSEHOLD_DOMAIN_REQUEST_REQUIRED", `The in-scope ${domain} domain has authored economics but no execution configuration was supplied.`, "household_projection", "Household", undefined, domain);
-// Canonical Investment ownership is through Account. Preserve validation of
-// explicit legacy owner facts, but do not require that non-schema extension.
+// Account is always authoritative, including when legacy owner data is retained.
 const ownerFact = (model: PortableModelEnvelope, object: CanonicalObject, type: string) =>
-  type === "Investment" && object.owner_id == null
+  type === "Investment"
     ? objects(model, "Account").find(account => canonicalId(account, "account_id") === canonicalId(object, "account_id"))?.owner_id
     : object.owner_id;
+const validateLegacyInvestmentOwner = (model: PortableModelEnvelope, object: CanonicalObject, scope: HouseholdScope, id: string): CompileResult<true> => {
+  if (object.owner_id != null) {
+    const legacy = resolveOwnerScope(model, object.owner_id, scope, "Investment", id);
+    if (legacy.status !== "compiled") return legacy;
+    const accountOwner = ownerFact(model, object, "Investment");
+    if (typeof accountOwner === "string" && (object.owner_id as string).toLowerCase() !== accountOwner.toLowerCase())
+      return { status: "invalid_model", diagnostics: Object.freeze([{ severity: "error", code: "INVESTMENT_LEGACY_OWNER_CONFLICT", message: `Investment ${id} legacy owner_id conflicts with its Account owner. Remove or correct the legacy owner data.`, entityType: "Investment", entityId: id, fieldPath: "owner_id" }]) };
+  }
+  return { status: "compiled", value: true, diagnostics: Object.freeze([]) };
+};
 const activeOwner = (model: PortableModelEnvelope, object: CanonicalObject, scope: HouseholdScope, type: string, id: string): boolean => {
   const result = resolveOwnerScope(model, ownerFact(model, object, type), scope, type, id);
   return result.status === "compiled" && result.value === "in_scope";
@@ -79,6 +88,10 @@ const compileStandaloneAssets = (model: PortableModelEnvelope, baseCurrency: str
   for (const type of ["Investment", "Asset"] as const) for (const item of objects(model, type)) {
     const id = canonicalId(item, `${type.toLowerCase()}_id`);
     if (id === undefined) continue;
+    if (type === "Investment") {
+      const legacy = validateLegacyInvestmentOwner(model, item, scopeResult.value, id);
+      if (legacy.status !== "compiled") return legacy;
+    }
     const owner = resolveOwnerScope(model, ownerFact(model, item, type), scopeResult.value, type, id);
     if (owner.status !== "compiled") return owner;
   }
@@ -142,6 +155,10 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   for (const type of ["Income", "Expense", "Investment", "Liability"] as const) for (const item of objects(model, type)) {
     const id = canonicalId(item, `${type.toLowerCase()}_id`);
     if (id === undefined) continue;
+    if (type === "Investment") {
+      const legacy = validateLegacyInvestmentOwner(model, item, scope.value, id);
+      if (legacy.status !== "compiled") return legacy;
+    }
     const owner = resolveOwnerScope(model, ownerFact(model, item, type), scope.value, type, id);
     if (owner.status !== "compiled") return owner;
   }

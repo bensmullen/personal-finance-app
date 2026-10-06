@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { describe, expect, it, vi } from "vitest";
 import { assertBalanced } from "../src/accounting/index.js";
 import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { compileDomainMechanics } from "../src/application/compiler/domainMechanics.js";
@@ -25,6 +26,65 @@ const detail = (model = createD1IntegratedHousehold(), request = d1IntegratedCom
   runHouseholdKernel({ kernel: compile(model, request).executionKernel!, runContext: d1IntegratedRunContext(), resultTier: "detail" });
 
 describe("D1-C bounded Golden Household integration", () => {
+  it("keeps the selectable UAT export equal to the authoritative builder and recomputes its economics", () => {
+    const json = readFileSync(new URL("./fixtures/d1-integrated-uat-model.json", import.meta.url), "utf8");
+    const model = createD1IntegratedHousehold();
+    expect(json.trim()).toBe(exportPersonalModelJson(model).trim());
+    const imported = importPersonalModelJson(json);
+    expect(imported).toEqual(model);
+    expect(detail(imported)).toEqual(detail(model));
+  });
+
+  it("uses Account ownership for owner-free and matching legacy linked holdings without double counting", () => {
+    const model = createD1IntegratedHousehold();
+    const ownerFree: PersonalDraft = { ...model, objects: { ...model.objects, Investment: model.objects.Investment!.map(value => {
+      const { owner_id: _legacy, ...holding } = value as Record<string, import("../src/model/modelVersion.js").JsonValue>;
+      return holding;
+    }) } };
+    const matching: PersonalDraft = { ...ownerFree, objects: { ...ownerFree.objects, Investment: ownerFree.objects.Investment!.map(value => ({ ...(value as object), owner_id: golden.person })) } };
+    expect(compile(ownerFree).standaloneAssets.map(asset => asset.id)).toEqual([golden.home]);
+    expect(compile(matching).standaloneAssets).toEqual(compile(ownerFree).standaloneAssets);
+    expect(detail(matching)).toEqual(detail(ownerFree));
+  });
+
+  it.each([
+    [integratedId(900), "INVESTMENT_LEGACY_OWNER_CONFLICT"],
+    ["not-a-uuid", "OWNER_REFERENCE_INVALID"],
+    [integratedId(901), "OWNER_REFERENCE_NOT_FOUND"],
+  ])("rejects conflicting or invalid legacy owner %s before linked Asset scope can diverge", (owner, code) => {
+    const model = createD1IntegratedHousehold();
+    const legacy: PersonalDraft = { ...model, objects: { ...model.objects,
+      Person: [...model.objects.Person!, { person_id: integratedId(900), name: "Synthetic outside owner" }],
+      Investment: model.objects.Investment!.map(value => (value as { investment_id: string }).investment_id === golden.brokerageInvestment ? { ...(value as object), owner_id: owner } : value),
+    } };
+    const result = compileHouseholdProjection(legacy, d1IntegratedCompilerRequest());
+    expect(result.status).toBe("invalid_model");
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code, entityType: "Investment", entityId: golden.brokerageInvestment, fieldPath: "owner_id" }));
+    expect(compileHouseholdProjection(legacy, d1IntegratedCompilerRequest())).toEqual(result);
+  });
+
+  it("restores D1 domain, workplace and tax replay after a genuinely fresh codec module boundary", async () => {
+    const compiled = compile(), runContext = d1IntegratedRunContext();
+    const baseline = runHouseholdKernel({ kernel: compiled.executionKernel!, runContext, resultTier: "detail" });
+    const summary = runHouseholdKernel({ kernel: compiled.executionKernel!, runContext });
+    expect(compiled.participants?.map(participant => participant.portableCodec)).toContain("domain-mechanics/v1");
+    const artifact = JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(summary)));
+    vi.resetModules();
+    // Only the replay composition boundary is loaded before restore. No compiler
+    // or fixture import can prepopulate this new module's codec registry.
+    const freshReplay = await import("../src/simulation/r3/replayArtifact.js");
+    const restored = freshReplay.restorePortableHouseholdReplayArtifact(artifact);
+    const freshExecution = await import("../src/simulation/householdExecution.js");
+    const freshSerialize = (await import("../src/simulation/run.js")).canonicalSerialize;
+    const rerun = freshExecution.runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext, resultTier: "detail" });
+    expect(freshSerialize(rerun.state)).toBe(canonicalSerialize(baseline.state));
+    expect(freshSerialize(rerun.primitiveState)).toBe(canonicalSerialize(baseline.primitiveState));
+    expect(freshSerialize(rerun.periods)).toBe(canonicalSerialize(baseline.periods));
+    expect(freshSerialize(restored.runMetadata)).toBe(canonicalSerialize(summary.runMetadata));
+    const checkpoint = freshExecution.replayHouseholdForecastWindow(restored, rerun.periods[0]!.period);
+    expect(freshSerialize(checkpoint.periods)).toBe(canonicalSerialize(baseline.periods));
+  });
+
   it("reconciles beginning/ending cash, owned positions, debt, tax and net worth independently", () => {
     const compiled = compile(), before = compiled.reconciledOpeningState;
     // Normal-created holdings carry account_id, not a non-schema owner_id.

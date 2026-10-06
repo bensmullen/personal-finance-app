@@ -24,7 +24,6 @@ import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant } from "../src/time/index.js";
 import { USD } from "../src/values/index.js";
 import { forecastDiagnosticMessage } from "../ui/entityPresentation.js";
-import { createD1IntegratedHousehold } from "../test/fixtures/d1IntegratedHousehold.js";
 
 const loadExample = async (page: import("@playwright/test").Page) => {
   await page.goto("/");
@@ -111,7 +110,8 @@ const importDraft = async (
 const rawUuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
 test("D1-C authors, saves, reloads and runs a combined household through normal controls", async ({ page }, testInfo) => {
-  await importDraft(page, createD1IntegratedHousehold());
+  const uatJson = await readFile(new URL("../test/fixtures/d1-integrated-uat-model.json", import.meta.url), "utf8");
+  await importDraft(page, importPersonalModelJson(uatJson));
   await page.getByRole("button", { name: "Model Settings", exact: true }).click();
   await page.getByLabel("Simulation end").fill("2026-02-01");
   await page.getByRole("button", { name: "Plan", exact: true }).click();
