@@ -1,6 +1,6 @@
 # Insurance Planning
 
-**Version:** 0.2.0-draft
+**Version:** 0.3.0-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-INS
 
@@ -67,6 +67,16 @@ Before stochastic household modeling and private alpha, the supported household 
 - applicable accounting and tax classification.
 
 Probabilistic claim frequency/severity is not required for this gate. Unsupported policy-family or claim mechanics SHALL be capability-gated rather than approximated.
+
+### PFA-INS-013 — Pre-stochastic health-insurance and Medicare premium floor
+
+Before R5 stochastic household runtime begins, the deterministic insurance/health-cost layer SHALL support materially common premium mechanics beyond a generic expense.
+
+For employer or individually purchased health coverage, the supported contract SHALL preserve covered household members, effective coverage period, gross premium, employer subsidy/share where applicable, employee/household share, payment frequency, and pre-tax payroll versus after-tax household funding character.
+
+For Medicare-age households, the supported deterministic cost floor SHALL represent the applicable elected/supported Medicare premium structure, including Part A premium when applicable, Part B, Part D, and explicitly authored Medicare Advantage, Medigap, or other supplemental premiums. Income-related premium adjustments such as IRMAA SHALL use authoritative income/tax facts when materially applicable rather than a hard-coded surcharge.
+
+This requirement does not require medical-claim adjudication, provider-network modeling, prescription formularies, or probabilistic healthcare utilization. Those remain capability-gated until separately implemented.
 
 ## 3. Initial scope
 
