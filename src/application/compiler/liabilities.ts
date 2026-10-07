@@ -170,6 +170,14 @@ export function mortgageFinalPaymentDate(firstPayment: string, count: string): s
   return contractualOccurrences(anchor, Number(count)).at(-1)?.slice(0, 10);
 }
 
+/** Suggest a count only when the recorded maturity is an actual occurrence. */
+export function mortgagePaymentCount(firstPayment: string, maturity: string): string | undefined {
+  const anchor = utcDate(firstPayment), final = utcDate(maturity);
+  if (!anchor || !final || final < anchor) return undefined;
+  const index = contractualOccurrences(anchor, 1200).findIndex(at => at === final);
+  return index < 0 ? undefined : String(index + 1);
+}
+
 const canonicalReference = (
   model: PortableModelEnvelope,
   raw: unknown,

@@ -94,7 +94,7 @@ import {
 
 import { useInteractiveForecast } from "./forecast/useInteractiveForecast.js";
 import { EditorHub } from "./EntityEditor.js";
-import { mortgageFinalPaymentDate } from "../src/application/compiler/liabilities.js";
+import { mortgageFinalPaymentDate, mortgagePaymentCount } from "../src/application/compiler/liabilities.js";
 import { currentPlan, editCurrentPlanHorizon, simulationWindowProblem } from "../src/application/forecastSetup.js";
 import { FieldHelp, PercentageInput } from "./forecast/PercentageInput.js";
 import { DomainMechanicsPanel } from "./forecast/DomainMechanicsPanel.js";
@@ -233,6 +233,8 @@ function missingForecastSetup(draft: PersonalDraft, cashAccount: string, investm
     if (!/^[1-9]\d*$/.test(profile.totalPayments)) missing.push(`${name}: Total payment count (for example 360 for 30 years).`);
     if (!banks.includes(profile.fundingAccountId)) missing.push(`${name}: Funding account (bank paying the mortgage).`);
     if (!/^\d+$/.test(profile.settlementPriority)) missing.push(`${name}: Settlement priority (lower number first).`);
+    const final = mortgageFinalPaymentDate(profile.paymentAnchor, profile.totalPayments);
+    if (final && mortgage.maturity_date != null && mortgage.maturity_date !== final) missing.push(`${name}: Contractual maturity differs from calculated final payment ${final}; use the suggested correction in Forecast setup.`);
   }
   return missing;
 }
@@ -1598,6 +1600,7 @@ function LiabilityExecutionControls({
         const profile =
           liabilityConfig.profiles[id] ?? EMPTY_LIABILITY_SESSION_PROFILE;
         const finalPayment = mortgageFinalPaymentDate(profile.paymentAnchor, profile.totalPayments);
+        const suggestedCount = typeof mortgage.maturity_date === "string" ? mortgagePaymentCount(profile.paymentAnchor, mortgage.maturity_date) : undefined;
         const mismatch = finalPayment && mortgage.maturity_date != null && mortgage.maturity_date !== finalPayment;
         return (
           <fieldset key={id}>
@@ -1630,6 +1633,7 @@ function LiabilityExecutionControls({
               />
             </label>
             {!/^[1-9]\d*$/.test(profile.totalPayments) && <p className="field-error">Required: number of monthly payments, for example 360.</p>}
+            {suggestedCount && suggestedCount !== profile.totalPayments && <button type="button" onClick={() => updateProfile(id, "totalPayments", suggestedCount)}>Calculate schedule: use {suggestedCount} payments from first payment through recorded maturity</button>}
             {finalPayment && <p>Calculated final scheduled payment: <strong>{finalPayment}</strong> · {profile.totalPayments} monthly payments starting {profile.paymentAnchor}. Months without the payment day are skipped under this contract.</p>}
             {mismatch && <p className="field-error" role="alert">Schedule mismatch: recorded maturity {String(mortgage.maturity_date)} differs from calculated final payment {finalPayment}. Confirm the first payment and count, then correct contractual maturity to {finalPayment}.</p>}
             {finalPayment && (mismatch || mortgage.maturity_date == null) && setDraft && <button type="button" onClick={() => setDraft(patchPersonalObject(draft, "Liability", id, { maturity_date: finalPayment }))}>Use calculated contractual maturity {finalPayment}</button>}

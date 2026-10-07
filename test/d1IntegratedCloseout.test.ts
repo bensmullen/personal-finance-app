@@ -35,7 +35,7 @@ describe("D1-C bounded Golden Household integration", () => {
       investments: { ...request.investments!, simulationEnd: "2036-01-01", months: 120 },
       liabilities: { ...request.liabilities!, simulationEnd: "2036-01-01", months: 120 },
     };
-    const result = runHouseholdKernel({ kernel: compile(createD1IntegratedHousehold(), extended).executionKernel!, resultTier: "summary", runContext: createRunContext({
+    const result = runHouseholdKernel({ kernel: compile(createD1IntegratedHousehold(), extended).executionKernel!, runContext: createRunContext({
       runId: runId(integratedId(999)), scenarioId: scenarioId(golden.rootScenario), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2036-01-01T00:00:00.000Z"), baseCurrency: USD,
     }) });
     expect(result.stoppedAt, JSON.stringify(result.diagnostics)).toBe("2027-01-01T00:00:00.000Z");

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createGoldenHouseholdDraft, createGoldenHouseholdExampleDraft, editPersonalRetirementDate, type JsonObject } from "../src/application/personalMvp.js";
-import { mortgageFinalPaymentDate } from "../src/application/compiler/liabilities.js";
+import { mortgageFinalPaymentDate, mortgagePaymentCount } from "../src/application/compiler/liabilities.js";
 import { currentPlan, editCurrentPlanHorizon, simulationWindowProblem } from "../src/application/forecastSetup.js";
 import { createGoldenHouseholdForecastRequest, GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
 import { runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
@@ -10,6 +10,8 @@ import { groupDiagnostics, forecastDiagnosticMessage, investmentAccountSummary, 
 describe("D1 UAT presentation boundaries", () => {
   it("uses the compiler's monthly mortgage schedule, including skipped invalid payment days", () => {
     expect(mortgageFinalPaymentDate("2022-02-01", "360")).toBe("2052-01-01");
+    expect(mortgagePaymentCount("2022-02-01", "2052-01-01")).toBe("360");
+    expect(mortgagePaymentCount("2026-01-31", "2026-04-30")).toBeUndefined();
     expect(mortgageFinalPaymentDate("2026-01-31", "3")).toBe("2026-05-31");
     expect(mortgageFinalPaymentDate("2026-02-30", "360")).toBeUndefined();
     expect(mortgageFinalPaymentDate("2022-02-01", "0")).toBeUndefined();
