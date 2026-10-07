@@ -1651,6 +1651,7 @@ function LiabilityExecutionControls({
             <label>
               Funding account
               <select
+                aria-label="Funding account"
                 {...requiredCue(!profile.fundingAccountId)}
                 value={profile.fundingAccountId}
                 onChange={(event) =>
@@ -2909,11 +2910,14 @@ function OpeningContributionUsageAuthoring({ draft, setDraft }: { draft: Persona
 }
 
 function ContributionCapacityPanel({ draft, forecast }: { draft: PersonalDraft; forecast: PersonalHouseholdForecastReadModel | undefined }) {
+  const { baseline } = useContext(FinancialResultModels);
+  const currentForecast = baseline && baseline.resultModel === draft && !baseline.pending && !baseline.stale ? forecast : undefined;
   let rows: ReturnType<typeof getContributionCapacities>;
-  try { rows = forecast && forecast.status !== "unavailable" ? forecast.contributionCapacities : getContributionCapacities(draft); } catch (failure) { return <p role="alert">{failure instanceof Error ? failure.message : "Contribution capacity is unavailable"}</p>; }
+  try { rows = currentForecast && currentForecast.status !== "unavailable" ? currentForecast.contributionCapacities : getContributionCapacities(draft); } catch (failure) { return <p role="alert">{failure instanceof Error ? failure.message : "Contribution capacity is unavailable"}</p>; }
   return <section className="panel" aria-label="Contribution capacity"><h2>Annual contribution capacity</h2><p>Modeled YTD combines authoritative opening usage and committed forecast contributions across every account sharing a bucket.</p>
     <table><thead><tr><th>Account / year</th><th>Shared categories</th><th>Annual USD limit</th><th>Opening YTD</th><th>Forecast usage</th><th>Modeled YTD</th><th>Remaining</th></tr></thead><tbody>{rows.map(row => <tr key={`${row.accountId}:${row.bucketIdentity}`}><td>{objectLabel("Account", objectEntries(draft, "Account").find(item => item.account_id === row.accountId) ?? {})} / {row.year}{row.provenance === "projected_current_law" && <p>Projected current law · {row.lawVersion}</p>}</td><td>{row.categories.map(value => value.replaceAll("_", " ")).join(", ")}</td><td>{row.annualLimit ?? "Incomplete"}{row.diagnostics.length > 0 && <p role="status">{row.diagnostics.join(", ")}</p>}</td><td>{row.openingUsage ?? "Unknown"}</td><td>{row.forecastUsage ?? "Run plan"}</td><td>{row.yearToDate ?? "Incomplete"}</td><td>{row.remaining ?? "Incomplete"}</td></tr>)}</tbody></table>
-    {forecast && forecast.status !== "unavailable" && forecast.contingentPositions.map(item => <p key={item.positionId}>Unvested contingent plan value: {item.value.amount} {item.value.currency}; excluded from owned net worth.</p>)}
+    {!currentForecast && forecast && <p>Forecast usage will appear when a forecast reflects the current plan. The limits and opening usage shown here use your current saved facts.</p>}
+    {currentForecast && currentForecast.status !== "unavailable" && currentForecast.contingentPositions.map(item => <p key={item.positionId}>Unvested contingent plan value: {item.value.amount} {item.value.currency}; excluded from owned net worth.</p>)}
   </section>;
 }
 

@@ -285,3 +285,11 @@ new tax conventions when modeled jurisdictions are known.
 No local verification was run. GitHub CI on the pushed exact head owns execution
 of these assertions. Fresh ChatGPT exact-head audit and product-owner UAT remain
 required before merge; this continuation does not self-accept either gate.
+
+CI follow-up preserves stable accessible names for payroll amount, household
+cash account and mortgage funding controls. The existing YTD browser assertion
+also exposed a current-capacity panel consuming retained stale forecast usage;
+it now reads current saved facts until a forecast for the current model is
+committed. The historical forecast remains available in its existing result
+view. Tax setup includes validated member residence facts even when interest or
+investment income occurs without an authored Income stream.

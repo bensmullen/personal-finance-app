@@ -87,6 +87,7 @@ describe("Issue 80 resolved forecast decisions", () => {
   it("requires confirmed accounts/dates and includes exact scheduled-later settlements without estimated amounts", () => {
     const model = createGoldenHouseholdExampleDraft();
     expect(forecastTaxJurisdictions(model)).toEqual(["US:FEDERAL", "US:NY"]);
+    expect(forecastTaxJurisdictions({ ...model, objects: { ...model.objects, Income: [] } })).toEqual(["US:FEDERAL", "US:NY"]);
     expect(forecastTaxSetupProblem(model, undefined, "2026-01-01", "2026-02-01")).toContain("confirm");
     expect(forecastTaxSetupProblem(model, settlementSetup, "2026-01-01", "2026-02-01")).toBeUndefined();
     const request = compileForecastTaxSettlements(settlementSetup, "2026-01-01", "2026-02-01");

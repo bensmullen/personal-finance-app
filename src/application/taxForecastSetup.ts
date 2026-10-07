@@ -2,7 +2,7 @@ import { domainId } from "../identity/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../funding/index.js";
 import { instant, civilDate } from "../time/index.js";
 import type { PersonalDraft } from "./personalMvp.js";
-import { objects, canonicalId } from "./compiler/shared.js";
+import { objects, canonicalId, resolveHouseholdScope, type CanonicalObject } from "./compiler/shared.js";
 import { compileHouseholdTax, type HouseholdTaxCompilerRequest } from "./compiler/tax.js";
 
 export interface TaxForecastSettlementSetup {
@@ -15,7 +15,12 @@ export interface TaxForecastSettlementSetup {
 export function forecastTaxJurisdictions(model: PersonalDraft): readonly string[] {
   const compiled = compileHouseholdTax(model);
   if (compiled.status !== "compiled") return [];
-  const locations = compiled.value.incomes.flatMap(income => [...income.residence, ...income.work]).flatMap(fact => [fact.state_jurisdiction, ...(fact.local_jurisdiction === undefined ? [] : [fact.local_jurisdiction])]).map(value => value.replace(/^US-/, "US:"));
+  const scope = resolveHouseholdScope(model);
+  if (scope.status !== "compiled") return [];
+  // Portfolio/domain income may exist without an authored Income stream.
+  // These residence records were validated by compileHouseholdTax above.
+  const residences = objects(model, "Person").filter(person => scope.value.memberIds.includes(canonicalId(person, "person_id") ?? "")).flatMap(person => (person.residence_jurisdiction_periods ?? []) as readonly CanonicalObject[]);
+  const locations = [...compiled.value.incomes.flatMap(income => [...income.residence, ...income.work]), ...residences].flatMap(fact => [String(fact.state_jurisdiction), ...(fact.local_jurisdiction === undefined ? [] : [String(fact.local_jurisdiction)])]).map(value => value.replace(/^US-/, "US:"));
   return [...new Set([...(locations.some(value => value.startsWith("US:")) ? ["US:FEDERAL"] : []), ...locations.map(value => value === "US:PA:PHILADELPHIA" ? `${value}:WAGE` : value === "US:CO:DENVER" ? `${value}:OPT` : value)])].sort();
 }
 
