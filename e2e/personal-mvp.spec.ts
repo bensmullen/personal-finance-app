@@ -267,7 +267,7 @@ test("D1 round 2 explains immutable plan dates, mortgage guidance and contextual
   // tax law should remain scoped incompleteness, not truncate economic execution.
   const status = page.getByRole("status", { name: "Household forecast status" });
   await expect(status).toHaveAttribute("data-pending", "false");
-  await expect(page.getByText("Completed through 2036-01-01", { exact: true })).toBeVisible();
+  await expect(page.getByText("Completed through 2036-01-01 · Some outputs are partially modeled", { exact: true })).toBeVisible();
   const mortgage = page.getByRole("region", { name: "Household execution configuration" }).getByRole("group", { name: "Example mortgage" });
   await mortgage.getByLabel("Total payment count", { exact: true }).fill("359");
   await expect(mortgage).toContainText("Schedule mismatch");

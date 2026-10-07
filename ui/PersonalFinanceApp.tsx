@@ -3064,9 +3064,9 @@ function HouseholdForecastVisual({
           {forecast.requestedHorizon.end.slice(0, 10)}
         </span>
         <span>
-          {forecast.status === "completed"
-            ? `Completed through ${forecast.reachedThrough?.slice(0, 10)}`
-            : `Incomplete; stopped at ${forecast.stoppedAt?.slice(0, 10)}`}
+          {forecast.stoppedAt
+            ? `Incomplete; stopped at ${forecast.stoppedAt.slice(0, 10)}`
+            : `Completed through ${forecast.reachedThrough?.slice(0, 10)}${forecast.status === "incomplete" ? " · Some outputs are partially modeled" : ""}`}
         </span>
       </div>
       {forecast.stoppedAt && <section className="stress" role="alert" aria-label="Forecast stopped early">

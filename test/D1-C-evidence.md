@@ -201,6 +201,9 @@ derives maturity using the compiler's actual monthly schedule, distinguishes
 origination from first payment, offers a confirmed correction for mismatch,
 and labels projected payoff separately. Tax summaries collapse equal remedies;
 expanded roots include category and jurisdiction as well as counts and outputs.
+The boundary banner uses the actual stoppedAt/reachedThrough fields: a fully
+executed, tax-incomplete run is labeled completed through its actual boundary
+with partially modeled outputs, rather than displaying “stopped at undefined.”
 No local verification was run.
 
 Issue #80 explicitly requires escalation rather than extrapolation at these
