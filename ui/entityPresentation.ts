@@ -1,6 +1,7 @@
 import { PERSONAL_OBJECT_TYPES, getPersonalEditorMetadata, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../src/application/personalMvp.js";
 import { isHouseholdCashAccount } from "../src/application/personalMvp.js";
-import { decimal } from "../src/values/index.js";
+import { openingInvestmentAccountValues } from "../src/application/presentation.js";
+export { percentageToRate, rateToPercentage } from "../src/application/presentation.js";
 
 export interface DisplayDiagnostic {
   readonly code?: string;
@@ -31,32 +32,12 @@ export function groupDiagnostics(diagnostics: readonly DisplayDiagnostic[]) {
   return [...groups.values()];
 }
 
-/** Exact text conversion at the presentation boundary, never binary floating point. */
-export function percentageToRate(value: string): string {
-  if (!/^[+-]?\d+(?:\.\d+)?$/.test(value)) throw new Error("Enter a percentage such as 5 or 5.25, without the % sign.");
-  return decimal(value).times(decimal("0.01")).toString();
-}
-export function rateToPercentage(value: unknown): string {
-  if (value === undefined || value === "") return "";
-  return decimal(String(value)).times(decimal("100")).toString();
-}
-
 export function investmentAccountSummary(account: JsonObject, draft: PersonalDraft, currency?: string): string {
   const unit = account.currency ?? currency;
   const holdings = objectEntries(draft, "Investment").filter(item => item.account_id === account.account_id);
-  try {
-    const holdingsValue = holdings.reduce((sum, holding) => {
-      if (holding.currency != null && holding.currency !== unit) throw new Error("Currency conversion required");
-      const value = holding.market_value ?? (holding.quantity != null && holding.price != null
-        ? decimal(String(holding.quantity)).times(decimal(String(holding.price))).toString() : undefined);
-      if (value == null) throw new Error("Holding valuation missing");
-      return sum.plus(decimal(String(value)));
-    }, decimal("0"));
-    const cash = decimal(String(account.opening_balance ?? "0"));
-    return `Total account value: ${formatExactMoney(cash.plus(holdingsValue).toString(), unit)} · Cash inside account: ${formatExactMoney(cash.toString(), unit)} · Investments/holdings: ${formatExactMoney(holdingsValue.toString(), unit)}`;
-  } catch {
-    return `Total account value unavailable — review holding prices/currencies · Cash inside account: ${formatExactMoney(account.opening_balance, unit)} · ${holdings.length} holdings`;
-  }
+  const values = openingInvestmentAccountValues(account, draft, currency);
+  if (values) return `Total account value: ${formatExactMoney(values.total, values.currency)} · Cash inside account: ${formatExactMoney(values.cash, values.currency)} · Investments/holdings: ${formatExactMoney(values.holdings, values.currency)}`;
+  return `Total account value unavailable — review holding prices/currencies · Cash inside account: ${formatExactMoney(account.opening_balance, unit)} · ${holdings.length} holdings`;
 }
 
 export const objectEntries = (draft: PersonalDraft, type: PersonalObjectType): readonly JsonObject[] =>

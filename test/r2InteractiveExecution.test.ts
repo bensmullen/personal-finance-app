@@ -132,7 +132,7 @@ describe("R2 request channels", () => {
       const { controller, workers } = channel();
       const input = operation === "baseline_forecast" ? submission() : { ...submission(), operation, intents: [] } as ForecastSubmission;
       controller.submit(input, true);
-      const old = { ...financial("incomplete"), diagnostics: [{ code: "OLD_MODEL_ONLY", message: "Old household" }] } as PersonalHouseholdForecastReadModel;
+      const old = { ...financial("incomplete"), diagnostics: [{ severity: "warning" as const, code: "OLD_MODEL_ONLY", message: "Old household" }] };
       workers[0]!.complete(old);
       controller.submit({ ...input, fingerprint: "pending-old-model" }, true);
       controller.reset();

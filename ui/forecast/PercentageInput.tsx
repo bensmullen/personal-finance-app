@@ -10,7 +10,7 @@ export function PercentageInput({ label, value, onChange }: { label: string; val
   const display = () => { try { return rateToPercentage(value); } catch { return ""; } };
   const [text, setText] = useState(display);
   useEffect(() => { if (!value.startsWith("Invalid percentage:")) setText(display()); }, [value]);
-  const valid = text === "" || /^[+-]?\d+(?:\.\d+)?$/.test(text);
+  const valid = text === "" || /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text);
   return <div style={{ minWidth: 0, maxWidth: "32rem" }}>
     <label style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem", minWidth: 0, writingMode: "horizontal-tb", wordBreak: "normal" }}>
       <span style={{ minWidth: "10rem", flex: "1 1 12rem" }}>{label} (%)</span>
