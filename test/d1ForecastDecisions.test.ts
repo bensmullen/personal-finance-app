@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { currentPlan, replaceCurrentPlanHorizon, simulationWindowProblem } from "../src/application/forecastSetup.js";
 import { compileForecastTaxSettlements, forecastTaxJurisdictions, forecastTaxSetupProblem } from "../src/application/taxForecastSetup.js";
-import { createGoldenHouseholdExampleDraft, exportPersonalModelJson, importPersonalModelJson, type JsonObject } from "../src/application/personalMvp.js";
+import { createGoldenHouseholdExampleDraft, exportPersonalModelJson, importPersonalModelJson, authorPersonalPurchasePlan, type PersonalDraft, type JsonObject } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS as golden } from "../src/application/goldenHousehold.js";
 import { compileHouseholdTax } from "../src/application/compiler/tax.js";
 import { compileHouseholdProjection, type HouseholdProjectionCompilerRequest } from "../src/application/compiler/householdProjection.js";
@@ -14,7 +14,7 @@ import { runHouseholdKernel, replayHouseholdForecastWindow } from "../src/simula
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
 import { createRunContext, runId, scenarioId, canonicalSerialize } from "../src/simulation/run.js";
 import { USD } from "../src/values/index.js";
-import { createD1IntegratedHousehold, d1IntegratedCompilerRequest, integratedId } from "./fixtures/d1IntegratedHousehold.js";
+import { createD1IntegratedHousehold, d1IntegratedCompilerRequest, integratedId, integratedIds } from "./fixtures/d1IntegratedHousehold.js";
 
 const replacementId = integratedId(991);
 const settlementSetup = {
@@ -26,8 +26,8 @@ const requestThrough = (end: string, months: number): HouseholdProjectionCompile
   const base = d1IntegratedCompilerRequest();
   return { ...base, cashFlow: { ...base.cashFlow!, simulationEnd: end, months }, investments: { ...base.investments!, simulationEnd: end, months }, liabilities: { ...base.liabilities!, simulationEnd: end, months } };
 };
-const kernel = (request: HouseholdProjectionCompilerRequest) => {
-  const compiled = compileHouseholdProjection(createD1IntegratedHousehold(), request);
+const kernel = (request: HouseholdProjectionCompilerRequest, model: PersonalDraft = createD1IntegratedHousehold()) => {
+  const compiled = compileHouseholdProjection(model, request);
   expect(compiled.status).toBe("compiled");
   if (compiled.status !== "compiled") throw new Error(compiled.diagnostics.map(item => item.message).join(" "));
   return compiled.value.executionKernel!;
@@ -42,7 +42,8 @@ describe("Issue 80 resolved forecast decisions", () => {
     expect(currentPlan(next)).toEqual({ ...old, scenario_id: replacementId, end_date: "2037-01-01" });
     expect((next.objects.Scenario as readonly JsonObject[]).filter(item => item.enabled && item.base_scenario_id == null)).toHaveLength(1);
     expect((next.objects.Scenario as readonly JsonObject[]).find(item => item.scenario_id === old.scenario_id)).toMatchObject({ start_date: old.start_date, end_date: old.end_date, enabled: false });
-    for (const [type, entries] of Object.entries(model.objects)) if (type !== "Scenario") expect(next.objects[type]).toEqual(entries.map(item => typeof item === "object" && item !== null && !Array.isArray(item) && item.scenario_id === old.scenario_id ? { ...item, scenario_id: replacementId } : item));
+    const record = (item: unknown): item is JsonObject => item !== null && typeof item === "object" && !Array.isArray(item);
+    for (const [type, entries] of Object.entries(model.objects)) if (type !== "Scenario") expect(next.objects[type]).toEqual(entries.map(item => record(item) && item.scenario_id === old.scenario_id ? { ...item, scenario_id: replacementId } : item));
     expect(simulationWindowProblem(model, "2026-01-01", "2037-01-01")).toContain("exceeds");
     expect(simulationWindowProblem(next, "2026-01-01", "2037-01-01")).toBeUndefined();
     expect(importPersonalModelJson(exportPersonalModelJson(next))).toEqual(next);
@@ -52,7 +53,9 @@ describe("Issue 80 resolved forecast decisions", () => {
     if (rebased.status === "compiled") {
       const before = runHouseholdKernel({ kernel: kernel(request), runContext: context("2026-02-01") });
       const after = runHouseholdKernel({ kernel: rebased.value.executionKernel!, runContext: createRunContext({ ...context("2026-02-01"), scenarioId: scenarioId(replacementId) }) });
-      expect(after.state).toEqual(before.state);
+      // Generated occurrence identities explicitly contain Scenario identity.
+      // Everything else, including all economic amounts, must remain exact.
+      expect(canonicalSerialize(after.state)).toBe(canonicalSerialize(before.state).replaceAll(golden.rootScenario, replacementId));
     }
   });
 
@@ -101,7 +104,10 @@ describe("Issue 80 resolved forecast decisions", () => {
     const projected = runHouseholdKernel({ kernel: kernel({ ...firstYear, forecastLawPolicy: "projected_current_law" }), runContext: context("2027-01-01") });
     expect(projected.state).toEqual(verified.state);
     const long = requestThrough("2036-01-01", 120);
-    const result = runHouseholdKernel({ kernel: kernel({ ...long, forecastLawPolicy: "projected_current_law", tax: compileForecastTaxSettlements(settlementSetup, "2026-01-01", "2036-01-01") }), runContext: context("2036-01-01") });
+    // The audited fixture's IRA purchase is one-time. Author a recurring IRA
+    // through the normal contract to prove future personal contributions too.
+    const recurring = authorPersonalPurchasePlan(createD1IntegratedHousehold(), { primitiveId: integratedId(30), investmentId: integratedIds.ira, sourceCashAccountId: golden.savings, amount: "500", frequency: "monthly", date: "2026-01-10", order: 10, excessPolicy: "auto_cap", contributionFacts: { taxYear: 2026, ageAtYearEnd: 36, taxableCompensation: "108000", filingStatus: "single", rothMagi: "108000", workplacePlanCovered: true } });
+    const result = runHouseholdKernel({ kernel: kernel({ ...long, forecastLawPolicy: "projected_current_law", tax: compileForecastTaxSettlements(settlementSetup, "2026-01-01", "2036-01-01") }, recurring), runContext: context("2036-01-01") });
     expect(result.stoppedAt, JSON.stringify(result.diagnostics)).toBeUndefined();
     expect(result.reachedThrough).toBe("2036-01-01T00:00:00.000Z");
     expect(result.periods).toHaveLength(120);

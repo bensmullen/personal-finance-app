@@ -19,12 +19,12 @@ export function simulationWindowProblem(model: PersonalDraft, start: string, end
 }
 
 /** Creation-time Scenario dates are changed only by creating a replacement root. */
-export function replaceCurrentPlanHorizon(model: PersonalDraft, replacementId: string, start: string, end: string, window: { start: string; end: string }, retirementDates: readonly string[] = []): PersonalDraft {
+export function replaceCurrentPlanHorizon(model: PersonalDraft, replacementId: string, start: string, end: string, runWindow: { start: string; end: string }, retirementDates: readonly string[] = []): PersonalDraft {
   const plan = currentPlan(model);
   if (!plan) throw new Error("Choose one enabled Current Plan first.");
   if (!UUID.test(replacementId) || (model.objects.Scenario ?? []).filter(isObject).some(item => typeof item.scenario_id === "string" && item.scenario_id.toLowerCase() === replacementId.toLowerCase())) throw new Error("Replacement plan requires a new identity.");
   if (!utcDate(start) || !utcDate(end) || start >= end) throw new Error("Current Plan requires valid increasing dates.");
-  if (!utcDate(window.start) || !utcDate(window.end) || window.start >= window.end || window.start < start || window.end > end) throw new Error("Correct Simulation dates to fit the proposed Current Plan before applying plan dates.");
+  if (!utcDate(runWindow.start) || !utcDate(runWindow.end) || runWindow.start >= runWindow.end || runWindow.start < start || runWindow.end > end) throw new Error("Correct Simulation dates to fit the proposed Current Plan before applying plan dates.");
   const oldId = plan.scenario_id;
   const belongs = (value: unknown) => typeof value === "string" && typeof oldId === "string" && value.toLowerCase() === oldId.toLowerCase();
   if ((model.objects.Scenario ?? []).filter(isObject).some(item => belongs(item.base_scenario_id))) throw new Error("This plan has alternatives. Remove or export those alternatives before changing Current Plan dates; their horizons cannot be changed in place.");

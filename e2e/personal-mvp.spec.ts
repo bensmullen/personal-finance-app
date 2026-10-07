@@ -266,6 +266,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
 
 test("D1 resolved decisions extend plan dates, guide tax setup and continue projected ten-year contributions", async ({ page }) => {
   test.setTimeout(120_000);
+  page.setDefaultTimeout(10_000);
   const errors: string[] = [];
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   page.on("pageerror", error => errors.push(error.message));
@@ -325,6 +326,7 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   const purchases = page.getByRole("region", { name: "Saved investment purchases" });
   await expect(purchases.getByLabel("Purchase investment", { exact: true })).toHaveValue("d1cc0000-0000-4000-8000-000000000002");
   await purchases.getByLabel("Purchase amount", { exact: true }).fill("501");
+  await purchases.getByLabel("Purchase frequency", { exact: true }).selectOption("monthly");
   await purchases.getByRole("button", { name: "Save investment purchase", exact: true }).click();
   await expect(purchases).toContainText("501");
   await manage("Health savings investments", "HSA-EMPLOYEE");
