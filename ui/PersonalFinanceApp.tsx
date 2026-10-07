@@ -3004,7 +3004,7 @@ function HouseholdPlan({
         <p>Choose where income is received, whose investments and debt to forecast, and how each mortgage is paid. These session-only choices must be configured again after importing or loading a model. Saved retirement dates are used automatically.</p>
         <label>
           Cash-flow execution account
-          <select {...requiredCue(!cashFlowExecutionAccountId)} value={cashFlowExecutionAccountId} onChange={(event) => setCashFlowExecutionAccountId(event.target.value)}>
+          <select aria-label="Cash-flow execution account" {...requiredCue(!cashFlowExecutionAccountId)} value={cashFlowExecutionAccountId} onChange={(event) => setCashFlowExecutionAccountId(event.target.value)}>
             <option value="">Select funding account</option>
             {accounts.filter(isCashFlowPaymentAccount).map((account) => <option key={objectId("Account", account)} value={objectId("Account", account)}>{objectLabel("Account", account)}</option>)}
           </select>
