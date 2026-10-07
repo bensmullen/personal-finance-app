@@ -2,10 +2,12 @@ import { accountingTransactionId, createAccountingLeg, createAccountingTransacti
 import { failValidation, issueCodes } from "../diagnostics/index.js";
 import { cloneAuthoritativeState, applyAccountingTransactionAtomically, type AuthoritativeState } from "../state/index.js";
 import type { Instant } from "../time/index.js";
-import { domainId } from "../identity/index.js";
+import { domainId, type DomainId } from "../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../lineage/index.js";
 import { Money, Quantity, RoundingPolicy, decimal } from "../values/index.js";
 import { decideContribution, recordContribution, employerContributionCandidate, type ContributionPolicy } from "./contributions.js";
+import { contributionPolicyAt, projectedContributionDiagnostics } from "./contributionProjection.js";
+import type { TaxCapabilityDiagnostic } from "./tax/contracts.js";
 
 export interface PayrollContributionAllocation {
   readonly id: string;
@@ -35,6 +37,8 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   const quantityRounding = new RoundingPolicy(12, "half_even");
   let candidate = cloneAuthoritativeState(opening);
   let employee = Money.zero(input.gross.currency);
+  const diagnostics: TaxCapabilityDiagnostic[] = [];
+  const appliedRuleIds: DomainId<"tax-rule">[] = [];
   const matchedContributions = new Map<string, Money>();
   const matchKey = (allocation: PayrollContributionAllocation): string => allocation.policy.character.endsWith("_hsa") ? `hsa:${allocation.policy.personId}` : `${allocation.policy.personId}:${allocation.policy.limits.find(binding => binding.kind === "401k_additions")?.bucketKey}`;
   const employeeLegs: AccountingLegDraft[] = [];
@@ -44,6 +48,8 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
     if (!["traditional_401k", "roth_401k", "after_tax_401k", "employee_hsa"].includes(allocation.policy.character) || allocation.vestedFraction !== "1" || allocation.calculation.kind === "match") return invalid("Unsupported employee payroll contribution or vesting");
     const requested = allocation.calculation.kind === "fixed" ? allocation.calculation.amount : input.gross.times(percent(allocation.calculation.rate)).round(rounding);
     const decision = decideContribution(candidate, allocation.policy, allocation.accountId, input.at, requested);
+    if (decision.incompleteFacts) { diagnostics.push(...projectedContributionDiagnostics(allocation.policy, input.at)); continue; }
+    appliedRuleIds.push(...decision.buckets.flatMap(bucket => [bucket.ruleId, ...(typeof bucket.facts.baseRuleId === "string" ? [domainId("tax-rule", bucket.facts.baseRuleId)] : [])]));
     if (requested.isPositive() && decision.accepted.isZero() && allocation.policy.excessPolicy === "reject") return invalid("Employee payroll contribution exceeds statutory capacity");
     if (decision.accepted.isZero()) continue;
     employee = employee.plus(decision.accepted);
@@ -57,7 +63,8 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
     if (allocation.policy.character === "traditional_401k" || allocation.policy.character === "roth_401k" || allocation.policy.character === "employee_hsa") matchedContributions.set(matchKey(allocation), (matchedContributions.get(matchKey(allocation)) ?? Money.zero(input.gross.currency)).plus(decision.accepted));
   }
   const net = input.gross.minus(employee);
-  const transaction = createAccountingTransaction({ id: accountingTransactionId(input.id), date: input.at, type: "payroll_income", traceRefs: [calculationTraceRef(calculationTraceId(`payroll:${input.id}:gross:${input.incomeId}`), input.allocations.flatMap(allocation => allocation.policy.limits.map(binding => domainId("tax-rule", binding.ruleId))))], legs: [
+  const payrollRuleIds = input.allocations.some(allocation => contributionPolicyAt(allocation.policy, input.at).facts.lawProjection === "projected_current_law") ? appliedRuleIds : input.allocations.flatMap(allocation => allocation.policy.limits.map(binding => domainId("tax-rule", binding.ruleId)));
+  const transaction = createAccountingTransaction({ id: accountingTransactionId(input.id), date: input.at, type: "payroll_income", traceRefs: [calculationTraceRef(calculationTraceId(`payroll:${input.id}:gross:${input.incomeId}`), payrollRuleIds)], legs: [
     ...employeeLegs,
     ...(net.isPositive() ? [{ type: "cash" as const, posting: "debit" as const, amount: net, accountId: input.depositAccountId, cashFlowClass: "operating" as const }] : []),
     { type: "income" as const, posting: "credit" as const, amount: input.gross },
@@ -72,9 +79,10 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
     const requested = calculation.kind === "fixed" ? calculation.amount : (calculation.kind === "match" ? matched : input.gross).times(percent(calculation.rate)).round(rounding);
     if (!requested.isPositive()) continue;
     const decision = decideContribution(candidate, allocation.policy, allocation.accountId, input.at, requested);
+    if (decision.incompleteFacts) { diagnostics.push(...projectedContributionDiagnostics(allocation.policy, input.at)); continue; }
     if (decision.accepted.isZero() && allocation.policy.excessPolicy === "auto_cap") continue;
     const posted = employerContributionCandidate(candidate, { id: `${input.id}:${allocation.id}`, at: input.at, accountId: allocation.accountId, positionId: allocation.positionId, requested, vestedFraction: allocation.vestedFraction, policy: allocation.policy, quantityRounding });
     candidate = posted.state; transactions.push(posted.transaction);
   }
-  return { state: candidate, transactions: Object.freeze(transactions), gross: input.gross, employeeContributions: employee, takeHomeCash: net };
+  return { state: candidate, transactions: Object.freeze(transactions), gross: input.gross, employeeContributions: employee, takeHomeCash: net, diagnostics: Object.freeze(diagnostics) };
 };

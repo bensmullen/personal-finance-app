@@ -200,6 +200,9 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   if (standalone.status !== "compiled") return standalone;
   const tax = compileHouseholdTax(model, { ...request.tax, ...(request.forecastLawPolicy === "projected_current_law" ? { projectedCurrentLawThrough: firstBoundary.simulationEnd } : {}) });
   if (tax.status !== "compiled") return tax;
+  const taxLocations = [...tax.value.incomes.flatMap(income => [...income.residence, ...income.work]),
+    ...objects(model, "Person").filter(person => scope.value.memberIds.includes(canonicalId(person, "person_id") ?? "")).flatMap(person => (person.residence_jurisdiction_periods ?? []) as readonly CanonicalObject[])];
+  const taxJurisdictions = new Set(taxLocations.flatMap(location => [String(location.state_jurisdiction).replace(/^US-/, "US:"), String(location.local_jurisdiction ?? "")]));
   const domains = hasDomainMechanics(model) ? compileDomainMechanics(model, {
     baseCurrency: firstBoundary.baseCurrency, asOf: firstBoundary.asOf ?? firstBoundary.simulationStart,
     simulationStart: firstBoundary.simulationStart, simulationEnd: firstBoundary.simulationEnd,
@@ -219,7 +222,7 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
     ...(liabilities === undefined ? {} : { liabilities: liabilities.value.scenarioBindings }),
   });
   const value: CompiledHouseholdProjection = Object.freeze({
-    ...(request.forecastLawPolicy === undefined ? {} : { projectedLaw: tax.value.catalog.flatMap(rule => rule.provenance.type === "projected_current_law" && (tax.value.filingStatus === rule.filingStatus || rule.filingStatus === "all") && (rule.jurisdiction === "US:FEDERAL" || tax.value.incomes.some(income => [...income.residence, ...income.work].some(taxLocation => [taxLocation.state_jurisdiction.replace(/^US-/, "US:"), taxLocation.local_jurisdiction].includes(rule.jurisdiction)))) ? [{ jurisdiction: rule.jurisdiction, baseYear: rule.provenance.baseYear, baseRuleId: String(rule.provenance.baseRuleId), from: rule.effectiveFrom, until: rule.effectiveUntil }] : []) }),
+    ...(request.forecastLawPolicy === undefined ? {} : { projectedLaw: tax.value.catalog.flatMap(rule => rule.provenance.type === "projected_current_law" && (tax.value.filingStatus === rule.filingStatus || rule.filingStatus === "all") && (rule.jurisdiction === "US:FEDERAL" || taxJurisdictions.has(rule.jurisdiction) || taxJurisdictions.has(rule.jurisdiction.replace(/:(WAGE|OPT)$/, ""))) ? [{ jurisdiction: rule.jurisdiction, baseYear: rule.provenance.baseYear, baseRuleId: String(rule.provenance.baseRuleId), from: rule.effectiveFrom, until: rule.effectiveUntil }] : []) }),
     nonInvestmentPositionIds: taxCreditPositionIds(tax.value),
     participants: Object.freeze([createHouseholdTaxParticipant({ ...tax.value, simulationStart: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`),
       domainOperations: domains?.status === "compiled" ? domains.value.input.operations.map(item => ({ id: item.id, at: instant(item.at) })).sort((a, b) => a.id.localeCompare(b.id)) : [] }),

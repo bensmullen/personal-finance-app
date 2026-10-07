@@ -242,9 +242,42 @@ forecast catalog carries the latest applicable source parameters forward
 nominally, with source rule/year, date bounds and projected provenance. Later
 verified definitions supersede projection. Unsupported legal bases and unknown
 locations remain scoped limitations. No inflation or future legislation is
-inferred. Future contribution facts are explicitly projected from authored
-annual facts; age advances by year. Committed future buckets and their capacity
+inferred. Future annual personal facts require a separately confirmed nominal
+carry-forward assumption on each contribution plan; only age advances without
+that confirmation. Committed future buckets and their capacity
 rows retain projected provenance and the 2026 base-law version.
+
+### Exact-head audit continuation after 4016fe90
+
+The three remaining audit repairs are covered by focused additions to
+`d1ForecastDecisions.test.ts` and the existing normal-user round-2 browser path:
+
+- Near-threshold Roth IRA MAGI with growing modeled salary: 2027 MAGI,
+  compensation, workplace and HSA facts are absent without confirmation;
+  contributions are skipped with scoped capability diagnostics while wages and
+  the rest of the forecast continue. Summary/detail and portable replay must
+  agree, including preservation of wage recognition alongside diagnostics.
+- Explicit per-plan annual-personal-fact confirmation remains durable through
+  normal authoring/export/import. The ten-year synthetic fixture now explicitly
+  opts into this assumption; default fixture facts are unchanged. UI help
+  distinguishes nominal compensation/MAGI assumptions from growing salary and
+  from law projection. Unknown facts are never filled by this confirmation.
+- Projected contribution rules use deterministic versioned UUID identities from
+  base identity, policy version and future year. Applied-rule traces retain both
+  projected identity and base-rule link; capacity facts record base year/rule,
+  projected year, policy and separate annual-fact provenance. Repeated decisions
+  and replay must preserve identity. Verified 2026 transaction traces retain
+  their original shape.
+- A portfolio-only Pennsylvania resident with no Income objects generates bank
+  interest and a taxable sale in 2027. The displayed compiler law basis includes
+  projected Pennsylvania law; execution evidence must show its selection and
+  tax-liability posting. Person residence and local facts now participate in
+  displayed projected-law jurisdiction scope.
+
+No local verification was run. GitHub CI owns unit, browser, architecture,
+typecheck and build results; this section states required assertions rather than
+claiming an unrun test passed. Exact-head ChatGPT audit and product-owner UAT
+round 3 remain separate gates before merge.
 
 Current Plan date controls call a replacement-root authoring contract, creating
 a new identity and rebinding scenario-owned objects while retaining a disabled

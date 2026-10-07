@@ -13,7 +13,13 @@ import { instant } from "../src/time/index.js";
 import { runHouseholdKernel, replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
 import { createRunContext, runId, scenarioId, canonicalSerialize } from "../src/simulation/run.js";
-import { USD } from "../src/values/index.js";
+import { USD, money } from "../src/values/index.js";
+import { contributionPolicyAt, contributionRuleIdAt } from "../src/simulation/contributionProjection.js";
+import { decideContribution } from "../src/simulation/contributions.js";
+import { getPersonalPurchasePlans, getPayrollContributionPlans, patchPersonalObject, authorDomainOperation } from "../src/application/personalMvp.js";
+import { summarizeHouseholdPeriod } from "../src/simulation/r3/summaryPeriod.js";
+import { federalBaseDeductionOnlyEligibilityKey, fullYearResidentEligibilityKey } from "../src/rules/tax/contracts.js";
+import { recognizedGrossTaxableBaseEligibilityKey } from "../src/rules/tax/recognition.js";
 import { createD1IntegratedHousehold, d1IntegratedCompilerRequest, integratedId, integratedIds } from "./fixtures/d1IntegratedHousehold.js";
 
 const replacementId = integratedId(991);
@@ -107,7 +113,7 @@ describe("Issue 80 resolved forecast decisions", () => {
     const long = requestThrough("2036-01-01", 120);
     // The audited fixture's IRA purchase is one-time. Author a recurring IRA
     // through the normal contract to prove future personal contributions too.
-    const recurring = authorPersonalPurchasePlan(createD1IntegratedHousehold(), { primitiveId: integratedId(30), investmentId: integratedIds.ira, sourceCashAccountId: golden.savings, amount: "500", frequency: "monthly", date: "2026-01-10", order: 10, excessPolicy: "auto_cap", contributionFacts: { taxYear: 2026, ageAtYearEnd: 36, taxableCompensation: "108000", filingStatus: "single", rothMagi: "108000", workplacePlanCovered: true } });
+    const recurring = authorPersonalPurchasePlan(createD1IntegratedHousehold({ projectAnnualFacts: true }), { primitiveId: integratedId(30), investmentId: integratedIds.ira, sourceCashAccountId: golden.savings, amount: "500", frequency: "monthly", date: "2026-01-10", order: 10, excessPolicy: "auto_cap", contributionFacts: { annualFactProjection: "confirmed_nominal_carry_forward", taxYear: 2026, ageAtYearEnd: 36, taxableCompensation: "108000", filingStatus: "single", rothMagi: "108000", workplacePlanCovered: true } });
     const result = runHouseholdKernel({ kernel: kernel({ ...long, forecastLawPolicy: "projected_current_law", tax: compileForecastTaxSettlements(settlementSetup, "2026-01-01", "2036-01-01") }, recurring), runContext: context("2036-01-01") });
     expect(result.stoppedAt, JSON.stringify(result.diagnostics)).toBeUndefined();
     expect(result.reachedThrough).toBe("2036-01-01T00:00:00.000Z");
@@ -123,4 +129,82 @@ describe("Issue 80 resolved forecast decisions", () => {
     const window = { start: instant("2027-04-01T00:00:00.000Z"), end: instant("2027-05-01T00:00:00.000Z") };
     expect(canonicalSerialize(replayHouseholdForecastWindow(restored, window))).toBe(canonicalSerialize(replayHouseholdForecastWindow(result, window)));
   }, 60_000);
+
+  it("does not reuse near-threshold Roth MAGI or workplace/HSA annual facts as modeled salary grows", () => {
+    let model = createD1IntegratedHousehold();
+    model = patchPersonalObject(model, "Income", golden.income, { amount: "13500" });
+    model = patchPersonalObject(model, "Assumption", golden.salaryGrowthAssumption, { value: "0.20" });
+    model = authorPersonalPurchasePlan(model, { primitiveId: integratedId(30), investmentId: integratedIds.ira, sourceCashAccountId: golden.savings, amount: "500", frequency: "monthly", date: "2026-01-10", order: 10, excessPolicy: "auto_cap", contributionFacts: { taxYear: 2026, ageAtYearEnd: 36, taxableCompensation: "162000", filingStatus: "single", rothMagi: "162000" } });
+    const ira = getPersonalPurchasePlans(model).find(plan => plan.investmentId === integratedIds.ira)!.contribution!;
+    const futureIra = contributionPolicyAt({ ...ira, forecastLawPolicy: "projected_current_law" }, instant("2027-01-10T00:00:00.000Z"));
+    expect(futureIra.facts).toEqual({ taxYear: 2027, ageAtYearEnd: 37, lawProjection: "projected_current_law" });
+    for (const plan of getPayrollContributionPlans(model)) {
+      const future = contributionPolicyAt({ ...plan.allocation.policy, forecastLawPolicy: "projected_current_law" }, instant("2027-01-01T00:00:00.000Z"));
+      expect(future.facts.eligiblePlanCompensation).toBeUndefined();
+      expect(future.facts.hsaFullYearEligible).toBeUndefined();
+      expect(future.facts.hsaCoverage).toBeUndefined();
+    }
+    const executionKernel = kernel({ ...requestThrough("2027-02-01", 13), forecastLawPolicy: "projected_current_law" }, model);
+    const summary = runHouseholdKernel({ kernel: executionKernel, runContext: context("2027-02-01") });
+    const detail = runHouseholdKernel({ kernel: executionKernel, runContext: context("2027-02-01"), resultTier: "detail" });
+    expect(summary.stoppedAt, JSON.stringify(summary.diagnostics)).toBeUndefined();
+    expect(summary.reachedThrough).toBe("2027-02-01T00:00:00.000Z");
+    expect(Object.values(summary.state.contributions ?? {}).some(entry => entry.at >= "2027-01-01")).toBe(false);
+    const wages = detail.periods.map(period => period.cashFlow!.recurringIncomeRecognized);
+    expect(wages[12]!.compare(wages[0]!)).toBeGreaterThan(0);
+    expect(wages[12]!.compare(money("14000", USD))).toBeGreaterThan(0); // annualized pay now exceeds the $168k phaseout ceiling
+    expect(summary.diagnostics.some(item => item.message.includes("2027 roth ira") && item.message.includes("ROTH_MAGI_REQUIRED"))).toBe(true);
+    expect(summary.diagnostics.some(item => item.message.includes("HSA_FULL_YEAR_ELIGIBILITY_AND_COVERAGE_REQUIRED"))).toBe(true);
+    expect(summary.diagnostics.some(item => item.message.includes("PLAN_COMPENSATION_REQUIRED"))).toBe(true);
+    expect(detail.periods[12]!.outputCapabilities?.statementIncome.status).toBe("complete");
+    expect(detail.periods[12]!.outputCapabilities?.contributionPrincipal.status).toBe("incomplete");
+    expect(summary.state).toEqual(detail.state);
+    expect(summary.periods).toEqual(detail.periods.map(summarizeHouseholdPeriod));
+    const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(summary))));
+    const window = { start: instant("2027-01-01T00:00:00.000Z"), end: instant("2027-02-01T00:00:00.000Z") };
+    expect(canonicalSerialize(replayHouseholdForecastWindow(restored, window))).toBe(canonicalSerialize(replayHouseholdForecastWindow(summary, window)));
+  });
+
+  it("gives projected contribution applications distinct stable identities and resolvable base-rule lineage", () => {
+    const model = createD1IntegratedHousehold({ projectAnnualFacts: true });
+    const policy = { ...getPersonalPurchasePlans(model).find(plan => plan.investmentId === integratedIds.ira)!.contribution!, forecastLawPolicy: "projected_current_law" as const };
+    const state = runHouseholdKernel({ kernel: kernel(d1IntegratedCompilerRequest(), model), runContext: context("2026-02-01") }).state;
+    const decide = (year: number) => decideContribution(state, policy, integratedIds.iraAccount, instant(`${year}-02-01T00:00:00.000Z`), money("100", USD));
+    const verified = decide(2026), projected = decide(2027), repeated = decide(2027), later = decide(2030);
+    expect(projected.accepted.amount.toString()).toBe("100");
+    expect(canonicalSerialize(projected)).toBe(canonicalSerialize(repeated));
+    for (const binding of policy.limits) {
+      const identity = contributionRuleIdAt(binding.ruleId, policy, instant("2027-02-01T00:00:00.000Z"));
+      expect(verified.buckets.some(bucket => bucket.ruleId === binding.ruleId)).toBe(true);
+      expect(identity).not.toBe(binding.ruleId);
+      expect(later.buckets.some(bucket => bucket.ruleId === identity)).toBe(false);
+      const bucket = projected.buckets.find(bucket => bucket.ruleId === identity)!;
+      expect(bucket.facts).toMatchObject({ provenance: "projected_current_law", baseRuleId: binding.ruleId, baseYear: "2026", projectedYear: "2027", projectionPolicy: "nominal_carry_forward", annualFacts: "explicit_confirmed_forecast_assumption" });
+      expect(projected.applications.find(application => application.ruleId === identity)!.traceRefs![0]!.ruleIds).toEqual(expect.arrayContaining([identity, binding.ruleId]));
+    }
+    expect(importPersonalModelJson(exportPersonalModelJson(model))).toEqual(model);
+  });
+
+  it("surfaces projected state law actually applied to a portfolio-only household without Income objects", () => {
+    let model = createD1IntegratedHousehold();
+    model = { ...model, objects: { ...model.objects, Income: [], Expense: [], Insurance: [], PrimitiveInstance: model.objects.PrimitiveInstance!.filter(value => ![30, 110, 130, 140, 150].map(integratedId).includes(String((value as JsonObject).primitive_instance_id))), Investment: model.objects.Investment!.map(value => ({ ...(value as JsonObject), contribution_model_id: null })) } };
+    model = patchPersonalObject(model, "Person", golden.person, { residence_jurisdiction_periods: [{ effective_date: "2026-01-01", state_jurisdiction: "US-PA" }], tax_eligibility_periods: [federalBaseDeductionOnlyEligibilityKey, fullYearResidentEligibilityKey("US:PA"), recognizedGrossTaxableBaseEligibilityKey("US:PA")].map(key => ({ effective_date: "2026-01-01", key, value: true })) });
+    model = patchPersonalObject(model, "Account", golden.savings, { interest_rate: "0.126825030131969720661201", interest_convention: "effective_annual_monthly", first_credit_date: "2027-01-15" });
+    model = authorDomainOperation(model, { eventId: integratedId(997), effectId: integratedId(998), primitiveId: integratedId(999), name: "Projected portfolio gain", kind: "sale", holdingId: golden.brokerageInvestment, amount: "1100", quantity: "10", date: "2027-01-21", order: 20 });
+    const base = d1IntegratedCompilerRequest();
+    const boundary = { simulationStart: "2027-01-01", simulationEnd: "2027-02-01", asOf: "2027-01-01", months: 1 };
+    const { cashFlow: _cashFlow, ...portfolioRequest } = base;
+    const compiled = compileHouseholdProjection(model, { ...portfolioRequest, forecastLawPolicy: "projected_current_law", investments: { ...base.investments!, ...boundary }, liabilities: { ...base.liabilities!, ...boundary }, tax: compileForecastTaxSettlements({ ...settlementSetup, conventions: [{ jurisdiction: "US:FEDERAL", monthDay: "04-15", priority: 0, confirmed: true }, { jurisdiction: "US:PA", monthDay: "04-15", priority: 1, confirmed: true }] }, boundary.simulationStart, boundary.simulationEnd) });
+    expect(compiled.status).toBe("compiled");
+    if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled.diagnostics));
+    const stateBasis = compiled.value.projectedLaw!.filter(rule => rule.jurisdiction === "US:PA");
+    expect(stateBasis.length).toBeGreaterThan(0);
+    expect(stateBasis.every(rule => rule.baseYear === 2026 && rule.from.startsWith("2027-01-01"))).toBe(true);
+    const result = runHouseholdKernel({ kernel: compiled.value.executionKernel!, runContext: createRunContext({ ...context("2027-02-01"), asOf: instant("2027-01-01T00:00:00.000Z"), dataCutoff: instant("2027-01-01T00:00:00.000Z"), simulationStart: instant("2027-01-01T00:00:00.000Z") }), resultTier: "detail" });
+    expect(result.stoppedAt, JSON.stringify(result.diagnostics)).toBeUndefined();
+    expect(result.periods[0]!.transactions.some(transaction => transaction.type === "cash_interest")).toBe(true);
+    expect(result.periods[0]!.transactions.some(transaction => transaction.type === "sale")).toBe(true);
+    expect(result.periods[0]!.transactions.some(transaction => transaction.type === "tax_liability")).toBe(true);
+    expect(result.diagnostics.some(item => "category" in item && item.category === "projected_current_law" && "jurisdiction" in item && item.jurisdiction === "US:PA")).toBe(true);
+  });
 });

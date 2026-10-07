@@ -21,7 +21,7 @@ export const integratedIds = {
  * growth/annual-limit edges already proved in D1-A. Death is an insurance
  * counterfactual; no real household data is used.
  */
-export const createD1IntegratedHousehold = (): PersonalDraft => {
+export const createD1IntegratedHousehold = (options: { readonly projectAnnualFacts?: boolean } = {}): PersonalDraft => {
   let model = createGoldenHouseholdDraft();
   for (const value of model.objects.Assumption ?? []) {
     const assumption = value as { assumption_id: string };
@@ -51,14 +51,15 @@ export const createD1IntegratedHousehold = (): PersonalDraft => {
     // normal editor supplies ownership through Account, not an Investment owner.
     model = { ...model, objects: { ...model.objects, Investment: model.objects.Investment!.map(value => (value as { investment_id: string }).investment_id === investmentId ? { ...(value as Record<string, JsonValue>), price: "100", market_value: "0" } : value) } };
   }
-  const facts = { taxYear: 2026, ageAtYearEnd: 36, eligiblePlanCompensation: "108000", hsaFullYearEligible: true, hsaCoverage: "self" as const };
+  const projection = options.projectAnnualFacts ? { annualFactProjection: "confirmed_nominal_carry_forward" as const } : {};
+  const facts = { ...projection, taxYear: 2026, ageAtYearEnd: 36, eligiblePlanCompensation: "108000", hsaFullYearEligible: true, hsaCoverage: "self" as const };
   for (const [investmentId, character, calculation, priority] of [
     [golden.retirementInvestment, "traditional_401k", { kind: "percent", rate: "0.05" }, 10],
     [integratedIds.match, "employer_401k", { kind: "match", rate: "0.5", compensationCapRate: "0.06" }, 40],
     [integratedIds.hsaEmployee, "employee_hsa", { kind: "fixed", amount: "100" }, 30],
     [integratedIds.hsaEmployer, "employer_hsa", { kind: "fixed", amount: "25" }, 50],
   ] as const) model = authorPayrollContributionPlan(model, { primitiveId: integratedId(100 + priority), investmentId, character, calculation, priority, incomeId: golden.income, planKey: "golden-employer", vestedFraction: "1", excessPolicy: "auto_cap", facts });
-  model = authorPersonalPurchasePlan(model, { primitiveId: integratedId(30), investmentId: integratedIds.ira, sourceCashAccountId: golden.savings, amount: "500", frequency: "once", date: "2026-01-10", order: 10, excessPolicy: "auto_cap", contributionFacts: { taxYear: 2026, ageAtYearEnd: 36, taxableCompensation: "108000", filingStatus: "single", rothMagi: "108000", workplacePlanCovered: true } });
+  model = authorPersonalPurchasePlan(model, { primitiveId: integratedId(30), investmentId: integratedIds.ira, sourceCashAccountId: golden.savings, amount: "500", frequency: "once", date: "2026-01-10", order: 10, excessPolicy: "auto_cap", contributionFacts: { ...projection, taxYear: 2026, ageAtYearEnd: 36, taxableCompensation: "108000", filingStatus: "single", rothMagi: "108000", workplacePlanCovered: true } });
   model = authorPersonalPurchasePlan(model, { primitiveId: integratedId(31), investmentId: golden.brokerageInvestment, sourceCashAccountId: golden.checking, amount: "1000", frequency: "once", date: "2026-01-10", order: 20 });
   model = addPersonalObject(model, "Investment", integratedIds.treasury, { owner_id: golden.person, account_id: golden.brokerageAccount, investment_type: "bond", instrument_subtype: "treasury_bill", symbol: "BILL-DEMO", quantity: "0", price: "980", market_value: "0", cost_basis: "980", acquisition_date: "2026-01-01", maturity_date: "2026-01-20", face_value: "1000", funding_account_id: golden.checking, settlement_account_id: golden.savings, return_model_id: null });
   model = addPersonalObject(model, "Investment", integratedIds.crypto, { owner_id: golden.person, account_id: golden.brokerageAccount, investment_type: "crypto", symbol: "SPOT-DEMO", quantity: "0", price: "100", market_value: "0", return_model_id: null });

@@ -8,6 +8,7 @@ import { normalizeContributionLimitRuleIds } from "./contributionBindings.js";
 import { UUID, EXACT_DECIMAL, objects, canonicalId, type CanonicalObject } from "./shared.js";
 
 export interface AuthoredContributionFacts {
+  readonly annualFactProjection?: "confirmed_nominal_carry_forward";
   readonly taxYear: number;
   readonly ageAtYearEnd?: number;
   readonly taxableCompensation?: string;
@@ -31,6 +32,7 @@ const bool = (value: JsonValue | undefined) => value === undefined ? undefined :
 const integer = (value: JsonValue | undefined) => value === undefined ? undefined : typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : fail("CONTRIBUTION_FACT_INTEGER_INVALID");
 export const parseContributionFacts = (value: JsonValue | undefined): D1ContributionFacts => {
   if (!record(value) || typeof value.taxYear !== "number") return fail("CONTRIBUTION_FACT_YEAR_REQUIRED");
+  if (value.annualFactProjection !== undefined && value.annualFactProjection !== "confirmed_nominal_carry_forward") return fail("CONTRIBUTION_FACT_PROJECTION_INVALID");
   const status = value.filingStatus;
   if (status !== undefined && !["single", "married_joint", "married_separate", "head_of_household", "qualifying_surviving_spouse"].includes(String(status))) return fail("CONTRIBUTION_FILING_STATUS_INVALID");
   const coverage = value.hsaCoverage;
@@ -42,6 +44,7 @@ export const parseContributionFacts = (value: JsonValue | undefined): D1Contribu
     rothMagi: amount(value.rothMagi), deductionMagi: amount(value.deductionMagi), livesWithSpouse: bool(value.livesWithSpouse), workplacePlanCovered: bool(value.workplacePlanCovered), spouseWorkplacePlanCovered: bool(value.spouseWorkplacePlanCovered),
     priorYearSponsorWages: amount(value.priorYearSponsorWages), planHasRoth: bool(value.planHasRoth), hsaFullYearEligible: bool(value.hsaFullYearEligible), hsaCoverage, hsaFamilyAllocation: amount(value.hsaFamilyAllocation) };
   return { taxYear: facts.taxYear,
+    ...(value.annualFactProjection === undefined ? {} : { annualFactProjection: value.annualFactProjection }),
     ...(facts.ageAtYearEnd === undefined ? {} : { ageAtYearEnd: facts.ageAtYearEnd }),
     ...(facts.taxableCompensation === undefined ? {} : { taxableCompensation: facts.taxableCompensation }),
     ...(facts.eligiblePlanCompensation === undefined ? {} : { eligiblePlanCompensation: facts.eligiblePlanCompensation }),

@@ -327,12 +327,19 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await expect(purchases.getByLabel("Purchase investment", { exact: true })).toHaveValue("d1cc0000-0000-4000-8000-000000000002");
   await purchases.getByLabel("Purchase amount", { exact: true }).fill("501");
   await purchases.getByLabel("Purchase frequency", { exact: true }).selectOption("monthly");
+  const iraAssumption = purchases.getByRole("region", { name: "Annual contribution forecast assumption" });
+  await expect(iraAssumption.getByRole("checkbox")).not.toBeChecked();
+  await expect(iraAssumption).toContainText("salary is not MAGI");
+  await iraAssumption.getByRole("checkbox").check();
   await purchases.getByRole("button", { name: "Save investment purchase", exact: true }).click();
   await expect(purchases).toContainText("501");
   await manage("Health savings investments", "HSA-EMPLOYEE");
   const payroll = page.getByRole("region", { name: "Saved payroll contributions" });
   await expect(payroll.getByLabel("Payroll destination", { exact: true })).toHaveValue("d1cc0000-0000-4000-8000-000000000005");
   await payroll.getByLabel("Payroll contribution amount", { exact: true }).fill("101");
+  const hsaAssumption = payroll.getByRole("region", { name: "Annual contribution forecast assumption" });
+  await expect(hsaAssumption.getByRole("checkbox")).not.toBeChecked();
+  await hsaAssumption.getByRole("checkbox").check();
   await payroll.getByRole("button", { name: "Save payroll contribution", exact: true }).click();
   // Export and inspect the same authoritative plans, proving contextual routes
   // updated existing plans rather than introducing duplicate economic routes.
@@ -344,8 +351,10 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   const restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
   const ira = getPersonalPurchasePlans(restored).filter(plan => plan.investmentId === "d1cc0000-0000-4000-8000-000000000002");
   expect(ira).toHaveLength(1); expect(ira[0]!.amount).toBe("501");
+  expect(ira[0]!.contribution!.facts.annualFactProjection).toBe("confirmed_nominal_carry_forward");
   const hsa = getPayrollContributionPlans(restored).filter(plan => plan.allocation.positionId === "d1cc0000-0000-4000-8000-000000000005");
   expect(hsa).toHaveLength(1); expect(hsa[0]!.allocation.calculation).toMatchObject({ kind: "fixed", amount: expect.objectContaining({}) });
+  expect(hsa[0]!.allocation.policy.facts.annualFactProjection).toBe("confirmed_nominal_carry_forward");
   if (hsa[0]!.allocation.calculation.kind === "fixed") expect(hsa[0]!.allocation.calculation.amount.amount.toString()).toBe("101");
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();

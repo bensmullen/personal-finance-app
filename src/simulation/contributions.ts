@@ -9,7 +9,7 @@ import type { AnnualContributionLimitRule, RuleTarget } from "../rules/contracts
 import { applyAccountingTransactionAtomically, cloneAuthoritativeState, validateAuthoritativeState, type AuthoritativeState, type ContributionState } from "../state/index.js";
 import { instant, type Instant } from "../time/index.js";
 import { Money, Quantity, RoundingPolicy, decimal } from "../values/index.js";
-import { contributionPolicyAt } from "./contributionProjection.js";
+import { contributionPolicyAt, contributionRuleIdAt, projectedContributionDiagnostics } from "./contributionProjection.js";
 
 export type { ContributionCharacter } from "../rules/contribution2026.js";
 export interface ContributionLimitBinding {
@@ -33,9 +33,13 @@ const usage = (state: AuthoritativeState) => Object.values(state.contributions ?
 
 /** All applicable scope buckets are resolved before any financial candidate is posted. */
 export const decideContribution = (state: AuthoritativeState, policy: ContributionPolicy, accountId: string, at: Instant, requested: Money): ContributionBucketDecision => {
+  const basePolicy = policy;
+  const incomplete = projectedContributionDiagnostics(policy, at);
   policy = contributionPolicyAt(policy, at);
   if (state.accounts[accountId]?.ownerId !== policy.personId) return invalid("Contribution must reach its contributor's own account");
   if (policy.facts.taxYear !== Number(at.slice(0, 4))) return invalid("Contribution facts do not cover this UTC year");
+  if (requested.isNegative() || requested.currency.code !== "USD") return invalid("Contribution requests must be nonnegative USD amounts");
+  if (incomplete.length) return Object.freeze({ requested, accepted: Money.zero(requested.currency), excess: requested, policy: policy.excessPolicy, buckets: [], applications: [], incompleteFacts: incomplete.map(item => item.message) });
   const needed: D1CapacityKind[] = policy.character.endsWith("_ira") ? ["ira_shared", ...(policy.character === "roth_ira" ? ["roth_ira" as const] : [])]
     : policy.character.includes("401k") ? ["401k_additions", ...(["traditional_401k", "roth_401k"].includes(policy.character) ? ["401k_elective" as const] : [])]
       : ["hsa_individual", ...(policy.facts.hsaCoverage === "family" ? ["hsa_family" as const] : [])];
@@ -52,10 +56,10 @@ export const decideContribution = (state: AuthoritativeState, policy: Contributi
     if (capacity.status !== "complete") return invalid(capacity.diagnostics.join(", "));
     const bucket = `${binding.target.targetType}:${binding.target.targetId}:${binding.bucketKey}:${policy.facts.taxYear}`;
     if (Object.values(state.contributions ?? {}).some(entry => entry.buckets.some(prior => prior.identity === bucket && !prior.annualLimit.equals(capacity.capacity)))) return invalid("Conflicting annual facts for the same committed statutory bucket");
-    return { id: domainId("tax-rule", binding.ruleId), kind: "annual_contribution_limit", target: binding.target, bucketKey: binding.bucketKey, includedCharacters: binding.includedCharacters,
+    return { id: domainId("tax-rule", contributionRuleIdAt(binding.ruleId, basePolicy, at)), kind: "annual_contribution_limit", target: binding.target, bucketKey: binding.bucketKey, includedCharacters: binding.includedCharacters,
       effectiveFrom: instant(`${policy.facts.taxYear}-01-01T00:00:00.000Z`), effectiveUntil: instant(`${policy.facts.taxYear + 1}-01-01T00:00:00.000Z`), calendarYear: policy.facts.taxYear, calendar: "utc", annualLimit: capacity.capacity,
       capacityFacts: { lawVersion: capacity.lawVersion, kind: binding.kind,
-        ...(policy.facts.lawProjection === undefined ? {} : { provenance: policy.facts.lawProjection, baseYear: "2026", annualFacts: "projected_from_authored_plan" }),
+        ...(policy.facts.lawProjection === undefined ? {} : { provenance: policy.facts.lawProjection, baseRuleId: binding.ruleId, baseYear: "2026", projectedYear: String(policy.facts.taxYear), projectionPolicy: "nominal_carry_forward", annualFacts: basePolicy.facts.taxYear === policy.facts.taxYear ? "explicit_year_facts" : "explicit_confirmed_forecast_assumption" }),
         ...Object.fromEntries(Object.entries(policy.facts).filter(([, value]) => value !== undefined).map(([key, value]) => [key, typeof value === "boolean" ? value : value instanceof Money ? `${value.amount.toString()} ${value.currency.code}` : String(value)])) } };
   });
   const resolved = resolveContributionLimitBindings(catalog, catalog.map(rule => rule.id), [
@@ -142,7 +146,7 @@ export const employerContributionCandidate = (state: AuthoritativeState, input: 
   }
   legs.push({ type: "income", posting: "credit", amount: decision.accepted });
   const transaction = createAccountingTransaction({ id: accountingTransactionId(input.id), date: input.at, type: "employer_retirement_contribution", legs: legs.map(createAccountingLeg),
-    traceRefs: [calculationTraceRef(calculationTraceId(`contribution:${input.id}`), input.policy.limits.map(binding => domainId("tax-rule", binding.ruleId)))] });
+    traceRefs: [calculationTraceRef(calculationTraceId(`contribution:${input.id}`), contributionPolicyAt(input.policy, input.at).facts.lawProjection === "projected_current_law" ? decision.buckets.flatMap(bucket => [bucket.ruleId, ...(typeof bucket.facts.baseRuleId === "string" ? [domainId("tax-rule", bucket.facts.baseRuleId)] : [])]) : input.policy.limits.map(binding => domainId("tax-rule", binding.ruleId)))] });
   const candidate = cloneAuthoritativeState(state);
   applyAccountingTransactionAtomically(candidate, transaction);
   const committed = recordContribution(candidate, input.policy, input.accountId, input.id, input.at, decision);

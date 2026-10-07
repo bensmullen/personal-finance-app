@@ -94,7 +94,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
         const diagnostics = [...(facts.taxDiagnostics ?? [])];
         for (const economic of facts.taxEconomics ?? []) if (economic.facts.residenceJurisdictions.length === 0 &&
           Object.values(economic.income).some(value => !value.isZero())) diagnostics.push(taxDiagnostic("residence_jurisdiction_periods", "Supply effective residence tax facts for this operation.", undefined, economic.sourceId));
-        return withYear(runtime, year, { ...prior, economics: prior.economics.with(facts.taxEconomics ?? []), diagnostics: prior.diagnostics.withoutSources(facts.resolvedTaxDiagnosticSourceIds ?? []).with(diagnostics) });
+        runtime = withYear(runtime, year, { ...prior, economics: prior.economics.with(facts.taxEconomics ?? []), diagnostics: prior.diagnostics.withoutSources(facts.resolvedTaxDiagnosticSourceIds ?? []).with(diagnostics) });
       }
       if (descriptor.operationClass !== "cash_income_settlement") return runtime;
       const id = descriptor.id.split(":")[1]!;

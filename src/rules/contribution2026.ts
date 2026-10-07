@@ -12,6 +12,8 @@ export const D1_CONTRIBUTION_LAW_2026 = Object.freeze({
 });
 
 export interface D1ContributionFacts {
+  /** Explicit user assumption for supplied annual facts, separate from projected law. */
+  readonly annualFactProjection?: "confirmed_nominal_carry_forward";
   readonly lawProjection?: "projected_current_law";
   readonly taxYear: number;
   readonly ageAtYearEnd?: number;
