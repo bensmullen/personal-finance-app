@@ -112,6 +112,7 @@ const rawUuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
 test("D1 UAT example, import, guided setup, edits and readable account/rate controls", async ({ page }) => {
   test.setTimeout(120_000);
+  page.setDefaultTimeout(10_000);
   const errors: string[] = [];
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   page.on("pageerror", error => errors.push(error.message));
@@ -529,8 +530,8 @@ test("R4 UAT immutable account, income, and debt facts are not fake editable con
   await page.getByRole("button", { name: /Everyday checking/ }).click();
   let editor = page.getByRole("dialog", { name: "Edit Account" });
   await expect(editor.getByRole("group", { name: "Account type", exact: true })).toContainText("checking");
-  await expect(editor.getByRole("group", { name: "Balance", exact: true })).toContainText("20,000.00 USD");
-  await expect(editor.locator('input[aria-label="Balance"], input[aria-label="Currency"], input[aria-label="opening date"], select[aria-label="Account type"]')).toHaveCount(0);
+  await expect(editor.getByRole("group", { name: "Cash balance", exact: true })).toContainText("20,000.00 USD");
+  await expect(editor.locator('input[aria-label="Cash balance"], input[aria-label="Currency"], input[aria-label="opening date"], select[aria-label="Account type"]')).toHaveCount(0);
   await editor.getByText("Expert model details", { exact: true }).click();
   await expect(editor.locator('select[aria-label="Tax treatment"]')).toHaveCount(0);
   await editor.getByRole("button", { name: "Close editor" }).click();
@@ -638,14 +639,14 @@ test("R4 UAT preserves incompatible expense funding with actionable diagnostics"
   await expect(editor.getByRole("note")).toHaveCount(0);
 });
 
-test("R4 current plan starts with the outlook and opens expert setup without recalculation", async ({ page }) => {
+test("R4 current plan shows setup and opens technical details without recalculation", async ({ page }) => {
   await loadExample(page);
   await useShortHorizon(page);
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Plan", exact: true }).click();
   const status = page.getByRole("status", { name: "Household forecast status" });
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
   await expect(page.getByRole("figure", { name: "Household financial outlook chart" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Household execution configuration" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Household execution configuration" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Standalone forecast drill-down" })).toHaveCount(0);
   const request = await status.getAttribute("data-request-id");
   await openPlanDetails(page);
@@ -1301,10 +1302,10 @@ test("model portability and deterministic what-if comparison stay explicit", asy
     .click();
   await expect(
     page.getByRole("status", { name: "Household comparison status" }),
-  ).toHaveAttribute("data-lifecycle", "stale");
+  ).toHaveAttribute("data-lifecycle", "idle");
   await expect(page.getByRole("status", { name: "Household comparison status" })).toContainText("Run a new comparison");
-  await page.getByRole("button", { name: /Show .* comparison details/ }).click();
-  await expect(page.getByRole("table", { name: "What-if alternative household comparison" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Show .* comparison details/ })).toHaveCount(0);
+  await expect(page.getByRole("table", { name: "What-if alternative household comparison" })).toHaveCount(0);
 });
 
 test("What If executes retirement without mutating the baseline binding", async ({
