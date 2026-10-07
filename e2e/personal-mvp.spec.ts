@@ -150,6 +150,8 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
   await expect(status).toContainText("Partially modeled");
   await expect(status).toContainText("New York");
+  await expect(status).toContainText("Future annual contribution facts need confirmation");
+  await expect(status).toContainText("Unconfirmed contributions are skipped; wages and other household activity continue");
   await expect(status).not.toContainText("Tax filing status is missing");
   const originalRequest = await status.getAttribute("data-request-id");
   await expect(status.locator("[data-diagnostic-root]").first()).toBeVisible();
@@ -383,7 +385,8 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   expect(new Set(primaryMessages).size).toBe(primaryMessages.length);
   await status.getByText("Technical diagnostic details", { exact: true }).click();
   const roots = await status.locator("details details > summary").allTextContents();
-  expect(roots.filter(root => root.includes("PFA-TAX-009")).every(root => /rule_selection|local_residence_jurisdiction|canonical_rule_reference|payment_funding|settlement_timing|legal_base_or_component|projected_current_law|contribution_jurisdiction_base|term_life/.test(root))).toBe(true);
+  expect(roots.filter(root => root.includes("PFA-TAX-009")).every(root => /rule_selection|local_residence_jurisdiction|canonical_rule_reference|payment_funding|settlement_timing|legal_base_or_component|projected_current_law|contribution_jurisdiction_base|contribution_annual_facts|term_life/.test(root))).toBe(true);
+  expect(roots.some(root => root.includes("contribution_annual_facts"))).toBe(true);
   expect(errors).toEqual([]);
 });
 
