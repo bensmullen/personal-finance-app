@@ -181,3 +181,43 @@ TECHNICAL_REASON: The canonical filing-status field is derived; bypassing generi
 
 A fresh exact-head ChatGPT audit and product-owner UAT remain required before
 merge. This continuation does not self-accept owner UAT.
+
+## Round 2 repair and unresolved product decisions
+
+The existing 28-case evidence map and audited financial expectations are
+preserved. Additional focused coverage in `d1UatPresentation.test.ts` and
+`d1IntegratedCloseout.test.ts` distinguishes the normal Golden example's
+ten-year execution from the integrated household's recurring 2026-only
+contribution plans. The latter must stop at the first 2027 period with
+`RULE_INPUT_INVALID: Contribution facts do not cover this UTC year`, preserving
+the committed 2026 boundary. CI owns confirmation of these assertions.
+
+The browser UAT path now opens Example salary in both models, inspects its
+structured dated allocations, checks readable holding summaries at 1440/390px,
+extends Current Plan dates through normal controls, requests a ten-year run,
+and updates IRA/HSA plans from account-level contribution actions. Exported
+plans must retain one authoritative route per edited holding. Mortgage guidance
+derives maturity using the compiler's actual monthly schedule, distinguishes
+origination from first payment, offers a confirmed correction for mismatch,
+and labels projected payoff separately. Tax summaries collapse equal remedies;
+expanded roots include category and jurisdiction as well as counts and outputs.
+No local verification was run.
+
+Issue #80 explicitly requires escalation rather than extrapolation at these
+remaining boundaries:
+
+DECISION_NEEDED: Forward-law strategy for long-range deterministic planning.
+PRODUCT_IMPACT: Decide whether long-range views are horizon-capped, limited to tax-independent outputs, or use explicit projected law.
+OPTIONS: (1) cap to verified-law horizon; (2) continue only semantically tax-independent outputs and mark tax-dependent outputs unavailable; (3) introduce an explicit forward-law projection policy with modeled-versus-verified provenance.
+RECOMMENDATION: Prefer explicit modeled-versus-verified forward-law policy; keep D1 honest and schedule that policy as the next tax/forecast dependency if it cannot safely be authorized here.
+TECHNICAL_REASON: Federal 2026 verified coverage ends 2027-01-01; D1 contribution law and annual eligibility facts are explicitly 2026-only. Reusing them for later contributions violates authority.
+
+DECISION_NEEDED: Define the normal household's tax payment/refund and final settlement authoring contract.
+PRODUCT_IMPACT: After-tax cash cannot be called complete without both explicit funding and dated settlement instructions; an account alone cannot resolve this limitation.
+OPTIONS: Retain explicitly scoped incomplete after-tax outputs; or authorize a guided flow recording jurisdiction, tax year, payment/refund account, payment instructions and final settlement dates.
+RECOMMENDATION: Authorize explicit user-authored instructions using the existing tax participant; never infer filing dates or automatic payment amounts.
+TECHNICAL_REASON: `src/simulation/tax/participant.ts` diagnoses both payment_funding and settlement_timing and expressly requires an explicit final settlement/refund date. The session-to-compiler adapter does not expose these inputs yet. Importing durable model data does not restore them.
+
+Round 2 remains blocked pending these product decisions, CI confirmation,
+an exact-head semantic audit and fresh product-owner UAT. This evidence does
+not assert merge readiness or self-accept UAT.

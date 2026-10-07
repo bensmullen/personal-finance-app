@@ -162,6 +162,14 @@ const contractualOccurrences = (
   return Object.freeze(result.slice(0, count));
 };
 
+/** Use the compiler's skip-invalid-day monthly contract for setup guidance. */
+export function mortgageFinalPaymentDate(firstPayment: string, count: string): string | undefined {
+  if (!/^[1-9]\d*$/.test(count) || !Number.isSafeInteger(Number(count)) || Number(count) > 1200) return undefined;
+  const anchor = utcDate(firstPayment);
+  if (!anchor) return undefined;
+  return contractualOccurrences(anchor, Number(count)).at(-1)?.slice(0, 10);
+}
+
 const canonicalReference = (
   model: PortableModelEnvelope,
   raw: unknown,

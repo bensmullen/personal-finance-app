@@ -11,6 +11,8 @@ import { deriveHouseholdClosingMetrics } from "../src/simulation/householdProjec
 import { replayHouseholdForecastWindow, runHouseholdKernel } from "../src/simulation/householdExecution.js";
 import { summarizeHouseholdPeriod } from "../src/simulation/r3/forecastSummary.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
+import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { instant } from "../src/time/index.js";
 import { taxBalanceIds } from "../src/simulation/tax.js";
 import { canonicalSerialize } from "../src/simulation/run.js";
 import { USD } from "../src/values/index.js";
@@ -26,6 +28,22 @@ const detail = (model = createD1IntegratedHousehold(), request = d1IntegratedCom
   runHouseholdKernel({ kernel: compile(model, request).executionKernel!, runContext: d1IntegratedRunContext(), resultTier: "detail" });
 
 describe("D1-C bounded Golden Household integration", () => {
+  it("attributes the exact first failing 2027 period to annual contribution facts without reusing 2026 law", () => {
+    const request = d1IntegratedCompilerRequest();
+    const extended = { ...request,
+      cashFlow: { ...request.cashFlow!, simulationEnd: "2036-01-01", months: 120 },
+      investments: { ...request.investments!, simulationEnd: "2036-01-01", months: 120 },
+      liabilities: { ...request.liabilities!, simulationEnd: "2036-01-01", months: 120 },
+    };
+    const result = runHouseholdKernel({ kernel: compile(createD1IntegratedHousehold(), extended).executionKernel!, resultTier: "summary", runContext: createRunContext({
+      runId: runId(integratedId(999)), scenarioId: scenarioId(golden.rootScenario), asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2036-01-01T00:00:00.000Z"), baseCurrency: USD,
+    }) });
+    expect(result.stoppedAt, JSON.stringify(result.diagnostics)).toBe("2027-01-01T00:00:00.000Z");
+    expect(result.reachedThrough).toBe("2027-01-01T00:00:00.000Z");
+    expect(result.periods).toHaveLength(12);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "RULE_INPUT_INVALID", entityType: "contribution", message: "Contribution facts do not cover this UTC year" }));
+    expect(Object.values(result.state.contributions ?? {}).every(entry => entry.at < "2027-01-01T00:00:00.000Z")).toBe(true);
+  });
   it("keeps the selectable UAT export equal to the authoritative builder and recomputes its economics", () => {
     const json = readFileSync(new URL("./fixtures/d1-integrated-uat-model.json", import.meta.url), "utf8");
     const model = createD1IntegratedHousehold();

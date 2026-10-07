@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { calculationFingerprint, INTERACTIVE_ENGINE_VERSION } from "../../src/application/interactiveForecast.js";
 import { createHouseholdForecastRequest, type PersonalHouseholdSessionExecutionConfiguration } from "../../src/application/householdProjection.js";
 import { resolvePersonalSessionSettings, type PersonalDraft, type PersonalSessionSettings } from "../../src/application/personalMvp.js";
+import { simulationWindowProblem } from "../../src/application/forecastSetup.js";
 import { applicationPerformanceRegistry } from "../../src/application/performance.js";
 import { ForecastController, type ForecastSubmission, type ForecastView, type ForecastWorkerPort } from "./controller.js";
 
@@ -18,7 +19,7 @@ export function useInteractiveForecast(model: PersonalDraft | undefined, configu
   const [comparisonChannel] = useState(() => new ForecastController(makeWorker, scheduler, setComparison, (record) => applicationPerformanceRegistry.record(record)));
   const effectiveConfiguration = useMemo(() => configuration === undefined ? undefined : { ...configuration, ...settings }, [configuration, settings]);
   const input = useMemo((): Extract<ForecastSubmission, { operation: "baseline_forecast" }> | undefined => {
-    if (!model || !effectiveConfiguration || !resolvePersonalSessionSettings(settings, "cash_flow").request) return undefined;
+    if (!model || !effectiveConfiguration || !resolvePersonalSessionSettings(settings, "cash_flow").request || simulationWindowProblem(model, settings.simulationStart, settings.simulationEnd)) return undefined;
     try {
       const request = createHouseholdForecastRequest(effectiveConfiguration, crypto.randomUUID());
       const fingerprint = calculationFingerprint("baseline_forecast", model, request);

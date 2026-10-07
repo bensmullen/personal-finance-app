@@ -39,6 +39,7 @@ export const HouseholdChart = memo(function HouseholdChart({ forecast, cashFlowO
   return <figure className="forecast-figure" aria-label={cashFlowOnly ? "Monthly income and expenses chart" : "Household financial outlook chart"}>
     <figcaption>
       <strong>{cashFlowOnly ? "Monthly income and expenses" : "Household outlook"} · {first.netWorth.currency}</strong>
+      {forecast.stoppedAt && <p role="note">Partial forecast only · stops at {forecast.stoppedAt.slice(0, 10)}. No values are modeled through the requested end {forecast.requestedHorizon.end.slice(0, 10)}.</p>}
       <p>{cashFlowOnly
         ? `Last modeled month: income ${formatExactMoney(last.statementIncome.amount, last.statementIncome.currency)}; expenses ${formatExactMoney(last.statementExpenses.amount, last.statementExpenses.currency)}.`
         : `Net worth: ${formatExactMoney(first.netWorth.amount, first.netWorth.currency)} at the first modeled month → ${formatExactMoney(last.netWorth.amount, last.netWorth.currency)} at the last modeled month.`}</p>

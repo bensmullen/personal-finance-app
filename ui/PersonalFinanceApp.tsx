@@ -64,6 +64,7 @@ import {
   sessionSettingsFromHorizon,
   validatePersonalDraft,
   validatePersonalModelJson,
+  patchPersonalObject,
   type ForecastRequest,
   type JsonObject,
   type PersonalDraft,
@@ -93,6 +94,8 @@ import {
 
 import { useInteractiveForecast } from "./forecast/useInteractiveForecast.js";
 import { EditorHub } from "./EntityEditor.js";
+import { mortgageFinalPaymentDate } from "../src/application/compiler/liabilities.js";
+import { currentPlan, editCurrentPlanHorizon, simulationWindowProblem } from "../src/application/forecastSetup.js";
 import { FieldHelp, PercentageInput } from "./forecast/PercentageInput.js";
 import { DomainMechanicsPanel } from "./forecast/DomainMechanicsPanel.js";
 import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, groupDiagnostics, isCashFlowPaymentAccount, type NetWorthSection } from "./entityPresentation.js";
@@ -237,6 +240,7 @@ const requiredCue = (missing: boolean) => ({ "aria-invalid": missing, style: mis
 
 export function PersonalFinanceApp() {
   const [draft, setDraft] = useState<PersonalDraft | undefined>();
+  const [contributionTarget, setContributionTarget] = useState<{ investmentId: string; kind: "personal" | "payroll" }>();
   const [replacementIdentity, setReplacementIdentity] = useState(0);
   const browserRequest = useRef<BrowserPerformanceRequest | undefined>(undefined);
   const [explanations] = useState(() => ({ baseline: new ResultExplanationCache<FinancialExplanation>(), comparison: new ResultExplanationCache<FinancialExplanation>() }));
@@ -353,6 +357,7 @@ export function PersonalFinanceApp() {
   };
 
   const replaceCanonicalModel = (next: PersonalDraft, message: string) => {
+    setContributionTarget(undefined);
     setReplacementIdentity(value => value + 1);
     updateCanonicalModel(next);
     setLiabilityConfig(emptyLiabilityConfig());
@@ -630,7 +635,7 @@ export function PersonalFinanceApp() {
   };
   const effectiveHouseholdExecution = interactive.effectiveConfiguration;
   const setupMissing = missingForecastSetup(draft, cashFlowExecutionAccountId, investmentOwnerId, liabilityConfig);
-  const settingsProblem = resolvePersonalSessionSettings(sessionSettings, "cash_flow").error;
+  const settingsProblem = resolvePersonalSessionSettings(sessionSettings, "cash_flow").error ?? (draft ? simulationWindowProblem(draft, sessionSettings.simulationStart, sessionSettings.simulationEnd) : undefined);
   const openForecastSetup = (missing?: string) => {
     navigate("Plan"); setSubnav("Current Plan");
     requestAnimationFrame(() => {
@@ -828,6 +833,9 @@ export function PersonalFinanceApp() {
             <>
               <HouseholdPlan
                 draft={draft}
+                settings={sessionSettings}
+                setSettings={setSessionSettings}
+                contributionTarget={contributionTarget}
                 setDraft={updateCanonicalModel}
                 forecast={householdForecast}
                 run={runHouseholdForecast}
@@ -896,6 +904,8 @@ export function PersonalFinanceApp() {
           )}
           {primary === "Settings" && subnav === "Model Settings" && (
             <ModelSettings
+              draft={draft}
+              setDraft={updateCanonicalModel}
               settings={sessionSettings}
               setSettings={(value) => {
                 invalidateResults();
@@ -941,6 +951,11 @@ export function PersonalFinanceApp() {
                 types={EDITORS[subnav]!}
                 section={primary === "Net Worth" ? subnav as NetWorthSection : undefined}
                 selectedScenarioId={effectiveHouseholdExecution?.selectedRootScenarioId}
+                onContributions={(investmentId, kind) => {
+                  setContributionTarget({ investmentId, kind });
+                  navigate("Plan"); setSubnav("Current Plan");
+                  requestAnimationFrame(() => document.getElementById(kind === "personal" ? "personal-contributions" : "payroll-contributions")?.scrollIntoView({ block: "start" }));
+                }}
                 draft={draft}
                 setDraft={updateCanonicalModel}
                 metadata={metadata}
@@ -1522,12 +1537,14 @@ function LiabilityExecutionControls({
   draft,
   liabilityConfig,
   setLiabilityConfig,
+  setDraft,
 }: {
   draft: PersonalDraft;
   liabilityConfig: LiabilitySessionConfig;
   setLiabilityConfig: React.Dispatch<
     React.SetStateAction<LiabilitySessionConfig>
   >;
+  setDraft?: (draft: PersonalDraft) => void;
 }) {
   const mortgages = objectEntries(draft, "Liability").filter(
     (item) => item.liability_type === "mortgage",
@@ -1580,9 +1597,13 @@ function LiabilityExecutionControls({
         const id = objectId("Liability", mortgage);
         const profile =
           liabilityConfig.profiles[id] ?? EMPTY_LIABILITY_SESSION_PROFILE;
+        const finalPayment = mortgageFinalPaymentDate(profile.paymentAnchor, profile.totalPayments);
+        const mismatch = finalPayment && mortgage.maturity_date != null && mortgage.maturity_date !== finalPayment;
         return (
           <fieldset key={id}>
             <legend>{objectLabel("Liability", mortgage)}</legend>
+            <p>Loan start / origination: {String(mortgage.origination_date)}. Contractual final payment / maturity: {String(mortgage.maturity_date ?? "Not recorded")}.</p>
+            <p>The first scheduled payment is a separate contract fact; it is not inferred from loan start. Extra principal changes projected payoff, while contractual maturity stays fixed.</p>
             <label>
               Payment anchor
               <input
@@ -1609,6 +1630,9 @@ function LiabilityExecutionControls({
               />
             </label>
             {!/^[1-9]\d*$/.test(profile.totalPayments) && <p className="field-error">Required: number of monthly payments, for example 360.</p>}
+            {finalPayment && <p>Calculated final scheduled payment: <strong>{finalPayment}</strong> · {profile.totalPayments} monthly payments starting {profile.paymentAnchor}. Months without the payment day are skipped under this contract.</p>}
+            {mismatch && <p className="field-error" role="alert">Schedule mismatch: recorded maturity {String(mortgage.maturity_date)} differs from calculated final payment {finalPayment}. Confirm the first payment and count, then correct contractual maturity to {finalPayment}.</p>}
+            {finalPayment && (mismatch || mortgage.maturity_date == null) && setDraft && <button type="button" onClick={() => setDraft(patchPersonalObject(draft, "Liability", id, { maturity_date: finalPayment }))}>Use calculated contractual maturity {finalPayment}</button>}
             <label>
               Funding account
               <select
@@ -2491,10 +2515,14 @@ function ModelSettings({
   settings,
   setSettings,
   error,
+  draft,
+  setDraft,
 }: {
   settings: PersonalSessionSettings;
   setSettings: Dispatch<SetStateAction<PersonalSessionSettings>>;
   error: string;
+  draft: PersonalDraft;
+  setDraft: (draft: PersonalDraft) => void;
 }) {
   const update = (field: keyof PersonalSessionSettings, value: string) =>
     setSettings((current) => ({ ...current, [field]: value }));
@@ -2506,6 +2534,7 @@ function ModelSettings({
         title="Dates and conventions"
         text="Model dates are explicit; wall-clock today is never authoritative."
       />
+      <PlanHorizonSettings draft={draft} setDraft={setDraft} settings={settings} />
       <section className="panel form-grid">
         <label>
           Base currency
@@ -2574,9 +2603,9 @@ function ModelSettings({
             readOnly
           />
         </label>
-        {(error || resolved.error) && (
+        {(error || resolved.error || simulationWindowProblem(draft, settings.simulationStart, settings.simulationEnd)) && (
           <p className="field-error full" role="alert">
-            {error || resolved.error}
+            {error || resolved.error || simulationWindowProblem(draft, settings.simulationStart, settings.simulationEnd)}
           </p>
         )}
         <p className="muted full">
@@ -2589,6 +2618,26 @@ function ModelSettings({
 }
 
 
+function PlanHorizonSettings({ draft, setDraft, settings, setSettings }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void; settings: PersonalSessionSettings; setSettings?: Dispatch<SetStateAction<PersonalSessionSettings>> }) {
+  const plan = currentPlan(draft);
+  const [start, setStart] = useState(String(plan?.start_date ?? ""));
+  const [end, setEnd] = useState(String(plan?.end_date ?? ""));
+  const [error, setError] = useState("");
+  useEffect(() => { setStart(String(plan?.start_date ?? "")); setEnd(String(plan?.end_date ?? "")); }, [plan?.scenario_id, plan?.start_date, plan?.end_date]);
+  const problem = simulationWindowProblem(draft, settings.simulationStart, settings.simulationEnd);
+  return <section className="panel" aria-label="Current Plan horizon" id="plan-horizon">
+    <h2>Current Plan dates</h2><p>Your saved plan defines the available planning range. Simulation dates select a run window within it. Retirement must be within the plan, but may fall outside a run window.</p>
+    <label>Current plan start<input aria-label="Current plan start" type="date" value={start} onChange={event => setStart(event.target.value)} /></label>
+    <label>Current plan end<input aria-label="Current plan end" type="date" value={end} onChange={event => setEnd(event.target.value)} /></label>
+    <button type="button" onClick={() => { try { setDraft(editCurrentPlanHorizon(draft, start, end)); setError(""); } catch (failure) { setError(failure instanceof Error ? failure.message : "Plan dates could not be saved"); } }}>Save Current Plan dates</button>
+    <p>Available simulation range: {String(plan?.start_date)} → {String(plan?.end_date)} (exclusive end).</p>
+    {setSettings && <><label>Simulation start<input aria-label="Simulation start" type="date" value={settings.simulationStart} onChange={event => setSettings(prior => ({ ...prior, simulationStart: event.target.value }))} /></label>
+      <label>Simulation end<input aria-label="Simulation end" type="date" value={settings.simulationEnd} onChange={event => setSettings(prior => ({ ...prior, simulationEnd: event.target.value }))} /></label></>}
+    {(error || problem) && <p className="field-error" role="alert">{error || problem}</p>}
+    {problem && settings.simulationEnd > String(plan?.end_date) && <button type="button" onClick={() => { setEnd(settings.simulationEnd); document.querySelector<HTMLInputElement>('[aria-label="Current plan end"]')?.focus(); }}>Use requested simulation end for Current Plan</button>}
+  </section>;
+}
+
 function DiagnosticList({
   diagnostics,
   fallback,
@@ -2600,21 +2649,21 @@ function DiagnosticList({
 }) {
   const currentModel = useContext(FinancialResultModels).model;
   const groups = groupDiagnostics(diagnostics);
+  const summaries = [...new Map(groups.map(group => [forecastDiagnosticMessage(group.diagnostic, model ?? currentModel), group])).entries()];
   return (
     <div className="capability">
-      <strong>Forecast needs attention</strong>
+      <strong>{diagnostics.every(item => item.entityType === "tax_capability") ? "Partially modeled · tax limitations" : "Forecast needs attention"}</strong>
       {diagnostics.length === 0 ? (
         <p>The forecast is unavailable. Review the original explanation in Technical diagnostic details; no more specific editor remedy is available.</p>
       ) : (
-        groups.map(group => (
+        summaries.map(([message, group]) => (
           <p key={group.key} data-diagnostic-root={group.key}>
-            {forecastDiagnosticMessage(group.diagnostic, model ?? currentModel)}
-            {group.affectedOutputs.length > 0 && <small> {group.affectedOutputs.length} affected outputs.</small>}
+            {message}
           </p>
         ))
       )}
       <details><summary>Technical diagnostic details</summary>
-        {groups.map(group => <details key={group.key}><summary>{group.diagnostic.code} · {group.occurrences} occurrences · {group.affectedOutputs.length} affected outputs</summary>
+        {groups.map(group => <details key={group.key}><summary>{group.diagnostic.code} · {group.diagnostic.category ?? group.diagnostic.entityType ?? "execution"} · {group.diagnostic.jurisdiction ?? "household"} · {group.occurrences} occurrences · {group.affectedOutputs.length} affected outputs</summary>
           <pre>{JSON.stringify({ diagnostic: group.diagnostic, originalMessages: group.messages, affectedOutputs: group.affectedOutputs,
             recordIds: [...new Set(diagnostics.filter(item => groupDiagnostics([item])[0]?.key === group.key).map(item => item.entityId).filter(Boolean))] }, null, 2)}</pre>
         </details>)}
@@ -2624,11 +2673,11 @@ function DiagnosticList({
   );
 }
 
-function PersonalPurchaseAuthoring({ draft, setDraft }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void }) {
+function PersonalPurchaseAuthoring({ draft, setDraft, initialInvestmentId }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void; initialInvestmentId?: string }) {
   const banks = objectEntries(draft, "Account").filter(account => ["checking", "savings"].includes(String(account.account_type)));
   const brokerageIds = new Set(objectEntries(draft, "Account").filter(account => ["taxable_brokerage", "traditional_ira", "roth_ira"].includes(String(account.account_type))).map(account => objectId("Account", account)));
   const investments = objectEntries(draft, "Investment").filter(investment => brokerageIds.has(String(investment.account_id)));
-  const [investmentId, setInvestmentId] = useState("");
+  const [investmentId, setInvestmentId] = useState(initialInvestmentId ?? "");
   const [bankId, setBankId] = useState("");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState("");
@@ -2663,7 +2712,7 @@ function PersonalPurchaseAuthoring({ draft, setDraft }: { draft: PersonalDraft; 
     setFilingStatus(facts?.filingStatus ?? ""); setCovered(facts?.workplacePlanCovered === undefined ? "" : String(facts.workplacePlanCovered)); setSpouseCovered(facts?.spouseWorkplacePlanCovered === undefined ? "" : String(facts.spouseWorkplacePlanCovered));
     setLivesWithSpouse(facts?.livesWithSpouse === undefined ? "" : String(facts.livesWithSpouse)); setExcessPolicy(plan.contribution?.excessPolicy ?? "reject");
   }, [investmentId, savedPurchases]);
-  return <section className="panel" aria-label="Saved investment purchases">
+  return <section className="panel" id="personal-contributions" aria-label="Saved investment purchases">
     <h2>Investment purchases</h2>
     <p>Save a one-time or monthly brokerage or IRA purchase funded from checking or savings. Holdings need an executable projected return. Each purchase is valued at the modeled month-end price. IRA eligibility and deductions require explicit annual facts; missing facts remain incomplete.</p>
     <label>Purchase investment<select aria-label="Purchase investment" value={investmentId} onChange={event => setInvestmentId(event.target.value)}><option value="">Choose holding</option>{investments.map(investment => <option key={objectId("Investment", investment)} value={objectId("Investment", investment)}>{objectLabel("Investment", investment)}</option>)}</select></label>
@@ -2713,11 +2762,11 @@ function contributionFieldHelp(key: string): string {
   return help[key] ?? "Use the recorded annual contribution fact in the displayed unit. The app needs this to apply the correct eligibility limit; unknown facts remain incomplete. For example select Single only when that is the established filing status for the contribution year.";
 }
 
-function PayrollContributionAuthoring({ draft, setDraft }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void }) {
+function PayrollContributionAuthoring({ draft, setDraft, initialInvestmentId }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void; initialInvestmentId?: string }) {
   const accounts = objectEntries(draft, "Account").filter(item => ["traditional_401k", "roth_401k", "hsa", "hsa_investment"].includes(String(item.account_type)));
   const destinations = objectEntries(draft, "Investment").filter(item => accounts.some(account => account.account_id === item.account_id));
   const incomes = objectEntries(draft, "Income").filter(item => item.income_type === "salary" && item.gross_or_net !== "net");
-  const [investmentId, setInvestmentId] = useState(""); const [incomeId, setIncomeId] = useState("");
+  const [investmentId, setInvestmentId] = useState(initialInvestmentId ?? ""); const [incomeId, setIncomeId] = useState("");
   const [character, setCharacter] = useState<PayrollContributionPlan["character"]>("traditional_401k");
   const [kind, setKind] = useState<"fixed" | "percent" | "match">("percent");
   const [amount, setAmount] = useState(""); const [rate, setRate] = useState(""); const [capRate, setCapRate] = useState("");
@@ -2738,7 +2787,7 @@ function PayrollContributionAuthoring({ draft, setDraft }: { draft: PersonalDraf
   }, [investmentId, saved]);
   const input = (key: string, label: string) => <div key={key}><label>{label}<input value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })} /></label><FieldHelp label={label}>{contributionFieldHelp(key)}</FieldHelp></div>;
   const booleanInput = (key: string, label: string) => <div key={key}><label>{label}<select aria-label={label} value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })}><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label><FieldHelp label={label}>{contributionFieldHelp(key)}</FieldHelp></div>;
-  return <section className="panel" aria-label="Saved payroll contributions"><h2>Payroll and employer contributions</h2>
+  return <section className="panel" id="payroll-contributions" aria-label="Saved payroll contributions"><h2>Payroll and employer contributions</h2>
     <p>Save employee or employer contributions to workplace investments. Employee contributions reduce take-home cash; employer contributions add plan value. Enter percentages such as 5 for 5%.</p>
     <label>Payroll destination<select aria-label="Payroll destination" value={investmentId} onChange={event => setInvestmentId(event.target.value)}><option value="">Choose holding</option>{destinations.map(item => <option key={String(item.investment_id)} value={String(item.investment_id)}>{objectLabel("Investment", item)}</option>)}</select></label>
     <FieldHelp label="Payroll destination">Choose the investment holding in the workplace account receiving contributions. This tells the forecast where to buy units. For example choose RETIREMENT-DEMO in Workplace retirement for the employee 401(k) contribution; employer matching may use a separate holding in the same plan.</FieldHelp>
@@ -2880,6 +2929,9 @@ function RetirementDateAuthoring({ draft, setDraft }: { draft: PersonalDraft; se
 
 function HouseholdPlan({
   draft,
+  settings,
+  setSettings,
+  contributionTarget,
   setDraft,
   forecast,
   run,
@@ -2895,6 +2947,9 @@ function HouseholdPlan({
   setHouseholdExecution,
 }: {
   draft: PersonalDraft;
+  settings: PersonalSessionSettings;
+  setSettings: Dispatch<SetStateAction<PersonalSessionSettings>>;
+  contributionTarget?: { investmentId: string; kind: "personal" | "payroll" };
   setDraft: (draft: PersonalDraft) => void;
   forecast: PersonalHouseholdForecastReadModel | undefined;
   run: () => void;
@@ -2923,6 +2978,7 @@ function HouseholdPlan({
         title="Your reconciled household plan"
         text="One execution carries cash flow, investments, debt, property, and retirement through the same state transition."
       />
+      <PlanHorizonSettings draft={draft} setDraft={setDraft} settings={settings} setSettings={setSettings} />
       <section className="panel" id="forecast-setup" tabIndex={-1}>
       <h2>Forecast setup</h2>
       <section className="controls" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)" }} aria-label="Household execution configuration">
@@ -2937,7 +2993,7 @@ function HouseholdPlan({
         </label>
         {!cashFlowExecutionAccountId && <p className="field-error">Required: choose the bank account receiving income.</p>}
         <InvestmentExecutionControls draft={draft} ownerId={investmentOwnerId} setOwnerId={setInvestmentOwnerId} />
-        <LiabilityExecutionControls draft={draft} liabilityConfig={liabilityConfig} setLiabilityConfig={setLiabilityConfig} />
+        <LiabilityExecutionControls draft={draft} setDraft={setDraft} liabilityConfig={liabilityConfig} setLiabilityConfig={setLiabilityConfig} />
         <details><summary>Technical retirement binding override</summary><fieldset>
           <legend>Baseline retirement binding (session-only)</legend>
           <select aria-label="Baseline retirement income" value={retirementIncomeId} onChange={(event) => setRetirementIncomeId(event.target.value)}><option value="">No retirement binding</option>{incomes.map((income) => <option key={objectId("Income", income)} value={objectId("Income", income)}>{objectLabel("Income", income)}</option>)}</select>
@@ -2950,8 +3006,8 @@ function HouseholdPlan({
       </section>
       </section>
       <RetirementDateAuthoring draft={draft} setDraft={setDraft} />
-      <PersonalPurchaseAuthoring draft={draft} setDraft={setDraft} />
-      <PayrollContributionAuthoring draft={draft} setDraft={setDraft} />
+      <PersonalPurchaseAuthoring key={`personal:${contributionTarget?.investmentId ?? "overview"}`} draft={draft} setDraft={setDraft} initialInvestmentId={contributionTarget?.kind === "personal" ? contributionTarget.investmentId : undefined} />
+      <PayrollContributionAuthoring key={`payroll:${contributionTarget?.investmentId ?? "overview"}`} draft={draft} setDraft={setDraft} initialInvestmentId={contributionTarget?.kind === "payroll" ? contributionTarget.investmentId : undefined} />
       <OpeningContributionUsageAuthoring draft={draft} setDraft={setDraft} />
       <ContributionCapacityPanel draft={draft} forecast={forecast} />
       <section className="panel">
@@ -3017,6 +3073,11 @@ function HouseholdForecastVisual({
             : `Incomplete; stopped at ${forecast.stoppedAt?.slice(0, 10)}`}
         </span>
       </div>
+      {forecast.stoppedAt && <section className="stress" role="alert" aria-label="Forecast stopped early">
+        <strong>The requested forecast did not complete. Results end at {forecast.stoppedAt.slice(0, 10)}.</strong>
+        <p>{forecast.diagnostics.filter(item => item.entityType !== "tax_capability").map(item => forecastDiagnosticMessage(item, financialModel)).filter((message, index, messages) => messages.indexOf(message) === index).join(" ") || "Review the forecast limitations above for the stopping dependency."}</p>
+        <p>Later dates have no modeled results. Extend verified coverage or choose a supported shorter window before relying on this plan.</p>
+      </section>}
       {forecast.liquidityShortfalls.length > 0 && (
         <div className="stress" role="alert">
           <strong>Financial outcome · Modeled liquidity stress</strong>
@@ -3034,6 +3095,9 @@ function HouseholdForecastVisual({
           ))}
         </section>
       )}
+      {!cashFlowOnly && forecast.debtPayoffs.length > 0 && <section className="panel" aria-label="Projected mortgage payoff"><h3>Projected payoff date</h3>
+        {forecast.debtPayoffs.map(payoff => <p key={payoff.loanId}>{payoff.scheduledAt.slice(0, 10)} · Contractual maturity is unchanged. Technical loan reference is available in forecast details.</p>)}
+      </section>}
       {!cashFlowOnly && (
         <section className="kpi-grid">
           <Kpi label="Ending net worth" value={householdMoney(ending?.netWorth)} />
@@ -3180,7 +3244,7 @@ function ForecastVisual({ forecast, draft }: { forecast: PersonalForecastReadMod
         </ForecastDetails>
         {forecast.liabilityPayoffs.length > 0 && (
           <p className="muted">
-            Payoff:{" "}
+            Projected payoff date (contractual maturity unchanged):{" "}
             {forecast.liabilityPayoffs
               .map(
                 (item) =>

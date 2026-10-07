@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { addPersonalObject, deletePersonalObject, patchPersonalObject, type getPersonalEditorMetadata, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../src/application/personalMvp.js";
+import { addPersonalObject, deletePersonalObject, patchPersonalObject, getPersonalPurchasePlans, getPayrollContributionPlans, type getPersonalEditorMetadata, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../src/application/personalMvp.js";
 import { objectEntries, objectId, objectLabel, entitySummary, referenceLabel, referenceTargets, formatExactMoney, formatRate, isCashFlowPaymentAccount, belongsToNetWorthSection, linkedReturnAssumption, type NetWorthSection } from "./entityPresentation.js";
 import { PercentageInput } from "./forecast/PercentageInput.js";
 
@@ -217,6 +217,7 @@ export function EditorHub({
   currency,
   section,
   selectedScenarioId,
+  onContributions,
 }: {
   types: readonly PersonalObjectType[];
   draft: PersonalDraft;
@@ -226,6 +227,7 @@ export function EditorHub({
   currency: string;
   section?: NetWorthSection;
   selectedScenarioId?: string;
+  onContributions?: (investmentId: string, kind: "personal" | "payroll") => void;
 }) {
   return (
     <>
@@ -241,6 +243,7 @@ export function EditorHub({
           currency={currency}
           section={section}
           selectedScenarioId={selectedScenarioId}
+          onContributions={onContributions}
         />
       ))}
     </>
@@ -272,6 +275,7 @@ function ObjectEditor({
   currency,
   section,
   selectedScenarioId,
+  onContributions,
 }: {
   type: PersonalObjectType;
   draft: PersonalDraft;
@@ -281,6 +285,7 @@ function ObjectEditor({
   currency: string;
   section?: NetWorthSection;
   selectedScenarioId?: string;
+  onContributions?: (investmentId: string, kind: "personal" | "payroll") => void;
 }) {
   const [editing, setEditing] = useState<JsonObject>();
   const [creating, setCreating] = useState(false);
@@ -386,10 +391,10 @@ function ObjectEditor({
       ) : (
         <div className="object-grid">
           {values.map((item) => (
-            <article className="object-card" key={objectId(type, item)}>
-              <button className="card-main" onClick={() => { setCreating(false); setEditing(item); }}>
+            <article className="object-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", minWidth: 0 }} key={objectId(type, item)}>
+              <button className="card-main" style={{ width: "100%", minWidth: 0 }} onClick={() => { setCreating(false); setEditing(item); }}>
                 <span className="object-icon">{TITLES[type][0]}</span>
-                <span>
+                <span data-card-summary style={{ flex: "1 1 auto", minWidth: 0, textAlign: "left" }}>
                   <strong id={`${type}-${objectId(type, item)}-label`}>{objectLabel(type, item) || `New ${type}`}</strong>
                   <small>
                     {entitySummary(type, item, draft, currency)}
@@ -397,6 +402,7 @@ function ObjectEditor({
                 </span>
               </button>
               {type === "Investment" && <ProjectedReturn investment={item} draft={draft} setDraft={setDraft} selectedScenarioId={selectedScenarioId} />}
+              {(type === "Investment" || type === "Account") && onContributions && <ContextualContributions item={item} type={type} draft={draft} open={onContributions} />}
               <button className="danger-link" aria-describedby={`${type}-${objectId(type, item)}-label`} onClick={() => remove(item)}>
                 Delete
               </button>
@@ -531,13 +537,42 @@ function ObjectEditor({
     </section>
   );
 }
+function ContextualContributions({ item, type, draft, open }: { item: JsonObject; type: "Investment" | "Account"; draft: PersonalDraft; open: (id: string, kind: "personal" | "payroll") => void }) {
+  const account = type === "Account" ? item : objectEntries(draft, "Account").find(account => account.account_id === item.account_id);
+  const kind = ["traditional_401k", "roth_401k", "hsa", "hsa_investment"].includes(String(account?.account_type)) ? "payroll"
+    : ["traditional_ira", "roth_ira", "taxable_brokerage"].includes(String(account?.account_type)) ? "personal" : undefined;
+  if (!kind) return null;
+  const holdings = type === "Investment" ? [item] : objectEntries(draft, "Investment").filter(holding => holding.account_id === item.account_id);
+  try {
+    const purchases = getPersonalPurchasePlans(draft);
+    const payroll = getPayrollContributionPlans(draft);
+    return <section aria-label={`Contributions for ${objectLabel(type, item)}`}>
+      <p>{kind === "payroll" ? "401(k) and HSA contributions come from salary/payroll; employer contributions add plan value." : "IRA and brokerage contributions buy investments using checking or savings. They are not Spending."}</p>
+      {holdings.map(holding => {
+        const id = objectId("Investment", holding);
+        const saved = kind === "personal" ? purchases.filter(plan => plan.investmentId === id).map(plan => `${plan.amount} ${plan.schedule.kind === "utc_monthly" ? "monthly" : "one time"}`)
+          : payroll.filter(plan => plan.allocation.positionId === id).map(plan => `${plan.allocation.policy.character.replaceAll("_", " ")} · ${plan.allocation.calculation.kind === "fixed" ? `${plan.allocation.calculation.amount.amount.toString()} per payroll` : `${formatRate(plan.allocation.calculation.rate)} ${plan.allocation.calculation.kind}`}`);
+        return <div key={id}><p>{objectLabel("Investment", holding)} · {saved.length ? `Saved future contributions: ${saved.join("; ")}` : "No saved future contributions"}</p>
+          <button type="button" onClick={() => open(id, kind)}>Manage/Add contributions to {objectLabel("Investment", holding)}</button></div>;
+      })}
+      {!holdings.length && <p>Add a supported holding in this account before scheduling contributions.</p>}
+    </section>;
+  } catch (failure) { return <p role="alert">{failure instanceof Error ? failure.message : "Saved contributions are unavailable. Review Current Plan."}</p>; }
+}
+
 function FieldControl({ fieldName, field, value, draft, currency, entityType, creating, onChange }: {
   fieldName: string; field: EditorField | undefined; value: unknown; draft: PersonalDraft; currency: unknown;
   entityType: PersonalObjectType; creating: boolean;
   onChange: (value: string | boolean | readonly string[] | null) => void;
 }) {
-  if (!field || field.derived || internalReference(field)) return null;
+  if (!field || field.derived) return null;
   const label = FIELD_LABELS[fieldName] ?? fieldName.replaceAll("_", " ");
+  if (field.type.startsWith("object") || (value !== null && typeof value === "object" && !field.ref)) return <section className="financial-fact" aria-label={label}>
+    <strong>{label}</strong>
+    <p>Structured dated facts · preserved as recorded. Import a corrected model to change these allocations.</p>
+    <details><summary>View {label}</summary><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(value ?? null, null, 2)}</pre></details>
+  </section>;
+  if (internalReference(field)) return null;
   const unsupportedReturn = entityType === "Investment" && ["expected_return", "volatility"].includes(fieldName);
   if (unsupportedReturn || (!creating && !field.mutable && value !== undefined)) return <div className="financial-fact" role="group" aria-label={label}>
     <strong>{label}</strong>

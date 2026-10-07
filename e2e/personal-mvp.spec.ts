@@ -110,6 +110,18 @@ const importDraft = async (
 
 const rawUuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
+const openSalaryFacts = async (page: import("@playwright/test").Page) => {
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Income", exact: true }).click();
+  await page.getByRole("button").filter({ has: page.locator("strong", { hasText: /^Example salary$/ }) }).click();
+  const drawer = page.getByRole("dialog", { name: "Edit Income" });
+  await expect(drawer.getByRole("heading", { name: "Example salary" })).toBeVisible();
+  await drawer.getByText("Additional financial details", { exact: true }).click();
+  await drawer.getByText("View work service jurisdiction allocations", { exact: true }).click();
+  await expect(drawer.locator("pre").filter({ hasText: '"allocation": "1"' }).first()).toBeVisible();
+  await drawer.getByRole("button", { name: "Close editor", exact: true }).click();
+};
+
 test("D1 UAT example, import, guided setup, edits and readable account/rate controls", async ({ page }) => {
   test.setTimeout(120_000);
   page.setDefaultTimeout(10_000);
@@ -117,6 +129,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   page.on("pageerror", error => errors.push(error.message));
   await loadExample(page);
+  await openSalaryFacts(page);
   await useShortHorizon(page);
   const status = page.getByRole("status", { name: "Household forecast status" });
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
@@ -144,6 +157,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   await expect(page.locator("[data-diagnostic-root]")).toHaveCount(0);
   await expect(page.getByText(/Old result|Stale retained result/)).toHaveCount(0);
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toHaveCount(0);
+  await openSalaryFacts(page);
   const checklist = page.getByRole("region", { name: "Forecast setup checklist" });
   for (const missing of ["Cash-flow execution account", "Investment owner", "Debt owner", "Payment anchor", "Total payment count", "Funding account", "Settlement priority"]) {
     await expect(checklist).toContainText(missing);
@@ -217,6 +231,13 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
     expect(rateBox!.x + rateBox!.width).toBeLessThanOrEqual(width);
     await page.getByRole("button", { name: "Net Worth", exact: true }).click();
     await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
+    for (const symbol of ["RETIREMENT-DEMO", "BROKERAGE-DEMO"]) {
+      const card = page.getByRole("article").filter({ has: page.locator("strong", { hasText: new RegExp(`^${symbol}$`) }) });
+      const summary = await card.locator("[data-card-summary]").boundingBox();
+      expect(summary!.width).toBeGreaterThan(150);
+      expect((await card.locator("[data-card-summary] strong").boundingBox())!.height).toBeLessThan(60);
+      await expect(card.getByRole("button", { name: /^Manage\/Add contributions/ }).first()).toBeVisible();
+    }
     const returns = page.getByRole("region", { name: "Projected return for RETIREMENT-DEMO" });
     const returnInput = returns.getByLabel("Projected annual return", { exact: true });
     const labelBox = await returnInput.locator("..").locator("span").first().boundingBox();
@@ -224,6 +245,74 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
     expect(labelBox!.height).toBeLessThan(80);
     expect((await returnInput.boundingBox())!.width).toBeLessThanOrEqual(160);
   }
+  expect(errors).toEqual([]);
+});
+
+test("D1 round 2 links plan/simulation dates, mortgage guidance and contextual contribution authoring", async ({ page }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  page.on("pageerror", error => errors.push(error.message));
+  await loadExample(page);
+  await openSalaryFacts(page);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  const dates = page.getByRole("region", { name: "Current Plan horizon" });
+  await dates.getByLabel("Simulation end", { exact: true }).fill("2037-01-01");
+  await expect(dates).toContainText("exceeds Current plan end 2036-01-01");
+  await dates.getByRole("button", { name: "Use requested simulation end for Current Plan", exact: true }).click();
+  await dates.getByRole("button", { name: "Save Current Plan dates", exact: true }).click();
+  await expect(dates).toContainText("Available simulation range: 2026-01-01 → 2037-01-01");
+  await dates.getByLabel("Simulation end", { exact: true }).fill("2036-01-01");
+  // The normal example has no recurring statutory contribution. Missing future
+  // tax law should remain scoped incompleteness, not truncate economic execution.
+  const status = page.getByRole("status", { name: "Household forecast status" });
+  await expect(status).toHaveAttribute("data-pending", "false");
+  await expect(page.getByText("Completed through 2036-01-01", { exact: true })).toBeVisible();
+  const mortgage = page.getByRole("region", { name: "Household execution configuration" }).getByRole("group", { name: "Example mortgage" });
+  await mortgage.getByLabel("Total payment count", { exact: true }).fill("359");
+  await expect(mortgage).toContainText("Schedule mismatch");
+  await expect(mortgage.getByRole("button", { name: "Use calculated contractual maturity 2051-12-01", exact: true })).toBeVisible();
+  await mortgage.getByLabel("Total payment count", { exact: true }).fill("360");
+  await expect(mortgage).toContainText("Calculated final scheduled payment: 2052-01-01");
+  await expect(mortgage.getByText(/Schedule mismatch/)).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  await page.locator('input[type="file"]').setInputFiles("test/fixtures/d1-integrated-uat-model.json");
+  await page.getByRole("button", { name: "Import into session", exact: true }).click();
+  await openSalaryFacts(page);
+  const manage = async (accountName: string, symbol: string) => {
+    await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+    await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
+    const card = page.getByRole("article").filter({ has: page.locator("strong", { hasText: new RegExp(`^${accountName}$`) }) });
+    await expect(card).toContainText("Saved future contributions");
+    await card.getByRole("button", { name: `Manage/Add contributions to ${symbol}`, exact: true }).click();
+  };
+  await manage("Personal Roth IRA", "IRA-DEMO");
+  const purchases = page.getByRole("region", { name: "Saved investment purchases" });
+  await expect(purchases.getByLabel("Purchase investment", { exact: true })).toHaveValue("d1cc0000-0000-4000-8000-000000000002");
+  await purchases.getByLabel("Purchase amount", { exact: true }).fill("501");
+  await purchases.getByRole("button", { name: "Save investment purchase", exact: true }).click();
+  await expect(purchases).toContainText("501");
+  await manage("Health savings investments", "HSA-EMPLOYEE");
+  const payroll = page.getByRole("region", { name: "Saved payroll contributions" });
+  await expect(payroll.getByLabel("Payroll destination", { exact: true })).toHaveValue("d1cc0000-0000-4000-8000-000000000005");
+  await payroll.getByLabel("Payroll contribution amount", { exact: true }).fill("101");
+  await payroll.getByRole("button", { name: "Save payroll contribution", exact: true }).click();
+  // Export and inspect the same authoritative plans, proving contextual routes
+  // updated existing plans rather than introducing duplicate economic routes.
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  const downloading = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const download = await downloading;
+  const restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
+  const ira = getPersonalPurchasePlans(restored).filter(plan => plan.investmentId === "d1cc0000-0000-4000-8000-000000000002");
+  expect(ira).toHaveLength(1); expect(ira[0]!.amount).toBe("501");
+  const hsa = getPayrollContributionPlans(restored).filter(plan => plan.allocation.positionId === "d1cc0000-0000-4000-8000-000000000005");
+  expect(hsa).toHaveLength(1); expect(hsa[0]!.allocation.calculation).toMatchObject({ kind: "fixed", amount: expect.objectContaining({}) });
+  if (hsa[0]!.allocation.calculation.kind === "fixed") expect(hsa[0]!.allocation.calculation.amount.amount.toString()).toBe("101");
   expect(errors).toEqual([]);
 });
 
