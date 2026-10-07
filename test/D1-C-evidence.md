@@ -156,7 +156,7 @@ The focused “D1 UAT example, import, guided setup, edits and readable account/
 controls” browser case starts on the landing page, uses the synthetic example,
 imports the checked-in D1 model in that same session, checks all required setup
 items and empty prior results/diagnostics, completes one final apply/run action,
-edits salary with normal controls, checks grouped diagnostic roots and no
+edits the baseline projected return with normal controls, checks grouped diagnostic roots and no
 console/page errors, and exercises percentages/help at 1440 and 390 pixels.
 The existing bounded D1-C author/save/reload/run/refinance case is preserved.
 CI owns execution of this evidence; these additions are not a local pass claim.
