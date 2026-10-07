@@ -126,11 +126,11 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   await expect(status.locator("[data-diagnostic-root]").first()).toBeVisible();
   await page.getByRole("button", { name: "Net Worth", exact: true }).click();
   await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
-  const retirementCard = page.getByRole("button", { name: /Workplace retirement/ }).locator("..");
+  const retirementCard = page.getByRole("article").filter({ has: page.locator("strong").filter({ hasText: /^Workplace retirement$/ }) });
   await expect(retirementCard).toContainText("Total account value: 100,000 USD");
   await expect(retirementCard).toContainText("Cash inside account: 0 USD");
   await expect(retirementCard).toContainText("Investments/holdings: 100,000 USD");
-  await expect(page.getByRole("button", { name: /Taxable brokerage/ }).locator("..")).toContainText("Total account value: 50,000 USD");
+  await expect(page.getByRole("article").filter({ has: page.locator("strong").filter({ hasText: /^Taxable brokerage$/ }) })).toContainText("Total account value: 50,000 USD");
 
   // Import in this running session, rather than navigating to a fresh app.
   await page.getByRole("button", { name: "Settings", exact: true }).click();

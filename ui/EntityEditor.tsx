@@ -109,7 +109,7 @@ const FIELD_LABELS: Record<string, string> = {
   distribution_parameters: "Distribution parameters",
   volatility: "Volatility",
 };
-const RETIREMENT_LIMITATION = "Saved purchases and contribution plans are under Plan → Current Plan → Investment purchases and Payroll and employer contributions. Use these for IRA, 401(k) and HSA contributions. Account totals below include holdings; cash inside an investment account is shown separately.";
+const RETIREMENT_LIMITATION = "Saved purchases and contribution plans are under Plan → Current Plan. Use Investment purchases for checking/savings-funded IRA contributions, and Payroll and employer contributions for workplace 401(k) and HSA allocations. Do not model a contribution as Spending paid to a retirement account. Account totals below include holdings; cash inside an investment account is shown separately.";
 const PRIMARY_FIELDS: Record<PersonalObjectType, readonly string[]> = {
   Household: [
     "name",
