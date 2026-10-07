@@ -2615,7 +2615,7 @@ function DiagnosticList({
       )}
       <details><summary>Technical diagnostic details</summary>
         {groups.map(group => <details key={group.key}><summary>{group.diagnostic.code} · {group.occurrences} occurrences · {group.affectedOutputs.length} affected outputs</summary>
-          <pre>{JSON.stringify({ diagnostic: group.diagnostic, affectedOutputs: group.affectedOutputs,
+          <pre>{JSON.stringify({ diagnostic: group.diagnostic, originalMessages: group.messages, affectedOutputs: group.affectedOutputs,
             recordIds: [...new Set(diagnostics.filter(item => groupDiagnostics([item])[0]?.key === group.key).map(item => item.entityId).filter(Boolean))] }, null, 2)}</pre>
         </details>)}
         {!groups.length && <pre>{fallback ?? "No richer diagnostic is available."}</pre>}

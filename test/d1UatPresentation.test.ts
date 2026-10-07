@@ -11,11 +11,13 @@ describe("D1 UAT presentation boundaries", () => {
       { ...root, entityId: "income-b", affectedOutputs: ["netWorth", "netIncome"] },
       { ...root, entityId: "income-a", affectedOutputs: ["cash"] },
       { ...root, category: "rule_selection", jurisdiction: "US:NY", message: "No supported rule" },
+      { ...root, category: "rule_selection", jurisdiction: "US:NY", message: "No supported rule in a later year" },
     ]);
     expect(groups).toHaveLength(2);
     expect(groups[0]).toMatchObject({ occurrences: 3, affectedOutputs: ["cash", "netIncome", "netWorth"] });
     expect(forecastDiagnosticMessage(groups[0]!.diagnostic)).toContain("Tax filing status is missing or conflicting");
     expect(forecastDiagnosticMessage(groups[1]!.diagnostic)).toContain("New York");
+    expect(groups[1]!.messages).toEqual(["No supported rule", "No supported rule in a later year"]);
     expect(groupDiagnostics([{ ...root, affectedOutputs: ["cash"] }])[0]!.key).toBe(groups[0]!.key);
   });
   it.each([ ["5", "0.05"], ["5.25", "0.0525"], ["0.000000000000000001", "0.00000000000000000001"], ["-100", "-1"], ["100", "1"] ])("converts %s percent to exact canonical %s", (percent, rate) => {

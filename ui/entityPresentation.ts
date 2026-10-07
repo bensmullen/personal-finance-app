@@ -16,18 +16,20 @@ export interface DisplayDiagnostic {
 }
 /** Group display copies only; retain engine diagnostics and their output scope. */
 export function groupDiagnostics(diagnostics: readonly DisplayDiagnostic[]) {
-  const groups = new Map<string, { key: string; diagnostic: DisplayDiagnostic; occurrences: number; affectedOutputs: string[] }>();
+  const groups = new Map<string, { key: string; diagnostic: DisplayDiagnostic; occurrences: number; affectedOutputs: string[]; messages: string[] }>();
   for (const diagnostic of diagnostics) {
     // Tax roots recur for different income records and outputs. The same remedy
     // is shared, while their individual record context stays in technical detail.
     const key = JSON.stringify([diagnostic.code, diagnostic.category, diagnostic.jurisdiction,
       diagnostic.entityType === "tax_capability" ? undefined : diagnostic.entityId,
-      diagnostic.fieldPath, diagnostic.message, [...(diagnostic.relatedIds ?? [])].sort()]);
+      diagnostic.fieldPath, diagnostic.entityType === "tax_capability" && diagnostic.category ? undefined : diagnostic.message,
+      [...(diagnostic.relatedIds ?? [])].sort()]);
     const group = groups.get(key);
     if (group) {
       group.occurrences++;
       group.affectedOutputs = [...new Set([...group.affectedOutputs, ...(diagnostic.affectedOutputs ?? [])])].sort();
-    } else groups.set(key, { key, diagnostic, occurrences: 1, affectedOutputs: [...new Set(diagnostic.affectedOutputs ?? [])].sort() });
+      group.messages = [...new Set([...group.messages, ...(diagnostic.message ? [diagnostic.message] : [])])];
+    } else groups.set(key, { key, diagnostic, occurrences: 1, affectedOutputs: [...new Set(diagnostic.affectedOutputs ?? [])].sort(), messages: diagnostic.message ? [diagnostic.message] : [] });
   }
   return [...groups.values()];
 }
