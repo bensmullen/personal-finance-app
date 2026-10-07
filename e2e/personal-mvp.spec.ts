@@ -174,12 +174,11 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
 
   // An ordinary economic edit reuses the applied configuration and reruns.
   const beforeEdit = await status.getAttribute("data-request-id");
-  await page.getByRole("button", { name: "Money", exact: true }).click();
-  await page.getByRole("button", { name: "Income", exact: true }).click();
-  await page.getByRole("button", { name: /Example salary/ }).click();
-  const editor = page.getByRole("dialog", { name: "Edit Income" });
-  await editor.getByLabel("Amount", { exact: true }).fill("9100.00");
-  await editor.getByRole("button", { name: "Close editor" }).click();
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
+  const baselineReturn = page.getByRole("region", { name: "Projected return for RETIREMENT-DEMO" });
+  await baselineReturn.getByLabel("Projected annual return", { exact: true }).fill("8");
+  await baselineReturn.getByRole("button", { name: "Apply projected return", exact: true }).click();
   await expect(status).not.toHaveAttribute("data-request-id", beforeEdit!);
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
   await expect(status).toHaveAttribute("data-pending", "false");
