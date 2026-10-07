@@ -150,8 +150,6 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
   await expect(status).toContainText("Partially modeled");
   await expect(status).toContainText("New York");
-  await expect(status).toContainText("Future annual contribution facts need confirmation");
-  await expect(status).toContainText("Unconfirmed contributions are skipped; wages and other household activity continue");
   await expect(status).not.toContainText("Tax filing status is missing");
   const originalRequest = await status.getAttribute("data-request-id");
   await expect(status.locator("[data-diagnostic-root]").first()).toBeVisible();
@@ -381,6 +379,8 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("Projected current law");
   await expect(status).not.toContainText("Tax payments & refunds: choose");
   await expect(status).toContainText("New York");
+  await expect(status).toContainText("Future annual contribution facts need confirmation");
+  await expect(status).toContainText("Unconfirmed contributions are skipped; wages and other household activity continue");
   const primaryMessages = await status.locator("[data-diagnostic-root]").allTextContents();
   expect(new Set(primaryMessages).size).toBe(primaryMessages.length);
   await status.getByText("Technical diagnostic details", { exact: true }).click();
