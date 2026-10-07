@@ -95,7 +95,9 @@ import {
 import { useInteractiveForecast } from "./forecast/useInteractiveForecast.js";
 import { EditorHub } from "./EntityEditor.js";
 import { mortgageFinalPaymentDate, mortgagePaymentCount } from "../src/application/compiler/liabilities.js";
-import { currentPlan, simulationWindowProblem } from "../src/application/forecastSetup.js";
+import { currentPlan, simulationWindowProblem, replaceCurrentPlanHorizon } from "../src/application/forecastSetup.js";
+import { forecastTaxJurisdictions, forecastTaxSetupProblem, type TaxForecastSettlementSetup } from "../src/application/taxForecastSetup.js";
+import { TaxSettlementControls } from "./forecast/TaxSettlementControls.js";
 import { FieldHelp, PercentageInput } from "./forecast/PercentageInput.js";
 import { DomainMechanicsPanel } from "./forecast/DomainMechanicsPanel.js";
 import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, groupDiagnostics, isCashFlowPaymentAccount, type NetWorthSection } from "./entityPresentation.js";
@@ -262,6 +264,7 @@ export function PersonalFinanceApp() {
       sessionSettingsFromHorizon("2026-01-01", 12),
     );
   const [runSettingsError, setRunSettingsError] = useState("");
+  const [taxSettlementSetup, setTaxSettlementSetup] = useState<TaxForecastSettlementSetup>();
   const [liabilityConfig, setLiabilityConfig] =
     useState<LiabilitySessionConfig>(emptyLiabilityConfig);
   const [investmentOwnerId, setInvestmentOwnerId] = useState("");
@@ -354,6 +357,8 @@ export function PersonalFinanceApp() {
   };
 
   const updateCanonicalModel = (next: PersonalDraft) => {
+    const nextRoot = currentPlan(next)?.scenario_id;
+    if (draft && typeof nextRoot === "string" && nextRoot !== currentPlan(draft)?.scenario_id) setHouseholdExecution(prior => prior === undefined ? undefined : { ...prior, selectedRootScenarioId: nextRoot });
     setDraft(next);
     invalidateResults();
   };
@@ -367,6 +372,7 @@ export function PersonalFinanceApp() {
     setCashFlowExecutionAccountId("");
     setRetirementBindings([]);
     setHouseholdExecution(undefined);
+    setTaxSettlementSetup(undefined);
     setNotice(message);
   };
 
@@ -522,7 +528,7 @@ export function PersonalFinanceApp() {
             "Golden Household loaded",
           );
           setSessionSettings(sessionSettingsFromHorizon("2026-01-01", 120));
-          setHouseholdExecution(configuration);
+          setHouseholdExecution({ ...configuration, forecastLawPolicy: "projected_current_law" });
           setCashFlowExecutionAccountId(configuration.cashFlowExecutionAccountId ?? "");
           setInvestmentOwnerId(configuration.investmentExecutionOwnerId);
           setLiabilityConfig({ ownerId: configuration.liabilityExecutionOwnerId, profiles: Object.fromEntries(configuration.liabilityExecutionProfiles.map((profile) => [profile.liabilityId, { paymentAnchor: profile.paymentAnchor, totalPayments: String(profile.totalPayments), fundingAccountId: profile.fundingAccountId, settlementPriority: String(profile.settlementPriority) }])) });
@@ -637,6 +643,8 @@ export function PersonalFinanceApp() {
   };
   const effectiveHouseholdExecution = interactive.effectiveConfiguration;
   const setupMissing = missingForecastSetup(draft, cashFlowExecutionAccountId, investmentOwnerId, liabilityConfig);
+  const taxSetupProblem = forecastTaxSetupProblem(draft, taxSettlementSetup, sessionSettings.simulationStart, sessionSettings.simulationEnd);
+  if (taxSetupProblem) setupMissing.push(taxSetupProblem);
   const settingsProblem = resolvePersonalSessionSettings(sessionSettings, "cash_flow").error ?? (draft ? simulationWindowProblem(draft, sessionSettings.simulationStart, sessionSettings.simulationEnd) : undefined);
   const openForecastSetup = (missing?: string) => {
     navigate("Plan"); setSubnav("Current Plan");
@@ -764,6 +772,7 @@ export function PersonalFinanceApp() {
         </nav>
         <main id="main-content" tabIndex={-1} style={{ minWidth: 0 }}>
           <ForecastStatus label="Household forecast" state={interactive.baseline} />
+          {taxSetupProblem && interactive.available && <section className="panel capability" aria-label="Tax forecast needs setup"><strong>Needs setup · Tax payments &amp; refunds</strong><p>{taxSetupProblem}</p><button onClick={() => openForecastSetup()}>Set up tax payments &amp; refunds</button></section>}
           {interactive.available ? <button className="primary" onClick={runHouseholdForecast}>Update forecast</button> : <section className="panel capability" aria-label="Forecast setup checklist">
             <h2>Needs setup · household forecast not run</h2>
             <p>Loading or importing a model clears session-only forecast choices. Complete these choices to run this household; saved purchases and contributions remain in the plan.</p>
@@ -850,12 +859,15 @@ export function PersonalFinanceApp() {
                 setLiabilityConfig={setLiabilityConfig}
                 retirementBindings={retirementBindings}
                 setRetirementBindings={setRetirementBindings}
+                taxSettlementSetup={taxSettlementSetup}
+                setTaxSettlementSetup={setTaxSettlementSetup}
                 setHouseholdExecution={(bindings) => {
                   const mortgages = objectEntries(draft, "Liability").filter((item) => item.liability_type === "mortgage");
                   if (setupMissing.length || settingsProblem) return setRunSettingsError([...setupMissing, ...(settingsProblem ? [settingsProblem] : [])].join(" "));
                   const appliedBindings = bindings ?? retirementBindings;
                   setRetirementBindings(appliedBindings);
                   setHouseholdExecution({
+                    forecastLawPolicy: "projected_current_law", ...(taxSettlementSetup === undefined ? {} : { taxSettlementSetup }),
                     baseCurrency: sessionSettings.baseCurrency, asOf: sessionSettings.asOf, dataCutoff: sessionSettings.dataCutoff,
                     simulationStart: sessionSettings.simulationStart, simulationEnd: sessionSettings.simulationEnd,
                     sameInstantCashFlowOrder: sessionSettings.sameInstantCashFlowOrder,
@@ -2619,14 +2631,20 @@ function ModelSettings({
 }
 
 
-function PlanHorizonSettings({ draft, settings, setSettings }: { draft: PersonalDraft; settings: PersonalSessionSettings; setSettings?: Dispatch<SetStateAction<PersonalSessionSettings>> }) {
+function PlanHorizonSettings({ draft, settings, setSettings, setDraft, retirementDates = [] }: { draft: PersonalDraft; settings: PersonalSessionSettings; setSettings?: Dispatch<SetStateAction<PersonalSessionSettings>>; setDraft?: (draft: PersonalDraft) => void; retirementDates?: readonly string[] }) {
   const plan = currentPlan(draft);
+  const [start, setStart] = useState(String(plan?.start_date ?? ""));
+  const [end, setEnd] = useState(String(plan?.end_date ?? ""));
+  const [error, setError] = useState("");
+  useEffect(() => { setStart(String(plan?.start_date ?? "")); setEnd(String(plan?.end_date ?? "")); }, [plan?.scenario_id]);
   const problem = simulationWindowProblem(draft, settings.simulationStart, settings.simulationEnd);
   return <section className="panel" aria-label="Current Plan horizon" id="plan-horizon">
     <h2>Current Plan dates</h2><p>Your saved plan defines the available planning range. Simulation dates select a run window within it. Retirement must be within the plan, but may fall outside a run window.</p>
-    <label>Current plan start<input aria-label="Current plan start" type="date" value={String(plan?.start_date ?? "")} readOnly /></label>
-    <label>Current plan end<input aria-label="Current plan end" type="date" value={String(plan?.end_date ?? "")} readOnly /></label>
-    <p>These saved plan dates are creation-time facts. This editor cannot extend them. To use a wider plan, import a model created with that horizon under Settings → Import / Export; otherwise choose simulation dates within the available range.</p>
+    <label>Current plan start<input aria-label="Current plan start" type="date" value={start} readOnly={!setDraft} onChange={event => setStart(event.target.value)} /></label>
+    <label>Current plan end<input aria-label="Current plan end" type="date" value={end} readOnly={!setDraft} onChange={event => setEnd(event.target.value)} /></label>
+    {setDraft ? <button onClick={() => { try { setDraft(replaceCurrentPlanHorizon(draft, randomId(), start, end, { start: settings.simulationStart, end: settings.simulationEnd }, retirementDates)); setError(""); } catch (error) { setError(error instanceof Error ? error.message : "Plan dates could not be applied."); } }}>Apply Current Plan dates</button> : <p>Change plan dates under Plan → Current Plan.</p>}
+    <p>Extending your plan makes a longer simulation window available. Simulation end remains your choice.</p>
+    {error && <p role="alert">{error}</p>}
     <p>Available simulation range: {String(plan?.start_date)} → {String(plan?.end_date)} (exclusive end).</p>
     {setSettings && <><label>Simulation start<input aria-label="Simulation start" type="date" value={settings.simulationStart} onChange={event => setSettings(prior => ({ ...prior, simulationStart: event.target.value }))} /></label>
       <label>Simulation end<input aria-label="Simulation end" type="date" value={settings.simulationEnd} onChange={event => setSettings(prior => ({ ...prior, simulationEnd: event.target.value }))} /></label></>}
@@ -2894,7 +2912,7 @@ function ContributionCapacityPanel({ draft, forecast }: { draft: PersonalDraft; 
   let rows: ReturnType<typeof getContributionCapacities>;
   try { rows = forecast && forecast.status !== "unavailable" ? forecast.contributionCapacities : getContributionCapacities(draft); } catch (failure) { return <p role="alert">{failure instanceof Error ? failure.message : "Contribution capacity is unavailable"}</p>; }
   return <section className="panel" aria-label="Contribution capacity"><h2>Annual contribution capacity</h2><p>Modeled YTD combines authoritative opening usage and committed forecast contributions across every account sharing a bucket.</p>
-    <table><thead><tr><th>Account / year</th><th>Shared categories</th><th>Annual USD limit</th><th>Opening YTD</th><th>Forecast usage</th><th>Modeled YTD</th><th>Remaining</th></tr></thead><tbody>{rows.map(row => <tr key={`${row.accountId}:${row.bucketIdentity}`}><td>{objectLabel("Account", objectEntries(draft, "Account").find(item => item.account_id === row.accountId) ?? {})} / {row.year}</td><td>{row.categories.map(value => value.replaceAll("_", " ")).join(", ")}</td><td>{row.annualLimit ?? "Incomplete"}{row.diagnostics.length > 0 && <p role="status">{row.diagnostics.join(", ")}</p>}</td><td>{row.openingUsage ?? "Unknown"}</td><td>{row.forecastUsage ?? "Run plan"}</td><td>{row.yearToDate ?? "Incomplete"}</td><td>{row.remaining ?? "Incomplete"}</td></tr>)}</tbody></table>
+    <table><thead><tr><th>Account / year</th><th>Shared categories</th><th>Annual USD limit</th><th>Opening YTD</th><th>Forecast usage</th><th>Modeled YTD</th><th>Remaining</th></tr></thead><tbody>{rows.map(row => <tr key={`${row.accountId}:${row.bucketIdentity}`}><td>{objectLabel("Account", objectEntries(draft, "Account").find(item => item.account_id === row.accountId) ?? {})} / {row.year}{row.provenance === "projected_current_law" && <p>Projected current law · {row.lawVersion}</p>}</td><td>{row.categories.map(value => value.replaceAll("_", " ")).join(", ")}</td><td>{row.annualLimit ?? "Incomplete"}{row.diagnostics.length > 0 && <p role="status">{row.diagnostics.join(", ")}</p>}</td><td>{row.openingUsage ?? "Unknown"}</td><td>{row.forecastUsage ?? "Run plan"}</td><td>{row.yearToDate ?? "Incomplete"}</td><td>{row.remaining ?? "Incomplete"}</td></tr>)}</tbody></table>
     {forecast && forecast.status !== "unavailable" && forecast.contingentPositions.map(item => <p key={item.positionId}>Unvested contingent plan value: {item.value.amount} {item.value.currency}; excluded from owned net worth.</p>)}
   </section>;
 }
@@ -2940,6 +2958,8 @@ function HouseholdPlan({
   setLiabilityConfig,
   retirementBindings,
   setRetirementBindings,
+  taxSettlementSetup,
+  setTaxSettlementSetup,
   setHouseholdExecution,
 }: {
   draft: PersonalDraft;
@@ -2958,6 +2978,8 @@ function HouseholdPlan({
   setLiabilityConfig: React.Dispatch<React.SetStateAction<LiabilitySessionConfig>>;
   retirementBindings: readonly RetirementTerminationBinding[];
   setRetirementBindings: (value: readonly RetirementTerminationBinding[]) => void;
+  taxSettlementSetup: TaxForecastSettlementSetup | undefined;
+  setTaxSettlementSetup: (value: TaxForecastSettlementSetup) => void;
   setHouseholdExecution: (bindings?: readonly RetirementTerminationBinding[]) => void;
 }) {
   const accounts = objectEntries(draft, "Account");
@@ -2974,7 +2996,7 @@ function HouseholdPlan({
         title="Your reconciled household plan"
         text="One execution carries cash flow, investments, debt, property, and retirement through the same state transition."
       />
-      <PlanHorizonSettings draft={draft} settings={settings} setSettings={setSettings} />
+      <PlanHorizonSettings draft={draft} settings={settings} setSettings={setSettings} setDraft={setDraft} retirementDates={retirementBindings.map(binding => binding.baselineDate)} />
       <section className="panel" id="forecast-setup" tabIndex={-1}>
       <h2>Forecast setup</h2>
       <section className="controls" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)" }} aria-label="Household execution configuration">
@@ -2990,6 +3012,8 @@ function HouseholdPlan({
         {!cashFlowExecutionAccountId && <p className="field-error">Required: choose the bank account receiving income.</p>}
         <InvestmentExecutionControls draft={draft} ownerId={investmentOwnerId} setOwnerId={setInvestmentOwnerId} />
         <LiabilityExecutionControls draft={draft} setDraft={setDraft} liabilityConfig={liabilityConfig} setLiabilityConfig={setLiabilityConfig} />
+        <TaxSettlementControls accounts={accounts.filter(account => ["checking", "savings"].includes(String(account.account_type))).map(account => ({ id: objectId("Account", account), label: objectLabel("Account", account) }))} jurisdictions={forecastTaxJurisdictions(draft)} value={taxSettlementSetup} onChange={setTaxSettlementSetup} />
+        <p>Long-range forecasts use projected current law after verified coverage ends: nominal carry-forward of the latest source-backed parameters, with no inflation indexing. Future contribution eligibility and annual amounts carry forward your authored plan facts; age advances by calendar year. These future facts and tax/contribution outputs are projected assumptions.</p>
         <details><summary>Technical retirement binding override</summary><fieldset>
           <legend>Baseline retirement binding (session-only)</legend>
           <select aria-label="Baseline retirement income" value={retirementIncomeId} onChange={(event) => setRetirementIncomeId(event.target.value)}><option value="">No retirement binding</option>{incomes.map((income) => <option key={objectId("Income", income)} value={objectId("Income", income)}>{objectLabel("Income", income)}</option>)}</select>
@@ -3073,6 +3097,12 @@ function HouseholdForecastVisual({
         <strong>The requested forecast did not complete. Results end at {forecast.stoppedAt.slice(0, 10)}.</strong>
         <p>{forecast.diagnostics.filter(item => item.entityType !== "tax_capability").map(item => forecastDiagnosticMessage(item, financialModel)).filter((message, index, messages) => messages.indexOf(message) === index).join(" ") || "Review the forecast limitations above for the stopping dependency."}</p>
         <p>Later dates have no modeled results. Extend verified coverage or choose a supported shorter window before relying on this plan.</p>
+      </section>}
+      {!!forecast.projectedLaw?.length && <section className="capability" aria-label="Projected law forecast basis">
+        <strong>Projected current law · forecast assumptions</strong>
+        <p>From 2027-01-01, future tax and contribution outputs use nominal carry-forward where verified coverage has ended. No inflation indexing or future legislation is inferred. Future contribution eligibility and annual amounts carry forward authored plan facts; age advances by year. Later verified rules supersede projections.</p>
+        <ul>{[...new Map(forecast.projectedLaw.map(item => [`${item.jurisdiction}:${item.baseYear}:${item.from}:${item.until}`, item])).values()].map(item => <li key={`${item.jurisdiction}:${item.from}`}>{item.jurisdiction}: {item.baseYear} source rules projected from {item.from.slice(0, 10)} through {item.until.slice(0, 10)} (exclusive).</li>)}</ul>
+        <details><summary>Projected source rule identities</summary><ul>{forecast.projectedLaw.map(item => <li key={`${item.baseRuleId}:${item.from}`}>{item.jurisdiction} · {item.baseRuleId} · base year {item.baseYear}</li>)}</ul></details>
       </section>}
       {forecast.liquidityShortfalls.length > 0 && (
         <div className="stress" role="alert">

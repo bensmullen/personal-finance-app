@@ -230,3 +230,58 @@ TECHNICAL_REASON: `src/simulation/tax/participant.ts` diagnoses both payment_fun
 Round 2 remains blocked pending these product decisions, CI confirmation,
 an exact-head semantic audit and fresh product-owner UAT. This evidence does
 not assert merge readiness or self-accept UAT.
+
+## Issue #80 resolved-decision continuation
+
+The PM decisions appended to Issue #80 supersede the three decision blocks
+above. The prior verified-only regression remains valid: without an explicit
+projection policy, annual contribution facts still stop at the 2027 boundary.
+Normal household execution now explicitly requests `projected_current_law`.
+The verified catalogs and 2026 formulas remain unchanged. A separate modular
+forecast catalog carries the latest applicable source parameters forward
+nominally, with source rule/year, date bounds and projected provenance. Later
+verified definitions supersede projection. Unsupported legal bases and unknown
+locations remain scoped limitations. No inflation or future legislation is
+inferred. Future contribution facts are explicitly projected from authored
+annual facts; age advances by year. Committed future buckets and their capacity
+rows retain projected provenance and the 2026 base-law version.
+
+Current Plan date controls call a replacement-root authoring contract, creating
+a new identity and rebinding scenario-owned objects while retaining a disabled
+old root with its original dates. Simulation dates remain separately chosen.
+Shortening requires correction of incompatible simulation/retirement dates.
+Any existing child topology fails non-destructively with guidance rather than
+leaving an incompatible alternative. Session root selection follows the new
+root so automatic reruns remain available.
+
+Forecast Setup includes Tax payments & refunds. Users explicitly select bank
+accounts and confirm a following-year month/day and same-date payment order
+for each known modeled jurisdiction. April 15 is an unconfirmed suggestion,
+not a legal deadline. The application generates exact final settlement records
+for each modeled year, including records scheduled beyond the run window, and
+passes them to the existing tax participant. No estimated amounts are invented.
+These conventions remain session data and reset on model import/load.
+Completing setup removes funding/timing limitations without implying that
+unsupported New York/local law is complete. Projected-law provenance alone
+does not suppress a modeled final settlement; actual unresolved dependencies
+continue to gate their jurisdiction's settlement.
+
+`d1ForecastDecisions.test.ts` adds evidence for replacement reference/economic
+preservation and portable model validity; non-destructive shortening/child
+rejection; verified/projection separation and future enacted-rule preference;
+confirmed exact settlement instructions and scheduled-later dates; unchanged
+2026 economics; 120 committed months of integrated IRA/HSA/payroll plans;
+projected bucket provenance; settlement diagnostic removal; and portable replay
+of the following-year settlement month.
+
+The existing round-2 browser path now actually extends Current Plan dates,
+selects a newly available simulation window, completes explicit tax setup,
+requests the imported 2026→2036 household, and checks completion, projected
+law/capacity labels and concise limitations. It retains salary drawer,
+1440px/390px geometry, mortgage schedule/payoff and contextual contribution
+checks, and fails on console/page errors. Other apply-setup paths confirm the
+new tax conventions when modeled jurisdictions are known.
+
+No local verification was run. GitHub CI on the pushed exact head owns execution
+of these assertions. Fresh ChatGPT exact-head audit and product-owner UAT remain
+required before merge; this continuation does not self-accept either gate.

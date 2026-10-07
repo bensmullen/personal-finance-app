@@ -21,6 +21,7 @@ import { capability, EXACT_DECIMAL, ASSET_TYPES, ASSET_VALUATION_METHODS, canoni
 
 /** Application boundary for the one reconciled PR20 execution input. */
 export interface HouseholdProjectionCompilerRequest {
+  readonly forecastLawPolicy?: "projected_current_law";
   readonly tax?: HouseholdTaxCompilerRequest;
   readonly cashFlow?: CashFlowCompilerRequest;
   readonly investments?: InvestmentCompilerRequest;
@@ -35,6 +36,7 @@ export interface CompiledStandaloneAsset {
 }
 
 export interface CompiledHouseholdProjection {
+  readonly projectedLaw?: readonly { readonly jurisdiction: string; readonly baseYear: number; readonly baseRuleId: string; readonly from: string; readonly until: string }[];
   readonly nonInvestmentPositionIds?: readonly string[];
   readonly participants?: readonly HouseholdKernelParticipant[];
   readonly executionKernel?: CompiledHouseholdKernel;
@@ -196,7 +198,7 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   if (scenarios.size !== 1 || horizons.size !== 1 || currencies.size !== 1 || households.size !== 1 || owners.size !== 1 || starts.size !== 1 || ends.size !== 1 || asOfs.size > 1) return invalid("HOUSEHOLD_COMPILER_DISAGREEMENT", "Participating compilers must agree on Household, execution owner, currency, scenario, as-of boundary, and exact horizon.");
   const standalone = compileStandaloneAssets(model, firstBoundary.baseCurrency, firstBoundary.simulationStart, firstBoundary.simulationEnd);
   if (standalone.status !== "compiled") return standalone;
-  const tax = compileHouseholdTax(model, request.tax);
+  const tax = compileHouseholdTax(model, { ...request.tax, ...(request.forecastLawPolicy === "projected_current_law" ? { projectedCurrentLawThrough: firstBoundary.simulationEnd } : {}) });
   if (tax.status !== "compiled") return tax;
   const domains = hasDomainMechanics(model) ? compileDomainMechanics(model, {
     baseCurrency: firstBoundary.baseCurrency, asOf: firstBoundary.asOf ?? firstBoundary.simulationStart,
@@ -217,14 +219,15 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
     ...(liabilities === undefined ? {} : { liabilities: liabilities.value.scenarioBindings }),
   });
   const value: CompiledHouseholdProjection = Object.freeze({
+    ...(request.forecastLawPolicy === undefined ? {} : { projectedLaw: tax.value.catalog.flatMap(rule => rule.provenance.type === "projected_current_law" && (tax.value.filingStatus === rule.filingStatus || rule.filingStatus === "all") && (rule.jurisdiction === "US:FEDERAL" || tax.value.incomes.some(income => [...income.residence, ...income.work].some(location => [location.state_jurisdiction.replace(/^US-/, "US:"), location.local_jurisdiction].includes(rule.jurisdiction)))) ? [{ jurisdiction: rule.jurisdiction, baseYear: rule.provenance.baseYear, baseRuleId: String(rule.provenance.baseRuleId), from: rule.effectiveFrom, until: rule.effectiveUntil }] : []) }),
     nonInvestmentPositionIds: taxCreditPositionIds(tax.value),
     participants: Object.freeze([createHouseholdTaxParticipant({ ...tax.value, simulationStart: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`),
       domainOperations: domains?.status === "compiled" ? domains.value.input.operations.map(item => ({ id: item.id, at: instant(item.at) })).sort((a, b) => a.id.localeCompare(b.id)) : [] }),
       ...(domains?.status === "compiled" ? [domains.value.participant] : []),
       ...(mortgages.value ? [mortgages.value] : []),
       ...(durablePayrollAllocations(model).some(item => item.events.length > 0) ? [createWorkplaceEventParticipant(durablePayrollAllocations(model).flatMap(item => item.events))] : [])]),
-    ...(cash === undefined ? {} : { cashFlowInput: cash.value.input }),
-    ...(investments === undefined ? {} : { investmentInput: investments.value.input }),
+    ...(cash === undefined ? {} : { cashFlowInput: request.forecastLawPolicy === undefined ? cash.value.input : { ...cash.value.input, incomes: cash.value.input.incomes.map(income => ({ ...income, ...(income.payrollContributions === undefined ? {} : { payrollContributions: income.payrollContributions.map(allocation => ({ ...allocation, policy: { ...allocation.policy, forecastLawPolicy: "projected_current_law" as const } })) }) })) } }),
+    ...(investments === undefined ? {} : { investmentInput: request.forecastLawPolicy === undefined ? investments.value.input : { ...investments.value.input, purchases: investments.value.input.purchases.map(purchase => ({ ...purchase, ...(purchase.contribution === undefined ? {} : { contribution: { ...purchase.contribution, forecastLawPolicy: "projected_current_law" as const } }) })) } }),
     ...(liabilities === undefined ? {} : { liabilityInput: liabilities.value.input }),
     reconciledOpeningState: opening.value,
     reconciledPrimitiveState: primitive.value,

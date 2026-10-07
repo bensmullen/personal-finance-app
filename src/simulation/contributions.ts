@@ -2,13 +2,14 @@ import { accountingTransactionId, createAccountingLeg, createAccountingTransacti
 import { failValidation, issueCodes } from "../diagnostics/index.js";
 import { domainId } from "../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../lineage/index.js";
-import { deriveD1ContributionCapacity, D1_CONTRIBUTION_LAW_2026, contributionCharacters, type ContributionCharacter, type D1CapacityKind, type D1ContributionFacts } from "../rules/contribution2026.js";
+import { deriveD1ContributionCapacity, contributionCharacters, type ContributionCharacter, type D1CapacityKind, type D1ContributionFacts } from "../rules/contribution2026.js";
 import { contributionBucketIdentity, evaluateContributionBuckets, type ContributionBucketDecision } from "../rules/contribution.js";
 import { resolveContributionLimitBindings } from "../rules/resolver.js";
 import type { AnnualContributionLimitRule, RuleTarget } from "../rules/contracts.js";
 import { applyAccountingTransactionAtomically, cloneAuthoritativeState, validateAuthoritativeState, type AuthoritativeState, type ContributionState } from "../state/index.js";
 import { instant, type Instant } from "../time/index.js";
 import { Money, Quantity, RoundingPolicy, decimal } from "../values/index.js";
+import { contributionPolicyAt } from "./contributionProjection.js";
 
 export type { ContributionCharacter } from "../rules/contribution2026.js";
 export interface ContributionLimitBinding {
@@ -19,6 +20,7 @@ export interface ContributionLimitBinding {
   readonly includedCharacters: readonly string[];
 }
 export interface ContributionPolicy {
+  readonly forecastLawPolicy?: "projected_current_law";
   readonly character: ContributionCharacter;
   readonly personId: string;
   readonly householdId: string;
@@ -31,6 +33,7 @@ const usage = (state: AuthoritativeState) => Object.values(state.contributions ?
 
 /** All applicable scope buckets are resolved before any financial candidate is posted. */
 export const decideContribution = (state: AuthoritativeState, policy: ContributionPolicy, accountId: string, at: Instant, requested: Money): ContributionBucketDecision => {
+  policy = contributionPolicyAt(policy, at);
   if (state.accounts[accountId]?.ownerId !== policy.personId) return invalid("Contribution must reach its contributor's own account");
   if (policy.facts.taxYear !== Number(at.slice(0, 4))) return invalid("Contribution facts do not cover this UTC year");
   const needed: D1CapacityKind[] = policy.character.endsWith("_ira") ? ["ira_shared", ...(policy.character === "roth_ira" ? ["roth_ira" as const] : [])]
@@ -51,7 +54,8 @@ export const decideContribution = (state: AuthoritativeState, policy: Contributi
     if (Object.values(state.contributions ?? {}).some(entry => entry.buckets.some(prior => prior.identity === bucket && !prior.annualLimit.equals(capacity.capacity)))) return invalid("Conflicting annual facts for the same committed statutory bucket");
     return { id: domainId("tax-rule", binding.ruleId), kind: "annual_contribution_limit", target: binding.target, bucketKey: binding.bucketKey, includedCharacters: binding.includedCharacters,
       effectiveFrom: instant(`${policy.facts.taxYear}-01-01T00:00:00.000Z`), effectiveUntil: instant(`${policy.facts.taxYear + 1}-01-01T00:00:00.000Z`), calendarYear: policy.facts.taxYear, calendar: "utc", annualLimit: capacity.capacity,
-      capacityFacts: { lawVersion: D1_CONTRIBUTION_LAW_2026.version, kind: binding.kind,
+      capacityFacts: { lawVersion: capacity.lawVersion, kind: binding.kind,
+        ...(policy.facts.lawProjection === undefined ? {} : { provenance: policy.facts.lawProjection, baseYear: "2026", annualFacts: "projected_from_authored_plan" }),
         ...Object.fromEntries(Object.entries(policy.facts).filter(([, value]) => value !== undefined).map(([key, value]) => [key, typeof value === "boolean" ? value : value instanceof Money ? `${value.amount.toString()} ${value.currency.code}` : String(value)])) } };
   });
   const resolved = resolveContributionLimitBindings(catalog, catalog.map(rule => rule.id), [
@@ -95,6 +99,7 @@ export const decideContribution = (state: AuthoritativeState, policy: Contributi
 
 /** Returns a fresh committed ledger; rejected or failed financial work never calls this. */
 export const recordContribution = (state: AuthoritativeState, policy: ContributionPolicy, accountId: string, id: string, at: Instant, decision: ContributionBucketDecision, incomeId?: string): AuthoritativeState => {
+  policy = contributionPolicyAt(policy, at);
   if (state.contributions?.[id]) return invalid("Duplicate contribution identity");
   if (decision.accepted.isZero()) return state;
   let eligibleDeduction: Money | undefined;

@@ -33,6 +33,21 @@ const loadExample = async (page: import("@playwright/test").Page) => {
   ).toBeVisible();
 };
 
+const configureTaxSettlement = async (page: import("@playwright/test").Page) => {
+  const panel = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
+  const confirmations = panel.getByRole("checkbox");
+  if (await confirmations.count() === 0) return;
+  await panel.getByLabel("Tax payment account", { exact: true }).selectOption({ label: "Everyday checking" });
+  await panel.getByLabel("Tax refund account", { exact: true }).selectOption({ label: "Everyday checking" });
+  for (const jurisdiction of ["US:FEDERAL", "US:NY"]) {
+    const confirmation = panel.getByLabel(`Confirm ${jurisdiction} forecast settlement convention`, { exact: true });
+    if (await confirmation.count() === 0) continue;
+    await panel.getByRole("button", { name: `Suggest April 15 for ${jurisdiction}`, exact: true }).click();
+    await expect(confirmation).not.toBeChecked();
+    await confirmation.check();
+  }
+};
+
 test("D1-B normal investment controls persist a bank-funded operation without compiler IDs", async ({ page }) => {
   const cryptoId = "d1b90000-0000-4000-8000-000000000001";
   const original = createGoldenHouseholdDraft();
@@ -174,6 +189,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   await mortgage.getByLabel("Total payment count").fill("360");
   await mortgage.getByLabel("Funding account").selectOption({ label: "Everyday checking" });
   await mortgage.getByLabel("Settlement priority").fill("1");
+  await configureTaxSettlement(page);
   await expect(checklist).toContainText("Required choices are complete");
   await configuration.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
@@ -248,7 +264,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   expect(errors).toEqual([]);
 });
 
-test("D1 round 2 explains immutable plan dates, mortgage guidance and contextual contribution authoring", async ({ page }) => {
+test("D1 resolved decisions extend plan dates, guide tax setup and continue projected ten-year contributions", async ({ page }) => {
   test.setTimeout(120_000);
   const errors: string[] = [];
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
@@ -260,8 +276,13 @@ test("D1 round 2 explains immutable plan dates, mortgage guidance and contextual
   const dates = page.getByRole("region", { name: "Current Plan horizon" });
   await dates.getByLabel("Simulation end", { exact: true }).fill("2037-01-01");
   await expect(dates).toContainText("exceeds Current plan end 2036-01-01");
-  await expect(dates.getByLabel("Current plan end", { exact: true })).toHaveAttribute("readonly", "");
-  await expect(dates).toContainText("This editor cannot extend them");
+  await dates.getByLabel("Simulation end", { exact: true }).fill("2036-01-01");
+  await dates.getByLabel("Current plan end", { exact: true }).fill("2037-01-01");
+  await dates.getByRole("button", { name: "Apply Current Plan dates", exact: true }).click();
+  await expect(dates).toContainText("Available simulation range: 2026-01-01 → 2037-01-01");
+  await expect(dates.getByLabel("Simulation end", { exact: true })).toHaveValue("2036-01-01");
+  await dates.getByLabel("Simulation end", { exact: true }).fill("2037-01-01");
+  await expect(dates.getByText(/exceeds Current plan end/)).toHaveCount(0);
   await dates.getByLabel("Simulation end", { exact: true }).fill("2036-01-01");
   // The normal example has no recurring statutory contribution. Missing future
   // tax law should remain scoped incompleteness, not truncate economic execution.
@@ -336,16 +357,22 @@ test("D1 round 2 explains immutable plan dates, mortgage guidance and contextual
   await expect(importedMortgage.getByLabel("Total payment count", { exact: true })).toHaveValue("360");
   await importedMortgage.getByLabel("Funding account", { exact: true }).selectOption({ label: "Everyday checking" });
   await importedMortgage.getByLabel("Settlement priority", { exact: true }).fill("1");
+  await configureTaxSettlement(page);
   await configuration.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
-  const stopped = page.getByRole("alert", { name: "Forecast stopped early" });
-  await expect(stopped).toContainText("Results end at 2027-01-01", { timeout: 30_000 });
-  await expect(stopped).toContainText("contribution eligibility facts and statutory limits cover 2026 only");
-  await expect(page.getByRole("figure", { name: "Household financial outlook chart" })).toContainText("No values are modeled through the requested end 2036-01-01");
+  await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  await expect(page.getByRole("alert", { name: "Forecast stopped early" })).toHaveCount(0);
+  await expect(page.getByText("Completed through 2036-01-01 · Some outputs are partially modeled", { exact: true })).toBeVisible();
+  const basis = page.getByRole("region", { name: "Projected law forecast basis" });
+  await expect(basis).toContainText("From 2027-01-01");
+  await expect(basis).toContainText("US:FEDERAL: 2026 source rules projected");
+  await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("Projected current law");
+  await expect(status).not.toContainText("Tax payments & refunds: choose");
+  await expect(status).toContainText("New York");
   const primaryMessages = await status.locator("[data-diagnostic-root]").allTextContents();
   expect(new Set(primaryMessages).size).toBe(primaryMessages.length);
   await status.getByText("Technical diagnostic details", { exact: true }).click();
   const roots = await status.locator("details details > summary").allTextContents();
-  expect(roots.filter(root => root.includes("PFA-TAX-009")).every(root => /rule_selection|local_residence_jurisdiction|canonical_rule_reference|payment_funding|settlement_timing|legal_base_or_component/.test(root))).toBe(true);
+  expect(roots.filter(root => root.includes("PFA-TAX-009")).every(root => /rule_selection|local_residence_jurisdiction|canonical_rule_reference|payment_funding|settlement_timing|legal_base_or_component|projected_current_law|contribution_jurisdiction_base|term_life/.test(root))).toBe(true);
   expect(errors).toEqual([]);
 });
 
@@ -404,6 +431,7 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   await mortgage.getByLabel("Total payment count").fill("360");
   await mortgage.getByLabel("Funding account").selectOption({ label: "Everyday checking" });
   await mortgage.getByLabel("Settlement priority").fill("1");
+  await configureTaxSettlement(page);
   await configuration.getByRole("button", { name: "Apply setup & run forecast" }).click();
   await page.getByRole("button", { name: "Update forecast", exact: true }).click();
   await showHouseholdDetails(page);
@@ -1537,6 +1565,7 @@ test("What If executes deterministic investment return", async ({ page }) => {
     .getByLabel("Funding account")
     .selectOption({ label: "Everyday checking" });
   await mortgage.getByLabel("Settlement priority").fill("1");
+  await configureTaxSettlement(page);
   await configuration
     .getByRole("button", { name: "Apply setup & run forecast" })
     .click();
@@ -1814,6 +1843,7 @@ test("PR21 closeout: configure save reload reconfigure", async ({ page }) => {
   await configuration
     .getByRole("button", { name: "Apply retirement binding" })
     .click();
+  await configureTaxSettlement(page);
   await configuration
     .getByRole("button", { name: "Apply setup & run forecast" })
     .click();

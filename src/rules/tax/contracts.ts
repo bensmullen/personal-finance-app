@@ -47,6 +47,7 @@ export interface TaxLawCoverageGap {
 }
 export type TaxProvenance =
   | { readonly type: "synthetic_test_only"; readonly description: string }
+  | { readonly type: "projected_current_law"; readonly baseRuleId: FinancialRuleId; readonly baseYear: number; readonly policy: "nominal_carry_forward"; readonly sources: readonly TaxSource[]; readonly scope: string; readonly limitations: readonly string[] }
   | { readonly type: "verified_law"; readonly sources: readonly TaxSource[]; readonly scope: string; readonly limitations: readonly string[] };
 
 export interface TaxBracket {

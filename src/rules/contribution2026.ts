@@ -12,6 +12,7 @@ export const D1_CONTRIBUTION_LAW_2026 = Object.freeze({
 });
 
 export interface D1ContributionFacts {
+  readonly lawProjection?: "projected_current_law";
   readonly taxYear: number;
   readonly ageAtYearEnd?: number;
   readonly taxableCompensation?: Money;
@@ -53,14 +54,14 @@ const phaseout = (base: Money, magi: Money, bounds: readonly string[]): Money =>
 
 export const deriveD1ContributionCapacity = (kind: D1CapacityKind, facts: D1ContributionFacts, sharedIraUsed = zero()): D1Capacity => {
   const incomplete = (...diagnostics: string[]): D1Capacity => Object.freeze({ status: "incomplete", kind, diagnostics: Object.freeze(diagnostics) });
-  if (facts.taxYear !== 2026) return incomplete("CONTRIBUTION_LAW_YEAR_UNAVAILABLE");
+  if (facts.taxYear !== 2026 && !(facts.taxYear > 2026 && facts.lawProjection === "projected_current_law")) return incomplete("CONTRIBUTION_LAW_YEAR_UNAVAILABLE");
   if (kind !== "401k_additions" && kind !== "hsa_family" && (!Number.isSafeInteger(facts.ageAtYearEnd) || facts.ageAtYearEnd! < 0)) return incomplete("CONTRIBUTION_AGE_REQUIRED");
   for (const value of [facts.taxableCompensation, facts.eligiblePlanCompensation, facts.rothMagi, facts.deductionMagi, facts.priorYearSponsorWages, facts.hsaFamilyAllocation])
     if (value !== undefined && !validMoney(value)) return incomplete("CONTRIBUTION_FACT_MONEY_INVALID");
   if (!validMoney(sharedIraUsed)) return incomplete("IRA_USAGE_INVALID");
   const age = facts.ageAtYearEnd!;
   const complete = (ordinaryCapacity: Money, catchupCapacity = zero(), rothCatchupRequired?: boolean): D1Capacity => Object.freeze({ status: "complete", kind, capacity: ordinaryCapacity.plus(catchupCapacity), ordinaryCapacity, catchupCapacity,
-    ...(rothCatchupRequired === undefined ? {} : { rothCatchupRequired }), lawVersion: D1_CONTRIBUTION_LAW_2026.version, facts: Object.freeze({ ...facts }) });
+    ...(rothCatchupRequired === undefined ? {} : { rothCatchupRequired }), lawVersion: facts.taxYear === 2026 ? D1_CONTRIBUTION_LAW_2026.version : `${D1_CONTRIBUTION_LAW_2026.version}:projected_current_law:nominal-v1`, facts: Object.freeze({ ...facts }) });
   if (kind === "401k_additions") {
     if (!validMoney(facts.eligiblePlanCompensation)) return incomplete("PLAN_COMPENSATION_REQUIRED");
     return complete(min(amount(D1_CONTRIBUTION_LAW_2026.additions401k), facts.eligiblePlanCompensation));

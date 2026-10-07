@@ -61,7 +61,10 @@ export const taxBalanceIds = (jurisdiction: string, year: string) => {
 const balanceIds = taxBalanceIds;
 export const taxCreditPositionIds = (input: HouseholdTaxInput) => {
   const jurisdictions = [...new Set([...input.catalog.map(rule => rule.jurisdiction), ...input.payments.map(payment => payment.jurisdiction), ...(input.settlements ?? []).map(item => item.jurisdiction)])].sort();
-  const years = [...new Set([...input.catalog.flatMap(rule => [rule.effectiveFrom.slice(0, 4), subtractMilliseconds(rule.effectiveUntil, 1).slice(0, 4)]), ...input.payments.map(payment => payment.at.slice(0, 4)), ...(input.settlements ?? []).map(item => item.taxYear)])].sort();
+  const years = [...new Set([...input.catalog.flatMap(rule => {
+    const first = Number(rule.effectiveFrom.slice(0, 4)), last = Number(subtractMilliseconds(rule.effectiveUntil, 1).slice(0, 4));
+    return Array.from({ length: last - first + 1 }, (_, offset) => String(first + offset));
+  }), ...input.payments.map(payment => payment.at.slice(0, 4)), ...(input.settlements ?? []).map(item => item.taxYear)])].sort();
   return Object.freeze(jurisdictions.flatMap(jurisdiction => years.map(year => balanceIds(jurisdiction, year).creditPositionId)));
 };
 
@@ -198,6 +201,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
               try {
                 const resolved = binding(jurisdiction, economic.at, economic.facts);
                 const rule = resolved.rule;
+                if (rule.provenance.type === "projected_current_law") diagnostics.push(taxDiagnostic("projected_current_law", `Projected current law: nominal carry-forward of ${rule.provenance.baseYear} rule ${rule.provenance.baseRuleId}; tax outputs are projected, not verified.`, jurisdiction));
                 const local = jurisdiction.split(":").length > 2 && jurisdiction !== "US:NY:NYC";
                 // Annual income deductions are applied once; employment-local rules keep their actual legal slices.
                 const key = canonicalSerialize({ jurisdiction, ruleId: rule.id, ...(local ? { facts: economic.facts, month: rule.periodicEmployeeTax ? economic.at.slice(0, 7) : undefined, employee: rule.periodicEmployeeTax ? sources.get(economic.sourceId)?.ownerId : undefined } : {}) });
@@ -317,7 +321,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
             post(suffix, kind, [...(applied.isPositive() ? [{ type: "liability" as const, posting: "debit" as const, amount: applied, entityId: liabilityId }] : []), ...(prepaid.isPositive() ? [{ type: "asset" as const, posting: "debit" as const, amount: prepaid, entityId: creditPositionId }] : []), ...settlement.fundingAllocations.map(allocation => ({ type: "cash" as const, posting: "credit" as const, amount: allocation.amount, accountId: allocation.accountId, cashFlowClass: "operating" as const }))], settlementRefs);
           };
           if (instruction !== undefined && instruction.jurisdiction === jurisdiction) payment(instruction.id, instruction.amount, `tax_${instruction.kind}`);
-          if (finalSettlement?.jurisdiction === jurisdiction && !uniqueDiagnostics.some(diagnostic => diagnostic.jurisdiction === undefined || diagnostic.jurisdiction === jurisdiction)) {
+          if (finalSettlement?.jurisdiction === jurisdiction && !uniqueDiagnostics.some(diagnostic => diagnostic.category !== "projected_current_law" && (diagnostic.jurisdiction === undefined || diagnostic.jurisdiction === jurisdiction))) {
             payment("final", state.liabilities[liabilityId]!.balance, "tax_final_settlement");
             const refund = state.positions[creditPositionId]!.carryingValue;
             if (refund.isPositive()) post(`${jurisdiction}:refund`, "tax_refund", [{ type: "cash", posting: "debit", amount: refund, accountId: account!, cashFlowClass: "operating" }, { type: "asset", posting: "credit", amount: refund, entityId: creditPositionId }], mergeTraceRefs(refs, nextPaymentRefs[jurisdiction]) ?? []);
