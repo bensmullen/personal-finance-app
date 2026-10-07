@@ -2718,7 +2718,7 @@ function PersonalPurchaseAuthoring({ draft, setDraft, initialInvestmentId }: { d
   }, [draft]);
   useEffect(() => {
     const plan = savedPurchases.plans.find(item => item.investmentId === investmentId);
-    if (!plan) return;
+    if (!plan) { setProjectAnnualFacts(false); return; }
     setBankId(plan.sourceCashAccountId); setAmount(plan.amount); setOrder(String(plan.order));
     setFrequency(plan.schedule.kind === "utc_monthly" ? "monthly" : "once");
     setDate(plan.schedule.kind === "utc_monthly" ? plan.schedule.anchor : plan.schedule.dates[0] ?? "");
@@ -2765,7 +2765,7 @@ function PersonalPurchaseAuthoring({ draft, setDraft, initialInvestmentId }: { d
 }
 
 function AnnualContributionAssumption({ confirmed, onChange }: { confirmed: boolean; onChange: (value: boolean) => void }) {
-  return <section aria-label="Annual contribution forecast assumption"><label><input type="checkbox" checked={confirmed} onChange={event => onChange(event.target.checked)} />Assume these annual personal facts stay unchanged in future years</label><p>This is an explicit forecast assumption for every supplied fact in this plan: compensation, MAGI, filing status, prior employer wages, plan features, workplace coverage and HSA eligibility/coverage/allocation where supplied. Amounts stay nominal even if modeled salary grows; salary is not MAGI or eligible plan pay. Age advances each year. Unconfirmed future contribution capacity and tax treatment remain incomplete, and those contributions are skipped while other household activity continues.</p>{confirmed && <p role="status">Saved with this plan as a personal-fact forecast assumption, separate from projected current law.</p>}</section>;
+  return <section aria-label="Annual contribution forecast assumption"><label><input type="checkbox" checked={confirmed} onChange={event => onChange(event.target.checked)} />Assume these annual personal facts stay unchanged in future years</label><p>This is an explicit forecast assumption for every supplied fact in this plan: compensation, MAGI, filing status, prior employer wages, plan features, workplace coverage and HSA eligibility/coverage/allocation where supplied. Amounts stay nominal even if modeled salary grows; salary is not MAGI or eligible plan pay. Age advances each year. Unconfirmed future contribution capacity and tax treatment remain incomplete, and those contributions are skipped while other household activity continues.</p>{confirmed && <p role="status">Saving this plan records a personal-fact forecast assumption, separate from projected current law.</p>}</section>;
 }
 
 function contributionFieldHelp(key: string): string {
@@ -2800,7 +2800,7 @@ function PayrollContributionAuthoring({ draft, setDraft, initialInvestmentId }: 
   const saved = useMemo(() => { try { return { plans: getPayrollContributionPlans(draft), error: "" }; } catch (failure) { return { plans: [], error: failure instanceof Error ? failure.message : "Unsupported saved payroll policy" }; } }, [draft]);
   useEffect(() => {
     setOpeningUnvested(getPayrollOpeningUnvestedUnits(draft, investmentId));
-    const plan = saved.plans.find(item => item.allocation.positionId === investmentId); if (!plan) return;
+    const plan = saved.plans.find(item => item.allocation.positionId === investmentId); if (!plan) { setFields(current => ({ ...current, annualFactProjection: "" })); return; }
     const allocation = plan.allocation; setIncomeId(plan.incomeId); setCharacter(allocation.policy.character === "traditional_ira" || allocation.policy.character === "roth_ira" ? "traditional_401k" : allocation.policy.character);
     setKind(allocation.calculation.kind); setAmount(allocation.calculation.kind === "fixed" ? allocation.calculation.amount.amount.toString() : ""); setRate(allocation.calculation.kind === "fixed" ? "" : allocation.calculation.rate); setCapRate(allocation.calculation.kind === "match" ? allocation.calculation.compensationCapRate : "");
     setPriority(String(allocation.priority)); setPlanKey(allocation.policy.limits.find(item => item.kind === "401k_additions")?.bucketKey.slice("401k_additions:".length) ?? ""); setVested(allocation.vestedFraction); setExcessPolicy(allocation.policy.excessPolicy);

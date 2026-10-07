@@ -202,7 +202,7 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   if (tax.status !== "compiled") return tax;
   const taxLocations = [...tax.value.incomes.flatMap(income => [...income.residence, ...income.work]),
     ...objects(model, "Person").filter(person => scope.value.memberIds.includes(canonicalId(person, "person_id") ?? "")).flatMap(person => (person.residence_jurisdiction_periods ?? []) as readonly CanonicalObject[])];
-  const taxJurisdictions = new Set(taxLocations.flatMap(location => [String(location.state_jurisdiction).replace(/^US-/, "US:"), String(location.local_jurisdiction ?? "")]));
+  const taxJurisdictions = new Set(taxLocations.flatMap(taxLocation => [String(taxLocation.state_jurisdiction).replace(/^US-/, "US:"), String(taxLocation.local_jurisdiction ?? "")]));
   const domains = hasDomainMechanics(model) ? compileDomainMechanics(model, {
     baseCurrency: firstBoundary.baseCurrency, asOf: firstBoundary.asOf ?? firstBoundary.simulationStart,
     simulationStart: firstBoundary.simulationStart, simulationEnd: firstBoundary.simulationEnd,

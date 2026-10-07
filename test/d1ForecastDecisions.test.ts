@@ -17,7 +17,7 @@ import { USD, money } from "../src/values/index.js";
 import { contributionPolicyAt, contributionRuleIdAt } from "../src/simulation/contributionProjection.js";
 import { decideContribution } from "../src/simulation/contributions.js";
 import { getPersonalPurchasePlans, getPayrollContributionPlans, patchPersonalObject, authorDomainOperation } from "../src/application/personalMvp.js";
-import { summarizeHouseholdPeriod } from "../src/simulation/r3/summaryPeriod.js";
+import { summarizeHouseholdPeriod } from "../src/simulation/r3/forecastSummary.js";
 import { federalBaseDeductionOnlyEligibilityKey, fullYearResidentEligibilityKey } from "../src/rules/tax/contracts.js";
 import { recognizedGrossTaxableBaseEligibilityKey } from "../src/rules/tax/recognition.js";
 import { createD1IntegratedHousehold, d1IntegratedCompilerRequest, integratedId, integratedIds } from "./fixtures/d1IntegratedHousehold.js";
@@ -153,11 +153,11 @@ describe("Issue 80 resolved forecast decisions", () => {
     const wages = detail.periods.map(period => period.cashFlow!.recurringIncomeRecognized);
     expect(wages[12]!.compare(wages[0]!)).toBeGreaterThan(0);
     expect(wages[12]!.compare(money("14000", USD))).toBeGreaterThan(0); // annualized pay now exceeds the $168k phaseout ceiling
-    expect(summary.diagnostics.some(item => item.message.includes("2027 roth ira") && item.message.includes("ROTH_MAGI_REQUIRED"))).toBe(true);
+    expect(summary.diagnostics.some(item => item.message.includes("2027 roth ira") && item.message.includes("IRA_TAXABLE_COMPENSATION_REQUIRED"))).toBe(true);
     expect(summary.diagnostics.some(item => item.message.includes("HSA_FULL_YEAR_ELIGIBILITY_AND_COVERAGE_REQUIRED"))).toBe(true);
     expect(summary.diagnostics.some(item => item.message.includes("PLAN_COMPENSATION_REQUIRED"))).toBe(true);
-    expect(detail.periods[12]!.outputCapabilities?.statementIncome.status).toBe("complete");
-    expect(detail.periods[12]!.outputCapabilities?.contributionPrincipal.status).toBe("incomplete");
+    expect(detail.periods[12]!.outputCapabilities?.statementIncome?.status).toBe("complete");
+    expect(detail.periods[12]!.outputCapabilities?.contributionPrincipal?.status).toBe("incomplete");
     expect(summary.state).toEqual(detail.state);
     expect(summary.periods).toEqual(detail.periods.map(summarizeHouseholdPeriod));
     const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(summary))));
@@ -187,7 +187,7 @@ describe("Issue 80 resolved forecast decisions", () => {
 
   it("surfaces projected state law actually applied to a portfolio-only household without Income objects", () => {
     let model = createD1IntegratedHousehold();
-    model = { ...model, objects: { ...model.objects, Income: [], Expense: [], Insurance: [], PrimitiveInstance: model.objects.PrimitiveInstance!.filter(value => ![30, 110, 130, 140, 150].map(integratedId).includes(String((value as JsonObject).primitive_instance_id))), Investment: model.objects.Investment!.map(value => ({ ...(value as JsonObject), contribution_model_id: null })) } };
+    model = { ...model, objects: { ...model.objects, Income: [], Expense: [], Insurance: [], PrimitiveInstance: model.objects.PrimitiveInstance!.filter(value => ![30, 110, 130, 140, 150].map(integratedId).includes(String((value as JsonObject).primitive_instance_id))), Investment: model.objects.Investment!.filter(value => (value as JsonObject).investment_id !== integratedIds.treasury).map(value => ({ ...(value as JsonObject), contribution_model_id: null })) } };
     model = patchPersonalObject(model, "Person", golden.person, { residence_jurisdiction_periods: [{ effective_date: "2026-01-01", state_jurisdiction: "US-PA" }], tax_eligibility_periods: [federalBaseDeductionOnlyEligibilityKey, fullYearResidentEligibilityKey("US:PA"), recognizedGrossTaxableBaseEligibilityKey("US:PA")].map(key => ({ effective_date: "2026-01-01", key, value: true })) });
     model = patchPersonalObject(model, "Account", golden.savings, { interest_rate: "0.126825030131969720661201", interest_convention: "effective_annual_monthly", first_credit_date: "2027-01-15" });
     model = authorDomainOperation(model, { eventId: integratedId(997), effectId: integratedId(998), primitiveId: integratedId(999), name: "Projected portfolio gain", kind: "sale", holdingId: golden.brokerageInvestment, amount: "1100", quantity: "10", date: "2027-01-21", order: 20 });
@@ -195,7 +195,7 @@ describe("Issue 80 resolved forecast decisions", () => {
     const boundary = { simulationStart: "2027-01-01", simulationEnd: "2027-02-01", asOf: "2027-01-01", months: 1 };
     const { cashFlow: _cashFlow, ...portfolioRequest } = base;
     const compiled = compileHouseholdProjection(model, { ...portfolioRequest, forecastLawPolicy: "projected_current_law", investments: { ...base.investments!, ...boundary }, liabilities: { ...base.liabilities!, ...boundary }, tax: compileForecastTaxSettlements({ ...settlementSetup, conventions: [{ jurisdiction: "US:FEDERAL", monthDay: "04-15", priority: 0, confirmed: true }, { jurisdiction: "US:PA", monthDay: "04-15", priority: 1, confirmed: true }] }, boundary.simulationStart, boundary.simulationEnd) });
-    expect(compiled.status).toBe("compiled");
+    expect(compiled.status, JSON.stringify(compiled.diagnostics)).toBe("compiled");
     if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled.diagnostics));
     const stateBasis = compiled.value.projectedLaw!.filter(rule => rule.jurisdiction === "US:PA");
     expect(stateBasis.length).toBeGreaterThan(0);
