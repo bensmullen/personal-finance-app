@@ -11,7 +11,7 @@ const scheduler = {
   clear: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
-export function useInteractiveForecast(model: PersonalDraft | undefined, configuration: PersonalHouseholdSessionExecutionConfiguration | undefined, settings: PersonalSessionSettings) {
+export function useInteractiveForecast(model: PersonalDraft | undefined, configuration: PersonalHouseholdSessionExecutionConfiguration | undefined, settings: PersonalSessionSettings, replacementIdentity = 0) {
   const [baseline, setBaseline] = useState<ForecastView>({ lifecycle: "idle", pending: false, stale: false });
   const [comparison, setComparison] = useState<ForecastView>({ lifecycle: "idle", pending: false, stale: false });
   const [baselineChannel] = useState(() => new ForecastController(makeWorker, scheduler, setBaseline, (record) => applicationPerformanceRegistry.record(record)));
@@ -33,10 +33,14 @@ export function useInteractiveForecast(model: PersonalDraft | undefined, configu
   }, [model, effectiveConfiguration]);
   // Only economic changes trigger execution. Navigation, pages and explanations do not.
   useLayoutEffect(() => {
+    baselineChannel.reset();
+    comparisonChannel.reset();
+  }, [replacementIdentity, baselineChannel, comparisonChannel]);
+  useLayoutEffect(() => {
     if (input) baselineChannel.submit(input);
-    else baselineChannel.invalidate();
+    else baselineChannel.invalidate("Complete forecast setup to run this household.");
     comparisonChannel.invalidate("Comparison inputs changed. Run a new comparison.");
-  }, [input?.fingerprint, baselineChannel, comparisonChannel]);
+  }, [input?.fingerprint, replacementIdentity, baselineChannel, comparisonChannel]);
   useEffect(() => () => { baselineChannel.dispose(); comparisonChannel.dispose(); }, [baselineChannel, comparisonChannel]);
 
   const compare = (operation: "scenario_comparison" | "major_asset_debt_comparison", economicInputs: unknown) => {

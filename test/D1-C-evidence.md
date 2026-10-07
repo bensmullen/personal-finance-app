@@ -124,13 +124,13 @@ After CI and ChatGPT semantic audit, product-owner UAT should use this synthetic
 household and the existing Golden example. Open Settings → Import / Export,
 choose `test/fixtures/d1-integrated-uat-model.json`, and click Import into
 session. In Model Settings set simulation start/as-of/data cutoff to
-2026-01-01 and simulation end to 2026-02-01. In Plan → Current Plan → Expert
-forecast configuration, select Everyday checking as cash-flow account and
+2026-01-01 and simulation end to 2026-02-01. Use the prominent Complete forecast
+setup action, or Plan → Current Plan → Forecast setup. Select Everyday checking as cash-flow account and
 Taylor Example as both investment and debt execution owner. For Example
 mortgage set payment anchor 2022-02-01, total payment count 360, funding account
-Everyday checking and settlement priority 1. Select Example salary and Planned
-retirement, apply the retirement binding, apply household execution
-configuration, and Recalculate. Save/load preserves the model; reapply this
+Everyday checking and settlement priority 1. Click Apply setup & run forecast.
+Saved canonical retirement relationships are used automatically; no separate
+retirement Apply action is required. Save/load preserves the model; reapply this
 session configuration after load. Explicit tax payment/settlement and contention
 policies in the unit compiler request are execution evidence, not saved model
 facts; the browser walkthrough does not promise the unit tax balances.
@@ -143,3 +143,41 @@ is a synthetic counterfactual, not a prediction. UAT is not self-accepted here.
 
 Overall D1 remains gated on green CI, ChatGPT semantic audit, accepted owner UAT
 and merge. R5 household stochastic work remains gated until all four occur.
+
+## Product-owner UAT round 1 repair evidence
+
+`d1UatPresentation.test.ts` covers semantic diagnostic grouping, affected-output
+union, exact percentage conversion, known example tax facts and account cash /
+holdings presentation. `r2InteractiveExecution.test.ts` adds replacement resets
+for both channels, including late worker responses and cache clearing even when
+the imported model has the same identity/fingerprint.
+
+The focused “D1 UAT example, import, guided setup, edits and readable account/rate
+controls” browser case starts on the landing page, uses the synthetic example,
+imports the checked-in D1 model in that same session, checks all required setup
+items and empty prior results/diagnostics, completes one final apply/run action,
+edits salary with normal controls, checks grouped diagnostic roots and no
+console/page errors, and exercises percentages/help at 1440 and 390 pixels.
+The existing bounded D1-C author/save/reload/run/refinance case is preserved.
+CI owns execution of this evidence; these additions are not a local pass claim.
+
+The normal example uses `createGoldenHouseholdExampleDraft`, which supplies
+synthetic single filing status, dated New York residence/work facts and explicit
+federal base-deduction-only eligibility. The original audited Golden builder and
+the D1 integrated builder/export remain unchanged, so no old arithmetic or
+unknown-fact expectation is weakened. New York law and local applicability,
+unsupported future law years, and session tax payment configuration remain
+honestly incomplete. No schema, model-format or financial-semantics version
+changes were made.
+
+Broader authoring decision for the PM (not required to import/run these valid
+synthetic examples):
+
+DECISION_NEEDED: Should normal users author filing status and dated residence/work tax facts through a dedicated tax-facts flow?
+PRODUCT_IMPACT: The generic editor currently excludes derived filing status and structured dated facts; users with missing or conflicting tax facts must import corrected data.
+OPTIONS: Retain import-only repair, or authorize a dedicated observed-tax-facts authoring contract and UI.
+RECOMMENDATION: Authorize the dedicated flow separately; keep Issue #80’s examples valid and explain scoped incompleteness.
+TECHNICAL_REASON: The canonical filing-status field is derived; bypassing generic editor protections here would change the authoring contract.
+
+A fresh exact-head ChatGPT audit and product-owner UAT remain required before
+merge. This continuation does not self-accept owner UAT.

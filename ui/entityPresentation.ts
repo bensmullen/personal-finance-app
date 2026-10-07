@@ -1,5 +1,63 @@
 import { PERSONAL_OBJECT_TYPES, getPersonalEditorMetadata, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../src/application/personalMvp.js";
 import { isHouseholdCashAccount } from "../src/application/personalMvp.js";
+import { decimal } from "../src/values/index.js";
+
+export interface DisplayDiagnostic {
+  readonly code?: string;
+  readonly message?: string;
+  readonly entityType?: string;
+  readonly entityId?: string;
+  readonly category?: string;
+  readonly jurisdiction?: string;
+  readonly fieldPath?: string;
+  readonly relatedIds?: readonly string[];
+  readonly affectedOutputs?: readonly string[];
+}
+/** Group display copies only; retain engine diagnostics and their output scope. */
+export function groupDiagnostics(diagnostics: readonly DisplayDiagnostic[]) {
+  const groups = new Map<string, { key: string; diagnostic: DisplayDiagnostic; occurrences: number; affectedOutputs: string[] }>();
+  for (const diagnostic of diagnostics) {
+    // Tax roots recur for different income records and outputs. The same remedy
+    // is shared, while their individual record context stays in technical detail.
+    const key = JSON.stringify([diagnostic.code, diagnostic.category, diagnostic.jurisdiction,
+      diagnostic.entityType === "tax_capability" ? undefined : diagnostic.entityId,
+      diagnostic.fieldPath, diagnostic.message, [...(diagnostic.relatedIds ?? [])].sort()]);
+    const group = groups.get(key);
+    if (group) {
+      group.occurrences++;
+      group.affectedOutputs = [...new Set([...group.affectedOutputs, ...(diagnostic.affectedOutputs ?? [])])].sort();
+    } else groups.set(key, { key, diagnostic, occurrences: 1, affectedOutputs: [...new Set(diagnostic.affectedOutputs ?? [])].sort() });
+  }
+  return [...groups.values()];
+}
+
+/** Exact text conversion at the presentation boundary, never binary floating point. */
+export function percentageToRate(value: string): string {
+  if (!/^[+-]?\d+(?:\.\d+)?$/.test(value)) throw new Error("Enter a percentage such as 5 or 5.25, without the % sign.");
+  return decimal(value).times(decimal("0.01")).toString();
+}
+export function rateToPercentage(value: unknown): string {
+  if (value === undefined || value === "") return "";
+  return decimal(String(value)).times(decimal("100")).toString();
+}
+
+export function investmentAccountSummary(account: JsonObject, draft: PersonalDraft, currency?: string): string {
+  const unit = account.currency ?? currency;
+  const holdings = objectEntries(draft, "Investment").filter(item => item.account_id === account.account_id);
+  try {
+    const holdingsValue = holdings.reduce((sum, holding) => {
+      if (holding.currency != null && holding.currency !== unit) throw new Error("Currency conversion required");
+      const value = holding.market_value ?? (holding.quantity != null && holding.price != null
+        ? decimal(String(holding.quantity)).times(decimal(String(holding.price))).toString() : undefined);
+      if (value == null) throw new Error("Holding valuation missing");
+      return sum.plus(decimal(String(value)));
+    }, decimal("0"));
+    const cash = decimal(String(account.opening_balance ?? "0"));
+    return `Total account value: ${formatExactMoney(cash.plus(holdingsValue).toString(), unit)} · Cash inside account: ${formatExactMoney(cash.toString(), unit)} · Investments/holdings: ${formatExactMoney(holdingsValue.toString(), unit)}`;
+  } catch {
+    return `Total account value unavailable — review holding prices/currencies · Cash inside account: ${formatExactMoney(account.opening_balance, unit)} · ${holdings.length} holdings`;
+  }
+}
 
 export const objectEntries = (draft: PersonalDraft, type: PersonalObjectType): readonly JsonObject[] =>
   (draft.objects[type] ?? []).filter((value): value is JsonObject =>
@@ -39,6 +97,17 @@ export function forecastDiagnosticMessage(diagnostic: {
     return resolved && resolved !== "Unavailable reference" ? resolved : fallback;
   };
   switch (diagnostic.code) {
+    case "PFA-TAX-008":
+    case "PFA-TAX-009": {
+      const tax = diagnostic as DisplayDiagnostic;
+      if (tax.category === "filing_status") return "Tax filing status is missing or conflicting. Import a model with an explicit, consistent household/person filing status. The current editor cannot author this derived tax fact. Tax-dependent totals remain incomplete until this is resolved.";
+      if (tax.category === "residence_jurisdiction_periods" || tax.category === "work_service_jurisdiction_allocations")
+        return "Dated residence or work-location facts are missing. Import corrected dated tax facts; the current editor cannot author those intervals. Current positions and recognized income remain available, but tax-dependent totals are incomplete.";
+      const jurisdiction = ["US-NY", "US:NY"].includes(tax.jurisdiction ?? "") ? "New York" : friendlyText(tax.jurisdiction ?? "the affected jurisdiction");
+      if (tax.category === "local_residence_jurisdiction") return `Local tax applicability for ${jurisdiction} is unknown. Current-position values and recognized income remain available; after-tax totals are incomplete. Review the dated tax facts in the imported model; local law coverage may also be unsupported.`;
+      if (tax.category === "payment_funding") return "Tax payment and refund funding is not configured for this session. Current-position values and recognized income remain available; tax-dependent cash and after-tax totals are incomplete. Technical diagnostic details describe the required execution configuration.";
+      return `Forecast ran with partially modeled taxes for ${jurisdiction}. Current-position values and recognized income remain available; tax-dependent cash, net worth and after-tax totals are incomplete. Review the original reason in Technical diagnostic details before relying on those totals.`;
+    }
     case "PAYMENT_ACCOUNT_TYPE_UNSUPPORTED":
       return `${label("Expense", diagnostic.entityId, "This spending item")} uses ${label("Account", diagnostic.relatedIds?.[0], "a non-cash account")} for funding. Under Money → Spending, choose a checking, savings, or cash funding account. Retirement and brokerage accounts cannot pay spending in this forecast.`;
     case "INVESTMENT_EXPECTED_RETURN_UNSUPPORTED":
@@ -49,14 +118,14 @@ export function forecastDiagnosticMessage(diagnostic: {
       return "The current monthly summary cannot interpret this linked event or probability behavior. Supported future scheduled retirement events preserve current income; other event behavior requires a separate financial capability. Keep the recorded relationship intact.";
     case "RETIREMENT_BINDING_MISMATCH": {
       const event = draft?.objects.Event?.filter(isJsonObject).find((item) => item.event_id === diagnostic.entityId);
-      return `${label("Event", diagnostic.entityId, "The retirement plan")} does not match the selected plan’s retirement date${event?.start_date ? ` (${String(event.start_date)})` : ""}. Under Plan → What If? → Retire earlier/later, choose the income and retirement plan belonging to the current plan, then enter the new date. For imported plans, review Plan → Current Plan → Expert forecast configuration → Baseline canonical retirement event and Baseline retirement date; the date must match the selected event. Event enablement and plan membership cannot be repaired in this editor; an invalid imported relationship needs a corrected model.`;
+      return `${label("Event", diagnostic.entityId, "The retirement plan")} does not match the selected plan’s retirement date${event?.start_date ? ` (${String(event.start_date)})` : ""}. Under Plan → What If? → Retire earlier/later, choose the income and retirement plan belonging to the current plan, then enter the new date. For imported plans, review Plan → Current Plan → Forecast setup → Baseline canonical retirement event and Baseline retirement date; the date must match the selected event. Event enablement and plan membership cannot be repaired in this editor; an invalid imported relationship needs a corrected model.`;
     }
     case "PAYMENT_ACCOUNT_REQUIRED":
     case "PAYMENT_ACCOUNT_REFERENCE_NOT_FOUND":
       return "A spending item has no usable funding account. Under Money → Spending, open the item and choose Funding account. Create a checking, savings, or cash account under Money → Accounts first if none is available.";
     case "RETIREMENT_BINDING_UNAVAILABLE":
     case "RETIREMENT_BINDING_AMBIGUOUS":
-      return "The retirement comparison needs one supported income and retirement plan relationship. Under Plan → What If? → Retire earlier/later, select the intended plan. If none is listed, configure the existing relationship under Plan → Current Plan → Expert forecast configuration; this editor cannot create retirement events.";
+      return "The retirement comparison needs one supported income and retirement plan relationship. Under Plan → What If? → Retire earlier/later, select the intended plan. If none is listed, configure the existing relationship under Plan → Current Plan → Forecast setup; this editor cannot create retirement events.";
     case "ASSUMPTION_VALUE_INVALID":
     case "EXACT_DECIMAL_INVALID":
       return "A forecast input is not a valid exact decimal. Under Plan → Assumptions, review Value for return or growth assumptions (0.08 means 8% effective annual rate). For amounts, review the named item under Money or Net Worth and enter a decimal amount without currency symbols or commas. Original input details are below.";
@@ -68,15 +137,15 @@ export function forecastDiagnosticMessage(diagnostic: {
       return "The new retirement date is invalid. Under Plan → What If? → Retire earlier/later, enter a valid New retirement date.";
     case "SCENARIO_RATE_INVALID":
     case "SCENARIO_ASSUMPTION_VALUE_INVALID":
-      return "The comparison rate is not a valid exact decimal. Under Plan → What If?, review Exact effective annual rate before comparing income, spending, or investment returns. Enter a decimal such as 0.08 = 8%; the baseline plan stays unchanged.";
+      return "The comparison rate is not a valid exact decimal. Under Plan → What If?, review Annual growth / return before comparing income, spending, or investment returns. Enter a percentage such as 8 for 8%; the baseline plan stays unchanged.";
     case "SCENARIO_FUNDING_POLICY_INCOMPLETE":
     case "SCENARIO_FUNDING_POLICY_INVALID":
       return "The comparison needs a complete ordered funding choice. Under Plan → What If? → Change funding behavior, choose the spending or loan target and add compatible funding accounts in the intended order. Each account must appear only once.";
     case "SCENARIO_TARGET_UNEXECUTABLE":
-      return "The selected item cannot execute in the current comparison. Under Plan → What If?, choose a target belonging to the configured household and forecast scope. Review Plan → Current Plan → Expert forecast configuration for the execution account, owner, and debt contract setup; imported unsupported relationships require a corrected model.";
+      return "The selected item cannot execute in the current comparison. Under Plan → What If?, choose a target belonging to the configured household and forecast scope. Review Plan → Current Plan → Forecast setup for the execution account, owner, and debt contract setup; imported unsupported relationships require a corrected model.";
     case "EXECUTION_OWNER_INVALID":
     case "EXECUTION_OWNER_NOT_HOUSEHOLD_MEMBER":
-      return "The forecast needs an owner who belongs to the household. Under Plan → Current Plan → Expert forecast configuration → Investment execution configuration, choose Execution owner for investments. For debt, choose Execution owner under Net Worth → Debt → Debt execution configuration, then Apply household execution configuration in Current Plan.";
+      return "The forecast needs an owner who belongs to the household. Under Plan → Current Plan → Forecast setup → Investment execution configuration, choose Execution owner for investments. For debt, choose Execution owner under Net Worth → Debt → Debt execution configuration, then Apply setup & run forecast in Current Plan.";
     case "INVESTMENT_PRICE_REQUIRED":
     case "INVESTMENT_PURCHASE_PRICE_UNSUPPORTED":
       return `${label("Investment", diagnostic.entityId, "This investment")} needs an opening price to value its units. Under Net Worth → Investments & retirement, open the holding and enter Price in money per unit. A purchase needs a positive price; do not invent an observed price merely to run the forecast.`;
@@ -88,7 +157,7 @@ export function forecastDiagnosticMessage(diagnostic: {
     case "LIABILITY_PAYMENT_FREQUENCY_UNSUPPORTED":
       return `${label("Liability", diagnostic.entityId, "This debt")} has a payment schedule the fixed monthly debt forecast cannot execute. Under Net Worth → Debt, open the debt and review payment frequency. Choose monthly only if that is the actual contract; other payment schedules are unsupported.`;
     case "LIABILITY_EXECUTION_PROFILE_REQUIRED":
-      return `${label("Liability", diagnostic.entityId, "This debt")} needs its contractual payment setup. Under Net Worth → Debt → Debt execution configuration, choose Execution owner and enter the debt’s Payment anchor, Total payment count, Funding account, and Settlement priority. Under Plan → Current Plan → Expert forecast configuration, use Apply household execution configuration. Only the supported fixed monthly mortgage contract can execute.`;
+      return `${label("Liability", diagnostic.entityId, "This debt")} needs its contractual payment setup. Under Net Worth → Debt → Debt execution configuration, choose Execution owner and enter the debt’s Payment anchor, Total payment count, Funding account, and Settlement priority. Under Plan → Current Plan → Forecast setup, use Apply setup & run forecast. Only the supported fixed monthly mortgage contract can execute.`;
     case "MORTGAGE_REFINANCE_UNSUPPORTED":
       return `Under Plan → Current Plan → Investment and retirement operations, review the saved refinance. ${friendlyText(diagnostic.message ?? "Use one supported fixed monthly mortgage replacement.")} The supported refinance has no cash-out, fees or escrow and starts a full-month payment schedule.`;
     case "INVESTMENT_RETURN_MODEL_UNSUPPORTED":
@@ -171,7 +240,7 @@ export function entitySummary(type: PersonalObjectType, item: JsonObject, draft:
   const parts: Record<PersonalObjectType, unknown[]> = {
     Household: [item.household_type, item.primary_jurisdiction],
     Person: [referenceLabel(draft, "Household", item.household_id), item.residence_jurisdiction],
-    Account: [item.account_type, money("opening_balance"), owner],
+    Account: [item.account_type, isCashFlowPaymentAccount(item) ? money("opening_balance") : investmentAccountSummary(item, draft, currency), owner],
     Income: [money("amount"), item.frequency, owner],
     Expense: [money("amount"), item.frequency, referenceLabel(draft, "Account", item.payment_account_id)],
     Asset: [item.asset_type, money("acquisition_cost"), owner],

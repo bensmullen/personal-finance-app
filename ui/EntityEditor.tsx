@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { addPersonalObject, deletePersonalObject, patchPersonalObject, type getPersonalEditorMetadata, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../src/application/personalMvp.js";
 import { objectEntries, objectId, objectLabel, entitySummary, referenceLabel, referenceTargets, formatExactMoney, formatRate, isCashFlowPaymentAccount, belongsToNetWorthSection, linkedReturnAssumption, type NetWorthSection } from "./entityPresentation.js";
+import { PercentageInput } from "./forecast/PercentageInput.js";
 
 const randomId = () => crypto.randomUUID();
 interface EditorField {
@@ -108,7 +109,7 @@ const FIELD_LABELS: Record<string, string> = {
   distribution_parameters: "Distribution parameters",
   volatility: "Volatility",
 };
-const RETIREMENT_LIMITATION = "Do not model a contribution as Spending paid to a retirement account. Use Investment purchases for checking/savings-funded IRA contributions, and Payroll and employer contributions for workplace 401(k) and HSA allocations.";
+const RETIREMENT_LIMITATION = "Saved purchases and contribution plans are under Plan → Current Plan → Investment purchases and Payroll and employer contributions. Use these for IRA, 401(k) and HSA contributions. Account totals below include holdings; cash inside an investment account is shown separately.";
 const PRIMARY_FIELDS: Record<PersonalObjectType, readonly string[]> = {
   Household: [
     "name",
@@ -256,11 +257,9 @@ function ProjectedReturn({ investment, draft, setDraft, selectedScenarioId }: {
   const valid = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(rate) && !belowTotalLoss;
   if (!assumption) return <p role="note">Projected annual return is unavailable: this investment has no supported linked deterministic return assumption in the current plan. Plan → Assumptions can edit existing assumptions; creating the executable relationship is not supported here. Import a model with a supported linked return model to establish it.</p>;
   return <section aria-label={`Projected return for ${objectLabel("Investment", investment)}`}>
-    <label>Projected annual return
-      <input aria-label="Projected annual return" inputMode="decimal" value={rate} onChange={(event) => setRate(event.target.value)} />
-    </label>
-    <p>Effective annual rate: {rate} = {formatRate(rate)}. Baseline assumption: {objectLabel("Assumption", assumption)}. This changes the linked assumption, including any other holdings that share it.</p>
-    {!valid && <p role="alert">Enter an exact effective annual decimal rate of at least −1, such as 0.08 = 8%. Returns below a total loss are unsupported.</p>}
+    <PercentageInput label="Projected annual return" value={rate} onChange={setRate} />
+    <p>Effective annual return: {formatRate(rate)}. Baseline assumption: {objectLabel("Assumption", assumption)}. This changes the linked assumption, including any other holdings that share it.</p>
+    {!valid && <p role="alert">Enter an annual percentage of at least −100, such as 8 for 8%. Returns below a total loss are unsupported.</p>}
     <button type="button" disabled={!valid || rate === String(assumption.value)} onClick={() => setDraft(patchPersonalObject(draft, "Assumption", objectId("Assumption", assumption), { value: rate }))}>Apply projected return</button>
   </section>;
 }
@@ -606,13 +605,13 @@ function FieldControl({ fieldName, field, value, draft, currency, entityType, cr
       <small>{referenceLabel(draft, field.ref, value)}{missing.length > 0 && " · inspect Technical details for the stored ID"}</small>
     </label>;
   }
+  if (field.type === "rate") return <PercentageInput label={label} value={String(value ?? "")} onChange={onChange} />;
   return <label>{label}
     <input aria-label={label} required={required} type={field.type === "date" ? "date" : "text"} value={String(value ?? "")}
       inputMode={["money", "rate", "decimal"].includes(field.type) ? "decimal" : undefined}
       placeholder={field.required ? "Required" : "Optional"} onChange={(event) => onChange(event.target.value)} />
     {FIELD_HELP[fieldName] && <small>{FIELD_HELP[fieldName]}</small>}
     {field.type === "money" && <small>Currency: {String(currency ?? "not specified")}. {value ? formatExactMoney(value, currency) : "Enter a decimal amount."}</small>}
-    {field.type === "rate" && <small>Decimal rate{value ? ` · ${formatRate(value)}` : " · 0.05 means 5%"}. No rate basis is inferred.</small>}
     {field.type === "decimal" && <small>Decimal value; retain the supplied units and precision.</small>}
     {!creating && !field.mutable && value === undefined && <small>Missing creation-time fact: supply once. It cannot be overwritten afterward.</small>}
   </label>;

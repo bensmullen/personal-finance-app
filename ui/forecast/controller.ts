@@ -105,6 +105,13 @@ export class ForecastController {
     this.#publish({ ...this.#state, pending: false, stale: this.#state.lastGoodResult !== undefined,
       lifecycle: this.#state.lastGoodResult === undefined ? "idle" : "stale", latestResult: undefined, message });
   }
+  /** A replacement model must never inherit results or diagnostics from another model. */
+  reset(): void {
+    this.#stop();
+    ++this.#sequence;
+    this.#cache.clear();
+    this.#publish(initialForecastState());
+  }
   dispose(): void {
     this.#stop();
     this.#state = initialForecastState();

@@ -31,7 +31,7 @@ import {
 } from "recharts";
 import { z } from "zod";
 import {
-  createGoldenHouseholdDraft,
+  createGoldenHouseholdExampleDraft,
   editPersonalRetirementDate,
   getPersonalRetirementPlans,
   authorPersonalPurchasePlan,
@@ -93,8 +93,9 @@ import {
 
 import { useInteractiveForecast } from "./forecast/useInteractiveForecast.js";
 import { EditorHub } from "./EntityEditor.js";
+import { FieldHelp, PercentageInput } from "./forecast/PercentageInput.js";
 import { DomainMechanicsPanel } from "./forecast/DomainMechanicsPanel.js";
-import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, type NetWorthSection } from "./entityPresentation.js";
+import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, groupDiagnostics, isCashFlowPaymentAccount, type NetWorthSection } from "./entityPresentation.js";
 import { calculationFingerprint } from "../src/application/interactiveForecast.js";
 import { HouseholdChart } from "./forecast/HouseholdChart.js";
 import { ForecastDetails, LazyExplanation, ExplanationCache } from "./forecast/details.js";
@@ -215,8 +216,28 @@ const emptyLiabilityConfig = (): LiabilitySessionConfig => ({
   profiles: {},
 });
 
+function missingForecastSetup(draft: PersonalDraft, cashAccount: string, investmentOwner: string, liability: LiabilitySessionConfig): string[] {
+  const people = objectEntries(draft, "Person").map(item => objectId("Person", item));
+  const banks = objectEntries(draft, "Account").filter(isCashFlowPaymentAccount).map(item => objectId("Account", item));
+  const missing: string[] = [];
+  if (!banks.includes(cashAccount)) missing.push("Cash-flow execution account: choose the bank account receiving household income.");
+  if (!people.includes(investmentOwner)) missing.push("Investment owner: choose a household person.");
+  if (!people.includes(liability.ownerId)) missing.push("Debt owner: choose a household person.");
+  for (const mortgage of objectEntries(draft, "Liability").filter(item => item.liability_type === "mortgage")) {
+    const profile = liability.profiles[objectId("Liability", mortgage)] ?? EMPTY_LIABILITY_SESSION_PROFILE;
+    const name = objectLabel("Liability", mortgage);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(profile.paymentAnchor)) missing.push(`${name}: Payment anchor (first contractual payment date).`);
+    if (!/^[1-9]\d*$/.test(profile.totalPayments)) missing.push(`${name}: Total payment count (for example 360 for 30 years).`);
+    if (!banks.includes(profile.fundingAccountId)) missing.push(`${name}: Funding account (bank paying the mortgage).`);
+    if (!/^\d+$/.test(profile.settlementPriority)) missing.push(`${name}: Settlement priority (lower number first).`);
+  }
+  return missing;
+}
+const requiredCue = (missing: boolean) => ({ "aria-invalid": missing, style: missing ? { border: "2px solid #a32929" } : {} });
+
 export function PersonalFinanceApp() {
   const [draft, setDraft] = useState<PersonalDraft | undefined>();
+  const [replacementIdentity, setReplacementIdentity] = useState(0);
   const browserRequest = useRef<BrowserPerformanceRequest | undefined>(undefined);
   const [explanations] = useState(() => ({ baseline: new ResultExplanationCache<FinancialExplanation>(), comparison: new ResultExplanationCache<FinancialExplanation>() }));
   useEffect(() => { if (browserRequest.current !== undefined) browserRequest.current.active = false; });
@@ -286,7 +307,7 @@ export function PersonalFinanceApp() {
     },
     [draft, sessionSettings.baseCurrency, sessionSettings.asOf],
   );
-  const interactive = useInteractiveForecast(draft, householdExecution, sessionSettings);
+  const interactive = useInteractiveForecast(draft, householdExecution, sessionSettings, replacementIdentity);
   const householdForecast = interactive.baseline.lastGoodResult && "scope" in interactive.baseline.lastGoodResult
     ? interactive.baseline.lastGoodResult as PersonalHouseholdForecastReadModel : undefined;
   const householdComparison = interactive.comparison.lastGoodResult && "alternatives" in interactive.comparison.lastGoodResult
@@ -332,6 +353,7 @@ export function PersonalFinanceApp() {
   };
 
   const replaceCanonicalModel = (next: PersonalDraft, message: string) => {
+    setReplacementIdentity(value => value + 1);
     updateCanonicalModel(next);
     setLiabilityConfig(emptyLiabilityConfig());
     setInvestmentOwnerId("");
@@ -489,7 +511,7 @@ export function PersonalFinanceApp() {
         loadExample={() => {
           const configuration = createGoldenHouseholdSessionConfiguration();
           replaceCanonicalModel(
-            createGoldenHouseholdDraft(),
+            createGoldenHouseholdExampleDraft(),
             "Golden Household loaded",
           );
           setSessionSettings(sessionSettingsFromHorizon("2026-01-01", 120));
@@ -607,11 +629,29 @@ export function PersonalFinanceApp() {
     setSubnav("Compare Plans");
   };
   const effectiveHouseholdExecution = interactive.effectiveConfiguration;
+  const setupMissing = missingForecastSetup(draft, cashFlowExecutionAccountId, investmentOwnerId, liabilityConfig);
+  const settingsProblem = resolvePersonalSessionSettings(sessionSettings, "cash_flow").error;
+  const openForecastSetup = (missing?: string) => {
+    navigate("Plan"); setSubnav("Current Plan");
+    requestAnimationFrame(() => {
+      const setup = document.getElementById("forecast-setup");
+      if (!setup) return;
+      let scope: Element = setup;
+      let label = missing?.split(":")[0] ?? "";
+      if (missing?.startsWith("Investment owner")) { scope = [...setup.querySelectorAll("section")].find(section => section.querySelector("h2")?.textContent === "Investment execution configuration") ?? setup; label = "Execution owner"; }
+      else if (missing?.startsWith("Debt owner")) { scope = [...setup.querySelectorAll("section")].find(section => section.querySelector("h2")?.textContent === "Debt execution configuration") ?? setup; label = "Execution owner"; }
+      else if (missing && !missing.startsWith("Cash-flow")) { scope = [...setup.querySelectorAll("fieldset")].find(fieldset => fieldset.querySelector("legend")?.textContent === label) ?? setup; label = missing.split(":")[1]?.split(" (")[0]?.trim() ?? ""; }
+      const control = label ? [...scope.querySelectorAll("label")].find(item => item.textContent?.trim().startsWith(label))?.querySelector<HTMLElement>("input, select") : undefined;
+      (control ?? setup).focus();
+      (control ?? setup).scrollIntoView({ block: "center" });
+    });
+  };
   const runHouseholdForecast = () => {
     const resolved = resolvePersonalSessionSettings(sessionSettings, "cash_flow");
     if (!resolved.request) { setRunSettingsError(resolved.error ?? "Run settings are not valid."); return; }
     if (!interactive.available) {
-      setRunSettingsError("The household forecast requires explicit household execution configuration in Current Plan.");
+      setRunSettingsError(setupMissing.length ? setupMissing.join(" ") : "Apply forecast setup in Current Plan to run this model.");
+      openForecastSetup();
       return;
     }
     setRunSettingsError("");
@@ -717,7 +757,14 @@ export function PersonalFinanceApp() {
         </nav>
         <main id="main-content" tabIndex={-1}>
           <ForecastStatus label="Household forecast" state={interactive.baseline} />
-          {interactive.available && <button className="primary" onClick={runHouseholdForecast}>Recalculate</button>}
+          {interactive.available ? <button className="primary" onClick={runHouseholdForecast}>Update forecast</button> : <section className="panel capability" aria-label="Forecast setup checklist">
+            <h2>Needs setup · household forecast not run</h2>
+            <p>Loading or importing a model clears session-only forecast choices. Complete these choices to run this household; saved purchases and contributions remain in the plan.</p>
+            {setupMissing.length > 0 && <ul>{setupMissing.map(item => <li key={item}><button type="button" onClick={() => openForecastSetup(item)}>{item}</button></li>)}</ul>}
+            {settingsProblem && <p role="alert">{settingsProblem} <button onClick={() => { navigate("Settings"); setSubnav("Model Settings"); }}>Review forecast dates</button></p>}
+            {!setupMissing.length && !settingsProblem && <p>Required choices are complete. Apply setup &amp; run forecast in Current Plan.</p>}
+            <button className="primary" onClick={() => openForecastSetup()}>Complete forecast setup</button>
+          </section>}
           {primary === "Plan" && subnav === "Compare Plans" && <ForecastStatus label="Household comparison" state={interactive.comparison} />}
 
           {notice && (
@@ -793,17 +840,11 @@ export function PersonalFinanceApp() {
                 setLiabilityConfig={setLiabilityConfig}
                 retirementBindings={retirementBindings}
                 setRetirementBindings={setRetirementBindings}
-                setHouseholdExecution={() => {
+                setHouseholdExecution={(bindings) => {
                   const mortgages = objectEntries(draft, "Liability").filter((item) => item.liability_type === "mortgage");
-                  if (!cashFlowExecutionAccountId) return setRunSettingsError("Household execution configuration is missing the cash-flow execution account.");
-                  if (!investmentOwnerId) return setRunSettingsError("Household execution configuration is missing the investment execution owner.");
-                  if (!liabilityConfig.ownerId) return setRunSettingsError("Household execution configuration is missing the liability execution owner.");
-                  for (const mortgage of mortgages) {
-                    const id = objectId("Liability", mortgage);
-                    const profile = liabilityConfig.profiles[id];
-                    if (!profile?.paymentAnchor || !profile.fundingAccountId || !/^\d+$/.test(profile.totalPayments) || !/^\d+$/.test(profile.settlementPriority))
-                      return setRunSettingsError(`Household execution configuration is missing an explicit complete profile for ${objectLabel("Liability", mortgage)}.`);
-                  }
+                  if (setupMissing.length || settingsProblem) return setRunSettingsError([...setupMissing, ...(settingsProblem ? [settingsProblem] : [])].join(" "));
+                  const appliedBindings = bindings ?? retirementBindings;
+                  setRetirementBindings(appliedBindings);
                   setHouseholdExecution({
                     baseCurrency: sessionSettings.baseCurrency, asOf: sessionSettings.asOf, dataCutoff: sessionSettings.dataCutoff,
                     simulationStart: sessionSettings.simulationStart, simulationEnd: sessionSettings.simulationEnd,
@@ -814,7 +855,7 @@ export function PersonalFinanceApp() {
                     liabilityExecutionProfiles: mortgages.map((mortgage) => {
                       const id = objectId("Liability", mortgage); const profile = liabilityConfig.profiles[id]!;
                       return { liabilityId: id, kind: "vs4_fixed_monthly_fully_amortizing" as const, paymentAnchor: profile.paymentAnchor, totalPayments: Number(profile.totalPayments), fundingAccountId: profile.fundingAccountId, settlementPriority: Number(profile.settlementPriority), openingContractStatus: "current" as const };
-                    }), retirementBindings,
+                    }), retirementBindings: appliedBindings,
                     ...(householdExecution?.contentionPolicy === undefined ? {} : { contentionPolicy: householdExecution.contentionPolicy }),
                   });
                   setRunSettingsError("");
@@ -1084,16 +1125,19 @@ function SetupWizard({
 function ForecastStatus({ label, state }: { label: string; state: ForecastView }) {
   return <section className={`forecast-status ${state.stale ? "stale" : ""}`} role="status" aria-label={`${label} status`}
     data-lifecycle={state.lifecycle} data-pending={state.pending} data-fingerprint={state.fingerprint} data-request-id={state.requestId}>
-    <strong>{label} · {state.lifecycle === "completed" ? "Ready" : state.lifecycle === "unsupported" ? "Unsupported configuration" : state.lifecycle === "idle" ? "Not run" : state.lifecycle}</strong>
+    <strong>{label} · {state.pending ? "Running" : state.stale ? "Update needed" : state.lifecycle === "completed" ? "Ready" : state.lifecycle === "incomplete" ? "Partially modeled" : state.lifecycle === "unsupported" ? "Unsupported" : state.lifecycle === "idle" ? "Needs setup" : "Update needed"}</strong>
     {state.pending && <span>{state.lastGoodResult ? "Recalculating" : "Running"} deterministic forecast…</span>}
-    {state.stale && <span>Stale retained result — previous inputs; not current.</span>}
-    {!state.pending && !state.stale && (state.lifecycle === "completed" || state.lifecycle === "incomplete") && <span>Current result{state.lifecycle === "incomplete" ? " · financially incomplete" : ""}</span>}
+    {state.stale && <span>Old result — inputs changed; these numbers are not current. Update forecast or complete setup below.</span>}
+    {!state.pending && !state.stale && state.lifecycle === "completed" && <span>Current result</span>}
+    {!state.pending && !state.stale && state.lifecycle === "incomplete" && <><span>Forecast ran. Some outputs are incomplete; review the scoped reasons below before using after-tax totals.</span>
+      {state.lastGoodResult && <DiagnosticList diagnostics={state.lastGoodResult.diagnostics ?? []} model={state.resultModel} />}</>}
+    {state.lifecycle === "unsupported" && <span>Review the guidance below, correct the supported setup or import a supported model, then Update forecast.</span>}
     {state.message && <span>{state.lifecycle === "unsupported" && state.latestResult?.status === "unavailable" && state.latestResult.diagnostics.length > 0 ? "Review the forecast guidance below." : friendlyText(state.message)}</span>}
     {state.lifecycle === "unsupported" && state.latestResult?.status === "unavailable" && state.latestResult.diagnostics.length > 0 && <DiagnosticList diagnostics={state.latestResult.diagnostics} />}
     <details><summary>Technical forecast details</summary>
       <dl><dt>Lifecycle</dt><dd>{state.lifecycle}</dd><dt>Request</dt><dd>{state.requestId ?? "Not submitted"}</dd>
         <dt>Cache</dt><dd>{state.cacheState ?? "Not applicable"}</dd>
-        {state.message && <><dt>Original diagnostic</dt><dd>{state.message}</dd></>}
+        {state.message && !state.latestResult?.diagnostics?.length && <><dt>Original diagnostic</dt><dd>{state.message}</dd></>}
       </dl>
     </details>
   </section>;
@@ -1450,12 +1494,12 @@ function InvestmentExecutionControls({
     <section className="panel controls">
       <h2>Investment execution configuration</h2>
       <p className="muted">
-        Session-only explicit configuration. Select the Person whose investment
-        scope should execute.
+        Choose the person whose investments to forecast. This choice is session-only.
       </p>
       <label>
         Execution owner
         <select
+          {...requiredCue(!ownerId)}
           value={ownerId}
           onChange={(event) => setOwnerId(event.target.value)}
         >
@@ -1470,6 +1514,7 @@ function InvestmentExecutionControls({
           ))}
         </select>
       </label>
+      {!ownerId && <p className="field-error">Required: choose the investment owner.</p>}
     </section>
   );
 }
@@ -1505,12 +1550,12 @@ function LiabilityExecutionControls({
     <section className="panel controls">
       <h2>Debt execution configuration</h2>
       <p className="muted">
-        Session-only explicit configuration. Leave a profile absent to receive a
-        capability diagnostic rather than inferred terms.
+        Choose the debt owner and enter the mortgage contract terms. These session choices tell the forecast which bank pays each mortgage; they do not change your saved debt.
       </p>
       <label>
         Execution owner
         <select
+          {...requiredCue(!liabilityConfig.ownerId)}
           value={liabilityConfig.ownerId}
           onChange={(event) =>
             setLiabilityConfig((prior) => ({
@@ -1530,6 +1575,7 @@ function LiabilityExecutionControls({
           ))}
         </select>
       </label>
+      {!liabilityConfig.ownerId && <p className="field-error">Required: choose the debt owner.</p>}
       {mortgages.map((mortgage) => {
         const id = objectId("Liability", mortgage);
         const profile =
@@ -1540,6 +1586,7 @@ function LiabilityExecutionControls({
             <label>
               Payment anchor
               <input
+                {...requiredCue(!profile.paymentAnchor)}
                 type="date"
                 value={profile.paymentAnchor}
                 onChange={(event) =>
@@ -1547,9 +1594,11 @@ function LiabilityExecutionControls({
                 }
               />
             </label>
+            {!profile.paymentAnchor && <p className="field-error">Required: first contractual payment date.</p>}
             <label>
               Total payment count
               <input
+                {...requiredCue(!/^[1-9]\d*$/.test(profile.totalPayments))}
                 type="number"
                 min="1"
                 step="1"
@@ -1559,16 +1608,18 @@ function LiabilityExecutionControls({
                 }
               />
             </label>
+            {!/^[1-9]\d*$/.test(profile.totalPayments) && <p className="field-error">Required: number of monthly payments, for example 360.</p>}
             <label>
               Funding account
               <select
+                {...requiredCue(!profile.fundingAccountId)}
                 value={profile.fundingAccountId}
                 onChange={(event) =>
                   updateProfile(id, "fundingAccountId", event.target.value)
                 }
               >
                 <option value="">Select funding account</option>
-                {accounts.map((account) => (
+                {accounts.filter(isCashFlowPaymentAccount).map((account) => (
                   <option
                     key={objectId("Account", account)}
                     value={objectId("Account", account)}
@@ -1578,9 +1629,11 @@ function LiabilityExecutionControls({
                 ))}
               </select>
             </label>
+            {!profile.fundingAccountId && <p className="field-error">Required: bank account paying this mortgage.</p>}
             <label>
               Settlement priority
               <input
+                {...requiredCue(!/^\d+$/.test(profile.settlementPriority))}
                 type="number"
                 min="0"
                 step="1"
@@ -1590,6 +1643,7 @@ function LiabilityExecutionControls({
                 }
               />
             </label>
+            {!/^\d+$/.test(profile.settlementPriority) && <p className="field-error">Required: whole-number payment order; lower number first.</p>}
           </fieldset>
         );
       })}
@@ -1783,18 +1837,10 @@ function WhatIfStarter({
             ))}
           </select>
         </label>
-        <label>
-          Exact effective annual rate
-          <input
-            aria-label="Exact effective annual rate"
-            inputMode="decimal"
-            value={rate}
-            onChange={(event) => setRate(event.target.value)}
-          />
-        </label>
+        <PercentageInput label="Annual growth / return" value={rate} onChange={setRate} />
         {!exactRate && (
           <p className="field-error" role="alert">
-            Enter an exact decimal rate, such as 0.05.
+            Enter a percentage, such as 5 for 5%.
           </p>
         )}
         <div className="object-grid">
@@ -1805,7 +1851,7 @@ function WhatIfStarter({
             <input aria-label="Major asset name" value={majorName} onChange={(event) => setMajorName(event.target.value)} />
             <input aria-label="Major asset value" inputMode="decimal" value={majorValue} onChange={(event) => setMajorValue(event.target.value)} />
             <input aria-label="Major debt amount" inputMode="decimal" value={majorDebt} onChange={(event) => setMajorDebt(event.target.value)} />
-            <input aria-label="Major debt annual rate" inputMode="decimal" value={majorRate} onChange={(event) => setMajorRate(event.target.value)} />
+            <PercentageInput label="Major debt annual rate" value={majorRate} onChange={setMajorRate} />
             <input aria-label="Major debt payment anchor" type="date" value={majorAnchor} onChange={(event) => setMajorAnchor(event.target.value)} />
             <input aria-label="Major debt total payments" type="number" value={majorPayments} onChange={(event) => setMajorPayments(event.target.value)} />
             <select aria-label="Major debt funding account" value={majorFunding} onChange={(event) => setMajorFunding(event.target.value)}><option value="">Select funding account</option>{accounts.map((item) => <option key={objectId("Account", item)} value={objectId("Account", item)}>{objectLabel("Account", item)}</option>)}</select>
@@ -1835,7 +1881,7 @@ function WhatIfStarter({
               ))}
             </select>
             {retirementPlan ? <p>Current planned retirement date: <strong>{retirementPlan.binding.baselineDate}</strong> for {objectLabel("Income", retirementPlan.income)}.</p> :
-              <p role="note">{retirementPlans.length > 0 ? "Choose the income and retirement plan you want to compare." : "No supported income/retirement relationship is available in the current plan. Review Plan → Current Plan → Expert forecast configuration for existing retirement relationships. Creating retirement events is not supported here; import a model with a supported scheduled retirement event linked to income."}</p>}
+              <p role="note">{retirementPlans.length > 0 ? "Choose the income and retirement plan you want to compare." : "No supported income/retirement relationship is available in the current plan. Review Plan → Current Plan → Forecast setup for existing retirement relationships. Creating retirement events is not supported here; import a model with a supported scheduled retirement event linked to income."}</p>}
             <input
               aria-label="New retirement date"
               type="date"
@@ -2553,20 +2599,26 @@ function DiagnosticList({
   model?: PersonalDraft;
 }) {
   const currentModel = useContext(FinancialResultModels).model;
+  const groups = groupDiagnostics(diagnostics);
   return (
     <div className="capability">
       <strong>Forecast needs attention</strong>
       {diagnostics.length === 0 ? (
         <p>The forecast is unavailable. Review the original explanation in Technical diagnostic details; no more specific editor remedy is available.</p>
       ) : (
-        diagnostics.map((item, index) => (
-          <p key={`${item.code}:${item.entityId ?? index}`}>
-            {forecastDiagnosticMessage(item, model ?? currentModel)}
+        groups.map(group => (
+          <p key={group.key} data-diagnostic-root={group.key}>
+            {forecastDiagnosticMessage(group.diagnostic, model ?? currentModel)}
+            {group.affectedOutputs.length > 0 && <small> {group.affectedOutputs.length} affected outputs.</small>}
           </p>
         ))
       )}
       <details><summary>Technical diagnostic details</summary>
-        <pre>{JSON.stringify(diagnostics.length ? diagnostics : { message: fallback ?? "No richer diagnostic is available." }, null, 2)}</pre>
+        {groups.map(group => <details key={group.key}><summary>{group.diagnostic.code} · {group.occurrences} occurrences · {group.affectedOutputs.length} affected outputs</summary>
+          <pre>{JSON.stringify({ diagnostic: group.diagnostic, affectedOutputs: group.affectedOutputs,
+            recordIds: [...new Set(diagnostics.filter(item => groupDiagnostics([item])[0]?.key === group.key).map(item => item.entityId).filter(Boolean))] }, null, 2)}</pre>
+        </details>)}
+        {!groups.length && <pre>{fallback ?? "No richer diagnostic is available."}</pre>}
       </details>
     </div>
   );
@@ -2619,7 +2671,10 @@ function PersonalPurchaseAuthoring({ draft, setDraft }: { draft: PersonalDraft; 
     <label>Purchase amount<input value={amount} onChange={event => setAmount(event.target.value)} inputMode="decimal" /></label>
     <label>Purchase start date<input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
     <label>Purchase frequency<select aria-label="Purchase frequency" value={frequency} onChange={event => setFrequency(event.target.value === "once" ? "once" : "monthly")}><option value="once">One time</option><option value="monthly">Monthly</option></select></label>
-    <label>Purchase execution order<input type="number" min="0" step="1" value={order} onChange={event => setOrder(event.target.value)} /></label>
+    <details><summary>Advanced same-day purchase ordering</summary>
+      <label>Purchase execution order<input type="number" min="0" step="1" value={order} onChange={event => setOrder(event.target.value)} /></label>
+      <FieldHelp label="Purchase execution order">Controls which saved purchase runs first when purchases compete for the same bank cash on the same day. Enter a nonnegative whole number; lower numbers run first. For example, order 10 runs before order 20. It does not create extra funding.</FieldHelp>
+    </details>
     {ira && <fieldset><legend>IRA contribution facts for {date.slice(0, 4) || "the contribution year"}</legend>
       <label>Age at year end<input type="number" min="0" value={age} onChange={event => setAge(event.target.value)} /></label>
       <label>Annual taxable compensation<input inputMode="decimal" value={compensation} onChange={event => setCompensation(event.target.value)} /></label>
@@ -2640,6 +2695,22 @@ function PersonalPurchaseAuthoring({ draft, setDraft }: { draft: PersonalDraft; 
     {savedPurchases.error && <p role="alert">{savedPurchases.error}</p>}
     {savedPurchases.plans.map(plan => <p key={plan.id}>Saved purchase: {objectLabel("Investment", investments.find(investment => objectId("Investment", investment) === plan.investmentId) ?? {})} — {plan.amount} {String(banks.find(bank => objectId("Account", bank) === plan.sourceCashAccountId)?.currency ?? "")} {plan.schedule.kind === "utc_monthly" ? "monthly" : "one time"} from {objectLabel("Account", banks.find(bank => objectId("Account", bank) === plan.sourceCashAccountId) ?? {})}.</p>)}
   </section>;
+}
+
+function contributionFieldHelp(key: string): string {
+  const help: Record<string, string> = {
+    taxYear: "The calendar year of these contributions, used to choose that year’s limits. Enter four digits, for example 2026.",
+    ageAtYearEnd: "Your age on December 31 of the contribution year. The app needs it for catch-up limits. Enter whole years, for example 36, rather than a birth date.",
+    eligiblePlanCompensation: "Annual eligible plan compensation is the year’s pay counted by this employer’s retirement plan, used for the combined employee/employer limit. Enter dollars without commas, for example 108000.00; use the plan’s definition of eligible pay.",
+    priorYearSponsorWages: "Prior-year wages with this sponsor means wages paid by this same employer last calendar year. This determines whether catch-up contributions must be Roth. Enter dollars, for example 108000.00 for last year’s pay; do not include another employer’s wages.",
+    planHasRoth: "Does the employer plan allow Roth contributions? This is needed for the Roth catch-up requirement. Select Yes or No from the plan documents; for example Yes for a plan offering a Roth 401(k).",
+    taxableCompensation: "Annual earned pay eligible for IRA contributions, used to limit contributions. Enter dollars for the full year, for example 108000.00; investment income is not compensation.",
+    rothMagi: "Modified adjusted gross income for Roth IRA eligibility. This is used for income phase-outs. Enter the annual dollar amount, for example 108000.00, using the Roth IRA tax worksheet rather than gross pay.",
+    hsaFullYearEligible: "Were you eligible to contribute to an HSA for the entire year? This bounded model needs full-year eligibility. Choose Yes only when coverage and other eligibility requirements are established, for example qualifying coverage throughout 2026.",
+    hsaFamilyAllocation: "Your share of the ordinary family HSA annual limit, excluding catch-up, after any spouse allocation. Enter dollars, for example 4000.00. The app needs this to avoid giving both spouses the full family allowance.",
+    livesWithSpouse: "Whether you lived with your spouse during this contribution year, used for married-filing-separately IRA eligibility. Select Yes or No, for example Yes if you shared a home during any part of the year.",
+  };
+  return help[key] ?? "Use the recorded annual contribution fact in the displayed unit. The app needs this to apply the correct eligibility limit; unknown facts remain incomplete. For example select Single only when that is the established filing status for the contribution year.";
 }
 
 function PayrollContributionAuthoring({ draft, setDraft }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void }) {
@@ -2665,25 +2736,31 @@ function PayrollContributionAuthoring({ draft, setDraft }: { draft: PersonalDraf
     setVestDate(plan.events.find(event => event.kind === "vest")?.at.slice(0, 10) ?? ""); setForfeitDate(plan.events.find(event => event.kind === "forfeit")?.at.slice(0, 10) ?? "");
     setFields(Object.fromEntries(Object.entries(allocation.policy.facts).map(([key, value]) => [key, typeof value === "object" ? value.amount.toString() : String(value)])));
   }, [investmentId, saved]);
-  const input = (key: string, label: string) => <label key={key}>{label}<input value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })} /></label>;
-  const booleanInput = (key: string, label: string) => <label key={key}>{label}<select aria-label={label} value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })}><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>;
+  const input = (key: string, label: string) => <div key={key}><label>{label}<input value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })} /></label><FieldHelp label={label}>{contributionFieldHelp(key)}</FieldHelp></div>;
+  const booleanInput = (key: string, label: string) => <div key={key}><label>{label}<select aria-label={label} value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })}><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label><FieldHelp label={label}>{contributionFieldHelp(key)}</FieldHelp></div>;
   return <section className="panel" aria-label="Saved payroll contributions"><h2>Payroll and employer contributions</h2>
-    <p>Allocate gross salary directly to workplace holdings. Employee contributions reduce take-home cash. Employer benefits add plan value. Rates use fractions: 0.05 means 5%. Use distinct priorities, with employee allocations before employer benefits.</p>
+    <p>Save employee or employer contributions to workplace investments. Employee contributions reduce take-home cash; employer contributions add plan value. Enter percentages such as 5 for 5%.</p>
     <label>Payroll destination<select aria-label="Payroll destination" value={investmentId} onChange={event => setInvestmentId(event.target.value)}><option value="">Choose holding</option>{destinations.map(item => <option key={String(item.investment_id)} value={String(item.investment_id)}>{objectLabel("Investment", item)}</option>)}</select></label>
     <label>Payroll salary<select aria-label="Payroll salary" value={incomeId} onChange={event => setIncomeId(event.target.value)}><option value="">Choose gross salary</option>{incomes.map(item => <option key={String(item.income_id)} value={String(item.income_id)}>{objectLabel("Income", item)}</option>)}</select></label>
     <label>Payroll contribution character<select aria-label="Payroll contribution character" value={character} onChange={event => { const value = event.target.value; if (value === "traditional_401k" || value === "roth_401k" || value === "after_tax_401k" || value === "employee_hsa" || value === "employer_401k" || value === "employer_hsa") setCharacter(value); }}><option value="traditional_401k">Traditional 401(k)</option><option value="roth_401k">Roth 401(k)</option><option value="after_tax_401k">After-tax 401(k)</option><option value="employee_hsa">Employee HSA</option><option value="employer_401k">Employer 401(k)</option><option value="employer_hsa">Employer HSA</option></select></label>
-    <label>Payroll contribution method<select aria-label="Payroll contribution method" value={kind} onChange={event => setKind(event.target.value === "fixed" ? "fixed" : event.target.value === "match" ? "match" : "percent")}><option value="fixed">Fixed amount per payroll</option><option value="percent">Fraction of gross compensation</option><option value="match">Employer match of employee contribution</option></select></label>
-    {kind === "fixed" ? <label>Payroll contribution amount<input value={amount} onChange={event => setAmount(event.target.value)} /></label> : <label>Payroll contribution rate<input value={rate} onChange={event => setRate(event.target.value)} /></label>}
-    {kind === "match" && <label>Match compensation cap rate<input value={capRate} onChange={event => setCapRate(event.target.value)} /></label>}
-    <label>Payroll allocation priority<input type="number" value={priority} onChange={event => setPriority(event.target.value)} /></label>
-    {!character.endsWith("_hsa") && <label>Shared plan/sponsor key<input value={planKey} onChange={event => setPlanKey(event.target.value)} /></label>}
-    {character === "employer_401k" && <label>Vested fraction of future employer contributions<input value={vested} onChange={event => setVested(event.target.value)} /></label>}
+    <label>Payroll contribution method<select aria-label="Payroll contribution method" value={kind} onChange={event => setKind(event.target.value === "fixed" ? "fixed" : event.target.value === "match" ? "match" : "percent")}><option value="fixed">Fixed amount per payroll</option><option value="percent">Percentage of gross pay</option><option value="match">Employer match of employee contribution</option></select></label>
+    <FieldHelp label="Payroll contribution method">Choose a dollar amount per paycheck, a percentage of gross pay, or an employer match. The forecast needs this to calculate each contribution. For example, 5% of a $9,000 paycheck contributes $450; a 100% match matches the eligible employee contribution dollar for dollar.</FieldHelp>
+    {kind === "fixed" ? <label>Payroll contribution amount<input value={amount} onChange={event => setAmount(event.target.value)} /><small>Dollars per paycheck, for example 450.00.</small></label> : <PercentageInput label="Payroll contribution rate" value={rate} onChange={setRate} />}
+    {kind === "match" && <PercentageInput label="Match compensation cap rate" value={capRate} onChange={setCapRate} />}
+    <details><summary>Advanced payroll ordering</summary><label>Payroll allocation priority<input type="number" value={priority} onChange={event => setPriority(event.target.value)} /></label>
+      <FieldHelp label="Payroll allocation priority">Controls the order of contributions sharing one paycheck. Enter distinct whole numbers; lower numbers run first. Employee contributions must precede employer matches, for example employee 10, employer 20. This makes competing contributions deterministic.</FieldHelp>
+    </details>
+    {!character.endsWith("_hsa") && <><label>Employer / plan group<input value={planKey} onChange={event => setPlanKey(event.target.value)} list="employer-plan-groups" /></label>
+      <datalist id="employer-plan-groups">{[...new Set(saved.plans.flatMap(plan => plan.allocation.policy.limits.filter(limit => limit.kind === "401k_additions").map(limit => limit.bucketKey.slice("401k_additions:".length))))].map(key => <option key={key} value={key} />)}</datalist>
+      <FieldHelp label="Employer / plan group">Give related contributions the same employer/plan name so they share the employer’s annual limit. For example use Example Employer for both employee and employer contributions to that plan, and Former Employer for a different employer. This name is also the stable shared plan/sponsor key; changing it changes which limits are shared.</FieldHelp></>}
+    {character === "employer_401k" && <PercentageInput label="Owned share of future employer contributions" value={vested} onChange={setVested} />}
     {!character.endsWith("_hsa") && <label>Opening unvested employer units<input aria-label="Opening unvested employer units" value={openingUnvested} onChange={event => setOpeningUnvested(event.target.value)} /><small>Subset of this holding's total opening units funded by the employer and still unvested. Employee-funded units remain fully owned.</small></label>}
     {character === "employer_401k" && <fieldset><legend>Optional full contingent reclassification</legend><p>These dates reclassify all then-current unvested value in this holding. Complex schedules and partial forfeiture are unsupported. A forfeiture date does not infer a salary end date; author the employment-income end separately.</p><label>Full vesting date<input type="date" value={vestDate} onChange={event => setVestDate(event.target.value)} /></label><label>Full contingent forfeiture date<input type="date" value={forfeitDate} onChange={event => setForfeitDate(event.target.value)} /></label></fieldset>}
     <fieldset><legend>Annual eligibility facts</legend>{input("taxYear", "Payroll contribution year")}{input("ageAtYearEnd", "Payroll age at year end")}
-      {character.endsWith("_hsa") ? <>{booleanInput("hsaFullYearEligible", "HSA eligible for the full year")}<label>HSA coverage<select aria-label="HSA coverage" value={fields.hsaCoverage ?? ""} onChange={event => setFields({ ...fields, hsaCoverage: event.target.value })}><option value="">Unknown</option><option value="self">Self only</option><option value="family">Family</option></select></label>{fields.hsaCoverage === "family" && input("hsaFamilyAllocation", "Individual ordinary family HSA allocation")}</> : <>{input("eligiblePlanCompensation", "Annual eligible plan compensation")}{booleanInput("planHasRoth", "Plan has a Roth feature")}{input("priorYearSponsorWages", "Prior-year wages with this sponsor")}</>}
+      {character.endsWith("_hsa") ? <>{booleanInput("hsaFullYearEligible", "HSA eligible for the full year")}<label>HSA coverage<select aria-label="HSA coverage" value={fields.hsaCoverage ?? ""} onChange={event => setFields({ ...fields, hsaCoverage: event.target.value })}><option value="">Unknown</option><option value="self">Self only</option><option value="family">Family</option></select></label><FieldHelp label="HSA coverage">Choose self-only or family qualifying health coverage. This determines the annual HSA limit. For example select Family for eligible family coverage; do not infer eligibility from owning an HSA.</FieldHelp>{fields.hsaCoverage === "family" && input("hsaFamilyAllocation", "Your share of the family HSA limit")}</> : <>{input("eligiblePlanCompensation", "Annual pay eligible for this plan")}{booleanInput("planHasRoth", "Plan has a Roth feature")}{input("priorYearSponsorWages", "Last year’s pay from this employer")}</>}
     </fieldset>
-    <label>Payroll excess policy<select aria-label="Payroll excess policy" value={excessPolicy} onChange={event => setExcessPolicy(event.target.value === "auto_cap" ? "auto_cap" : "reject")}><option value="reject">Reject excess</option><option value="auto_cap">Explicitly cap to available capacity</option></select></label>
+    <label>When a contribution exceeds the limit<select aria-label="When a contribution exceeds the limit" value={excessPolicy} onChange={event => setExcessPolicy(event.target.value === "auto_cap" ? "auto_cap" : "reject")}><option value="reject">Stop and report the excess</option><option value="auto_cap">Reduce to the remaining allowance</option></select></label>
+    <FieldHelp label="When a contribution exceeds the limit">Payroll excess policy chooses whether to reject an over-limit contribution or reduce it to the known remaining allowance. For example, if $100 remains and $150 is requested, reducing contributes $100. Missing eligibility facts still stay incomplete.</FieldHelp>
     <button type="button" disabled={!investmentId || !incomeId} onClick={() => {
       try { const investment = destinations.find(item => item.investment_id === investmentId)!;
         const existing = saved.plans.find(item => item.allocation.positionId === investmentId);
@@ -2712,13 +2789,14 @@ function HistoricalContributionScopeAuthoring({ draft, setDraft }: { draft: Pers
     setFields(scope ? Object.fromEntries(Object.entries(scope.policy.facts).map(([key, value]) => [key, typeof value === "object" ? value.amount.toString() : String(value)])) : { taxYear: "2026" });
     setPlanKey(scope?.policy.limits.find(item => item.kind === "401k_additions")?.bucketKey.slice("401k_additions:".length) ?? "");
   }, [saved, investmentId]);
-  const input = (key: string, label: string) => <label>{label}<input value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })} /></label>;
-  const booleanInput = (key: string, label: string) => <label>{label}<select value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })}><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>;
+  const input = (key: string, label: string) => <div><label>{label}<input value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })} /></label><FieldHelp label={label}>{contributionFieldHelp(key)}</FieldHelp></div>;
+  const booleanInput = (key: string, label: string) => <div><label>{label}<select value={fields[key] ?? ""} onChange={event => setFields({ ...fields, [key]: event.target.value })}><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label><FieldHelp label={label}>{contributionFieldHelp(key)}</FieldHelp></div>;
   return <fieldset><legend>Historical account or employer plan</legend>
-    <p>Define prior contribution scopes even when this holding has no future contribution plan. For a former employer, use that employer's plan/sponsor key; the active employer keeps its own annual-additions bucket. Add a historical account and holding in the model editor if absent.</p>
+    <p>Record contributions already made this year, including contributions to a former employer’s plan. Add that account and holding first if it is missing.</p>
+    <FieldHelp label="Prior contribution history">The forecast needs earlier contributions to know how much annual allowance remains. Enter each account’s contribution year and eligibility facts, then its year-to-date dollar amounts below. Use a separate employer/plan group for a former employer, for example Former Employer, so its employer limit remains separate from the active employer. This records prior usage without adding forecast cash or changing opening balances.</FieldHelp>
     <label>Historical holding<select aria-label="Historical holding" value={investmentId} onChange={event => setInvestmentId(event.target.value)}><option value="">Choose holding</option>{holdings.map(item => <option key={String(item.investment_id)} value={String(item.investment_id)}>{objectLabel("Investment", item)}</option>)}</select></label>
-    {input("taxYear", "Historical contribution year")}{input("ageAtYearEnd", "Historical contributor age at year end")}
-    {investmentId && (hsa ? <>{booleanInput("hsaFullYearEligible", "Historical HSA full-year eligibility")}<label>Historical HSA coverage<select value={fields.hsaCoverage ?? ""} onChange={event => setFields({ ...fields, hsaCoverage: event.target.value })}><option value="">Unknown</option><option value="self">Self only</option><option value="family">Family</option></select></label>{input("hsaFamilyAllocation", "Historical individual family HSA allocation")}</> : ira ? <>{input("taxableCompensation", "Historical annual taxable compensation")}{account?.account_type === "roth_ira" && <>{input("rothMagi", "Historical Roth IRA MAGI")}<label>Historical filing status<select value={fields.filingStatus ?? ""} onChange={event => setFields({ ...fields, filingStatus: event.target.value })}><option value="">Unknown</option><option value="single">Single</option><option value="married_joint">Married jointly</option><option value="married_separate">Married separately</option><option value="head_of_household">Head of household</option><option value="qualifying_surviving_spouse">Qualifying surviving spouse</option></select></label>{booleanInput("livesWithSpouse", "Historical lived with spouse")}</>}</> : <><label>Historical plan/sponsor key<input value={planKey} onChange={event => setPlanKey(event.target.value)} /></label>{input("eligiblePlanCompensation", "Historical eligible plan compensation")}{booleanInput("planHasRoth", "Historical plan has Roth feature")}{input("priorYearSponsorWages", "Historical prior-year sponsor wages")}</>)}
+    {input("taxYear", "Historical contribution year")}{input("ageAtYearEnd", "Your age at the end of that year")}
+    {investmentId && (hsa ? <>{booleanInput("hsaFullYearEligible", "Historical HSA full-year eligibility")}<label>Historical HSA coverage<select value={fields.hsaCoverage ?? ""} onChange={event => setFields({ ...fields, hsaCoverage: event.target.value })}><option value="">Unknown</option><option value="self">Self only</option><option value="family">Family</option></select></label>{input("hsaFamilyAllocation", "Historical individual family HSA allocation")}</> : ira ? <>{input("taxableCompensation", "Historical annual taxable compensation")}{account?.account_type === "roth_ira" && <>{input("rothMagi", "Historical Roth IRA MAGI")}<label>Historical filing status<select value={fields.filingStatus ?? ""} onChange={event => setFields({ ...fields, filingStatus: event.target.value })}><option value="">Unknown</option><option value="single">Single</option><option value="married_joint">Married jointly</option><option value="married_separate">Married separately</option><option value="head_of_household">Head of household</option><option value="qualifying_surviving_spouse">Qualifying surviving spouse</option></select></label>{booleanInput("livesWithSpouse", "Historical lived with spouse")}</>}</> : <><label>Historical employer / plan group<input value={planKey} onChange={event => setPlanKey(event.target.value)} /></label><FieldHelp label="Historical employer / plan group">Use the same employer name for contributions sharing that employer’s limit. For example Former Employer groups that employer’s employee and employer contributions separately from your current employer. This name is the historical plan/sponsor key used to track shared annual usage.</FieldHelp>{input("eligiblePlanCompensation", "Historical annual pay eligible for this plan")}{booleanInput("planHasRoth", "Historical plan has Roth feature")}{input("priorYearSponsorWages", "Historical last year’s pay from this employer")}</>)}
     <button type="button" disabled={!investmentId} onClick={() => {
       try {
         const facts: PayrollContributionPlan["facts"] = { taxYear: Number(fields.taxYear), ...(fields.ageAtYearEnd ? { ageAtYearEnd: Number(fields.ageAtYearEnd) } : {}), ...(fields.taxableCompensation ? { taxableCompensation: fields.taxableCompensation } : {}), ...(fields.eligiblePlanCompensation ? { eligiblePlanCompensation: fields.eligiblePlanCompensation } : {}), ...(fields.rothMagi ? { rothMagi: fields.rothMagi } : {}), ...(fields.filingStatus === "single" || fields.filingStatus === "married_joint" || fields.filingStatus === "married_separate" || fields.filingStatus === "head_of_household" || fields.filingStatus === "qualifying_surviving_spouse" ? { filingStatus: fields.filingStatus } : {}), ...(fields.livesWithSpouse ? { livesWithSpouse: fields.livesWithSpouse === "true" } : {}), ...(fields.priorYearSponsorWages ? { priorYearSponsorWages: fields.priorYearSponsorWages } : {}), ...(fields.planHasRoth ? { planHasRoth: fields.planHasRoth === "true" } : {}), ...(fields.hsaFullYearEligible ? { hsaFullYearEligible: fields.hsaFullYearEligible === "true" } : {}), ...(fields.hsaCoverage === "self" || fields.hsaCoverage === "family" ? { hsaCoverage: fields.hsaCoverage } : {}), ...(fields.hsaFamilyAllocation ? { hsaFamilyAllocation: fields.hsaFamilyAllocation } : {}) };
@@ -2826,7 +2904,7 @@ function HouseholdPlan({
   setLiabilityConfig: React.Dispatch<React.SetStateAction<LiabilitySessionConfig>>;
   retirementBindings: readonly RetirementTerminationBinding[];
   setRetirementBindings: (value: readonly RetirementTerminationBinding[]) => void;
-  setHouseholdExecution: () => void;
+  setHouseholdExecution: (bindings?: readonly RetirementTerminationBinding[]) => void;
 }) {
   const accounts = objectEntries(draft, "Account");
   const incomes = objectEntries(draft, "Income");
@@ -2842,36 +2920,37 @@ function HouseholdPlan({
         title="Your reconciled household plan"
         text="One execution carries cash flow, investments, debt, property, and retirement through the same state transition."
       />
-      <RetirementDateAuthoring draft={draft} setDraft={setDraft} />
-      <PersonalPurchaseAuthoring draft={draft} setDraft={setDraft} />
-      <PayrollContributionAuthoring draft={draft} setDraft={setDraft} />
-      <OpeningContributionUsageAuthoring draft={draft} setDraft={setDraft} />
-      <ContributionCapacityPanel draft={draft} forecast={forecast} />
-      <p className="muted">If the forecast needs setup, open Expert forecast configuration below. These session choices must be configured again after reloading a saved model.</p>
-      <details className="panel">
-      <summary>Expert forecast configuration</summary>
-      <section className="controls" aria-label="Household execution configuration">
+      <section className="panel" id="forecast-setup" tabIndex={-1}>
+      <h2>Forecast setup</h2>
+      <section className="controls" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)" }} aria-label="Household execution configuration">
         <h2>Household execution configuration</h2>
-        <p className="muted">Session-only. These explicit choices are not saved with the canonical model.</p>
+        <p>Choose where income is received, whose investments and debt to forecast, and how each mortgage is paid. These session-only choices must be configured again after importing or loading a model. Saved retirement dates are used automatically.</p>
         <label>
           Cash-flow execution account
-          <select value={cashFlowExecutionAccountId} onChange={(event) => setCashFlowExecutionAccountId(event.target.value)}>
+          <select {...requiredCue(!cashFlowExecutionAccountId)} value={cashFlowExecutionAccountId} onChange={(event) => setCashFlowExecutionAccountId(event.target.value)}>
             <option value="">Select funding account</option>
-            {accounts.map((account) => <option key={objectId("Account", account)} value={objectId("Account", account)}>{objectLabel("Account", account)}</option>)}
+            {accounts.filter(isCashFlowPaymentAccount).map((account) => <option key={objectId("Account", account)} value={objectId("Account", account)}>{objectLabel("Account", account)}</option>)}
           </select>
         </label>
+        {!cashFlowExecutionAccountId && <p className="field-error">Required: choose the bank account receiving income.</p>}
         <InvestmentExecutionControls draft={draft} ownerId={investmentOwnerId} setOwnerId={setInvestmentOwnerId} />
         <LiabilityExecutionControls draft={draft} liabilityConfig={liabilityConfig} setLiabilityConfig={setLiabilityConfig} />
-        <fieldset>
+        <details><summary>Technical retirement binding override</summary><fieldset>
           <legend>Baseline retirement binding (session-only)</legend>
           <select aria-label="Baseline retirement income" value={retirementIncomeId} onChange={(event) => setRetirementIncomeId(event.target.value)}><option value="">No retirement binding</option>{incomes.map((income) => <option key={objectId("Income", income)} value={objectId("Income", income)}>{objectLabel("Income", income)}</option>)}</select>
           <select aria-label="Baseline canonical retirement event" value={retirementEventId} onChange={(event) => { setRetirementEventId(event.target.value); const selected = events.find((item) => String(item.event_id) === event.target.value); if (typeof selected?.start_date === "string") setRetirementDate(selected.start_date); }}><option value="">No canonical event</option>{events.map((event) => <option key={String(event.event_id)} value={String(event.event_id)}>{friendlyText(event.name ?? "Unnamed retirement event")}</option>)}</select>
           <input aria-label="Baseline retirement date" type="date" value={retirementDate} onChange={(event) => setRetirementDate(event.target.value)} />
           <button type="button" onClick={() => setRetirementBindings(!retirementIncomeId || !retirementDate ? [] : [{ incomeId: retirementIncomeId, terminationEventId, baselineDate: retirementDate, ...(retirementEventId ? { canonicalEventId: retirementEventId } : {}) }])}>Apply retirement binding</button>
-        </fieldset>
-        <button className="primary" onClick={setHouseholdExecution}>Apply household execution configuration</button>
+        </fieldset></details>
+        <button className="primary" onClick={() => setHouseholdExecution(!retirementIncomeId || !retirementDate ? retirementBindings : [{ incomeId: retirementIncomeId, terminationEventId, baselineDate: retirementDate, ...(retirementEventId ? { canonicalEventId: retirementEventId } : {}) }])}>Apply setup &amp; run forecast</button>
+        <p>After applying setup, economic edits automatically refresh the forecast. Update forecast is also available beside the global status.</p>
       </section>
-      </details>
+      </section>
+      <RetirementDateAuthoring draft={draft} setDraft={setDraft} />
+      <PersonalPurchaseAuthoring draft={draft} setDraft={setDraft} />
+      <PayrollContributionAuthoring draft={draft} setDraft={setDraft} />
+      <OpeningContributionUsageAuthoring draft={draft} setDraft={setDraft} />
+      <ContributionCapacityPanel draft={draft} forecast={forecast} />
       <section className="panel">
         <div className="panel-head">
           <h2>Authoritative household forecast</h2>
@@ -3008,7 +3087,7 @@ function HouseholdForecastVisual({
         )}
       </ForecastDetails>
       {forecast.diagnostics.length > 0 && (
-        <DiagnosticList diagnostics={forecast.diagnostics} model={financialModel} />
+        <p role="note">Forecast limitations are grouped beside the global forecast status above. Review them before relying on tax-dependent totals.</p>
       )}
     </>
   );
@@ -3202,16 +3281,7 @@ function ForecastVisual({ forecast, draft }: { forecast: PersonalForecastReadMod
         </div>
           )}
         </ForecastDetails>
-        {forecast.diagnostics.length > 0 && (
-          <div className="stress-detail">
-            <strong>Forecast diagnostics</strong>
-            {forecast.diagnostics.map((item, index) => (
-              <p key={`${item.code}:${item.entityId ?? index}`}>
-                {forecastDiagnosticMessage(item, draft)}
-              </p>
-            ))}
-          </div>
-        )}
+        {forecast.diagnostics.length > 0 && <DiagnosticList diagnostics={forecast.diagnostics} model={draft} />}
       </>
     );
   const data = forecast.points.map((point) => ({
