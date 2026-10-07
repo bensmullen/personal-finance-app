@@ -17,7 +17,7 @@ export function openingInvestmentAccountValues(account: JsonObject, draft: Perso
   { total: string; cash: string; holdings: string; currency: string } | undefined {
   const unit = String(account.currency ?? currency ?? "");
   const holdings = (draft.objects.Investment ?? []).filter((value): value is JsonObject =>
-    typeof value === "object" && value !== null && !Array.isArray(value) && value.account_id === account.account_id);
+    typeof value === "object" && value !== null && !Array.isArray(value)).filter(holding => holding.account_id === account.account_id);
   try {
     if (!unit) return undefined;
     const holdingsValue = holdings.reduce((sum, holding) => {

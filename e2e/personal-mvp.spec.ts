@@ -203,6 +203,15 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
     await payroll.getByText("Advanced payroll ordering", { exact: true }).click();
     await payroll.getByText("About payroll allocation priority", { exact: true }).click();
     await expect(payroll.getByText(/lower numbers run first/)).toBeVisible();
+    const purchases = page.getByRole("region", { name: "Saved investment purchases" });
+    await purchases.getByText("Advanced same-day purchase ordering", { exact: true }).click();
+    await purchases.getByText("About purchase execution order", { exact: true }).click();
+    await expect(purchases.getByText(/lower numbers run first/)).toBeVisible();
+    const history = page.getByRole("region", { name: "Prior year-to-date contributions" });
+    await history.getByText("About prior contribution history", { exact: true }).click();
+    await expect(history.getByText(/This records prior usage without adding forecast cash/)).toBeVisible();
+    await history.getByText("About your age at the end of that year", { exact: true }).click();
+    await expect(history.getByText(/Your age on December 31/)).toBeVisible();
     const rateBox = await rate.boundingBox();
     expect(rateBox!.width).toBeLessThanOrEqual(160);
     expect(rateBox!.x + rateBox!.width).toBeLessThanOrEqual(width);

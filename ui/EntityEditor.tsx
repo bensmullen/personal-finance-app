@@ -67,7 +67,7 @@ const FIELD_LABELS: Record<string, string> = {
   name: "Name",
   account_type: "Account type",
   institution: "Institution",
-  opening_balance: "Balance",
+  opening_balance: "Cash balance",
   currency: "Currency",
   liquidity_class: "Liquidity",
   tax_treatment: "Tax treatment",
