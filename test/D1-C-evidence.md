@@ -194,7 +194,7 @@ the committed 2026 boundary. CI owns confirmation of these assertions.
 
 The browser UAT path now opens Example salary in both models, inspects its
 structured dated allocations, checks readable holding summaries at 1440/390px,
-extends Current Plan dates through normal controls, requests a ten-year run,
+shows the immutable Current Plan date boundary, requests a ten-year run,
 and updates IRA/HSA plans from account-level contribution actions. Exported
 plans must retain one authoritative route per edited holding. Mortgage guidance
 derives maturity using the compiler's actual monthly schedule, distinguishes
@@ -205,6 +205,12 @@ No local verification was run.
 
 Issue #80 explicitly requires escalation rather than extrapolation at these
 remaining boundaries:
+
+DECISION_NEEDED: How should users extend Current Plan dates when canonical Scenario start_date and end_date are creation-time immutable?
+PRODUCT_IMPACT: The dates can be shown and simulation windows constrained, but the existing canonical editor cannot save an extended horizon. Appearing to save would silently ignore the change.
+OPTIONS: Authorize creation/rebinding of a replacement plan with a new identity; or amend the canonical mutability contract and authorize its migration/implementation separately.
+RECOMMENDATION: Resolve the plan authoring contract explicitly before implementing extension; retain read-only dates and a direct path to import a model created with a wider horizon for this partial repair.
+TECHNICAL_REASON: docs/personal_finance_canonical_schema_v1.0.json Scenario start_date/end_date both have mutable:false; PFA-UX-014 requires respecting creation-only fields. Issue #80 prohibits schema/spec/product-semantic changes.
 
 DECISION_NEEDED: Forward-law strategy for long-range deterministic planning.
 PRODUCT_IMPACT: Decide whether long-range views are horizon-capped, limited to tax-independent outputs, or use explicit projected law.

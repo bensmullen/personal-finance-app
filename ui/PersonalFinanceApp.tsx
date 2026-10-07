@@ -95,7 +95,7 @@ import {
 import { useInteractiveForecast } from "./forecast/useInteractiveForecast.js";
 import { EditorHub } from "./EntityEditor.js";
 import { mortgageFinalPaymentDate, mortgagePaymentCount } from "../src/application/compiler/liabilities.js";
-import { currentPlan, editCurrentPlanHorizon, simulationWindowProblem } from "../src/application/forecastSetup.js";
+import { currentPlan, simulationWindowProblem } from "../src/application/forecastSetup.js";
 import { FieldHelp, PercentageInput } from "./forecast/PercentageInput.js";
 import { DomainMechanicsPanel } from "./forecast/DomainMechanicsPanel.js";
 import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, groupDiagnostics, isCashFlowPaymentAccount, type NetWorthSection } from "./entityPresentation.js";
@@ -907,7 +907,6 @@ export function PersonalFinanceApp() {
           {primary === "Settings" && subnav === "Model Settings" && (
             <ModelSettings
               draft={draft}
-              setDraft={updateCanonicalModel}
               settings={sessionSettings}
               setSettings={(value) => {
                 invalidateResults();
@@ -2520,13 +2519,11 @@ function ModelSettings({
   setSettings,
   error,
   draft,
-  setDraft,
 }: {
   settings: PersonalSessionSettings;
   setSettings: Dispatch<SetStateAction<PersonalSessionSettings>>;
   error: string;
   draft: PersonalDraft;
-  setDraft: (draft: PersonalDraft) => void;
 }) {
   const update = (field: keyof PersonalSessionSettings, value: string) =>
     setSettings((current) => ({ ...current, [field]: value }));
@@ -2538,7 +2535,7 @@ function ModelSettings({
         title="Dates and conventions"
         text="Model dates are explicit; wall-clock today is never authoritative."
       />
-      <PlanHorizonSettings draft={draft} setDraft={setDraft} settings={settings} />
+      <PlanHorizonSettings draft={draft} settings={settings} />
       <section className="panel form-grid">
         <label>
           Base currency
@@ -2622,23 +2619,18 @@ function ModelSettings({
 }
 
 
-function PlanHorizonSettings({ draft, setDraft, settings, setSettings }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void; settings: PersonalSessionSettings; setSettings?: Dispatch<SetStateAction<PersonalSessionSettings>> }) {
+function PlanHorizonSettings({ draft, settings, setSettings }: { draft: PersonalDraft; settings: PersonalSessionSettings; setSettings?: Dispatch<SetStateAction<PersonalSessionSettings>> }) {
   const plan = currentPlan(draft);
-  const [start, setStart] = useState(String(plan?.start_date ?? ""));
-  const [end, setEnd] = useState(String(plan?.end_date ?? ""));
-  const [error, setError] = useState("");
-  useEffect(() => { setStart(String(plan?.start_date ?? "")); setEnd(String(plan?.end_date ?? "")); }, [plan?.scenario_id, plan?.start_date, plan?.end_date]);
   const problem = simulationWindowProblem(draft, settings.simulationStart, settings.simulationEnd);
   return <section className="panel" aria-label="Current Plan horizon" id="plan-horizon">
     <h2>Current Plan dates</h2><p>Your saved plan defines the available planning range. Simulation dates select a run window within it. Retirement must be within the plan, but may fall outside a run window.</p>
-    <label>Current plan start<input aria-label="Current plan start" type="date" value={start} onChange={event => setStart(event.target.value)} /></label>
-    <label>Current plan end<input aria-label="Current plan end" type="date" value={end} onChange={event => setEnd(event.target.value)} /></label>
-    <button type="button" onClick={() => { try { setDraft(editCurrentPlanHorizon(draft, start, end)); setError(""); } catch (failure) { setError(failure instanceof Error ? failure.message : "Plan dates could not be saved"); } }}>Save Current Plan dates</button>
+    <label>Current plan start<input aria-label="Current plan start" type="date" value={String(plan?.start_date ?? "")} readOnly /></label>
+    <label>Current plan end<input aria-label="Current plan end" type="date" value={String(plan?.end_date ?? "")} readOnly /></label>
+    <p>These saved plan dates are creation-time facts. This editor cannot extend them. To use a wider plan, import a model created with that horizon under Settings → Import / Export; otherwise choose simulation dates within the available range.</p>
     <p>Available simulation range: {String(plan?.start_date)} → {String(plan?.end_date)} (exclusive end).</p>
     {setSettings && <><label>Simulation start<input aria-label="Simulation start" type="date" value={settings.simulationStart} onChange={event => setSettings(prior => ({ ...prior, simulationStart: event.target.value }))} /></label>
       <label>Simulation end<input aria-label="Simulation end" type="date" value={settings.simulationEnd} onChange={event => setSettings(prior => ({ ...prior, simulationEnd: event.target.value }))} /></label></>}
-    {(error || problem) && <p className="field-error" role="alert">{error || problem}</p>}
-    {problem && settings.simulationEnd > String(plan?.end_date) && <button type="button" onClick={() => { setEnd(settings.simulationEnd); document.querySelector<HTMLInputElement>('[aria-label="Current plan end"]')?.focus(); }}>Use requested simulation end for Current Plan</button>}
+    {problem && <p className="field-error" role="alert">{problem}</p>}
   </section>;
 }
 
@@ -2982,7 +2974,7 @@ function HouseholdPlan({
         title="Your reconciled household plan"
         text="One execution carries cash flow, investments, debt, property, and retirement through the same state transition."
       />
-      <PlanHorizonSettings draft={draft} setDraft={setDraft} settings={settings} setSettings={setSettings} />
+      <PlanHorizonSettings draft={draft} settings={settings} setSettings={setSettings} />
       <section className="panel" id="forecast-setup" tabIndex={-1}>
       <h2>Forecast setup</h2>
       <section className="controls" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)" }} aria-label="Household execution configuration">

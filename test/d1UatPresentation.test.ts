@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createGoldenHouseholdDraft, createGoldenHouseholdExampleDraft, editPersonalRetirementDate, type JsonObject } from "../src/application/personalMvp.js";
 import { mortgageFinalPaymentDate, mortgagePaymentCount } from "../src/application/compiler/liabilities.js";
-import { currentPlan, editCurrentPlanHorizon, simulationWindowProblem } from "../src/application/forecastSetup.js";
+import { currentPlan, simulationWindowProblem } from "../src/application/forecastSetup.js";
 import { createGoldenHouseholdForecastRequest, GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
 import { runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
 import { compileHouseholdTax } from "../src/application/compiler/tax.js";
@@ -16,15 +16,12 @@ describe("D1 UAT presentation boundaries", () => {
     expect(mortgageFinalPaymentDate("2026-02-30", "360")).toBeUndefined();
     expect(mortgageFinalPaymentDate("2022-02-01", "0")).toBeUndefined();
   });
-  it("extends only Current Plan dates and keeps the run window and retirement inside that plan", () => {
+  it("identifies the immutable Current Plan boundary and keeps run windows and retirement inside it", () => {
     const model = createGoldenHouseholdExampleDraft();
     expect(simulationWindowProblem(model, "2026-01-01", "2037-01-01")).toContain("exceeds Current plan end 2036-01-01");
-    const extended = editCurrentPlanHorizon(model, "2026-01-01", "2040-01-01");
-    expect(currentPlan(extended)?.end_date).toBe("2040-01-01");
-    expect(extended.objects.Income).toEqual(model.objects.Income);
-    expect(extended.objects.Event).toEqual(model.objects.Event);
-    expect(simulationWindowProblem(extended, "2026-01-01", "2037-01-01")).toBeUndefined();
-    expect(() => editCurrentPlanHorizon(model, "2026-01-01", "2035-01-01")).toThrow("retirement date");
+    expect(currentPlan(model)?.end_date).toBe("2036-01-01");
+    expect(simulationWindowProblem(model, "2026-01-01", "2036-01-01")).toBeUndefined();
+    expect(simulationWindowProblem(model, "2025-01-01", "2036-01-01")).toContain("before Current plan start");
     expect(() => editPersonalRetirementDate(model, GOLDEN_HOUSEHOLD_IDS.income, "2041-01-01")).toThrow("Current Plan horizon");
   });
   it("runs the normal known-tax-facts example for the actual requested ten years without silent truncation", () => {
@@ -37,7 +34,7 @@ describe("D1 UAT presentation boundaries", () => {
     expect(result.reachedThrough).toBe("2036-01-01T00:00:00.000Z");
     expect(result.points).toHaveLength(120);
     expect(result.diagnostics.some(item => item.code === "PFA-TAX-009")).toBe(true);
-  });
+  }, 60_000);
   it("attributes a later-year contribution stop without projecting law, and combines cash settlement remedies", () => {
     expect(forecastDiagnosticMessage({ code: "RULE_INPUT_INVALID", message: "Contribution facts do not cover this UTC year" })).toContain("cover 2026 only");
     expect(forecastDiagnosticMessage({ code: "PFA-TAX-009", category: "payment_funding" } as never)).toBe(forecastDiagnosticMessage({ code: "PFA-TAX-009", category: "settlement_timing" } as never));

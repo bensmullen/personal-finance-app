@@ -248,7 +248,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   expect(errors).toEqual([]);
 });
 
-test("D1 round 2 links plan/simulation dates, mortgage guidance and contextual contribution authoring", async ({ page }) => {
+test("D1 round 2 explains immutable plan dates, mortgage guidance and contextual contribution authoring", async ({ page }) => {
   test.setTimeout(120_000);
   const errors: string[] = [];
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
@@ -260,9 +260,8 @@ test("D1 round 2 links plan/simulation dates, mortgage guidance and contextual c
   const dates = page.getByRole("region", { name: "Current Plan horizon" });
   await dates.getByLabel("Simulation end", { exact: true }).fill("2037-01-01");
   await expect(dates).toContainText("exceeds Current plan end 2036-01-01");
-  await dates.getByRole("button", { name: "Use requested simulation end for Current Plan", exact: true }).click();
-  await dates.getByRole("button", { name: "Save Current Plan dates", exact: true }).click();
-  await expect(dates).toContainText("Available simulation range: 2026-01-01 → 2037-01-01");
+  await expect(dates.getByLabel("Current plan end", { exact: true })).toHaveAttribute("readonly", "");
+  await expect(dates).toContainText("This editor cannot extend them");
   await dates.getByLabel("Simulation end", { exact: true }).fill("2036-01-01");
   // The normal example has no recurring statutory contribution. Missing future
   // tax law should remain scoped incompleteness, not truncate economic execution.
@@ -273,9 +272,21 @@ test("D1 round 2 links plan/simulation dates, mortgage guidance and contextual c
   await mortgage.getByLabel("Total payment count", { exact: true }).fill("359");
   await expect(mortgage).toContainText("Schedule mismatch");
   await expect(mortgage.getByRole("button", { name: "Use calculated contractual maturity 2051-12-01", exact: true })).toBeVisible();
+  await mortgage.getByRole("button", { name: "Use calculated contractual maturity 2051-12-01", exact: true }).click();
+  await expect(mortgage).toContainText("Contractual final payment / maturity: 2051-12-01");
   await mortgage.getByLabel("Total payment count", { exact: true }).fill("360");
+  await mortgage.getByRole("button", { name: "Use calculated contractual maturity 2052-01-01", exact: true }).click();
   await expect(mortgage).toContainText("Calculated final scheduled payment: 2052-01-01");
   await expect(mortgage.getByText(/Schedule mismatch/)).toHaveCount(0);
+  const operations = page.getByRole("region", { name: "Investment and retirement operations" });
+  await operations.getByLabel("Domain operation", { exact: true }).selectOption("mortgage_extra");
+  await operations.getByLabel("Mortgage for extra principal", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.mortgage);
+  await operations.getByLabel("Extra principal checking / savings account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.checking);
+  await operations.getByLabel("Operation date", { exact: true }).fill("2031-01-01");
+  await operations.getByLabel("Operation cash amount", { exact: true }).fill("300000");
+  await operations.getByRole("button", { name: "Save domain operation", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Projected mortgage payoff" })).toContainText("2031-01-01", { timeout: 30_000 });
+  await expect(mortgage).toContainText("Contractual final payment / maturity: 2052-01-01");
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Import / Export", exact: true }).click();
@@ -313,6 +324,28 @@ test("D1 round 2 links plan/simulation dates, mortgage guidance and contextual c
   const hsa = getPayrollContributionPlans(restored).filter(plan => plan.allocation.positionId === "d1cc0000-0000-4000-8000-000000000005");
   expect(hsa).toHaveLength(1); expect(hsa[0]!.allocation.calculation).toMatchObject({ kind: "fixed", amount: expect.objectContaining({}) });
   if (hsa[0]!.allocation.calculation.kind === "fixed") expect(hsa[0]!.allocation.calculation.amount.amount.toString()).toBe("101");
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  const configuration = page.getByRole("region", { name: "Household execution configuration" });
+  await configuration.getByLabel("Cash-flow execution account", { exact: true }).selectOption({ label: "Everyday checking" });
+  await configuration.getByRole("heading", { name: "Investment execution configuration" }).locator("..").getByLabel("Execution owner").selectOption({ label: "Taylor Example" });
+  await configuration.getByRole("heading", { name: "Debt execution configuration" }).locator("..").getByLabel("Execution owner").selectOption({ label: "Taylor Example" });
+  const importedMortgage = configuration.getByRole("group", { name: "Example mortgage" });
+  await importedMortgage.getByLabel("Payment anchor", { exact: true }).fill("2022-02-01");
+  await importedMortgage.getByRole("button", { name: "Calculate schedule: use 360 payments from first payment through recorded maturity", exact: true }).click();
+  await expect(importedMortgage.getByLabel("Total payment count", { exact: true })).toHaveValue("360");
+  await importedMortgage.getByLabel("Funding account", { exact: true }).selectOption({ label: "Everyday checking" });
+  await importedMortgage.getByLabel("Settlement priority", { exact: true }).fill("1");
+  await configuration.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
+  const stopped = page.getByRole("alert", { name: "Forecast stopped early" });
+  await expect(stopped).toContainText("Results end at 2027-01-01", { timeout: 30_000 });
+  await expect(stopped).toContainText("contribution eligibility facts and statutory limits cover 2026 only");
+  await expect(page.getByRole("figure", { name: "Household financial outlook chart" })).toContainText("No values are modeled through the requested end 2036-01-01");
+  const primaryMessages = await status.locator("[data-diagnostic-root]").allTextContents();
+  expect(new Set(primaryMessages).size).toBe(primaryMessages.length);
+  await status.getByText("Technical diagnostic details", { exact: true }).click();
+  const roots = await status.locator("details details > summary").allTextContents();
+  expect(roots.filter(root => root.includes("PFA-TAX-009")).every(root => /rule_selection|local_residence_jurisdiction|canonical_rule_reference|payment_funding|settlement_timing|legal_base_or_component/.test(root))).toBe(true);
   expect(errors).toEqual([]);
 });
 
@@ -508,7 +541,7 @@ test("R4 UAT groups cash separately from investment account wrappers and holding
   await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
   const retirementAccount = page.locator(".object-card").filter({ has: page.locator("strong").filter({ hasText: /^Workplace retirement$/ }) });
   await expect(retirementAccount.getByRole("button", { name: /Workplace retirement/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /RETIREMENT-DEMO/ })).toBeVisible();
+  await expect(page.locator("button.card-main").filter({ hasText: /RETIREMENT-DEMO/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Everyday checking/ })).toHaveCount(0);
   await expect(page.getByText(/Investment holdings are assets too/)).toBeVisible();
   await page.getByRole("button", { name: "Property & other assets", exact: true }).click();
@@ -645,7 +678,7 @@ test("R4 UAT normal investment and spending editors cannot author known unsuppor
   const request = await status.getAttribute("data-request-id");
   await page.getByRole("button", { name: "Net Worth", exact: true }).click();
   await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
-  await page.getByRole("button", { name: /RETIREMENT-DEMO/ }).click();
+  await page.locator("button.card-main").filter({ hasText: /RETIREMENT-DEMO/ }).click();
   const editor = page.getByRole("dialog", { name: "Edit Investment" });
   await editor.getByText("Expert model details", { exact: true }).click();
   await expect(editor.locator('input[aria-label="Expected return"], input[aria-label="Volatility"]')).toHaveCount(0);
@@ -682,7 +715,7 @@ for (const [field, value, code, message] of [
     await expect(standalone.locator("pre")).toContainText(code);
     await page.getByRole("button", { name: "Net Worth", exact: true }).click();
     await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
-    await page.getByRole("button", { name: /RETIREMENT-DEMO/ }).click();
+    await page.locator("button.card-main").filter({ hasText: /RETIREMENT-DEMO/ }).click();
     const editor = page.getByRole("dialog", { name: "Edit Investment" });
     await editor.getByText("Expert model details", { exact: true }).click();
     const label = field === "expected_return" ? "Expected return" : "Volatility";
