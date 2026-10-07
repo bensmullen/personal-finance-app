@@ -11,7 +11,7 @@ export function PercentageInput({ label, value, onChange }: { label: string; val
   const [text, setText] = useState(display);
   useEffect(() => { if (!value.startsWith("Invalid percentage:")) setText(display()); }, [value]);
   const valid = text === "" || /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text);
-  return <div style={{ minWidth: 0, maxWidth: "32rem" }}>
+  return <div style={{ minWidth: 0, width: "100%", maxWidth: "32rem" }}>
     <label style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem", minWidth: 0, writingMode: "horizontal-tb", wordBreak: "normal" }}>
       <span style={{ minWidth: "10rem", flex: "1 1 12rem" }}>{label} (%)</span>
       <input aria-label={label} inputMode="decimal" aria-invalid={!valid} value={text}

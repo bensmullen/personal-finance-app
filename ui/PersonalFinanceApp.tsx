@@ -755,7 +755,7 @@ export function PersonalFinanceApp() {
             </strong>
           </div>
         </nav>
-        <main id="main-content" tabIndex={-1}>
+        <main id="main-content" tabIndex={-1} style={{ minWidth: 0 }}>
           <ForecastStatus label="Household forecast" state={interactive.baseline} />
           {interactive.available ? <button className="primary" onClick={runHouseholdForecast}>Update forecast</button> : <section className="panel capability" aria-label="Forecast setup checklist">
             <h2>Needs setup · household forecast not run</h2>
