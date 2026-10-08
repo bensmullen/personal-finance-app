@@ -21,6 +21,7 @@ import { capability, EXACT_DECIMAL, ASSET_TYPES, ASSET_VALUATION_METHODS, canoni
 
 /** Application boundary for the one reconciled PR20 execution input. */
 export interface HouseholdProjectionCompilerRequest {
+  readonly forecastLawPolicy?: "projected_current_law";
   readonly tax?: HouseholdTaxCompilerRequest;
   readonly cashFlow?: CashFlowCompilerRequest;
   readonly investments?: InvestmentCompilerRequest;
@@ -35,6 +36,7 @@ export interface CompiledStandaloneAsset {
 }
 
 export interface CompiledHouseholdProjection {
+  readonly projectedLaw?: readonly { readonly jurisdiction: string; readonly baseYear: number; readonly baseRuleId: string; readonly from: string; readonly until: string }[];
   readonly nonInvestmentPositionIds?: readonly string[];
   readonly participants?: readonly HouseholdKernelParticipant[];
   readonly executionKernel?: CompiledHouseholdKernel;
@@ -60,8 +62,23 @@ const invalid = <T>(code: string, message: string): CompileResult<T> => ({ statu
 const unsupported = <T>(diagnostics: readonly CapabilityDiagnostic[]): CompileResult<T> => ({ status: "unsupported", diagnostics: Object.freeze([...diagnostics]) });
 
 const domainDiagnostic = (domain: string): CapabilityDiagnostic => capability("HOUSEHOLD_DOMAIN_REQUEST_REQUIRED", `The in-scope ${domain} domain has authored economics but no execution configuration was supplied.`, "household_projection", "Household", undefined, domain);
+// Account is always authoritative, including when legacy owner data is retained.
+const ownerFact = (model: PortableModelEnvelope, object: CanonicalObject, type: string) =>
+  type === "Investment"
+    ? objects(model, "Account").find(account => canonicalId(account, "account_id") === canonicalId(object, "account_id"))?.owner_id
+    : object.owner_id;
+const validateLegacyInvestmentOwner = (model: PortableModelEnvelope, object: CanonicalObject, scope: HouseholdScope, id: string): CompileResult<true> => {
+  if (object.owner_id != null) {
+    const legacy = resolveOwnerScope(model, object.owner_id, scope, "Investment", id);
+    if (legacy.status !== "compiled") return legacy;
+    const accountOwner = ownerFact(model, object, "Investment");
+    if (typeof accountOwner === "string" && (object.owner_id as string).toLowerCase() !== accountOwner.toLowerCase())
+      return { status: "invalid_model", diagnostics: Object.freeze([{ severity: "error", code: "INVESTMENT_LEGACY_OWNER_CONFLICT", message: `Investment ${id} legacy owner_id conflicts with its Account owner. Remove or correct the legacy owner data.`, entityType: "Investment", entityId: id, fieldPath: "owner_id" }]) };
+  }
+  return { status: "compiled", value: true, diagnostics: Object.freeze([]) };
+};
 const activeOwner = (model: PortableModelEnvelope, object: CanonicalObject, scope: HouseholdScope, type: string, id: string): boolean => {
-  const result = resolveOwnerScope(model, object.owner_id, scope, type, id);
+  const result = resolveOwnerScope(model, ownerFact(model, object, type), scope, type, id);
   return result.status === "compiled" && result.value === "in_scope";
 };
 
@@ -73,7 +90,11 @@ const compileStandaloneAssets = (model: PortableModelEnvelope, baseCurrency: str
   for (const type of ["Investment", "Asset"] as const) for (const item of objects(model, type)) {
     const id = canonicalId(item, `${type.toLowerCase()}_id`);
     if (id === undefined) continue;
-    const owner = resolveOwnerScope(model, item.owner_id, scopeResult.value, type, id);
+    if (type === "Investment") {
+      const legacy = validateLegacyInvestmentOwner(model, item, scopeResult.value, id);
+      if (legacy.status !== "compiled") return legacy;
+    }
+    const owner = resolveOwnerScope(model, ownerFact(model, item, type), scopeResult.value, type, id);
     if (owner.status !== "compiled") return owner;
   }
   let currency: Currency;
@@ -136,7 +157,11 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   for (const type of ["Income", "Expense", "Investment", "Liability"] as const) for (const item of objects(model, type)) {
     const id = canonicalId(item, `${type.toLowerCase()}_id`);
     if (id === undefined) continue;
-    const owner = resolveOwnerScope(model, item.owner_id, scope.value, type, id);
+    if (type === "Investment") {
+      const legacy = validateLegacyInvestmentOwner(model, item, scope.value, id);
+      if (legacy.status !== "compiled") return legacy;
+    }
+    const owner = resolveOwnerScope(model, ownerFact(model, item, type), scope.value, type, id);
     if (owner.status !== "compiled") return owner;
   }
   let spouseHsaScope = false;
@@ -173,8 +198,11 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   if (scenarios.size !== 1 || horizons.size !== 1 || currencies.size !== 1 || households.size !== 1 || owners.size !== 1 || starts.size !== 1 || ends.size !== 1 || asOfs.size > 1) return invalid("HOUSEHOLD_COMPILER_DISAGREEMENT", "Participating compilers must agree on Household, execution owner, currency, scenario, as-of boundary, and exact horizon.");
   const standalone = compileStandaloneAssets(model, firstBoundary.baseCurrency, firstBoundary.simulationStart, firstBoundary.simulationEnd);
   if (standalone.status !== "compiled") return standalone;
-  const tax = compileHouseholdTax(model, request.tax);
+  const tax = compileHouseholdTax(model, { ...request.tax, ...(request.forecastLawPolicy === "projected_current_law" ? { projectedCurrentLawThrough: firstBoundary.simulationEnd } : {}) });
   if (tax.status !== "compiled") return tax;
+  const taxLocations = [...tax.value.incomes.flatMap(income => [...income.residence, ...income.work]),
+    ...objects(model, "Person").filter(person => scope.value.memberIds.includes(canonicalId(person, "person_id") ?? "")).flatMap(person => (person.residence_jurisdiction_periods ?? []) as readonly CanonicalObject[])];
+  const taxJurisdictions = new Set(taxLocations.flatMap(taxLocation => [String(taxLocation.state_jurisdiction).replace(/^US-/, "US:"), String(taxLocation.local_jurisdiction ?? "")]));
   const domains = hasDomainMechanics(model) ? compileDomainMechanics(model, {
     baseCurrency: firstBoundary.baseCurrency, asOf: firstBoundary.asOf ?? firstBoundary.simulationStart,
     simulationStart: firstBoundary.simulationStart, simulationEnd: firstBoundary.simulationEnd,
@@ -194,14 +222,15 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
     ...(liabilities === undefined ? {} : { liabilities: liabilities.value.scenarioBindings }),
   });
   const value: CompiledHouseholdProjection = Object.freeze({
+    ...(request.forecastLawPolicy === undefined ? {} : { projectedLaw: tax.value.catalog.flatMap(rule => rule.provenance.type === "projected_current_law" && (tax.value.filingStatus === rule.filingStatus || rule.filingStatus === "all") && (rule.jurisdiction === "US:FEDERAL" || taxJurisdictions.has(rule.jurisdiction) || taxJurisdictions.has(rule.jurisdiction.replace(/:(WAGE|OPT)$/, ""))) ? [{ jurisdiction: rule.jurisdiction, baseYear: rule.provenance.baseYear, baseRuleId: String(rule.provenance.baseRuleId), from: rule.effectiveFrom, until: rule.effectiveUntil }] : []) }),
     nonInvestmentPositionIds: taxCreditPositionIds(tax.value),
     participants: Object.freeze([createHouseholdTaxParticipant({ ...tax.value, simulationStart: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`),
-      domainOperations: domains?.status === "compiled" ? domains.value.input.operations.map(item => ({ id: item.id, at: instant(item.at) })) : [] }),
+      domainOperations: domains?.status === "compiled" ? domains.value.input.operations.map(item => ({ id: item.id, at: instant(item.at) })).sort((a, b) => a.id.localeCompare(b.id)) : [] }),
       ...(domains?.status === "compiled" ? [domains.value.participant] : []),
       ...(mortgages.value ? [mortgages.value] : []),
       ...(durablePayrollAllocations(model).some(item => item.events.length > 0) ? [createWorkplaceEventParticipant(durablePayrollAllocations(model).flatMap(item => item.events))] : [])]),
-    ...(cash === undefined ? {} : { cashFlowInput: cash.value.input }),
-    ...(investments === undefined ? {} : { investmentInput: investments.value.input }),
+    ...(cash === undefined ? {} : { cashFlowInput: request.forecastLawPolicy === undefined ? cash.value.input : { ...cash.value.input, incomes: cash.value.input.incomes.map(income => ({ ...income, ...(income.payrollContributions === undefined ? {} : { payrollContributions: income.payrollContributions.map(allocation => ({ ...allocation, policy: { ...allocation.policy, forecastLawPolicy: "projected_current_law" as const } })) }) })) } }),
+    ...(investments === undefined ? {} : { investmentInput: request.forecastLawPolicy === undefined ? investments.value.input : { ...investments.value.input, purchases: investments.value.input.purchases.map(purchase => ({ ...purchase, ...(purchase.contribution === undefined ? {} : { contribution: { ...purchase.contribution, forecastLawPolicy: "projected_current_law" as const } }) })) } }),
     ...(liabilities === undefined ? {} : { liabilityInput: liabilities.value.input }),
     reconciledOpeningState: opening.value,
     reconciledPrimitiveState: primitive.value,

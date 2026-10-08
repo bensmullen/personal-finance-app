@@ -96,6 +96,8 @@ import {
 } from "./verticalSlice2.js";
 import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
 import { decideContribution, recordContribution, type ContributionPolicy } from "./contributions.js";
+import { projectedContributionDiagnostics } from "./contributionProjection.js";
+import type { TaxCapabilityDiagnostic } from "./tax/contracts.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -261,6 +263,7 @@ export interface PreparedVerticalSlice3Period {
 }
 
 export interface ExecutedVerticalSlice3Operation {
+  readonly taxDiagnostics?: readonly TaxCapabilityDiagnostic[];
   readonly state: AuthoritativeState;
   readonly primitiveState: PrimitiveRuntimeStateStore;
   readonly effects: readonly SemanticEffect[];
@@ -1327,10 +1330,10 @@ export const executePreparedVerticalSlice3Operation = (
   const contributionApplications = contributionDecision?.applications.map(application => Object.freeze({ ...application, result: application.result.accepted })) ?? [];
   summary?.traces(contributionApplications.flatMap(application => application.traceRefs ?? []));
   if (contributionDecision?.accepted.isZero()) {
-    if (contributionDecision.policy === "reject") failValidation({ severity: "error", code: issueCodes.contributionLimitApplied, message: "Contribution exceeds its applicable statutory capacity; select auto-cap explicitly to permit a partial amount.", entityType: "contribution", entityId: purchase!.id });
+    if (contributionDecision.policy === "reject" && !contributionDecision.incompleteFacts) failValidation({ severity: "error", code: issueCodes.contributionLimitApplied, message: "Contribution exceeds its applicable statutory capacity; select auto-cap explicitly to permit a partial amount.", entityType: "contribution", entityId: purchase!.id });
     const next = cloneAuthoritativeState(state);
     if (operation.descriptor.occurrenceIdentity !== undefined) registerAuthoritativeIdentity(next.identities, "generatedOccurrenceKeys", operation.descriptor.occurrenceIdentity);
-    return Object.freeze({ state: next, primitiveState, effects: Object.freeze([]), transactions: Object.freeze([]), contributionPrincipal: Money.zero(input.baseCurrency), fees: Money.zero(input.baseCurrency), ruleApplications: Object.freeze(contributionApplications), unrealizedGain: Money.zero(input.baseCurrency) });
+    return Object.freeze({ state: next, primitiveState, effects: Object.freeze([]), transactions: Object.freeze([]), contributionPrincipal: Money.zero(input.baseCurrency), fees: Money.zero(input.baseCurrency), ruleApplications: Object.freeze(contributionApplications), unrealizedGain: Money.zero(input.baseCurrency), ...(contributionDecision.incompleteFacts ? { taxDiagnostics: projectedContributionDiagnostics(contribution!, operation.descriptor.sequencingInstant) } : {}) });
   }
   const filtered: VerticalSlice3Input = Object.freeze({
     ...input,
@@ -1486,6 +1489,7 @@ export const runVerticalSlice3 = (
         effects.push(...result.effects);
         transactions.push(...result.transactions);
         ruleApplications.push(...result.ruleApplications);
+        diagnostics.push(...result.taxDiagnostics ?? []);
         contributionPrincipal = contributionPrincipal.plus(
           result.contributionPrincipal,
         );

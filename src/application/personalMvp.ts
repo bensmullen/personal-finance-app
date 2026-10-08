@@ -1806,6 +1806,22 @@ export const createGoldenHouseholdDraft = (): PersonalDraft => {
   });
 };
 
+/** Normal-user example supplies known synthetic facts. The original Golden
+ * fixture remains the audited unknown-tax-facts baseline for financial tests. */
+export const createGoldenHouseholdExampleDraft = (): PersonalDraft => {
+  const draft = createGoldenHouseholdDraft();
+  return withObjects(draft, {
+    ...draft.objects,
+    Person: (draft.objects.Person ?? []).map(value => ({ ...(value as JsonObject), filing_status: "single",
+      residence_jurisdiction_periods: [{ effective_date: "2026-01-01", state_jurisdiction: "US-NY" }],
+      tax_eligibility_periods: [{ effective_date: "2026-01-01", key: "federal_base_deduction_only", value: true }],
+    })),
+    Income: (draft.objects.Income ?? []).map(value => ({ ...(value as JsonObject),
+      work_service_jurisdiction_allocations: [{ effective_date: "2026-01-01", state_jurisdiction: "US-NY", allocation: "1" }],
+    })),
+  });
+};
+
 /** Compatibility fixture retained for scope-specific compiler callers. */
 export const createSyntheticPersonalDraft = (): PersonalDraft => {
   const golden = createGoldenHouseholdDraft();

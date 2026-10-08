@@ -7,6 +7,8 @@ import { portableHouseholdParticipant, restoreHouseholdParticipant, type Portabl
 // Composition boundary: domain codecs register factories; replay dispatch stays generic.
 import "../tax/replayCodec.js";
 import "../workplaceEvents.js";
+import "../domainMechanics.js";
+import "../mortgageLifecycle.js";
 
 type Wire = null | boolean | number | string | { readonly kind: string; readonly value: unknown };
 interface EncodingGraph { readonly identities: Map<object, Wire>; readonly content: Map<string, Wire>; readonly active: Set<object> }

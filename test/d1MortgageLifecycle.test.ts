@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { authorMortgageRefinance, compileMortgageLifecycle } from "../src/application/compiler/mortgageLifecycle.js";
 import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
 import { exportPersonalModelJson, importPersonalModelJson } from "../src/application/modelPortability.js";
@@ -14,6 +14,8 @@ import { money, Rate, rateConvention, RoundingPolicy, USD } from "../src/values/
 import type { OperationState } from "../src/simulation/r3/operations.js";
 import { compileHouseholdKernel } from "../src/simulation/r3/compiledHousehold.js";
 import { runHouseholdKernel } from "../src/simulation/householdExecution.js";
+import { createPortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
+import { canonicalSerialize } from "../src/simulation/run.js";
 
 const id = (n: number) => `d1b20000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const loan: FixedAmortizingLoan = {
@@ -30,6 +32,32 @@ const authored = (date = "2026-01-01") => authorMortgageRefinance(createGoldenHo
 const compile = (date = "2026-01-01", input = slice) => compileMortgageLifecycle(importPersonalModelJson(exportPersonalModelJson(authored(date))), input, ids.rootScenario, "2026-01-01", "2026-03-01");
 
 describe("D1-B VS4 refinance expected effects", () => {
+  it("restores mortgage lifecycle replay in a fresh codec registry without compiler import side effects", async () => {
+    const compiled = compile(); if (compiled.status !== "compiled" || !compiled.value) throw new Error("refinance fixture unavailable");
+    expect(compiled.value.portableCodec).toBe("mortgage-lifecycle/v1");
+    const before = opening();
+    const kernel = compileHouseholdKernel({ liabilityInput: slice, reconciledOpeningState: before.state, reconciledPrimitiveState: before.primitiveState, scenarioIdentity: ids.rootScenario, executionMonths: 2, scenarioBindings: {}, participants: [compiled.value] }, context.simulationStart);
+    const baseline = runHouseholdKernel({ kernel, runContext: context, resultTier: "detail" });
+    const summary = runHouseholdKernel({ kernel, runContext: context });
+    const artifact = JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(summary)));
+    vi.resetModules();
+    const freshReplay = await import("../src/simulation/r3/replayArtifact.js");
+    const restored = freshReplay.restorePortableHouseholdReplayArtifact(artifact);
+    const freshExecution = await import("../src/simulation/householdExecution.js");
+    const freshSerialize = (await import("../src/simulation/run.js")).canonicalSerialize;
+    const rerun = freshExecution.runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext, resultTier: "detail" });
+    expect(rerun.status).toBe("completed");
+    expect(freshSerialize(rerun.state)).toBe(canonicalSerialize(baseline.state));
+    expect(freshSerialize(rerun.primitiveState)).toBe(canonicalSerialize(baseline.primitiveState));
+    expect(freshSerialize(rerun.periods)).toBe(canonicalSerialize(baseline.periods));
+    expect(freshSerialize(restored.runMetadata)).toBe(canonicalSerialize(summary.runMetadata));
+    expect(rerun.state.liabilities[ids.mortgage]!.balance.amount.toString()).toBe("0");
+    expect(rerun.periods.map(period => period.netWorth.amount.toString())).toEqual(["4000", "4000"]);
+    for (const period of rerun.periods) {
+      const checkpoint = freshExecution.replayHouseholdForecastWindow(restored, period.period);
+      expect(freshSerialize(checkpoint.periods)).toBe(canonicalSerialize([baseline.periods.find(value => value.period.start === period.period.start)!]));
+    }
+  });
   it("reports replacement principal and debt service identically in the summary and detailed household paths", () => {
     const compiled = compile(); if (compiled.status !== "compiled" || !compiled.value) throw new Error("refinance fixture unavailable");
     const before = opening();

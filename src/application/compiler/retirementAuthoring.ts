@@ -35,6 +35,8 @@ export const authorCanonicalRetirementDate = (model: PortableModelEnvelope, inco
   if (income?.end_date != null) throw new Error("RETIREMENT_INDEPENDENT_INCOME_END_UNSUPPORTED");
   const roots = objects(model, "Scenario").filter(item => item.enabled === true && item.base_scenario_id == null);
   if (roots.length !== 1 || canonicalId(roots[0]!, "scenario_id") !== String(event.scenario_id).toLowerCase() || !Array.isArray(roots[0]!.event_ids) || !roots[0]!.event_ids.some(value => typeof value === "string" && value.toLowerCase() === eventId)) throw new Error("RETIREMENT_BASELINE_RELATIONSHIP_UNSUPPORTED");
+  const planStart = utcDate(roots[0]!.start_date), planEnd = utcDate(roots[0]!.end_date);
+  if ((planStart && utcDate(date)! < planStart) || (planEnd && utcDate(date)! >= planEnd)) throw new Error("Retirement date must be within the Current Plan horizon. Extend Current plan end first; retirement may be outside the simulation window.");
   return Object.freeze({ ...model, objects: Object.freeze({ ...model.objects, Event: Object.freeze(objects(model, "Event").map(item => canonicalId(item, "event_id") === eventId ? Object.freeze({ ...item, start_date: date }) : item)) }) });
 };
 

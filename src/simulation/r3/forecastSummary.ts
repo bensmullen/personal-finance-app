@@ -35,6 +35,9 @@ export interface HouseholdForecastSummaryPeriod {
 export const summarizeHouseholdPeriod = (result: HouseholdProjectionPeriodResult): HouseholdForecastSummaryPeriod => {
   const sink = new SummaryOperationSink(result.cash.currency);
   sink.traces(result.traceRefs);
+  // Payroll allocation rule provenance is attached to its posted transactions,
+  // while the recurring-income trace describes the gross recognition itself.
+  for (const transaction of result.transactions) sink.traces(transaction.traceRefs ?? []);
   const { sources, rules, assumptions, events } = sink.snapshot();
   return Object.freeze({
     ...(result.outputCapabilities === undefined ? {} : { outputCapabilities: result.outputCapabilities }),
