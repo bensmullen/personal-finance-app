@@ -2,6 +2,7 @@ import { ValidationError } from "../../diagnostics/index.js";
 import { domainId } from "../../identity/index.js";
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { createTaxCatalog } from "../../rules/tax/catalog.js";
+import { projectedCurrentLawCatalog } from "../../rules/tax/projection.js";
 import { alphaStateTaxCatalog, alphaLocalTaxCatalog, federal2024TaxCatalog, federal2026TaxCatalog } from "../../rules/tax/lawCatalog.js";
 import type { TaxCoreRule, FilingStatus } from "../../rules/tax/contracts.js";
 import { decimal } from "../../values/index.js";
@@ -19,6 +20,7 @@ import { activeTaxFact as active, resolveTaxEligibility } from "../../simulation
 export { activeTaxFact, resolveTaxEligibility } from "../../simulation/tax/facts.js";
 
 export interface HouseholdTaxCompilerRequest {
+  readonly projectedCurrentLawThrough?: string;
   readonly catalog?: readonly TaxCoreRule[];
   readonly fundingPolicy?: FundingPolicy;
   readonly refundAccountId?: AccountId;
@@ -119,7 +121,8 @@ export const compileHouseholdTax = (model: PortableModelEnvelope, request: House
     for (const at of allEligibility.map(item => item.effective_date)) resolveTaxEligibility(sharedEligibility, at);
     for (const entries of personEligibility.values()) for (const at of [...sharedEligibility, ...entries].map(item => item.effective_date)) resolveTaxEligibility([...sharedEligibility, ...entries], at);
     for (const income of incomes) for (const at of allEligibility.map(item => item.effective_date)) resolveTaxEligibility([...sharedEligibility, ...income.eligibility], at);
-    const catalog = createTaxCatalog(request.catalog ?? [...federal2024TaxCatalog, ...federal2026TaxCatalog, ...alphaStateTaxCatalog, ...alphaLocalTaxCatalog]);
+    const verified = request.catalog ?? [...federal2024TaxCatalog, ...federal2026TaxCatalog, ...alphaStateTaxCatalog, ...alphaLocalTaxCatalog];
+    const catalog = request.projectedCurrentLawThrough === undefined ? createTaxCatalog(verified) : projectedCurrentLawCatalog(verified, request.projectedCurrentLawThrough);
     const accountTaxTreatments: Record<string, string> = {};
     for (const account of objects(model, "Account")) {
       const id = canonicalId(account, "account_id"); if (!id) continue;

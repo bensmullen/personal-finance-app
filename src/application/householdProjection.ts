@@ -60,8 +60,11 @@ import { deriveHouseholdClosingMetrics } from "../simulation/householdProjection
 import { positionMarketValue } from "../valuation/index.js";
 import { utcMonthDifference } from "../time/index.js";
 import type { HouseholdContentionPolicy } from "../simulation/intraperiodScheduler.js";
+import { compileForecastTaxSettlements, type TaxForecastSettlementSetup } from "./taxForecastSetup.js";
 
 export interface PersonalHouseholdSessionExecutionConfiguration {
+  readonly forecastLawPolicy?: "projected_current_law";
+  readonly taxSettlementSetup?: TaxForecastSettlementSetup;
   readonly baseCurrency: string;
   readonly asOf: string;
   readonly dataCutoff: string;
@@ -104,6 +107,8 @@ export const createHouseholdForecastRequest = (
     dataCutoff: configuration.dataCutoff,
     runIdentity,
     compiler: Object.freeze({
+      ...(configuration.forecastLawPolicy === undefined ? {} : { forecastLawPolicy: configuration.forecastLawPolicy }),
+      ...(configuration.taxSettlementSetup === undefined ? {} : { tax: compileForecastTaxSettlements(configuration.taxSettlementSetup, configuration.simulationStart, configuration.simulationEnd) }),
       cashFlow: Object.freeze({
         ...common,
         sameInstantCashFlowOrder: configuration.sameInstantCashFlowOrder,
@@ -249,6 +254,7 @@ export type PersonalHouseholdForecastReadModel =
   | ({
       readonly scope: "household";
       readonly status: "completed" | "incomplete";
+      readonly projectedLaw?: CompiledHouseholdProjection["projectedLaw"];
       readonly points: readonly HouseholdForecastPoint[];
       readonly contributionCapacities: ReturnType<typeof contributionCapacityReadModel>;
       readonly contingentPositions: readonly { readonly positionId: string; readonly accountId: string; readonly value: HouseholdMoneyReadModel }[];
@@ -702,6 +708,7 @@ const toReadModel = (
       }),
     ),
     points: Object.freeze(points),
+    ...(compiled.projectedLaw === undefined ? {} : { projectedLaw: compiled.projectedLaw }),
     contributionCapacities: contributionCapacityReadModel(model, result.state),
     contingentPositions: Object.freeze(Object.values(result.state.contingentPositions ?? {}).map(entry => ({ positionId: String(entry.positionId), accountId: String(result.state.positions[entry.positionId]!.accountId), value: moneyDto(result.state.positions[entry.positionId]!.price.times(entry.quantity.amount)) }))),
     liquidityShortfalls: Object.freeze(

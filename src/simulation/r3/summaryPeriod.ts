@@ -9,6 +9,7 @@ import type { HouseholdForecastSummaryPeriod } from "./forecastSummary.js";
 import { householdExecutionMetrics } from "./metrics.js";
 import { mergeOutputCapabilities } from "./capabilities.js";
 import { realizedMortgageLoans } from "../mortgageLifecycle.js";
+import { SummaryOperationSink } from "./summarySink.js";
 
 /** Materializes display facts directly, without a detailed period adapter. */
 export const createHouseholdSummaryPeriod = (period: Period, opening: AuthoritativeState, closing: AuthoritativeState,
@@ -33,16 +34,22 @@ export const createHouseholdSummaryPeriod = (period: Period, opening: Authoritat
   const interestIds = [...(kernel.liabilities?.interestIds ?? []), ...realizedLoans.map(loan => loan.interestPayableLiabilityId)];
   const principalBefore = sum(principalIds.map(id => opening.liabilities[id]?.balance ?? zero));
   const principalAfter = sum(principalIds.map(id => closing.liabilities[id]?.balance ?? zero));
-  const rules = [...new Set(operations.flatMap(op => op.evidence.rules))].sort();
-  const assumptions = [...new Set(operations.flatMap(op => op.evidence.assumptions))].sort();
-  const events = [...new Set(operations.flatMap(op => op.evidence.events))].sort();
+  const extensionEvidence = new SummaryOperationSink(currency);
+  for (const fact of facts) {
+    extensionEvidence.traces(fact.traceRefs ?? []);
+    for (const tx of fact.transactions ?? []) extensionEvidence.traces(tx.traceRefs ?? []);
+  }
+  const extension = extensionEvidence.snapshot();
+  const rules = [...new Set([...operations.flatMap(op => op.evidence.rules), ...extension.rules])].sort();
+  const assumptions = [...new Set([...operations.flatMap(op => op.evidence.assumptions), ...extension.assumptions])].sort();
+  const events = [...new Set([...operations.flatMap(op => op.evidence.events), ...extension.events])].sort();
   const outputCapabilities = mergeOutputCapabilities(facts.map(fact => fact.outputCapabilities));
   return Object.freeze({ period: Object.freeze({ ...period }), statements: deriveStatementsFromFlows(closing, flows.snapshot(), currency),
     ...(outputCapabilities === undefined ? {} : { outputCapabilities }),
     cash: metrics.cash, investmentValue: metrics.investmentValue, assets: metrics.totalAssets, liabilities: metrics.totalLiabilities, netWorth: metrics.netWorth,
     constraintOutcomes: Object.freeze([...cash.flatMap(op => op.constraintOutcomes), ...debts.flatMap(op => op.constraintOutcomes), ...facts.flatMap(op => op.constraintOutcomes ?? [])]),
     liquidityShortfalls: Object.freeze([...cash.flatMap(op => op.liquidityShortfalls), ...debts.flatMap(op => op.liquidityShortfalls), ...facts.flatMap(op => op.liquidityShortfalls ?? [])]),
-    explanationBindings: Object.freeze({ sources: mergeTraceRefs(...operations.map(op => op.evidence.sources)) ?? Object.freeze([]),
+    explanationBindings: Object.freeze({ sources: mergeTraceRefs(...operations.map(op => op.evidence.sources), extension.sources) ?? Object.freeze([]),
       rules: Object.freeze(rules), assumptions: Object.freeze(assumptions), events: Object.freeze(events) }),
     ...(cash.length === 0 ? {} : { recurringIncomeRecognized: sum(cash.map(op => op.recurringIncomeRecognized)),
       recurringExpenseRecognized: sum(cash.map(op => op.recurringExpenseRecognized)), expenseCashSettlement: sum(cash.map(op => op.expenseCashSettlement)),

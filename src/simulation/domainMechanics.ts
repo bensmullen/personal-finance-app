@@ -279,7 +279,13 @@ export const executeDomainOperation = (opening: OperationState, input: DomainMec
 export const createDomainMechanicsParticipant = (configuration: DomainMechanicsInput): HouseholdKernelParticipant => {
   const input = immutableConfiguration(configuration);
   if (new Set(input.operations.map(item => item.id)).size !== input.operations.length) fail("DOMAIN_ID_DUPLICATE", "Each operation requires one stable identity.");
-  return Object.freeze({ id: "domain_mechanics", version: "d1b-v1", portableCodec: "domain-mechanics/v1", economicInputs: input,
+  // Canonicalize unordered collections for identity/transport only. Authored
+  // instant/order dependencies, and each holding's lot-selection order, remain.
+  const economicInputs = immutableConfiguration({ ...input,
+    holdings: [...input.holdings].sort((a, b) => a.id.localeCompare(b.id)),
+    operations: [...input.operations].sort((a, b) => a.id.localeCompare(b.id)),
+  });
+  return Object.freeze({ id: "domain_mechanics", version: "d1b-v1", portableCodec: "domain-mechanics/v1", economicInputs,
     observe: (_descriptor, facts, runtime) => {
       if (!facts.acquiredLots?.length) return runtime;
       const prior = (runtime.domainMechanics as DomainRuntime | undefined) ?? { lots: Object.fromEntries(input.holdings.map(item => [item.id, item.lots])), basis: Object.fromEntries(input.holdings.map(item => [item.id, item.afterTaxBasis ?? "0"])), receipts: {} };

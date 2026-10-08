@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { calculationFingerprint, INTERACTIVE_ENGINE_VERSION } from "../../src/application/interactiveForecast.js";
 import { createHouseholdForecastRequest, type PersonalHouseholdSessionExecutionConfiguration } from "../../src/application/householdProjection.js";
 import { resolvePersonalSessionSettings, type PersonalDraft, type PersonalSessionSettings } from "../../src/application/personalMvp.js";
+import { simulationWindowProblem } from "../../src/application/forecastSetup.js";
 import { applicationPerformanceRegistry } from "../../src/application/performance.js";
 import { ForecastController, type ForecastSubmission, type ForecastView, type ForecastWorkerPort } from "./controller.js";
 
@@ -11,14 +12,14 @@ const scheduler = {
   clear: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
-export function useInteractiveForecast(model: PersonalDraft | undefined, configuration: PersonalHouseholdSessionExecutionConfiguration | undefined, settings: PersonalSessionSettings) {
+export function useInteractiveForecast(model: PersonalDraft | undefined, configuration: PersonalHouseholdSessionExecutionConfiguration | undefined, settings: PersonalSessionSettings, replacementIdentity = 0) {
   const [baseline, setBaseline] = useState<ForecastView>({ lifecycle: "idle", pending: false, stale: false });
   const [comparison, setComparison] = useState<ForecastView>({ lifecycle: "idle", pending: false, stale: false });
   const [baselineChannel] = useState(() => new ForecastController(makeWorker, scheduler, setBaseline, (record) => applicationPerformanceRegistry.record(record)));
   const [comparisonChannel] = useState(() => new ForecastController(makeWorker, scheduler, setComparison, (record) => applicationPerformanceRegistry.record(record)));
   const effectiveConfiguration = useMemo(() => configuration === undefined ? undefined : { ...configuration, ...settings }, [configuration, settings]);
   const input = useMemo((): Extract<ForecastSubmission, { operation: "baseline_forecast" }> | undefined => {
-    if (!model || !effectiveConfiguration || !resolvePersonalSessionSettings(settings, "cash_flow").request) return undefined;
+    if (!model || !effectiveConfiguration || !resolvePersonalSessionSettings(settings, "cash_flow").request || simulationWindowProblem(model, settings.simulationStart, settings.simulationEnd)) return undefined;
     try {
       const request = createHouseholdForecastRequest(effectiveConfiguration, crypto.randomUUID());
       const fingerprint = calculationFingerprint("baseline_forecast", model, request);
@@ -33,10 +34,14 @@ export function useInteractiveForecast(model: PersonalDraft | undefined, configu
   }, [model, effectiveConfiguration]);
   // Only economic changes trigger execution. Navigation, pages and explanations do not.
   useLayoutEffect(() => {
+    baselineChannel.reset();
+    comparisonChannel.reset();
+  }, [replacementIdentity, baselineChannel, comparisonChannel]);
+  useLayoutEffect(() => {
     if (input) baselineChannel.submit(input);
-    else baselineChannel.invalidate();
+    else baselineChannel.invalidate("Complete forecast setup to run this household.");
     comparisonChannel.invalidate("Comparison inputs changed. Run a new comparison.");
-  }, [input?.fingerprint, baselineChannel, comparisonChannel]);
+  }, [input?.fingerprint, replacementIdentity, baselineChannel, comparisonChannel]);
   useEffect(() => () => { baselineChannel.dispose(); comparisonChannel.dispose(); }, [baselineChannel, comparisonChannel]);
 
   const compare = (operation: "scenario_comparison" | "major_asset_debt_comparison", economicInputs: unknown) => {

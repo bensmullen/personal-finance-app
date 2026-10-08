@@ -127,6 +127,25 @@ describe("R2 request channels", () => {
       controller.dispose();
     }
   });
+  it("clears cross-model results, diagnostics, model and cache while suppressing delayed responses", () => {
+    for (const operation of ["baseline_forecast", "scenario_comparison"] as const) {
+      const { controller, workers } = channel();
+      const input = operation === "baseline_forecast" ? submission() : { ...submission(), operation, intents: [] } as ForecastSubmission;
+      controller.submit(input, true);
+      const old = { ...financial("incomplete"), diagnostics: [{ severity: "warning" as const, code: "OLD_MODEL_ONLY", message: "Old household" }] };
+      workers[0]!.complete(old);
+      controller.submit({ ...input, fingerprint: "pending-old-model" }, true);
+      controller.reset();
+      expect(controller.state).toEqual({ lifecycle: "idle", pending: false, stale: false });
+      workers[1]!.complete(old);
+      expect(controller.state.lastGoodResult).toBeUndefined();
+      expect(controller.state.resultModel).toBeUndefined();
+      expect(controller.state.latestResult).toBeUndefined();
+      controller.submit(input, true); // Same model ID/fingerprint cannot inherit the old cache.
+      expect(workers).toHaveLength(3);
+      controller.dispose();
+    }
+  });
   it("debounces exactly 300 ms and manual recalculation supersedes pending and active work", () => {
     vi.useFakeTimers();
     const { controller, workers } = channel();

@@ -9,6 +9,8 @@ import { compileOpeningContributionUsage, savedOpeningContributionUsage } from "
 import { historicalContributionScopes } from "./contributionHistoryScopes.js";
 
 export interface ContributionCapacityReadModel {
+  readonly provenance?: "projected_current_law";
+  readonly lawVersion?: string;
   readonly accountId: string; readonly year: number; readonly bucketIdentity: string; readonly categories: readonly string[];
   readonly annualLimit?: string; readonly yearToDate?: string; readonly remaining?: string; readonly diagnostics: readonly string[];
   readonly openingUsage?: string; readonly forecastUsage?: string;
@@ -41,6 +43,19 @@ export const contributionCapacityReadModel = (model: PortableModelEnvelope, stat
   for (const account of objects(model, "Account")) if (["traditional_ira", "roth_ira", "traditional_401k", "roth_401k", "hsa", "hsa_investment"].includes(String(account.account_type)) && ![...rows.values()].some(row => row.accountId === account.account_id)) {
     const accountId = String(account.account_id);
     rows.set(accountId, { accountId, year: 2026, bucketIdentity: "unconfigured", categories: [], diagnostics: ["Author annual eligibility facts and contribution scope to determine capacity."] });
+  }
+  // Future rows read the committed authoritative buckets, including their law
+  // provenance. They never recalculate capacity with the opening year's facts.
+  const projectedEntries = Object.values(state?.contributions ?? {}).filter(entry => entry.source !== "opening");
+  const projectedUsage = new Map<string, Money>();
+  for (const entry of projectedEntries) for (const bucket of entry.buckets) if (bucket.facts?.provenance === "projected_current_law") projectedUsage.set(bucket.identity, (projectedUsage.get(bucket.identity) ?? Money.zero(USD)).plus(bucket.amount));
+  for (const entry of projectedEntries) for (const bucket of entry.buckets) {
+    if (bucket.facts?.provenance !== "projected_current_law") continue;
+    const year = Number(entry.at.slice(0, 4));
+    const used = projectedUsage.get(bucket.identity)!;
+    rows.set(`${entry.accountId}:${bucket.identity}`, { accountId: entry.accountId, year, bucketIdentity: bucket.identity,
+      categories: plans.flatMap(plan => plan.policy.limits).find(binding => `${binding.target.targetType}:${binding.target.targetId}:${binding.bucketKey}:${year}` === bucket.identity)?.includedCharacters ?? [entry.character],
+      annualLimit: bucket.annualLimit.amount.toString(), openingUsage: "0", forecastUsage: used.amount.toString(), yearToDate: used.amount.toString(), remaining: used.compare(bucket.annualLimit) >= 0 ? "0" : bucket.annualLimit.minus(used).amount.toString(), diagnostics: [], provenance: "projected_current_law", lawVersion: String(bucket.facts.lawVersion) });
   }
   return Object.freeze([...rows.values()].sort((a, b) => `${a.accountId}:${a.bucketIdentity}`.localeCompare(`${b.accountId}:${b.bucketIdentity}`)));
 };
