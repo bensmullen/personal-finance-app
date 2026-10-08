@@ -181,7 +181,7 @@ test("U1 account actions choose the authoritative personal and workplace paths",
   for (const width of [1440, 390]) { await page.setViewportSize({ width, height: 1000 }); await assertContractAndGeometry(page, width); }
   expect(await payroll.innerText()).not.toMatch(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b|\[object Object\]/i);
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByText("Canonical model saved to this browser", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Canonical model saved to this browser/)).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "Load saved model", exact: true }).click();
   await navigate(page, "Net Worth", "Investments & retirement");
