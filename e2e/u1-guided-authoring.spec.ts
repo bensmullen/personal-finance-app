@@ -153,6 +153,8 @@ test("U1 account actions choose the authoritative personal and workplace paths",
   await personal.getByLabel("Purchase amount", { exact: true }).fill("75.001");
   await personal.getByRole("button", { name: "Save investment purchase", exact: true }).click();
   await expect(personal.getByRole("alert").filter({ hasText: "currency precision" })).toBeVisible();
+  await personal.getByRole("button", { name: "Review purchase amount", exact: true }).click();
+  await expect(personal.getByLabel("Purchase amount", { exact: true })).toBeFocused();
   await expect(personal.getByLabel("Purchase amount", { exact: true })).toHaveValue("75.001");
   await expect(personal.getByText(/^Saved purchase: SPOT-DEMO/)).toHaveCount(0);
   await personal.getByLabel("Purchase amount", { exact: true }).fill("75.00");

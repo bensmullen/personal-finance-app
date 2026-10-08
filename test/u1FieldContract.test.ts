@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { FINANCIAL_FIELDS, U1_INVENTORY, ENTITY_FIELD_INVENTORY, entityField, financialField, fieldProblem, compareDecimal, unvestedProblem } from "../ui/authoring/fieldContract.js";
 import { getPersonalEditorMetadata } from "../src/application/personalMvp.js";
 import { entityRelationshipProblems } from "../ui/authoring/entityProblems.js";
+import { importPersonalModelJson } from "../src/application/modelPortability.js";
+import { objectEntries } from "../ui/entityPresentation.js";
 import { payrollCharacters, authoringFailure } from "../ui/authoring/contributionChoices.js";
 import { currentPlan, simulationWindowProblem, replaceCurrentPlanHorizon } from "../src/application/forecastSetup.js";
 import { createGoldenHouseholdExampleDraft } from "../src/application/personalMvp.js";
@@ -51,6 +53,16 @@ describe("U1 guided authoring contract", () => {
     for (const reason of ["Compiler failed at 90000000-0000-4000-8000-000000000001", "invalid payload {input_bindings: []}", "PAYROLL_RATE_INVALID", "IRA_CONTRIBUTION_FACTS_REQUIRED"]) {
       expect(authoringFailure(new Error(reason))).not.toMatch(/90000000|Compiler|input_bindings|PAYROLL_|IRA_/);
     }
+  });
+  it("protects payroll and IRA ownership when editing existing financial objects", () => {
+    const draft = importPersonalModelJson(readFileSync(new URL("./fixtures/d1-integrated-uat-model.json", import.meta.url), "utf8"));
+    const salary = objectEntries(draft, "Income").find(item => item.income_type === "salary")!;
+    expect(entityRelationshipProblems("Income", { ...salary, gross_or_net: "net" }, draft).gross_or_net).toContain("payroll contributions");
+    const account = objectEntries(draft, "Account").find(item => item.account_type === "traditional_401k")!;
+    expect(entityRelationshipProblems("Account", { ...account, owner_id: "other-owner" }, draft).owner_id).toContain("salary owner");
+    const ira = objectEntries(draft, "Account").find(item => item.account_type === "roth_ira")!;
+    expect(entityRelationshipProblems("Account", { ...ira, owner_id: "other-owner" }, draft).owner_id).toContain("IRA eligibility");
+    expect(entityRelationshipProblems("Account", account, draft)).toEqual({});
   });
   it("requires complete metadata for every inventoried common and advanced control", () => {
     expect(new Set(U1_INVENTORY.fields).size).toBe(U1_INVENTORY.fields.length);

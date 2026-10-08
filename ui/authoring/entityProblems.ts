@@ -1,5 +1,6 @@
-import { getPayrollContributionPlans, getPersonalPurchasePlans, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../../src/application/personalMvp.js";
+import { getPayrollContributionPlans, getPersonalPurchasePlans, getPayrollOpeningUnvestedUnits, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../../src/application/personalMvp.js";
 import { objectEntries, isCashFlowPaymentAccount } from "../entityPresentation.js";
+import { unvestedProblem } from "./fieldContract.js";
 
 /** Bounded relationship checks only. Financial calculations stay in D1. */
 export function entityRelationshipProblems(type: PersonalObjectType, item: JsonObject, draft: PersonalDraft): Readonly<Record<string, string>> {
@@ -16,11 +17,17 @@ export function entityRelationshipProblems(type: PersonalObjectType, item: JsonO
   if (type === "Expense" && item.payment_account_id && !objectEntries(draft, "Account").some(account => account.account_id === item.payment_account_id && isCashFlowPaymentAccount(account))) errors.payment_account_id = "Choose checking, savings, or cash to pay spending.";
   try {
     const payroll = getPayrollContributionPlans(draft);
+    if (type === "Account" && payroll.some(plan => plan.allocation.accountId === item.account_id && objectEntries(draft, "Income").find(income => income.income_id === plan.incomeId)?.owner_id !== item.owner_id)) errors.owner_id = "This account receives payroll contributions. Keep the salary owner or revise those contributions first.";
+    if (type === "Account" && getPersonalPurchasePlans(draft).some(plan => plan.contribution && objectEntries(draft, "Investment").find(investment => investment.investment_id === plan.investmentId)?.account_id === item.account_id && plan.contribution.personId !== item.owner_id)) errors.owner_id = "This account has saved IRA eligibility for its owner. Revise those contributions before changing the owner.";
     if (type === "Income" && payroll.some(plan => plan.incomeId === item.income_id)) {
       if (item.gross_or_net === "net") errors.gross_or_net = "This salary funds payroll contributions. Keep gross pay or revise those contributions first.";
       if (payroll.some(plan => plan.incomeId === item.income_id && objectEntries(draft, "Account").find(account => account.account_id === plan.allocation.accountId)?.owner_id !== item.owner_id)) errors.owner_id = "Keep the contribution account owner or revise the payroll contributions first.";
     }
     if (type === "Investment") {
+      if (typeof item.investment_id === "string" && typeof item.quantity === "string") {
+        const problem = unvestedProblem(getPayrollOpeningUnvestedUnits(draft, item.investment_id), item.quantity);
+        if (problem) errors.quantity = "Opening units cannot be smaller than the recorded unvested units. Review employer vesting in Current Plan.";
+      }
       const account = objectEntries(draft, "Account").find(account => account.account_id === item.account_id);
       const original = objectEntries(draft, "Investment").find(value => value.investment_id === item.investment_id);
       if (original && original.account_id !== item.account_id && (payroll.some(plan => plan.allocation.positionId === item.investment_id) || getPersonalPurchasePlans(draft).some(plan => plan.investmentId === item.investment_id))) errors.account_id = "This holding has saved contributions. Revise those contributions before changing its account.";

@@ -2711,8 +2711,16 @@ function DiagnosticList({
   );
 }
 
-function AuthoringError({ reason }: { reason: string }) {
-  return <div><p role="alert">{authoringFailure(new Error(reason))}</p><details><summary>Technical details</summary><pre>{reason}</pre></details></div>;
+function AuthoringError({ reason, route }: { reason: string; route: "personal" | "payroll" }) {
+  const root = useRef<HTMLDivElement>(null);
+  const [repairTarget, setRepairTarget] = useState<string>();
+  const target = /UNVESTED/.test(reason) ? "unvested" : /VESTING/.test(reason) ? "vested" : /RATE/.test(reason) ? "payrollRate" : /AMOUNT/.test(reason) ? route === "personal" ? "purchaseAmount" : "payrollAmount" : /CURRENCY|CHECKING|SAVINGS/.test(reason) ? "purchaseFunding" : /OWNER|DESTINATION/.test(reason) ? route === "personal" ? "purchaseInvestment" : "payrollSalary" : /DATE|SCHEDULE/.test(reason) ? "purchaseDate" : /ORDER|PRIORITY/.test(reason) ? route === "personal" ? "purchaseOrder" : "payrollPriority" : /FACT|COMPENSATION|ELIGIB/.test(reason) ? route === "personal" ? "taxableCompensation" : "taxYear" : undefined;
+  useEffect(() => {
+    const region = root.current?.closest("section");
+    const candidate = target && region?.querySelector(`[data-financial-field="${target}"] :is(input, select)`) ? target : route === "personal" ? "purchaseInvestment" : "payrollDestination";
+    setRepairTarget(region?.querySelector(`[data-financial-field="${candidate}"] :is(input, select)`) ? candidate : undefined);
+  }, [target, route, reason]);
+  return <div ref={root}><p role="alert">{authoringFailure(new Error(reason))}</p>{repairTarget && <button type="button" onClick={() => focusRepair(root.current?.closest("section")?.querySelector<HTMLElement>(`[data-financial-field="${repairTarget}"] :is(input, select)`))}>Review {financialField(repairTarget).label.toLowerCase()}</button>}<details><summary>Technical details</summary><pre>{reason}</pre></details></div>;
 }
 function PersonalPurchaseAuthoring({ draft, setDraft, initialInvestmentId }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void; initialInvestmentId?: string }) {
   const banks = objectEntries(draft, "Account").filter(account => ["checking", "savings"].includes(String(account.account_type)));
@@ -2791,8 +2799,8 @@ function PersonalPurchaseAuthoring({ draft, setDraft, initialInvestmentId }: { d
         setError("");
       } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
     }}>Save investment purchase</button>
-    {error && <AuthoringError reason={error} />}
-    {savedPurchases.error && <AuthoringError reason={savedPurchases.error} />}
+    {error && <AuthoringError reason={error} route="personal" />}
+    {savedPurchases.error && <AuthoringError reason={savedPurchases.error} route="personal" />}
     {savedPurchases.plans.map(plan => <p key={plan.id}>Saved purchase: {objectLabel("Investment", investments.find(investment => objectId("Investment", investment) === plan.investmentId) ?? {})} — {plan.amount} {String(banks.find(bank => objectId("Account", bank) === plan.sourceCashAccountId)?.currency ?? "")} {plan.schedule.kind === "utc_monthly" ? "monthly" : "one time"} from {objectLabel("Account", banks.find(bank => objectId("Account", bank) === plan.sourceCashAccountId) ?? {})}.</p>)}
   </section></GuidedFields>;
 }
@@ -2904,7 +2912,7 @@ function PayrollContributionAuthoring({ draft, setDraft, initialInvestmentId }: 
           facts: { taxYear: Number(fields.taxYear), ...(fields.annualFactProjection === "confirmed_nominal_carry_forward" ? { annualFactProjection: "confirmed_nominal_carry_forward" as const } : {}), ...(fields.ageAtYearEnd ? { ageAtYearEnd: Number(fields.ageAtYearEnd) } : {}), ...(fields.eligiblePlanCompensation ? { eligiblePlanCompensation: fields.eligiblePlanCompensation } : {}), ...(fields.priorYearSponsorWages ? { priorYearSponsorWages: fields.priorYearSponsorWages } : {}), ...(fields.planHasRoth ? { planHasRoth: fields.planHasRoth === "true" } : {}), ...(fields.hsaFullYearEligible ? { hsaFullYearEligible: fields.hsaFullYearEligible === "true" } : {}), ...(fields.hsaCoverage === "self" || fields.hsaCoverage === "family" ? { hsaCoverage: fields.hsaCoverage } : {}), ...(fields.hsaFamilyAllocation ? { hsaFamilyAllocation: fields.hsaFamilyAllocation } : {}) } })); setError("");
       } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
     }}>Save payroll contribution</button>
-    {(error || saved.error) && <AuthoringError reason={error || saved.error} />}
+    {(error || saved.error) && <AuthoringError reason={error || saved.error} route="payroll" />}
     {saved.plans.map(item => <p key={item.allocation.id}>Saved payroll: {item.allocation.policy.character.replaceAll("_", " ")} to {objectLabel("Investment", destinations.find(destination => destination.investment_id === item.allocation.positionId) ?? {})}.</p>)}
   </section></GuidedFields>;
 }
