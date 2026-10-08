@@ -608,7 +608,7 @@ test("D1 normal IRA authoring saves annual facts and explicit auto-cap", async (
   await form.getByLabel("Purchase amount", { exact: true }).fill("8000"); await form.getByLabel("Purchase start date", { exact: true }).fill("2026-02-10");
   await form.getByLabel("Purchase frequency", { exact: true }).selectOption("once"); await form.getByLabel("Age at year end", { exact: true }).fill("36");
   await form.getByLabel("Annual earned pay", { exact: true }).fill("120000"); await form.getByLabel("Contribution filing status", { exact: true }).selectOption("single");
-  await form.getByLabel("Roth IRA MAGI", { exact: true }).fill("120000"); await form.getByLabel("Excess contribution policy", { exact: true }).selectOption("auto_cap");
+  await form.getByLabel("Income for Roth IRA eligibility", { exact: true }).fill("120000"); await form.getByLabel("Excess contribution policy", { exact: true }).selectOption("auto_cap");
   await form.getByRole("button", { name: "Save investment purchase", exact: true }).click(); await expect(form.getByText(/Saved purchase:.*8000.*one time/)).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click(); await page.getByRole("button", { name: "Import / Export", exact: true }).click();
   const promise = page.waitForEvent("download"); await page.getByRole("button", { name: "Export current model", exact: true }).click();
