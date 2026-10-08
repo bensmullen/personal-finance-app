@@ -1,6 +1,6 @@
 # Portfolio & Investment Planning
 
-**Version:** 0.4.1-draft
+**Version:** 0.5.1-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-INV
 
@@ -162,6 +162,34 @@ When the optimizer ranks tax-sensitive account selection, contribution character
 
 The deterministic optimizer MAY rank a bounded set of strategies using explicit user goals/constraints and deterministic return assumptions. It SHALL NOT claim uncertainty-aware, risk-adjusted, globally optimal, or efficient-frontier optimality without the stochastic/risk semantics required by PFA-PLAN and PFA-PROB.
 
+### PFA-INV-025 — Expanded workplace and self-employed retirement plans
+
+Before R5 stochastic household runtime begins, investment/account execution SHALL support the ordinary deterministic contract for 403(b), governmental 457(b), TSP, SEP IRA, and SIMPLE IRA accounts required by PFA-DET.
+
+Each supported plan family SHALL preserve its distinct employee/employer contribution character, statutory limit scope, tax treatment, account ownership, rollover/distribution compatibility, and plan-specific restrictions that materially affect the household forecast. The implementation SHALL reuse common retirement mechanics where financially equivalent without flattening legally distinct limits or tax treatment into a generic 401(k).
+
+### PFA-INV-026 — IRA Roth conversions, backdoor Roth, and mega-backdoor paths
+
+Before R5, supported conversion mechanics SHALL include:
+
+- Traditional IRA to Roth IRA conversion;
+- nondeductible IRA contribution followed by a supported backdoor Roth conversion, with aggregate Traditional/SEP/SIMPLE IRA basis and pro-rata tax treatment supplied to PFA-TAX; and
+- after-tax workplace-plan contribution followed by supported in-plan Roth conversion or eligible Roth rollover for a bounded mega-backdoor path.
+
+Portfolio logic SHALL preserve contribution, rollover, and conversion as distinct operations and SHALL NOT hide basis, limit usage, plan eligibility, or tax consequences inside a net balance transfer.
+
+### PFA-INV-027 — TIPS and Series EE savings-bond mechanics
+
+Before R5, the fixed-income implementation SHALL support the deterministic instrument semantics required by PFA-DET for TIPS and Series EE savings bonds.
+
+TIPS SHALL preserve inflation-adjusted principal, coupon cash flow, maturity value, and tax-character facts. Series EE bonds SHALL preserve issue/acquisition facts, accrued/redemption value, redemption timing, and tax-character facts. Unsupported specialty elections SHALL be explicitly capability-gated.
+
+### PFA-INV-028 — 529 education-savings account and rollover mechanics
+
+Before R5, 529 plans SHALL be first-class supported education-savings accounts rather than generic taxable investments.
+
+The supported deterministic contract SHALL preserve owner and beneficiary identity, contributions, investment holdings/value, qualified versus non-qualified distributions, earnings/basis character, and the rollover paths required by PFA-DET, including supported plan-to-plan rollovers, beneficiary changes, and bounded 529-to-Roth-IRA rollovers subject to authoritative eligibility/limit rules.
+
 ## 3. Relationship to specialized equity capability
 
 PFA-EQ owns concentrated single-issuer and equity-compensation semantics. This specification owns the broader household portfolio-planning context into which those exposures are integrated.
@@ -170,4 +198,4 @@ The system may initially support diversified asset-class planning while capabili
 
 ## 4. Deferred decisions
 
-Detailed security tax-lot optimization, product selection, full risk-tolerance elicitation, efficient-frontier/risk-budget methods, plan-loan execution, and automated trade execution remain future design choices unless a nearer milestone explicitly requires them. The bounded deterministic portfolio optimizer in PFA-INV-024 is not deferred.
+Security tax-lot optimization beyond the private-alpha tax-loss-harvesting/wash-sale floor, product selection, full risk-tolerance elicitation, efficient-frontier/risk-budget methods, plan-loan execution, and automated trade execution remain future design choices unless a nearer milestone explicitly requires them. The bounded deterministic portfolio optimizer in PFA-INV-024 and the D2 account/instrument mechanics in PFA-INV-025 through PFA-INV-028 are not deferred.
