@@ -317,7 +317,7 @@
     {
       "id": "portfolio-planning",
       "path": "docs/specs/capabilities/portfolio-planning.md",
-      "version": "0.4.0-draft",
+      "version": "0.5.0-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -345,7 +345,17 @@
         "contribution limit",
         "rollover",
         "plan loan",
-        "deterministic portfolio optimization"
+        "deterministic portfolio optimization",
+        "403b",
+        "457b",
+        "TSP",
+        "SEP IRA",
+        "SIMPLE IRA",
+        "backdoor Roth",
+        "mega backdoor Roth",
+        "TIPS",
+        "Series EE",
+        "529"
       ],
       "applies_to": [
         "personal-mvp",
@@ -362,7 +372,7 @@
     {
       "id": "insurance-planning",
       "path": "docs/specs/capabilities/insurance-planning.md",
-      "version": "0.2.0-draft",
+      "version": "0.3.0-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -385,7 +395,10 @@
         "risk transfer",
         "coverage adequacy",
         "life insurance",
-        "disability"
+        "disability",
+        "health insurance",
+        "Medicare",
+        "IRMAA"
       ],
       "applies_to": [
         "personal-mvp",
@@ -478,7 +491,7 @@
     {
       "id": "tax-engine",
       "path": "docs/specs/capabilities/tax-engine.md",
-      "version": "0.1.5-draft",
+      "version": "0.3.0-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -501,7 +514,15 @@
         "private alpha",
         "tax rule catalog",
         "tax floor",
-        "rule fingerprint"
+        "rule fingerprint",
+        "wash sale",
+        "capital loss carryforward",
+        "tax loss harvesting",
+        "1031 exchange",
+        "Social Security",
+        "Roth conversion",
+        "529",
+        "TIPS"
       ],
       "applies_to": [
         "personal-mvp",
@@ -564,7 +585,7 @@
     {
       "id": "deterministic-household-financial-semantics",
       "path": "docs/specs/capabilities/deterministic-household-financial-semantics.md",
-      "version": "0.2.0-draft",
+      "version": "0.3.0-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "pre-stochastic-gate",
@@ -601,7 +622,27 @@
         "pre-stochastic gate",
         "employer match",
         "contribution limit",
-        "rollover"
+        "rollover",
+        "Social Security",
+        "pension",
+        "403b",
+        "457b",
+        "TSP",
+        "SEP IRA",
+        "SIMPLE IRA",
+        "backdoor Roth",
+        "mega backdoor Roth",
+        "Roth conversion",
+        "auto loan",
+        "student loan",
+        "credit card",
+        "HELOC",
+        "Medicare",
+        "health insurance",
+        "FSA",
+        "TIPS",
+        "Series EE",
+        "529"
       ],
       "applies_to": [
         "personal-mvp",
@@ -621,7 +662,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.5.0-draft",
+      "version": "0.6.0-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -660,7 +701,25 @@
         "optimization",
         "portfolio planning",
         "insurance planning",
-        "simulation kernel"
+        "simulation kernel",
+        "D2",
+        "Social Security",
+        "pension",
+        "403b",
+        "457b",
+        "TSP",
+        "SEP IRA",
+        "SIMPLE IRA",
+        "consumer debt",
+        "Medicare",
+        "FSA",
+        "TIPS",
+        "Series EE",
+        "529",
+        "tax loss harvesting",
+        "wash sale",
+        "capital loss carryforward",
+        "1031 exchange"
       ],
       "applies_to": [
         "personal-mvp",
