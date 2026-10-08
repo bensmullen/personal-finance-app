@@ -1,14 +1,14 @@
 import { useEffect, useState, useId } from "react";
 import { percentageToRate, rateToPercentage } from "../entityPresentation.js";
 import { FieldShell, RepairSummary } from "../authoring/FieldShell.js";
-import { FINANCIAL_FIELDS, financialField, fieldProblem } from "../authoring/fieldContract.js";
+import { FINANCIAL_FIELDS, financialField, fieldProblem, type FinancialField } from "../authoring/fieldContract.js";
 
 export function FieldHelp({ label, children }: { label: string; children: string }) {
   return <details style={{ minWidth: 0, maxWidth: "42rem" }}><summary title={children}>About {label.toLowerCase()}</summary><p>{children}</p></details>;
 }
 
 /** UI percentages cross this boundary as exact canonical fraction strings. */
-export function PercentageInput({ label, value, onChange, fieldKey: explicitKey, required = false, repairKey, error }: { label: string; value: string; onChange: (value: string) => void; fieldKey?: string; required?: boolean; repairKey?: string; error?: string | undefined }) {
+export function PercentageInput({ label, value, onChange, fieldKey: explicitKey, required = false, repairKey, error, presentation }: { label: string; value: string; onChange: (value: string) => void; fieldKey?: string; required?: boolean; repairKey?: string; error?: string | undefined; presentation?: FinancialField | undefined }) {
   const identity = useId();
   const display = () => { try { return rateToPercentage(value); } catch { return ""; } };
   const [text, setText] = useState(display);
@@ -19,7 +19,7 @@ export function PercentageInput({ label, value, onChange, fieldKey: explicitKey,
   if (!fieldKey) throw new Error(`Missing financial percentage metadata: ${label}`);
   const problem = error ?? (!valid ? "Enter a percentage such as 5 or 5.25 without the % sign." : fieldProblem(financialField(fieldKey), text, required));
   const target = repairKey ?? `percentage:${identity}`;
-  return <div><RepairSummary errors={problem ? [{ target, message: `${label}: ${problem}` }] : []} /><FieldShell fieldKey={fieldKey} repairKey={target} required={required} error={problem} hint="Enter a percentage, for example 5.25 for 5.25%.">
+  return <div><RepairSummary errors={problem ? [{ target, message: `${label}: ${problem}` }] : []} /><FieldShell fieldKey={fieldKey} presentation={presentation} repairKey={target} required={required} error={problem} hint="Enter a percentage, for example 5.25 for 5.25%.">
     <input aria-label={label} inputMode="decimal" value={text} onChange={event => {
       const next = event.target.value; setText(next);
       try { onChange(next === "" ? "" : percentageToRate(next)); }

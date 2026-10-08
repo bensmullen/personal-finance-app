@@ -1,7 +1,7 @@
 "use client";
 import { Children, cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from "react";
 import { FieldShell, RepairSummary } from "./FieldShell.js";
-import { FINANCIAL_FIELDS, fieldProblem } from "./fieldContract.js";
+import { FINANCIAL_FIELDS, fieldProblem, type FinancialField } from "./fieldContract.js";
 import { FieldHelp } from "../forecast/PercentageInput.js";
 
 /** Migration adapter: existing D1 callbacks survive; presentation is centralized. */
@@ -17,8 +17,8 @@ export const FIELD_ALIASES: Readonly<Record<string, string>> = {
 };
 const labels = new Map(Object.values(FINANCIAL_FIELDS).map(field => [field.label, field.key]));
 type NodeProps = { children?: ReactNode; value?: unknown; required?: boolean; readOnly?: boolean; disabled?: boolean; "aria-invalid"?: boolean; "aria-label"?: string; "data-repair"?: string; type?: string };
-export function GuidedFields({ children, scope, aliases = {}, required = [], errors = {}, repairKeys = {} }: {
-  children: ReactNode; scope: string; aliases?: Readonly<Record<string, string>>; required?: readonly string[]; errors?: Readonly<Record<string, string | undefined>>; repairKeys?: Readonly<Record<string, string | undefined>>;
+export function GuidedFields({ children, scope, aliases = {}, required = [], errors = {}, repairKeys = {}, presentations = {} }: {
+  children: ReactNode; scope: string; aliases?: Readonly<Record<string, string>>; required?: readonly string[]; errors?: Readonly<Record<string, string | undefined>>; repairKeys?: Readonly<Record<string, string | undefined>>; presentations?: Readonly<Record<string, FinancialField>>;
 }) {
   const identity = useId(), problems: { target: string; message: string }[] = [];
   const visit = (nodes: ReactNode, path = ""): ReactNode => Children.map(nodes, (node, index) => {
@@ -34,13 +34,13 @@ export function GuidedFields({ children, scope, aliases = {}, required = [], err
       const label = contents.filter(child => typeof child === "string" || typeof child === "number").join("").trim() || control.props["aria-label"] || "";
       const key = aliases[label] ?? FIELD_ALIASES[label] ?? labels.get(label);
       if (!key) throw new Error(`Missing financial field metadata in ${scope}: ${label}`);
-      const field = FINANCIAL_FIELDS[key]!;
+      const field = presentations[key] ?? FINANCIAL_FIELDS[key]!;
       const needed = required.includes(key) || !!control.props.required;
       const problem = control.props.readOnly || control.props.disabled ? undefined : errors[key] ?? fieldProblem(field, control.props.value, needed) ?? (control.props["aria-invalid"] ? `Complete ${field.label.toLowerCase()} before forecasting.` : undefined);
       const target = repairKeys[key] ?? control.props["data-repair"] ?? `${scope}:${identity}:${key}:${nextPath}`;
       if (problem) problems.push({ target, message: `${field.label}: ${problem}` });
       const notices = contents.filter(child => isValidElement<{ role?: string }>(child) && child.props.role === "note");
-      return <div key={node.key ?? nextPath}><FieldShell fieldKey={key} required={needed} error={problem} repairKey={target}>{control as Parameters<typeof FieldShell>[0]["children"]}</FieldShell>{notices}</div>;
+      return <div key={node.key ?? nextPath}><FieldShell fieldKey={key} presentation={field} required={needed} error={problem} repairKey={target}>{control as Parameters<typeof FieldShell>[0]["children"]}</FieldShell>{notices}</div>;
     }
     return node.props.children === undefined ? node : cloneElement(node, {}, visit(node.props.children, nextPath));
   });

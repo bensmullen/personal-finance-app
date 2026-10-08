@@ -1,11 +1,57 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { FINANCIAL_FIELDS, U1_INVENTORY, financialField, fieldProblem } from "../ui/authoring/fieldContract.js";
+import { FINANCIAL_FIELDS, U1_INVENTORY, ENTITY_FIELD_INVENTORY, entityField, financialField, fieldProblem, compareDecimal, unvestedProblem } from "../ui/authoring/fieldContract.js";
+import { getPersonalEditorMetadata } from "../src/application/personalMvp.js";
+import { entityRelationshipProblems } from "../ui/authoring/entityProblems.js";
 import { payrollCharacters, authoringFailure } from "../ui/authoring/contributionChoices.js";
 import { currentPlan, simulationWindowProblem, replaceCurrentPlanHorizon } from "../src/application/forecastSetup.js";
 import { createGoldenHouseholdExampleDraft } from "../src/application/personalMvp.js";
 
 describe("U1 guided authoring contract", () => {
+  it("resolves ambiguous properties against domain and authoritative edit state", () => {
+    expect(entityField("maturity_date", "Investment")?.description).toMatch(/Treasury or CD/);
+    expect(entityField("maturity_date", "Investment")?.dependencies).not.toContain("totalPayments");
+    expect(entityField("maturity_date", "Liability")?.label).toBe("Contractual final payment");
+    expect(entityField("source", "Assumption")?.description).not.toMatch(/employer|paying/i);
+    expect(entityField("source", "Income")?.description).toMatch(/paying this income/);
+    expect(entityField("category", "Assumption")?.example).toBe("market_return");
+    expect(entityField("category", "Expense")?.label).toBe("Spending category");
+    expect(entityField("maturity_date", "Income")).toBeUndefined();
+    const metadata = getPersonalEditorMetadata();
+    for (const [context, keys] of Object.entries(ENTITY_FIELD_INVENTORY)) {
+      const fields = metadata[context as keyof typeof metadata].fields;
+      for (const key of keys) {
+        const descriptor = Object.entries(fields).find(([name]) => name === key)?.[1];
+        expect(descriptor, `${context}.${key}`).toBeDefined();
+        const field = entityField(key, context, descriptor, true);
+        expect(field, `${context}.${key}`).toBeDefined();
+        expect(field?.state).toBe(descriptor!.required ? "required" : "optional");
+        if (descriptor && "enumValues" in descriptor) expect(descriptor.enumValues).toContain(field!.example.toLowerCase().replaceAll(" ", "_"));
+      }
+    }
+    expect(entityField("opening_balance", "Account", metadata.Account.fields.opening_balance, false, "0")?.state).toBe("read-only");
+    expect(entityField("opening_balance", "Account", metadata.Account.fields.opening_balance, false, undefined)?.state).toBe("required");
+  });
+  it("checks exact bounded ownership without forbidding legitimate signed rates", () => {
+    expect(compareDecimal("9007199254740993.01", "9007199254740993.00")).toBe(1);
+    expect(unvestedProblem("101", "100")).toBeDefined();
+    expect(unvestedProblem("-0.01", "100")).toBeDefined();
+    expect(unvestedProblem("100.000", "100")).toBeUndefined();
+    expect(unvestedProblem("0", "0")).toBeUndefined();
+    expect(fieldProblem(financialField("vested"), "100.01")).toBeDefined();
+    expect(fieldProblem(financialField("vested"), "-1")).toBeDefined();
+    expect(fieldProblem(financialField("vested"), "100")).toBeUndefined();
+    expect(fieldProblem(financialField("return"), "-20")).toBeUndefined();
+    const draft = createGoldenHouseholdExampleDraft();
+    expect(entityRelationshipProblems("Investment", { acquisition_date: "2026-01-01", maturity_date: "2025-12-31" }, draft).maturity_date).toBeDefined();
+    expect(entityRelationshipProblems("Income", { gross_or_net: "gross", start_date: "2026-01-01", end_date: "2027-01-01" }, draft)).toEqual({});
+    expect(entityRelationshipProblems("Income", { gross_or_net: "gross", start_date: "2026-01-01", end_date: "2026-01-01" }, draft).end_date).toBeDefined();
+  });
+  it("keeps arbitrary exceptions and identifiers out of normal save failures", () => {
+    for (const reason of ["Compiler failed at 90000000-0000-4000-8000-000000000001", "invalid payload {input_bindings: []}", "PAYROLL_RATE_INVALID", "IRA_CONTRIBUTION_FACTS_REQUIRED"]) {
+      expect(authoringFailure(new Error(reason))).not.toMatch(/90000000|Compiler|input_bindings|PAYROLL_|IRA_/);
+    }
+  });
   it("requires complete metadata for every inventoried common and advanced control", () => {
     expect(new Set(U1_INVENTORY.fields).size).toBe(U1_INVENTORY.fields.length);
     for (const key of U1_INVENTORY.fields) {

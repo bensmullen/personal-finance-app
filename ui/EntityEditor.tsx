@@ -8,6 +8,8 @@ import { GuidedFields } from "./authoring/GuidedFields.js";
 import { FieldShell, RepairSummary, focusRepair } from "./authoring/FieldShell.js";
 import { fieldProblem } from "./authoring/fieldContract.js";
 import { entityField } from "./authoring/fieldContract.js";
+import { authoringFailure } from "./authoring/contributionChoices.js";
+import { entityRelationshipProblems } from "./authoring/entityProblems.js";
 
 export interface EntityRepair { readonly objectType: PersonalObjectType; readonly objectId: string; readonly field: string; readonly token: string; }
 const randomId = () => crypto.randomUUID();
@@ -21,6 +23,11 @@ interface EditorField {
   readonly enumValues?: readonly string[];
 }
 const internalReference = (field: EditorField) => field.type === "object" || Boolean(field.ref && referenceTargets(field.ref).length === 0);
+export function canRepairEntityField(type: PersonalObjectType, name: string, field: EditorField | undefined, value: unknown, draft?: PersonalDraft): boolean {
+  return !!field && !!entityField(name, type) && !field.derived && !internalReference(field) &&
+    !field.type.startsWith("object") && !(value !== null && typeof value === "object" && (!Array.isArray(value) || value.some(item => item !== null && typeof item === "object"))) &&
+    (!draft || !field.ref || referenceTargets(field.ref).some(target => objectEntries(draft, target).length > 0)) && (field.mutable || value === undefined);
+}
 const FIELD_HELP: Record<string, string> = {
   amount: "Amount per occurrence, using the frequency selected here.",
   opening_balance: "Internal account cash at the opening position, excluding holdings valued separately. Changing this does not represent a new deposit or withdrawal.",
@@ -197,16 +204,23 @@ function ObjectEditor({
   const [editing, setEditing] = useState<JsonObject>();
   const [creating, setCreating] = useState(false);
   const [creationError, setCreationError] = useState("");
+  const [technicalError, setTechnicalError] = useState("");
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const initialEditing = useRef<JsonObject | undefined>(undefined);
   const drawer = useRef<HTMLElement>(null);
   const editingId = editing ? objectId(type, editing) : undefined;
   useEffect(() => {
     if (repairTarget?.objectType !== type) return;
     const item = objectEntries(draft, type).find(value => objectId(type, value) === repairTarget.objectId);
-    if (item) { setCreating(false); setEditing(item); }
+    if (item) { initialEditing.current = item; setCreating(false); setEditing(item); }
   }, [repairTarget]);
   useEffect(() => {
     if (!repairTarget || editingId !== repairTarget.objectId) return;
-    requestAnimationFrame(() => focusRepair(drawer.current?.querySelector<HTMLElement>(`[data-repair="${CSS.escape(`entity:${editingId}:${repairTarget.field}`)}"]`)));
+    requestAnimationFrame(() => {
+      const target = drawer.current?.querySelector<HTMLElement>(`[data-repair="${CSS.escape(`entity:${editingId}:${repairTarget.field}`)}"]`);
+      if (target) focusRepair(target);
+      else setCreationError("This recorded fact cannot be changed here. Import corrected records in Settings → Import / Export.");
+    });
   }, [editingId, repairTarget]);
   useEffect(() => {
     if (!editingId) return;
@@ -222,7 +236,11 @@ function ObjectEditor({
   const values = objectEntries(draft, type).filter((item) => belongsToNetWorthSection(draft, type, item, section));
   const descriptor = metadata[type];
   const fields = descriptor.fields as Record<string, EditorField>;
-  const close = () => { setEditing(undefined); setCreating(false); setCreationError(""); };
+  const close = () => { setEditing(undefined); setCreating(false); setCreationError(""); setTechnicalError(""); setConfirmDiscard(false); };
+  const dismiss = () => {
+    if (editing && JSON.stringify(editing) !== JSON.stringify(initialEditing.current)) setConfirmDiscard(true);
+    else close();
+  };
   const add = () => {
     const id = randomId();
     const initial: Record<string, string | boolean | number | readonly string[]> = { [descriptor.idField]: id };
@@ -237,6 +255,7 @@ function ObjectEditor({
     }
     setCreating(true);
     setCreationError("");
+    initialEditing.current = initial;
     setEditing(initial);
   };
   const create = () => {
@@ -247,7 +266,7 @@ function ObjectEditor({
       return;
     }
     try { const next = addPersonalObject(draft, type, objectId(type, editing), editing); setDraft(next); close(); }
-    catch { setCreationError("This item could not be created. Review the required facts and relationships."); }
+    catch (failure) { setCreationError(authoringFailure(failure)); setTechnicalError(failure instanceof Error ? failure.message : String(failure)); }
   };
   const saveField = (
     field: string,
@@ -258,29 +277,30 @@ function ObjectEditor({
     if (!creating && fields[field]?.mutable === false && editing[field] !== undefined) return;
     setEditing({ ...editing, [field]: value });
   };
+  const relationshipProblems: Readonly<Record<string, string>> = editing ? entityRelationshipProblems(type, editing, draft) : {};
   const editorProblems = editing ? Object.entries(fields).flatMap(([name, field]) => {
-    const presentation = entityField(name);
+    const presentation = entityField(name, type, field, creating, editing[name], typeof editing.unit === "string" ? editing.unit : undefined);
     if (!presentation || field.derived || internalReference(field) || (!creating && !field.mutable && editing[name] !== undefined)) return [];
-    const problem = fieldProblem(presentation, editing[name], field.required);
+    const value = editing[name];
+    const missingReference = field.ref && value != null && value !== "" && (Array.isArray(value) ? value : [value]).some(id => !referenceTargets(field.ref!).some(target => objectEntries(draft, target).some(item => objectId(target, item) === id)));
+    const problem = relationshipProblems[name] ?? fieldProblem(presentation, value, field.required) ??
+      (missingReference ? "Choose an available relationship." : field.enumValues && value != null && value !== "" && !field.enumValues.includes(String(value)) ? "Choose a supported option." : undefined);
     return problem ? [{ target: `entity:${editingId}:${name}`, message: `${presentation.label}: ${problem}` }] : [];
   }) : [];
-  const dateConflict = editing && typeof editing.start_date === "string" && typeof editing.end_date === "string" && editing.end_date !== "" && editing.start_date >= editing.end_date;
-  if (editing && type === "Expense" && !objectEntries(draft, "Account").some(item => item.account_id === editing.payment_account_id && isCashFlowPaymentAccount(item))) editorProblems.push({ target: `entity:${editingId}:payment_account_id`, message: "Funding account: choose checking, savings, or cash to pay spending." });
-  if (dateConflict) editorProblems.push({ target: `entity:${editingId}:end_date`, message: "End must be after start so this activity has a valid period." });
   const save = () => {
     if (!editing || editorProblems.length) { focusRepair(drawer.current?.querySelector<HTMLElement>('[aria-invalid="true"]')); return; }
     if (creating) { create(); return; }
     const original = values.find(item => objectId(type, item) === editingId);
     const patch = Object.fromEntries(Object.entries(editing).filter(([name, value]) => name !== descriptor.idField && (fields[name]?.mutable || original?.[name] === undefined) && value !== original?.[name]));
     try { setDraft(patchPersonalObject(draft, type, editingId!, patch)); close(); }
-    catch { setCreationError("These changes could not be saved. Review the financial facts and relationships."); }
+    catch (failure) { setCreationError(authoringFailure(failure)); setTechnicalError(failure instanceof Error ? failure.message : String(failure)); }
   };
   const editableFields = Object.keys(fields).filter((name) =>
     name !== descriptor.idField && !fields[name]!.derived && !internalReference(fields[name]!));
-  const commonFields = editableFields.filter((name) => entityField(name)?.disclosure === "common" || (creating && entityField(name) && fields[name]!.required && !fields[name]!.mutable));
-  const secondaryFields = editableFields.filter((name) => entityField(name) && !commonFields.includes(name));
+  const commonFields = editableFields.filter((name) => entityField(name, type)?.disclosure === "common" || (creating && entityField(name, type) && fields[name]!.required && !fields[name]!.mutable));
+  const secondaryFields = editableFields.filter((name) => entityField(name, type) && !commonFields.includes(name));
   const expertFields: string[] = [];
-  const managedFields = Object.keys(fields).filter((name) => internalReference(fields[name]!) || (!entityField(name) && name !== descriptor.idField));
+  const managedFields = Object.keys(fields).filter((name) => internalReference(fields[name]!) || (!entityField(name, type) && name !== descriptor.idField));
   const remove = (item: JsonObject) => {
     const result = deletePersonalObject(draft, type, objectId(type, item));
     if (!result.deleted) {
@@ -309,7 +329,7 @@ function ObjectEditor({
         <div className="object-grid">
           {values.map((item) => (
             <article className="object-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", minWidth: 0 }} key={objectId(type, item)}>
-              <button className="card-main" style={{ width: "100%", minWidth: 0 }} onClick={() => { setCreating(false); setEditing(item); }}>
+              <button className="card-main" style={{ width: "100%", minWidth: 0 }} onClick={() => { initialEditing.current = item; setCreating(false); setEditing(item); }}>
                 <span className="object-icon">{TITLES[type][0]}</span>
                 <span data-card-summary style={{ flex: "1 1 auto", minWidth: 0, textAlign: "left" }}>
                   <strong id={`${type}-${objectId(type, item)}-label`}>{objectLabel(type, item) || `New ${type}`}</strong>
@@ -331,12 +351,12 @@ function ObjectEditor({
         <div
           className="drawer-backdrop"
           onMouseDown={(event) => {
-            if (event.currentTarget === event.target) close();
+            if (event.currentTarget === event.target) dismiss();
           }}
         >
           <aside ref={drawer} className="drawer" role="dialog" aria-modal="true" aria-label={`${creating ? "Create" : "Edit"} ${type}`}
             onKeyDown={(event) => {
-              if (event.key === "Escape") { event.preventDefault(); close(); }
+              if (event.key === "Escape") { event.preventDefault(); dismiss(); }
               if (event.key !== "Tab") return;
               const controls = Array.from(drawer.current?.querySelectorAll<HTMLElement>(
                 'button:not(:disabled), input:not(:disabled), select:not(:disabled), summary, [tabindex="0"]') ?? [])
@@ -353,12 +373,13 @@ function ObjectEditor({
               <button
                 className="icon-button"
                 aria-label="Close editor"
-                onClick={close}
+                onClick={dismiss}
               >
                 ×
               </button>
             </div>
-            {creating && <p>Choose creation-time facts before adding this record. Once set, these facts cannot be overwritten. Closing or cancelling discards this new record.</p>}
+            {confirmDiscard && <section role="alert" aria-label="Unsaved changes"><p>Discard unsaved changes?</p><button type="button" onClick={close}>Discard changes</button><button type="button" autoFocus onClick={() => setConfirmDiscard(false)}>Continue editing</button></section>}
+            {creating && <p>Choose creation-time facts before adding this record. Once set, these facts cannot be overwritten.</p>}
             {(type === "Investment" || type === "Account") && <p role="note">{RETIREMENT_LIMITATION}</p>}
             {type === "Investment" && !creating && <ProjectedReturn investment={editing} draft={draft} setDraft={setDraft} selectedScenarioId={selectedScenarioId} />}
             <form onSubmit={(event) => { event.preventDefault(); save(); }}>
@@ -374,7 +395,8 @@ function ObjectEditor({
                   currency={editing.currency ?? currency}
                   entityType={type}
                   creating={creating}
-                  repairKey={`entity:${editingId}:${fieldName}`} error={fieldName === "end_date" && dateConflict ? "End must be after start." : undefined}
+                  recordedUnit={typeof editing.unit === "string" ? editing.unit : undefined}
+                  repairKey={`entity:${editingId}:${fieldName}`} error={relationshipProblems[fieldName]}
                   onChange={(value) => saveField(fieldName, value)}
                 />
               ))}
@@ -396,7 +418,8 @@ function ObjectEditor({
                       currency={editing.currency ?? currency}
                       entityType={type}
                       creating={creating}
-                      repairKey={`entity:${editingId}:${fieldName}`} error={fieldName === "end_date" && dateConflict ? "End must be after start." : undefined}
+                      recordedUnit={typeof editing.unit === "string" ? editing.unit : undefined}
+                      repairKey={`entity:${editingId}:${fieldName}`} error={relationshipProblems[fieldName]}
                       onChange={(value) => saveField(fieldName, value)}
                     />
                   ))
@@ -433,9 +456,10 @@ function ObjectEditor({
             </details>
             {<div className="row">
               <button type="submit" className="primary" disabled={editorProblems.length > 0}>{creating ? `Create ${type}` : "Save changes"}</button>
-              <button type="button" className="secondary" onClick={close}>Cancel</button>
+              <button type="button" className="secondary" onClick={dismiss}>Cancel</button>
             </div>}
             {creationError && <p className="field-error" role="alert">{creationError}</p>}
+            {technicalError && <details><summary>Technical save details</summary><pre>{technicalError}</pre></details>}
             </form>
             <details>
               <summary>Technical details</summary>
@@ -482,22 +506,24 @@ function ContextualContributions({ item, type, draft, open }: { item: JsonObject
       })}
       {!holdings.length && <p>Add a supported holding in this account before scheduling contributions.</p>}
     </section>;
-  } catch (failure) { return <p role="alert">{failure instanceof Error ? failure.message : "Saved contributions are unavailable. Review Current Plan."}</p>; }
+  } catch (failure) { return <div><p role="alert">Saved contributions need review. Open Current Plan to review the supported contribution path.</p><details><summary>Technical details</summary><pre>{failure instanceof Error ? failure.message : String(failure)}</pre></details></div>; }
 }
 
 function FieldControl(props: Parameters<typeof RawFieldControl>[0] & { repairKey?: string; error?: string | undefined }) {
-  const presentation = entityField(props.fieldName);
+  const presentation = entityField(props.fieldName, props.entityType, props.field, props.creating, props.value, props.recordedUnit);
   if (!presentation) return null;
-  return <GuidedFields scope={`entity-${props.entityType}`} aliases={{ [presentation.label]: props.fieldName }} required={props.field?.required ? [props.fieldName] : []} repairKeys={{ [props.fieldName]: props.repairKey }} errors={{ [props.fieldName]: props.error }}>{RawFieldControl(props)}</GuidedFields>;
+  return <GuidedFields scope={`entity-${props.entityType}`} presentations={{ [props.fieldName]: presentation }} aliases={{ [presentation.label]: props.fieldName }} required={props.field?.required ? [props.fieldName] : []} repairKeys={{ [props.fieldName]: props.repairKey }} errors={{ [props.fieldName]: props.error }}>{RawFieldControl(props)}</GuidedFields>;
 }
 
-function RawFieldControl({ fieldName, field, value, draft, currency, entityType, creating, onChange, repairKey, error }: {
+function RawFieldControl({ fieldName, field, value, draft, currency, entityType, creating, onChange, repairKey, error, recordedUnit }: {
   fieldName: string; field: EditorField | undefined; value: unknown; draft: PersonalDraft; currency: unknown;
   entityType: PersonalObjectType; creating: boolean; repairKey?: string; error?: string | undefined;
+  recordedUnit?: string;
   onChange: (value: string | boolean | readonly string[] | null) => void;
 }) {
   if (!field || field.derived) return null;
-  const label = entityField(fieldName)!.label;
+  const presentation = entityField(fieldName, entityType, field, creating, value, recordedUnit)!;
+  const label = presentation.label;
   if (field.type.startsWith("object") || (value !== null && typeof value === "object" && (!field.ref || !Array.isArray(value) || value.some(item => item !== null && typeof item === "object")))) return <section className="financial-fact" aria-label={label}>
     <strong>{label}</strong>
     <p>Structured dated facts · preserved as recorded. Import a corrected model to change these allocations.</p>
@@ -571,7 +597,7 @@ function RawFieldControl({ fieldName, field, value, draft, currency, entityType,
       <small>{referenceLabel(draft, field.ref, value)}{missing.length > 0 && " · inspect Technical details for the stored ID"}</small>
     </label>;
   }
-  if (field.type === "rate") return <PercentageInput label={label} fieldKey={fieldName} value={String(value ?? "")} onChange={onChange} required={required} repairKey={repairKey} error={error} />;
+  if (field.type === "rate" || presentation.format === "percent") return <PercentageInput label={label} presentation={presentation} fieldKey={fieldName} value={String(value ?? "")} onChange={onChange} required={required} repairKey={repairKey} error={error} />;
   return <label>{label}
     <input aria-label={label} required={required} type={field.type === "date" ? "date" : "text"} value={String(value ?? "")}
       inputMode={["money", "rate", "decimal"].includes(field.type) ? "decimal" : undefined}

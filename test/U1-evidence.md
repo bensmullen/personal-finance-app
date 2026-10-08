@@ -31,3 +31,21 @@ and change a mortgage; change planning/forecast dates; run/update a forecast; fi
 an incomplete setup; interpret a partially modeled tax result; edit salary and
 investment return. Acceptance includes first-impression organization and cognitive
 load. These goals deliberately contain no implementation-specific click recipe.
+
+## PR #98 audit repair
+
+| Journey / reported failure | Repair | Regression evidence in GitHub CI |
+| --- | --- | --- |
+| Treasury maturity used loan guidance; assumption source/category used income/spending meaning | Domain-scoped inventory and metadata; descriptor-based edit state; annual assumption rates use exact percentage entry | Contextual contract assertions and rendered assumption/Treasury browser controls, including advanced help |
+| Numerically valid but incompatible financial relationships could save | Exact bounded payroll rate/owned-share and unvested-unit checks; date chronology, salary ownership, saved-contribution account protection and compatible funding currency | Boundary unit cases; payroll >100% and Treasury chronology browser assertions; existing mortgage maturity/schedule journey |
+| Escape, Close and Cancel lost staged edits | Explicit Discard changes / Continue editing warning; failed saves retain the form | Salary modify/Escape/Cancel/discard browser journey; purchase precision failure retains unsaved amount |
+| A recognized immutable field offered a dead repair link | Repair routing checks descriptor, structured state and relationship availability; non-editable facts offer corrected-model import | Deliberately incomplete imported salary and immutable opening balance browser journey |
+| Unrelated saves reset contribution drafts | Load a plan only on intentional destination changes; preserve inputs on saved-plan updates | User-created payroll and brokerage purchase with interleaved saves and dirty-input retention |
+| Tests checked choices or unsaved inputs rather than durable authoring | Assert saved-plan summaries, local save/reload, and reloaded IRA and workplace account summaries | IRA edit, new brokerage purchase, employer HSA save, reload and restored amount assertions |
+| Unknown exceptions leaked internals or lacked original evidence | Friendly bounded error mapping; original failure inside explicit Technical details | Unknown-exception unit assertions and failed purchase browser journey |
+
+Boundaries remain explicit: complex vesting, unsupported contribution policies,
+structured dated tax facts, immutable recorded facts and executable return-model
+relationship creation require the supported existing authoring route or corrected
+model import. Unknown annual eligibility remains incomplete. Tests and CI do not
+establish independent re-audit or product-owner visual/uncoached UAT acceptance.

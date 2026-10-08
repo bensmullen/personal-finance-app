@@ -31,7 +31,7 @@ import {
 } from "recharts";
 import { z } from "zod";
 import { payrollCharacters, authoringFailure } from "./authoring/contributionChoices.js";
-import { financialField, fieldProblem, entityField as financialFieldOrUndefined } from "./authoring/fieldContract.js";
+import { financialField, fieldProblem, compareDecimal, unvestedProblem, entityField as financialFieldOrUndefined } from "./authoring/fieldContract.js";
 import { GuidedFields } from "./authoring/GuidedFields.js";
 import { FinancialSection, focusRepair, FinancialInput } from "./authoring/FieldShell.js";
 import {
@@ -97,7 +97,7 @@ import {
 } from "./persistence/indexedDbPersonalModelStore.js";
 
 import { useInteractiveForecast } from "./forecast/useInteractiveForecast.js";
-import { EditorHub } from "./EntityEditor.js";
+import { EditorHub, canRepairEntityField } from "./EntityEditor.js";
 import { mortgageFinalPaymentDate, mortgagePaymentCount } from "../src/application/compiler/liabilities.js";
 import { currentPlan, simulationWindowProblem, replaceCurrentPlanHorizon } from "../src/application/forecastSetup.js";
 import { forecastTaxJurisdictions, forecastTaxSetupProblem, type TaxForecastSettlementSetup } from "../src/application/taxForecastSetup.js";
@@ -789,12 +789,14 @@ export function PersonalFinanceApp() {
           {issues.length > 0 && <section className="repair-summary" role="alert" aria-label="Saved plan needs attention">
             <strong>Recorded financial facts need attention</strong>
             <ul>{issues.map((issue, index) => {
-              const presentation = issue.field ? financialFieldOrUndefined(issue.field) : undefined;
+              const presentation = issue.field ? financialFieldOrUndefined(issue.field, issue.objectType) : undefined;
               const type = issue.objectType;
               const item = type ? objectEntries(draft, type).find(value => objectId(type, value) === issue.objectId) : undefined;
               const name = type && item ? objectLabel(type, item) : "Saved plan";
-              return <li key={index}>{name} · {presentation?.label ?? "Recorded relationship"}: {presentation ? "Review this fact before relying on the forecast." : "A supported fact is missing or invalid. Import corrected records; the fact cannot be authored here."}
-                {presentation && type && issue.objectId && <button onClick={() => {
+              const repairable = type && item && issue.field && canRepairEntityField(type, issue.field, Object.entries(metadata[type].fields).find(([name]) => name === issue.field)?.[1], item[issue.field], draft);
+              return <li key={index}>{name} · {presentation?.label ?? "Recorded relationship"}: {repairable ? "Review this fact before relying on the forecast." : "This recorded fact needs correction. Import corrected records; it cannot be edited here."}
+                {!repairable && <button onClick={() => { navigate("Settings"); setSubnav("Import / Export"); }}>Import corrected records</button>}
+                {repairable && presentation && type && issue.objectId && <button onClick={() => {
                   const location: Record<PersonalObjectType, [Primary, string]> = { Household: ["Settings", "Household & People"], Person: ["Settings", "Household & People"], Account: ["Money", "Accounts"], Income: ["Money", "Income"], Expense: ["Money", "Spending"], Investment: ["Net Worth", "Investments & retirement"], Asset: ["Net Worth", "Property & other assets"], Liability: ["Net Worth", "Debt"], Assumption: ["Plan", "Assumptions"], Scenario: ["Plan", "What If?"] };
                   const [page, section] = location[type]; navigate(page); setSubnav(section);
                   setEntityRepair({ objectType: type, objectId: issue.objectId!, field: issue.field!, token: randomId() });
@@ -2708,6 +2710,9 @@ function DiagnosticList({
   );
 }
 
+function AuthoringError({ reason }: { reason: string }) {
+  return <div><p role="alert">{authoringFailure(new Error(reason))}</p><details><summary>Technical details</summary><pre>{reason}</pre></details></div>;
+}
 function PersonalPurchaseAuthoring({ draft, setDraft, initialInvestmentId }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void; initialInvestmentId?: string }) {
   const banks = objectEntries(draft, "Account").filter(account => ["checking", "savings"].includes(String(account.account_type)));
   const brokerageIds = new Set(objectEntries(draft, "Account").filter(account => ["taxable_brokerage", "traditional_ira", "roth_ira"].includes(String(account.account_type))).map(account => objectId("Account", account)));
@@ -2748,11 +2753,11 @@ function PersonalPurchaseAuthoring({ draft, setDraft, initialInvestmentId }: { d
     setCompensation(facts?.taxableCompensation?.amount.toString() ?? ""); setRothMagi(facts?.rothMagi?.amount.toString() ?? ""); setDeductionMagi(facts?.deductionMagi?.amount.toString() ?? "");
     setFilingStatus(facts?.filingStatus ?? ""); setCovered(facts?.workplacePlanCovered === undefined ? "" : String(facts.workplacePlanCovered)); setSpouseCovered(facts?.spouseWorkplacePlanCovered === undefined ? "" : String(facts.spouseWorkplacePlanCovered));
     setLivesWithSpouse(facts?.livesWithSpouse === undefined ? "" : String(facts.livesWithSpouse)); setExcessPolicy(plan.contribution?.excessPolicy ?? "reject");
-  }, [investmentId, savedPurchases]);
+  }, [investmentId]);
   const purchaseProblems = {
-    purchaseAmount: fieldProblem(financialField("purchaseAmount"), amount, true),
-    purchaseDate: fieldProblem(financialField("purchaseDate"), date, true),
-    purchaseFunding: bankId && !banks.some(item => item.account_id === bankId) ? "Choose an available checking or savings account." : undefined,
+    purchaseAmount: fieldProblem(financialField("purchaseAmount"), amount, true) ?? (compareDecimal(amount, "0") !== undefined && compareDecimal(amount, "0") !== 1 ? "Enter a purchase amount greater than zero." : undefined),
+    purchaseDate: fieldProblem(financialField("purchaseDate"), date, true) ?? (date && currentPlan(draft) && (date < String(currentPlan(draft)!.start_date) || date >= String(currentPlan(draft)!.end_date)) ? "Choose a purchase date within Current Plan." : undefined),
+    purchaseFunding: bankId && !banks.some(item => item.account_id === bankId && item.currency === destination?.currency) ? "Choose checking or savings in the destination currency." : undefined,
     purchaseOrder: fieldProblem(financialField("purchaseOrder"), order, true),
   };
   const purchaseInvalid = Object.values(purchaseProblems).some(Boolean);
@@ -2760,7 +2765,7 @@ function PersonalPurchaseAuthoring({ draft, setDraft, initialInvestmentId }: { d
     <h2>Investment purchases</h2>
     <p>Schedule a one-time or monthly purchase from checking or savings. IRA eligibility needs annual facts.</p>
     <label>Purchase investment<select aria-label="Purchase investment" value={investmentId} onChange={event => setInvestmentId(event.target.value)}><option value="">Choose holding</option>{investments.map(investment => <option key={objectId("Investment", investment)} value={objectId("Investment", investment)}>{objectLabel("Investment", investment)}</option>)}</select></label>
-    <label>Purchase funding account<select aria-label="Purchase funding account" value={bankId} onChange={event => setBankId(event.target.value)}><option value="">Choose bank account</option>{banks.map(bank => <option key={objectId("Account", bank)} value={objectId("Account", bank)}>{objectLabel("Account", bank)}</option>)}</select></label>
+    <label>Purchase funding account<select aria-label="Purchase funding account" value={bankId} onChange={event => setBankId(event.target.value)}><option value="">Choose bank account</option>{banks.filter(bank => !destination || bank.currency === destination.currency).map(bank => <option key={objectId("Account", bank)} value={objectId("Account", bank)}>{objectLabel("Account", bank)}</option>)}</select></label>
     <label>Purchase amount<input value={amount} onChange={event => setAmount(event.target.value)} inputMode="decimal" /></label>
     <label>Purchase start date<input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
     <label>Purchase frequency<select aria-label="Purchase frequency" value={frequency} onChange={event => setFrequency(event.target.value === "once" ? "once" : "monthly")}><option value="once">One time</option><option value="monthly">Monthly</option></select></label>
@@ -2783,10 +2788,10 @@ function PersonalPurchaseAuthoring({ draft, setDraft, initialInvestmentId }: { d
       try {
         setDraft(authorPersonalPurchasePlan(draft, { primitiveId: typeof selected?.contribution_model_id === "string" ? selected.contribution_model_id : randomId(), investmentId, sourceCashAccountId: bankId, amount, date, frequency, order: Number(order), ...(ira ? { excessPolicy, contributionFacts: { taxYear: Number(date.slice(0, 4)), ...(projectAnnualFacts ? { annualFactProjection: "confirmed_nominal_carry_forward" as const } : {}), ...(age === "" ? {} : { ageAtYearEnd: Number(age) }), ...(compensation === "" ? {} : { taxableCompensation: compensation }), ...(filingStatus === "" ? {} : { filingStatus }), ...(rothMagi === "" ? {} : { rothMagi }), ...(deductionMagi === "" ? {} : { deductionMagi }), ...(covered === "" ? {} : { workplacePlanCovered: covered === "true" }), ...(spouseCovered === "" ? {} : { spouseWorkplacePlanCovered: spouseCovered === "true" }), ...(livesWithSpouse === "" ? {} : { livesWithSpouse: livesWithSpouse === "true" }) } } : {}) }));
         setError("");
-      } catch (failure) { setError(authoringFailure(failure)); }
+      } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
     }}>Save investment purchase</button>
-    {error && <p role="alert">{error}</p>}
-    {savedPurchases.error && <p role="alert">{savedPurchases.error}</p>}
+    {error && <AuthoringError reason={error} />}
+    {savedPurchases.error && <AuthoringError reason={savedPurchases.error} />}
     {savedPurchases.plans.map(plan => <p key={plan.id}>Saved purchase: {objectLabel("Investment", investments.find(investment => objectId("Investment", investment) === plan.investmentId) ?? {})} — {plan.amount} {String(banks.find(bank => objectId("Account", bank) === plan.sourceCashAccountId)?.currency ?? "")} {plan.schedule.kind === "utc_monthly" ? "monthly" : "one time"} from {objectLabel("Account", banks.find(bank => objectId("Account", bank) === plan.sourceCashAccountId) ?? {})}.</p>)}
   </section></GuidedFields>;
 }
@@ -2837,7 +2842,7 @@ function PayrollContributionAuthoring({ draft, setDraft, initialInvestmentId }: 
     setPriority(String(allocation.priority)); setPlanKey(allocation.policy.limits.find(item => item.kind === "401k_additions")?.bucketKey.slice("401k_additions:".length) ?? ""); setVested(allocation.vestedFraction); setExcessPolicy(allocation.policy.excessPolicy);
     setVestDate(plan.events.find(event => event.kind === "vest")?.at.slice(0, 10) ?? ""); setForfeitDate(plan.events.find(event => event.kind === "forfeit")?.at.slice(0, 10) ?? "");
     setFields(Object.fromEntries(Object.entries(allocation.policy.facts).map(([key, value]) => [key, typeof value === "object" ? value.amount.toString() : String(value)])));
-  }, [investmentId, saved]);
+  }, [investmentId]);
   const destinationAccount = accounts.find(account => account.account_id === destinations.find(item => item.investment_id === investmentId)?.account_id);
   const characters = payrollCharacters(destinationAccount?.account_type);
   const employer = character.startsWith("employer_");
@@ -2850,10 +2855,14 @@ function PayrollContributionAuthoring({ draft, setDraft, initialInvestmentId }: 
     payrollSalary: incomeId && !compatibleIncomes.some(item => item.income_id === incomeId) ? "Choose gross salary belonging to the destination account owner." : undefined,
     character: investmentId && !characters.includes(character) ? "Choose a contribution type compatible with this account." : undefined,
     method: kind === "match" && !employer ? "Only employer contributions can use matching." : undefined,
-    payrollAmount: kind === "fixed" ? fieldProblem(financialField("payrollAmount"), amount, true) : undefined,
-    payrollRate: kind !== "fixed" ? fieldProblem(financialField("payrollRate"), rate, true) : undefined,
-    matchCap: kind === "match" ? fieldProblem(financialField("matchCap"), capRate, true) : undefined,
-    payrollPriority: fieldProblem(financialField("payrollPriority"), priority, true),
+    payrollAmount: kind === "fixed" ? fieldProblem(financialField("payrollAmount"), amount, true) ?? (compareDecimal(amount, "0") === -1 ? "Enter a nonnegative payroll contribution amount." : undefined) : undefined,
+    payrollRate: kind !== "fixed" ? fieldProblem(financialField("payrollRate"), rate, true) ?? (compareDecimal(rate, "0") === -1 || compareDecimal(rate, "1") === 1 ? "Enter a contribution rate from 0 to 100%." : undefined) : undefined,
+    matchCap: kind === "match" ? fieldProblem(financialField("matchCap"), capRate, true) ?? (compareDecimal(capRate, "0") === -1 || compareDecimal(capRate, "1") === 1 ? "Enter a cap from 0 to 100%." : undefined) : undefined,
+    vested: character === "employer_401k" && (compareDecimal(vested, "0") === -1 || compareDecimal(vested, "1") === 1) ? "Enter an owned share from 0 to 100%." : undefined,
+    unvested: !character.endsWith("_hsa") ? fieldProblem(financialField("unvested"), openingUnvested, true) ?? unvestedProblem(openingUnvested, String(destinations.find(item => item.investment_id === investmentId)?.quantity ?? "0")) : undefined,
+    vestDate: fieldProblem(financialField("vestDate"), vestDate) ?? (vestDate && currentPlan(draft) && (vestDate < String(currentPlan(draft)!.start_date) || vestDate >= String(currentPlan(draft)!.end_date)) ? "Choose a vesting date within Current Plan." : undefined),
+    forfeitDate: fieldProblem(financialField("forfeitDate"), forfeitDate) ?? (forfeitDate && vestDate && forfeitDate === vestDate ? "Vesting and forfeiture cannot occur on the same date." : forfeitDate && currentPlan(draft) && (forfeitDate < String(currentPlan(draft)!.start_date) || forfeitDate >= String(currentPlan(draft)!.end_date)) ? "Choose a forfeiture date within Current Plan." : undefined),
+    payrollPriority: fieldProblem(financialField("payrollPriority"), priority, true) ?? (saved.plans.some(plan => plan.incomeId === incomeId && plan.allocation.positionId !== investmentId && String(plan.allocation.priority) === priority) ? "Use a distinct order for contributions sharing this salary." : undefined),
     taxYear: fieldProblem(financialField("taxYear"), fields.taxYear, true),
   };
   const payrollInvalid = Object.values(payrollProblems).some(Boolean);
@@ -2868,15 +2877,15 @@ function PayrollContributionAuthoring({ draft, setDraft, initialInvestmentId }: 
     <label>Payroll contribution character<select aria-label="Payroll contribution character" value={character} onChange={event => { const value = event.target.value; if (value === "traditional_401k" || value === "roth_401k" || value === "after_tax_401k" || value === "employee_hsa" || value === "employer_401k" || value === "employer_hsa") setCharacter(value); }}>{characters.map(value => <option key={value} value={value}>{({ traditional_401k: "Traditional 401(k)", roth_401k: "Roth 401(k)", after_tax_401k: "After-tax 401(k)", employee_hsa: "Employee HSA", employer_401k: "Employer 401(k)", employer_hsa: "Employer HSA" })[value]}</option>)}</select></label>
     <label>Payroll contribution method<select aria-label="Payroll contribution method" value={kind} onChange={event => setKind(event.target.value === "fixed" ? "fixed" : event.target.value === "match" ? "match" : "percent")}><option value="fixed">Fixed amount per payroll</option><option value="percent">Percentage of gross pay</option>{employer && <option value="match">Employer match of employee contribution</option>}</select></label>
     <FieldHelp label="Payroll contribution method">Choose a dollar amount per paycheck, a percentage of gross pay, or an employer match. The forecast needs this to calculate each contribution. For example, 5% of a $9,000 paycheck contributes $450; a 100% match matches the eligible employee contribution dollar for dollar.</FieldHelp>
-    {kind === "fixed" ? <label>Payroll contribution amount<input aria-label="Payroll contribution amount" value={amount} onChange={event => setAmount(event.target.value)} /><small>Dollars per paycheck, for example 450.00.</small></label> : <PercentageInput label="Payroll contribution rate" value={rate} onChange={setRate} />}
-    {kind === "match" && <PercentageInput label="Match compensation cap rate" value={capRate} onChange={setCapRate} />}
+    {kind === "fixed" ? <label>Payroll contribution amount<input aria-label="Payroll contribution amount" value={amount} onChange={event => setAmount(event.target.value)} /><small>Dollars per paycheck, for example 450.00.</small></label> : <PercentageInput label="Payroll contribution rate" value={rate} onChange={setRate} error={payrollProblems.payrollRate} />}
+    {kind === "match" && <PercentageInput label="Match compensation cap rate" value={capRate} onChange={setCapRate} error={payrollProblems.matchCap} />}
     <details><summary>Advanced payroll ordering</summary><label>Payroll allocation priority<input type="number" value={priority} onChange={event => setPriority(event.target.value)} /></label>
       <FieldHelp label="Payroll allocation priority">Controls the order of contributions sharing one paycheck. Enter distinct whole numbers; lower numbers run first. Employee contributions must precede employer matches, for example employee 10, employer 20. This makes competing contributions deterministic.</FieldHelp>
     </details>
     {!character.endsWith("_hsa") && <><label>Employer / plan group<input value={planKey} onChange={event => setPlanKey(event.target.value)} list="employer-plan-groups" /></label>
       <datalist id="employer-plan-groups">{[...new Set(saved.plans.flatMap(plan => plan.allocation.policy.limits.filter(limit => limit.kind === "401k_additions").map(limit => limit.bucketKey.slice("401k_additions:".length))))].map(key => <option key={key} value={key} />)}</datalist>
       <FieldHelp label="Employer / plan group">Give related contributions the same employer/plan name so they share the employer’s annual limit. For example use Example Employer for both employee and employer contributions to that plan, and Former Employer for a different employer. This name is also the stable shared plan/sponsor key; changing it changes which limits are shared.</FieldHelp></>}
-    {character === "employer_401k" && <PercentageInput label="Owned share of future employer contributions" value={vested} onChange={setVested} />}
+    {character === "employer_401k" && <PercentageInput label="Owned share of future employer contributions" value={vested} onChange={setVested} error={payrollProblems.vested} />}
     {!character.endsWith("_hsa") && <FinancialSection title="Employer vesting"><label>Opening unvested employer units<input aria-label="Opening unvested employer units" value={openingUnvested} onChange={event => setOpeningUnvested(event.target.value)} /><small>Subset of this holding's total opening units funded by the employer and still unvested. Employee-funded units remain fully owned.</small></label></FinancialSection>}
     {!character.endsWith("_hsa") && <FieldHelp label="Opening unvested employer units">Enter the number of existing investment units funded by the employer that you do not yet own under the vesting schedule. For example enter 100 when 100 of the holding’s opening units are unvested. This excludes contingent employer value from owned net worth; enter units, not dollars or a percentage.</FieldHelp>}
     {character === "employer_401k" && <fieldset><legend>Optional full contingent reclassification</legend><p>These dates reclassify all then-current unvested value in this holding. Complex schedules and partial forfeiture are unsupported. A forfeiture date does not infer a salary end date; author the employment-income end separately.</p><label>Full vesting date<input type="date" value={vestDate} onChange={event => setVestDate(event.target.value)} /></label><label>Full contingent forfeiture date<input type="date" value={forfeitDate} onChange={event => setForfeitDate(event.target.value)} /></label></fieldset>}
@@ -2892,9 +2901,9 @@ function PayrollContributionAuthoring({ draft, setDraft, initialInvestmentId }: 
         setDraft(authorPayrollContributionPlan(draft, { primitiveId: typeof investment.contribution_model_id === "string" ? investment.contribution_model_id : randomId(), investmentId, incomeId, priority: Number(priority), character, calculation: kind === "fixed" ? { kind, amount } : kind === "percent" ? { kind, rate } : { kind, rate, compensationCapRate: capRate }, planKey, vestedFraction: character === "employer_401k" ? vested : "1", excessPolicy, ...(!character.endsWith("_hsa") ? { openingUnvestedQuantity: openingUnvested } : {}),
           contingentEvents: character !== "employer_401k" ? [] : [...(vestDate ? [{ eventId: existing?.events.find(event => event.kind === "vest")?.eventId ?? randomId(), kind: "vest" as const, date: vestDate }] : []), ...(forfeitDate ? [{ eventId: existing?.events.find(event => event.kind === "forfeit")?.eventId ?? randomId(), kind: "forfeit" as const, date: forfeitDate }] : [])],
           facts: { taxYear: Number(fields.taxYear), ...(fields.annualFactProjection === "confirmed_nominal_carry_forward" ? { annualFactProjection: "confirmed_nominal_carry_forward" as const } : {}), ...(fields.ageAtYearEnd ? { ageAtYearEnd: Number(fields.ageAtYearEnd) } : {}), ...(fields.eligiblePlanCompensation ? { eligiblePlanCompensation: fields.eligiblePlanCompensation } : {}), ...(fields.priorYearSponsorWages ? { priorYearSponsorWages: fields.priorYearSponsorWages } : {}), ...(fields.planHasRoth ? { planHasRoth: fields.planHasRoth === "true" } : {}), ...(fields.hsaFullYearEligible ? { hsaFullYearEligible: fields.hsaFullYearEligible === "true" } : {}), ...(fields.hsaCoverage === "self" || fields.hsaCoverage === "family" ? { hsaCoverage: fields.hsaCoverage } : {}), ...(fields.hsaFamilyAllocation ? { hsaFamilyAllocation: fields.hsaFamilyAllocation } : {}) } })); setError("");
-      } catch (failure) { setError(authoringFailure(failure)); }
+      } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
     }}>Save payroll contribution</button>
-    {(error || saved.error) && <p role="alert">{error || saved.error}</p>}
+    {(error || saved.error) && <AuthoringError reason={error || saved.error} />}
     {saved.plans.map(item => <p key={item.allocation.id}>Saved payroll: {item.allocation.policy.character.replaceAll("_", " ")} to {objectLabel("Investment", destinations.find(destination => destination.investment_id === item.allocation.positionId) ?? {})}.</p>)}
   </section></GuidedFields>;
 }

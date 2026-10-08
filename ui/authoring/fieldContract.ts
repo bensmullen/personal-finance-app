@@ -44,10 +44,10 @@ const rows: readonly Row[] = [
   ["ytdOrdinary", "Prior YTD amount excluding catch-up", "Ordinary portion of the total, excluding catch-up contributions.", "money", "USD / year", "1000.00", "advanced", ["ytdTotal"]],
   ["ytdConfirmed", "Confirm all prior contributions are known", "Includes employer contributions and zero for omitted categories; unknown history must remain incomplete.", "choice", "confirmation", "Confirm only after review", "advanced"],
   ["gross_or_net", "Pay amount basis", "Gross pay is before deductions; net pay is take-home. Payroll contributions require gross salary.", "choice", "basis", "Gross", "common", ["amount", "payrollSalary"]],
-  ["tax_character", "Income tax category", "Recorded income classification used by supported tax rules.", "choice", "category", "Wages", "advanced"],
+  ["tax_character", "Income tax category", "Recorded income classification used by supported tax rules.", "choice", "category", "Ordinary", "advanced"],
   ["tax_treatment", "Tax treatment", "Recorded account or holding classification; owning an account does not establish eligibility.", "choice", "classification", "Tax deferred", "advanced", ["account_type"]],
   ["rate_type", "Loan rate basis", "The supported mortgage path requires a fixed rate.", "choice", "basis", "Fixed", "advanced"],
-  ["valuation_method", "Property valuation method", "Recorded valuation method; supported forecast behavior depends on linked models.", "choice", "method", "Market value", "advanced"],
+  ["valuation_method", "Property valuation method", "Recorded valuation method; supported forecast behavior depends on linked models.", "choice", "method", "Market", "advanced"],
   ["liquidity_class", "Access to funds", "Recorded classification of how readily funds are accessible.", "choice", "category", "Liquid", "advanced"],
   ["filing_status", "Recorded filing status", "Tax calculations also require dated eligibility facts.", "choice", "status", "Single", "advanced"],
   ["members", "Household members", "People included in this household.", "choice", "people", "Alex", "advanced"],
@@ -70,6 +70,9 @@ const rows: readonly Row[] = [
   ["household_type", "Household type", "The people included in your household.", "choice", "category", "Family"],
   ["formation_date", "Household start", "When the household began.", "date", "date", "2020-01-01", "advanced"],
   ["household_id", "Household", "Household this person belongs to.", "choice", "household", "My household"],
+  ["employment_status", "Employment status", "Recorded employment situation; this does not automatically start or stop salary.", "choice", "status", "Employed", "advanced", ["end_date"]],
+  ["scenario_id", "Plan", "Plan containing this assumption.", "choice", "plan", "Current plan", "advanced"],
+  ["timestep", "Planning interval", "Recorded plan interval; the supported household forecast runs monthly.", "choice", "interval", "Monthly", "advanced"],
   ["owner_id", "Owner", "Person or household owning this item.", "choice", "owner", "Alex"],
   ["primary_jurisdiction", "Primary location", "Recorded household location; tax applicability needs dated facts.", "text", "jurisdiction", "US-CO", "advanced"],
   ["residence_jurisdiction", "Residence location", "Recorded residence; dated tax facts remain separate.", "text", "jurisdiction", "US-CO", "advanced"],
@@ -172,8 +175,42 @@ const rows: readonly Row[] = [
   ["retirementIncome", "Retirement income", "Income linked to an existing retirement plan.", "choice", "income", "Example salary"],
   ["retirementDate", "Planned retirement date", "Saved baseline retirement within Current Plan bounds.", "date", "date", "2041-01-01", "common", ["planStart", "planEnd"]],
 ];
-export const FINANCIAL_FIELDS: Readonly<Record<string, FinancialField>> = Object.freeze(Object.fromEntries(rows.map(([key, label, description, format, unit, example, disclosure = "common", dependencies = []]) => [key, Object.freeze({ key, label, description, why: "The forecast uses this recorded fact; unknown financial facts are not inferred.", unit, example, format, disclosure, dependencies, state: disclosure === "derived" ? "derived" : "optional", source: "Recorded plan fact or explicit session choice through existing D1 authoring", suggestion: "No automatic financial defaults; calculated suggestions require confirmation." })])));
-export const entityField = (name: string): FinancialField | undefined => FINANCIAL_FIELDS[name];
+export const FINANCIAL_FIELDS: Readonly<Record<string, FinancialField>> = Object.freeze(Object.fromEntries(rows.map(([key, label, description, format, unit, example, disclosure = "common", dependencies = []]) => [key, Object.freeze({ key, label, description, why: description, unit, example, format, disclosure, dependencies, state: disclosure === "derived" ? "derived" : "optional", source: `${label}: explicit recorded fact or selected forecast convention`, suggestion: dependencies.length ? `Review alongside ${dependencies.map(name => rows.find(row => row[0] === name)?.[1] ?? "the linked financial fact").join(", ")}.` : `Use the established ${label.toLowerCase()}; no value is inferred.` })])));
+export const ENTITY_FIELD_INVENTORY: Readonly<Record<string, readonly string[]>> = {
+  Household: ["name", "household_type", "formation_date", "members", "primary_jurisdiction"],
+  Person: ["first_name", "last_name", "date_of_birth", "household_id", "employment_status", "residence_jurisdiction"],
+  Account: ["name", "account_type", "owner_id", "institution", "currency", "opening_date", "opening_balance", "liquidity_class", "tax_treatment", "interest_rate", "interest_convention", "first_credit_date"],
+  Income: ["owner_id", "income_type", "source", "amount", "frequency", "start_date", "end_date", "tax_character", "gross_or_net"],
+  Expense: ["owner_id", "category", "amount", "frequency", "start_date", "end_date", "essentiality", "payment_account_id"],
+  Asset: ["name", "asset_type", "owner_id", "account_id", "acquisition_date", "acquisition_cost", "valuation_method", "liquidity_class"],
+  Liability: ["name", "liability_type", "owner_id", "principal", "current_balance", "interest_rate", "rate_type", "payment_frequency", "extra_payment", "origination_date", "maturity_date", "collateral_id", "tax_treatment"],
+  Investment: ["account_id", "investment_type", "symbol", "quantity", "tax_treatment", "instrument_subtype", "acquisition_date", "cost_basis", "after_tax_basis", "face_value", "maturity_date", "coupon_rate", "interest_convention", "crediting_frequency", "first_credit_date", "settlement_account_id", "funding_account_id", "underlying_investment_id", "strike_price", "expiration_date", "contract_multiplier"],
+  Assumption: ["name", "category", "value", "unit", "start_date", "end_date", "source", "scenario_id"],
+  Scenario: ["name", "description", "start_date", "end_date", "timestep", "enabled"],
+};
+const contextual: Readonly<Record<string, Partial<FinancialField>>> = {
+  "Investment.maturity_date": { label: "Investment maturity", description: "Contractual redemption date of the Treasury or CD.", why: "Determines when the instrument redeems its face value.", example: "2027-01-01", dependencies: ["acquisition_date", "instrument_subtype"], source: "Recorded instrument terms", suggestion: "Use the maturity date on the instrument confirmation." },
+  "Assumption.source": { label: "Assumption source", description: "Whether this assumption is your estimate, historical evidence, external research, or a model output.", why: "Documents the basis for this planning assumption.", example: "user", source: "Your assumption provenance", suggestion: "Choose the established source category." },
+  "Assumption.category": { label: "Assumption category", description: "Financial purpose of this assumption, such as return or inflation.", why: "Identifies which planning assumption you are reviewing.", example: "market_return", source: "Recorded assumption classification", suggestion: "Retain the category of the linked financial model." },
+  "Asset.account_id": { label: "Linked account", description: "Recorded account relationship for this standalone asset.", why: "Preserves the asset's account relationship without adding its value twice.", example: "Example account", dependencies: [], source: "Recorded asset relationship", suggestion: "Do not use standalone assets to duplicate securities." },
+  "Liability.tax_treatment": { label: "Debt tax classification", description: "Recorded debt classification; it does not establish deductible interest.", why: "Preserves the classification separately from supported tax calculations.", example: "taxable", dependencies: [], source: "Recorded debt facts", suggestion: "Do not infer deductions from this classification." },
+  "Expense.category": { label: "Spending category", description: "Purpose of this spending, such as groceries or utilities.", why: "Identifies recurring spending in the plan.", example: "Groceries", source: "Your spending classification", suggestion: "Use a recognizable spending category." },
+  "Account.interest_rate": { description: "Annual bank interest rate using the recorded calculation basis.", why: "Sets supported bank interest credits.", dependencies: ["interest_convention"], source: "Recorded bank terms", suggestion: "Use the quoted rate and matching calculation basis." },
+  "Liability.interest_rate": { description: "Nominal annual loan rate; supported mortgages use fixed rates and monthly payments.", why: "Sets contractual debt interest under the existing loan model.", dependencies: ["rate_type", "payment_frequency"], source: "Recorded loan agreement", suggestion: "Use the contractual rate, not APR including fees." },
+};
+export function entityField(name: string, context?: string, descriptor?: { required: boolean; derived: boolean; mutable: boolean; type?: string }, creating = false, value?: unknown, recordedUnit?: string): FinancialField | undefined {
+  const base = FINANCIAL_FIELDS[name];
+  if (!base) return undefined;
+  if (!context) return base;
+  if (!ENTITY_FIELD_INVENTORY[context]?.includes(name)) return undefined;
+  const assumptionValue: Partial<FinancialField> = context === "Assumption" && name === "value" ? /annual rate/i.test(recordedUnit ?? "")
+    ? { label: "Annual assumption rate", description: "Effective annual growth or return in the linked financial model.", why: "Changes all financial activity sharing this assumption.", format: "percent", unit: "% annually", example: "8", dependencies: ["unit"], suggestion: "Enter 8 for 8%; negative supported growth rates retain their sign." }
+    : { format: "decimal", unit: recordedUnit ?? "recorded unit", description: "Exact assumption amount in its recorded unit.", why: "Defines the linked model's planning input.", suggestion: "Keep the established unit when changing this value." } : {};
+  return { ...base, why: `${base.description} This is a recorded ${context.toLowerCase()} fact.`,
+    source: `Recorded ${context.toLowerCase()} ${base.label.toLowerCase()}`,
+    suggestion: "Use the established fact; leave unknown optional facts unset.", ...contextual[`${context}.${name}`], ...assumptionValue,
+    state: descriptor ? descriptor.derived ? "derived" : !creating && !descriptor.mutable && value !== undefined ? "read-only" : descriptor.required ? "required" : "optional" : base.state };
+}
 export function financialField(key: string): FinancialField {
   const field = FINANCIAL_FIELDS[key];
   if (!field) throw new Error(`Missing financial field metadata: ${key}`);
@@ -192,6 +229,7 @@ export function fieldProblem(field: FinancialField, value: unknown, required = f
   const text = String(value);
   if (field.format === "integer" && (!/^\d+$/.test(text) || !Number.isSafeInteger(Number(text)))) return "Enter a nonnegative whole number.";
   if (["money", "decimal", "percent"].includes(field.format) && !/^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text)) return "Enter a decimal without commas or a currency sign.";
+  if (["vested", "matchCap", "payrollRate"].includes(field.key) && (compareDecimal(text, "0") === -1 || compareDecimal(text, "100") === 1)) return "Enter a percentage from 0 to 100.";
   if (field.format === "date") {
     const date = new Date(`${text}T00:00:00.000Z`);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== text) return "Enter a valid calendar date.";
@@ -201,4 +239,16 @@ export function fieldProblem(field: FinancialField, value: unknown, required = f
     if (!/^\d{2}-\d{2}$/.test(text) || !Number.isFinite(date.getTime()) || date.toISOString().slice(5, 10) !== text) return "Enter a valid month/day, such as 04-15. The forecast checks dates against the selected years.";
   }
   return undefined;
+}
+/** Exact input comparison; no floating-point money. */
+export function compareDecimal(left: string, right: string): number | undefined {
+  const a = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(left), b = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(right);
+  if (!a || !b) return undefined;
+  const scale = Math.max(a[3]?.length ?? 0, b[3]?.length ?? 0);
+  const integer = (parts: RegExpExecArray) => BigInt(`${parts[1] === "-" ? "-" : ""}${parts[2]}${(parts[3] ?? "").padEnd(scale, "0")}`);
+  const x = integer(a), y = integer(b);
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+export function unvestedProblem(units: string, total: string): string | undefined {
+  return compareDecimal(units, "0") === -1 || compareDecimal(units, total) === 1 ? "Unvested units must be between zero and this holding's opening units." : undefined;
 }

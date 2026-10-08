@@ -1,6 +1,6 @@
 "use client";
 import { cloneElement, useId, useState, useEffect, type ReactElement, type InputHTMLAttributes, type SelectHTMLAttributes, type ReactNode } from "react";
-import { financialField, fieldProblem } from "./fieldContract.js";
+import { financialField, fieldProblem, type FinancialField } from "./fieldContract.js";
 
 type Control = ReactElement<InputHTMLAttributes<HTMLInputElement> & SelectHTMLAttributes<HTMLSelectElement>>;
 /** Opens all enclosing disclosures before focusing the actual repair control. */
@@ -10,13 +10,13 @@ export function focusRepair(target: HTMLElement | null | undefined) {
   while (ancestor) { if (ancestor instanceof HTMLDetailsElement) ancestor.open = true; ancestor = ancestor.parentElement; }
   target.focus(); target.scrollIntoView({ block: "center", behavior: "smooth" });
 }
-export function FieldShell({ fieldKey, children, required = false, error, hint, repairKey }: {
-  fieldKey: string; children: Control; required?: boolean; error?: string | undefined; hint?: string; repairKey?: string | undefined;
+export function FieldShell({ fieldKey, children, required = false, error, hint, repairKey, presentation }: {
+  fieldKey: string; children: Control; required?: boolean; error?: string | undefined; hint?: string; repairKey?: string | undefined; presentation?: FinancialField | undefined;
 }) {
-  const field = financialField(fieldKey), id = useId();
+  const field = presentation ?? financialField(fieldKey), id = useId();
   const readOnly = children.props.readOnly || children.props.disabled;
   const problem = readOnly ? undefined : error ?? fieldProblem(field, children.props.value, required);
-  const help = `${field.description} ${field.why} Unit: ${field.unit}. Example: ${field.example}. ${field.suggestion}`;
+  const help = `${field.description}${field.why === field.description ? "" : ` ${field.why}`} Unit: ${field.unit}. Example: ${field.example}. Source: ${field.source}. ${field.suggestion}`;
   return <div className={`field-shell${problem ? " field-invalid" : ""}${readOnly ? " field-readonly" : ""}`} data-financial-field={fieldKey} data-disclosure={field.disclosure} data-field-state={readOnly ? "read-only" : required ? "required" : field.state}>
     <div className="field-heading"><label htmlFor={id}>{field.label}{required && <span aria-label="required"> *</span>}</label>
       <details className="field-help"><summary role="button" aria-label={`Help for ${field.label}`} aria-description={help} title={help}>?</summary><div role="note">{help}</div></details>

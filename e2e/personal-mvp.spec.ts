@@ -655,7 +655,7 @@ test("R4 UAT baseline projected return edits the linked assumption and reruns th
   await page.getByRole("button", { name: "Assumptions", exact: true }).click();
   const assumptionName = createGoldenHouseholdDraft().objects.Assumption!.find((item: any) => item.assumption_id === GOLDEN_HOUSEHOLD_IDS.retirementReturnAssumption) as any;
   await page.getByRole("button", { name: new RegExp(String(assumptionName.name)) }).click();
-  await expect(page.getByRole("dialog", { name: "Edit Assumption" }).getByLabel("Value", { exact: true })).toHaveValue("0.08");
+  await expect(page.getByRole("dialog", { name: "Edit Assumption" }).getByLabel("Annual assumption rate", { exact: true })).toHaveValue("8");
 });
 
 test("R4 UAT diagnostics explain monthly-event limits and retirement remediation without raw codes", async () => {
