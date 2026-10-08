@@ -1863,6 +1863,7 @@ function WhatIfStarter({
         <label>
           Income target
           <select
+            aria-label="Income target"
             value={incomeId}
             onChange={(event) => setIncomeId(event.target.value)}
           >
@@ -1880,6 +1881,7 @@ function WhatIfStarter({
         <label>
           Expense target
           <select
+            aria-label="Expense target"
             value={expenseId}
             onChange={(event) => setExpenseId(event.target.value)}
           >
