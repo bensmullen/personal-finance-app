@@ -4899,8 +4899,7 @@
       ],
       "depends_on_requirement_ids": [
         "PFA-DET-015",
-        "PFA-INV-019",
-        "PFA-TAX-013"
+        "PFA-INV-019"
       ],
       "verification_methods": [
         "analysis",
@@ -4930,6 +4929,121 @@
       ],
       "depends_on_requirement_ids": [
         "PFA-PLAN-015"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-TAX-017",
+      "spec_id": "tax-engine",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/rules/",
+        "src/application/",
+        "src/simulation/",
+        "future tax-rule catalog",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-TAX-002",
+        "PFA-TAX-011",
+        "PFA-TAX-012"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-TAX-018",
+      "spec_id": "tax-engine",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "src/rules/",
+        "src/application/",
+        "src/simulation/",
+        "future tax-rule catalog",
+        "test/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-TAX-002",
+        "PFA-TAX-011",
+        "PFA-TAX-017"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-017",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "future planning modules",
+        "src/application/",
+        "src/simulation/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PLAN-002",
+        "PFA-PLAN-012",
+        "PFA-PLAN-015"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-PLAN-018",
+      "spec_id": "financial-planning-and-optimization",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "future planning modules",
+        "src/application/",
+        "ui/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-PLAN-017"
       ],
       "verification_methods": [
         "analysis",

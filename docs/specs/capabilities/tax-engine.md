@@ -1,6 +1,6 @@
 # Tax Engine Capability
 
-**Version:** 0.3.0-draft
+**Version:** 0.4.0-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-TAX
 
@@ -141,6 +141,20 @@ Before private alpha, the authoritative tax engine and planning boundary SHALL s
 
 These mechanics are a mandatory private-alpha tax floor even though other T1B domains may remain capability-gated by cohort. Tax-loss harvesting logic SHALL consume PFA-TAX results; portfolio/planning code SHALL NOT duplicate wash-sale, basis, carryforward, or 1031 tax formulas.
 
+### PFA-TAX-017 — Optimization-ready tax-rule composition
+
+Supported tax rules SHALL be available through a stable tax-domain contract that can determine, as applicable, rule applicability, dependencies, elections, limits/constraints, jurisdiction/effective-date composition, and resulting tax state transitions for a proposed household strategy.
+
+Federal, state, local, and other supported jurisdiction rules SHALL compose through authoritative tax-rule resolution rather than optimizer-owned arithmetic. Missing material cross-rule or cross-jurisdiction interactions SHALL produce capability diagnostics rather than being treated as zero or silently ignored.
+
+This requirement does not require every tax rule to be encoded as a closed-form numeric expression or solver-native constraint. The authoritative evaluator MAY remain procedural, graph-based, or otherwise implementation-neutral so long as planning/search can evaluate proposed strategies reproducibly through the same tax semantics.
+
+### PFA-TAX-018 — Multi-period tax state and explicit legal predicates
+
+Supported tax facts that can affect later periods SHALL remain explicit, reproducible state across the planning horizon. This includes, where applicable, basis and tax lots, holding periods, loss/credit/deduction carryforwards, depreciation/amortization state, previously taxed amounts, contribution/distribution/conversion history, elections, and other effective tax attributes.
+
+When a tax consequence depends on a legal, factual, or facts-and-circumstances predicate that the authoritative household data and supported rules cannot resolve deterministically, that predicate SHALL remain explicit as an input, assumption, scenario branch, or capability diagnostic. The optimizer SHALL NOT silently guess the legal conclusion merely to complete a search.
+
 ## 3. Planned decomposition
 
 Later tax specifications may be split by federal, state/local, payroll, investment/capital-gains, retirement, equity-compensation, and estate/gift domains when actual implementation breadth justifies that decomposition.
@@ -156,5 +170,7 @@ These are examples, not a hard-coded list. Runtime output validity SHOULD be dri
 ## 5. Sequencing
 
 Comprehensive tax implementation need not precede every later product capability, but R5 SHALL NOT begin until the D2 tax characterization required by PFA-TAX-015 is complete for the admitted deterministic breadth floor. T1A SHALL implement PFA-TAX-010 for the actual private-alpha cohort and PFA-TAX-011's reusable catalog boundary. T1B remains the advanced/specialized track, but its PFA-TAX-016 capital-loss/wash-sale/tax-loss-harvesting/1031 slice is a mandatory private-alpha gate; other specialized business, AMT, complex credit/phaseout, rental/pass-through, foreign, estate/gift, and equity-compensation domains gate only the outputs that depend on them unless the alpha cohort requires them.
+
+PFA-TAX-017 and PFA-TAX-018 reserve the architecture needed for future comprehensive tax optimization; they do not make exhaustive federal/state/local tax-law coverage a private-alpha prerequisite. New tax domains SHOULD preserve these rule-composition and multi-period-state seams as they are added.
 
 Tax performance must be measured before high-realization-count production forecasts rely on it.

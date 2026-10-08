@@ -1,6 +1,6 @@
 # Financial Planning & Decision Optimization
 
-**Version:** 0.2.0-draft
+**Version:** 0.3.0-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-PLAN
 
@@ -38,7 +38,7 @@ Candidate strategies SHALL be evaluated through the same authoritative financial
 
 ### PFA-PLAN-003 — Explicit objectives and constraints
 
-Optimization objectives, goals, tradeoff preferences, and hard constraints SHALL be explicit planning configuration. The system SHALL NOT embed a universal hidden objective such as maximizing terminal net worth.
+Optimization objectives, goals, tradeoff preferences, and hard constraints SHALL be explicit planning configuration. The system SHALL NOT embed a universal hidden objective such as maximizing terminal net worth or minimizing taxes. Tax may be an explicit objective, constraint, or modeled consequence, but tax-aware optimization SHOULD optimize the user's broader supported household objectives such as after-tax spending/wealth, liquidity, goal attainment, risk, and legacy rather than treating lower tax liability as inherently preferable.
 
 ### PFA-PLAN-004 — Multi-objective tradeoffs
 
@@ -87,16 +87,18 @@ Search/optimization algorithms, local versus server execution, and acceleration 
 
 ### PFA-PLAN-015 — Deterministic portfolio optimization may precede stochastic modeling
 
-After the deterministic D1 financial-semantic gate and the applicable tax floor are complete, the planning layer SHALL be able to implement a bounded deterministic portfolio optimizer before Monte Carlo/stochastic simulation exists.
+After the deterministic D1 financial-semantic gate is complete, the planning layer SHALL be able to implement a bounded deterministic portfolio optimizer before Monte Carlo/stochastic simulation exists. A portfolio-only scope MAY operate without tax-sensitive decision search when it explicitly excludes tax-dependent consequences and claims. Tax-aware portfolio decisions require the applicable authoritative tax floor.
 
 That optimizer MAY generate and rank candidate contribution, allocation, rebalancing, and supported account-location strategies using:
 - explicit deterministic return assumptions;
 - authoritative contribution limits/employer-match rules;
 - authoritative funding/liquidity/accounting semantics;
-- applicable authoritative tax evaluation;
+- applicable authoritative tax evaluation when the configured candidate set or objective includes tax-sensitive decisions or consequences; and
 - explicit user goals, target allocations/ranges, and hard constraints.
 
-Its claims SHALL match its evidence. Deterministic portfolio optimization may identify the best strategy among the bounded alternatives under the stated deterministic assumptions, but SHALL NOT be presented as uncertainty-aware risk optimization, sequence-risk optimization, or globally optimal asset allocation.
+A portfolio-only result MAY be labeled pre-tax or tax-excluded when that scope is meaningful for the evaluated decisions. It SHALL identify material excluded tax consequences and SHALL NOT claim after-tax, tax-aware, or integrated household optimality.
+
+Its claims SHALL match its evidence. Deterministic portfolio optimization may identify the best strategy among the bounded alternatives under the stated deterministic assumptions and declared capability scope, but SHALL NOT be presented as uncertainty-aware risk optimization, sequence-risk optimization, or globally optimal asset allocation.
 
 ### PFA-PLAN-016 — Stochastic portfolio optimization upgrades deterministic planning
 
@@ -104,11 +106,25 @@ After the required probabilistic market/household semantics exist, P2 SHALL exte
 
 The stochastic optimizer SHALL reuse the same decision semantics as PFA-PLAN-015 rather than redefining contributions, allocation, rebalancing, taxes, or account location. Deterministic portfolio optimization remains useful for preview, explanation, screening, and cases whose conclusion does not materially depend on uncertainty.
 
+### PFA-PLAN-017 — Capability-scoped and composable optimization
+
+Every optimization problem SHALL declare the enabled decision domains, materially evaluated consequence domains, evaluation fidelity, and materially omitted domains. Portfolio-only, tax-aware portfolio, tax-strategy, and broader integrated planning SHALL compose through the same strategy/evaluation contract rather than creating separate financial engines.
+
+A supported decision SHALL retain the same semantic identity when additional consequence domains are enabled. For example, enabling tax evaluation SHALL enrich the consequences of a contribution, sale, withdrawal, conversion, or other decision rather than replacing that decision with a tax-optimizer-specific representation.
+
+A result SHALL NOT imply optimality or completeness outside its declared capability scope. Materially omitted domains that could reverse a recommendation SHALL be disclosed through capability diagnostics or scoped claims.
+
+### PFA-PLAN-018 — Product entitlements do not redefine financial semantics
+
+Commercial subscription, feature-access, or product-tier entitlements MAY determine which planning domains, search breadth, evaluation fidelity, or compute budgets a user can invoke, but SHALL remain outside the authoritative financial semantics.
+
+Given the same facts, assumptions, decisions, enabled consequence domains, rule versions, and evaluation fidelity, the authoritative evaluator SHALL produce the same financial result regardless of commercial tier. A lower-access tier MAY omit an optimization domain or higher-cost search capability only when that omission is explicit in the planning scope; it SHALL NOT substitute less-correct formulas, silently omit consequences inside an enabled domain, or alter the meaning of a financial decision.
+
 ## 4. Initial scope
 
 The first planning milestone SHALL establish the deterministic strategy-definition/evaluation contract and the bounded deterministic portfolio-optimization floor required by PFA-INV-024. It should prove strategy identity, comparable evaluation, explanations, capability diagnostics, compiled-plan reuse, contribution/account constraints, and bounded candidate generation before broad stochastic search is introduced.
 
-Later milestones add stochastic candidate evaluation, progressive uncertainty-aware optimization, and broader integrated decision domains. Full cross-domain optimization is not a prerequisite for private alpha, but the bounded deterministic portfolio optimizer is.
+Later milestones add stochastic candidate evaluation, progressive uncertainty-aware optimization, and broader integrated decision domains. The initial planning boundary SHALL preserve capability scope independently from any future commercial entitlement model so broader planning suites can be enabled without replacing the planner or financial evaluator. Full cross-domain optimization is not a prerequisite for private alpha, but the bounded deterministic portfolio optimizer is.
 
 ## 5. Deferred representation decisions
 

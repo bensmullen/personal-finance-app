@@ -1,6 +1,6 @@
 # Portfolio & Investment Planning
 
-**Version:** 0.5.0-draft
+**Version:** 0.5.1-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-INV
 
@@ -155,6 +155,10 @@ After PFA-DET is complete, the product SHALL support bounded portfolio strategy 
 - liquidity and funding constraints;
 - fees/costs where modeled; and
 - tax-aware account/contribution/location decisions only to the extent the authoritative tax engine has complete coverage for the compared strategies.
+
+A portfolio-only optimizer MAY be configured as explicitly pre-tax or tax-excluded for decisions whose evaluation remains meaningful without tax-sensitive consequences, such as supported allocation, rebalancing, risk/return, and cost analysis within a fixed account scope. Such a result SHALL identify material excluded tax consequences and SHALL NOT claim tax-aware, after-tax, or integrated household optimality.
+
+When the optimizer ranks tax-sensitive account selection, contribution character, account location, realization, withdrawal, conversion, or other tax-dependent choices, it SHALL use the authoritative tax engine at the completeness required by PFA-TAX rather than approximate those consequences inside portfolio logic.
 
 The deterministic optimizer MAY rank a bounded set of strategies using explicit user goals/constraints and deterministic return assumptions. It SHALL NOT claim uncertainty-aware, risk-adjusted, globally optimal, or efficient-frontier optimality without the stochastic/risk semantics required by PFA-PLAN and PFA-PROB.
 

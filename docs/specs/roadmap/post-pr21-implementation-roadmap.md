@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.6.0-draft
+**Version:** 0.6.1-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -275,7 +275,9 @@ Domain modules and fixtures may proceed in parallel after D1 when they consume s
 
 P1 begins after D1 confirms that the original deterministic financial mechanics used by private-alpha planning decisions are semantically correct and testable. Because T1A Phase B is already a D1 prerequisite, P1 may use authoritative tax evaluation for supported tax-sensitive decisions. P1 may proceed in parallel with D2 and C1, but it SHALL capability-gate any strategy conclusion that depends on a D2 domain until that domain is merged and verified.
 
-P1 now includes a required **deterministic portfolio-optimization floor for private alpha**. Implement the initial PFA-PLAN contract with a deliberately bounded supported decision set:
+P1 now includes a required **deterministic portfolio-optimization floor for private alpha**. The planning boundary SHALL support explicit capability scope so portfolio-only analysis can remain modular from tax-aware portfolio analysis and later integrated planning. Commercial entitlements are outside financial semantics and may gate access to these capabilities later without changing the correctness of an enabled evaluator.
+
+Implement the initial PFA-PLAN contract with a deliberately bounded supported decision set:
 
 - typed separation of facts, assumptions, decisions, goals, constraints, strategies, and outcomes;
 - durable/reproducible strategy identity;
@@ -285,7 +287,10 @@ P1 now includes a required **deterministic portfolio-optimization floor for priv
 - capability diagnostics when missing tax/investment/insurance/other semantics could materially change a conclusion;
 - no automated financial action;
 - compiled-plan reuse for localized decision overlays where semantically valid;
-- bounded deterministic portfolio candidate generation/ranking for supported contribution priority, employer-match capture, contribution allocation, movement toward explicit target allocation/ranges, rebalancing, and tax-aware account/location decisions where authoritative tax coverage exists.
+- explicit optimization-scope metadata identifying enabled decision/consequence domains and materially omitted domains;
+- bounded deterministic portfolio candidate generation/ranking for supported contribution priority, employer-match capture, contribution allocation, movement toward explicit target allocation/ranges, and rebalancing;
+- portfolio-only pre-tax/tax-excluded evaluation where meaningful and clearly scoped; and
+- tax-aware account/location and other tax-sensitive decisions only where authoritative tax coverage exists.
 
 P1 does not require Monte Carlo optimization, efficient-frontier/risk-optimal allocation, a new canonical Goal/Strategy object, or complete cross-domain planning. Its deterministic optimizer must disclose that conclusions depend on fixed return assumptions and bounded candidate/search scope. Its purpose is to deliver useful basic portfolio decision support before stochastic work while establishing the stable planning boundary that P2 later upgrades.
 
@@ -364,6 +369,8 @@ For the actual private-alpha cohort, implement the materially applicable subset 
 Property tax may remain a modeled household expense and sales tax may remain embedded in spending assumptions when no separate tax-engine interaction is required. Self-employment/business, AMT, complex credits/phaseouts, rental/pass-through, foreign, estate/gift, and equity-compensation-specific taxation remain T1B unless an alpha participant requires them.
 
 Create the reusable tax-rule catalog boundary from PFA-TAX-011. During personal/local development the catalog may be version-controlled app data. Before/within shared private-alpha persistence, common effective-dated rule definitions should be stored once per version/content fingerprint, while household models store facts/elections/references rather than duplicate copies of tax law. Executable tax algorithms remain in the rules engine.
+
+As tax coverage expands, preserve the optimization-ready composition and multi-period state seams from PFA-TAX-017/018. This reserves future comprehensive applicable-law tax optimization without making exhaustive tax-code encoding part of T1A, D2, or the private-alpha gate.
 
 Examples of tax-independent results may continue to display in accordance with PFA-TAX-008. Objective output validity SHALL be driven by dependencies/capability diagnostics rather than a global all-or-nothing tax switch.
 
@@ -444,7 +451,7 @@ R7 may expose engineering/developer results before T1A is complete, but a tax-af
 
 ## 14. P2 — Stochastic strategy evaluation and progressive optimization
 
-After P1 and the required R7 probabilistic semantics exist, add strategy-set stochastic evaluation using PFA-PLAN, PFA-PROB, and PFA-PERF-024:
+After P1 and the required R7 probabilistic semantics exist, add strategy-set stochastic evaluation using PFA-PLAN, PFA-PROB, and PFA-PERF-024. Preserve the declared capability scope from P1 so portfolio-only, tax-aware, and later integrated searches can use the same stochastic evaluation machinery without forcing every domain into every product surface:
 
 - common Forecast Basis and common-random-number cohorts for materially comparable candidates;
 - bounded lower-cost stochastic screening followed by higher-confidence evaluation of survivors;
@@ -566,6 +573,10 @@ Private-alpha infrastructure remains governed by the system/software architectur
 
 P3 is the long-term integration track after P1 and the applicable domain capabilities mature; it additionally depends on P2 for stochastic automated optimization. It combines supported planning decisions across portfolio/investments, taxes, insurance, retirement, debt, liquidity, and other future domains without moving their financial formulas into the optimizer.
 
+As tax coverage matures, P3 explicitly includes comprehensive applicable-law tax-strategy optimization across supported federal, state, local, and other tax rules. Tax-sensitive search SHALL remain grounded in the authoritative tax engine's jurisdiction composition, multi-period state, rule versions, and explicit unresolved legal predicates. The planning objective SHALL remain the household's broader supported financial goals rather than tax minimization in isolation.
+
+P3 SHALL remain capability-composable: portfolio-only, tax-aware portfolio, tax-strategy, and broader integrated planning may be exposed independently or together. Future product tiers MAY gate access to larger planning suites, search breadth, or higher-cost evaluation, but commercial entitlements SHALL NOT change authoritative financial semantics or make a lower tier silently less correct within an enabled capability.
+
 P3 SHALL use progressive evaluation rather than brute-force high-fidelity Monte Carlo across every possible combination:
 
 ```text
@@ -596,6 +607,6 @@ The following items SHALL remain visible until closed:
 - **Advanced portfolio-planning depth (PFA-INV):** allocation optimization beyond the required deterministic floor, broad rebalancing policy, account-location optimization, security selection, and other advanced planning may remain incremental. The D1+D2 deterministic account/instrument/contribution/conversion/funding mechanics named by PFA-DET/PFA-INV are **not deferred** and are required before R5.
 - **Advanced insurance planning (PFA-INS):** probabilistic claims, coverage optimization, underwriting/product-specific recommendation logic, and unsupported policy families may remain incremental. D1 deterministic premiums/payouts plus D2 health-insurance and Medicare premium mechanics required by PFA-DET/PFA-INS are **not deferred** and are required before R5.
 - **Stochastic strategy optimization (P2):** may remain post-alpha if alpha offers explicit scenario/strategy comparison rather than automated optimization; trigger before exposing an automated stochastic strategy recommendation.
-- **Integrated cross-domain optimization (P3):** long-term product capability spanning the supported tax, investment, insurance, retirement, debt, liquidity, and future planning domains. It is intentionally not a blanket private-alpha prerequisite.
+- **Integrated cross-domain optimization (P3):** long-term product capability spanning the supported tax, investment, insurance, retirement, debt, liquidity, and future planning domains, including comprehensive applicable-law tax-strategy optimization as rule coverage matures. It is intentionally not a blanket private-alpha prerequisite, and its domain modules remain independently exposable through capability-scoped planning.
 
 Additional deferred capabilities may be added here only with an owner/trigger or planned milestone; deferral SHALL NOT silently erase a requirement.

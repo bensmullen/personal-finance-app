@@ -274,7 +274,7 @@
     {
       "id": "financial-planning-and-optimization",
       "path": "docs/specs/capabilities/financial-planning-and-optimization.md",
-      "version": "0.2.0-draft",
+      "version": "0.3.0-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -300,7 +300,10 @@
         "tradeoff",
         "portfolio optimization",
         "deterministic optimization",
-        "stochastic optimization"
+        "stochastic optimization",
+        "capability-scoped optimization",
+        "composable optimization",
+        "product entitlements"
       ],
       "applies_to": [
         "personal-mvp",
@@ -317,7 +320,7 @@
     {
       "id": "portfolio-planning",
       "path": "docs/specs/capabilities/portfolio-planning.md",
-      "version": "0.5.0-draft",
+      "version": "0.5.1-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -355,7 +358,9 @@
         "mega backdoor Roth",
         "TIPS",
         "Series EE",
-        "529"
+        "529",
+        "pre-tax portfolio optimization",
+        "tax-aware portfolio optimization"
       ],
       "applies_to": [
         "personal-mvp",
@@ -491,7 +496,7 @@
     {
       "id": "tax-engine",
       "path": "docs/specs/capabilities/tax-engine.md",
-      "version": "0.3.0-draft",
+      "version": "0.4.0-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -522,7 +527,11 @@
         "Social Security",
         "Roth conversion",
         "529",
-        "TIPS"
+        "TIPS",
+        "tax optimization",
+        "multi-period tax state",
+        "legal predicates",
+        "jurisdiction composition"
       ],
       "applies_to": [
         "personal-mvp",
@@ -662,7 +671,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.6.0-draft",
+      "version": "0.6.1-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -719,7 +728,10 @@
         "tax loss harvesting",
         "wash sale",
         "capital loss carryforward",
-        "1031 exchange"
+        "1031 exchange",
+        "capability-scoped optimization",
+        "comprehensive tax optimization",
+        "product tiers"
       ],
       "applies_to": [
         "personal-mvp",
