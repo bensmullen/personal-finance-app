@@ -1,6 +1,6 @@
 # Deterministic Household Financial Semantics Readiness
 
-**Version:** 0.3.0-draft  
+**Version:** 0.3.1-draft  
 **Status:** Pre-stochastic/private-alpha gate  
 **Requirement prefix:** PFA-DET
 
@@ -238,9 +238,11 @@ The UI SHALL:
 - explain unsupported capabilities in user-action language; and
 - keep compiler codes/UUIDs in technical detail rather than primary guidance.
 
+The shared normal-user authoring contract in PFA-UX-015 through PFA-UX-020 is an explicit D1 usability acceptance dependency. D1-C's passed computational/semantic checks are not equivalent to accepted D1 authoring UAT. U1 is a usability recovery/acceptance slice over the original D1 semantics; it does not add D2 economic capabilities.
+
 ### PFA-DET-015 — Stochastic and private-alpha gate
 
-D1 closeout is defined by the original PFA-DET-001 through PFA-DET-014 contract and its D1-C verification; it does not require D2 capabilities to already exist. D2 closeout is separately defined by PFA-DET-016 through PFA-DET-023.
+D1 closeout is defined by the original PFA-DET-001 through PFA-DET-014 contract, D1-C deterministic semantic integration, and accepted task-based authoring UX/UAT under U1/PFA-UX-015 through PFA-UX-020. D1-C financial-semantic implementation may merge independently before UX acceptance without declaring the D1 gate complete. D1 does not require D2 capabilities to already exist. D2 closeout is separately defined by PFA-DET-016 through PFA-DET-023. PFA-DET-015 is the combined D1+D2 gate for stochastic runtime, not an additional scope of financial instruments inside D1.
 
 R5 stochastic runtime implementation SHALL NOT begin until both D1 and D2 deterministic readiness contracts are complete and verified. None of the named D2 ordinary instrument/benefit families may be omitted merely because an initial private-alpha participant does not use them. Isolated calibration, planning, import, or other foundation work that cannot alter, assume, or execute stochastic household semantics may proceed earlier.
 
