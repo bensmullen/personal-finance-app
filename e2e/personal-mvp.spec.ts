@@ -511,13 +511,13 @@ test("D1 authors former-employer YTD history without a future contribution instr
   await prior.getByRole("button", { name: "Save prior YTD usage", exact: true }).click();
   await expect(prior.getByRole("alert")).toContainText("OPENING_USAGE_SCOPE_REQUIRED");
   await prior.getByLabel("Historical holding", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
-  await prior.getByLabel("Your age at the end of that year", { exact: true }).fill("36");
-  await prior.getByLabel("Historical employer / plan group", { exact: true }).fill("employer-a");
-  await prior.getByLabel("Historical annual pay eligible for this plan", { exact: true }).fill("100000");
+  await prior.getByLabel("Age at year end", { exact: true }).fill("36");
+  await prior.getByLabel("Employer / plan group", { exact: true }).fill("employer-a");
+  await prior.getByLabel("Annual pay eligible for this plan", { exact: true }).fill("100000");
   await prior.getByRole("button", { name: "Save historical scope", exact: true }).click();
   await prior.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
-  await prior.getByLabel(/traditional 401k prior YTD total$/).first().fill("20000");
-  await prior.getByLabel(/traditional 401k prior YTD amount excluding catch-up$/).first().fill("20000");
+  await prior.getByRole("textbox", { name: /traditional 401k prior YTD total$/ }).first().fill("20000");
+  await prior.getByRole("textbox", { name: /traditional 401k prior YTD amount excluding catch-up$/ }).first().fill("20000");
   await prior.getByRole("checkbox").check();
   await prior.getByRole("button", { name: "Save prior YTD usage", exact: true }).click();
   await expect(prior.getByRole("alert")).toHaveCount(0);
@@ -577,8 +577,8 @@ test("D1 normal payroll authoring preserves allocations and shared limit identit
   await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("24500");
   const priorUsage = page.getByRole("region", { name: "Prior year-to-date contributions" });
   await priorUsage.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
-  await priorUsage.getByLabel(/traditional 401k prior YTD total$/).fill("10000");
-  await priorUsage.getByLabel(/traditional 401k prior YTD amount excluding catch-up$/).fill("10000");
+  await priorUsage.getByRole("textbox", { name: /traditional 401k prior YTD total$/ }).fill("10000");
+  await priorUsage.getByRole("textbox", { name: /traditional 401k prior YTD amount excluding catch-up$/ }).fill("10000");
   await priorUsage.getByRole("checkbox").check();
   await priorUsage.getByRole("button", { name: "Save prior YTD usage", exact: true }).click();
   await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("14500");
@@ -607,7 +607,7 @@ test("D1 normal IRA authoring saves annual facts and explicit auto-cap", async (
   await form.getByLabel("Purchase funding account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.savings);
   await form.getByLabel("Purchase amount", { exact: true }).fill("8000"); await form.getByLabel("Purchase start date", { exact: true }).fill("2026-02-10");
   await form.getByLabel("Purchase frequency", { exact: true }).selectOption("once"); await form.getByLabel("Age at year end", { exact: true }).fill("36");
-  await form.getByLabel("Annual taxable compensation", { exact: true }).fill("120000"); await form.getByLabel("Contribution filing status", { exact: true }).selectOption("single");
+  await form.getByLabel("Annual earned pay", { exact: true }).fill("120000"); await form.getByLabel("Contribution filing status", { exact: true }).selectOption("single");
   await form.getByLabel("Roth IRA MAGI", { exact: true }).fill("120000"); await form.getByLabel("Excess contribution policy", { exact: true }).selectOption("auto_cap");
   await form.getByRole("button", { name: "Save investment purchase", exact: true }).click(); await expect(form.getByText(/Saved purchase:.*8000.*one time/)).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click(); await page.getByRole("button", { name: "Import / Export", exact: true }).click();
@@ -710,6 +710,7 @@ test("R4 UAT creates asset facts deliberately and preserves them as read-only", 
   await editor.getByLabel("Asset type", { exact: true }).selectOption("vehicle");
   await expect(editor.getByLabel("Asset type", { exact: true }).locator('option[value="cash"], option[value="investment"]')).toHaveCount(0);
   await editor.getByLabel("Owner", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.household);
+  await openEditorFinancialDetails(editor);
   await editor.getByLabel("Acquisition date", { exact: true }).fill("2026-01-01");
   await editor.getByLabel("Acquisition cost", { exact: true }).fill("25000.00");
   // Creation edits have not added an incomplete record to the canonical model.
@@ -854,7 +855,7 @@ test("R4 UAT preserves incompatible expense funding with actionable diagnostics"
   await expect(editor.getByRole("note")).toContainText("preserved until you choose");
   await editor.getByText("Technical details", { exact: true }).click();
   await expect(editor.locator("dd").filter({ hasText: GOLDEN_HOUSEHOLD_IDS.retirementAccount })).toBeVisible();
-  const funding = editor.getByLabel("Mortgage payment account", { exact: true });
+  const funding = editor.getByLabel("Funding account", { exact: true });
   await expect(funding.locator(`option[value="${GOLDEN_HOUSEHOLD_IDS.retirementAccount}"]`)).toHaveCount(0);
   await funding.selectOption(GOLDEN_HOUSEHOLD_IDS.checking);
   await expect(editor.getByRole("note")).toHaveCount(0);
@@ -893,8 +894,8 @@ test("R4 editor uses friendly financial identity and distinct expert/technical d
   await opener.focus();
   await page.keyboard.press("Enter");
   const editor = page.getByRole("dialog", { name: "Edit Income" });
-  await openEditorFinancialDetails(editor);
   await expect(editor.getByRole("button", { name: "Close editor" })).toBeFocused();
+  await openEditorFinancialDetails(editor);
   await expect(editor.getByLabel("Owner", { exact: true })).toContainText("Taylor Example");
   await expect(editor.getByLabel("Amount", { exact: true })).toHaveValue("9000.00");
   expect(await editor.innerText()).not.toMatch(rawUuid);
@@ -969,6 +970,7 @@ test("R4 narrow and wide layouts retain readable status, chart and keyboard edit
     const editor = page.getByRole("dialog", { name: "Edit Income" });
   await openEditorFinancialDetails(editor);
     await expect(editor.getByLabel("Amount", { exact: true })).toBeVisible();
+    await editor.getByRole("button", { name: "Close editor" }).focus();
     await page.keyboard.press("Shift+Tab");
     await expect(editor.getByText("Technical details", { exact: true })).toBeFocused();
     await page.keyboard.press("Tab");
@@ -1092,7 +1094,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   // Opening account balances are immutable; exercise a supported economic edit.
   await page.getByLabel("Amount", { exact: true }).fill("10000.00");
   await expect(page.getByLabel("Amount", { exact: true })).toHaveValue("10000.00");
-  await page.getByRole("button", { name: "Close editor" }).click();
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(status).toHaveAttribute("data-lifecycle", "stale");
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   // A future income amount changes the forecast, not opening net worth.

@@ -1457,6 +1457,7 @@ function Plan({
         <label>
           Forecast scope
           <select
+            aria-label="Forecast scope"
             value={forecastScope}
             onChange={(event) =>
               setScope(event.target.value as ForecastRequest["scope"])
