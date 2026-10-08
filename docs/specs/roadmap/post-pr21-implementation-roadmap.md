@@ -194,7 +194,7 @@ R3 SHALL implement PFA-PERF-019 through PFA-PERF-023 and satisfy the reusable ex
 
 ## 5A. D1 — Deterministic household financial-semantic readiness
 
-D1 is a hard semantic gate before R5 stochastic runtime work. It implements and verifies PFA-DET after R3's reusable execution foundation and T1A Phase B's applicable tax integration are available. R4 authoring integrity and the intended alpha input paths must be sufficiently stable to test the same concepts a user will actually enter.
+D1 is the original deterministic financial-semantic milestone. It implements and verifies PFA-DET-001 through PFA-DET-014 after R3's reusable execution foundation and T1A Phase B's applicable tax integration are available. D2 is a separate subsequent hard gate before R5; PFA-DET-015 combines the D1 and D2 readiness conditions. R4 authoring integrity and the intended alpha input paths must be sufficiently stable to test the same concepts a user will actually enter.
 
 D1 SHALL complete the deterministic semantic audit from user input through canonical representation, executable behavior, accounting/state effects, tax characterization, and user-visible result for the initial private-alpha scope.
 
@@ -227,11 +227,11 @@ D1 should be implemented as seam-safe slices rather than one cross-cutting branc
 2. **D1-B — remaining deterministic domain mechanics.** After D1-A merges, remaining PFA-DET cases such as advanced direct/indirect retirement rollovers with basis/tax-character preservation, in-plan Roth conversion, mortgage/refinance/extra principal, cash-account interest, Treasury/bond/CD mechanics, cryptocurrency, the bounded option lifecycle, insurance premium/payout behavior, dividend reinvestment, and any still-missing tax characterization may be split into parallel domain slices only where they own disjoint domain modules. Shared compiler/editor/execution integration remains a single integration lane.
 3. **D1-C — integrated closeout.** Merge all D1 slices, run the combined realistic-household truth table and source-of-funds/no-double-counting checks, complete semantic audit, then perform D1 UAT from the actual normal-user authoring paths.
 
-Completion of Issue #70 alone SHALL NOT satisfy the D1 gate unless a merged-main audit demonstrates that every PFA-DET requirement and D1 truth-table case is already covered.
+Completion of Issue #70 alone SHALL NOT satisfy the D1 gate unless a merged-main audit demonstrates that every original D1 requirement (PFA-DET-001 through PFA-DET-014) and D1 truth-table case is already covered; D2 (PFA-DET-016 through PFA-DET-023) is separately required for R5.
 
 If a named subfeature cannot be supported safely for the initial alpha contract, its exact unsupported boundary must be explicit and the private-alpha scope cannot claim that use case complete.
 
-**D2 handoff:** D1 completion no longer opens R5 directly. After D1-C is green and merged, D2 expands the deterministic household breadth before any stochastic household runtime begins. Isolated C1 calibration work and other explicitly parallel-safe foundation work may continue because they do not assume unresolved household financial semantics.
+**D2 handoff:** D1 completion closes the original D1 scope, not the combined pre-stochastic gate. After D1-C is green and merged, D2 expands the deterministic household breadth before any stochastic household runtime begins. Isolated C1 calibration work and other explicitly parallel-safe foundation work may continue because they do not assume unresolved household financial semantics.
 
 **User validation:** required. D1 closeout SHALL include a focused user walkthrough proving that the required use cases can be entered in financially recognizable terms and that the resulting deterministic cash/state/tax behavior is understandable.
 
