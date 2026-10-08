@@ -4,6 +4,9 @@ import { authorDomainOperation, authorOpeningInvestmentLot, authorMortgageRefina
 import { objectEntries, objectId, objectLabel } from "../entityPresentation.js";
 import { PercentageInput, FieldHelp } from "./PercentageInput.js";
 
+import { GuidedFields } from "../authoring/GuidedFields.js";
+import { authoringFailure } from "../authoring/contributionChoices.js";
+
 const choices = [
   ["purchase", "Buy spot crypto / long call"], ["sale", "Sell investment"],
   ["ordinary_dividend", "Ordinary dividend"], ["qualified_dividend", "Qualified dividend (eligibility established)"],
@@ -47,9 +50,9 @@ export function DomainMechanicsPanel({ draft, setDraft }: { readonly draft: Pers
         setDraft(authorDomainOperation(draft, plan));
       }
       setMessage("Operation saved in the plan. Forecast compilation will check eligibility, funding and timing.");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Operation could not be saved."); }
+    } catch (error) { setMessage(authoringFailure(error)); }
   };
-  return <section className="panel" aria-label="Investment and retirement operations"><h2>Investment, retirement and mortgage operations</h2>
+  return <GuidedFields scope="scheduled-activity" required={["operationDate"]}><section className="panel" aria-label="Investment and retirement operations"><h2>Investment, retirement and mortgage operations</h2>
     <p>Sales and investment income remain in investment account cash. Reinvestment uses that income. Spot crypto and call premiums require checking or savings. Use Investment purchases for ordinary equity/fund purchases. Unsupported products are diagnosed before forecast use.</p>
     <label>Operation<select aria-label="Domain operation" value={kind} onChange={event => { setKind(event.target.value); setMessage(""); }}>{choices.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
     {text("date", "Operation date", "date")}
@@ -76,7 +79,7 @@ export function DomainMechanicsPanel({ draft, setDraft }: { readonly draft: Pers
       <ul>{(draft.objects.Investment ?? []).filter(record).filter(item => item.investment_id === fields.lotHolding).flatMap(item => Array.isArray(item.tax_lots) ? item.tax_lots.filter(record).map(lot => <li key={String(lot.id)}>{String(lot.acquired)} · {String(lot.quantity)} units · basis {String(lot.basis)} <button onClick={() => setDraft({ ...draft, objects: { ...draft.objects, Investment: (draft.objects.Investment ?? []).filter(record).map(investment => investment === item ? { ...investment, tax_lots: (item.tax_lots as readonly JsonObject[]).filter(prior => prior !== lot) } : investment) } })}>Remove lot</button></li>) : [])}</ul>
     </details>
     <TermLifeEditor draft={draft} setDraft={setDraft} />
-  </section>;
+  </section></GuidedFields>;
 }
 
 function TermLifeEditor({ draft, setDraft }: { readonly draft: PersonalDraft; readonly setDraft: (draft: PersonalDraft) => void }) {
