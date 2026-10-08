@@ -238,6 +238,17 @@ The UI SHALL:
 - explain unsupported capabilities in user-action language; and
 - keep compiler codes/UUIDs in technical detail rather than primary guidance.
 
+### PFA-DET-015 — Stochastic and private-alpha gate
+
+D1 closeout is defined by the original PFA-DET-001 through PFA-DET-014 contract and its D1-C verification; it does not require D2 capabilities to already exist. D2 closeout is separately defined by PFA-DET-016 through PFA-DET-023.
+
+R5 stochastic runtime implementation SHALL NOT begin until both D1 and D2 deterministic readiness contracts are complete and verified. None of the named D2 ordinary instrument/benefit families may be omitted merely because an initial private-alpha participant does not use them. Isolated calibration, planning, import, or other foundation work that cannot alter, assume, or execute stochastic household semantics may proceed earlier.
+
+R6/R7 probabilistic household work SHALL NOT begin from an implementation state that bypasses this gate, and probabilistic household results SHALL NOT be treated as product-complete unless the deterministic gate remains green.
+
+Private-alpha launch additionally requires these supported use cases to be authorable through the intended onboarding/editor paths and included in representative UAT, with unsupported subfeatures explicitly capability-gated.
+
+
 ### PFA-DET-016 — Social Security and defined-benefit pension income
 
 Before stochastic household modeling begins, the deterministic model SHALL support materially common retirement-income sources beyond account withdrawals.
@@ -311,14 +322,6 @@ The supported rollover floor SHALL include ordinary plan-to-plan 529 rollovers a
 The D2 breadth capabilities in PFA-DET-016 through PFA-DET-022 SHALL have independent deterministic expected-effect tests plus at least one combined household fixture spanning retirement income, expanded retirement plans, ordinary debt, healthcare costs, special fixed income, and education savings.
 
 Verification SHALL reconcile cash flow, assets, liabilities, basis/tax character, statutory-limit usage, benefit/premium schedules, rollovers/conversions, and ending net worth without double counting. Normal-user authoring and capability diagnostics SHALL be exercised for each admitted family before D2 closes.
-
-### PFA-DET-015 — Stochastic and private-alpha gate
-
-R5 stochastic runtime implementation SHALL NOT begin until both the original D1 readiness matrix in PFA-DET-013 and the D2 common-household breadth requirements in PFA-DET-016 through PFA-DET-023 are complete for the intended initial private-alpha scope. Isolated calibration, planning, import, or other foundation work that cannot alter, assume, or execute stochastic household semantics may proceed earlier.
-
-R6/R7 probabilistic household work SHALL NOT begin from an implementation state that bypasses this gate, and probabilistic household results SHALL NOT be treated as product-complete unless the deterministic gate remains green.
-
-Private-alpha launch additionally requires these supported use cases to be authorable through the intended onboarding/editor paths and included in representative UAT, with unsupported subfeatures explicitly capability-gated.
 
 ## 3. Scope boundary
 
