@@ -1,6 +1,6 @@
 # Application UX & Financial Comprehension
 
-**Version:** 0.1.4-draft
+**Version:** 0.1.5-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-UX
 
@@ -83,6 +83,44 @@ The application SHALL:
 - translate capability diagnostics into actionable user guidance while retaining technical codes/IDs only in technical detail.
 
 An editor that appears to accept a value which the canonical model silently refuses or the forecast necessarily rejects does not satisfy this requirement.
+
+### PFA-UX-015 — Calm, high-information presentation
+
+Normal-user screens SHALL be clean, scannable, visually consistent, and detailed **without being verbose or crowded**. The first view of an account, plan, or forecast SHALL foreground a small set of meaningful values, status, future activity, and next actions. Secondary financial detail SHALL be revealed through clearly named expandable sections, drill-downs, or contextual help; technical details SHALL remain opt-in.
+
+The UI SHALL NOT make the user scan long instructional paragraphs, repeated field explanations, raw diagnostics, or every canonical field to complete a common task. Collapse is not permission to hide essential actions, blocking problems, financial qualifications, or important assumptions. Default expanded/collapsed states SHALL reflect user goals and severity, not implementation object structure. Visual hierarchy, spacing, grouping, alignment, and consistent input sizing SHALL communicate structure without excessive decoration or competing emphasis.
+
+### PFA-UX-016 — Reusable human-facing field contract
+
+Every normal/advanced financial control in the supported authoring journeys SHALL have a shared field-presentation definition containing, as applicable: concise user-facing label, short meaning, why it matters, unit/frequency/basis, expected format, concrete example, required/optional/derived/read-only state, source of truth, dependencies, validation, and disclosure level.
+
+Common fields SHALL use plain language; legal and calculation-specific names MAY appear in contextual help when financially important. Contextual explanations SHALL be available through accessible hover, focus, click, and touch interactions, including a persistent expanded alternative where needed. Percentages SHALL be understandable in ordinary percent units while preserving authoritative exact-decimal rates. Structured canonical data SHALL use a domain control or safe secondary read-only presentation, never unsafe string coercion or raw JSON as the primary editor.
+
+New supported user-facing controls without the required field metadata SHALL fail automated UI contract verification. Existing user-facing fields within the U1 scope SHALL be inventoried rather than only repairing previously reported labels.
+
+### PFA-UX-017 — Linked financial inputs and contradiction prevention
+
+A common financial relationship SHALL NOT be authored as unrelated conflicting free-entry fields. When existing authoritative facts determine a value unambiguously, the UI SHALL calculate/display it; otherwise it SHALL offer a clearly explained, optional calculated suggestion. Mutability, confirmation, and provenance remain governed by canonical financial semantics.
+
+The UI SHALL provide immediate field- and section-level cross-field validation, valid-option filtering, and explicit dependencies. Examples include mortgage contractual payment schedule versus projected early payoff, Current Plan bounds versus simulation window, eligible contribution funding/destination selection, and payroll- versus bank-funded contributions. Invalid combinations SHALL be prevented or identified before a user trusts the forecast; the UX SHALL NOT create a second financial formula or silently change unrelated canonical facts.
+
+### PFA-UX-018 — Actionable, non-repetitive validation and diagnostics
+
+Every invalid or incomplete normal-user workflow SHALL tell the user what is wrong, why it matters, where it occurs, and the next available action. Blocking input errors SHALL mark the affected control and section visually and accessibly, appear in a concise page-level summary, and provide direct focus/navigation to repair. Warnings, partially modeled/unsupported capabilities, stale output, and blocked execution SHALL have distinguishable meanings, not share an undifferentiated red error treatment.
+
+One semantic cause SHALL produce one primary user-facing diagnosis and remedy, with affected-output scope summarized concisely. Raw codes, rule lineage, UUIDs, occurrence counts, and full diagnostic payloads SHALL remain in deliberately opened technical details. A known unavailable rule SHALL NOT masquerade as a user-input mistake, and an invalid setup SHALL NOT be disguised as normal projected-law uncertainty. Hiding or deduplicating presentation SHALL NOT suppress underlying engine diagnostics or unsupported financial outcomes.
+
+### PFA-UX-019 — Task-first financial navigation and guided setup
+
+Normal financial tasks SHALL begin from financially recognizable objects and intentions, not internal model entities. The account/holding view SHALL make existing future contributions and a contextual contribution action discoverable; personal IRA/brokerage flows SHALL route to the authoritative bank-funded authoring contract, while 401(k)/HSA workplace flows SHALL route to the authoritative payroll contract. Mortgage editing SHALL distinguish contractual maturity from projected payoff.
+
+Forecast Setup SHALL group required data by understandable purpose, visibly list missing prerequisites, link/focus each required control, and offer one prominent apply/run or update action. Where valid configuration exists, the existing automatic deterministic refresh behavior SHALL remain. Source-of-funds, account-owner, tax settlement, and projected-law limitations SHALL be presented in user terms with advanced financial detail available as needed.
+
+### PFA-UX-020 — Uncoached UAT and responsive interaction proof
+
+U1 acceptance SHALL require product-owner task-based UAT without a technical click-by-click instruction script. Representative goals SHALL include authoring personal and payroll contributions, editing income and assumptions, configuring mortgage and horizon, setting up/running a forecast, fixing an invalid input, and interpreting a partially modeled tax result.
+
+Automated browser verification SHALL cover the same normal-user routes, including accessible help, missing-field highlighting and direct repair navigation, cross-field contradiction handling, no unexpected console/page errors, and readable desktop/narrow layouts. Expandable detail controls SHALL be keyboard and touch usable; text SHALL NOT wrap into one-character columns, obscure primary actions, or overflow controls at supported viewport sizes. A green implementation/unit suite alone does not constitute accepted UX.
 
 ## 3. Near-term cleanup scope
 
