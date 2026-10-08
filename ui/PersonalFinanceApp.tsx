@@ -788,7 +788,7 @@ export function PersonalFinanceApp() {
           </section>}
           {issues.length > 0 && <section className="repair-summary" role="alert" aria-label="Saved plan needs attention">
             <strong>Recorded financial facts need attention</strong>
-            <ul>{issues.map((issue, index) => {
+            <ul>{Array.from(new Map(issues.map(issue => [`${issue.objectType}:${issue.objectId}:${issue.field}`, issue])).values()).map((issue, index) => {
               const presentation = issue.field ? financialFieldOrUndefined(issue.field, issue.objectType) : undefined;
               const type = issue.objectType;
               const item = type ? objectEntries(draft, type).find(value => objectId(type, value) === issue.objectId) : undefined;
@@ -803,6 +803,7 @@ export function PersonalFinanceApp() {
                 }}>Review {presentation.label.toLowerCase()}</button>}
               </li>;
             })}</ul>
+            <details><summary>Technical saved-fact details</summary><pre>{JSON.stringify(issues, null, 2)}</pre></details>
           </section>}
           {primary === "Plan" && subnav === "Compare Plans" && <ForecastStatus label="Household comparison" state={interactive.comparison} />}
 

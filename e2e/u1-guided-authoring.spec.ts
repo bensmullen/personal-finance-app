@@ -18,7 +18,7 @@ const assertContractAndGeometry = async (page: Page, width: number) => {
     await expect(shell).toHaveCount(1);
     const key = await shell.getAttribute("data-financial-field");
     expect(FINANCIAL_FIELDS[key!], key!).toBeDefined();
-    const scope = await control.locator('xpath=ancestor::*[@data-authoring-scope][1]').getAttribute("data-authoring-scope").catch(() => null);
+    const scope = await control.evaluate(element => element.closest("[data-authoring-scope]")?.getAttribute("data-authoring-scope"));
     const field = scope?.startsWith("entity-") ? entityField(key!, scope.slice("entity-".length), undefined, false, undefined, await control.getAttribute("aria-label") === "Annual assumption rate" ? "effective annual rate" : undefined) : FINANCIAL_FIELDS[key!];
     expect(field, `${scope}:${key}`).toBeDefined();
     const heading = shell.locator(".field-heading label");
