@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.6.1-draft
+**Version:** 0.6.2-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -35,10 +35,16 @@ R2  Interactive deterministic execution foundation
       |
       +--> T1A Phase B household tax integration <--- T1A Phase A
                 |
-                +----> D1 Deterministic household semantics readiness <--- R4
+                +----> D1 Deterministic financial semantics <--- R4
                        |   + D1-A authoring/account semantics (Issue #70)
                        |   + D1-B remaining deterministic domain mechanics
-                       |   + D1-C combined truth-table/UAT closeout
+                       |   + D1-C combined truth-table + semantic audit (#80)
+                       |                  |
+                       |                  v
+                       |              U1 Guided financial UX (#94)
+                       |                  |
+                       |                  v
+                       |            D1 gate: uncoached UAT accepted
                        |
                        +--> P1 Deterministic planning/strategy foundation
                        |
@@ -61,7 +67,7 @@ R2  Interactive deterministic execution foundation
                                    |
                                    +--> R10 Probabilistic + planning decision UX
 
-D1 + D2 + O1 + P1 + T1A target-cohort coverage +
+D1 (including U1) + D2 + O1 + P1 + T1A target-cohort coverage +
 T1B private-alpha tax floor + A1
                          |
                          v
@@ -100,8 +106,9 @@ For the currently planned lanes, ownership is:
 | Lane | Safe parallel scope | Shared integration boundary |
 | --- | --- | --- |
 | T1A Phase B | Household tax integration after R3 + Phase A | Owns tax household execution until merged; D1 does not start against an unmerged T1A-B branch |
-| D1 | Deterministic authoring, account/funding/current-position and original PFA-DET mechanics | Owns shared deterministic compiler/execution/editor semantics until D1 closeout |
-| D2 | After D1: Social Security/pensions, expanded retirement plans/conversions, common debt, healthcare/FSA, TIPS/EE, and 529 domain modules/fixtures | Owns expanded deterministic household semantics until D2 closeout; isolated domain work may parallelize only behind stable contracts |
+| D1-C | Original PFA-DET-001–014 financial/combined-household semantics and verification | Owns integrated D1 financial semantics until PR #89 merges; merging the code does not constitute UAT acceptance |
+| U1 | After D1-C semantic merge: guided authoring/field-help/validation/diagnostic UX for the original D1 scope | Sole owner of shared normal-user editor/forecast UX until #94 closes; no new accounting/tax/contribution formulas |
+| D2 | After D1 + U1 UAT acceptance: Social Security/pensions, expanded retirement plans/conversions, common debt, healthcare/FSA, TIPS/EE, and 529 domain modules/fixtures | Owns expanded deterministic household semantics until D2 closeout; isolated domain/spec/fixture preparation may parallelize U1 only without editing shared UI/authoritative D1 paths |
 | C1 | Normalized calibration contract, immutable fingerprints, synthetic calibration | Must not change household financial semantics or stochastic runtime behavior; safe alongside T1A-B/D1 |
 | O1 | During D1: candidate/import schemas, parsers, provenance, idempotency, telemetry, synthetic fixtures | Authoritative model mutation and shared editor/compiler integration wait for D1 merge |
 | P1 | Planning-owned orchestration and decision/strategy configuration | Starts after D1; consumes the merged decision-overlay/execution boundary and does not change financial formulas |
@@ -194,7 +201,7 @@ R3 SHALL implement PFA-PERF-019 through PFA-PERF-023 and satisfy the reusable ex
 
 ## 5A. D1 — Deterministic household financial-semantic readiness
 
-D1 is the original deterministic financial-semantic milestone. It implements and verifies PFA-DET-001 through PFA-DET-014 after R3's reusable execution foundation and T1A Phase B's applicable tax integration are available. D2 is a separate subsequent hard gate before R5; PFA-DET-015 combines the D1 and D2 readiness conditions. R4 authoring integrity and the intended alpha input paths must be sufficiently stable to test the same concepts a user will actually enter.
+D1 is the original deterministic financial-semantic milestone. It implements and verifies PFA-DET-001 through PFA-DET-014 after R3's reusable execution foundation and T1A Phase B's applicable tax integration are available. D1-C may merge its audited financial semantics before user acceptance, but **D1 remains open until U1 (Issue #94) passes ChatGPT review and uncoached normal-user UAT**. D2 is a separate subsequent hard gate before R5; PFA-DET-015 combines the D1 and D2 readiness conditions. R4 was a prior editor cleanup, not proof that U1's normal-user interaction contract is satisfied.
 
 D1 SHALL complete the deterministic semantic audit from user input through canonical representation, executable behavior, accounting/state effects, tax characterization, and user-visible result for the initial private-alpha scope.
 
@@ -225,15 +232,16 @@ D1 should be implemented as seam-safe slices rather than one cross-cutting branc
 
 1. **D1-A — authoring/account semantics.** Issue #70 is the current D1-A slice. It establishes current-position event semantics, cash versus investment/retirement classification, no-double-counting rules, executable baseline return authoring, personally funded contribution paths, employee and employer 401(k)/HSA contribution semantics, automatic statutory contribution-limit calculation, and coherent retirement-date baseline/What-If behavior.
 2. **D1-B — remaining deterministic domain mechanics.** After D1-A merges, remaining PFA-DET cases such as advanced direct/indirect retirement rollovers with basis/tax-character preservation, in-plan Roth conversion, mortgage/refinance/extra principal, cash-account interest, Treasury/bond/CD mechanics, cryptocurrency, the bounded option lifecycle, insurance premium/payout behavior, dividend reinvestment, and any still-missing tax characterization may be split into parallel domain slices only where they own disjoint domain modules. Shared compiler/editor/execution integration remains a single integration lane.
-3. **D1-C — integrated closeout.** Merge all D1 slices, run the combined realistic-household truth table and source-of-funds/no-double-counting checks, complete semantic audit, then perform D1 UAT from the actual normal-user authoring paths.
+3. **D1-C — integrated semantic closeout (Issue #80 / PR #89).** Merge all D1 financial slices, run the combined realistic-household truth table and source-of-funds/no-double-counting checks, and complete semantic audit. The D1-C code may merge to give U1 a stable base without declaring D1 fully accepted.
+4. **U1 — guided financial authoring UX (Issue #94).** After audited D1-C merges, implement the cross-screen task-first interface, concise default summaries, organized collapsible financial sections, accessible contextual help, shared field/validation contracts, linked inputs, actionable diagnostics, and uncoached product-owner UAT under PFA-UX-015 through PFA-UX-020. No D1 financial formula redesign. U1's accepted UAT closes the original D1 gate.
 
 Completion of Issue #70 alone SHALL NOT satisfy the D1 gate unless a merged-main audit demonstrates that every original D1 requirement (PFA-DET-001 through PFA-DET-014) and D1 truth-table case is already covered; D2 (PFA-DET-016 through PFA-DET-023) is separately required for R5.
 
 If a named subfeature cannot be supported safely for the initial alpha contract, its exact unsupported boundary must be explicit and the private-alpha scope cannot claim that use case complete.
 
-**D2 handoff:** D1 completion closes the original D1 scope, not the combined pre-stochastic gate. After D1-C is green and merged, D2 expands the deterministic household breadth before any stochastic household runtime begins. Isolated C1 calibration work and other explicitly parallel-safe foundation work may continue because they do not assume unresolved household financial semantics.
+**D2 handoff:** D1 completion means audited D1-C semantics **and** accepted U1 normal-user UAT; it does not mean the D2 breadth exists. After that D1 gate, D2 expands ordinary household mechanics before any stochastic household runtime begins. Planning/specification and isolated domain/fixture preparation for D2 may proceed while U1 is active, but shared editor/read-model/financial compilation integration must not race U1. C1 and other explicitly isolated foundations may continue in parallel.
 
-**User validation:** required. D1 closeout SHALL include a focused user walkthrough proving that the required use cases can be entered in financially recognizable terms and that the resulting deterministic cash/state/tax behavior is understandable.
+**User validation:** required at U1 acceptance. D1 closeout SHALL use an **uncoached, goal-based** walkthrough proving that users can discover, configure, correct, and understand supported financial inputs/results. A script describing every field and click is not evidence of intuitive UX.
 
 
 ## 5B. D2 — Common-household deterministic breadth before stochastic runtime
@@ -257,7 +265,7 @@ D2 SHALL implement and verify PFA-DET-016 through PFA-DET-023 and the correspond
 
 D2 is not permission to make every rare statutory or plan-specific exception a universal pre-stochastic requirement. The ordinary household contract for each named family must be complete and testable; uncommon variants may be capability-gated only when the boundary is explicit and cannot silently change a supported result.
 
-D2 should be implemented as seam-safe slices after D1 merges:
+D2 should be implemented as seam-safe slices after the complete D1 + U1 acceptance gate (isolated D2 specification/domain-fixture preparation may happen earlier without claiming implementation acceptance):
 
 1. **D2-A — retirement/public-benefit breadth.** Social Security, pensions, 403(b)/457(b)/TSP, SEP/SIMPLE, IRA→Roth, backdoor Roth, mega-backdoor Roth, and their common tax/limit semantics.
 2. **D2-B — debt, special fixed income, and education savings.** Auto/student/credit-card/HELOC mechanics, TIPS, Series EE bonds, and 529 plans/rollovers.
@@ -329,6 +337,18 @@ Implement PFA-UX with emphasis on:
 
 **User validation:** required. Milestone closeout SHALL provide a concise walkthrough covering novice comprehension, entity editing, advanced-detail discoverability, chart readability, and any remaining confusing/dead controls.
 
+## 8A. U1 — Guided financial authoring and usability acceptance (Issue #94)
+
+**Start condition:** audited D1-C semantic integration (Issue #80 / PR #89) is merged to main. U1 is the **normal-user usability acceptance dependency for D1**, not a new financial domain, a second R4, or the D2 scope.
+
+Implement PFA-UX-015 through PFA-UX-020 as one shared system, rather than repeatedly patching whichever label a reviewer last complained about. The default product view should be **visually detailed but quiet**: scannable account/plan summaries, logical headings and spacing, consistent controls, a small number of primary actions, and organized collapsible sub-sections. Accessible hover/focus/click/touch help exposes additional explanations only when useful; blocking validation and materially important financial limitations must never be hidden behind collapse.
+
+Before implementation, inventory normal-user fields in UAT-critical flows and classify each as common, advanced financial, derived/read-only, technical, or unsupported. A reusable field contract provides meaning, unit, examples, help, dependencies, and error/derived state; supported new controls without metadata fail automated coverage. Related values are linked and cross-validated, with calculation/suggestion only where financial authority permits it. Diagnostic summaries are deduplicated and direct users to the affected controls.
+
+Keep the implementation efficient by reusing D1's authoritative contribution/funding/mortgage/tax-setup contracts, rather than creating new financial calculators or broadening canonical schemas. Implement U1's common field/layout/validation foundation before converting the representative forecast, mortgage, IRA/401(k)/HSA, salary, investment, and tax journeys. CI/browser tests cover missing-field repair, contradictions, accessible help, readable desktop/mobile layouts and console safety.
+
+**Acceptance:** green CI + ChatGPT UX/semantic audit + uncoached product-owner goal-based UAT, then merge. Until then, D1 is not accepted and D1-gated financial/stochastic work remains blocked. D2 domain-spec/fixture preparation can parallelize U1 only behind isolated contracts; shared normal-user UI stays U1-owned.
+
 ## 9. O1 — Assisted onboarding and import foundation
 
 O1 begins after the R2/R4 interaction foundations are stable enough to support a guided workflow. Its foundation may proceed in parallel with R3/C1/T1A-B/D1, but O1 is split at the authoritative-mutation seam:
@@ -384,7 +404,7 @@ T1B may parallelize safely at the rule/catalog layer when it adds isolated effec
 
 ## 11. R5 — Stochastic runtime foundation
 
-**Start condition:** the full D1 gate and the full D2 common-household breadth gate are complete on merged main, including D1-C and D2-D integrated truth-table verification, semantic audits, and accepted UAT; PFA-TAX-015 is complete for the admitted D2 scope; and C1's calibration contract is merged. Issue #70/D1-A or D1 by itself is not sufficient. Do not use R5 to discover or patch unresolved ordinary household financial semantics.
+**Start condition:** the full D1 gate (including U1 accepted UX/UAT) and the full D2 common-household breadth gate are complete on merged main, including D1-C and D2-D integrated truth-table verification, semantic audits, and accepted UAT; PFA-TAX-015 is complete for the admitted D2 scope; and C1's calibration contract is merged. Issue #70/D1-A or D1 by itself is not sufficient. Do not use R5 to discover or patch unresolved ordinary household financial semantics.
 
 Implement the higher-authority stochastic semantics before Monte Carlo orchestration:
 
@@ -548,7 +568,7 @@ Before private-alpha infrastructure:
 - the assisted-input architecture preserves factual-versus-planning semantic categories, candidate review, provenance, ambiguity handling, idempotency, and the privacy boundary required by PFA-ONB;
 - performance, convergence, memory, and per-run compute-cost budgets are documented and met for supported realistic use, with explicit cost-per-rerun measurement/estimation for every enabled stochastic execution placement;
 - Golden, realistic-household, and computationally complex/stress fixtures pass their applicable correctness/performance checks and their coverage inventories show the supported product is exercised materially beyond the simple Golden Household;
-- D1 is complete on merged main: every original PFA-DET deterministic use case has an independently specified truth-table test, the combined realistic household reconciles, source-of-funds constraints are enforced, and product-owner D1 UAT is accepted; completion of Issue #70 alone does not satisfy this gate unless the full D1 matrix is covered;
+- D1 is complete on merged main: every original PFA-DET deterministic use case has an independently specified truth-table test, the combined realistic household reconciles, source-of-funds constraints are enforced, **U1 guided UX is audited/merged, and uncoached product-owner D1 UAT is accepted**; completion of Issue #70 or PR #89 semantic merge alone does not satisfy this gate;
 - D2 is complete on merged main: Social Security/pensions, expanded retirement plans and Roth-conversion paths, common consumer debt, Medicare/health premiums/FSA, TIPS/EE bonds, and 529 plans/rollovers have independent deterministic evidence plus D2-D combined-household reconciliation and accepted UAT;
 - current-state UI is responsive;
 - deterministic forecasts do not block the UI;
