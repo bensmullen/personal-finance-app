@@ -1,0 +1,967 @@
+{
+  "model_format_version": "0.2.0-draft",
+  "financial_specification_version": "0.1.15-draft",
+  "model_id": "90000000-0000-4000-8000-000000000001",
+  "objects": {
+    "Account": [
+      {
+        "account_id": "90000000-0000-4000-8000-000000000004",
+        "account_type": "checking",
+        "contribution_limit_rule_ids": [],
+        "currency": "USD",
+        "liquidity_class": "liquid",
+        "name": "Everyday checking",
+        "opening_balance": "20000.00",
+        "opening_date": "2026-01-01",
+        "owner_id": "90000000-0000-4000-8000-000000000003",
+        "tax_treatment": "taxable",
+        "transaction_ids": [],
+        "withdrawal_rule_ids": []
+      },
+      {
+        "account_id": "90000000-0000-4000-8000-000000000013",
+        "account_type": "savings",
+        "contribution_limit_rule_ids": [],
+        "currency": "USD",
+        "liquidity_class": "liquid",
+        "name": "Emergency savings",
+        "opening_balance": "15000.00",
+        "opening_date": "2026-01-01",
+        "owner_id": "90000000-0000-4000-8000-000000000003",
+        "tax_treatment": "taxable",
+        "transaction_ids": [],
+        "withdrawal_rule_ids": []
+      },
+      {
+        "account_id": "90000000-0000-4000-8000-000000000014",
+        "account_type": "traditional_401k",
+        "contribution_limit_rule_id": null,
+        "contribution_limit_rule_ids": [
+          "d1c30000-0000-4000-8000-c77e2a387547",
+          "d1c30000-0000-4000-8000-f09b3849848c"
+        ],
+        "currency": "USD",
+        "liquidity_class": "liquid",
+        "name": "Workplace retirement",
+        "opening_balance": "0.00",
+        "opening_date": "2020-01-01",
+        "owner_id": "90000000-0000-4000-8000-000000000003",
+        "tax_treatment": "tax_deferred",
+        "transaction_ids": [],
+        "withdrawal_rule_ids": []
+      },
+      {
+        "account_id": "90000000-0000-4000-8000-000000000015",
+        "account_type": "taxable_brokerage",
+        "contribution_limit_rule_ids": [],
+        "currency": "USD",
+        "liquidity_class": "liquid",
+        "name": "Taxable brokerage",
+        "opening_balance": "0.00",
+        "opening_date": "2020-01-01",
+        "owner_id": "90000000-0000-4000-8000-000000000003",
+        "tax_treatment": "taxable",
+        "transaction_ids": [],
+        "withdrawal_rule_ids": []
+      },
+      {
+        "account_id": "d1cc0000-0000-4000-8000-000000000001",
+        "account_type": "roth_ira",
+        "contribution_limit_rule_id": null,
+        "contribution_limit_rule_ids": [
+          "d1c30000-0000-4000-8000-6a951cc94c71",
+          "d1c30000-0000-4000-8000-6fbd25d6af25"
+        ],
+        "currency": "USD",
+        "liquidity_class": "liquid",
+        "name": "Personal Roth IRA",
+        "opening_balance": "0",
+        "opening_date": "2020-01-01",
+        "owner_id": "90000000-0000-4000-8000-000000000003",
+        "tax_treatment": "tax_free",
+        "transaction_ids": [],
+        "withdrawal_rule_ids": []
+      },
+      {
+        "account_id": "d1cc0000-0000-4000-8000-000000000004",
+        "account_type": "hsa_investment",
+        "contribution_limit_rule_id": null,
+        "contribution_limit_rule_ids": [
+          "d1c30000-0000-4000-8000-deb663bf0ecd"
+        ],
+        "currency": "USD",
+        "liquidity_class": "liquid",
+        "name": "Health savings investments",
+        "opening_balance": "0",
+        "opening_date": "2020-01-01",
+        "owner_id": "90000000-0000-4000-8000-000000000003",
+        "tax_treatment": "tax_free",
+        "transaction_ids": [],
+        "withdrawal_rule_ids": []
+      }
+    ],
+    "Asset": [
+      {
+        "acquisition_cost": "350000.00",
+        "acquisition_date": "2022-01-01",
+        "asset_id": "90000000-0000-4000-8000-000000000007",
+        "asset_type": "real_estate",
+        "liquidity_class": "illiquid",
+        "name": "Example home",
+        "owner_id": "90000000-0000-4000-8000-000000000002",
+        "sale_cost": "0.0000",
+        "valuation_method": "cost"
+      },
+      {
+        "acquisition_cost": "50000",
+        "acquisition_date": "2024-01-01",
+        "asset_id": "d1cc0000-0000-4000-8000-000000000011",
+        "asset_type": "other",
+        "liquidity_class": "illiquid",
+        "name": "Brokerage holding reference",
+        "owner_id": "90000000-0000-4000-8000-000000000003",
+        "sale_cost": "0.0000",
+        "valuation_method": "cost"
+      }
+    ],
+    "Assumption": [
+      {
+        "assumption_id": "90000000-0000-4000-8000-000000000010",
+        "category": "salary_growth",
+        "name": "Salary growth",
+        "scenario_id": "90000000-0000-4000-8000-000000000011",
+        "source": "user",
+        "unit": "effective annual rate",
+        "value": "0"
+      },
+      {
+        "assumption_id": "90000000-0000-4000-8000-000000000017",
+        "category": "inflation",
+        "name": "Living-cost inflation",
+        "scenario_id": "90000000-0000-4000-8000-000000000011",
+        "source": "user",
+        "unit": "effective annual rate",
+        "value": "0"
+      },
+      {
+        "assumption_id": "90000000-0000-4000-8000-000000000018",
+        "category": "market_return",
+        "name": "Retirement portfolio return",
+        "scenario_id": "90000000-0000-4000-8000-000000000011",
+        "source": "user",
+        "unit": "effective annual rate",
+        "value": "0"
+      },
+      {
+        "assumption_id": "90000000-0000-4000-8000-000000000019",
+        "category": "market_return",
+        "name": "Brokerage return",
+        "scenario_id": "90000000-0000-4000-8000-000000000011",
+        "source": "user",
+        "unit": "effective annual rate",
+        "value": "0"
+      }
+    ],
+    "Event": [
+      {
+        "dependencies": [],
+        "effect_ids": [],
+        "enabled": true,
+        "event_id": "90000000-0000-4000-8000-000000000023",
+        "event_type": "retirement",
+        "name": "Planned retirement",
+        "precedence": 0,
+        "scenario_id": "90000000-0000-4000-8000-000000000011",
+        "start_date": "2035-01-01",
+        "trigger_type": "scheduled"
+      },
+      {
+        "dependencies": [],
+        "effect_ids": [
+          "d1cc0000-0000-4000-8000-000000000041"
+        ],
+        "enabled": true,
+        "event_id": "d1cc0000-0000-4000-8000-000000000040",
+        "event_type": "other",
+        "name": "Synthetic purchase",
+        "precedence": 10,
+        "scenario_id": "90000000-0000-4000-8000-000000000011",
+        "start_date": "2026-01-11",
+        "trigger_type": "scheduled"
+      },
+      {
+        "dependencies": [],
+        "effect_ids": [
+          "d1cc0000-0000-4000-8000-000000000044"
+        ],
+        "enabled": true,
+        "event_id": "d1cc0000-0000-4000-8000-000000000043",
+        "event_type": "other",
+        "name": "Synthetic sale",
+        "precedence": 10,
+        "scenario_id": "90000000-0000-4000-8000-000000000011",
+        "start_date": "2026-01-21",
+        "trigger_type": "scheduled"
+      },
+      {
+        "dependencies": [],
+        "effect_ids": [
+          "d1cc0000-0000-4000-8000-000000000047"
+        ],
+        "enabled": true,
+        "event_id": "d1cc0000-0000-4000-8000-000000000046",
+        "event_type": "other",
+        "name": "Synthetic sale",
+        "precedence": 20,
+        "scenario_id": "90000000-0000-4000-8000-000000000011",
+        "start_date": "2026-01-21",
+        "trigger_type": "scheduled"
+      },
+      {
+        "dependencies": [],
+        "effect_ids": [
+          "d1cc0000-0000-4000-8000-000000000050"
+        ],
+        "enabled": true,
+        "event_id": "d1cc0000-0000-4000-8000-000000000049",
+        "event_type": "other",
+        "name": "Synthetic reinvest_dividend",
+        "precedence": 10,
+        "scenario_id": "90000000-0000-4000-8000-000000000011",
+        "start_date": "2026-01-22",
+        "trigger_type": "scheduled"
+      },
+      {
+        "dependencies": [],
+        "effect_ids": [],
+        "enabled": true,
+        "event_id": "d1cc0000-0000-4000-8000-000000000010",
+        "event_type": "death",
+        "name": "Synthetic term-life counterfactual",
+        "precedence": 0,
+        "scenario_id": "90000000-0000-4000-8000-000000000011",
+        "start_date": "2026-01-25",
+        "trigger_type": "scheduled"
+      }
+    ],
+    "EventEffect": [
+      {
+        "event_effect_id": "d1cc0000-0000-4000-8000-000000000041",
+        "operation": "d1_domain",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000042",
+        "target_entity_id": "d1cc0000-0000-4000-8000-000000000008",
+        "target_entity_type": "Investment"
+      },
+      {
+        "event_effect_id": "d1cc0000-0000-4000-8000-000000000044",
+        "operation": "d1_domain",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000045",
+        "target_entity_id": "d1cc0000-0000-4000-8000-000000000008",
+        "target_entity_type": "Investment"
+      },
+      {
+        "event_effect_id": "d1cc0000-0000-4000-8000-000000000047",
+        "operation": "d1_domain",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000048",
+        "target_entity_id": "90000000-0000-4000-8000-000000000016",
+        "target_entity_type": "Investment"
+      },
+      {
+        "event_effect_id": "d1cc0000-0000-4000-8000-000000000050",
+        "operation": "d1_domain",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000051",
+        "target_entity_id": "90000000-0000-4000-8000-000000000016",
+        "target_entity_type": "Investment"
+      }
+    ],
+    "Expense": [
+      {
+        "amount": "4800.00",
+        "category": "Living costs",
+        "essentiality": "discretionary",
+        "expense_id": "90000000-0000-4000-8000-000000000006",
+        "frequency": "monthly",
+        "growth_model_id": "90000000-0000-4000-8000-000000000020",
+        "owner_id": "90000000-0000-4000-8000-000000000002",
+        "payment_account_id": "90000000-0000-4000-8000-000000000004",
+        "start_date": "2026-01-03"
+      }
+    ],
+    "Household": [
+      {
+        "formation_date": "2020-01-01",
+        "household_id": "90000000-0000-4000-8000-000000000002",
+        "household_type": "individual",
+        "members": [
+          "90000000-0000-4000-8000-000000000003"
+        ],
+        "name": "Example household",
+        "primary_jurisdiction": "US-NY",
+        "tax_eligibility_periods": []
+      }
+    ],
+    "Income": [
+      {
+        "amount": "9000.00",
+        "frequency": "monthly",
+        "gross_or_net": "gross",
+        "growth_model_id": "90000000-0000-4000-8000-000000000012",
+        "income_id": "90000000-0000-4000-8000-000000000005",
+        "income_type": "salary",
+        "owner_id": "90000000-0000-4000-8000-000000000003",
+        "related_event_id": "90000000-0000-4000-8000-000000000023",
+        "source": "Example salary",
+        "start_date": "2026-01-02",
+        "tax_character": "ordinary",
+        "tax_eligibility_periods": [],
+        "work_service_jurisdiction_allocations": [
+          {
+            "allocation": "1",
+            "effective_date": "2026-01-01",
+            "state_jurisdiction": "US-NY"
+          }
+        ]
+      }
+    ],
+    "Insurance": [
+      {
+        "beneficiary_id": "90000000-0000-4000-8000-000000000002",
+        "benefit_account_id": "90000000-0000-4000-8000-000000000013",
+        "coverage_amount": "100000",
+        "death_event_id": "d1cc0000-0000-4000-8000-000000000010",
+        "end_date": "2027-01-01",
+        "insurance_id": "d1cc0000-0000-4000-8000-000000000009",
+        "insurance_type": "life",
+        "insured_person_id": "90000000-0000-4000-8000-000000000003",
+        "name": "Synthetic term life",
+        "owner_id": "90000000-0000-4000-8000-000000000003",
+        "policy_family": "term_life_lump_sum",
+        "premium": "50",
+        "premium_account_id": "90000000-0000-4000-8000-000000000004",
+        "premium_frequency": "monthly",
+        "start_date": "2026-01-01"
+      }
+    ],
+    "Investment": [
+      {
+        "account_id": "90000000-0000-4000-8000-000000000014",
+        "acquisition_date": "2024-01-01",
+        "after_tax_basis": "0",
+        "contribution_model_id": "d1cc0000-0000-4000-8000-000000000110",
+        "cost_basis": "100000",
+        "investment_id": "90000000-0000-4000-8000-000000000009",
+        "investment_type": "fund",
+        "market_value": "100000.00",
+        "owner_id": "90000000-0000-4000-8000-000000000003",
+        "price": "100.00",
+        "quantity": "1000.0000",
+        "return_model_id": "90000000-0000-4000-8000-000000000021",
+        "symbol": "RETIREMENT-DEMO",
+        "tax_treatment": "inherited"
+      },
+      {
+        "account_id": "90000000-0000-4000-8000-000000000015",
+        "acquisition_date": "2024-01-01",
+        "after_tax_basis": "0",
+        "asset_id": "d1cc0000-0000-4000-8000-000000000011",
+        "contribution_model_id": "d1cc0000-0000-4000-8000-000000000031",
+        "cost_basis": "50000",
+        "investment_id": "90000000-0000-4000-8000-000000000016",
+        "investment_type": "fund",
+        "market_value": "50000.00",
+        "owner_id": "90000000-0000-4000-8000-000000000003",
+        "price": "100.00",
+        "quantity": "500.0000",
+        "return_model_id": "90000000-0000-4000-8000-000000000022",
+        "symbol": "BROKERAGE-DEMO",
+        "tax_treatment": "inherited"
+      },
+      {
+        "account_id": "d1cc0000-0000-4000-8000-000000000001",
+        "after_tax_basis": "0",
+        "contribution_model_id": "d1cc0000-0000-4000-8000-000000000030",
+        "investment_id": "d1cc0000-0000-4000-8000-000000000002",
+        "investment_type": "fund",
+        "market_value": "0",
+        "price": "100",
+        "quantity": "0",
+        "return_model_id": "d1cc0000-0000-4000-8000-000000000202",
+        "symbol": "IRA-DEMO",
+        "tax_treatment": "inherited"
+      },
+      {
+        "account_id": "90000000-0000-4000-8000-000000000014",
+        "after_tax_basis": "0",
+        "contribution_model_id": "d1cc0000-0000-4000-8000-000000000140",
+        "investment_id": "d1cc0000-0000-4000-8000-000000000003",
+        "investment_type": "fund",
+        "market_value": "0",
+        "price": "100",
+        "quantity": "0",
+        "return_model_id": "d1cc0000-0000-4000-8000-000000000203",
+        "symbol": "MATCH-DEMO",
+        "tax_treatment": "inherited"
+      },
+      {
+        "account_id": "d1cc0000-0000-4000-8000-000000000004",
+        "after_tax_basis": "0",
+        "contribution_model_id": "d1cc0000-0000-4000-8000-000000000130",
+        "investment_id": "d1cc0000-0000-4000-8000-000000000005",
+        "investment_type": "fund",
+        "market_value": "0",
+        "price": "100",
+        "quantity": "0",
+        "return_model_id": "d1cc0000-0000-4000-8000-000000000205",
+        "symbol": "HSA-EMPLOYEE",
+        "tax_treatment": "inherited"
+      },
+      {
+        "account_id": "d1cc0000-0000-4000-8000-000000000004",
+        "after_tax_basis": "0",
+        "contribution_model_id": "d1cc0000-0000-4000-8000-000000000150",
+        "investment_id": "d1cc0000-0000-4000-8000-000000000006",
+        "investment_type": "fund",
+        "market_value": "0",
+        "price": "100",
+        "quantity": "0",
+        "return_model_id": "d1cc0000-0000-4000-8000-000000000206",
+        "symbol": "HSA-EMPLOYER",
+        "tax_treatment": "inherited"
+      },
+      {
+        "account_id": "90000000-0000-4000-8000-000000000015",
+        "acquisition_date": "2026-01-01",
+        "cost_basis": "980",
+        "face_value": "1000",
+        "funding_account_id": "90000000-0000-4000-8000-000000000004",
+        "instrument_subtype": "treasury_bill",
+        "investment_id": "d1cc0000-0000-4000-8000-000000000007",
+        "investment_type": "bond",
+        "market_value": "0",
+        "maturity_date": "2026-01-20",
+        "price": "980",
+        "quantity": "0",
+        "return_model_id": null,
+        "settlement_account_id": "90000000-0000-4000-8000-000000000013",
+        "symbol": "BILL-DEMO",
+        "tax_treatment": "inherited"
+      },
+      {
+        "account_id": "90000000-0000-4000-8000-000000000015",
+        "investment_id": "d1cc0000-0000-4000-8000-000000000008",
+        "investment_type": "crypto",
+        "market_value": "0",
+        "price": "100",
+        "quantity": "0",
+        "return_model_id": null,
+        "symbol": "SPOT-DEMO",
+        "tax_treatment": "inherited"
+      }
+    ],
+    "Liability": [
+      {
+        "collateral_id": "90000000-0000-4000-8000-000000000007",
+        "current_balance": "225669.71",
+        "extra_payment": "0.0000",
+        "interest_rate": "0.0525",
+        "liability_id": "90000000-0000-4000-8000-000000000008",
+        "liability_type": "mortgage",
+        "maturity_date": "2052-01-01",
+        "name": "Example mortgage",
+        "origination_date": "2022-01-01",
+        "owner_id": "90000000-0000-4000-8000-000000000002",
+        "payment_frequency": "monthly",
+        "principal": "240000.00",
+        "rate_type": "fixed",
+        "tax_treatment": "taxable"
+      }
+    ],
+    "Person": [
+      {
+        "date_of_birth": "1990-01-01",
+        "employment_status": "employed",
+        "filing_status": "single",
+        "first_name": "Taylor",
+        "household_id": "90000000-0000-4000-8000-000000000002",
+        "last_name": "Example",
+        "person_id": "90000000-0000-4000-8000-000000000003",
+        "relationship_status": "single",
+        "residence_jurisdiction": "US-NY",
+        "residence_jurisdiction_periods": [
+          {
+            "effective_date": "2026-01-01",
+            "state_jurisdiction": "US-NY"
+          }
+        ],
+        "risk_profile": "moderate",
+        "tax_eligibility_periods": [
+          {
+            "effective_date": "2026-01-01",
+            "key": "federal_base_deduction_only",
+            "value": true
+          }
+        ]
+      }
+    ],
+    "PrimitiveInstance": [
+      {
+        "enabled": true,
+        "input_bindings": {
+          "rate": "90000000-0000-4000-8000-000000000010"
+        },
+        "parameters": {},
+        "primitive_id": "P08",
+        "primitive_instance_id": "90000000-0000-4000-8000-000000000012",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {
+          "rate": "90000000-0000-4000-8000-000000000017"
+        },
+        "parameters": {},
+        "primitive_id": "P08",
+        "primitive_instance_id": "90000000-0000-4000-8000-000000000020",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {
+          "rate": "90000000-0000-4000-8000-000000000018"
+        },
+        "parameters": {},
+        "primitive_id": "P23",
+        "primitive_instance_id": "90000000-0000-4000-8000-000000000021",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {
+          "rate": "90000000-0000-4000-8000-000000000019"
+        },
+        "parameters": {},
+        "primitive_id": "P23",
+        "primitive_instance_id": "90000000-0000-4000-8000-000000000022",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {
+          "rate": "90000000-0000-4000-8000-000000000019"
+        },
+        "parameters": {},
+        "primitive_id": "P23",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000202",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {
+          "rate": "90000000-0000-4000-8000-000000000019"
+        },
+        "parameters": {},
+        "primitive_id": "P23",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000203",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {
+          "rate": "90000000-0000-4000-8000-000000000019"
+        },
+        "parameters": {},
+        "primitive_id": "P23",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000205",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {
+          "rate": "90000000-0000-4000-8000-000000000019"
+        },
+        "parameters": {},
+        "primitive_id": "P23",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000206",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {
+          "income_id": "90000000-0000-4000-8000-000000000005"
+        },
+        "parameters": {
+          "adapter": "d1-payroll-contribution/v1",
+          "calculation": {
+            "kind": "percent",
+            "rate": "0.05"
+          },
+          "contingentEvents": [],
+          "contribution": {
+            "character": "traditional_401k",
+            "excessPolicy": "auto_cap",
+            "facts": {
+              "ageAtYearEnd": 36,
+              "eligiblePlanCompensation": "108000",
+              "hsaCoverage": "self",
+              "hsaFullYearEligible": true,
+              "taxYear": 2026
+            },
+            "householdId": "90000000-0000-4000-8000-000000000002",
+            "personId": "90000000-0000-4000-8000-000000000003"
+          },
+          "priority": 10,
+          "vestedFraction": "1"
+        },
+        "primitive_id": "P03",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000110",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {
+          "income_id": "90000000-0000-4000-8000-000000000005"
+        },
+        "parameters": {
+          "adapter": "d1-payroll-contribution/v1",
+          "calculation": {
+            "compensationCapRate": "0.06",
+            "kind": "match",
+            "rate": "0.5"
+          },
+          "contingentEvents": [],
+          "contribution": {
+            "character": "employer_401k",
+            "excessPolicy": "auto_cap",
+            "facts": {
+              "ageAtYearEnd": 36,
+              "eligiblePlanCompensation": "108000",
+              "hsaCoverage": "self",
+              "hsaFullYearEligible": true,
+              "taxYear": 2026
+            },
+            "householdId": "90000000-0000-4000-8000-000000000002",
+            "personId": "90000000-0000-4000-8000-000000000003"
+          },
+          "priority": 40,
+          "vestedFraction": "1"
+        },
+        "primitive_id": "P03",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000140",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {
+          "income_id": "90000000-0000-4000-8000-000000000005"
+        },
+        "parameters": {
+          "adapter": "d1-payroll-contribution/v1",
+          "calculation": {
+            "amount": "100",
+            "kind": "fixed"
+          },
+          "contingentEvents": [],
+          "contribution": {
+            "character": "employee_hsa",
+            "excessPolicy": "auto_cap",
+            "facts": {
+              "ageAtYearEnd": 36,
+              "eligiblePlanCompensation": "108000",
+              "hsaCoverage": "self",
+              "hsaFullYearEligible": true,
+              "taxYear": 2026
+            },
+            "householdId": "90000000-0000-4000-8000-000000000002",
+            "personId": "90000000-0000-4000-8000-000000000003"
+          },
+          "priority": 30,
+          "vestedFraction": "1"
+        },
+        "primitive_id": "P03",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000130",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {
+          "income_id": "90000000-0000-4000-8000-000000000005"
+        },
+        "parameters": {
+          "adapter": "d1-payroll-contribution/v1",
+          "calculation": {
+            "amount": "25",
+            "kind": "fixed"
+          },
+          "contingentEvents": [],
+          "contribution": {
+            "character": "employer_hsa",
+            "excessPolicy": "auto_cap",
+            "facts": {
+              "ageAtYearEnd": 36,
+              "eligiblePlanCompensation": "108000",
+              "hsaCoverage": "self",
+              "hsaFullYearEligible": true,
+              "taxYear": 2026
+            },
+            "householdId": "90000000-0000-4000-8000-000000000002",
+            "personId": "90000000-0000-4000-8000-000000000003"
+          },
+          "priority": 50,
+          "vestedFraction": "1"
+        },
+        "primitive_id": "P03",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000150",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {
+          "amount": "500",
+          "source_cash_account_id": "90000000-0000-4000-8000-000000000013"
+        },
+        "parameters": {
+          "adapter": "d1-personal-purchase/v1",
+          "contribution": {
+            "character": "roth_ira",
+            "excessPolicy": "auto_cap",
+            "facts": {
+              "ageAtYearEnd": 36,
+              "filingStatus": "single",
+              "rothMagi": "108000",
+              "taxYear": 2026,
+              "taxableCompensation": "108000",
+              "workplacePlanCovered": true
+            },
+            "householdId": "90000000-0000-4000-8000-000000000002",
+            "personId": "90000000-0000-4000-8000-000000000003"
+          },
+          "order": 10,
+          "schedule": {
+            "dates": [
+              "2026-01-10"
+            ],
+            "kind": "explicit_dates"
+          }
+        },
+        "primitive_id": "P03",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000030",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {
+          "amount": "1000",
+          "source_cash_account_id": "90000000-0000-4000-8000-000000000004"
+        },
+        "parameters": {
+          "adapter": "d1-personal-purchase/v1",
+          "order": 20,
+          "schedule": {
+            "dates": [
+              "2026-01-10"
+            ],
+            "kind": "explicit_dates"
+          }
+        },
+        "primitive_id": "P03",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000031",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {},
+        "parameters": {
+          "adapter": "d1-domain-operation/v1",
+          "amount": "200",
+          "cashAccountId": "90000000-0000-4000-8000-000000000004",
+          "holdingId": "d1cc0000-0000-4000-8000-000000000008",
+          "kind": "purchase",
+          "order": 10,
+          "quantity": "2"
+        },
+        "primitive_id": "P27",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000042",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {},
+        "parameters": {
+          "adapter": "d1-domain-operation/v1",
+          "amount": "300",
+          "holdingId": "d1cc0000-0000-4000-8000-000000000008",
+          "kind": "sale",
+          "order": 10,
+          "quantity": "2"
+        },
+        "primitive_id": "P27",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000045",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {},
+        "parameters": {
+          "adapter": "d1-domain-operation/v1",
+          "amount": "1100",
+          "holdingId": "90000000-0000-4000-8000-000000000016",
+          "kind": "sale",
+          "order": 20,
+          "quantity": "10"
+        },
+        "primitive_id": "P27",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000048",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      },
+      {
+        "enabled": true,
+        "input_bindings": {},
+        "parameters": {
+          "adapter": "d1-domain-operation/v1",
+          "amount": "100",
+          "dividendCharacter": "qualified",
+          "holdingId": "90000000-0000-4000-8000-000000000016",
+          "kind": "reinvest_dividend",
+          "order": 10,
+          "quantity": "1"
+        },
+        "primitive_id": "P27",
+        "primitive_instance_id": "d1cc0000-0000-4000-8000-000000000051",
+        "scenario_id": "90000000-0000-4000-8000-000000000011"
+      }
+    ],
+    "Scenario": [
+      {
+        "assumption_ids": [
+          "90000000-0000-4000-8000-000000000010",
+          "90000000-0000-4000-8000-000000000017",
+          "90000000-0000-4000-8000-000000000018",
+          "90000000-0000-4000-8000-000000000019"
+        ],
+        "enabled": true,
+        "end_date": "2036-01-01",
+        "event_ids": [
+          "90000000-0000-4000-8000-000000000023",
+          "d1cc0000-0000-4000-8000-000000000040",
+          "d1cc0000-0000-4000-8000-000000000043",
+          "d1cc0000-0000-4000-8000-000000000046",
+          "d1cc0000-0000-4000-8000-000000000049"
+        ],
+        "name": "Current plan",
+        "scenario_id": "90000000-0000-4000-8000-000000000011",
+        "simulation_count": 1,
+        "start_date": "2026-01-01",
+        "stochastic": false,
+        "timestep": "monthly"
+      }
+    ],
+    "TaxRule": [
+      {
+        "calculation_method": "custom",
+        "contribution_limits": [
+          {
+            "adapter": "d1-contribution-law/v1",
+            "bucket_key": "401k_elective",
+            "included_characters": [
+              "traditional_401k",
+              "roth_401k"
+            ],
+            "kind": "401k_elective",
+            "target_id": "90000000-0000-4000-8000-000000000003",
+            "target_type": "person"
+          }
+        ],
+        "effective_date": "2026-01-01",
+        "expiration_date": "2027-01-01",
+        "jurisdiction": "US",
+        "tax_rule_id": "d1c30000-0000-4000-8000-c77e2a387547",
+        "tax_type": "other"
+      },
+      {
+        "calculation_method": "custom",
+        "contribution_limits": [
+          {
+            "adapter": "d1-contribution-law/v1",
+            "bucket_key": "401k_additions:golden-employer",
+            "included_characters": [
+              "traditional_401k",
+              "roth_401k",
+              "after_tax_401k",
+              "employer_401k"
+            ],
+            "kind": "401k_additions",
+            "target_id": "90000000-0000-4000-8000-000000000003",
+            "target_type": "person"
+          }
+        ],
+        "effective_date": "2026-01-01",
+        "expiration_date": "2027-01-01",
+        "jurisdiction": "US",
+        "tax_rule_id": "d1c30000-0000-4000-8000-f09b3849848c",
+        "tax_type": "other"
+      },
+      {
+        "calculation_method": "custom",
+        "contribution_limits": [
+          {
+            "adapter": "d1-contribution-law/v1",
+            "bucket_key": "hsa_individual",
+            "included_characters": [
+              "employee_hsa",
+              "employer_hsa"
+            ],
+            "kind": "hsa_individual",
+            "target_id": "90000000-0000-4000-8000-000000000003",
+            "target_type": "person"
+          }
+        ],
+        "effective_date": "2026-01-01",
+        "expiration_date": "2027-01-01",
+        "jurisdiction": "US",
+        "tax_rule_id": "d1c30000-0000-4000-8000-deb663bf0ecd",
+        "tax_type": "other"
+      },
+      {
+        "calculation_method": "custom",
+        "contribution_limits": [
+          {
+            "adapter": "d1-contribution-law/v1",
+            "bucket_key": "ira_shared",
+            "included_characters": [
+              "traditional_ira",
+              "roth_ira"
+            ],
+            "kind": "ira_shared",
+            "target_id": "90000000-0000-4000-8000-000000000003",
+            "target_type": "person"
+          }
+        ],
+        "effective_date": "2026-01-01",
+        "expiration_date": "2027-01-01",
+        "jurisdiction": "US",
+        "tax_rule_id": "d1c30000-0000-4000-8000-6a951cc94c71",
+        "tax_type": "other"
+      },
+      {
+        "calculation_method": "custom",
+        "contribution_limits": [
+          {
+            "adapter": "d1-contribution-law/v1",
+            "bucket_key": "roth_ira",
+            "included_characters": [
+              "roth_ira"
+            ],
+            "kind": "roth_ira",
+            "target_id": "90000000-0000-4000-8000-000000000003",
+            "target_type": "person"
+          }
+        ],
+        "effective_date": "2026-01-01",
+        "expiration_date": "2027-01-01",
+        "jurisdiction": "US",
+        "tax_rule_id": "d1c30000-0000-4000-8000-6fbd25d6af25",
+        "tax_type": "other"
+      }
+    ]
+  }
+}

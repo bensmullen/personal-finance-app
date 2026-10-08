@@ -45,7 +45,11 @@ export const assertTaxCoreDefinition = (rule: TaxCoreRule): void => {
       text(condition.equals);
     }
   }
-  if (rule.provenance.type === "verified_law") {
+  if (rule.provenance.type === "verified_law" || rule.provenance.type === "projected_current_law") {
+    if (rule.provenance.type === "projected_current_law") {
+      domainId("tax-rule", rule.provenance.baseRuleId);
+      if (!Number.isSafeInteger(rule.provenance.baseYear) || rule.provenance.policy !== "nominal_carry_forward") invalid("Projected law requires explicit source year and policy");
+    }
     text(rule.provenance.scope);
     if (!Array.isArray(rule.provenance.limitations) || rule.provenance.sources.length === 0) invalid("Real law requires sources and explicit limitations");
     for (const limitation of rule.provenance.limitations) text(limitation);

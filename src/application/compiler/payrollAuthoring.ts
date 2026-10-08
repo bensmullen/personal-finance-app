@@ -46,7 +46,7 @@ export const durablePayrollAllocations = (model: PortableModelEnvelope): readonl
   const incomeId = primitive.input_bindings.income_id;
   const income = objects(model, "Income").find(item => item.income_id === incomeId);
   const account = objects(model, "Account").find(item => item.account_id === investment.account_id);
-  if (typeof incomeId !== "string" || !UUID.test(incomeId) || !income || income.income_type !== "salary" || income.gross_or_net === "net" || !account || account.currency !== "USD" || income.owner_id !== account.owner_id || investment.owner_id !== account.owner_id) return fail("PAYROLL_GROSS_SALARY_OWNER_REQUIRED");
+  if (typeof incomeId !== "string" || !UUID.test(incomeId) || !income || income.income_type !== "salary" || income.gross_or_net === "net" || !account || account.currency !== "USD" || income.owner_id !== account.owner_id || investment.owner_id != null && investment.owner_id !== account.owner_id) return fail("PAYROLL_GROSS_SALARY_OWNER_REQUIRED");
   const policy = compileContributionPolicy(model, account, primitive.parameters.contribution);
   openingUnvestedQuantity(model, investment);
   const hsa = policy.character.endsWith("_hsa");
@@ -76,7 +76,8 @@ export const durablePayrollAllocations = (model: PortableModelEnvelope): readonl
  const events = allocations.flatMap(item => item.events);
  if (new Set(allocations.map(item => item.allocation.id)).size !== allocations.length) return fail("PAYROLL_POLICY_BINDING_AMBIGUOUS");
  if (new Set(events.map(event => event.eventId)).size !== events.length || events.some(event => events.some(other => other !== event && other.positionId === event.positionId && other.at === event.at))) return fail("WORKPLACE_EVENT_AMBIGUOUS");
- return allocations;
+ // Collection order is not payroll priority; preserve the explicit authored order.
+ return allocations.sort((a, b) => a.allocation.priority - b.allocation.priority || a.allocation.id.localeCompare(b.allocation.id));
 };
 
 export const payrollOpeningBalances = (model: PortableModelEnvelope, allocations: readonly DurablePayrollAllocation[]) => {

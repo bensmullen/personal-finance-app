@@ -1,6 +1,7 @@
 import { failValidation, validationIssue, issueCodes, type ValidationIssue } from "../diagnostics/index.js";
 import { calculationTraceId, calculationTraceRef, freezeTraceRefs } from "../lineage/index.js";
 import { Money } from "../values/index.js";
+import { domainId } from "../identity/index.js";
 import type { AnnualContributionLimitRule, RuleApplication } from "./contracts.js";
 import { resolvedRuleValue, type ResolvedRule } from "./resolver.js";
 
@@ -13,6 +14,7 @@ export interface CommittedContributionUsage {
   readonly amount: Money;
 }
 export interface ContributionBucketDecision {
+  readonly incompleteFacts?: readonly string[];
   readonly requested: Money;
   readonly accepted: Money;
   readonly excess: Money;
@@ -103,6 +105,6 @@ export const evaluateAnnualContributionLimit = (resolved: ResolvedRule<"annual_c
   const decision: ContributionLimitDecisionKind = accepted.equals(requested) ? "allowed" : accepted.isPositive() ? "partially_allowed" : "rejected";
   const diagnostics = excess.isPositive() || usedBefore.compare(rule.annualLimit) > 0 ? Object.freeze([validationIssue({ severity: "warning", code: issueCodes.contributionLimitApplied, message: `Contribution rule ${rule.id} limited the requested amount`, entityType: "financial_rule", entityId: rule.id, relatedIds: [rule.target.targetId] })]) : Object.freeze([]);
   const result = Object.freeze({ decision, requested, usedBefore, annualLimit: rule.annualLimit, remainingBefore, accepted, excess, ruleId: rule.id, diagnostics });
-  const traceRefs = freezeTraceRefs([calculationTraceRef(calculationTraceId(`rule:${rule.kind}:${rule.id}:${at}`), [rule.id])])!;
+  const traceRefs = freezeTraceRefs([calculationTraceRef(calculationTraceId(`rule:${rule.kind}:${rule.id}:${at}`), [rule.id, ...(typeof rule.capacityFacts?.baseRuleId === "string" ? [domainId("tax-rule", rule.capacityFacts.baseRuleId)] : [])])])!;
   return Object.freeze({ ruleId: rule.id, ruleKind: rule.kind, target: Object.freeze({ ...rule.target }), evaluatedAt: at, result, traceRefs });
 };

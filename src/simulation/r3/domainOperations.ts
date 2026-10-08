@@ -7,6 +7,7 @@ import type { VerticalSlice2PeriodResult, PreparedVerticalSlice2Period } from ".
 import { executePreparedVerticalSlice2Occurrence } from "../verticalSlice2.js";
 import type { PreparedVerticalSlice3Period } from "../verticalSlice3.js";
 import { executePreparedVerticalSlice3Operation } from "../verticalSlice3.js";
+import type { TaxCapabilityDiagnostic } from "../tax/contracts.js";
 import type { VerticalSlice4PeriodResult, PreparedVerticalSlice4Period } from "../verticalSlice4.js";
 import { executePreparedVerticalSlice4Operation, guaranteedUnfundedRequiredServicePool, guaranteedFirstSourceRequiredService } from "../verticalSlice4.js";
 import type { RunContext } from "../run.js";
@@ -16,6 +17,9 @@ import type { AccountingTransaction } from "../../accounting/index.js";
 import type { ConstraintOutcome, LiquidityShortfall } from "../../funding/index.js";
 import type { ValidationIssue } from "../../diagnostics/index.js";
 import type { CalculationTraceRef } from "../../lineage/index.js";
+
+const contributionTaxDiagnostics = (diagnostics: readonly ValidationIssue[]): readonly TaxCapabilityDiagnostic[] =>
+  diagnostics.filter((item): item is TaxCapabilityDiagnostic => item.entityType === "tax_capability" && "category" in item && item.category === "contribution_annual_facts");
 
 export type InvestmentOperationFacts = Pick<HouseholdInvestmentPeriodSummary,
   "transactions" | "contributionPrincipal" | "fees" | "unrealizedGain" | "traceRefs">;
@@ -80,12 +84,12 @@ export const householdDomainParticipants = (
           const sink = new SummaryOperationSink(context.baseCurrency);
           const result = executePreparedVerticalSlice2Occurrence(prepared.cash!, occurrence, opening.state, opening.primitiveState,
             kernel.cash?.occurrenceInput(occurrence.streamId) ?? input.cashFlowInput!, context, sink);
-          return { state: result.state, primitiveState: result.primitiveState, facts: { summary: { evidence: sink.snapshot(), cash: result.summary } } };
+          return { state: result.state, primitiveState: result.primitiveState, facts: { ...(contributionTaxDiagnostics(result.summary.diagnostics).length ? { taxDiagnostics: contributionTaxDiagnostics(result.summary.diagnostics) } : {}), summary: { evidence: sink.snapshot(), cash: result.summary } } };
         }
         const result = executePreparedVerticalSlice2Occurrence(prepared.cash!, occurrence,
           opening.state, opening.primitiveState,
           kernel.cash?.occurrenceInput(occurrence.streamId) ?? input.cashFlowInput!, context);
-        return { state: result.state, primitiveState: result.primitiveState, facts: { cash: result.period } };
+        return { state: result.state, primitiveState: result.primitiveState, facts: { ...(contributionTaxDiagnostics(result.period.diagnostics).length ? { taxDiagnostics: contributionTaxDiagnostics(result.period.diagnostics) } : {}), cash: result.period } };
       },
     })) },
     { id: "investments", operations: (prepared.investments?.operations ?? []).map(operation => ({
@@ -105,16 +109,17 @@ export const householdDomainParticipants = (
           const sink = new SummaryOperationSink(context.baseCurrency);
           const result = executePreparedVerticalSlice3Operation(prepared.investments!, operation,
             opening.state, opening.primitiveState, input.investmentInput!, context, sink);
-          return { state: result.state, primitiveState: result.primitiveState, facts: { acquiredLots: acquired(result.state), summary: { evidence: sink.snapshot(), investment: {
+          return { state: result.state, primitiveState: result.primitiveState, facts: { ...(result.taxDiagnostics === undefined ? {} : { taxDiagnostics: result.taxDiagnostics, diagnostics: result.taxDiagnostics }), acquiredLots: acquired(result.state), summary: { evidence: sink.snapshot(), investment: {
             contributionPrincipal: result.contributionPrincipal, fees: result.fees, unrealizedGain: result.unrealizedGain,
           } } } };
         }
         const result = executePreparedVerticalSlice3Operation(prepared.investments!, operation,
           opening.state, opening.primitiveState, input.investmentInput!, context);
-        return { state: result.state, primitiveState: result.primitiveState, facts: { acquiredLots: acquired(result.state), investment: Object.freeze({
+        return { state: result.state, primitiveState: result.primitiveState, facts: { ...(result.taxDiagnostics === undefined ? {} : { taxDiagnostics: result.taxDiagnostics, diagnostics: result.taxDiagnostics }), acquiredLots: acquired(result.state), investment: Object.freeze({
           transactions: result.transactions, contributionPrincipal: result.contributionPrincipal,
           fees: result.fees, unrealizedGain: result.unrealizedGain,
-          traceRefs: mergeTraceRefs(result.effects.flatMap(effect => effect.traceRefs ?? [])) ?? Object.freeze([]),
+          traceRefs: mergeTraceRefs(result.effects.flatMap(effect => effect.traceRefs ?? []),
+            result.ruleApplications.flatMap(application => application.traceRefs ?? [])) ?? Object.freeze([]),
         }) } };
       },
     })) },

@@ -1,6 +1,6 @@
 # Deterministic Household Financial Semantics Readiness
 
-**Version:** 0.2.0-draft  
+**Version:** 0.3.0-draft  
 **Status:** Pre-stochastic/private-alpha gate  
 **Requirement prefix:** PFA-DET
 
@@ -115,7 +115,7 @@ The deterministic model SHALL support a defined private-alpha subset of fixed-in
 - sale before maturity when that instrument path is supported; and
 - applicable basis, realized gain/loss, and tax-character facts.
 
-The model SHALL distinguish return of principal from income. Unsupported callability, floating-rate, inflation-linked, default, early-withdrawal, or complex bond features SHALL be capability-gated.
+The model SHALL distinguish return of principal from income. Unsupported callability, floating-rate, default, early-withdrawal, or complex bond features SHALL be capability-gated. TIPS and Series EE savings bonds are governed by the D2 breadth requirements below rather than treated as generic unsupported fixed income.
 
 ### PFA-DET-008 — Mortgage lifecycle
 
@@ -240,11 +240,88 @@ The UI SHALL:
 
 ### PFA-DET-015 — Stochastic and private-alpha gate
 
-R5 stochastic runtime implementation SHALL NOT begin until the deterministic readiness matrix in PFA-DET-013 is complete for the intended initial private-alpha scope, except for isolated infrastructure work that cannot alter or assume unresolved household financial semantics.
+D1 closeout is defined by the original PFA-DET-001 through PFA-DET-014 contract and its D1-C verification; it does not require D2 capabilities to already exist. D2 closeout is separately defined by PFA-DET-016 through PFA-DET-023.
 
-R6/R7 probabilistic household results SHALL NOT be treated as product-complete until this deterministic gate remains green.
+R5 stochastic runtime implementation SHALL NOT begin until both D1 and D2 deterministic readiness contracts are complete and verified. None of the named D2 ordinary instrument/benefit families may be omitted merely because an initial private-alpha participant does not use them. Isolated calibration, planning, import, or other foundation work that cannot alter, assume, or execute stochastic household semantics may proceed earlier.
+
+R6/R7 probabilistic household work SHALL NOT begin from an implementation state that bypasses this gate, and probabilistic household results SHALL NOT be treated as product-complete unless the deterministic gate remains green.
 
 Private-alpha launch additionally requires these supported use cases to be authorable through the intended onboarding/editor paths and included in representative UAT, with unsupported subfeatures explicitly capability-gated.
+
+
+### PFA-DET-016 — Social Security and defined-benefit pension income
+
+Before stochastic household modeling begins, the deterministic model SHALL support materially common retirement-income sources beyond account withdrawals.
+
+The supported Social Security floor SHALL include retirement, spousal, and survivor benefits with explicit claimant/beneficiary identity, claiming/start date, effective-dated benefit rules or an authoritative user/imported benefit estimate, claiming-age adjustments where applicable, COLA treatment, household coordination, and applicable tax characterization. The model SHALL NOT treat Social Security as an arbitrary generic income stream when benefit eligibility or household coordination changes the result.
+
+The supported pension floor SHALL include a basic defined-benefit contract with participant and beneficiary identity, commencement date/age, quoted benefit or supported formula inputs, payment frequency, COLA when applicable, survivor continuation/election where authored, termination/death behavior, and applicable tax characterization. Unsupported plan-specific elections or actuarial options SHALL be capability-gated rather than guessed.
+
+### PFA-DET-017 — Expanded workplace and self-employed retirement-plan families
+
+Before stochastic modeling, the deterministic retirement model SHALL support ordinary authoring and execution for:
+
+- 403(b) plans;
+- governmental 457(b) plans;
+- the federal Thrift Savings Plan (TSP);
+- SEP IRAs; and
+- SIMPLE IRAs.
+
+For each admitted plan family, the model SHALL preserve the plan-specific contribution source, employee/employer character, effective-dated statutory limit scope, tax character, rollover/distribution compatibility, and ownership/account identity required for a correct household forecast. Specialized plan elections or uncommon catch-up provisions MAY remain capability-gated only when the ordinary supported contract is explicit and the affected output is marked incomplete.
+
+### PFA-DET-018 — Roth conversion, backdoor Roth, and mega-backdoor mechanics
+
+Before stochastic modeling, the deterministic model SHALL support:
+
+- Traditional IRA to Roth IRA conversion as an explicit non-consumption conversion;
+- a bounded backdoor Roth path using nondeductible Traditional IRA contribution/basis followed by Roth conversion, including the applicable aggregate IRA/pro-rata basis rule;
+- a bounded mega-backdoor path using after-tax workplace-plan contributions followed by supported in-plan Roth conversion or eligible rollover to Roth, while preserving previously taxed basis and statutory annual-additions limits.
+
+These paths SHALL preserve source/destination identity, pre-tax versus after-tax basis, contribution versus conversion character, applicable limit usage, tax recognition, and separate tax settlement. Plan support and legally material missing facts SHALL be explicit prerequisites rather than inferred.
+
+### PFA-DET-019 — Common consumer and household debt mechanics
+
+Before stochastic modeling, deterministic liability support SHALL include ordinary mechanics for:
+
+- fixed-rate auto loans;
+- standard student loans;
+- revolving credit-card balances; and
+- HELOCs.
+
+The supported contract SHALL model opening/current principal, interest accrual, rate type and effective rate, required/scheduled payments, principal-versus-interest allocation, extra payments, payoff, funding source, and ending liability state. Credit-card and HELOC support SHALL preserve revolving-balance behavior; HELOC variable-rate changes SHALL use explicit rate inputs/rules. Specialized student-loan income-driven repayment, forgiveness, deferment/forbearance, promotional card terms, and unusual HELOC features MAY remain capability-gated until explicitly implemented.
+
+### PFA-DET-020 — Medicare, health-insurance premiums, and health FSA mechanics
+
+Before stochastic modeling, the deterministic household model SHALL represent the recurring healthcare-cost floor that materially changes retirement and working-age cash flow.
+
+The supported floor SHALL include:
+
+- health-insurance premium schedules with covered household members, effective periods, employee/employer share where applicable, and explicit pre-tax payroll versus after-tax funding character;
+- basic Medicare premium/cost schedules for the elected/supported Parts and supplements, with age/effective-date eligibility and income-related premium adjustments when materially applicable to the household;
+- health FSA payroll contributions, plan-year limits, available balance/reimbursement settlement, and supported carryover or grace-period/use-it-or-lose-it terms when authored.
+
+Detailed medical-claim adjudication, provider networks, prescription formularies, and other unsupported health-plan mechanics SHALL remain capability-gated rather than approximated.
+
+### PFA-DET-021 — TIPS and Series EE savings bonds
+
+Before stochastic modeling, the deterministic fixed-income floor SHALL additionally support:
+
+- Treasury Inflation-Protected Securities (TIPS), including inflation-adjusted principal, coupon calculation on adjusted principal, maturity redemption, and applicable taxable interest/inflation-accretion characterization; and
+- Series EE savings bonds, including issue/purchase value, accrual/redemption value, maturity/redemption timing, and applicable federal/state tax character.
+
+Unsupported secondary-market, deferral-election, education-exclusion, or other specialized savings-bond cases SHALL be capability-gated unless the target household requires them.
+
+### PFA-DET-022 — 529 education-savings plans and rollovers
+
+Before stochastic modeling, the deterministic model SHALL support a bounded but real 529 plan contract covering account owner, beneficiary, contributions, investment balance/growth, qualified and non-qualified distributions, applicable earnings/tax/penalty character, and explicit funding/settlement.
+
+The supported rollover floor SHALL include ordinary plan-to-plan 529 rollovers and beneficiary changes where permitted, plus a bounded 529-to-Roth-IRA rollover path using effective-dated statutory eligibility, lifetime/annual limits, account-age/holding requirements, beneficiary identity, and Roth IRA contribution-limit interaction. State-specific deductions, credits, recapture, or plan restrictions SHALL be implemented for the supported jurisdiction or explicitly capability-gated.
+
+### PFA-DET-023 — D2 integrated deterministic breadth verification
+
+The D2 breadth capabilities in PFA-DET-016 through PFA-DET-022 SHALL have independent deterministic expected-effect tests plus at least one combined household fixture spanning retirement income, expanded retirement plans, ordinary debt, healthcare costs, special fixed income, and education savings.
+
+Verification SHALL reconcile cash flow, assets, liabilities, basis/tax character, statutory-limit usage, benefit/premium schedules, rollovers/conversions, and ending net worth without double counting. Normal-user authoring and capability diagnostics SHALL be exercised for each admitted family before D2 closes.
 
 ## 3. Scope boundary
 

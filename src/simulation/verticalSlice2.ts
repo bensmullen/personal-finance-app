@@ -676,6 +676,7 @@ function executeCashFlowPeriodCandidate(
             if (stream.payrollContributions?.length) {
               const payroll = payrollContributionCandidate(state, { id: `tx:${recognition.id}`, incomeId: stream.id, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions });
               state = payroll.state;
+              diagnostics.push(...payroll.diagnostics);
               for (const posted of payroll.transactions) transactions.push(posted);
             } else applyTransaction(transaction(`tx:${recognition.id}`, occurrence.scheduledAt, "income", [{ posting: "debit", type: "cash", amount, accountId: stream.depositAccountId, cashFlowClass: "operating" }, { posting: "credit", type: "income", amount }], traceRefs));
             recognizedIncome = recognizedIncome.plus(amount);
