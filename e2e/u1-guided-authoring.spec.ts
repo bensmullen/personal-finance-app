@@ -123,7 +123,7 @@ test("U1 account actions choose the authoritative personal and workplace paths",
   await ira.getByRole("button", { name: "Manage contributions to IRA-DEMO", exact: true }).click();
   const personal = page.getByRole("region", { name: "Saved investment purchases" });
   await expect(personal.getByLabel("Purchase investment", { exact: true })).toHaveValue("d1cc0000-0000-4000-8000-000000000002");
-  await expect(personal.getByLabel("Purchase funding account").locator('option[value="d1cc0000-0000-4000-8000-000000000001"]')).toHaveCount(0);
+  await expect(personal.getByLabel("Purchase funding account", { exact: true }).locator('option[value="d1cc0000-0000-4000-8000-000000000001"]')).toHaveCount(0);
   await personal.getByLabel("Purchase amount", { exact: true }).fill("invalid");
   await expect(personal.getByLabel("Purchase amount", { exact: true })).toHaveAttribute("aria-invalid", "true");
   await expect(personal.getByRole("button", { name: "Save investment purchase", exact: true })).toBeDisabled();
@@ -136,11 +136,11 @@ test("U1 account actions choose the authoritative personal and workplace paths",
   await hsa.getByRole("button", { name: "Manage contributions to HSA-EMPLOYEE", exact: true }).click();
   const payroll = page.getByRole("region", { name: "Saved payroll contributions" });
   await expect(payroll.getByLabel("Payroll destination", { exact: true })).toHaveValue("d1cc0000-0000-4000-8000-000000000005");
-  await expect(payroll.getByLabel("Payroll contribution character").locator("option")).toHaveCount(2);
-  await expect(payroll.getByLabel("Payroll contribution character").locator('option[value="traditional_401k"]')).toHaveCount(0);
-  await expect(payroll.getByLabel("Payroll contribution method").locator('option[value="match"]')).toHaveCount(0);
-  await payroll.getByLabel("Payroll contribution character").selectOption("employer_hsa");
-  await expect(payroll.getByLabel("Payroll contribution method").locator('option[value="match"]')).toHaveCount(1);
+  await expect(payroll.getByLabel("Payroll contribution character", { exact: true }).locator("option")).toHaveCount(2);
+  await expect(payroll.getByLabel("Payroll contribution character", { exact: true }).locator('option[value="traditional_401k"]')).toHaveCount(0);
+  await expect(payroll.getByLabel("Payroll contribution method", { exact: true }).locator('option[value="match"]')).toHaveCount(0);
+  await payroll.getByLabel("Payroll contribution character", { exact: true }).selectOption("employer_hsa");
+  await expect(payroll.getByLabel("Payroll contribution method", { exact: true }).locator('option[value="match"]')).toHaveCount(1);
   for (const width of [1440, 390]) { await page.setViewportSize({ width, height: 1000 }); await assertContractAndGeometry(page, width); }
   expect(await payroll.innerText()).not.toMatch(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b|\[object Object\]/i);
   expect(errors).toEqual([]);

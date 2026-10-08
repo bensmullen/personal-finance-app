@@ -444,7 +444,7 @@ function ObjectEditor({
                 <dt>{type} ID</dt>
                 <dd>{objectId(type, editing)}</dd>
                 {Object.entries(descriptor.fields)
-                  .filter(([, field]) => field.ref || field.type === "object")
+                  .filter(([name, field]) => field.ref || field.type === "object" || (editing[name] !== null && typeof editing[name] === "object"))
                   .map(([name, field]) => (
                     <span key={name}>
                       <dt>{name}</dt>

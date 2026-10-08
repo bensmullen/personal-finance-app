@@ -31,7 +31,8 @@ describe("U1 guided authoring contract", () => {
     expect(fieldProblem(financialField("purchaseAmount"), "1,000.00")).toBeDefined();
     expect(fieldProblem(financialField("purchaseAmount"), "9007199254740993.01")).toBeUndefined();
     expect(fieldProblem(financialField("paymentAnchor"), "2026-02-30")).toBeDefined();
-    expect(fieldProblem(financialField("taxDate"), "02-29")).toBeDefined();
+    expect(fieldProblem(financialField("taxDate"), "02-30")).toBeDefined();
+    expect(fieldProblem(financialField("taxDate"), "02-29")).toBeUndefined();
     expect(fieldProblem(financialField("taxDate"), "04-15")).toBeUndefined();
     expect(fieldProblem(financialField("payrollPriority"), "1.5")).toBeDefined();
     expect(fieldProblem(financialField("age"), "-1")).toBeDefined();

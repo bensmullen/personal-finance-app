@@ -197,8 +197,8 @@ export function fieldProblem(field: FinancialField, value: unknown, required = f
     if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== text) return "Enter a valid calendar date.";
   }
   if (field.format === "monthDay") {
-    const date = new Date(`2027-${text}T00:00:00.000Z`);
-    if (!/^\d{2}-\d{2}$/.test(text) || !Number.isFinite(date.getTime()) || date.toISOString().slice(5, 10) !== text) return "Enter a month/day valid every forecast year, such as 04-15.";
+    const date = new Date(`2028-${text}T00:00:00.000Z`);
+    if (!/^\d{2}-\d{2}$/.test(text) || !Number.isFinite(date.getTime()) || date.toISOString().slice(5, 10) !== text) return "Enter a valid month/day, such as 04-15. The forecast checks dates against the selected years.";
   }
   return undefined;
 }
