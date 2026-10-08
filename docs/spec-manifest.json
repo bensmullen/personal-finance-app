@@ -458,7 +458,7 @@
     {
       "id": "application-ux",
       "path": "docs/specs/capabilities/application-ux.md",
-      "version": "0.1.4-draft",
+      "version": "0.1.5-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -482,7 +482,14 @@
         "editor",
         "Forecast Basis",
         "historical comparison",
-        "saved forecast"
+        "saved forecast",
+        "guided financial authoring",
+        "calm information density",
+        "collapsible sections",
+        "contextual help",
+        "linked financial fields",
+        "inline validation",
+        "uncoached UAT"
       ],
       "applies_to": [
         "personal-mvp"
@@ -594,7 +601,7 @@
     {
       "id": "deterministic-household-financial-semantics",
       "path": "docs/specs/capabilities/deterministic-household-financial-semantics.md",
-      "version": "0.3.0-draft",
+      "version": "0.3.1-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "pre-stochastic-gate",
@@ -671,7 +678,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.6.1-draft",
+      "version": "0.6.2-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -731,7 +738,11 @@
         "1031 exchange",
         "capability-scoped optimization",
         "comprehensive tax optimization",
-        "product tiers"
+        "product tiers",
+        "U1",
+        "guided authoring",
+        "D1 UX acceptance gate",
+        "D2 pre-stochastic breadth"
       ],
       "applies_to": [
         "personal-mvp",
