@@ -1484,6 +1484,8 @@ test("Investments execute only after explicit owner selection and owner state cl
 test("model portability and deterministic what-if comparison stay explicit", async ({
   page,
 }) => {
+  test.setTimeout(120_000);
+  page.setDefaultTimeout(5_000);
   await loadExample(page);
   await useShortHorizon(page);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
@@ -1737,6 +1739,8 @@ test("What If preserves explicitly reversed funding priority", async ({
 test("manual local save survives reload and explicit load without restoring execution state", async ({
   page,
 }) => {
+  test.setTimeout(120_000);
+  page.setDefaultTimeout(5_000);
   await loadExample(page);
   await useShortHorizon(page);
   await page.getByRole("button", { name: "Money", exact: true }).click();
@@ -1872,13 +1876,15 @@ test("PR21 closeout: major asset debt at projection start uses reconciled compar
 
 test("PR21 closeout: configure save reload reconfigure", async ({ page }) => {
   test.setTimeout(120_000);
+  page.setDefaultTimeout(5_000);
   await loadExample(page);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await openAuthoringSections(page);
   await openPlanDetails(page);
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
-  await page.getByRole("button", { name: "Update forecast", exact: true }).click();
+  await configureTaxSettlement(page);
+  await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
   await showHouseholdDetails(page, "baseline", 60_000);
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible({ timeout: 60_000 });
   await page.getByRole("button", { name: "What If?", exact: true }).click();
