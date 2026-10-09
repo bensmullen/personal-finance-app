@@ -1,10 +1,24 @@
 import { getPayrollContributionPlans, getPersonalPurchasePlans, getPayrollOpeningUnvestedUnits, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../../src/application/personalMvp.js";
-import { objectEntries, isCashFlowPaymentAccount } from "../entityPresentation.js";
-import { unvestedProblem } from "./fieldContract.js";
+import { objectEntries, isCashFlowPaymentAccount, linkedReturnAssumption } from "../entityPresentation.js";
+import { unvestedProblem, effectiveAnnualReturnProblem } from "./fieldContract.js";
 
 /** Bounded relationship checks only. Financial calculations stay in D1. */
 export function entityRelationshipProblems(type: PersonalObjectType, item: JsonObject, draft: PersonalDraft): Readonly<Record<string, string>> {
   const errors: Record<string, string> = {};
+  // Use committed facts so retyping staged meaning cannot escape the guard.
+  if (type === "Assumption") {
+    const original = objectEntries(draft, "Assumption").find(value => value.assumption_id === item.assumption_id);
+    const linked = original && objectEntries(draft, "Investment").some(investment =>
+      linkedReturnAssumption(draft, investment, String(original.scenario_id))?.assumption_id === item.assumption_id);
+    if (original && linked) {
+      const problem = effectiveAnnualReturnProblem(item.value);
+      if (problem) errors.value = problem;
+      if (item.unit !== "effective annual rate") errors.unit = "Keep effective annual rate: linked holdings require this return basis.";
+      if (item.category !== "market_return") errors.category = "Keep market return: this assumption supplies the projected return for linked holdings.";
+      for (const field of ["start_date", "end_date"] as const) if (item[field] != null) errors[field] = "Leave this date unset. Linked holdings require a return covering the whole plan.";
+      if (item.scenario_id !== original.scenario_id) errors.scenario_id = "Keep the linked plan or import a model with a revised return relationship.";
+    }
+  }
   const period = (start: string, end: string) => {
     if (typeof item[start] === "string" && typeof item[end] === "string" && item[end] && item[start] >= item[end]) errors[end] = "Choose an end date after the start date.";
   };

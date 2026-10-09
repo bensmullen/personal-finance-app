@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { FINANCIAL_FIELDS, U1_INVENTORY, ENTITY_FIELD_INVENTORY, entityField, financialField, fieldProblem, compareDecimal, unvestedProblem } from "../ui/authoring/fieldContract.js";
+import { FINANCIAL_FIELDS, U1_INVENTORY, ENTITY_FIELD_INVENTORY, entityField, financialField, fieldProblem, compareDecimal, unvestedProblem, effectiveAnnualReturnProblem } from "../ui/authoring/fieldContract.js";
 import { getPersonalEditorMetadata } from "../src/application/personalMvp.js";
 import { entityRelationshipProblems } from "../ui/authoring/entityProblems.js";
 import { importPersonalModelJson } from "../src/application/modelPortability.js";
@@ -10,6 +10,26 @@ import { currentPlan, simulationWindowProblem, replaceCurrentPlanHorizon } from 
 import { createGoldenHouseholdExampleDraft } from "../src/application/personalMvp.js";
 
 describe("U1 guided authoring contract", () => {
+  it("guards linked executable returns without redefining unrelated signed rates", () => {
+    const draft = importPersonalModelJson(readFileSync(new URL("./fixtures/d1-integrated-uat-model.json", import.meta.url), "utf8"));
+    const assumption = objectEntries(draft, "Assumption").find(item => item.name === "Brokerage return")!;
+    for (const value of ["-1", "-1.000", "-0.2", "-0", "0", "+0.08"]) {
+      expect(effectiveAnnualReturnProblem(value), value).toBeUndefined();
+      expect(entityRelationshipProblems("Assumption", { ...assumption, value }, draft), value).toEqual({});
+    }
+    for (const value of ["-1.000000000000000001", "-1.5", "-2", "", "Invalid percentage:bad"]) {
+      expect(effectiveAnnualReturnProblem(value), value).toBeDefined();
+      expect(entityRelationshipProblems("Assumption", { ...assumption, value }, draft).value, value).toBeDefined();
+    }
+    for (const [field, value] of Object.entries({ unit: "nominal annual rate", category: "inflation", start_date: "2026-01-01", end_date: "2030-01-01", scenario_id: "other-plan" })) {
+      expect(entityRelationshipProblems("Assumption", { ...assumption, [field]: value }, draft)[field], field).toBeDefined();
+    }
+    expect(entityRelationshipProblems("Assumption", { ...assumption, name: "My return estimate", source: "historical", value: "-0.1" }, draft)).toEqual({});
+    const unrelated = { assumption_id: "unlinked", unit: "other signed rate", category: "inflation", value: "-1.5" };
+    expect(entityRelationshipProblems("Assumption", unrelated, draft)).toEqual({});
+    expect(fieldProblem(financialField("interest_rate"), "-150")).toBeUndefined();
+    expect(assumption.value).toBe("0");
+  });
   it("resolves ambiguous properties against domain and authoritative edit state", () => {
     expect(entityField("maturity_date", "Investment")?.description).toMatch(/Treasury or CD/);
     expect(entityField("maturity_date", "Investment")?.dependencies).not.toContain("totalPayments");

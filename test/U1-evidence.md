@@ -49,3 +49,29 @@ structured dated tax facts, immutable recorded facts and executable return-model
 relationship creation require the supported existing authoring route or corrected
 model import. Unknown annual eligibility remains incomplete. Tests and CI do not
 establish independent re-audit or product-owner visual/uncoached UAT acceptance.
+
+## Linked-return alternate-route repair (2026-10-09)
+
+Source review confirmed Plan → Assumptions could save a linked P23 return below
+−100%, while the holding action rejected it. Both now use the same exact
+canonical-rate validation. D1 authority is the effective-annual lower boundary
+in `src/primitives/evaluation.ts` and the linked assumption contract in
+`src/application/compiler/investments.ts`; no financial formulas changed.
+
+| Route / failure | Repair | Regression evidence |
+| --- | --- | --- |
+| General assumption editor bypassed the lower boundary | Inline accessible error and disabled Save; staged values retained and committed values preserved | Unit boundaries including −1.000000000000000001; browser reject/discard/reopen, exact −100% save and valid negative save |
+| Retyping linked meaning could invalidate forecasting | Validate staged unit, category, dates and plan against the committed executable relationship; retain name/source/value edits | Unit compatibility cases; browser unit/category rejection and restoration |
+| Holding action used a separate guard | Shared return validator; FieldShell error and disabled Apply | Browser below-boundary rejection, exact boundary Apply, negative Apply, usable forecast and saved/reloaded return |
+| Investment comparison accepted syntactically valid unsupported returns | Same range guard on investment comparison with actionable explanation | Browser invalid/valid comparison availability |
+
+Other percentage surfaces were reviewed at source: payroll contribution, match
+cap and vested share already enforce their 0–100% domain; debt nominal rates
+and unrelated assumption rates retain separate semantics. The shared What-If
+rate also serves income/spending, so the new return restriction applies only to
+investment comparison. No blanket prohibition on signed rates was introduced.
+The browser regression expects the Golden example's existing tax incompleteness
+while asserting a usable reconciled forecast; that limitation is independent of
+return validity. No local verification or new ChatGPT interactive test was run.
+Latest-head CI, independent ChatGPT re-audit and uncoached owner UAT remain gates;
+PR #98 stays draft and Issue #94, U1 and D1 remain open.

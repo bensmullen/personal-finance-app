@@ -6,7 +6,7 @@ import { objectEntries, objectId, objectLabel, entitySummary, referenceLabel, re
 import { PercentageInput } from "./forecast/PercentageInput.js";
 import { GuidedFields } from "./authoring/GuidedFields.js";
 import { FieldShell, RepairSummary, focusRepair } from "./authoring/FieldShell.js";
-import { fieldProblem } from "./authoring/fieldContract.js";
+import { fieldProblem, effectiveAnnualReturnProblem } from "./authoring/fieldContract.js";
 import { entityField } from "./authoring/fieldContract.js";
 import { authoringFailure } from "./authoring/contributionChoices.js";
 import { entityRelationshipProblems } from "./authoring/entityProblems.js";
@@ -167,14 +167,12 @@ function ProjectedReturn({ investment, draft, setDraft, selectedScenarioId }: {
   const assumption = linkedReturnAssumption(draft, investment, selectedScenarioId);
   const [rate, setRate] = useState(String(assumption?.value ?? ""));
   useEffect(() => { setRate(String(assumption?.value ?? "")); }, [assumption?.assumption_id, assumption?.value]);
-  const negative = /^-(\d+)(?:\.(\d+))?$/.exec(rate);
-  const belowTotalLoss = negative && negative[1] !== "0" && (negative[1] !== "1" || /[1-9]/.test(negative[2] ?? ""));
-  const valid = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(rate) && !belowTotalLoss;
+  const problem = effectiveAnnualReturnProblem(rate);
+  const valid = !problem;
   if (!assumption) return <p role="note">Projected annual return is unavailable: this investment has no supported linked deterministic return assumption in the current plan. Plan → Assumptions can edit existing assumptions; creating the executable relationship is not supported here. Import a model with a supported linked return model to establish it.</p>;
   return <section aria-label={`Projected return for ${objectLabel("Investment", investment)}`}>
-    <PercentageInput label="Projected annual return" value={rate} onChange={setRate} />
+    <PercentageInput label="Projected annual return" value={rate} onChange={setRate} error={problem} />
     <p>Effective annual return: {formatRate(rate)}. Baseline assumption: {objectLabel("Assumption", assumption)}. This changes the linked assumption, including any other holdings that share it.</p>
-    {!valid && <p role="alert">Enter an annual percentage of at least −100, such as 8 for 8%. Returns below a total loss are unsupported.</p>}
     <button type="button" disabled={!valid || rate === String(assumption.value)} onClick={() => setDraft(patchPersonalObject(draft, "Assumption", objectId("Assumption", assumption), { value: rate }))}>Apply projected return</button>
   </section>;
 }

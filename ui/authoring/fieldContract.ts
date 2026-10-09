@@ -252,3 +252,11 @@ export function compareDecimal(left: string, right: string): number | undefined 
 export function unvestedProblem(units: string, total: string): string | undefined {
   return compareDecimal(units, "0") === -1 || compareDecimal(units, total) === 1 ? "Unvested units must be between zero and this holding's opening units." : undefined;
 }
+
+/** P23 effective annual return in exact canonical rate units, not UI percent. */
+export function effectiveAnnualReturnProblem(value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) return "Enter an annual percentage, such as 8 for 8%.";
+  return compareDecimal(value, "-1") === -1
+    ? "Enter an annual return of at least −100%. Returns below a total loss are unsupported."
+    : undefined;
+}

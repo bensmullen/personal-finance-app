@@ -31,7 +31,7 @@ import {
 } from "recharts";
 import { z } from "zod";
 import { payrollCharacters, authoringFailure } from "./authoring/contributionChoices.js";
-import { financialField, fieldProblem, compareDecimal, unvestedProblem, entityField as financialFieldOrUndefined } from "./authoring/fieldContract.js";
+import { financialField, fieldProblem, compareDecimal, unvestedProblem, effectiveAnnualReturnProblem, entityField as financialFieldOrUndefined } from "./authoring/fieldContract.js";
 import { GuidedFields } from "./authoring/GuidedFields.js";
 import { FinancialSection, focusRepair, FinancialInput } from "./authoring/FieldShell.js";
 import {
@@ -2020,7 +2020,7 @@ function WhatIfStarter({
             </select>
             <button
               className="primary"
-              disabled={!investmentId || !householdExecution?.investmentExecutionOwnerId || !exactRate}
+              disabled={!investmentId || !householdExecution?.investmentExecutionOwnerId || !!effectiveAnnualReturnProblem(rate)}
               onClick={() =>
                 onCompare("investments", {
                   kind: "investment_return",
@@ -2031,6 +2031,7 @@ function WhatIfStarter({
             >
               Compare investment return
             </button>
+            {effectiveAnnualReturnProblem(rate) && <p role="alert">{effectiveAnnualReturnProblem(rate)}</p>}
             {(!householdExecution?.investmentExecutionOwnerId || investments.length === 0) && (
               <p className="capability">
                 {investments.length === 0
