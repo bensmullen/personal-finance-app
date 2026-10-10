@@ -12,9 +12,8 @@
 
 Shared required/optional cues follow descriptor/workflow requirements, with
 read-only/derived state separate. No new eligibility requirement or financial
-formula is authorized. Regression assertions added during this pass are pending
-CI execution; mortgage reproduction and external audit/UAT must not be claimed
-from source review alone.
+formula is authorized. CI observations are recorded below by revision; external
+audit/UAT must not be inferred from automated regressions or source review.
 
 | Owner repair | Implementation / source authority | Added CI regression |
 | --- | --- | --- |
@@ -35,8 +34,26 @@ implicitly pooled. It preserves frozen D1 formulas. No formula repair was made.
 The known all-or-nothing shortfall's `fundedAmount` is potential source cash
 (`src/funding/resolution.ts`), not a posted partial payment; it is displayed as
 available funding only in the shortfall context. Successful payments retain
-their original accounting behavior. No reproduction, browser result, CI green,
-independent re-audit or owner acceptance is self-attested here.
+their original accounting behavior. Independent re-audit and owner acceptance
+are not self-attested here.
+
+### Observed GitHub verification (2026-10-10)
+
+At implementation revision `9c55659d94446ee7058cd5538433a8d694d1c53a`,
+[GitHub run 38080463410](https://github.com/bensmullen/personal-finance-app/actions/runs/38080463410)
+passed typecheck, build, architecture, specification, codex-tooling, unit, and
+verification-plan. Unit success includes the synthetic Golden mortgage
+report-scope and per-account posted-cash assertions described above. It does
+not reproduce a private owner model or establish browser/UAT acceptance.
+Browser CI reported seven failures: nested-card/contribution selector ambiguity,
+older YTD label and disabled-save expectations, a missing observed-history
+notice, and a diagnostic journey timeout. The follow-up restores the
+observed-history notice, scopes account actions to their named contribution
+regions, updates YTD selectors with their displayed year, asserts the existing
+scope prerequisite before Save, and bounds diagnostic action waits. Financial
+and saved/exported-value expectations are preserved. Latest-head browser CI
+remains required; earlier passing tests are not whole-suite acceptance.
+No local verification or dependency installation was performed.
 
 Eligibility identity inventory: future IRA facts belong to the holding's saved
 purchase policy (person + contribution year + character); future workplace/HSA
@@ -70,9 +87,9 @@ labels, and `PercentageInput` rejects unregistered percentage controls.
 | Save, reload, import | Existing model persistence and D1 adapters; session setup remains explicit | Existing persistence and import/export browser tests adapted to explicit save |
 
 No local tests, typecheck, build, browser run, validators, dev server, or package
-installation were performed. Added/updated tests await GitHub Actions. Browser
-console cleanliness and geometry are assertions awaiting execution, not claimed
-observations. Independent ChatGPT UX/semantic audit and uncoached product-owner
+installation were performed. Revision-specific GitHub observations are recorded
+above. Browser console cleanliness and geometry require browser CI evidence;
+passing unit checks alone do not establish them. Independent ChatGPT UX/semantic audit and uncoached product-owner
 UAT remain external acceptance gates. This implementation does not close D1.
 
 Product-owner UAT goals: create/edit personal and payroll contributions; configure

@@ -243,7 +243,7 @@ test("U1 account actions choose the authoritative personal and workplace paths",
   await expect(ira).toContainText("Total account value");
   await expect(ira).toContainText("Cash inside account");
   await expect(ira).toContainText("Saved future contributions");
-  await ira.getByRole("button", { name: "Manage contributions to IRA-DEMO", exact: true }).click();
+  await ira.getByRole("region", { name: "Contributions for Personal Roth IRA", exact: true }).getByRole("button", { name: "Manage contributions to IRA-DEMO", exact: true }).click();
   const personal = page.getByRole("region", { name: "Saved investment purchases" });
   await expect(personal.getByLabel("Purchase investment", { exact: true })).toHaveValue("d1cc0000-0000-4000-8000-000000000002");
   await expect(personal.getByLabel("Purchase funding account", { exact: true }).locator('option[value="d1cc0000-0000-4000-8000-000000000001"]')).toHaveCount(0);
@@ -270,7 +270,7 @@ test("U1 account actions choose the authoritative personal and workplace paths",
 
   await navigate(page, "Net Worth", "Investments & retirement");
   const hsa = page.getByRole("article").filter({ has: page.locator("strong", { hasText: /^Health savings investments$/ }) });
-  await hsa.getByRole("button", { name: "Manage contributions to HSA-EMPLOYEE", exact: true }).click();
+  await hsa.getByRole("region", { name: "Contributions for Health savings investments", exact: true }).getByRole("button", { name: "Manage contributions to HSA-EMPLOYEE", exact: true }).click();
   const payroll = page.getByRole("region", { name: "Saved payroll contributions" });
   await expect(payroll.getByLabel("Payroll destination", { exact: true })).toHaveValue("d1cc0000-0000-4000-8000-000000000005");
   await expect(payroll.getByLabel("Payroll contribution character", { exact: true }).locator("option")).toHaveCount(2);
@@ -296,7 +296,7 @@ test("U1 account actions choose the authoritative personal and workplace paths",
   await ira.locator(":scope > details > summary").filter({ hasText: /^Scheduled activity/ }).click();
   await expect(ira.locator(":scope > details").last()).toContainText("501");
   await expect(hsa).toContainText("employer hsa");
-  await ira.getByRole("button", { name: "Manage contributions to IRA-DEMO", exact: true }).click();
+  await ira.getByRole("region", { name: "Contributions for Personal Roth IRA", exact: true }).getByRole("button", { name: "Manage contributions to IRA-DEMO", exact: true }).click();
   await expect(personal.getByLabel("Purchase amount", { exact: true })).toHaveValue("501");
   await personal.getByLabel("Purchase investment", { exact: true }).selectOption({ label: "SPOT-DEMO" });
   await expect(personal.getByLabel("Purchase amount", { exact: true })).toHaveValue("75.00");
@@ -445,6 +445,7 @@ test("Owner repair: isolated mortgage shortfalls name the evaluated payment acco
 
 test("Owner repair: a real multi-record funding diagnostic opens the editable spending field", async ({ page }) => {
   test.setTimeout(120_000);
+  page.setDefaultTimeout(5_000);
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });

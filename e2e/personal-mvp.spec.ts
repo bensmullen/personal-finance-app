@@ -275,7 +275,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
     await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
   await openReturnDetails(page);
     for (const symbol of ["RETIREMENT-DEMO", "BROKERAGE-DEMO"]) {
-      const card = page.getByRole("article").filter({ has: page.locator("strong", { hasText: new RegExp(`^${symbol}$`) }) });
+      const card = page.getByRole("button", { name: `Edit holding ${symbol}`, exact: true }).locator("..");
       const summary = await card.locator("[data-card-summary]").boundingBox();
       expect(summary!.width).toBeGreaterThan(150);
       expect((await card.locator("[data-card-summary] strong").boundingBox())!.height).toBeLessThan(60);
@@ -350,7 +350,7 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await openReturnDetails(page);
     const card = page.getByRole("article").filter({ has: page.locator("strong", { hasText: new RegExp(`^${accountName}$`) }) });
     await expect(card).toContainText("Saved future contributions");
-    await card.getByRole("button", { name: `Manage contributions to ${symbol}`, exact: true }).click();
+    await card.getByRole("region", { name: `Contributions for ${accountName}`, exact: true }).getByRole("button", { name: `Manage contributions to ${symbol}`, exact: true }).click();
   };
   await manage("Personal Roth IRA", "IRA-DEMO");
   const purchases = page.getByRole("region", { name: "Saved investment purchases" });
@@ -511,16 +511,16 @@ test("D1 authors former-employer YTD history without a future contribution instr
   const prior = page.getByRole("region", { name: "Prior year-to-date contributions" });
   await prior.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
   await prior.getByRole("checkbox").check();
-  await prior.getByRole("button", { name: "Save prior YTD usage", exact: true }).click();
-  await expect(prior.getByRole("alert")).toContainText("OPENING_USAGE_SCOPE_REQUIRED");
+  await expect(prior.getByRole("button", { name: "Save prior YTD usage", exact: true })).toBeDisabled();
+  await expect(prior.getByRole("alert")).toContainText("Define the historical account");
   await prior.getByLabel("Historical holding", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
   await prior.getByLabel("Age at year end", { exact: true }).fill("36");
   await prior.getByLabel("Employer / plan group", { exact: true }).fill("employer-a");
   await prior.getByLabel("Annual pay eligible for this plan", { exact: true }).fill("100000");
   await prior.getByRole("button", { name: "Save historical scope", exact: true }).click();
   await prior.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
-  await prior.getByRole("textbox", { name: /traditional 401k prior YTD total$/ }).first().fill("20000");
-  await prior.getByRole("textbox", { name: /traditional 401k prior YTD amount excluding catch-up$/ }).first().fill("20000");
+  await prior.getByRole("textbox", { name: /traditional 401k · 2026 prior YTD total$/ }).first().fill("20000");
+  await prior.getByRole("textbox", { name: /traditional 401k · 2026 prior YTD amount excluding catch-up$/ }).first().fill("20000");
   await prior.getByRole("checkbox").check();
   await prior.getByRole("button", { name: "Save prior YTD usage", exact: true }).click();
   await expect(prior.getByRole("alert")).toHaveCount(0);
@@ -580,8 +580,8 @@ test("D1 normal payroll authoring preserves allocations and shared limit identit
   await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("24500");
   const priorUsage = page.getByRole("region", { name: "Prior year-to-date contributions" });
   await priorUsage.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
-  await priorUsage.getByRole("textbox", { name: /traditional 401k prior YTD total$/ }).fill("10000");
-  await priorUsage.getByRole("textbox", { name: /traditional 401k prior YTD amount excluding catch-up$/ }).fill("10000");
+  await priorUsage.getByRole("textbox", { name: /traditional 401k · 2026 prior YTD total$/ }).fill("10000");
+  await priorUsage.getByRole("textbox", { name: /traditional 401k · 2026 prior YTD amount excluding catch-up$/ }).fill("10000");
   await priorUsage.getByRole("checkbox").check();
   await priorUsage.getByRole("button", { name: "Save prior YTD usage", exact: true }).click();
   await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("14500");

@@ -3202,6 +3202,7 @@ function HouseholdForecastVisual({
       <div className="boundary-banner">
         <strong>As of {forecast.asOf}</strong>
         <span>Reconciled household forecast{cashFlowOnly ? " · cash-flow view" : ""}</span>
+        <span>No observed history loaded</span>
         <span>
           Requested {forecast.requestedHorizon.start.slice(0, 10)} →{" "}
           {forecast.requestedHorizon.end.slice(0, 10)}
