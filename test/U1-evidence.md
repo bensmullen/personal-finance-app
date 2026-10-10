@@ -58,6 +58,15 @@ two selector issues: selecting a contextual account option by its bare name,
 and matching three accessible alerts instead of the prerequisite message.
 The diagnostic reached the named spending editor and focused its funding field.
 Follow-up selectors retain these assertions and select the exact checking ID.
+At implementation revision `4f4059ed6c0ccd6ec723e8577308e47535f0db37`,
+all GitHub verification checks passed, including `PASS playwright — 54 tests`.
+The browser evidence is job `114299600848`; it covers the owner account,
+subtype, prior-YTD save/reload/focus, named multi-record repair, saved activity,
+linked eligibility, and mortgage explanation/navigation journeys above.
+Responsive geometry and console assertions passed within those automated
+journeys. This is automated evidence, not an independent ChatGPT audit or
+uncoached product-owner UAT. The subsequent evidence-only commit does not
+change implementation or test behavior; its own CI remains a separate gate.
 No local verification or dependency installation was performed.
 
 Eligibility identity inventory: future IRA facts belong to the holding's saved
