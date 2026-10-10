@@ -678,7 +678,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.6.2-draft",
+      "version": "0.6.3-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -742,7 +742,10 @@
         "U1",
         "guided authoring",
         "D1 UX acceptance gate",
-        "D2 pre-stochastic breadth"
+        "D2 pre-stochastic breadth",
+        "GitHub issue-to-stage registry",
+        "milestone issue traceability",
+        "private-alpha issue gates"
       ],
       "applies_to": [
         "personal-mvp",
