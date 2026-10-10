@@ -1,0 +1,262 @@
+/** U1 inventory: only explicitly registered fields may appear in financial forms. */
+export type Disclosure = "common" | "advanced" | "technical" | "derived" | "unsupported";
+export type Format = "text" | "date" | "money" | "integer" | "decimal" | "percent" | "choice" | "monthDay";
+export interface FinancialField {
+  readonly key: string; readonly label: string; readonly description: string;
+  readonly why: string; readonly unit: string; readonly example: string;
+  readonly format: Format; readonly disclosure: Disclosure;
+  readonly state: "required" | "optional" | "derived" | "read-only";
+  readonly source: string; readonly dependencies: readonly string[]; readonly suggestion: string;
+}
+type Row = readonly [string, string, string, Format, string, string, Disclosure?, (readonly string[])?];
+const rows: readonly Row[] = [
+  ["setupName", "Household name", "Name identifying the household in your plan.", "text", "name", "My household"],
+  ["setupIncome", "Monthly income", "Monthly household income in the initial guided cash-flow model.", "money", "USD / month", "6000.00"],
+  ["setupCash", "Opening cash balance", "Cash held at the opening position, not new income.", "money", "USD", "5000.00"],
+  ["setupAsset", "Asset cost basis", "Recorded acquisition cost for the initial standalone asset.", "money", "USD", "350000.00"],
+  ["setupDebt", "Current debt", "Outstanding debt at the opening position.", "money", "USD", "235000.00"],
+  ["setupSpending", "Monthly spending", "Recurring monthly household spending.", "money", "USD / month", "4200.00"],
+  ["setupHorizon", "Projection horizon (years)", "Initial planning duration; forecast dates can be changed after setup.", "integer", "years", "10", "common", ["setupStart"]],
+  ["setupStart", "Projection start date", "First day of the opening forecast month.", "date", "date", "2026-01-01", "common", ["setupHorizon"]],
+  ["operation", "Operation", "Scheduled financial activity using existing supported plan operations.", "choice", "activity", "Schedule mortgage extra principal"],
+  ["operationDate", "Operation date", "Date the saved activity occurs; mortgage operations require a scheduled payment date.", "date", "date", "2031-01-01", "common", ["paymentAnchor"]],
+  ["operationMortgage", "Mortgage", "Existing fixed mortgage affected by this activity.", "choice", "loan", "Example mortgage"],
+  ["operationAmount", "Operation cash amount", "Cash used for the selected activity, separate from investment units.", "money", "currency", "100.00"],
+  ["operationOrder", "Same-date operation priority", "Lower whole numbers run first for competing activity on the same day.", "integer", "order", "10", "advanced"],
+  ["operationHolding", "Source / target holding", "Holding affected by the saved activity.", "choice", "holding", "Example fund"],
+  ["operationFunding", "Activity cash account", "Checking or savings used for this activity.", "choice", "account", "Checking"],
+  ["operationUnits", "Units / call contracts", "Units bought or sold; call quantities are contracts.", "decimal", "units or contracts", "1"],
+  ["operationAcceptance", "Confirm eligibility and destination acceptance", "Confirm established owned/vested eligibility and plan acceptance. Unsupported rollover cases remain unavailable.", "choice", "confirmation", "Confirm after review"],
+  ["operationDestination", "Retirement destination holding", "Receiving holding for an established eligible retirement path.", "choice", "holding", "IRA fund"],
+  ["samePlan", "Confirm source and Roth destination share one employer plan", "Required for a direct in-plan conversion; separate plans are incompatible.", "choice", "confirmation", "Confirm after review"],
+  ["rothDestination", "After-tax Roth IRA destination", "Roth IRA holding receiving the after-tax part of a split rollover.", "choice", "holding", "Roth IRA fund"],
+  ["linkedDistribution", "Original participant distribution", "The earlier distribution being completed by this eligible indirect deposit.", "choice", "distribution", "Earlier plan distribution"],
+  ["replacementCash", "Withholding replacement cash", "Additional bank cash replacing withheld proceeds for an indirect deposit.", "money", "currency", "1000.00"],
+  ["dividendCharacter", "Reinvested dividend character", "Qualified eligibility must be established; ordinary dividends are separate.", "choice", "tax character", "Ordinary", "advanced"],
+  ["specificLot", "Specific opening lot (optional)", "Select an opening lot or preserve the supported FIFO behavior.", "choice", "lot", "2022-01-01 opening lot", "advanced"],
+  ["lotHolding", "Opening lot investment", "Holding whose opening acquisition facts are being recorded.", "choice", "holding", "Example fund", "advanced"],
+  ["lotDate", "Lot acquisition date", "Actual recorded purchase date, separate from contribution history.", "date", "date", "2022-01-01", "advanced"],
+  ["lotUnits", "Opening lot units", "Opening lot units must reconcile to the holding's total opening quantity.", "decimal", "units", "100", "advanced", ["quantity"]],
+  ["lotBasis", "Opening lot cost basis", "Actual acquisition cost for these lot units.", "money", "currency", "4000.00", "advanced"],
+  ["historicalHolding", "Historical holding", "Account holding whose earlier contributions consume shared annual capacity.", "choice", "holding", "Former employer fund", "advanced"],
+  ["ytdDate", "YTD forecast boundary", "Prior contributions occurred before this date; they do not add forecast cash.", "date", "exclusive boundary", "2026-01-01", "advanced"],
+  ["ytdTotal", "Prior YTD total", "Total earlier contributions including catch-up.", "money", "USD / year", "1000.00", "advanced", ["taxYear"]],
+  ["ytdOrdinary", "Prior YTD amount excluding catch-up", "Ordinary portion of the total, excluding catch-up contributions.", "money", "USD / year", "1000.00", "advanced", ["ytdTotal"]],
+  ["ytdConfirmed", "Confirm all prior contributions are known", "Includes employer contributions and zero for omitted categories; unknown history must remain incomplete.", "choice", "confirmation", "Confirm only after review", "advanced"],
+  ["gross_or_net", "Pay amount basis", "Gross pay is before deductions; net pay is take-home. Payroll contributions require gross salary.", "choice", "basis", "Gross", "common", ["amount", "payrollSalary"]],
+  ["tax_character", "Income tax category", "Recorded income classification used by supported tax rules.", "choice", "category", "Ordinary", "advanced"],
+  ["tax_treatment", "Tax treatment", "Recorded account or holding classification; owning an account does not establish eligibility.", "choice", "classification", "Tax deferred", "advanced", ["account_type"]],
+  ["rate_type", "Loan rate basis", "The supported mortgage path requires a fixed rate.", "choice", "basis", "Fixed", "advanced"],
+  ["valuation_method", "Property valuation method", "Recorded valuation method; supported forecast behavior depends on linked models.", "choice", "method", "Market", "advanced"],
+  ["liquidity_class", "Access to funds", "Recorded classification of how readily funds are accessible.", "choice", "category", "Liquid", "advanced"],
+  ["filing_status", "Recorded filing status", "Tax calculations also require dated eligibility facts.", "choice", "status", "Single", "advanced"],
+  ["members", "Household members", "People included in this household.", "choice", "people", "Alex", "advanced"],
+  ["interest_convention", "Interest calculation basis", "APY monthly credit for bank cash; nominal simple for supported fixed-income instruments.", "choice", "annual rate basis", "Effective annual / APY", "advanced", ["interest_rate", "coupon_rate"]],
+  ["first_credit_date", "First interest payment", "Recorded first credit date for the interest schedule.", "date", "date", "2026-02-01", "advanced"],
+  ["instrument_subtype", "Investment product", "Select only a supported product; other variants remain unavailable.", "choice", "product", "Treasury bill", "advanced"],
+  ["face_value", "Face value", "Contractual redemption value for a fixed-income holding.", "money", "currency", "1000.00", "advanced"],
+  ["coupon_rate", "Annual coupon rate", "Nominal annual fixed coupon for supported Treasury or CD terms.", "percent", "% annually", "4", "advanced"],
+  ["crediting_frequency", "Interest payment frequency", "How often contractual interest is credited.", "choice", "payments", "Semiannual", "advanced"],
+  ["funding_account_id", "Purchase cash account", "Checking or savings used for funded acquisition.", "choice", "account", "Checking", "advanced"],
+  ["settlement_account_id", "Proceeds cash account", "Compatible cash account receiving contractual proceeds.", "choice", "account", "Checking", "advanced"],
+  ["underlying_investment_id", "Underlying investment", "Equity holding underlying the supported long call.", "choice", "holding", "Example equity", "advanced"],
+  ["strike_price", "Call exercise price", "Contractual exercise price per underlying unit.", "money", "currency / unit", "50.00", "advanced"],
+  ["expiration_date", "Call expiration", "Contract expiration date.", "date", "date", "2027-01-15", "advanced"],
+  ["contract_multiplier", "Units per call contract", "Underlying units represented by one call contract.", "integer", "units / contract", "100", "advanced"],
+  ["name", "Name", "A recognizable name for this item.", "text", "name", "Household checking"],
+  ["first_name", "First name", "Identifies the person owning financial activity.", "text", "name", "Alex"],
+  ["last_name", "Last name", "Identifies this household member.", "text", "name", "Example"],
+  ["date_of_birth", "Date of birth", "Recorded birth date; contribution ages are separate annual facts.", "date", "date", "1990-06-15", "advanced"],
+  ["household_type", "Household type", "The people included in your household.", "choice", "category", "Family"],
+  ["formation_date", "Household start", "When the household began.", "date", "date", "2020-01-01", "advanced"],
+  ["household_id", "Household", "Household this person belongs to.", "choice", "household", "My household"],
+  ["employment_status", "Employment status", "Recorded employment situation; this does not automatically start or stop salary.", "choice", "status", "Employed", "advanced", ["end_date"]],
+  ["scenario_id", "Plan", "Plan containing this assumption.", "choice", "plan", "Current plan", "advanced"],
+  ["timestep", "Planning interval", "Recorded plan interval; the supported household forecast runs monthly.", "choice", "interval", "Monthly", "advanced"],
+  ["owner_id", "Owner", "Person or household owning this item.", "choice", "owner", "Alex"],
+  ["primary_jurisdiction", "Primary location", "Recorded household location; tax applicability needs dated facts.", "text", "jurisdiction", "US-CO", "advanced"],
+  ["residence_jurisdiction", "Residence location", "Recorded residence; dated tax facts remain separate.", "text", "jurisdiction", "US-CO", "advanced"],
+  ["source", "Source / name", "Employer or source paying this income.", "text", "name", "Example salary"],
+  ["income_type", "Income type", "How this income is earned.", "choice", "category", "Salary"],
+  ["amount", "Amount", "Amount for each occurrence of the selected frequency.", "money", "currency / occurrence", "9000.00", "common", ["frequency"]],
+  ["frequency", "Frequency", "How often this amount occurs.", "choice", "occurrences", "Monthly", "common", ["amount"]],
+  ["start_date", "Start", "Activity begins on this day, inclusive.", "date", "inclusive date", "2026-01-01"],
+  ["end_date", "End", "Activity stops before this day.", "date", "exclusive date", "2036-01-01", "advanced", ["start_date"]],
+  ["category", "Description / category", "Recognizable purpose for this item.", "text", "category", "Groceries"],
+  ["essentiality", "Essential or discretionary", "Whether spending is a necessity or a choice.", "choice", "category", "Essential", "advanced"],
+  ["payment_account_id", "Funding account", "Cash account paying this expense.", "choice", "account", "Checking", "common", ["amount"]],
+  ["account_type", "Account type", "Account purpose and contribution route.", "choice", "wrapper", "Roth IRA"],
+  ["institution", "Institution", "Provider holding this account.", "text", "name", "Example bank", "advanced"],
+  ["opening_balance", "Cash balance", "Opening cash inside the account, excluding linked holdings.", "money", "account currency", "5000.00", "common", ["currency"]],
+  ["currency", "Currency", "Currency used for account amounts.", "text", "currency code", "USD"],
+  ["opening_date", "Account opened", "Recorded opening date.", "date", "date", "2020-01-01", "advanced"],
+  ["asset_type", "Asset type", "Standalone property; securities belong in Investments.", "choice", "category", "Real estate"],
+  ["acquisition_date", "Acquisition date", "When this asset or holding was acquired.", "date", "date", "2022-01-01", "advanced"],
+  ["acquisition_cost", "Acquisition cost", "Purchase cost, distinct from today's value.", "money", "currency", "350000.00", "advanced"],
+  ["liability_type", "Debt type", "Kind of loan owed.", "choice", "category", "Mortgage"],
+  ["principal", "Original principal", "Original borrowed amount, distinct from remaining debt.", "money", "currency", "300000.00", "advanced"],
+  ["current_balance", "Current balance", "Remaining debt at the opening position.", "money", "currency", "235000.00"],
+  ["interest_rate", "Interest rate", "Mortgage: nominal annual fixed rate. Bank: recorded interest convention.", "percent", "% annually", "5.25", "common", ["interest_convention", "payment_frequency"]],
+  ["payment_frequency", "Payment frequency", "Supported fixed mortgage debt uses monthly payments.", "choice", "payments", "Monthly", "advanced"],
+  ["extra_payment", "Extra payment", "Extra principal changes projected payoff, not contractual maturity.", "money", "currency / payment", "100.00", "advanced", ["maturity_date"]],
+  ["origination_date", "Loan start", "Loan origination does not determine the first payment date.", "date", "date", "2022-01-01", "advanced", ["paymentAnchor"]],
+  ["maturity_date", "Contractual final payment", "Contractual maturity, distinct from projected early payoff.", "date", "date", "2052-01-01", "advanced", ["paymentAnchor", "totalPayments"]],
+  ["collateral_id", "Collateral", "Property securing the debt.", "choice", "asset", "Home", "advanced"],
+  ["investment_type", "Investment type", "Kind of investment held.", "choice", "category", "Fund"],
+  ["account_id", "Investment account", "Account containing this holding; wrapper cash is separate.", "choice", "account", "Roth IRA"],
+  ["symbol", "Symbol", "Investment ticker.", "text", "ticker", "EXAMPLE"],
+  ["quantity", "Quantity", "Investment units, not dollars.", "decimal", "units", "100"],
+  ["price", "Price", "Recorded value per unit.", "money", "currency / unit", "50.00", "common", ["quantity"]],
+  ["market_value", "Market value", "Recorded holding value, distinct from account cash.", "money", "currency", "5000.00", "advanced"],
+  ["cost_basis", "Cost basis", "Recorded tax cost basis, distinct from market value.", "money", "currency", "4000.00", "advanced"],
+  ["after_tax_basis", "After-tax basis", "Recorded after-tax retirement basis.", "money", "currency", "1000.00", "advanced"],
+  ["value", "Value", "Assumption value in its recorded unit.", "text", "recorded unit", "0.08", "common", ["unit"]],
+  ["unit", "Unit", "Unit defining this assumption's value.", "text", "unit", "annual rate", "advanced"],
+  ["description", "Description", "Short explanation of this plan.", "text", "text", "Baseline plan", "advanced"],
+  ["enabled", "Use this plan", "Whether this saved plan is active.", "choice", "yes / no", "Yes"],
+  ["return", "Projected annual return", "Effective annual growth from the linked deterministic assumption; shared holdings change together.", "percent", "% annually", "8", "common", ["linked return assumption"]],
+  ["cashAccount", "Income receiving account", "Cash account receiving household income.", "choice", "account", "Checking"],
+  ["investmentOwner", "Investment owner", "Whose investments are included in the forecast.", "choice", "person", "Alex"],
+  ["debtOwner", "Debt owner", "Whose mortgages are included in the forecast.", "choice", "person", "Alex"],
+  ["paymentAnchor", "First monthly payment", "First contractual payment, separate from origination.", "date", "date", "2022-02-01", "common", ["totalPayments", "maturity_date"]],
+  ["totalPayments", "Number of monthly payments", "Full contractual count, including payments before the forecast.", "integer", "payments", "360", "common", ["paymentAnchor", "maturity_date"]],
+  ["mortgageFunding", "Mortgage payment account", "Cash account paying required mortgage payments.", "choice", "account", "Checking"],
+  ["settlementPriority", "Same-day mortgage order", "Lower numbers pay first when mortgages compete for cash.", "integer", "nonnegative order", "10", "advanced", ["mortgageFunding"]],
+  ["planStart", "Current plan start", "Earliest planning date.", "date", "inclusive date", "2026-01-01", "common", ["planEnd", "simulationStart"]],
+  ["planEnd", "Current plan end", "Plan stops before this date; extend before requesting a longer run.", "date", "exclusive date", "2046-01-01", "common", ["planStart", "simulationEnd"]],
+  ["simulationStart", "Simulation start", "First forecast date within Current Plan bounds.", "date", "inclusive date", "2026-01-01", "common", ["planStart"]],
+  ["simulationEnd", "Simulation end", "Forecast stops before this date within Current Plan bounds.", "date", "exclusive date", "2036-01-01", "common", ["planEnd", "simulationStart"]],
+  ["baseCurrency", "Base currency", "Currency displaying forecast amounts.", "text", "currency code", "USD", "advanced"],
+  ["asOf", "As of", "Date defining the opening position.", "date", "date", "2026-01-01", "advanced"],
+  ["dataCutoff", "Data cutoff", "Latest date for observed input facts.", "date", "date", "2026-01-01", "advanced"],
+  ["cashOrder", "Same-time cash-flow order", "Which activity uses cash first at the same instant.", "choice", "order", "Income before expense", "advanced"],
+  ["horizon", "Default horizon", "Calculated forecast duration.", "text", "months", "120 months", "derived"],
+  ["purchaseInvestment", "Purchase investment", "IRA or brokerage holding receiving purchases.", "choice", "holding", "IRA fund"],
+  ["purchaseFunding", "Purchase funding account", "Checking or savings funding purchases.", "choice", "account", "Checking"],
+  ["purchaseAmount", "Purchase amount", "Cash invested at each scheduled purchase.", "money", "currency / purchase", "250.00"],
+  ["purchaseDate", "Purchase start date", "First one-time or monthly purchase date.", "date", "date", "2026-02-01"],
+  ["purchaseFrequency", "Purchase frequency", "One purchase or monthly recurring plan.", "choice", "occurrences", "Monthly"],
+  ["purchaseOrder", "Same-day purchase order", "Lower numbers buy first when purchases compete for bank cash.", "integer", "nonnegative order", "10", "advanced", ["purchaseFunding"]],
+  ["age", "Age at year end", "Age on December 31 used for catch-up eligibility.", "integer", "years", "36", "advanced", ["taxYear"]],
+  ["taxableCompensation", "Annual earned pay", "Full-year IRA-eligible taxable compensation; investment income is excluded.", "money", "USD / year", "108000.00", "advanced"],
+  ["filingStatus", "Contribution filing status", "Established filing status for the contribution year.", "choice", "status", "Single", "advanced"],
+  ["rothMagi", "Income for Roth IRA eligibility", "Modified adjusted gross income from the Roth IRA worksheet, not gross salary.", "money", "USD / year", "108000.00", "advanced", ["filingStatus"]],
+  ["deductionMagi", "Income for IRA deduction", "Modified adjusted gross income from the traditional IRA deduction worksheet.", "money", "USD / year", "108000.00", "advanced", ["filingStatus", "covered"]],
+  ["covered", "Workplace plan coverage", "Whether you are covered by a workplace retirement plan.", "choice", "yes / no / unknown", "Yes", "advanced"],
+  ["spouseCovered", "Spouse workplace plan coverage", "Whether your spouse has workplace plan coverage.", "choice", "yes / no / unknown", "No", "advanced"],
+  ["livesWithSpouse", "Lived with spouse during the year", "Used for married-filing-separately IRA eligibility.", "choice", "yes / no / unknown", "Yes", "advanced"],
+  ["excess", "When a contribution exceeds the limit", "Reject excess or explicitly reduce to the known remaining allowance.", "choice", "policy", "Stop and report", "advanced"],
+  ["annualFacts", "Assume these annual personal facts stay unchanged in future years", "Carries supplied nominal facts forward; age advances. Salary is not MAGI or eligible plan pay.", "choice", "confirmed assumption", "Confirm only if appropriate", "advanced", ["taxYear", "taxableCompensation", "eligiblePlanCompensation"]],
+  ["payrollDestination", "Payroll destination", "Workplace holding receiving contributions.", "choice", "holding", "Workplace retirement fund"],
+  ["payrollSalary", "Payroll salary", "Same-owner gross salary funding workplace contributions.", "choice", "income", "Example salary", "common", ["payrollDestination"]],
+  ["character", "Contribution type", "Employee or employer contribution compatible with its destination.", "choice", "contribution", "Traditional 401(k)", "common", ["payrollDestination"]],
+  ["method", "Contribution method", "Fixed amount, percentage of gross pay, or employer match.", "choice", "method", "Percentage of gross pay", "common", ["character"]],
+  ["payrollAmount", "Payroll contribution amount", "Fixed amount per paycheck.", "money", "USD / paycheck", "450.00", "common", ["method"]],
+  ["payrollRate", "Payroll contribution rate", "Percentage of gross pay or employer matching percentage.", "percent", "%", "5", "common", ["method"]],
+  ["matchCap", "Match compensation cap rate", "Share of gross pay eligible for employer matching.", "percent", "% of gross pay", "6", "common", ["method"]],
+  ["payrollPriority", "Same-paycheck contribution order", "Distinct whole numbers, lower first; employee before employer matches.", "integer", "nonnegative order", "10", "advanced", ["method", "payrollSalary"]],
+  ["planKey", "Employer / plan group", "Related contributions share this employer's limit. Changing the name changes shared limits.", "text", "stable employer name", "Example Employer", "common", ["payrollDestination"]],
+  ["vested", "Owned share of future employer contributions", "Share immediately owned under employer vesting terms.", "percent", "% owned", "100", "advanced"],
+  ["unvested", "Opening unvested employer units", "Subset of opening units not yet owned, excluded from owned net worth.", "decimal", "units", "100", "advanced", ["quantity"]],
+  ["vestDate", "Full vesting date", "All then-current unvested units become owned on this date.", "date", "date", "2027-01-01", "advanced"],
+  ["forfeitDate", "Full contingent forfeiture date", "All then-current unvested value forfeited; salary end is separate.", "date", "date", "2028-01-01", "advanced"],
+  ["taxYear", "Contribution year", "Calendar year selecting annual limits.", "integer", "year", "2026", "advanced"],
+  ["eligiblePlanCompensation", "Annual pay eligible for this plan", "Full-year pay counted by the employer plan for the combined limit.", "money", "USD / year", "108000.00", "advanced", ["planKey", "taxYear"]],
+  ["planHasRoth", "Plan has a Roth feature", "Established plan feature needed for Roth catch-up rules.", "choice", "yes / no / unknown", "Yes", "advanced"],
+  ["priorYearSponsorWages", "Last year's pay from this employer", "Same-employer prior-year wages used for Roth catch-up requirements.", "money", "USD / prior year", "108000.00", "advanced", ["planKey", "taxYear"]],
+  ["hsaFullYearEligible", "HSA eligible for the full year", "Confirm qualifying coverage and eligibility for the entire year.", "choice", "yes / no / unknown", "Yes", "advanced"],
+  ["hsaCoverage", "HSA coverage", "Qualifying self-only or family health coverage.", "choice", "coverage", "Family", "advanced", ["hsaFullYearEligible"]],
+  ["hsaFamilyAllocation", "Your share of the family HSA limit", "Ordinary family allowance after spouse allocation, excluding catch-up.", "money", "USD / year", "4000.00", "advanced", ["hsaCoverage"]],
+  ["taxPayment", "Tax payment account", "Checking or savings paying modeled tax balances.", "choice", "account", "Checking"],
+  ["taxRefund", "Tax refund account", "Checking or savings receiving modeled refunds.", "choice", "account", "Checking"],
+  ["taxDate", "Following-year payment month/day", "Your forecast convention, not a legal filing deadline.", "monthDay", "MM-DD", "04-15", "common", ["taxYear"]],
+  ["taxPriority", "Same-day tax payment order", "Lower numbers pay first on the same date.", "integer", "nonnegative order", "10", "advanced", ["taxPayment", "taxDate"]],
+  ["taxConfirm", "Confirm forecast payment convention", "Confirm the chosen date and order; suggestions require approval.", "choice", "confirmation", "Confirm after review", "common", ["taxDate", "taxPriority"]],
+  ["retirementIncome", "Retirement income", "Income linked to an existing retirement plan.", "choice", "income", "Example salary"],
+  ["retirementDate", "Planned retirement date", "Saved baseline retirement within Current Plan bounds.", "date", "date", "2041-01-01", "common", ["planStart", "planEnd"]],
+];
+export const FINANCIAL_FIELDS: Readonly<Record<string, FinancialField>> = Object.freeze(Object.fromEntries(rows.map(([key, label, description, format, unit, example, disclosure = "common", dependencies = []]) => [key, Object.freeze({ key, label, description, why: description, unit, example, format, disclosure, dependencies, state: disclosure === "derived" ? "derived" : "optional", source: `${label}: explicit recorded fact or selected forecast convention`, suggestion: dependencies.length ? `Review alongside ${dependencies.map(name => rows.find(row => row[0] === name)?.[1] ?? "the linked financial fact").join(", ")}.` : `Use the established ${label.toLowerCase()}; no value is inferred.` })])));
+export const ENTITY_FIELD_INVENTORY: Readonly<Record<string, readonly string[]>> = {
+  Household: ["name", "household_type", "formation_date", "members", "primary_jurisdiction"],
+  Person: ["first_name", "last_name", "date_of_birth", "household_id", "employment_status", "residence_jurisdiction"],
+  Account: ["name", "account_type", "owner_id", "institution", "currency", "opening_date", "opening_balance", "liquidity_class", "tax_treatment", "interest_rate", "interest_convention", "first_credit_date"],
+  Income: ["owner_id", "income_type", "source", "amount", "frequency", "start_date", "end_date", "tax_character", "gross_or_net"],
+  Expense: ["owner_id", "category", "amount", "frequency", "start_date", "end_date", "essentiality", "payment_account_id"],
+  Asset: ["name", "asset_type", "owner_id", "account_id", "acquisition_date", "acquisition_cost", "valuation_method", "liquidity_class"],
+  Liability: ["name", "liability_type", "owner_id", "principal", "current_balance", "interest_rate", "rate_type", "payment_frequency", "extra_payment", "origination_date", "maturity_date", "collateral_id", "tax_treatment"],
+  Investment: ["account_id", "investment_type", "symbol", "quantity", "tax_treatment", "instrument_subtype", "acquisition_date", "cost_basis", "after_tax_basis", "face_value", "maturity_date", "coupon_rate", "interest_convention", "crediting_frequency", "first_credit_date", "settlement_account_id", "funding_account_id", "underlying_investment_id", "strike_price", "expiration_date", "contract_multiplier"],
+  Assumption: ["name", "category", "value", "unit", "start_date", "end_date", "source", "scenario_id"],
+  Scenario: ["name", "description", "start_date", "end_date", "timestep", "enabled"],
+};
+const contextual: Readonly<Record<string, Partial<FinancialField>>> = {
+  "Investment.maturity_date": { label: "Investment maturity", description: "Contractual redemption date of the Treasury or CD.", why: "Determines when the instrument redeems its face value.", example: "2027-01-01", dependencies: ["acquisition_date", "instrument_subtype"], source: "Recorded instrument terms", suggestion: "Use the maturity date on the instrument confirmation." },
+  "Assumption.source": { label: "Assumption source", description: "Whether this assumption is your estimate, historical evidence, external research, or a model output.", why: "Documents the basis for this planning assumption.", example: "user", source: "Your assumption provenance", suggestion: "Choose the established source category." },
+  "Assumption.category": { label: "Assumption category", description: "Financial purpose of this assumption, such as return or inflation.", why: "Identifies which planning assumption you are reviewing.", example: "market_return", source: "Recorded assumption classification", suggestion: "Retain the category of the linked financial model." },
+  "Asset.account_id": { label: "Linked account", description: "Recorded account relationship for this standalone asset.", why: "Preserves the asset's account relationship without adding its value twice.", example: "Example account", dependencies: [], source: "Recorded asset relationship", suggestion: "Do not use standalone assets to duplicate securities." },
+  "Liability.tax_treatment": { label: "Debt tax classification", description: "Recorded debt classification; it does not establish deductible interest.", why: "Preserves the classification separately from supported tax calculations.", example: "taxable", dependencies: [], source: "Recorded debt facts", suggestion: "Do not infer deductions from this classification." },
+  "Expense.category": { label: "Spending category", description: "Purpose of this spending, such as groceries or utilities.", why: "Identifies recurring spending in the plan.", example: "Groceries", source: "Your spending classification", suggestion: "Use a recognizable spending category." },
+  "Account.interest_rate": { description: "Annual bank interest rate using the recorded calculation basis.", why: "Sets supported bank interest credits.", dependencies: ["interest_convention"], source: "Recorded bank terms", suggestion: "Use the quoted rate and matching calculation basis." },
+  "Liability.interest_rate": { description: "Nominal annual loan rate; supported mortgages use fixed rates and monthly payments.", why: "Sets contractual debt interest under the existing loan model.", dependencies: ["rate_type", "payment_frequency"], source: "Recorded loan agreement", suggestion: "Use the contractual rate, not APR including fees." },
+};
+export function entityField(name: string, context?: string, descriptor?: { required: boolean; derived: boolean; mutable: boolean; type?: string }, creating = false, value?: unknown, recordedUnit?: string): FinancialField | undefined {
+  const base = FINANCIAL_FIELDS[name];
+  if (!base) return undefined;
+  if (!context) return base;
+  if (!ENTITY_FIELD_INVENTORY[context]?.includes(name)) return undefined;
+  const assumptionValue: Partial<FinancialField> = context === "Assumption" && name === "value" ? /annual rate/i.test(recordedUnit ?? "")
+    ? { label: "Annual assumption rate", description: "Effective annual growth or return in the linked financial model.", why: "Changes all financial activity sharing this assumption.", format: "percent", unit: "% annually", example: "8", dependencies: ["unit"], suggestion: "Enter 8 for 8%; negative supported growth rates retain their sign." }
+    : { format: "decimal", unit: recordedUnit ?? "recorded unit", description: "Exact assumption amount in its recorded unit.", why: "Defines the linked model's planning input.", suggestion: "Keep the established unit when changing this value." } : {};
+  return { ...base, why: `${base.description} This is a recorded ${context.toLowerCase()} fact.`,
+    source: `Recorded ${context.toLowerCase()} ${base.label.toLowerCase()}`,
+    suggestion: "Use the established fact; leave unknown optional facts unset.", ...contextual[`${context}.${name}`], ...assumptionValue,
+    state: descriptor ? descriptor.derived ? "derived" : !creating && !descriptor.mutable && value !== undefined ? "read-only" : descriptor.required ? "required" : "optional" : base.state };
+}
+export function financialField(key: string): FinancialField {
+  const field = FINANCIAL_FIELDS[key];
+  if (!field) throw new Error(`Missing financial field metadata: ${key}`);
+  return field;
+}
+export const U1_INVENTORY = Object.freeze({
+  fields: rows.map(row => row[0]),
+  technical: ["IDs", "rule lineage", "execution bindings", "structured dated facts", "diagnostic payloads", "unregistered schema fields"],
+  unsupported: ["standalone expected return", "volatility", "stochastic forecasting"],
+  derived: ["contractual final payment: existing mortgage adapter", "forecast duration", "projected payoff: committed forecast", "economic account value: existing read model"],
+  pages: ["Forecast period → cash → investments → debt → taxes → apply/run", "Account value → linked holdings → future contributions → manage", "Salary facts → amount/frequency → dated advanced facts", "Mortgage terms → calculated maturity → extra principal → projected payoff"],
+});
+export function fieldProblem(field: FinancialField, value: unknown, required = false): string | undefined {
+  if (value === "" || value === undefined || value === null) return required ? `Choose or enter ${field.label.toLowerCase()} so this activity can be forecast.` : undefined;
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const text = String(value);
+  if (field.format === "integer" && (!/^\d+$/.test(text) || !Number.isSafeInteger(Number(text)))) return "Enter a nonnegative whole number.";
+  if (["money", "decimal", "percent"].includes(field.format) && !/^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text)) return "Enter a decimal without commas or a currency sign.";
+  if (["vested", "matchCap", "payrollRate"].includes(field.key) && (compareDecimal(text, "0") === -1 || compareDecimal(text, "100") === 1)) return "Enter a percentage from 0 to 100.";
+  if (field.format === "date") {
+    const date = new Date(`${text}T00:00:00.000Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== text) return "Enter a valid calendar date.";
+  }
+  if (field.format === "monthDay") {
+    const date = new Date(`2028-${text}T00:00:00.000Z`);
+    if (!/^\d{2}-\d{2}$/.test(text) || !Number.isFinite(date.getTime()) || date.toISOString().slice(5, 10) !== text) return "Enter a valid month/day, such as 04-15. The forecast checks dates against the selected years.";
+  }
+  return undefined;
+}
+/** Exact input comparison; no floating-point money. */
+export function compareDecimal(left: string, right: string): number | undefined {
+  const a = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(left), b = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(right);
+  if (!a || !b) return undefined;
+  const scale = Math.max(a[3]?.length ?? 0, b[3]?.length ?? 0);
+  const integer = (parts: RegExpExecArray) => BigInt(`${parts[1] === "-" ? "-" : ""}${parts[2]}${(parts[3] ?? "").padEnd(scale, "0")}`);
+  const x = integer(a), y = integer(b);
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+export function unvestedProblem(units: string, total: string): string | undefined {
+  return compareDecimal(units, "0") === -1 || compareDecimal(units, total) === 1 ? "Unvested units must be between zero and this holding's opening units." : undefined;
+}
+
+/** P23 effective annual return in exact canonical rate units, not UI percent. */
+export function effectiveAnnualReturnProblem(value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) return "Enter an annual percentage, such as 8 for 8%.";
+  return compareDecimal(value, "-1") === -1
+    ? "Enter an annual return of at least −100%. Returns below a total loss are unsupported."
+    : undefined;
+}

@@ -69,6 +69,18 @@ const requireRepresentableHistory = (model: PortableModelEnvelope, year: number)
   }
 };
 
+/** Authoring read model of existing prerequisites; no usage or economics is posted. */
+export const openingContributionReadiness = (model: PortableModelEnvelope, boundary: string): { readonly ready: boolean; readonly reason?: string; readonly missingAccountIds: readonly string[] } => {
+  if (!utcDate(boundary)) return { ready: false, reason: "OPENING_USAGE_BOUNDARY_INVALID", missingAccountIds: [] };
+  const year = Number(boundary.slice(0, 4));
+  try {
+    const missingAccountIds = unrepresentedHistoricalAccounts(model, year).map(account => String(account.account_id));
+    if (missingAccountIds.length) return { ready: false, reason: "OPENING_USAGE_SCOPE_REQUIRED", missingAccountIds };
+    requireRepresentableHistory(model, year);
+    return { ready: true, missingAccountIds: [] };
+  } catch (failure) { return { ready: false, reason: failure instanceof Error ? failure.message : "OPENING_USAGE_SCOPE_INCOMPLETE", missingAccountIds: [] }; }
+};
+
 export interface OpeningContributionUsageEntry {
   readonly id: string;
   readonly investmentId: string;

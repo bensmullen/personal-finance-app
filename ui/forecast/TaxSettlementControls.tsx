@@ -1,19 +1,45 @@
-import type { TaxForecastSettlementSetup } from "../../src/application/taxForecastSetup.js";
+import { compileForecastTaxSettlements, type TaxForecastSettlementSetup } from "../../src/application/taxForecastSetup.js";
+import { FieldShell, FinancialInput, FinancialSection, RepairSummary } from "../authoring/FieldShell.js";
+import { financialField, fieldProblem } from "../authoring/fieldContract.js";
 
-export function TaxSettlementControls({ accounts, jurisdictions, value, onChange }: { accounts: readonly { id: string; label: string }[]; jurisdictions: readonly string[]; value: TaxForecastSettlementSetup | undefined; onChange: (value: TaxForecastSettlementSetup) => void }) {
+export function TaxSettlementControls({ accounts, jurisdictions, value, onChange, start, end }: { accounts: readonly { id: string; label: string }[]; jurisdictions: readonly string[]; value: TaxForecastSettlementSetup | undefined; onChange: (value: TaxForecastSettlementSetup) => void; start: string; end: string }) {
   const setup = value ?? { paymentAccountId: "", refundAccountId: "", conventions: [] };
   const conventions = jurisdictions.map((jurisdiction, index) => setup.conventions.find(item => item.jurisdiction === jurisdiction) ?? { jurisdiction, monthDay: "", priority: index, confirmed: false });
   const update = (jurisdiction: string, changes: Partial<TaxForecastSettlementSetup["conventions"][number]>) => onChange({ ...setup, conventions: conventions.map(item => item.jurisdiction === jurisdiction ? { ...item, ...changes } : item) });
-  return <section aria-label="Tax payments & refunds">
-    <h3>Tax payments &amp; refunds</h3>
-    <p>These session choices schedule modeled tax balances and refunds. Choose a month/day in the following year for each jurisdiction. This is your forecast convention; it is not a legal filing deadline. Estimated payments require separately authored amounts and dates.</p>
-    {(["paymentAccountId", "refundAccountId"] as const).map(field => <label key={field}>{field === "paymentAccountId" ? "Tax payment account" : "Tax refund account"}<select aria-label={field === "paymentAccountId" ? "Tax payment account" : "Tax refund account"} value={setup[field]} onChange={event => onChange({ ...setup, conventions, [field]: event.target.value })}><option value="">Choose checking or savings</option>{accounts.map(account => <option key={account.id} value={account.id}>{account.label}</option>)}</select></label>)}
-    {conventions.map(item => <fieldset key={item.jurisdiction}><legend>{item.jurisdiction}</legend>
-      <label>Following-year settlement month/day<input aria-label={`${item.jurisdiction} settlement month/day`} placeholder="MM-DD" value={item.monthDay} onChange={event => update(item.jurisdiction, { monthDay: event.target.value, confirmed: false })} /></label>
-      <button type="button" onClick={() => update(item.jurisdiction, { monthDay: "04-15", confirmed: false })}>Suggest April 15 for {item.jurisdiction}</button>
-      <label>Same-date tax payment order<input aria-label={`${item.jurisdiction} tax payment order`} type="number" min="0" value={item.priority} onChange={event => update(item.jurisdiction, { priority: Number(event.target.value), confirmed: false })} /></label>
-      <label><input type="checkbox" aria-label={`Confirm ${item.jurisdiction} forecast settlement convention`} checked={item.confirmed} onChange={event => update(item.jurisdiction, { confirmed: event.target.checked })} />I confirm this forecast settlement date and payment order (lower numbers first).</label>
-    </fieldset>)}
-    <p>Settlements for modeled years remain scheduled even when their dates fall after the simulation window. Unsupported state/local liability remains partially modeled after setup.</p>
+  const options = accounts.map(account => ({ value: account.id, label: account.label }));
+  const dateProblem = (item: TaxForecastSettlementSetup["conventions"][number]) => {
+    const format = fieldProblem(financialField("taxDate"), item.monthDay, true);
+    if (format || !setup.paymentAccountId || !setup.refundAccountId || fieldProblem(financialField("taxPriority"), item.priority, true)) return format;
+    try { compileForecastTaxSettlements({ ...setup, conventions: [{ ...item, confirmed: true }] }, start, end); }
+    catch { return "This payment date cannot be scheduled for the selected forecast years. Review the month/day and forecast period."; }
+    return undefined;
+  };
+  const problems = conventions.flatMap(item => {
+    const date = dateProblem(item);
+    const priority = fieldProblem(financialField("taxPriority"), item.priority, true);
+    return [...(date ? [{ target: `tax:${item.jurisdiction}:date`, message: `${taxLocation(item.jurisdiction)}: ${date}` }] : []), ...(priority ? [{ target: `tax:${item.jurisdiction}:priority`, message: priority }] : []), ...(!item.confirmed && !date && !priority ? [{ target: `tax:${item.jurisdiction}:confirm`, message: `${taxLocation(item.jurisdiction)}: confirm the forecast convention.` }] : [])];
+  });
+  return <section aria-label="Tax payments & refunds" data-tax-setup>
+    <h3>Tax payments &amp; refunds</h3><p>Choose where modeled taxes are paid and refunded. Payment dates are forecast conventions.</p>
+    <RepairSummary errors={problems} />
+    <div className="guided-grid">
+      <FinancialInput fieldKey="taxPayment" value={setup.paymentAccountId} required options={options} onChange={paymentAccountId => onChange({ ...setup, conventions, paymentAccountId })} error={setup.paymentAccountId && !accounts.some(item => item.id === setup.paymentAccountId) ? "Choose an available checking or savings account." : undefined} />
+      <FinancialInput fieldKey="taxRefund" value={setup.refundAccountId} required options={options} onChange={refundAccountId => onChange({ ...setup, conventions, refundAccountId })} error={setup.refundAccountId && !accounts.some(item => item.id === setup.refundAccountId) ? "Choose an available checking or savings account." : undefined} />
+    </div>
+    {conventions.map(item => <FinancialSection key={item.jurisdiction} title={taxLocation(item.jurisdiction)} attention={!item.confirmed}>
+      <FinancialInput fieldKey="taxDate" repairKey={`tax:${item.jurisdiction}:date`} value={item.monthDay} error={dateProblem(item)} required onChange={monthDay => update(item.jurisdiction, { monthDay, confirmed: false })} />
+      <button type="button" onClick={() => update(item.jurisdiction, { monthDay: "04-15", confirmed: false })}>Suggest April 15 for {taxLocation(item.jurisdiction)}</button>
+      <FinancialSection title="Same-day payment order">
+        <FinancialInput fieldKey="taxPriority" repairKey={`tax:${item.jurisdiction}:priority`} value={String(item.priority)} required onChange={priority => update(item.jurisdiction, { priority: Number(priority), confirmed: false })} />
+      </FinancialSection>
+      <FieldShell fieldKey="taxConfirm" required repairKey={`tax:${item.jurisdiction}:confirm`} error={!item.confirmed ? "Review and confirm this forecast date and payment order." : undefined}>
+        <input type="checkbox" aria-label={`Confirm ${item.jurisdiction} forecast settlement convention`} checked={item.confirmed} disabled={!!dateProblem(item) || !!fieldProblem(financialField("taxPriority"), item.priority, true)} onChange={event => update(item.jurisdiction, { confirmed: event.target.checked })} />
+      </FieldShell>
+    </FinancialSection>)}
+    <small>Unsupported state or local taxes remain partially modeled after setup.</small>
+    <details><summary>Forecast payment assumptions</summary><p>Dates fall in the following year and may be outside the selected run window. They are not legal filing deadlines. Estimated payments require separate recorded amounts and dates.</p></details>
   </section>;
+}
+function taxLocation(value: string): string {
+  return ({ "US:FEDERAL": "Federal income tax", "US:NY": "New York", "US:CO": "Colorado", "US:PA": "Pennsylvania", "US:CA": "California", "US:PA:PHILADELPHIA:WAGE": "Philadelphia wage tax", "US:CO:DENVER:OPT": "Denver occupational tax" } as Record<string, string>)[value] ?? value.replace(/^US:/, "").replaceAll(":", " · ");
 }

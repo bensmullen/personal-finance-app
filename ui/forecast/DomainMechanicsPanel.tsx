@@ -4,6 +4,9 @@ import { authorDomainOperation, authorOpeningInvestmentLot, authorMortgageRefina
 import { objectEntries, objectId, objectLabel } from "../entityPresentation.js";
 import { PercentageInput, FieldHelp } from "./PercentageInput.js";
 
+import { GuidedFields } from "../authoring/GuidedFields.js";
+import { authoringFailure } from "../authoring/contributionChoices.js";
+
 const choices = [
   ["purchase", "Buy spot crypto / long call"], ["sale", "Sell investment"],
   ["ordinary_dividend", "Ordinary dividend"], ["qualified_dividend", "Qualified dividend (eligibility established)"],
@@ -47,13 +50,14 @@ export function DomainMechanicsPanel({ draft, setDraft }: { readonly draft: Pers
         setDraft(authorDomainOperation(draft, plan));
       }
       setMessage("Operation saved in the plan. Forecast compilation will check eligibility, funding and timing.");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Operation could not be saved."); }
+    } catch (error) { setMessage(authoringFailure(error)); }
   };
-  return <section className="panel" aria-label="Investment and retirement operations"><h2>Investment, retirement and mortgage operations</h2>
+  const required = ["operation", "operationDate", ...(kind === "refinance" ? ["operationMortgage", "totalPayments"] : ["operationAmount", "operationOrder"]), ...(kind === "mortgage_extra" ? ["operationMortgage", "operationFunding"] : kind !== "refinance" && kind !== "indirect_deposit" ? ["operationHolding"] : []), ...(["purchase", "sale", "reinvest_dividend", "call_exercise"].includes(kind) ? ["operationUnits"] : []), ...(["purchase", "call_exercise", "indirect_distribution"].includes(kind) ? ["operationFunding"] : []), ...(retirement ? ["operationAcceptance"] : []), ...(retirement && kind !== "indirect_distribution" ? ["operationDestination"] : [])];
+  return <GuidedFields scope="scheduled-activity" required={required}><section className="panel" aria-label="Investment and retirement operations"><h2>Investment, retirement and mortgage operations</h2>
     <p>Sales and investment income remain in investment account cash. Reinvestment uses that income. Spot crypto and call premiums require checking or savings. Use Investment purchases for ordinary equity/fund purchases. Unsupported products are diagnosed before forecast use.</p>
     <label>Operation<select aria-label="Domain operation" value={kind} onChange={event => { setKind(event.target.value); setMessage(""); }}>{choices.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
     {text("date", "Operation date", "date")}
-    {kind === "refinance" ? <>{select("liabilityId", "Mortgage to replace", objectEntries(draft, "Liability").filter(item => item.liability_type === "mortgage").map(item => ({ id: objectId("Liability", item), label: objectLabel("Liability", item) })))}<PercentageInput label="Replacement nominal annual rate" value={fields.annualRate ?? ""} onChange={value => change("annualRate", value)} />{text("totalPayments", "Replacement monthly payments", "number")}<p>Non-cash-out, no fees or escrow. Choose a scheduled payment date with no extra principal at that occurrence. The new loan starts a full-month schedule.</p></> : <>
+    {kind === "refinance" ? <>{select("liabilityId", "Mortgage to replace", objectEntries(draft, "Liability").filter(item => item.liability_type === "mortgage").map(item => ({ id: objectId("Liability", item), label: objectLabel("Liability", item) })))}<PercentageInput label="Replacement nominal annual rate" required value={fields.annualRate ?? ""} onChange={value => change("annualRate", value)} />{text("totalPayments", "Replacement monthly payments", "number")}<p>Non-cash-out, no fees or escrow. Choose a scheduled payment date with no extra principal at that occurrence. The new loan starts a full-month schedule.</p></> : <>
       {kind !== "indirect_deposit" && kind !== "mortgage_extra" && select("holdingId", "Source / target holding", investments)}
       {kind === "mortgage_extra" && <>{select("liabilityId", "Mortgage for extra principal", objectEntries(draft, "Liability").filter(item => item.liability_type === "mortgage").map(item => ({ id: objectId("Liability", item), label: objectLabel("Liability", item) })))}{select("cashAccountId", "Extra principal checking / savings account", banks)}<p>Choose a scheduled payment date. Required debt service settles before extra principal; this choice is saved in the plan.</p></>}
       {text("amount", "Operation cash amount")}<details><summary>Advanced same-day operation ordering</summary>{text("order", "Same-date operation priority", "number")}<FieldHelp label="Same-date operation priority">Enter a whole number; lower numbers run first for competing operations on the same day. For example order 10 runs before order 20. The forecast needs an explicit order when operations share funding; this cannot create extra cash.</FieldHelp></details>
@@ -76,7 +80,7 @@ export function DomainMechanicsPanel({ draft, setDraft }: { readonly draft: Pers
       <ul>{(draft.objects.Investment ?? []).filter(record).filter(item => item.investment_id === fields.lotHolding).flatMap(item => Array.isArray(item.tax_lots) ? item.tax_lots.filter(record).map(lot => <li key={String(lot.id)}>{String(lot.acquired)} · {String(lot.quantity)} units · basis {String(lot.basis)} <button onClick={() => setDraft({ ...draft, objects: { ...draft.objects, Investment: (draft.objects.Investment ?? []).filter(record).map(investment => investment === item ? { ...investment, tax_lots: (item.tax_lots as readonly JsonObject[]).filter(prior => prior !== lot) } : investment) } })}>Remove lot</button></li>) : [])}</ul>
     </details>
     <TermLifeEditor draft={draft} setDraft={setDraft} />
-  </section>;
+  </section></GuidedFields>;
 }
 
 function TermLifeEditor({ draft, setDraft }: { readonly draft: PersonalDraft; readonly setDraft: (draft: PersonalDraft) => void }) {
