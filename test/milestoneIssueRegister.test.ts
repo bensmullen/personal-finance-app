@@ -16,6 +16,8 @@ const registry = JSON.parse(readFileSync(new URL("../docs/development/milestone-
   legacy_open_task_reconciliation: { issue_numbers: number[] };
 };
 const roadmap = readFileSync(new URL("../docs/specs/roadmap/post-pr21-implementation-roadmap.md", import.meta.url), "utf8");
+const watchWorkflow = readFileSync(new URL("../.github/workflows/issue-milestone-traceability.yml", import.meta.url), "utf8");
+const liveCheck = readFileSync(new URL("../tools/roadmap/verify-issue-stage-register.mjs", import.meta.url), "utf8");
 
 describe("issue-backed roadmap traceability", () => {
   it("registers each private-alpha/U1 issue exactly once with a stable mandatory stage", () => {
@@ -51,6 +53,15 @@ describe("issue-backed roadmap traceability", () => {
     };
     const complete = new Set<number>();
     for (const row of registry.issues) visit(row.issue_number, new Set<number>(), complete);
+  });
+  it("watches live GitHub issue creation and avoids silently missing new product issues", () => {
+    expect(watchWorkflow).toContain("types: [opened, reopened, edited]");
+    expect(watchWorkflow).toContain("issues: read");
+    expect(watchWorkflow).toContain("schedule:");
+    expect(watchWorkflow).toContain("verify-issue-stage-register.mjs");
+    expect(liveCheck).toContain("state=open&per_page=100");
+    expect(liveCheck).toContain("missing");
+    expect(liveCheck).toContain("[agent-candidate]");
   });
   it("records the planned live gate in the controlled roadmap and keeps historical cleanup separate", () => {
     expect(roadmap).toContain("docs/development/milestone-issue-register.json");
