@@ -1,6 +1,6 @@
 "use client";
 import { Children, cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from "react";
-import { FieldShell, RepairSummary } from "./FieldShell.js";
+import { FieldShell, RepairSummary, financialControlValue } from "./FieldShell.js";
 import { FINANCIAL_FIELDS, fieldProblem, type FinancialField } from "./fieldContract.js";
 import { FieldHelp } from "../forecast/PercentageInput.js";
 
@@ -16,7 +16,7 @@ export const FIELD_ALIASES: Readonly<Record<string, string>> = {
   "I have established owned/vested eligibility and destination/plan acceptance for this supported path.": "operationAcceptance",
 };
 const labels = new Map(Object.values(FINANCIAL_FIELDS).map(field => [field.label, field.key]));
-type NodeProps = { children?: ReactNode; value?: unknown; required?: boolean; readOnly?: boolean; disabled?: boolean; "aria-invalid"?: boolean; "aria-label"?: string; "data-repair"?: string; type?: string };
+type NodeProps = { children?: ReactNode; value?: unknown; checked?: boolean; required?: boolean; readOnly?: boolean; disabled?: boolean; "aria-invalid"?: boolean; "aria-label"?: string; "data-repair"?: string; type?: string };
 export function GuidedFields({ children, scope, aliases = {}, required = [], errors = {}, repairKeys = {}, presentations = {} }: {
   children: ReactNode; scope: string; aliases?: Readonly<Record<string, string>>; required?: readonly string[]; errors?: Readonly<Record<string, string | undefined>>; repairKeys?: Readonly<Record<string, string | undefined>>; presentations?: Readonly<Record<string, FinancialField>>;
 }) {
@@ -36,7 +36,8 @@ export function GuidedFields({ children, scope, aliases = {}, required = [], err
       if (!key) throw new Error(`Missing financial field metadata in ${scope}: ${label}`);
       const field = presentations[key] ?? FINANCIAL_FIELDS[key]!;
       const needed = required.includes(key) || !!control.props.required;
-      const problem = control.props.readOnly || control.props.disabled ? undefined : errors[key] ?? fieldProblem(field, control.props.value, needed) ?? (control.props["aria-invalid"] ? `Complete ${field.label.toLowerCase()} before forecasting.` : undefined);
+      const value = financialControlValue(key, control.props);
+      const problem = control.props.readOnly || control.props.disabled ? undefined : errors[key] ?? fieldProblem(field, value, needed) ?? (control.props["aria-invalid"] ? `Complete ${field.label.toLowerCase()} before forecasting.` : undefined);
       const target = repairKeys[key] ?? control.props["data-repair"] ?? `${scope}:${identity}:${key}:${nextPath}`;
       if (problem) problems.push({ target, message: `${field.label}: ${problem}` });
       const notices = contents.filter(child => isValidElement<{ role?: string }>(child) && child.props.role === "note");

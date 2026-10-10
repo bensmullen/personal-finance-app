@@ -1,5 +1,54 @@
 # U1 implementation evidence — issue #94
 
+## Owner follow-up inventory (2026-10-10; UAT not accepted)
+
+| Surface | Common | Advanced | Technical / preserved | Dependencies |
+| --- | --- | --- | --- | --- |
+| Investments | Account totals, cash, expand holdings, Edit account / Edit holding, contributions | Relevant instrument terms only; saved activity | Incompatible stored instrument terms, IDs | Holding → account; instrument type + subtype |
+| Annual eligibility | Named person, year, account and employer scope | Current contribution facts; distinct prior-history facts | Original adapter failure | Existing personal/payroll/history policy identity; no scope merging |
+| Prior YTD | Boundary, totals, explicit known-zero confirmation, save result | Ordinary/catch-up split; saved usage review | Original scope/eligibility failure | Year + holding + character; deliberate date changes reset confirmation |
+| Diagnostics | Named exact targets and truthful repair route | Related record context | Exact-ID lookup, UUIDs, traces | Descriptor editability; no guessed ID matches |
+| Mortgage reports | Explicit isolated/reconciled scope, funding account and payment date | Required/available funding and order where reported | Original execution evidence | Existing liability and household execution read models |
+
+Shared required/optional cues follow descriptor/workflow requirements, with
+read-only/derived state separate. No new eligibility requirement or financial
+formula is authorized. Regression assertions added during this pass are pending
+CI execution; mortgage reproduction and external audit/UAT must not be claimed
+from source review alone.
+
+| Owner repair | Implementation / source authority | Added CI regression |
+| --- | --- | --- |
+| Section purposes and required/optional cues | Shared FieldShell/GuidedFields, explicit workflow requirements; confirmations differ from ordinary false boolean facts | Rendered red cue, italic optional cue, label association and geometry at 1440/390; known-zero checkbox save |
+| Account-first holdings | Holdings nested in their own expandable account; separate named account/holding edit actions | Keyboard expansion, unrelated-account isolation, width assertions, subtype editor paths |
+| Product-specific editor | D1 supported equity/fund/crypto, long call, Treasury/CD boundary; incompatible stored terms preserved read-only | Unit product matrix; rendered fund, missing call subtype, call, CD, crypto controls |
+| Entity IDs | Only the bottom entity side-sheet accordion renamed | Existing side-sheet identity/focus regressions updated |
+| Named diagnostics | Exact entity/related-ID resolution, descriptor-based editability, canonical trace sources from a known forecast only | Multi-record invalid spending funding with direct field focus; ID lookup, immutable correction, unknown ID; unit exact matching |
+| Prior YTD | Stable year/holding/character draft identity; scope changes announced; application read model delegates readiness to existing D1 prerequisites | Scope → boundary → totals/confirmation → unchanged scope save → usage save → inline result → reload, with focus/viewport assertion; incomplete/year/conflict unit cases |
+| Repeated eligibility facts | Existing future-plan editor is primary; account/holding summaries are linked read-only; historical policy/year/employer scopes remain explicit and independent | Save age in primary IRA editor and inspect account summary; distinct historical/future employer conflict remains blocked |
+| Saved activity | Existing personal/payroll adapters plus recognized stored D1 event adapters; contributions editable via their existing path, other operations inspectable/read-only | Two actions on brokerage, account isolation, revised purchase amount after reload; no fake event editor |
+| Mortgage funding | Snapshot exact compiled policy → mortgage/account/order binding; retain execution-provided required/available amounts and evaluation date | Golden 24-month standalone liability / standalone cash / reconciled comparison; posted-account cash oracle, transaction balance, summary/detail/replay parity; separately funded bank account cannot cover mortgage; rendered scope/account/date/funding navigation |
+
+The mortgage fixture is synthetic Golden evidence, not the owner's particular
+model. `test/u1MortgageReportScopes.test.ts` deliberately fails if a reconciled
+payment lacks adequate cash in its designated account or if another account is
+implicitly pooled. It preserves frozen D1 formulas. No formula repair was made.
+The known all-or-nothing shortfall's `fundedAmount` is potential source cash
+(`src/funding/resolution.ts`), not a posted partial payment; it is displayed as
+available funding only in the shortfall context. Successful payments retain
+their original accounting behavior. No reproduction, browser result, CI green,
+independent re-audit or owner acceptance is self-attested here.
+
+Eligibility identity inventory: future IRA facts belong to the holding's saved
+purchase policy (person + contribution year + character); future workplace/HSA
+facts belong to its payroll policy (person + year + employer bucket where
+applicable); prior-history facts belong to the independently authored historical
+policy (holding + year + employer bucket). Account/holding summaries read those
+same policies and never create parallel values. The existing scope-conflict guard
+is retained rather than silently merging distinct historical and future policies.
+
+PR #98 remains draft. Issue #94, U1 and D1 remain open. Latest-head CI,
+independent ChatGPT audit and uncoached owner UAT are still required.
+
 The machine-readable inventory is `ui/authoring/fieldContract.ts`. Its explicitly
 registered fields contain classification, label, meaning, unit, format, example,
 state, source, dependencies, and suggestion policy. Rendered required/read-only

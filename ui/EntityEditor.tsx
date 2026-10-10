@@ -10,6 +10,9 @@ import { fieldProblem, effectiveAnnualReturnProblem } from "./authoring/fieldCon
 import { entityField } from "./authoring/fieldContract.js";
 import { authoringFailure } from "./authoring/contributionChoices.js";
 import { entityRelationshipProblems } from "./authoring/entityProblems.js";
+import { investmentFieldApplies, investmentProductNotice } from "./authoring/investmentFields.js";
+import { ScheduledActivity } from "./authoring/ScheduledActivity.js";
+import { EligibilitySummary } from "./authoring/EligibilitySummary.js";
 
 export interface EntityRepair { readonly objectType: PersonalObjectType; readonly objectId: string; readonly field: string; readonly token: string; }
 const randomId = () => crypto.randomUUID();
@@ -142,8 +145,8 @@ export function EditorHub({
 }) {
   return (
     <>
-      {section === "Investments & retirement" && <p role="note">Investment holdings are assets too. Account wrappers and their holdings appear together here because they have different forecast behavior from cash and property. An account contains its holdings; these lists are not amounts to add together.</p>}
-      {types.map((type) => (
+      {section === "Investments & retirement" && <p role="note">Select an account to review its holdings. Total account value includes holdings; cash inside the account is shown separately.</p>}
+      {types.filter(type => section !== "Investments & retirement" || type !== "Investment").map((type) => (
         <ObjectEditor
           key={type}
           type={type}
@@ -187,6 +190,7 @@ function ObjectEditor({
   selectedScenarioId,
   onContributions,
   repairTarget,
+  accountId,
 }: {
   type: PersonalObjectType;
   draft: PersonalDraft;
@@ -198,6 +202,7 @@ function ObjectEditor({
   selectedScenarioId?: string;
   onContributions?: (investmentId: string, kind: "personal" | "payroll") => void;
   repairTarget?: EntityRepair;
+  accountId?: string;
 }) {
   const [editing, setEditing] = useState<JsonObject>();
   const [creating, setCreating] = useState(false);
@@ -209,11 +214,11 @@ function ObjectEditor({
   const editingId = editing ? objectId(type, editing) : undefined;
   useEffect(() => {
     if (repairTarget?.objectType !== type) return;
-    const item = objectEntries(draft, type).find(value => objectId(type, value) === repairTarget.objectId);
+    const item = objectEntries(draft, type).find(value => objectId(type, value) === repairTarget.objectId && (!accountId || value.account_id === accountId));
     if (item) { initialEditing.current = item; setCreating(false); setEditing(item); }
   }, [repairTarget]);
   useEffect(() => {
-    if (!repairTarget || editingId !== repairTarget.objectId) return;
+    if (!repairTarget?.field || editingId !== repairTarget.objectId) return;
     requestAnimationFrame(() => {
       const target = drawer.current?.querySelector<HTMLElement>(`[data-repair="${CSS.escape(`entity:${editingId}:${repairTarget.field}`)}"]`);
       if (target) focusRepair(target);
@@ -231,7 +236,7 @@ function ObjectEditor({
       if (opener?.isConnected) opener.focus();
     };
   }, [editingId]);
-  const values = objectEntries(draft, type).filter((item) => belongsToNetWorthSection(draft, type, item, section));
+  const values = objectEntries(draft, type).filter((item) => belongsToNetWorthSection(draft, type, item, section) && (!accountId || item.account_id === accountId));
   const descriptor = metadata[type];
   const fields = descriptor.fields as Record<string, EditorField>;
   const close = () => { setEditing(undefined); setCreating(false); setCreationError(""); setTechnicalError(""); setConfirmDiscard(false); };
@@ -251,6 +256,7 @@ function ObjectEditor({
         initial[name] = value;
       }
     }
+    if (type === "Investment" && accountId) initial.account_id = accountId;
     setCreating(true);
     setCreationError("");
     initialEditing.current = initial;
@@ -277,6 +283,7 @@ function ObjectEditor({
   };
   const relationshipProblems: Readonly<Record<string, string>> = editing ? entityRelationshipProblems(type, editing, draft) : {};
   const editorProblems = editing ? Object.entries(fields).flatMap(([name, field]) => {
+    if (type === "Investment" && !investmentFieldApplies(name, editing)) return [];
     const presentation = entityField(name, type, field, creating, editing[name], typeof editing.unit === "string" ? editing.unit : undefined);
     if (!presentation || field.derived || internalReference(field) || (!creating && !field.mutable && editing[name] !== undefined)) return [];
     const value = editing[name];
@@ -293,9 +300,10 @@ function ObjectEditor({
     try { setDraft(patchPersonalObject(draft, type, editingId!, patch)); close(); }
     catch (failure) { setCreationError(authoringFailure(failure)); setTechnicalError(failure instanceof Error ? failure.message : String(failure)); }
   };
+  const incompatibleFields = type === "Investment" && editing ? Object.keys(fields).filter(name => !investmentFieldApplies(name, editing)) : [];
   const editableFields = Object.keys(fields).filter((name) =>
-    name !== descriptor.idField && !fields[name]!.derived && !internalReference(fields[name]!));
-  const commonFields = editableFields.filter((name) => entityField(name, type)?.disclosure === "common" || (creating && entityField(name, type) && fields[name]!.required && !fields[name]!.mutable));
+    name !== descriptor.idField && !fields[name]!.derived && !internalReference(fields[name]!) && !incompatibleFields.includes(name));
+  const commonFields = editableFields.filter((name) => entityField(name, type)?.disclosure === "common" || type === "Investment" && name === "instrument_subtype" || (creating && entityField(name, type) && fields[name]!.required && !fields[name]!.mutable));
   const secondaryFields = editableFields.filter((name) => entityField(name, type) && !commonFields.includes(name));
   const expertFields: string[] = [];
   const managedFields = Object.keys(fields).filter((name) => internalReference(fields[name]!) || (!entityField(name, type) && name !== descriptor.idField));
@@ -324,10 +332,10 @@ function ObjectEditor({
       {values.length === 0 ? (
         <p className="empty">No {TITLES[type].toLowerCase()} yet.</p>
       ) : (
-        <div className="object-grid">
+        <div className="object-grid" style={section === "Investments & retirement" && type === "Account" ? { gridTemplateColumns: "minmax(0, 1fr)" } : undefined}>
           {values.map((item) => (
             <article className="object-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", minWidth: 0 }} key={objectId(type, item)}>
-              <button className="card-main" style={{ width: "100%", minWidth: 0 }} onClick={() => { initialEditing.current = item; setCreating(false); setEditing(item); }}>
+              <button className="card-main" aria-label={type === "Account" ? `Edit account ${objectLabel(type, item)}` : type === "Investment" ? `Edit holding ${objectLabel(type, item)}` : undefined} style={{ width: "100%", minWidth: 0 }} onClick={() => { initialEditing.current = item; setCreating(false); setEditing(item); }}>
                 <span className="object-icon">{TITLES[type][0]}</span>
                 <span data-card-summary style={{ flex: "1 1 auto", minWidth: 0, textAlign: "left" }}>
                   <strong id={`${type}-${objectId(type, item)}-label`}>{objectLabel(type, item) || `New ${type}`}</strong>
@@ -336,8 +344,14 @@ function ObjectEditor({
                   </small>
                 </span>
               </button>
+              {type === "Account" && section === "Investments & retirement" && <details className="account-holdings" open={repairTarget?.objectType === "Investment" && objectEntries(draft, "Investment").some(holding => holding.account_id === item.account_id && holding.investment_id === repairTarget.objectId) ? true : undefined}>
+                <summary>Holdings in {objectLabel("Account", item)}</summary>
+                <ObjectEditor type="Investment" draft={draft} setDraft={setDraft} metadata={metadata} setNotice={setNotice} currency={currency} section={section} accountId={objectId("Account", item)} selectedScenarioId={selectedScenarioId} onContributions={onContributions} repairTarget={repairTarget} />
+              </details>}
               {type === "Investment" && <details><summary>Edit projected return</summary><ProjectedReturn investment={item} draft={draft} setDraft={setDraft} selectedScenarioId={selectedScenarioId} /></details>}
               {(type === "Investment" || type === "Account") && onContributions && <ContextualContributions item={item} type={type} draft={draft} open={onContributions} />}
+              {(type === "Investment" || type === "Account" && section === "Investments & retirement") && <EligibilitySummary draft={draft} {...(type === "Account" ? { accountId: objectId(type, item) } : { investmentId: objectId(type, item) })} review={onContributions} />}
+              {(type === "Investment" || type === "Account" && section === "Investments & retirement" || type === "Liability") && <ScheduledActivity draft={draft} {...(type === "Account" ? { accountId: objectId(type, item) } : type === "Investment" ? { investmentId: objectId(type, item) } : { liabilityId: objectId(type, item) })} onContributions={onContributions} />}
               <button className="danger-link" aria-describedby={`${type}-${objectId(type, item)}-label`} onClick={() => remove(item)}>
                 Delete
               </button>
@@ -379,6 +393,7 @@ function ObjectEditor({
             {confirmDiscard && <section role="alert" aria-label="Unsaved changes"><p>Discard unsaved changes?</p><button type="button" onClick={close}>Discard changes</button><button type="button" autoFocus onClick={() => setConfirmDiscard(false)}>Continue editing</button></section>}
             {creating && <p>Choose creation-time facts before adding this record. Once set, these facts cannot be overwritten.</p>}
             {(type === "Investment" || type === "Account") && <p role="note">{RETIREMENT_LIMITATION}</p>}
+            {type === "Investment" && investmentProductNotice(editing) && <p role="note">{investmentProductNotice(editing)}</p>}
             {type === "Investment" && !creating && <ProjectedReturn investment={editing} draft={draft} setDraft={setDraft} selectedScenarioId={selectedScenarioId} />}
             <form onSubmit={(event) => { event.preventDefault(); save(); }}>
             <RepairSummary errors={editorProblems} />
@@ -394,6 +409,7 @@ function ObjectEditor({
                   entityType={type}
                   creating={creating}
                   recordedUnit={typeof editing.unit === "string" ? editing.unit : undefined}
+                  instrumentType={editing.investment_type}
                   repairKey={`entity:${editingId}:${fieldName}`} error={relationshipProblems[fieldName]}
                   onChange={(value) => saveField(fieldName, value)}
                 />
@@ -401,7 +417,7 @@ function ObjectEditor({
             </div>
             <details>
               <summary>Additional financial details</summary>
-              <p className="muted">Optional dates, classifications, and relationships.</p>
+              <p className="muted">Dates, classifications, and relationships relevant to this item.</p>
               <div className="form-grid">
                 {secondaryFields.length ? (
                   secondaryFields.map((fieldName) => (
@@ -417,6 +433,7 @@ function ObjectEditor({
                       entityType={type}
                       creating={creating}
                       recordedUnit={typeof editing.unit === "string" ? editing.unit : undefined}
+                      instrumentType={editing.investment_type}
                       repairKey={`entity:${editingId}:${fieldName}`} error={relationshipProblems[fieldName]}
                       onChange={(value) => saveField(fieldName, value)}
                     />
@@ -429,6 +446,7 @@ function ObjectEditor({
             <details>
               <summary>Technical model details</summary>
               <p className="muted">Stored classifications and model settings. Supported execution depends on the forecast configuration.</p>
+              {incompatibleFields.some(name => editing[name] != null) && <section aria-label="Stored incompatible instrument details"><p>These stored terms do not apply to this product. They are preserved read-only; import corrected instrument records if they are unintended.</p><dl>{incompatibleFields.filter(name => editing[name] != null).map(name => <div key={name}><dt>{entityField(name, type)?.label ?? name}</dt><dd>{JSON.stringify(editing[name])}</dd></div>)}</dl></section>}
               <div className="form-grid">
                 {expertFields.map((fieldName) => <FieldControl key={fieldName}
                   fieldName={fieldName} field={fields[fieldName]} value={editing[fieldName]} draft={draft}
@@ -460,7 +478,7 @@ function ObjectEditor({
             {technicalError && <details><summary>Technical save details</summary><pre>{technicalError}</pre></details>}
             </form>
             <details>
-              <summary>Technical details</summary>
+              <summary>Entity IDs</summary>
               <p className="muted">Record IDs for troubleshooting relationships. These do not change financial behavior.</p>
               <dl className="advanced-list">
                 <dt>{type} ID</dt>
@@ -513,10 +531,11 @@ function FieldControl(props: Parameters<typeof RawFieldControl>[0] & { repairKey
   return <GuidedFields scope={`entity-${props.entityType}`} presentations={{ [props.fieldName]: presentation }} aliases={{ [presentation.label]: props.fieldName }} required={props.field?.required ? [props.fieldName] : []} repairKeys={{ [props.fieldName]: props.repairKey }} errors={{ [props.fieldName]: props.error }}>{RawFieldControl(props)}</GuidedFields>;
 }
 
-function RawFieldControl({ fieldName, field, value, draft, currency, entityType, creating, onChange, repairKey, error, recordedUnit }: {
+function RawFieldControl({ fieldName, field, value, draft, currency, entityType, creating, onChange, repairKey, error, recordedUnit, instrumentType }: {
   fieldName: string; field: EditorField | undefined; value: unknown; draft: PersonalDraft; currency: unknown;
   entityType: PersonalObjectType; creating: boolean; repairKey?: string; error?: string | undefined;
   recordedUnit?: string;
+  instrumentType?: unknown;
   onChange: (value: string | boolean | readonly string[] | null) => void;
 }) {
   if (!field || field.derived) return null;
@@ -547,7 +566,7 @@ function RawFieldControl({ fieldName, field, value, draft, currency, entityType,
     interest_convention: [{ value: "effective_annual_monthly", label: "Effective annual / APY · monthly cash credit" }, { value: "nominal_annual_simple", label: "Nominal annual simple · fixed coupon / CD interest" }],
     crediting_frequency: [{ value: "monthly", label: "Monthly (CD)" }, { value: "semiannual", label: "Every six months (Treasury / CD)" }, { value: "annual", label: "Annual (CD)" }],
   };
-  const domainChoices = domainOptions[fieldName];
+  const domainChoices = domainOptions[fieldName]?.filter(option => fieldName !== "instrument_subtype" || (instrumentType === "option" ? option.value === "long_equity_call" : instrumentType === "bond" ? option.value !== "long_equity_call" : false));
   if (domainChoices) return <label>{label}<select aria-label={label} value={String(value ?? "")} onChange={event => onChange(event.target.value || null)}><option value="">Not set</option>{domainChoices.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}{value && !domainChoices.some(option => option.value === value) ? <option value={String(value)}>Stored unsupported variant</option> : null}</select></label>;
   if (field.type === "boolean") return <label className="check">
     <input aria-label={label} type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} />

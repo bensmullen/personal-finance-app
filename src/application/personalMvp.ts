@@ -10,6 +10,8 @@ export { authorMortgageRefinance, authorMortgageExtra, type AuthoredRefinance } 
 export { contributionCapacityReadModel as getContributionCapacities, type ContributionCapacityReadModel } from "./compiler/contributionReadModel.js";
 export { authorPayrollContributionPlan, durablePayrollAllocations as getPayrollContributionPlans, payrollOpeningUnvestedUnits as getPayrollOpeningUnvestedUnits, type PayrollContributionPlan } from "./compiler/payrollAuthoring.js";
 export { authorOpeningContributionUsage, savedOpeningContributionUsage as getOpeningContributionUsage, openingContributionOptions as getOpeningContributionOptions, type OpeningContributionUsageEntry } from "./compiler/contributionOpening.js";
+export { openingContributionReadiness as getOpeningContributionReadiness } from "./compiler/contributionOpening.js";
+import { mortgageFundingContext, type MortgageFundingContext } from "./mortgageFundingPresentation.js";
 export { authorHistoricalContributionScope, historicalContributionScopes as getHistoricalContributionScopes } from "./compiler/contributionHistoryScopes.js";
 export type { AuthoredContributionFacts } from "./compiler/contributionAuthoring.js";
 export { durablePersonalPurchaseInstructions as getPersonalPurchasePlans } from "./compiler/personalPurchases.js";
@@ -136,6 +138,8 @@ export interface ForecastPoint {
   readonly traceIds: readonly string[];
 }
 export interface ShortfallReadModel {
+  readonly mortgageFunding?: MortgageFundingContext;
+  readonly evaluatedAt?: string;
   readonly period: string;
   readonly entityId: string;
   readonly required: MoneyReadModel;
@@ -974,6 +978,8 @@ export const runPersonalForecast = (
       });
       const shortfalls = result.periods.flatMap((period) =>
         period.liquidityShortfalls.map((shortfall) => ({
+          ...(mortgageFundingContext(compiled.input, String(shortfall.fundingPolicyId)) ? { mortgageFunding: mortgageFundingContext(compiled.input, String(shortfall.fundingPolicyId))! } : {}),
+          evaluatedAt: shortfall.evaluatedAt,
           period: period.period.start,
           entityId:
             "claimId" in shortfall

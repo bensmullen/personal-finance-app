@@ -1,5 +1,6 @@
 import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../diagnostics/index.js";
 import { contributionCapacityReadModel } from "./compiler/contributionReadModel.js";
+import { mortgageFundingContext } from "./mortgageFundingPresentation.js";
 import type {
   LiquidityShortfall,
   AllOrNothingLiquidityShortfall,
@@ -158,7 +159,7 @@ export interface HouseholdDebtBalance {
   readonly principal: HouseholdMoneyReadModel;
   readonly outstandingInterest: HouseholdMoneyReadModel;
 }
-export type HouseholdLiquidityShortfallReadModel =
+export type HouseholdLiquidityShortfallReadModel = { readonly mortgageFunding?: import("./mortgageFundingPresentation.js").MortgageFundingContext } & (
   | {
       readonly kind: "proposal";
       readonly origin?:
@@ -184,7 +185,7 @@ export type HouseholdLiquidityShortfallReadModel =
       readonly fundedAmount: HouseholdMoneyReadModel;
       readonly shortfallAmount: HouseholdMoneyReadModel;
       readonly evaluatedAt: string;
-    };
+    });
 export interface HouseholdForecastPoint {
   readonly outputCapabilities?: import("../simulation/tax/contracts.js").TaxOutputCapabilities;
   readonly periodStart: string;
@@ -625,7 +626,10 @@ const toReadModel = (
       }
     }
     const liquidityShortfalls = Object.freeze(
-      period.liquidityShortfalls.map(shortfallDto),
+      period.liquidityShortfalls.map(value => {
+        const mortgageFunding = mortgageFundingContext(compiled.liabilityInput, String(value.fundingPolicyId));
+        return Object.freeze({ ...shortfallDto(value), ...(mortgageFunding ? { mortgageFunding } : {}) });
+      }),
     );
     return Object.freeze({
       periodStart: period.period.start,

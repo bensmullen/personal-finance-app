@@ -46,6 +46,9 @@ const openEditorFinancialDetails = async (editor: import("@playwright/test").Loc
 };
 
 const openReturnDetails = async (page: import("@playwright/test").Page) => {
+  for (const summary of await page.locator(".account-holdings > summary").all()) {
+    if (await summary.locator("..").getAttribute("open") === null) await summary.click();
+  }
   for (const summary of await page.locator("summary").filter({ hasText: /^Edit projected return$/ }).all()) {
     if (await summary.isVisible() && await summary.locator("..").getAttribute("open") === null) await summary.click();
   }
@@ -152,7 +155,7 @@ const openSalaryFacts = async (page: import("@playwright/test").Page) => {
   await page.getByRole("button").filter({ has: page.locator("strong", { hasText: /^Example salary$/ }) }).click();
   const drawer = page.getByRole("dialog", { name: "Edit Income" });
   await expect(drawer.getByRole("heading", { name: "Example salary" })).toBeVisible();
-  await drawer.getByText("Technical details", { exact: true }).click();
+  await drawer.getByText("Entity IDs", { exact: true }).click();
   await expect(drawer.locator("dd").filter({ hasText: '"allocation": "1"' }).first()).toBeVisible();
   await drawer.getByRole("button", { name: "Close editor", exact: true }).click();
 };
@@ -629,7 +632,7 @@ test("R4 UAT groups cash separately from investment account wrappers and holding
   await expect(retirementAccount.getByRole("button", { name: /Workplace retirement/ })).toBeVisible();
   await expect(page.locator("button.card-main").filter({ hasText: /RETIREMENT-DEMO/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Everyday checking/ })).toHaveCount(0);
-  await expect(page.getByText(/Investment holdings are assets too/)).toBeVisible();
+  await expect(page.getByText(/Select an account to review its holdings/)).toBeVisible();
   await page.getByRole("button", { name: "Property & other assets", exact: true }).click();
   await expect(page.getByRole("button", { name: /Example home/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /RETIREMENT-DEMO/ })).toHaveCount(0);
@@ -933,7 +936,7 @@ test("R4 UAT preserves incompatible expense funding with actionable diagnostics"
   const editor = page.getByRole("dialog", { name: "Edit Expense" });
   await expect(editor.getByRole("note")).toContainText("Stored funding: Workplace retirement");
   await expect(editor.getByRole("note")).toContainText("preserved until you choose");
-  await editor.getByText("Technical details", { exact: true }).click();
+  await editor.getByText("Entity IDs", { exact: true }).click();
   await expect(editor.locator("dd").filter({ hasText: GOLDEN_HOUSEHOLD_IDS.retirementAccount })).toBeVisible();
   const funding = editor.getByLabel("Funding account", { exact: true });
   await expect(funding.locator(`option[value="${GOLDEN_HOUSEHOLD_IDS.retirementAccount}"]`)).toHaveCount(0);
@@ -989,7 +992,7 @@ test("R4 editor uses friendly financial identity and distinct expert/technical d
   await expect(editor.getByLabel("growth model id", { exact: true })).toHaveCount(0);
   await expect(editor.getByLabel("related event id", { exact: true })).toHaveCount(0);
   expect(await editor.innerText()).not.toMatch(rawUuid);
-  const technical = editor.getByText("Technical details", { exact: true });
+  const technical = editor.getByText("Entity IDs", { exact: true });
   await technical.focus();
   await page.keyboard.press("Enter");
   expect(await editor.innerText()).toMatch(rawUuid);
@@ -1052,7 +1055,7 @@ test("R4 narrow and wide layouts retain readable status, chart and keyboard edit
     await expect(editor.getByLabel("Amount", { exact: true })).toBeVisible();
     await editor.getByRole("button", { name: "Close editor" }).focus();
     await page.keyboard.press("Shift+Tab");
-    await expect(editor.getByText("Technical details", { exact: true })).toBeFocused();
+    await expect(editor.getByText("Entity IDs", { exact: true })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(editor.getByRole("button", { name: "Close editor" })).toBeFocused();
     await page.keyboard.press("Escape");

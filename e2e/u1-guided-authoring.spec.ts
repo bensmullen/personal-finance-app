@@ -5,6 +5,9 @@ import { readFileSync } from "node:fs";
 const navigate = async (page: Page, area: string, section: string) => {
   await page.getByRole("button", { name: area, exact: true }).click();
   await page.getByRole("button", { name: section, exact: true }).click();
+  if (section === "Investments & retirement") for (const summary of await page.locator(".account-holdings > summary").all()) {
+    if (await summary.locator("..").getAttribute("open") === null) await summary.click();
+  }
 };
 const open = async (scope: Page | Locator, title: string) => {
   const summary = scope.locator("summary").filter({ hasText: title }).first();
@@ -17,6 +20,14 @@ const assertContractAndGeometry = async (page: Page, width: number) => {
     const shell = control.locator('xpath=ancestor::*[@data-financial-field][1]');
     await expect(shell).toHaveCount(1);
     const key = await shell.getAttribute("data-financial-field");
+    const state = await shell.getAttribute("data-field-state");
+    if (state === "required") {
+      await expect(shell.locator(".field-required")).toBeVisible();
+      expect(await shell.locator(".field-required").evaluate(element => getComputedStyle(element).color)).toBe("rgb(180, 35, 24)");
+    } else if (state === "optional") await expect(shell.locator(".field-optional")).toContainText("(optional)");
+    else await expect(shell.locator(".field-managed")).toBeVisible();
+    const id = await control.getAttribute("id");
+    await expect(shell.locator(`label[for="${id}"]`)).toHaveCount(1);
     expect(FINANCIAL_FIELDS[key!], key!).toBeDefined();
     const scope = await control.evaluate(element => element.closest("[data-authoring-scope]")?.getAttribute("data-authoring-scope"));
     const field = scope?.startsWith("entity-") ? entityField(key!, scope.slice("entity-".length), undefined, false, undefined, await control.getAttribute("aria-label") === "Annual assumption rate" ? "effective annual rate" : undefined) : FINANCIAL_FIELDS[key!];
@@ -122,6 +133,100 @@ test("U1 normal navigation, staged salary, direct repair, mortgage and horizon g
   expect(errors).toEqual([]);
 });
 
+test("Owner repair: account-first holdings and subtype-specific controls remain readable on desktop and mobile", async ({ page }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  await page.goto("/"); await page.getByRole("button", { name: "Use synthetic example" }).click();
+  await navigate(page, "Settings", "Import / Export");
+  await page.locator('input[type="file"]').setInputFiles("test/fixtures/d1-integrated-uat-model.json");
+  await page.getByRole("button", { name: "Import into session", exact: true }).click();
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit holding BROKERAGE-DEMO", exact: true })).toBeHidden();
+  const brokerage = page.locator(".account-holdings").filter({ has: page.locator("summary", { hasText: /^Holdings in Taxable brokerage$/ }) });
+  await brokerage.locator(":scope > summary").focus(); await page.keyboard.press("Enter");
+  await expect(brokerage.getByRole("button", { name: "Edit holding BROKERAGE-DEMO", exact: true })).toBeVisible();
+  await expect(brokerage.getByRole("button", { name: /IRA-DEMO|RETIREMENT-DEMO/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Edit account Taxable brokerage", exact: true })).toBeVisible();
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const box = await brokerage.getByRole("button", { name: "Edit holding BROKERAGE-DEMO", exact: true }).boundingBox();
+    expect(box?.width).toBeGreaterThan(180);
+    await brokerage.getByRole("button", { name: "Edit holding BROKERAGE-DEMO", exact: true }).click();
+    const editor = page.getByRole("dialog", { name: "Edit Investment" });
+    await open(editor, "Additional financial details");
+    await expect(editor.getByLabel("Call exercise price", { exact: true })).toHaveCount(0);
+    await expect(editor.getByLabel("Investment maturity", { exact: true })).toHaveCount(0);
+    await expect(editor.locator("summary").filter({ hasText: /^Entity IDs$/ })).toBeVisible();
+    await assertContractAndGeometry(page, width);
+    await editor.getByRole("button", { name: "Close editor", exact: true }).click();
+  }
+  await brokerage.getByRole("button", { name: "+ Add Investment", exact: true }).click();
+  const creating = page.getByRole("dialog", { name: "Create Investment" });
+  await creating.getByLabel("Investment type", { exact: true }).selectOption("option");
+  await expect(creating.getByText(/Choose a supported long equity call product/)).toBeVisible();
+  await expect(creating.getByLabel("Call exercise price", { exact: true })).toHaveCount(0);
+  await creating.getByLabel("Investment product", { exact: true }).selectOption("long_equity_call");
+  await open(creating, "Additional financial details");
+  await expect(creating.getByLabel("Call exercise price", { exact: true })).toBeVisible();
+  await expect(creating.getByLabel("Investment maturity", { exact: true })).toHaveCount(0);
+  await creating.getByLabel("Investment type", { exact: true }).selectOption("bond");
+  await creating.getByLabel("Investment product", { exact: true }).selectOption("cd");
+  await expect(creating.getByLabel("Investment maturity", { exact: true })).toBeVisible();
+  await expect(creating.getByLabel("Call exercise price", { exact: true })).toHaveCount(0);
+  await creating.getByLabel("Investment type", { exact: true }).selectOption("crypto");
+  await expect(creating.getByLabel("Investment maturity", { exact: true })).toHaveCount(0);
+  await expect(creating.getByLabel("Call exercise price", { exact: true })).toHaveCount(0);
+  await creating.getByRole("button", { name: "Cancel", exact: true }).click();
+  await creating.getByRole("button", { name: "Discard changes", exact: true }).click();
+  expect(errors).toEqual([]);
+});
+
+test("Owner repair: historical scope and prior YTD save work in one session with an announced result and reload", async ({ page }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  await page.goto("/"); await page.getByRole("button", { name: "Use synthetic example" }).click();
+  await navigate(page, "Plan", "Current Plan"); await open(page, "Contributions already made this year");
+  const usage = page.getByRole("region", { name: "Prior year-to-date contributions" });
+  await usage.getByLabel("Historical holding", { exact: true }).selectOption({ label: "RETIREMENT-DEMO" });
+  await usage.getByLabel("Employer / plan group", { exact: true }).fill("Example employer");
+  await usage.getByLabel("Age at year end", { exact: true }).fill("36");
+  await usage.getByLabel("Annual pay eligible for this plan", { exact: true }).fill("108000");
+  await usage.getByRole("button", { name: "Save historical scope", exact: true }).click();
+  await expect(usage.getByRole("status").filter({ hasText: /Historical eligibility saved/ })).toBeVisible();
+  await usage.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
+  const totals = usage.getByRole("textbox", { name: /prior YTD total/ });
+  await totals.first().fill("100");
+  await usage.getByRole("textbox", { name: /prior YTD amount excluding catch-up/ }).first().fill("100");
+  const confirmation = usage.getByRole("checkbox", { name: "Confirm all prior contributions are known", exact: true });
+  await confirmation.check();
+  // Saving an unchanged legal scope produces a new model object. It must not
+  // reset unrelated dirty totals or the known-usage confirmation.
+  await usage.getByRole("button", { name: "Save historical scope", exact: true }).click();
+  await expect(confirmation).toBeChecked(); await expect(totals.first()).toHaveValue("100");
+  const save = usage.getByRole("button", { name: "Save prior YTD usage", exact: true });
+  await expect(save).toBeEnabled(); await save.scrollIntoViewIfNeeded();
+  const before = await save.boundingBox(); await save.click();
+  await expect(save).toBeFocused();
+  const after = await save.boundingBox(); expect(Math.abs(after!.y - before!.y)).toBeLessThan(120);
+  await expect(usage.getByRole("status").filter({ hasText: /Prior usage saved for 2026 before 2026-07-01/ })).toBeVisible();
+  await open(usage, "Saved prior usage"); await expect(usage).toContainText("100 USD");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText(/Canonical model saved to this browser/)).toBeVisible();
+  await page.reload(); await page.getByRole("button", { name: "Load saved model", exact: true }).click();
+  await navigate(page, "Plan", "Current Plan"); await open(page, "Contributions already made this year");
+  await expect(usage.getByLabel("YTD forecast boundary", { exact: true })).toHaveValue("2026-07-01");
+  await expect(totals.first()).toHaveValue("100");
+  await open(usage, "Saved prior usage"); await expect(usage).toContainText("100 USD");
+  await usage.getByLabel("YTD forecast boundary", { exact: true }).fill("2027-07-01");
+  await expect(save).toBeDisabled(); await expect(usage.getByRole("alert").filter({ hasText: /Define the historical account/ })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("U1 account actions choose the authoritative personal and workplace paths", async ({ page }) => {
   test.setTimeout(120_000);
   const errors: string[] = [];
@@ -186,6 +291,8 @@ test("U1 account actions choose the authoritative personal and workplace paths",
   await page.getByRole("button", { name: "Load saved model", exact: true }).click();
   await navigate(page, "Net Worth", "Investments & retirement");
   await expect(ira).toContainText("501");
+  await ira.locator(":scope > details > summary").filter({ hasText: /^Scheduled activity/ }).click();
+  await expect(ira.locator(":scope > details").last()).toContainText("501");
   await expect(hsa).toContainText("employer hsa");
   await ira.getByRole("button", { name: "Manage contributions to IRA-DEMO", exact: true }).click();
   await expect(personal.getByLabel("Purchase amount", { exact: true })).toHaveValue("501");
@@ -245,6 +352,119 @@ test("U1 saved-fact repair distinguishes editable facts from immutable correctio
   await expect(banner.getByRole("button", { name: "Review amount", exact: true })).toHaveCount(0);
   await banner.getByRole("button", { name: "Import corrected records", exact: true }).first().click();
   await expect(page.locator('input[type="file"]')).toBeVisible();
+});
+
+test("Owner repair: exact diagnostic ID lookup opens named records and preserves immutable correction paths", async ({ page }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  const model = JSON.parse(readFileSync("test/fixtures/d1-integrated-uat-model.json", "utf8"));
+  await page.goto("/"); await page.getByRole("button", { name: "Use synthetic example" }).click();
+  await navigate(page, "Settings", "Import / Export");
+  await page.locator('input[type="file"]').setInputFiles("test/fixtures/d1-integrated-uat-model.json");
+  await page.getByRole("button", { name: "Import into session", exact: true }).click();
+  await navigate(page, "Settings", "Technical diagnostics");
+  const lookup = page.getByLabel("Find a record by exact ID", { exact: true });
+  await lookup.fill(model.objects.Income[0].income_id);
+  const reference = page.locator(".diagnostic-references").filter({ hasText: /Income · Example salary/ });
+  await expect(reference).toContainText("Taylor Example");
+  await reference.getByRole("button", { name: "Open record", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Edit Income" })).toBeVisible();
+  await page.getByRole("button", { name: "Close editor", exact: true }).click();
+  await navigate(page, "Settings", "Technical diagnostics");
+  await lookup.fill(model.objects.Account[0].account_id);
+  await expect(page.locator(".diagnostic-references").filter({ hasText: /Everyday checking/ })).toContainText("corrected-model import");
+  await lookup.fill("90000000-0000-4000-8000-000000000099");
+  await expect(page.getByRole("status").filter({ hasText: /No exact record matches/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open record", exact: true })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("Owner repair: saved investment actions and linked eligibility summaries are inspectable by account", async ({ page }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  await page.goto("/"); await page.getByRole("button", { name: "Use synthetic example" }).click();
+  await navigate(page, "Settings", "Import / Export");
+  await page.locator('input[type="file"]').setInputFiles("test/fixtures/d1-integrated-uat-model.json");
+  await page.getByRole("button", { name: "Import into session", exact: true }).click();
+  await navigate(page, "Net Worth", "Investments & retirement");
+  const brokerage = page.locator("article").filter({ has: page.locator("strong", { hasText: /^Taxable brokerage$/ }) });
+  const activity = brokerage.locator(":scope > details").filter({ has: page.locator("summary").filter({ hasText: /^Scheduled activity/ }) }).last();
+  await activity.locator(":scope > summary").click();
+  await expect(activity.getByText(/^Investment sale · BROKERAGE-DEMO$/, { exact: true })).toHaveCount(1);
+  await expect(activity.getByText(/^Dividend reinvestment · BROKERAGE-DEMO$/, { exact: true })).toHaveCount(1);
+  await expect(activity).toContainText("2026-01-21");
+  await expect(activity).not.toContainText("IRA-DEMO");
+  await expect(activity.getByRole("button", { name: "Edit event", exact: true })).toHaveCount(0);
+  const ira = page.locator("article").filter({ has: page.locator("strong", { hasText: /^Personal Roth IRA$/ }) });
+  await ira.locator(":scope > details > summary").filter({ hasText: /^Saved annual eligibility$/ }).click();
+  const eligibility = ira.getByRole("region", { name: "Eligibility for IRA-DEMO" }).last();
+  await expect(eligibility).toContainText("Taylor Example"); await expect(eligibility).toContainText("2026");
+  await eligibility.getByRole("button", { name: "Review/edit eligibility for IRA-DEMO", exact: true }).click();
+  const personal = page.getByRole("region", { name: "Saved investment purchases" });
+  await expect(personal.getByLabel("Purchase investment", { exact: true })).toHaveValue("d1cc0000-0000-4000-8000-000000000002");
+  await open(personal, "IRA eligibility & tax facts");
+  await personal.getByLabel("Age at year end", { exact: true }).fill("37");
+  await personal.getByRole("button", { name: "Save investment purchase", exact: true }).click();
+  await navigate(page, "Net Worth", "Investments & retirement");
+  await ira.locator(":scope > details > summary").filter({ hasText: /^Saved annual eligibility$/ }).click();
+  await expect(eligibility.locator("dd").filter({ hasText: /^37$/ })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("Owner repair: isolated mortgage shortfalls name the evaluated payment account and navigate to funding", async ({ page }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  await page.goto("/"); await page.getByRole("button", { name: "Use synthetic example" }).click();
+  await navigate(page, "Plan", "Current Plan"); await open(page, "Expert standalone forecasts");
+  const standalone = page.getByRole("region", { name: "Standalone forecast drill-down" });
+  await standalone.getByLabel("Forecast scope", { exact: true }).selectOption("liabilities");
+  await standalone.getByRole("button", { name: "Run liabilities forecast", exact: true }).click();
+  await expect(standalone.getByText("Isolated liabilities forecast", { exact: true })).toBeVisible();
+  await expect(standalone.getByRole("note").filter({ hasText: /does not include salary or spending/ })).toBeVisible();
+  const explanation = standalone.getByRole("region", { name: "Mortgage funding explanation" }).first();
+  await expect(explanation).toContainText("Example mortgage"); await expect(explanation).toContainText("2027");
+  await expect(explanation).toContainText("Payment account: Everyday checking");
+  await expect(explanation).toContainText("Required"); await expect(explanation).toContainText("available");
+  await explanation.getByRole("button", { name: "Review mortgage payment account", exact: true }).click();
+  const funding = page.getByRole("region", { name: "Household execution configuration", exact: true }).getByLabel("Mortgage payment account", { exact: true });
+  await expect(funding).toBeFocused(); await expect(funding).toBeVisible();
+  await open(page, "Expert standalone forecasts");
+  await standalone.getByLabel("Forecast scope", { exact: true }).selectOption("cash_flow");
+  await standalone.getByRole("button", { name: "Run cash flow forecast", exact: true }).click();
+  await expect(standalone.getByText("Standalone cash-flow forecast · no mortgage execution", { exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("Owner repair: a real multi-record funding diagnostic opens the editable spending field", async ({ page }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  const model = JSON.parse(readFileSync("test/fixtures/d1-integrated-uat-model.json", "utf8"));
+  model.objects.Expense[0].payment_account_id = model.objects.Account.find((account: { account_type: string }) => account.account_type === "traditional_401k").account_id;
+  await page.goto("/"); await page.getByRole("button", { name: "Use synthetic example" }).click();
+  await navigate(page, "Settings", "Import / Export");
+  await page.locator('input[type="file"]').setInputFiles({ name: "unsupported-payment-account-synthetic.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(model)) });
+  await page.getByRole("button", { name: "Import into session", exact: true }).click();
+  await navigate(page, "Plan", "Current Plan"); await open(page, "Expert standalone forecasts");
+  const standalone = page.getByRole("region", { name: "Standalone forecast drill-down" });
+  await standalone.getByLabel("Forecast scope", { exact: true }).selectOption("cash_flow");
+  await standalone.getByRole("button", { name: "Run cash flow forecast", exact: true }).click();
+  const root = standalone.locator("[data-diagnostic-root]").filter({ hasText: "Living costs" }).first();
+  await expect(root).toContainText("Expense · Living costs"); await expect(root).toContainText("Account · Workplace retirement");
+  expect(await root.innerText()).not.toMatch(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/i);
+  await root.getByRole("button", { name: "Review Funding account", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "Edit Expense" });
+  await expect(editor.getByLabel("Funding account", { exact: true })).toBeFocused();
+  await editor.getByLabel("Funding account", { exact: true }).selectOption({ label: "Everyday checking" });
+  await editor.getByRole("button", { name: "Save changes", exact: true }).click();
+  expect(errors).toEqual([]);
 });
 
 test("U1 creates payroll contributions through the account action and retains another dirty draft", async ({ page }) => {

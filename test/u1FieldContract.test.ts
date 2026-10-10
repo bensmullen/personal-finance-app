@@ -65,7 +65,7 @@ describe("U1 guided authoring contract", () => {
     expect(fieldProblem(financialField("vested"), "100")).toBeUndefined();
     expect(fieldProblem(financialField("return"), "-20")).toBeUndefined();
     const draft = createGoldenHouseholdExampleDraft();
-    expect(entityRelationshipProblems("Investment", { acquisition_date: "2026-01-01", maturity_date: "2025-12-31" }, draft).maturity_date).toBeDefined();
+    expect(entityRelationshipProblems("Investment", { investment_type: "bond", instrument_subtype: "treasury_bill", acquisition_date: "2026-01-01", maturity_date: "2025-12-31" }, draft).maturity_date).toBeDefined();
     expect(entityRelationshipProblems("Income", { gross_or_net: "gross", start_date: "2026-01-01", end_date: "2027-01-01" }, draft)).toEqual({});
     expect(entityRelationshipProblems("Income", { gross_or_net: "gross", start_date: "2026-01-01", end_date: "2026-01-01" }, draft).end_date).toBeDefined();
   });

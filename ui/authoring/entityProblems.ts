@@ -1,6 +1,7 @@
 import { getPayrollContributionPlans, getPersonalPurchasePlans, getPayrollOpeningUnvestedUnits, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../../src/application/personalMvp.js";
 import { objectEntries, isCashFlowPaymentAccount, linkedReturnAssumption } from "../entityPresentation.js";
 import { unvestedProblem, effectiveAnnualReturnProblem } from "./fieldContract.js";
+import { investmentFieldApplies } from "./investmentFields.js";
 
 /** Bounded relationship checks only. Financial calculations stay in D1. */
 export function entityRelationshipProblems(type: PersonalObjectType, item: JsonObject, draft: PersonalDraft): Readonly<Record<string, string>> {
@@ -25,7 +26,7 @@ export function entityRelationshipProblems(type: PersonalObjectType, item: JsonO
   period("start_date", "end_date");
   period("opening_date", "closing_date");
   period("date_of_birth", "date_of_death");
-  if (type === "Investment") period("acquisition_date", "maturity_date");
+  if (type === "Investment" && investmentFieldApplies("maturity_date", item)) period("acquisition_date", "maturity_date");
   if (type === "Liability") period("origination_date", "maturity_date");
   if (type === "Income" && item.gross_or_net !== "gross" && item.gross_or_net !== "net") errors.gross_or_net = "Choose gross pay or take-home pay.";
   if (type === "Expense" && item.payment_account_id && !objectEntries(draft, "Account").some(account => account.account_id === item.payment_account_id && isCashFlowPaymentAccount(account))) errors.payment_account_id = "Choose checking, savings, or cash to pay spending.";

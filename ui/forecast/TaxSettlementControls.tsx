@@ -32,7 +32,7 @@ export function TaxSettlementControls({ accounts, jurisdictions, value, onChange
       <FinancialSection title="Same-day payment order">
         <FinancialInput fieldKey="taxPriority" repairKey={`tax:${item.jurisdiction}:priority`} value={String(item.priority)} required onChange={priority => update(item.jurisdiction, { priority: Number(priority), confirmed: false })} />
       </FinancialSection>
-      <FieldShell fieldKey="taxConfirm" repairKey={`tax:${item.jurisdiction}:confirm`} error={!item.confirmed ? "Review and confirm this forecast date and payment order." : undefined}>
+      <FieldShell fieldKey="taxConfirm" required repairKey={`tax:${item.jurisdiction}:confirm`} error={!item.confirmed ? "Review and confirm this forecast date and payment order." : undefined}>
         <input type="checkbox" aria-label={`Confirm ${item.jurisdiction} forecast settlement convention`} checked={item.confirmed} disabled={!!dateProblem(item) || !!fieldProblem(financialField("taxPriority"), item.priority, true)} onChange={event => update(item.jurisdiction, { confirmed: event.target.checked })} />
       </FieldShell>
     </FinancialSection>)}
