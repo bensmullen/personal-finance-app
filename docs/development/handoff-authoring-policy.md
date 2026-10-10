@@ -81,18 +81,19 @@ Before emitting an implementation/repair handoff, ChatGPT SHALL:
    roadmap material needed for the task;
 2. consult `docs/development/agent-learning-policy.md` and the active lesson
    ledger before issuing implementation instructions;
-3. resolve material semantic/architectural decisions rather than delegating
+3. consult the live issue-to-milestone register at `docs/development/milestone-issue-register.json` and its policy, reconcile current GitHub issue statuses, and verify that the task's owner stage/dependencies/mandatory closeout gate are allocated; do not silently skip an unresolved required issue or treat a planning backlog entry as V3 task authorization;
+4. resolve material semantic/architectural decisions rather than delegating
    those decisions to Codex;
-4. identify the smallest defensible `ALLOWED_PATHS`;
-5. state the objective and acceptance conditions clearly enough that Codex can
+5. identify the smallest defensible `ALLOWED_PATHS`;
+6. state the objective and acceptance conditions clearly enough that Codex can
    tell whether implementation is complete;
-6. describe material failure/partial/unsupported/stale/cancelled/error behavior
+7. describe material failure/partial/unsupported/stale/cancelled/error behavior
    when relevant;
-7. distinguish supported claims from deferred/not-measured/not-applicable areas;
-8. keep expensive representative/stress/scaling/convergence/provider evidence
+8. distinguish supported claims from deferred/not-measured/not-applicable areas;
+9. keep expensive representative/stress/scaling/convergence/provider evidence
    outside ordinary CI unless the repository verification policy explicitly
    assigns a bounded correctness workload to CI;
-9. perform a contradiction/negative-space review before handing off.
+10. perform a contradiction/negative-space review before handing off.
 
 The brief should be as short as the task allows. Complexity belongs in the
 semantic decisions themselves, not in mandatory envelope ceremony.

@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-10-10",
+  "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
+  "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap.",
+  "stage_gates": {
+    "D1_U1": {
+      "stage": "U1 / D1 final acceptance",
+      "blocking_transition": "Declare D1 complete or start D1-gated integrated implementation",
+      "required_issue_numbers": [
+        94,
+        99
+      ]
+    },
+    "D2": {
+      "stage": "D2-A / D2 closeout",
+      "blocking_transition": "Declare D2 complete or start stochastic R5",
+      "required_issue_numbers": [
+        103
+      ]
+    },
+    "R11": {
+      "stage": "R11 private-alpha readiness",
+      "blocking_transition": "Declare private-alpha-ready or begin private-alpha launch",
+      "required_issue_numbers": [
+        100,
+        101,
+        102,
+        104,
+        105
+      ]
+    }
+  },
+  "issues": [
+    {
+      "issue_number": 94,
+      "owner_stage": "U1",
+      "blocking_gate": "D1_U1",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-UX-015",
+        "PFA-UX-016",
+        "PFA-UX-017",
+        "PFA-UX-018",
+        "PFA-UX-019",
+        "PFA-UX-020"
+      ],
+      "scope": "Guided authoring and owner UAT; do not close D1 before acceptance."
+    },
+    {
+      "issue_number": 99,
+      "owner_stage": "D1-reconciliation",
+      "blocking_gate": "D1_U1",
+      "depends_on": [
+        94
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-013",
+        "PFA-DET-014"
+      ],
+      "scope": "Investigate isolated-vs-household mortgage funding; verify correctness before D1 closeout."
+    },
+    {
+      "issue_number": 100,
+      "owner_stage": "R11-financial-UX",
+      "blocking_gate": "R11",
+      "depends_on": [
+        94
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-013",
+        "PFA-UX-019"
+      ],
+      "scope": "Standing reinvest-dividends preference, with authoritative dividend and basis semantics."
+    },
+    {
+      "issue_number": 101,
+      "owner_stage": "T1A-tax-completeness",
+      "blocking_gate": "R11",
+      "depends_on": [
+        94
+      ],
+      "spec_requirement_ids": [
+        "PFA-TAX-010",
+        "PFA-TAX-014"
+      ],
+      "scope": "Salary withholding, cash take-home and net settlement/refund; financial correctness first."
+    },
+    {
+      "issue_number": 102,
+      "owner_stage": "R11-tax-workspace",
+      "blocking_gate": "R11",
+      "depends_on": [
+        101,
+        94
+      ],
+      "spec_requirement_ids": [
+        "PFA-UX-015",
+        "PFA-TAX-014"
+      ],
+      "scope": "Top-level Taxes workspace after trustworthy withholding and tax read models exist."
+    },
+    {
+      "issue_number": 103,
+      "owner_stage": "D2-A",
+      "blocking_gate": "D2",
+      "depends_on": [
+        94
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-017",
+        "PFA-TAX-015"
+      ],
+      "scope": "Ordinary retirement distribution/withdrawal and applicable tax rules; distinguish rollover."
+    },
+    {
+      "issue_number": 104,
+      "owner_stage": "R11-contribution-schedules",
+      "blocking_gate": "R11",
+      "depends_on": [
+        94
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-013",
+        "PFA-UX-019"
+      ],
+      "scope": "General recurring bank-funded purchase/contribution schedules before private alpha."
+    },
+    {
+      "issue_number": 105,
+      "owner_stage": "P1-planning-UX",
+      "blocking_gate": "R11",
+      "depends_on": [
+        94
+      ],
+      "spec_requirement_ids": [
+        "PFA-UX-011",
+        "PFA-UX-012",
+        "PFA-PLAN-005"
+      ],
+      "scope": "Independent saved-plan duplication; U1 may expose entry action only if existing semantics safely support it."
+    }
+  ],
+  "legacy_open_task_reconciliation": {
+    "issue_numbers": [
+      47,
+      49,
+      52,
+      55,
+      62,
+      63,
+      65,
+      66,
+      70
+    ],
+    "handling": "Historical task issues still appear open despite prior phase/PR activity; review merged-PR evidence and close when appropriate, or assign a live stage. They are an administrative audit queue and must not be mislabeled as unfinished financial work."
+  },
+  "excluded_from_product_gates": {
+    "class": "[agent-candidate]",
+    "authority": "docs/development/agent-learning-policy.md and GitHub candidate registry",
+    "rule": "Do not mix candidate issues with product stage obligations; use their existing learning-review process."
+  }
+}

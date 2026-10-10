@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.6.2-draft
+**Version:** 0.6.3-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -119,6 +119,25 @@ For the currently planned lanes, ownership is:
 | T1B | Isolated effective-dated rule/catalog work may proceed with consuming capabilities; PFA-TAX-016 is mandatory before R11 | Household/execution integration waits for the consuming domain's stable boundary or uses a dedicated synchronization change |
 
 This coordination contract controls implementation sequencing only. It does not move financial authority out of the canonical schema, executable financial semantics, or capability specifications.
+
+### 2.2 Issue-backed milestone and private-alpha gates
+
+**Machine-readable issue-to-stage register:** `docs/development/milestone-issue-register.json` (maintained under `docs/development/milestone-issue-policy.md`). This register assigns each live non-learning product/bug/planning issue a stage owner, mandatory closeout gate, dependencies, and relevant controlled requirements. GitHub remains the live status authority; registration alone does not prove implementation. A new backlog issue cannot be silently left unassigned, and a mandatory stage issue cannot be deferred past its gate without an explicit controlled roadmap change and product-owner decision.
+
+| First mandatory gate | Stage owner | Registered GitHub issue / disposition |
+| --- | --- | --- |
+| `D1_U1` — D1 completion | U1 guided UX | **#94** owner UAT and systematic UX repair (active) |
+| `D1_U1` — D1 completion | D1 funding verification | **#99** mortgage shortfall versus household cash (investigate; semantic correction if verified) |
+| `D2` — before stochastic R5 | D2-A retirement breadth | **#103** ordinary retirement distributions and tax/liquidity effects |
+| `R11` — before private alpha | Post-U1 investment UX | **#100** user-selected dividend reinvestment with sound cash/lot/basis semantics |
+| `R11` — before private alpha | T1A/T1B tax closeout | **#101** routine payroll withholding and net tax settlement |
+| `R11` — before private alpha | Tax workspace | **#102** user-facing Federal/State/Local taxes, **after #101** |
+| `R11` — before private alpha | Post-U1 personal contributions | **#104** supported flexible recurrence for bank-funded IRA/brokerage purchases |
+| `R11` — before private alpha | P1 planning/plan management | **#105** independent plan duplication and comparison after safe scenario/identity semantics are confirmed |
+
+**State reconciliation:** D1-C code was merged in PR #89 (Issue #80 closed administratively); **D1 itself remains unaccepted** until #94 UAT plus #99 reconciliation resolve. None of #100–#105 is permission to edit the currently U1-owned shared UI or to introduce a new financial formula under #94. Safe plan duplication may reuse the U1 visual pattern, but full independent cloning requires authoritative plan/scenario identity, copying, and persistence behavior; #105 owns that boundary. D2-A #103 must be ready for D2 closeout, not postponed to R11.
+
+The full R11 prerequisites in section 18 still apply: the register **adds tracking**, not exceptions to O1, P1, R5–R10, A1, tax-law, performance or user-validation requirements. A lightweight GitHub Action checks newly opened/reopened/edited issues (plus weekly and registry PR changes) against the stage register and fails on omissions. Before every milestone handoff, also fetch live open GitHub issues and reconcile the register; at closeout verify all required issue IDs and financial/UAT evidence. The action detects unregistered issues, not completed UAT or financial correctness. The nine historical implementation issues in the administrative queue require closure/reclassification after merged-PR review; they are not presumed unfinished product features. Agent-learning candidate issues use their separate candidate registry and do not belong to these product gates.
 
 ## 3. R1 — Performance instrumentation and baselines
 
