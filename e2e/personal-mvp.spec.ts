@@ -629,7 +629,7 @@ test("R4 UAT groups cash separately from investment account wrappers and holding
   await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
   await openReturnDetails(page);
   const retirementAccount = page.locator(".object-card").filter({ has: page.locator("strong").filter({ hasText: /^Workplace retirement$/ }) });
-  await expect(retirementAccount.getByRole("button", { name: /Workplace retirement/ })).toBeVisible();
+  await expect(retirementAccount.getByRole("button", { name: "Edit account Workplace retirement", exact: true })).toBeVisible();
   await expect(page.locator("button.card-main").filter({ hasText: /RETIREMENT-DEMO/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Everyday checking/ })).toHaveCount(0);
   await expect(page.getByText(/Select an account to review its holdings/)).toBeVisible();

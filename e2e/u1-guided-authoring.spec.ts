@@ -146,7 +146,9 @@ test("Owner repair: account-first holdings and subtype-specific controls remain 
   await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
   await expect(page.getByRole("button", { name: "Edit holding BROKERAGE-DEMO", exact: true })).toBeHidden();
   const brokerage = page.locator(".account-holdings").filter({ has: page.locator("summary", { hasText: /^Holdings in Taxable brokerage$/ }) });
-  await brokerage.locator(":scope > summary").focus(); await page.keyboard.press("Enter");
+  const accountButton = page.getByRole("button", { name: "Review account Taxable brokerage", exact: true });
+  await accountButton.focus(); await page.keyboard.press("Enter");
+  await expect(accountButton).toHaveAttribute("aria-expanded", "true");
   await expect(brokerage.getByRole("button", { name: "Edit holding BROKERAGE-DEMO", exact: true })).toBeVisible();
   await expect(brokerage.getByRole("button", { name: /IRA-DEMO|RETIREMENT-DEMO/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Edit account Taxable brokerage", exact: true })).toBeVisible();

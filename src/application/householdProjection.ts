@@ -1,6 +1,6 @@
 import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../diagnostics/index.js";
 import { contributionCapacityReadModel } from "./compiler/contributionReadModel.js";
-import { mortgageFundingContext } from "./mortgageFundingPresentation.js";
+import { mortgageFundingContext } from "./compiler/mortgageFundingPresentation.js";
 import type {
   LiquidityShortfall,
   AllOrNothingLiquidityShortfall,

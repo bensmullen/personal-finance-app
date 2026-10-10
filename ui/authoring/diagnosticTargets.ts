@@ -1,6 +1,6 @@
-import { getPersonalEditorMetadata, PERSONAL_OBJECT_TYPES, type PersonalDraft, type PersonalObjectType } from "../../src/application/personalMvp.js";
+import { getPersonalEditorMetadata, PERSONAL_OBJECT_TYPES, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../../src/application/personalMvp.js";
 import { objectEntries, objectId, objectLabel, referenceLabel, type DisplayDiagnostic } from "../entityPresentation.js";
-import { canRepairEntityField } from "../EntityEditor.js";
+import { canRepairEntityField } from "./entityRepair.js";
 import { investmentFieldApplies } from "./investmentFields.js";
 
 export interface DiagnosticTarget { id: string; type: string; label: string; context?: string; objectType?: PersonalObjectType; field?: string; editable: boolean; }
@@ -18,7 +18,11 @@ export function exactDiagnosticTargets(draft: PersonalDraft, id: string, fieldPa
     }
   }
   for (const [type, key] of [["Event", "event_id"], ["PrimitiveInstance", "primitive_instance_id"], ["TaxRule", "tax_rule_id"]] as const) {
-    for (const item of draft.objects[type] ?? []) if (item && typeof item === "object" && !Array.isArray(item) && item[key] === id) matches.push({ id, type, label: typeof item.name === "string" ? item.name : type === "Event" ? "Saved plan activity" : type === "TaxRule" ? "Recorded tax rule" : "Managed calculation relationship", editable: false });
+    for (const value of draft.objects[type] ?? []) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const item = value as JsonObject;
+      if (item[key] === id) matches.push({ id, type, label: typeof item.name === "string" ? item.name : type === "Event" ? "Saved plan activity" : type === "TaxRule" ? "Recorded tax rule" : "Managed calculation relationship", editable: false });
+    }
   }
   return matches;
 }

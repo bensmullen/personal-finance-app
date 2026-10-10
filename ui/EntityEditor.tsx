@@ -13,24 +13,12 @@ import { entityRelationshipProblems } from "./authoring/entityProblems.js";
 import { investmentFieldApplies, investmentProductNotice } from "./authoring/investmentFields.js";
 import { ScheduledActivity } from "./authoring/ScheduledActivity.js";
 import { EligibilitySummary } from "./authoring/EligibilitySummary.js";
+import { canRepairEntityField, type EditorField } from "./authoring/entityRepair.js";
+export { canRepairEntityField } from "./authoring/entityRepair.js";
 
 export interface EntityRepair { readonly objectType: PersonalObjectType; readonly objectId: string; readonly field: string; readonly token: string; }
 const randomId = () => crypto.randomUUID();
-interface EditorField {
-  readonly type: string;
-  readonly required: boolean;
-  readonly derived: boolean;
-  readonly mutable: boolean;
-  readonly default: unknown;
-  readonly ref?: string;
-  readonly enumValues?: readonly string[];
-}
 const internalReference = (field: EditorField) => field.type === "object" || Boolean(field.ref && referenceTargets(field.ref).length === 0);
-export function canRepairEntityField(type: PersonalObjectType, name: string, field: EditorField | undefined, value: unknown, draft?: PersonalDraft): boolean {
-  return !!field && !!entityField(name, type) && !field.derived && !internalReference(field) &&
-    !field.type.startsWith("object") && !(value !== null && typeof value === "object" && (!Array.isArray(value) || value.some(item => item !== null && typeof item === "object"))) &&
-    (!draft || !field.ref || referenceTargets(field.ref).some(target => objectEntries(draft, target).length > 0)) && (field.mutable || value === undefined);
-}
 const FIELD_HELP: Record<string, string> = {
   amount: "Amount per occurrence, using the frequency selected here.",
   opening_balance: "Internal account cash at the opening position, excluding holdings valued separately. Changing this does not represent a new deposit or withdrawal.",
@@ -209,6 +197,7 @@ function ObjectEditor({
   const [creationError, setCreationError] = useState("");
   const [technicalError, setTechnicalError] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [expandedAccounts, setExpandedAccounts] = useState<Readonly<Record<string, boolean>>>({});
   const initialEditing = useRef<JsonObject | undefined>(undefined);
   const drawer = useRef<HTMLElement>(null);
   const editingId = editing ? objectId(type, editing) : undefined;
@@ -335,7 +324,10 @@ function ObjectEditor({
         <div className="object-grid" style={section === "Investments & retirement" && type === "Account" ? { gridTemplateColumns: "minmax(0, 1fr)" } : undefined}>
           {values.map((item) => (
             <article className="object-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", minWidth: 0 }} key={objectId(type, item)}>
-              <button className="card-main" aria-label={type === "Account" ? `Edit account ${objectLabel(type, item)}` : type === "Investment" ? `Edit holding ${objectLabel(type, item)}` : undefined} style={{ width: "100%", minWidth: 0 }} onClick={() => { initialEditing.current = item; setCreating(false); setEditing(item); }}>
+              <button className="card-main" aria-label={type === "Account" ? `${section === "Investments & retirement" ? "Review" : "Edit"} account ${objectLabel(type, item)}` : type === "Investment" ? `Edit holding ${objectLabel(type, item)}` : undefined} aria-expanded={type === "Account" && section === "Investments & retirement" ? !!expandedAccounts[objectId(type, item)] : undefined} aria-controls={type === "Account" && section === "Investments & retirement" ? `holdings-${objectId(type, item)}` : undefined} style={{ width: "100%", minWidth: 0 }} onClick={() => {
+                if (type === "Account" && section === "Investments & retirement") { const id = objectId(type, item); setExpandedAccounts(previous => ({ ...previous, [id]: !previous[id] })); }
+                else { initialEditing.current = item; setCreating(false); setEditing(item); }
+              }}>
                 <span className="object-icon">{TITLES[type][0]}</span>
                 <span data-card-summary style={{ flex: "1 1 auto", minWidth: 0, textAlign: "left" }}>
                   <strong id={`${type}-${objectId(type, item)}-label`}>{objectLabel(type, item) || `New ${type}`}</strong>
@@ -344,7 +336,11 @@ function ObjectEditor({
                   </small>
                 </span>
               </button>
-              {type === "Account" && section === "Investments & retirement" && <details className="account-holdings" open={repairTarget?.objectType === "Investment" && objectEntries(draft, "Investment").some(holding => holding.account_id === item.account_id && holding.investment_id === repairTarget.objectId) ? true : undefined}>
+              {type === "Account" && section === "Investments & retirement" && <button type="button" className="secondary" onClick={() => { initialEditing.current = item; setCreating(false); setEditing(item); }}>Edit account {objectLabel(type, item)}</button>}
+              {type === "Account" && section === "Investments & retirement" && <details id={`holdings-${objectId(type, item)}`} className="account-holdings" open={!!expandedAccounts[objectId(type, item)] || repairTarget?.objectType === "Investment" && objectEntries(draft, "Investment").some(holding => holding.account_id === item.account_id && holding.investment_id === repairTarget.objectId)} onToggle={event => {
+                const id = objectId(type, item), open = event.currentTarget.open;
+                setExpandedAccounts(previous => previous[id] === open ? previous : { ...previous, [id]: open });
+              }}>
                 <summary>Holdings in {objectLabel("Account", item)}</summary>
                 <ObjectEditor type="Investment" draft={draft} setDraft={setDraft} metadata={metadata} setNotice={setNotice} currency={currency} section={section} accountId={objectId("Account", item)} selectedScenarioId={selectedScenarioId} onContributions={onContributions} repairTarget={repairTarget} />
               </details>}

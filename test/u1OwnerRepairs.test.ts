@@ -3,7 +3,7 @@ import { createGoldenHouseholdDraft, authorHistoricalContributionScope, authorPa
 import { GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 import { investmentFieldApplies, investmentProductNotice } from "../ui/authoring/investmentFields.js";
 import { exactDiagnosticTargets, diagnosticTargets } from "../ui/authoring/diagnosticTargets.js";
-import { savedActivity } from "../ui/authoring/ScheduledActivity.js";
+import { savedActivity } from "../ui/authoring/savedActivity.js";
 import { authoringFailure } from "../ui/authoring/contributionChoices.js";
 
 const facts = { taxYear: 2026, ageAtYearEnd: 36, eligiblePlanCompensation: "108000" };

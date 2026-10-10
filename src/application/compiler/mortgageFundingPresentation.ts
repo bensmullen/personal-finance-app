@@ -1,4 +1,4 @@
-import type { VerticalSlice4Input } from "../simulation/verticalSlice4.js";
+import type { VerticalSlice4Input } from "../../simulation/verticalSlice4.js";
 
 export interface MortgageFundingContext {
   readonly liabilityId: string;

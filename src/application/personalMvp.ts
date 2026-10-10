@@ -11,7 +11,7 @@ export { contributionCapacityReadModel as getContributionCapacities, type Contri
 export { authorPayrollContributionPlan, durablePayrollAllocations as getPayrollContributionPlans, payrollOpeningUnvestedUnits as getPayrollOpeningUnvestedUnits, type PayrollContributionPlan } from "./compiler/payrollAuthoring.js";
 export { authorOpeningContributionUsage, savedOpeningContributionUsage as getOpeningContributionUsage, openingContributionOptions as getOpeningContributionOptions, type OpeningContributionUsageEntry } from "./compiler/contributionOpening.js";
 export { openingContributionReadiness as getOpeningContributionReadiness } from "./compiler/contributionOpening.js";
-import { mortgageFundingContext, type MortgageFundingContext } from "./mortgageFundingPresentation.js";
+import { mortgageFundingContext, type MortgageFundingContext } from "./compiler/mortgageFundingPresentation.js";
 export { authorHistoricalContributionScope, historicalContributionScopes as getHistoricalContributionScopes } from "./compiler/contributionHistoryScopes.js";
 export type { AuthoredContributionFacts } from "./compiler/contributionAuthoring.js";
 export { durablePersonalPurchaseInstructions as getPersonalPurchasePlans } from "./compiler/personalPurchases.js";
