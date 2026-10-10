@@ -465,7 +465,9 @@ test("Owner repair: a real multi-record funding diagnostic opens the editable sp
   await root.getByRole("button", { name: "Review Funding account", exact: true }).click();
   const editor = page.getByRole("dialog", { name: "Edit Expense" });
   await expect(editor.getByLabel("Funding account", { exact: true })).toBeFocused();
-  await editor.getByLabel("Funding account", { exact: true }).selectOption({ label: "Everyday checking" });
+  const checkingId = model.objects.Account.find((account: { account_type: string }) => account.account_type === "checking").account_id;
+  await expect(editor.getByLabel("Funding account", { exact: true }).locator(`option[value="${checkingId}"]`)).toContainText("Everyday checking");
+  await editor.getByLabel("Funding account", { exact: true }).selectOption(checkingId);
   await editor.getByRole("button", { name: "Save changes", exact: true }).click();
   expect(errors).toEqual([]);
 });

@@ -512,7 +512,7 @@ test("D1 authors former-employer YTD history without a future contribution instr
   await prior.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
   await prior.getByRole("checkbox").check();
   await expect(prior.getByRole("button", { name: "Save prior YTD usage", exact: true })).toBeDisabled();
-  await expect(prior.getByRole("alert")).toContainText("Define the historical account");
+  await expect(prior.getByRole("alert").filter({ hasText: "Define the historical account" })).toBeVisible();
   await prior.getByLabel("Historical holding", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
   await prior.getByLabel("Age at year end", { exact: true }).fill("36");
   await prior.getByLabel("Employer / plan group", { exact: true }).fill("employer-a");

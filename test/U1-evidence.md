@@ -53,6 +53,11 @@ regions, updates YTD selectors with their displayed year, asserts the existing
 scope prerequisite before Save, and bounds diagnostic action waits. Financial
 and saved/exported-value expectations are preserved. Latest-head browser CI
 remains required; earlier passing tests are not whole-suite acceptance.
+At `f310d1d`, all non-browser checks passed and browser CI narrowed failures to
+two selector issues: selecting a contextual account option by its bare name,
+and matching three accessible alerts instead of the prerequisite message.
+The diagnostic reached the named spending editor and focused its funding field.
+Follow-up selectors retain these assertions and select the exact checking ID.
 No local verification or dependency installation was performed.
 
 Eligibility identity inventory: future IRA facts belong to the holding's saved
