@@ -82,7 +82,7 @@ Before emitting an implementation/repair handoff, ChatGPT SHALL:
 2. consult `docs/development/agent-learning-policy.md` and the active lesson
    ledger before issuing implementation instructions;
 3. consult the live issue-to-milestone register at `docs/development/milestone-issue-register.json` and its policy, reconcile current GitHub issue statuses, and verify that the task's owner stage/dependencies/mandatory closeout gate are allocated; do not silently skip an unresolved required issue or treat a planning backlog entry as V3 task authorization;
-5. resolve material semantic/architectural decisions rather than delegating
+4. resolve material semantic/architectural decisions rather than delegating
    those decisions to Codex;
 5. identify the smallest defensible `ALLOWED_PATHS`;
 6. state the objective and acceptance conditions clearly enough that Codex can
