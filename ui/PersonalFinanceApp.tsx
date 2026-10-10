@@ -3775,7 +3775,8 @@ function TechnicalDiagnostics({
   const [lookup, setLookup] = useState("");
   const [traceTargets, setTraceTargets] = useState<readonly DiagnosticTarget[]>([]), [traceMessage, setTraceMessage] = useState("");
   const { baseline } = useContext(FinancialResultModels);
-  const knownRefs = baseline?.lastGoodResult?.points.flatMap(point => point.traceRefs).filter(ref => ref.traceId === lookup.trim()) ?? [];
+  const result = baseline?.lastGoodResult;
+  const knownRefs = result && "points" in result ? result.points.flatMap(point => point.traceRefs).filter(ref => ref.traceId === lookup.trim()) : [];
   const targets = lookup.trim() ? exactDiagnosticTargets(draft, lookup.trim()) : [];
   return (
     <>
