@@ -8,8 +8,7 @@
       "stage": "U1 / D1 final acceptance",
       "blocking_transition": "Declare D1 complete or start D1-gated integrated implementation",
       "required_issue_numbers": [
-        94,
-        99
+        94
       ]
     },
     "D2": {
@@ -26,7 +25,6 @@
         100,
         101,
         102,
-        104,
         105
       ]
     }
@@ -43,22 +41,11 @@
         "PFA-UX-017",
         "PFA-UX-018",
         "PFA-UX-019",
-        "PFA-UX-020"
-      ],
-      "scope": "Guided authoring and owner UAT; do not close D1 before acceptance."
-    },
-    {
-      "issue_number": 99,
-      "owner_stage": "D1-reconciliation",
-      "blocking_gate": "D1_U1",
-      "depends_on": [
-        94
-      ],
-      "spec_requirement_ids": [
+        "PFA-UX-020",
         "PFA-DET-013",
         "PFA-DET-014"
       ],
-      "scope": "Investigate isolated-vs-household mortgage funding; verify correctness before D1 closeout."
+      "scope": "Guided authoring/owner UAT PLUS the fully consolidated #99 account-specific mortgage funding reconciliation; do not close D1 before both are accepted."
     },
     {
       "issue_number": 100,
@@ -71,7 +58,7 @@
         "PFA-DET-013",
         "PFA-UX-019"
       ],
-      "scope": "Standing reinvest-dividends preference, with authoritative dividend and basis semantics."
+      "scope": "Both standing reinvest-dividends with authoritative basis/tax semantics AND consolidated #104 flexible recurring personally funded IRA/brokerage scheduling; both required before private alpha."
     },
     {
       "issue_number": 101,
@@ -114,19 +101,6 @@
       "scope": "Ordinary retirement distribution/withdrawal and applicable tax rules; distinguish rollover."
     },
     {
-      "issue_number": 104,
-      "owner_stage": "R11-contribution-schedules",
-      "blocking_gate": "R11",
-      "depends_on": [
-        94
-      ],
-      "spec_requirement_ids": [
-        "PFA-DET-013",
-        "PFA-UX-019"
-      ],
-      "scope": "General recurring bank-funded purchase/contribution schedules before private alpha."
-    },
-    {
       "issue_number": 105,
       "owner_stage": "P1-planning-UX",
       "blocking_gate": "R11",
@@ -159,5 +133,21 @@
     "class": "[agent-candidate]",
     "authority": "docs/development/agent-learning-policy.md and GitHub candidate registry",
     "rule": "Do not mix candidate issues with product stage obligations; use their existing learning-review process."
-  }
+  },
+  "closed_consolidations": [
+    {
+      "issue_number": 99,
+      "consolidated_into": 94,
+      "closed_as": "duplicate",
+      "original_gate": "D1_U1",
+      "retained_requirement": "Investigate isolated liability vs reconciled household mortgage shortfall, verify correct payment account/priority, repair confirmed engine errors only under authorized scope and pass U1 UAT."
+    },
+    {
+      "issue_number": 104,
+      "consolidated_into": 100,
+      "closed_as": "duplicate",
+      "original_gate": "R11",
+      "retained_requirement": "Recurring IRA/brokerage bank-funded purchase schedules with selectable frequencies, calendar edge semantics, caps, funding, persistence and replay."
+    }
+  ]
 }

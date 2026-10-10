@@ -14,6 +14,13 @@ const registry = JSON.parse(readFileSync(new URL("../docs/development/milestone-
   stage_gates: Record<string, { stage: string; blocking_transition: string; required_issue_numbers: number[] }>;
   issues: IssueRow[];
   legacy_open_task_reconciliation: { issue_numbers: number[] };
+  closed_consolidations: {
+    issue_number: number;
+    consolidated_into: number;
+    closed_as: string;
+    original_gate: string;
+    retained_requirement: string;
+  }[];
 };
 const roadmap = readFileSync(new URL("../docs/specs/roadmap/post-pr21-implementation-roadmap.md", import.meta.url), "utf8");
 const watchWorkflow = readFileSync(new URL("../.github/workflows/issue-milestone-traceability.yml", import.meta.url), "utf8");
@@ -24,7 +31,8 @@ describe("issue-backed roadmap traceability", () => {
     expect(registry.schema_version).toBe(1);
     const ids = registry.issues.map(item => item.issue_number);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const id of [94, 99, 100, 101, 102, 103, 104, 105]) expect(ids).toContain(id);
+    for (const id of [94, 100, 101, 102, 103, 105]) expect(ids).toContain(id);
+    for (const id of [99, 104]) expect(ids).not.toContain(id);
     for (const row of registry.issues) {
       expect(Number.isSafeInteger(row.issue_number) && row.issue_number > 0).toBe(true);
       expect(row.owner_stage.trim()).not.toBe("");
@@ -53,6 +61,22 @@ describe("issue-backed roadmap traceability", () => {
     };
     const complete = new Set<number>();
     for (const row of registry.issues) visit(row.issue_number, new Set<number>(), complete);
+  });
+  it("keeps consolidated historical issues linked to surviving gate owners", () => {
+    const merges = new Map(registry.closed_consolidations.map(x => [x.issue_number, x.consolidated_into]));
+    expect(merges.get(99)).toBe(94);
+    expect(merges.get(104)).toBe(100);
+    const ids = new Set(registry.issues.map(x => x.issue_number));
+    expect(merges.size).toBe(registry.closed_consolidations.length);
+    for (const merger of registry.closed_consolidations) {
+      expect(merger.closed_as).toBe("duplicate");
+      expect(ids.has(merger.issue_number)).toBe(false);
+      expect(ids.has(merger.consolidated_into)).toBe(true);
+      expect(merger.retained_requirement.trim()).not.toBe("");
+      expect(registry.issues.find(x => x.issue_number === merger.consolidated_into)?.blocking_gate).toBe(merger.original_gate);
+      expect(roadmap).toContain(`#${merger.issue_number}`);
+      expect(roadmap).toContain(`#${merger.consolidated_into}`);
+    }
   });
   it("watches live GitHub issue creation and avoids silently missing new product issues", () => {
     expect(watchWorkflow).toContain("types: [opened, reopened, edited]");
