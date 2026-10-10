@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.6.3-draft
+**Version:** 0.6.4-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -126,16 +126,14 @@ This coordination contract controls implementation sequencing only. It does not 
 
 | First mandatory gate | Stage owner | Registered GitHub issue / disposition |
 | --- | --- | --- |
-| `D1_U1` — D1 completion | U1 guided UX | **#94** owner UAT and systematic UX repair (active) |
-| `D1_U1` — D1 completion | D1 funding verification | **#99** mortgage shortfall versus household cash (investigate; semantic correction if verified) |
+| `D1_U1` — D1 completion | U1 UX and funding reconciliation | **#94** owner UAT and full mortgage funding investigation merged from closed #99 |
 | `D2` — before stochastic R5 | D2-A retirement breadth | **#103** ordinary retirement distributions and tax/liquidity effects |
-| `R11` — before private alpha | Post-U1 investment UX | **#100** user-selected dividend reinvestment with sound cash/lot/basis semantics |
+| `R11` — before private alpha | Post-U1 investment activity | **#100** dividend reinvestment AND flexible IRA/brokerage contribution schedules (merged from closed #104) |
 | `R11` — before private alpha | T1A/T1B tax closeout | **#101** routine payroll withholding and net tax settlement |
 | `R11` — before private alpha | Tax workspace | **#102** user-facing Federal/State/Local taxes, **after #101** |
-| `R11` — before private alpha | Post-U1 personal contributions | **#104** supported flexible recurrence for bank-funded IRA/brokerage purchases |
 | `R11` — before private alpha | P1 planning/plan management | **#105** independent plan duplication and comparison after safe scenario/identity semantics are confirmed |
 
-**State reconciliation:** D1-C code was merged in PR #89 (Issue #80 closed administratively); **D1 itself remains unaccepted** until #94 UAT plus #99 reconciliation resolve. None of #100–#105 is permission to edit the currently U1-owned shared UI or to introduce a new financial formula under #94. Safe plan duplication may reuse the U1 visual pattern, but full independent cloning requires authoritative plan/scenario identity, copying, and persistence behavior; #105 owns that boundary. D2-A #103 must be ready for D2 closeout, not postponed to R11.
+**State reconciliation:** D1-C code was merged in PR #89 (Issue #80 closed administratively); **D1 itself remains unaccepted** until #94 UAT and the mortgage funding checks consolidated from #99 resolve. None of #100–#105 is permission to edit the currently U1-owned shared UI or to introduce a new financial formula under #94. Safe plan duplication may reuse the U1 visual pattern, but full independent cloning requires authoritative plan/scenario identity, copying, and persistence behavior; #105 owns that boundary. D2-A #103 must be ready for D2 closeout, not postponed to R11.
 
 The full R11 prerequisites in section 18 still apply: the register **adds tracking**, not exceptions to O1, P1, R5–R10, A1, tax-law, performance or user-validation requirements. A lightweight GitHub Action checks newly opened/reopened/edited issues (plus weekly and registry PR changes) against the stage register and fails on omissions. Before every milestone handoff, also fetch live open GitHub issues and reconcile the register; at closeout verify all required issue IDs and financial/UAT evidence. The action detects unregistered issues, not completed UAT or financial correctness. The nine historical implementation issues in the administrative queue require closure/reclassification after merged-PR review; they are not presumed unfinished product features. Agent-learning candidate issues use their separate candidate registry and do not belong to these product gates.
 
