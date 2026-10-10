@@ -159,7 +159,7 @@ export interface HouseholdDebtBalance {
   readonly principal: HouseholdMoneyReadModel;
   readonly outstandingInterest: HouseholdMoneyReadModel;
 }
-export type HouseholdLiquidityShortfallReadModel = { readonly mortgageFunding?: import("./mortgageFundingPresentation.js").MortgageFundingContext } & (
+export type HouseholdLiquidityShortfallReadModel = { readonly mortgageFunding?: import("./compiler/mortgageFundingPresentation.js").MortgageFundingContext } & (
   | {
       readonly kind: "proposal";
       readonly origin?:

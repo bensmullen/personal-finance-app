@@ -3306,7 +3306,7 @@ function HouseholdForecastVisual({
   );
 }
 
-function MortgageShortfall({ draft, funding, date, required, available, isolated = false }: { draft: PersonalDraft; funding?: import("../src/application/mortgageFundingPresentation.js").MortgageFundingContext; date: string; required: string; available: string; isolated?: boolean }) {
+function MortgageShortfall({ draft, funding, date, required, available, isolated = false }: { draft: PersonalDraft; funding?: import("../src/application/compiler/mortgageFundingPresentation.js").MortgageFundingContext; date: string; required: string; available: string; isolated?: boolean }) {
   const { reviewMortgageFunding } = useContext(FinancialResultModels);
   return <section aria-label="Mortgage funding explanation"><p>{funding ? referenceLabel(draft, "Liability", funding.liabilityId) : "Mortgage payment"} · {date.slice(0, 10)} · Required {required}; available from the evaluated funding sources {available}.</p>
     {funding && <p>Payment account: {funding.fundingAccountIds.map(id => referenceLabel(draft, "Account", id)).join(", ")}{funding.settlementPriority !== undefined && ` · Same-day mortgage order ${funding.settlementPriority}`}.</p>}
