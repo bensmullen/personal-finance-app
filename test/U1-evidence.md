@@ -21,6 +21,9 @@ come from posted Money legs, never JavaScript floating-point calculations.
   distinguishes contractual payment, scheduled amount due, actual principal
   repayment, recognized interest, extra principal and evaluated funding status.
   Posted bank purchases retain source cash account, destination holding and date.
+  The date is the actual posted instant: D1 personal purchases select an eligible
+  month from the authored schedule and execute at month close. This presentation
+  does not introduce same-day purchase execution or new recurrence semantics.
 - Money's Your Paycheck uses supported recurring household income before modeled
   employee allocations as its labeled basis. Only employee allocations from
   `payroll_income` are shown as known deductions; employer transactions, investment

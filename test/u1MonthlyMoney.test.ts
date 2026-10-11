@@ -18,7 +18,9 @@ describe("U1 monthly committed evidence", () => {
     expect(month.lines.filter(line => line.kind === "employee")).toHaveLength(2);
     expect(month.lines.some(line => line.holdingIds.includes(integratedIds.match))).toBe(false);
     const ira = month.lines.filter(line => line.kind === "transfer" && line.holdingIds.includes(integratedIds.ira));
-    expect(ira).toMatchObject([{ amount: "500", accountIds: [golden.savings], date: "2026-01-10T00:00:00.000Z" }]);
+    // D1 uses the authored date to select the eligible month; its existing
+    // investment purchase contract posts at that month's closing instant.
+    expect(ira).toMatchObject([{ amount: "500", accountIds: [golden.savings], date: "2026-01-31T23:59:59.999Z" }]);
     const mortgage = month.mortgages.find(item => item.liabilityId === golden.mortgage)!;
     expect(mortgage.fundingAccountIds).toEqual([golden.checking]);
     expect(money(mortgage.principal).plus(money(mortgage.interest)).amount.toString()).toBe(mortgage.payment);
