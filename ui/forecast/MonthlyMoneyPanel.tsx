@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { inspectMonthlyMoney } from "../../src/application/monthlyMoney.js";
 import type { PersonalHouseholdForecastReadModel } from "../../src/application/householdProjection.js";
 import type { PersonalDraft } from "../../src/application/personalMvp.js";
-import { formatExactMoney, referenceLabel } from "../entityPresentation.js";
+import { formatExactMoney, referenceLabel, objectEntries, objectId } from "../entityPresentation.js";
 import { FieldShell } from "../authoring/FieldShell.js";
 
 type Detail = ReturnType<typeof inspectMonthlyMoney>;
@@ -32,7 +32,7 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
       {!!points.length && <FieldShell fieldKey="moneyMonth" required><select aria-label={`${mode} forecast month`} value={point?.periodStart.slice(0, 7) ?? ""} onChange={event => { setSelected(event.target.value); setError(""); }}>{points.map(value => <option key={value.periodStart} value={value.periodStart.slice(0, 7)}>{value.periodStart.slice(0, 7)}</option>)}</select></FieldShell>}
     </div>
     {!current || !point ? <><p>{!point ? "This breakdown needs a household forecast." : "These results need an update before reviewing monthly payments."}</p>
-      {mode !== "paycheck" && draft.objects.Liability?.map(value => value && typeof value === "object" && !Array.isArray(value) && value.liability_type === "mortgage" && typeof value.liability_id === "string" ? <p key={value.liability_id}>{referenceLabel(draft, "Liability", value.liability_id)} · Payment not available. Review contractual terms and payment funding in Forecast setup.</p> : null)}
+      {mode !== "paycheck" && objectEntries(draft, "Liability").filter(value => value.liability_type === "mortgage").map(value => <p key={objectId("Liability", value)}>{referenceLabel(draft, "Liability", objectId("Liability", value))} · Payment not available. Review contractual terms and payment funding in Forecast setup.</p>)}
       <button type="button" onClick={setup}>Review forecast setup</button></> : <>
       <small>Household · modeled forecast · {point.periodStart.slice(0, 10)} to {point.periodEnd.slice(0, 10)} (exclusive)</small>
       {!detail && <button type="button" onClick={inspect}>Review selected month</button>}
@@ -49,7 +49,7 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
           <ul className="paycheck-legend"><li>● Employee workplace contributions · {amount(detail.employee)}{Number(detail.income) > 0 && ` (${(Number(detail.employee) / Number(detail.income) * 100).toFixed(1)}%)`}</li><li><button type="button" onClick={setup}>▧ Not yet reconciled · {amount(detail.unreconciled)}{Number(detail.income) > 0 && ` (${(Number(detail.unreconciled) / Number(detail.income) * 100).toFixed(1)}%)`}</button></li></ul>
           <small>Modeled bank deposits: {amount(detail.deposited)}. This excludes unmodeled withholding and is not an after-tax paycheck estimate.</small>
           <button type="button" onClick={setup}>Review tax & payroll setup</button>
-          {draft.objects.Income?.map(value => value && typeof value === "object" && !Array.isArray(value) && typeof value.income_id === "string" ? <button key={value.income_id} type="button" onClick={() => review("Income", value.income_id as string)}>{referenceLabel(draft, "Income", value.income_id)}</button> : null)}
+          {objectEntries(draft, "Income").map(value => <button key={objectId("Income", value)} type="button" onClick={() => review("Income", objectId("Income", value))}>{referenceLabel(draft, "Income", objectId("Income", value))}</button>)}
           {detail.lines.filter(line => line.kind === "employee").map(line => <p key={line.id}>Employee contribution · {amount(line.amount)} · {line.date.slice(0, 10)} {line.holdingIds.map(holdingLink)}</p>)}
         </>}
         <details open={mode !== "paycheck"}><summary>Inspect modeled cash uses</summary>

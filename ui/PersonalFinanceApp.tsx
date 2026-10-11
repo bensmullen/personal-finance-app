@@ -3217,7 +3217,7 @@ function HouseholdPlan({
 }
 
 function ForecastCutoff({ forecast, draft }: { forecast: Extract<PersonalHouseholdForecastReadModel, { status: "completed" | "incomplete" }>; draft: PersonalDraft }) {
-  const diagnostic = forecast.diagnostics.find(item => item.entityType !== "tax_capability") ?? forecast.diagnostics[0];
+  const diagnostic = forecast.diagnostics.find(item => item.severity === "error") ?? forecast.diagnostics.find(item => item.entityType !== "tax_capability") ?? forecast.diagnostics[0];
   const summary = diagnostic ? diagnosticSummary(diagnostic, draft) : undefined;
   return <section className="stress" role="alert" aria-label="Forecast stopped early">
     <strong>Last modeled boundary: {(forecast.reachedThrough ?? forecast.requestedHorizon.start).slice(0, 10)} (exclusive).</strong>
