@@ -10,8 +10,8 @@ import { diagnosticSummary } from "../ui/authoring/diagnosticSummary.js";
 describe("U1 monthly committed evidence", () => {
   it("excludes employer assets from employee pay and never attributes savings-funded purchases to income", () => {
     const model = createD1IntegratedHousehold();
-    const result = runPersonalHouseholdForecast(model, { compiler: d1IntegratedCompilerRequest(), asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity: "u1-monthly-evidence" });
-    if (result.status === "unavailable") throw new Error("Integrated household must have monthly evidence");
+    const result = runPersonalHouseholdForecast(model, { compiler: d1IntegratedCompilerRequest(), asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity: "d1940000-0000-4000-8000-000000000094" });
+    if (result.status === "unavailable") throw new Error(`Integrated household must have monthly evidence: ${JSON.stringify(result.diagnostics)}`);
     const before = JSON.stringify(result);
     const month = inspectMonthlyMoney(result.points[0]!);
     expect(month).toMatchObject({ income: "9000", employee: "550", deposited: "8450", unreconciled: "8450", status: "incomplete", withholding: "not_modeled" });
@@ -41,7 +41,7 @@ describe("U1 monthly committed evidence", () => {
     expect(diagnosticSummary({ code: "FORECAST_HORIZON_INVALID" }).remedy).toContain("month-start");
     expect(diagnosticSummary({ code: "PFA-TAX-009", entityType: "tax_capability", category: "payment_funding" }).remedy).toContain("cash accounts");
     expect(diagnosticSummary({ code: "PFA-TAX-009", entityType: "tax_capability", category: "local_residence_jurisdiction", jurisdiction: "US-NY" }).remedy).toContain("cannot be repaired");
-    expect(diagnosticSummary({ code: "UNSUPPORTED_NEW_CAPABILITY" }).remedy).toContain("future capability");
+    expect(diagnosticSummary({ code: "UNSUPPORTED_NEW_CAPABILITY" }).remedy).toContain("no supported editor repair");
     expect(diagnosticSummary({ code: "RULE_INPUT_INVALID", message: "HISTORICAL_SCOPE_ERROR" }).problem).not.toContain("HISTORICAL_SCOPE_ERROR");
   });
 });
