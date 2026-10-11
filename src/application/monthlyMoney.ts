@@ -54,9 +54,11 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint) {
   const loans = basis.replay.kernel.executable.liabilityInput?.loans ?? [];
   const mortgages = replay.periods.flatMap(period => (period.liability?.liabilities ?? []).map(item => {
     const loan = loans.find(value => value.id === item.loanId);
+    const paid = loan ? period.transactions.filter(tx => ["mortgage_principal_payment", "mortgage_interest_settlement"].includes(tx.type) && tx.date === item.scheduledAt && tx.legs.some(leg => leg.type === "liability" && [loan.principalLiabilityId, loan.interestPayableLiabilityId].includes(leg.entityId)))
+      .flatMap(tx => tx.legs).reduce((total, leg) => leg.type === "cash" && leg.posting === "credit" ? total.plus(leg.amount) : total, Money.zero(currency)) : undefined;
     return { liabilityId: String(loan?.principalLiabilityId ?? ""), date: String(item.scheduledAt),
       fundingAccountIds: loan?.fundingPolicy.orderedSources.map(value => String(value.accountId)) ?? [],
-      contractual: item.contractualPayment.amount.toString(), payment: item.scheduledPayment.amount.toString(),
+      contractual: item.contractualPayment.amount.toString(), payment: item.scheduledPayment.amount.toString(), paid: paid?.amount.toString(),
       principal: item.scheduledPrincipalPaid.amount.toString(), interest: item.currentInterest.amount.toString(),
       extra: item.extraPrincipalPaid.amount.toString(), status: item.scheduledFundingStatus === "fully_satisfied" ? "Paid" : "Not fully funded" };
   }));

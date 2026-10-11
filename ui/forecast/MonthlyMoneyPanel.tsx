@@ -55,8 +55,9 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
         <details open={mode !== "paycheck"}><summary>Inspect modeled cash uses</summary>
         <div aria-label="Mortgage cash payments">{!detail.mortgages.length && <p>No mortgage payment was scheduled in this modeled month.</p>}{detail.mortgages.map(item => <article key={`${item.liabilityId}:${item.date}`}>
           <h3>{referenceLabel(draft, "Liability", item.liabilityId)}</h3>
-          <p><strong>{amount(item.contractual)} / month</strong> · contractual payment · {item.date.slice(0, 10)}</p>
-          <p>Scheduled payment due {amount(item.payment)} · principal repaid {amount(item.principal)} · interest recognized {amount(item.interest)} · extra principal {amount(item.extra)}</p>
+          <p><strong>{amount(item.payment)} / month</strong> · scheduled payment due · {item.date.slice(0, 10)}</p>
+          <small>Ordinary contractual payment: {amount(item.contractual)}. Cash actually paid: {item.paid === undefined ? "Not available" : amount(item.paid)}.</small>
+          <p>Principal repaid {amount(item.principal)} · interest recognized {amount(item.interest)} · extra principal paid separately {amount(item.extra)}</p>
           <small>Principal repayment reduces debt; only interest is expense. Funding: {item.status}. Escrow additions are not modeled.</small>
           {item.fundingAccountIds.map(id => <button key={id} type="button" onClick={() => review("Account", id)}>{referenceLabel(draft, "Account", id)}</button>)}
           <button type="button" onClick={() => review("Liability", item.liabilityId)}>Review mortgage</button>

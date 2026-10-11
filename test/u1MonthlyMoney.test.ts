@@ -22,6 +22,7 @@ describe("U1 monthly committed evidence", () => {
     const mortgage = month.mortgages.find(item => item.liabilityId === golden.mortgage)!;
     expect(mortgage.fundingAccountIds).toEqual([golden.checking]);
     expect(money(mortgage.principal).plus(money(mortgage.interest)).amount.toString()).toBe(mortgage.payment);
+    expect(mortgage.paid).toBe(mortgage.payment);
     expect(month.mortgages).toHaveLength(1);
     expect(JSON.stringify(result)).toBe(before);
     expect(inspectMonthlyMoney(result.points[0]!)).toEqual(month);
