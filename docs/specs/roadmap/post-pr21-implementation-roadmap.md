@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.6.5-draft
+**Version:** 0.6.6-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -132,7 +132,7 @@ This coordination contract controls implementation sequencing only. It does not 
 | `R11` — before private alpha | T1A/T1B tax closeout | **#101** routine payroll withholding and net tax settlement |
 | `R11` — before private alpha | Tax workspace | **#102** user-facing Federal/State/Local taxes, **after #101** |
 | `R11` — before private alpha | P1 planning/plan management | **#105** independent plan duplication and comparison after safe scenario/identity semantics are confirmed |
-| `R11` — before private alpha | O1 guided exploration | **#108** seven rich synthetic alpha households, resettable one-click demos, reconciled history/holdings and explicitly gated unsupported domain outputs |
+| `R11` — before private alpha | O1 guided exploration | **#108** eight rich linked-family synthetic households, 4+ independently saved plans/persona, resettable demos, reconciled finances and capability-gated outputs |
 
 **State reconciliation:** D1-C code was merged in PR #89 (Issue #80 closed administratively); **D1 itself remains unaccepted** until #94 UAT and the mortgage funding checks consolidated from #99 resolve. None of #100–#105 is permission to edit the currently U1-owned shared UI or to introduce a new financial formula under #94. Safe plan duplication may reuse the U1 visual pattern, but full independent cloning requires authoritative plan/scenario identity, copying, and persistence behavior; #105 owns that boundary. D2-A #103 must be ready for D2 closeout, not postponed to R11.
 
@@ -392,7 +392,7 @@ O1 SHALL run representative onboarding dry runs before R11 and use the results t
 
 A production Plaid/bank-aggregation integration is not required for O1 or private alpha if the measured assisted workflow meets the target.
 
-**Alpha exploration dependency (#108):** maintain seven synthetic, heavily populated example households as a separate R11 demo-library obligation. Its non-normative authored fixture blueprints live in `docs/alpha/household-blueprints.md` with a monthly expense category matrix and fixture acceptance guidance. Implementation of the seven one-click sample experiences follows the audited relevant D1/D2 semantics and reuses the O1 candidate/authoritative-model boundary. Multi-state tax, rental/estate law and incomplete asset domains must show capability limitations, not false complete outputs. Commercial account aggregation remains optional; a future provider evaluation must not stall the demo library.
+**Alpha exploration dependency (#108):** maintain eight synthetic, heavily populated, family-linked example households as a separate R11 demo-library obligation. Its non-normative authored fixture blueprints live in `docs/alpha/household-blueprints.md` with a monthly expense category matrix and fixture acceptance guidance. Implementation of the eight one-click multi-plan sample experiences follows the audited relevant D1/D2 semantics and reuses the O1 candidate/authoritative-model boundary. Multi-state tax, rental/estate law and incomplete asset domains must show capability limitations, not false complete outputs. Commercial account aggregation remains optional; a future provider evaluation must not stall the demo library. Direct read-only linking is the preferred eventual default for personal-data onboarding; use a narrow evidence-driven CSV/statement fallback, not a universal importer. See `docs/alpha/account-connectivity-evaluation.md`. H01 includes extended adult children/partners/grandchildren with separate economic ownership; H02 includes all six family members; H03 has explicit zero-vs-two-children saved plans; H08 is a Denver couple approaching retirement with a dependent adult child and exactly $5m opening net worth, with long-term support, retirement timing and legal/benefits capability gaps flagged. The sample library does not bypass #105 independent plan semantics.
 
 **User validation:** required. Closeout should observe actual onboarding behavior rather than only reviewing screens. The user should verify that the workflow feels substantially faster than manual field-by-field setup and that extracted information is easy to review/correct.
 
@@ -588,7 +588,7 @@ Before private-alpha infrastructure:
 - the assisted-input architecture preserves factual-versus-planning semantic categories, candidate review, provenance, ambiguity handling, idempotency, and the privacy boundary required by PFA-ONB;
 - performance, convergence, memory, and per-run compute-cost budgets are documented and met for supported realistic use, with explicit cost-per-rerun measurement/estimation for every enabled stochastic execution placement;
 - Golden, realistic-household, and computationally complex/stress fixtures pass their applicable correctness/performance checks and their coverage inventories show the supported product is exercised materially beyond the simple Golden Household;
-- **#108** seven intentionally diverse, synthetic, prepopulated alpha households are independently selectable/resettable with zero manual entry; their available cash flows, liabilities, holdings and supported forecasts reconcile, and advanced unsupported financial/tax outputs are explicitly gated;
+- **#108** eight intentionally diverse, synthetic, prepopulated alpha households are independently selectable/resettable with zero manual entry and at least four genuine independently saved comparable alternative plans per model (following #105); their available cash flows, liabilities, holdings and supported forecasts reconcile, and advanced unsupported financial/tax outputs are explicitly gated;
 - D1 is complete on merged main: every original PFA-DET deterministic use case has an independently specified truth-table test, the combined realistic household reconciles, source-of-funds constraints are enforced, **U1 guided UX is audited/merged, and uncoached product-owner D1 UAT is accepted**; completion of Issue #70 or PR #89 semantic merge alone does not satisfy this gate;
 - D2 is complete on merged main: Social Security/pensions, expanded retirement plans and Roth-conversion paths, common consumer debt, Medicare/health premiums/FSA, TIPS/EE bonds, and 529 plans/rollovers have independent deterministic evidence plus D2-D combined-household reconciliation and accepted UAT;
 - current-state UI is responsive;
