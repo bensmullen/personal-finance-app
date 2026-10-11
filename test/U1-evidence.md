@@ -55,7 +55,12 @@ The new monthly-view browser journey passed; four existing browser assertions
 failed on relocated-page navigation or diagnostic visibility/duplication. The
 follow-up scopes assertions to visible primary diagnostics, restores the forecast
 page before inspecting its table, and preserves the visible volatility cause.
-Those corrections await latest-head CI. Independent audit, owner-specific funding
+Those corrections passed GitHub Actions [run 38101071410](https://github.com/bensmullen/personal-finance-app/actions/runs/38101071410)
+at code revision `ecdc064`: 1,047/1,047 unit tests across 63 files, all 55 browser
+tests, build, typecheck, architecture, specification, tooling and verification-plan.
+The browser evidence includes desktop/narrow geometry and unexpected console/page
+error assertions; it does not establish independent visual or uncoached acceptance.
+The following evidence-only commit changes no executable code. Independent audit, owner-specific funding
 reproduction if still reported, and uncoached owner UAT remain pending. Debt
 monthly evidence currently requires explicit Review selected month after a
 current household forecast; unavailable/stale results never display guessed
