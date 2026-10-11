@@ -49,8 +49,13 @@ come from posted Money legs, never JavaScript floating-point calculations.
   geometry, account editor focus, incomplete coverage and console assertions.
   Existing contribution/history browser journeys follow the relocated controls.
 
-No follow-up checks have been run locally. These are **authored regressions, not
-passing evidence**. Latest-head CI, independent audit, owner-specific funding
+No follow-up checks have been run locally. GitHub CI at `b1066c7` passed all
+1,047 unit tests, build, typecheck, architecture, specification and tooling checks.
+The new monthly-view browser journey passed; four existing browser assertions
+failed on relocated-page navigation or diagnostic visibility/duplication. The
+follow-up scopes assertions to visible primary diagnostics, restores the forecast
+page before inspecting its table, and preserves the visible volatility cause.
+Those corrections await latest-head CI. Independent audit, owner-specific funding
 reproduction if still reported, and uncoached owner UAT remain pending. Debt
 monthly evidence currently requires explicit Review selected month after a
 current household forecast; unavailable/stale results never display guessed

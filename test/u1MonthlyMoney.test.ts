@@ -41,6 +41,7 @@ describe("U1 monthly committed evidence", () => {
   it("presents coverage, dates and uneditable capabilities with a problem and honest remedy", () => {
     expect(diagnosticSummary({ code: "RULE_INPUT_INVALID", message: "Contribution facts do not cover this UTC year" })).toMatchObject({ problem: expect.stringContaining("contribution-year coverage"), remedy: expect.stringContaining("before that boundary") });
     expect(diagnosticSummary({ code: "FORECAST_HORIZON_INVALID" }).remedy).toContain("month-start");
+    expect(diagnosticSummary({ code: "INVESTMENT_STOCHASTIC_RETURN_UNSUPPORTED" })).toMatchObject({ problem: expect.stringContaining("future probabilistic forecasting"), remedy: expect.stringContaining("clear the stored Volatility") });
     expect(diagnosticSummary({ code: "PFA-TAX-009", entityType: "tax_capability", category: "payment_funding" }).remedy).toContain("cash accounts");
     expect(diagnosticSummary({ code: "PFA-TAX-009", entityType: "tax_capability", category: "local_residence_jurisdiction", jurisdiction: "US-NY" }).remedy).toContain("cannot be repaired");
     expect(diagnosticSummary({ code: "UNSUPPORTED_NEW_CAPABILITY" }).remedy).toContain("no supported editor repair");

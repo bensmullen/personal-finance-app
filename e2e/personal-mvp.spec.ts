@@ -230,6 +230,9 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   const roots = await status.locator("[data-diagnostic-root]").evaluateAll(nodes => nodes.map(node => node.getAttribute("data-diagnostic-root")));
   expect(new Set(roots).size).toBe(roots.length);
   await expect(page.getByRole("button", { name: "Update forecast", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  await openAuthoringSections(page);
   await showHouseholdDetails(page);
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible();
 
@@ -907,7 +910,7 @@ for (const [field, value, code, message] of [
     await standalone.getByLabel("Forecast scope", { exact: true }).selectOption("investments");
     await standalone.getByLabel(/^(Investment owner|Debt owner)$/).selectOption({ label: "Taylor Example" });
     await standalone.getByRole("button", { name: "Run investments forecast" }).click();
-    await expect(standalone.getByText(new RegExp(message))).toBeVisible();
+    await expect(standalone.locator("[data-diagnostic-root]").getByText(new RegExp(message))).toBeVisible();
     expect(await standalone.innerText()).not.toMatch(rawUuid);
     expect(await standalone.innerText()).not.toMatch(/rate-basis contract|VS3|INVESTMENT_.*UNSUPPORTED/);
     await standalone.getByText("Technical diagnostic details", { exact: true }).click();
@@ -943,8 +946,8 @@ test("R4 UAT preserves incompatible expense funding with actionable diagnostics"
   await openPlanDetails(page);
   const standalone = page.getByRole("region", { name: "Standalone forecast drill-down" });
   await standalone.getByRole("button", { name: "Run cash flow forecast" }).click();
-  await expect(standalone.getByText(/Living costs uses Workplace retirement/)).toBeVisible();
-  await expect(standalone).toContainText("checking, savings, or cash");
+  await expect(standalone.locator("[data-diagnostic-root]").getByText(/Living costs uses Workplace retirement/)).toBeVisible();
+  await expect(standalone.locator("[data-diagnostic-root]")).toContainText("checking, savings, or cash");
   expect(await standalone.innerText()).not.toMatch(rawUuid);
   expect(await standalone.innerText()).not.toMatch(/valid non-cash payment Account|PAYMENT_ACCOUNT_TYPE_UNSUPPORTED/);
   await standalone.getByText("Technical diagnostic details", { exact: true }).click();

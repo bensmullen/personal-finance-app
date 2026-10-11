@@ -6,6 +6,9 @@ export function diagnosticSummary(diagnostic: DisplayDiagnostic, model?: Persona
   const explanation = forecastDiagnosticMessage(diagnostic, model);
   const sentences = explanation.split(/(?<=[.!?])\s+/);
   const code = diagnostic.code ?? "";
+  if (code === "INVESTMENT_STOCHASTIC_RETURN_UNSUPPORTED") return {
+    problem: `${sentences[0]} Volatility belongs to future probabilistic forecasting.`,
+    remedy: sentences.find(sentence => sentence.startsWith("Under "))!, explanation };
   if (code === "RULE_INPUT_INVALID" && /Contribution facts do not cover|CONTRIBUTION_LAW_YEAR_UNAVAILABLE/.test(diagnostic.message ?? "")) return {
     problem: "The forecast reached the end of supported contribution-year coverage.",
     remedy: "Confirm supported future contribution facts and projected law, or end the simulation before that boundary.", explanation };
