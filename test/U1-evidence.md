@@ -1,5 +1,58 @@
 # U1 implementation evidence — issue #94
 
+## Remaining owner requests: implementation inventory
+
+| Surface | Common | Derived / read-only | Boundary |
+| --- | --- | --- | --- |
+| Money: Your Paycheck | Calendar month, household scope, review month, source links | Posted employee allocations and gross recurring income; unreconciled coverage | Withholding and income attribution unavailable; never label remainder Leftover |
+| Debt / Spending | Month, named mortgage, payment account, review funding | Contractual payment, actual principal/interest/extra principal from the same replay | No escrow invention, duplicate payment or principal expense |
+| Investments & Retirement | Account-context contribution action and existing editor | Saved activity summary | Existing personal/payroll adapters only |
+| Current Plan | Read-only activity and edit links | Existing saved contribution plans | No competing contribution editor |
+| Forecast cutoff | Modeled boundary, concise cause/remedy, affected records | Existing diagnostic targets and stoppedAt | Unsupported capability has no invented editor repair |
+
+This inventory precedes the follow-up edits. Month selection is presentation-only;
+replay is requested explicitly and cached per immutable result/month. Dollar values
+come from posted Money legs, never JavaScript floating-point calculations.
+
+### Owner requests 11–15: current follow-up evidence and limits
+
+- `src/application/monthlyMoney.ts` reads one committed month's immutable replay
+  and leaves the result untouched. Debt and Spending share this adapter. It
+  distinguishes contractual payment, scheduled amount due, actual principal
+  repayment, recognized interest, extra principal and evaluated funding status.
+  Posted bank purchases retain source cash account, destination holding and date.
+- Money's Your Paycheck uses supported recurring household income before modeled
+  employee allocations as its labeled basis. Only employee allocations from
+  `payroll_income` are shown as known deductions; employer transactions, investment
+  transfers and mortgage payments cannot reduce that denominator twice. The rest
+  is explicitly **not yet reconciled**, never Leftover. Separate cash-use detail
+  does not attribute savings, benefits, refunds or investment proceeds to pay.
+- Withholding is explicitly not modeled; annual tax liability is never spread
+  across months. No fully reconciled paycheck breakdown, actual after-tax pay or
+  income-funded allocation is claimed. This is the issue's grounded/incomplete
+  fallback pending the missing payroll/attribution contracts and #101.
+- Contribution editors and annual capacity/history now live in Investments &
+  Retirement. Current Plan shows saved activity and account-context edit links.
+  Existing adapter, persistence and financial semantics remain authoritative.
+- Shared diagnostic presentation bounds the default problem/remedy and preserves
+  the full mapped explanation and machine evidence in Technical details. Cutoff
+  displays the exclusive last modeled boundary; it does not label the first
+  unmodeled day as successfully forecast. Existing entity repair routes remain.
+- `test/u1MonthlyMoney.test.ts` adds combined-fixture payroll, employer exclusion,
+  savings-funded IRA, one mortgage, immutable replay and month-identity assertions.
+  Browser coverage adds real navigation, matching Debt/Spending amounts, mobile
+  geometry, account editor focus, incomplete coverage and console assertions.
+  Existing contribution/history browser journeys follow the relocated controls.
+
+No follow-up checks have been run locally. These are **authored regressions, not
+passing evidence**. Latest-head CI, independent audit, owner-specific funding
+reproduction if still reported, and uncoached owner UAT remain pending. Debt
+monthly evidence currently requires explicit Review selected month after a
+current household forecast; unavailable/stale results never display guessed
+payments. Full normal-user diagnostic coverage, cutoff attribution across all
+capabilities, and the final visual density must still pass the owner gates.
+PR #98 stays draft; Issue #94 and D1 remain open.
+
 ## Owner follow-up inventory (2026-10-10; UAT not accepted)
 
 | Surface | Common | Advanced | Technical / preserved | Dependencies |

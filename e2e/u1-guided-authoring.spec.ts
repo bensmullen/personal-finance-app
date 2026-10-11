@@ -45,6 +45,50 @@ const assertContractAndGeometry = async (page: Page, width: number) => {
   }
 };
 
+test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and contribution navigation", async ({ page }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Use synthetic example" }).click();
+  await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  await navigate(page, "Money", "Cash Flow");
+  const pay = page.getByRole("region", { name: "Your Paycheck", exact: true });
+  await pay.getByRole("button", { name: "Review selected month" }).click();
+  await expect(pay).toContainText("Incomplete allocation");
+  await expect(pay).toContainText("not leftover pay");
+  await expect(pay.getByRole("img")).toHaveAttribute("aria-label", /not yet reconciled.*total/i);
+  await pay.getByLabel("paycheck forecast month").selectOption("2026-02");
+  await pay.getByRole("button", { name: "Review selected month" }).click();
+  await expect(pay).toContainText("2026-02-01 to 2026-03-01");
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const bar = await pay.getByRole("img").boundingBox();
+    expect(bar!.width).toBeGreaterThan(200);
+    expect(bar!.x + bar!.width).toBeLessThanOrEqual(width);
+    await assertContractAndGeometry(page, width);
+  }
+  await navigate(page, "Net Worth", "Debt");
+  const debt = page.getByRole("region", { name: "Monthly mortgage payments", exact: true });
+  await debt.getByRole("button", { name: "Review selected month" }).click();
+  const payment = await debt.locator('[aria-label="Mortgage cash payments"]').innerText();
+  await expect(debt).toContainText("contractual payment");
+  await navigate(page, "Money", "Spending");
+  const spending = page.getByRole("region", { name: "Housing payments and transfers", exact: true });
+  await spending.getByRole("button", { name: "Review selected month" }).click();
+  expect(await spending.locator('[aria-label="Mortgage cash payments"]').innerText()).toBe(payment);
+  await expect(spending).toContainText("Principal repayment reduces debt");
+  await navigate(page, "Plan", "Current Plan");
+  await expect(page.getByRole("region", { name: "Saved investment purchases" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Saved payroll contributions" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Review or edit contributions" }).click();
+  await expect(page.locator("#investment-contribution-summary")).toBeFocused();
+  await page.getByRole("button", { name: "Manage contributions to RETIREMENT-DEMO", exact: true }).first().click();
+  await expect(page.getByRole("region", { name: "Saved payroll contributions" }).getByLabel("Payroll destination", { exact: true })).toBeFocused();
+  expect(errors).toEqual([]);
+});
+
 test("U1 normal navigation, staged salary, direct repair, mortgage and horizon guidance", async ({ page }) => {
   test.setTimeout(120_000);
   const errors: string[] = [];
@@ -192,7 +236,7 @@ test("Owner repair: historical scope and prior YTD save work in one session with
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   await page.goto("/"); await page.getByRole("button", { name: "Use synthetic example" }).click();
-  await navigate(page, "Plan", "Current Plan"); await open(page, "Contributions already made this year");
+  await navigate(page, "Net Worth", "Investments & retirement"); await open(page, "Contributions already made this year");
   const usage = page.getByRole("region", { name: "Prior year-to-date contributions" });
   await usage.getByLabel("Historical holding", { exact: true }).selectOption({ label: "RETIREMENT-DEMO" });
   await usage.getByLabel("Employer / plan group", { exact: true }).fill("Example employer");
@@ -220,7 +264,7 @@ test("Owner repair: historical scope and prior YTD save work in one session with
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText(/Canonical model saved to this browser/)).toBeVisible();
   await page.reload(); await page.getByRole("button", { name: "Load saved model", exact: true }).click();
-  await navigate(page, "Plan", "Current Plan"); await open(page, "Contributions already made this year");
+  await navigate(page, "Net Worth", "Investments & retirement"); await open(page, "Contributions already made this year");
   await expect(usage.getByLabel("YTD forecast boundary", { exact: true })).toHaveValue("2026-07-01");
   await expect(totals.first()).toHaveValue("100");
   await open(usage, "Saved prior usage"); await expect(usage).toContainText("100 USD");

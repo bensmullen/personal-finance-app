@@ -10,6 +10,7 @@ export interface FinancialField {
 }
 type Row = readonly [string, string, string, Format, string, string, Disclosure?, (readonly string[])?];
 const rows: readonly Row[] = [
+  ["moneyMonth", "Forecast month", "Calendar month of committed household activity to inspect.", "choice", "calendar month", "2026-01", "common", ["simulationStart", "simulationEnd"]],
   ["setupName", "Household name", "Name identifying the household in your plan.", "text", "name", "My household"],
   ["setupIncome", "Monthly income", "Monthly household income in the initial guided cash-flow model.", "money", "USD / month", "6000.00"],
   ["setupCash", "Opening cash balance", "Cash held at the opening position, not new income.", "money", "USD", "5000.00"],

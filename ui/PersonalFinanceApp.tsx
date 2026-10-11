@@ -36,6 +36,7 @@ import { GuidedFields } from "./authoring/GuidedFields.js";
 import { FinancialSection, focusRepair, FinancialInput, commitAtControl } from "./authoring/FieldShell.js";
 import { ScheduledActivity } from "./authoring/ScheduledActivity.js";
 import { diagnosticTargets, exactDiagnosticTargets, type DiagnosticTarget } from "./authoring/diagnosticTargets.js";
+import { diagnosticSummary } from "./authoring/diagnosticSummary.js";
 import {
   createGoldenHouseholdExampleDraft,
   editPersonalRetirementDate,
@@ -110,6 +111,7 @@ import { DomainMechanicsPanel } from "./forecast/DomainMechanicsPanel.js";
 import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, groupDiagnostics, isCashFlowPaymentAccount, type NetWorthSection } from "./entityPresentation.js";
 import { calculationFingerprint } from "../src/application/interactiveForecast.js";
 import { HouseholdChart } from "./forecast/HouseholdChart.js";
+import { MonthlyMoneyPanel } from "./forecast/MonthlyMoneyPanel.js";
 import { ForecastDetails, LazyExplanation, ExplanationCache } from "./forecast/details.js";
 import { ResultExplanationCache } from "./forecast/explanations.js";
 import type { ForecastView } from "./forecast/controller.js";
@@ -117,6 +119,7 @@ import type { ForecastView } from "./forecast/controller.js";
 type FinancialExplanation = ReturnType<typeof resolveHouseholdExplanation>;
 const FinancialResultModels = createContext<{ model?: PersonalDraft; baseline?: ForecastView; comparison?: ForecastView;
   reviewTarget?: (target: DiagnosticTarget) => void; reviewMortgageFunding?: (liabilityId: string) => void; importCorrection?: () => void;
+  reviewContributions?: (investmentId?: string, kind?: "personal" | "payroll") => void;
   explanations?: { baseline: ResultExplanationCache<FinancialExplanation>; comparison: ResultExplanationCache<FinancialExplanation> } }>({});
 
 type Primary = "Overview" | "Money" | "Net Worth" | "Plan" | "Settings";
@@ -665,7 +668,7 @@ export function PersonalFinanceApp() {
       const setup = document.getElementById("forecast-setup");
       const control = repair?.target === "taxSetup"
         ? setup?.querySelector<HTMLElement>('[data-tax-setup] [aria-invalid="true"]') ?? setup?.querySelector<HTMLElement>('[data-tax-setup] input, [data-tax-setup] select')
-        : repair ? setup?.querySelector<HTMLElement>(`[data-repair="${CSS.escape(repair.target)}"]`) : setup;
+        : repair ? document.querySelector<HTMLElement>(`[data-repair="${CSS.escape(repair.target)}"]`) : setup;
       focusRepair(control ?? setup);
     });
   };
@@ -716,10 +719,15 @@ export function PersonalFinanceApp() {
 
   return (
     <FinancialResultModels.Provider value={{ model: draft, baseline: interactive.baseline, comparison: interactive.comparison, explanations,
+      reviewContributions: (investmentId, kind) => {
+        setContributionTarget(investmentId && kind ? { investmentId, kind } : undefined);
+        navigate("Net Worth"); setSubnav("Investments & retirement");
+        requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>(investmentId && kind ? `#${kind === "personal" ? "personal-contributions" : "payroll-contributions"} select` : "#investment-contribution-summary")));
+      },
       importCorrection: () => { navigate("Settings"); setSubnav("Import / Export"); },
       reviewMortgageFunding: (id) => { navigate("Plan"); setSubnav("Current Plan"); requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>(`[data-repair="${CSS.escape(`mortgage:${id}:mortgageFunding`)}"]`))); },
       reviewTarget: (target) => {
-        if (!target.objectType) { navigate("Plan"); setSubnav("Current Plan"); return; }
+        if (!target.objectType) { openForecastSetup(target.field ? { target: target.field, message: target.label } : undefined); return; }
         const location: Record<PersonalObjectType, [Primary, string]> = { Household: ["Settings", "Household & People"], Person: ["Settings", "Household & People"], Account: ["Money", "Accounts"], Income: ["Money", "Income"], Expense: ["Money", "Spending"], Investment: ["Net Worth", "Investments & retirement"], Asset: ["Net Worth", "Property & other assets"], Liability: ["Net Worth", "Debt"], Assumption: ["Plan", "Assumptions"], Scenario: ["Plan", "What If?"] };
         const [page, section] = location[target.objectType]; navigate(page); setSubnav(section);
         setEntityRepair({ objectType: target.objectType, objectId: target.id, field: target.editable ? target.field ?? "" : "", token: randomId() });
@@ -858,6 +866,7 @@ export function PersonalFinanceApp() {
           )}
           {primary === "Net Worth" && subnav === "Debt" && (
             <>
+              <MonthlyEvidence draft={draft} forecast={householdForecast} mode="debt" />
               <EditorHub
                 repairTarget={entityRepair}
                 currency={sessionSettings.baseCurrency}
@@ -883,7 +892,6 @@ export function PersonalFinanceApp() {
                 draft={draft}
                 settings={sessionSettings}
                 setSettings={setSessionSettings}
-                contributionTarget={contributionTarget}
                 setDraft={updateCanonicalModel}
                 forecast={householdForecast}
                 run={runHouseholdForecast}
@@ -1005,7 +1013,7 @@ export function PersonalFinanceApp() {
                 selectedScenarioId={effectiveHouseholdExecution?.selectedRootScenarioId}
                 onContributions={(investmentId, kind) => {
                   setContributionTarget({ investmentId, kind });
-                  navigate("Plan"); setSubnav("Current Plan");
+                  navigate("Net Worth"); setSubnav("Investments & retirement");
                   requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>(`#${kind === "personal" ? "personal-contributions" : "payroll-contributions"} select`)));
                 }}
                 draft={draft}
@@ -1014,6 +1022,16 @@ export function PersonalFinanceApp() {
                 setNotice={setNotice}
               />
             )}
+          {primary === "Money" && subnav === "Spending" && <MonthlyEvidence draft={draft} forecast={householdForecast} mode="spending" />}
+          {primary === "Net Worth" && subnav === "Investments & retirement" && <>
+            <section className="panel" id="investment-contribution-summary" tabIndex={-1}>
+              <h2>Contributions in your accounts</h2><p>Choose Manage contributions on a holding above to review its funding and future activity.</p>
+            </section>
+            <FinancialSection title="IRA & brokerage contributions" open={contributionTarget?.kind === "personal"}><PersonalPurchaseAuthoring key={`personal:${contributionTarget?.kind === "personal" ? contributionTarget.investmentId : "overview"}`} draft={draft} setDraft={updateCanonicalModel} initialInvestmentId={contributionTarget?.kind === "personal" ? contributionTarget.investmentId : undefined} /></FinancialSection>
+            <FinancialSection title="Workplace & HSA contributions" open={contributionTarget?.kind === "payroll"}><PayrollContributionAuthoring key={`payroll:${contributionTarget?.kind === "payroll" ? contributionTarget.investmentId : "overview"}`} draft={draft} setDraft={updateCanonicalModel} initialInvestmentId={contributionTarget?.kind === "payroll" ? contributionTarget.investmentId : undefined} /></FinancialSection>
+            <FinancialSection title="Contributions already made this year"><OpeningContributionUsageAuthoring draft={draft} setDraft={updateCanonicalModel} /></FinancialSection>
+            <FinancialSection title="Annual contribution allowance"><ContributionCapacityPanel draft={draft} forecast={householdForecast} /></FinancialSection>
+          </>}
           {primary === "Plan" &&
             subnav === "Life Events" &&
             !EDITORS[subnav] && (
@@ -1287,6 +1305,19 @@ function Overview({
     </>
   );
 }
+function MonthlyEvidence({ draft, forecast, mode }: { draft: PersonalDraft; forecast?: PersonalHouseholdForecastReadModel | undefined; mode: "paycheck" | "debt" | "spending" }) {
+  const models = useContext(FinancialResultModels);
+  const current = !!models.baseline && models.baseline.resultModel === draft && !models.baseline.pending && !models.baseline.stale;
+  return <MonthlyMoneyPanel draft={draft} forecast={forecast} current={current} mode={mode}
+    setup={() => models.reviewTarget?.({ id: "", type: "Forecast setup", label: "Forecast setup", editable: false })}
+    review={(type, id) => {
+      if (type === "Investment") {
+        const holding = objectEntries(draft, "Investment").find(item => item.investment_id === id);
+        const account = objectEntries(draft, "Account").find(item => item.account_id === holding?.account_id);
+        models.reviewContributions?.(id, ["traditional_401k", "roth_401k", "hsa", "hsa_investment"].includes(String(account?.account_type)) ? "payroll" : "personal");
+      } else models.reviewTarget?.({ id, type, objectType: type, label: referenceLabel(draft, type, id), editable: false });
+    }} />;
+}
 function CashFlow({
   position,
   forecast,
@@ -1315,6 +1346,7 @@ function CashFlow({
         />
         <Kpi label="Net cash flow" value={position.monthlyCashFlow?.display} />
       </section>
+      <MonthlyEvidence draft={draft} forecast={forecast} mode="paycheck" />
       <section className="panel">
         <div className="panel-head">
           <h2>Income vs spending</h2>
@@ -2708,14 +2740,18 @@ function DiagnosticList({
       {diagnostics.length === 0 ? (
         <p>The forecast is unavailable. Review the original explanation in Technical diagnostic details; no more specific editor remedy is available.</p>
       ) : (
-        summaries.map(([message, group]) => (
+        summaries.map(([_message, group]) => (
           <div key={group.key} data-diagnostic-root={group.key}>
-            <p>{message}</p>{(model ?? currentModel) && <DiagnosticReferences targets={diagnosticTargets((model ?? currentModel)!, group.diagnostic)} />}
+            <p>{diagnosticSummary(group.diagnostic, model ?? currentModel).problem}</p>
+            <p>{diagnosticSummary(group.diagnostic, model ?? currentModel).remedy}</p>
+            {(group.diagnostic.category === "payment_funding" || group.diagnostic.category === "settlement_timing") && <ForecastSetupLink target="taxSetup" />}
+            {(model ?? currentModel) && <DiagnosticReferences targets={diagnosticTargets((model ?? currentModel)!, group.diagnostic)} />}
           </div>
         ))
       )}
       <details><summary>Technical diagnostic details</summary>
         {groups.map(group => <details key={group.key}><summary>{group.diagnostic.code} · {group.diagnostic.category ?? group.diagnostic.entityType ?? "execution"} · {group.diagnostic.jurisdiction ?? "household"} · {group.occurrences} occurrences · {group.affectedOutputs.length} affected outputs</summary>
+          <p>{forecastDiagnosticMessage(group.diagnostic, model ?? currentModel)}</p>
           {(model ?? currentModel) && <DiagnosticReferences targets={diagnosticTargets((model ?? currentModel)!, group.diagnostic)} />}
           <pre>{JSON.stringify({ diagnostic: group.diagnostic, originalMessages: group.messages, affectedOutputs: group.affectedOutputs,
             recordIds: [...new Set(diagnostics.filter(item => groupDiagnostics([item])[0]?.key === group.key).map(item => item.entityId).filter(Boolean))] }, null, 2)}</pre>
@@ -2726,6 +2762,10 @@ function DiagnosticList({
   );
 }
 
+function ForecastSetupLink({ target }: { target?: string }) {
+  const { reviewTarget } = useContext(FinancialResultModels);
+  return <button type="button" onClick={() => reviewTarget?.({ id: "", type: "Forecast setup", label: "Forecast setup", ...(target ? { field: target } : {}), editable: false })}>Review forecast setup</button>;
+}
 function DiagnosticReferences({ targets }: { targets: readonly DiagnosticTarget[] }) {
   const { reviewTarget, importCorrection } = useContext(FinancialResultModels);
   if (!targets.length) return null;
@@ -3064,7 +3104,6 @@ function HouseholdPlan({
   draft,
   settings,
   setSettings,
-  contributionTarget,
   setDraft,
   forecast,
   run,
@@ -3084,7 +3123,6 @@ function HouseholdPlan({
   draft: PersonalDraft;
   settings: PersonalSessionSettings;
   setSettings: Dispatch<SetStateAction<PersonalSessionSettings>>;
-  contributionTarget?: { investmentId: string; kind: "personal" | "payroll" };
   setDraft: (draft: PersonalDraft) => void;
   forecast: PersonalHouseholdForecastReadModel | undefined;
   run: () => void;
@@ -3101,6 +3139,7 @@ function HouseholdPlan({
   setTaxSettlementSetup: (value: TaxForecastSettlementSetup) => void;
   setHouseholdExecution: (bindings?: readonly RetirementTerminationBinding[]) => void;
 }) {
+  const { reviewContributions } = useContext(FinancialResultModels);
   const accounts = objectEntries(draft, "Account");
   const incomes = objectEntries(draft, "Income");
   const events = ((draft.objects as Record<string, readonly JsonObject[]>).Event ?? []).filter((event) => event.event_type === "retirement" && event.enabled === true && event.trigger_type === "scheduled");
@@ -3145,10 +3184,10 @@ function HouseholdPlan({
       </section>
       </section>
       <RetirementDateAuthoring draft={draft} setDraft={setDraft} />
-      <FinancialSection title="IRA & brokerage contributions" open={contributionTarget?.kind === "personal"}><PersonalPurchaseAuthoring key={`personal:${contributionTarget?.investmentId ?? "overview"}`} draft={draft} setDraft={setDraft} initialInvestmentId={contributionTarget?.kind === "personal" ? contributionTarget.investmentId : undefined} /></FinancialSection>
-      <FinancialSection title="Workplace & HSA contributions" open={contributionTarget?.kind === "payroll"}><PayrollContributionAuthoring key={`payroll:${contributionTarget?.investmentId ?? "overview"}`} draft={draft} setDraft={setDraft} initialInvestmentId={contributionTarget?.kind === "payroll" ? contributionTarget.investmentId : undefined} /></FinancialSection>
-      <FinancialSection title="Contributions already made this year"><OpeningContributionUsageAuthoring draft={draft} setDraft={setDraft} /></FinancialSection>
-      <FinancialSection title="Annual contribution allowance"><ContributionCapacityPanel draft={draft} forecast={forecast} /></FinancialSection>
+      <section className="panel" aria-label="Planned contributions"><h2>Planned contributions</h2>
+        <ScheduledActivity draft={draft} onContributions={reviewContributions} />
+        <button type="button" onClick={() => reviewContributions?.()}>Review or edit contributions</button>
+      </section>
       <section className="panel">
         <div className="panel-head">
           <h2>Authoritative household forecast</h2>
@@ -3177,6 +3216,18 @@ function HouseholdPlan({
   );
 }
 
+function ForecastCutoff({ forecast, draft }: { forecast: Extract<PersonalHouseholdForecastReadModel, { status: "completed" | "incomplete" }>; draft: PersonalDraft }) {
+  const diagnostic = forecast.diagnostics.find(item => item.entityType !== "tax_capability") ?? forecast.diagnostics[0];
+  const summary = diagnostic ? diagnosticSummary(diagnostic, draft) : undefined;
+  return <section className="stress" role="alert" aria-label="Forecast stopped early">
+    <strong>Last modeled boundary: {(forecast.reachedThrough ?? forecast.requestedHorizon.start).slice(0, 10)} (exclusive).</strong>
+    <p>{summary?.problem ?? "The forecast could not model activity from the stopping date."}</p>
+    <p>{summary?.remedy ?? "Use the earlier results and retry the forecast; no specific input repair was identified."}</p>
+    {diagnostic && <DiagnosticReferences targets={diagnosticTargets(draft, diagnostic)} />}
+    {diagnostic && /HORIZON|MONTHS_MISMATCH|PROFILE|OWNER|MATURITY/.test(diagnostic.code ?? "") && <ForecastSetupLink target={/HORIZON|MONTHS_MISMATCH/.test(diagnostic.code ?? "") ? "simulationStart" : "debtOwner"} />}
+    <details><summary>Technical cutoff details</summary><pre>{JSON.stringify({ stoppedAt: forecast.stoppedAt, reachedThrough: forecast.reachedThrough, diagnostic }, null, 2)}</pre></details>
+  </section>;
+}
 function HouseholdForecastVisual({
   forecast,
   draft,
@@ -3213,11 +3264,7 @@ function HouseholdForecastVisual({
             : `Completed through ${forecast.reachedThrough?.slice(0, 10)}${forecast.status === "incomplete" ? " · Some outputs are partially modeled" : ""}`}
         </span>
       </div>
-      {forecast.stoppedAt && <section className="stress" role="alert" aria-label="Forecast stopped early">
-        <strong>The requested forecast did not complete. Results end at {forecast.stoppedAt.slice(0, 10)}.</strong>
-        <p>{forecast.diagnostics.filter(item => item.entityType !== "tax_capability").map(item => forecastDiagnosticMessage(item, financialModel)).filter((message, index, messages) => messages.indexOf(message) === index).join(" ") || "Review the forecast limitations above for the stopping dependency."}</p>
-        <p>Later dates have no modeled results. Extend verified coverage or choose a supported shorter window before relying on this plan.</p>
-      </section>}
+      {forecast.stoppedAt && <ForecastCutoff forecast={forecast} draft={financialModel} />}
       {!!forecast.projectedLaw?.length && <section className="capability" aria-label="Projected law forecast basis">
         <strong>Projected current law · forecast assumptions</strong>
         <p>From 2027-01-01, future tax and contribution outputs use nominal carry-forward where verified coverage has ended. No inflation indexing or future legislation is inferred. Future contribution eligibility and annual amounts carry forward authored plan facts; age advances by year. Later verified rules supersede projections.</p>

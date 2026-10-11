@@ -88,3 +88,13 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
   .advanced-list { grid-template-columns: 1fr; gap: 4px; }
   .advanced-list dd { margin-bottom: 12px; }
 }
+/* Monthly evidence remains readable in the same card at narrow widths. */
+.monthly-money .panel-head { flex-wrap: wrap; gap: 1rem; }
+.monthly-money label { min-width: 10rem; max-width: 100%; }
+.monthly-money article { padding-block: 1rem; border-top: 1px solid #dce4df; }
+.monthly-money button { max-width: 100%; white-space: normal; }
+.paycheck-bar { display: flex; height: 1.5rem; width: 100%; overflow: hidden; border-radius: .5rem; margin-block: .75rem; }
+.paycheck-bar span { min-width: 0; flex-basis: 0; }
+.paycheck-employee { background: #376b84; }
+.paycheck-unreconciled { background: repeating-linear-gradient(135deg, #d9e0e4, #d9e0e4 6px, #a9b6be 6px, #a9b6be 8px); }
+.paycheck-legend { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; list-style: none; padding: 0; }

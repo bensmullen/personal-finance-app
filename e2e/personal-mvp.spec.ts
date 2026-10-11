@@ -34,6 +34,11 @@ const loadExample = async (page: import("@playwright/test").Page) => {
 };
 
 
+const openContributions = async (page: import("@playwright/test").Page) => {
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
+  await openAuthoringSections(page);
+};
 const openAuthoringSections = async (page: import("@playwright/test").Page) => {
   for (const title of ["IRA & brokerage contributions", "Workplace & HSA contributions", "Contributions already made this year", "Annual contribution allowance", "Investment activity & extra mortgage payments", "Debt & mortgage", "Investments", "Tax payments & refunds", "Employer vesting"]) {
     const summary = page.locator("summary").filter({ hasText: title }).filter({ hasNotText: "Help for" }).first();
@@ -219,6 +224,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
   await expect(status).not.toHaveAttribute("data-request-id", originalRequest!);
   await expect(status).toContainText("New York");
+  await openContributions(page);
   await expect(page.getByRole("region", { name: "Saved payroll contributions" })).toContainText("employer hsa");
   const roots = await status.locator("[data-diagnostic-root]").evaluateAll(nodes => nodes.map(node => node.getAttribute("data-diagnostic-root")));
   expect(new Set(roots).size).toBe(roots.length);
@@ -244,6 +250,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   await openAuthoringSections(page);
     await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
+    await openContributions(page);
     const payroll = page.getByRole("region", { name: "Saved payroll contributions" });
     await payroll.getByLabel("Payroll destination", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.retirementInvestment);
     const rate = payroll.getByLabel("Payroll contribution rate", { exact: true });
@@ -409,6 +416,7 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   const basis = page.getByRole("region", { name: "Projected law forecast basis" });
   await expect(basis).toContainText("From 2027-01-01");
   await expect(basis).toContainText("US:FEDERAL: 2026 source rules projected");
+  await openContributions(page);
   await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("Projected current law");
   await expect(status).not.toContainText("Tax payments & refunds: choose");
   await expect(status).toContainText("New York");
@@ -467,9 +475,13 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
   await expect(operations).toContainText("Sell investment · 2026-01-23");
+  await openContributions(page);
   const payroll = page.getByRole("region", { name: "Saved payroll contributions" });
   await expect(payroll).toContainText("traditional 401k");
   await expect(payroll).toContainText("employer hsa");
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  await openAuthoringSections(page);
   await expect(page.getByRole("heading", { name: "Forecast setup", exact: true })).toBeVisible();
   const configuration = page.getByRole("region", { name: "Household execution configuration" });
   await expect(configuration.getByLabel("Income receiving account", { exact: true })).toHaveValue("");
@@ -508,6 +520,7 @@ test("D1 authors former-employer YTD history without a future contribution instr
   await openAuthoringSections(page);
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
+  await openContributions(page);
   const prior = page.getByRole("region", { name: "Prior year-to-date contributions" });
   await prior.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
   await prior.getByRole("checkbox").check();
@@ -543,6 +556,7 @@ test("D1 saves an authored brokerage purchase in the canonical export", async ({
   await openAuthoringSections(page);
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
+  await openContributions(page);
   await page.getByLabel("Purchase investment", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
   await page.getByLabel("Purchase funding account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.savings);
   await page.getByLabel("Purchase amount", { exact: true }).fill("125");
@@ -566,6 +580,7 @@ test("D1 normal payroll authoring preserves allocations and shared limit identit
   await openAuthoringSections(page);
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
+  await openContributions(page);
   const form = page.getByRole("region", { name: "Saved payroll contributions" });
   await form.getByLabel("Payroll destination", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.retirementInvestment);
   await form.getByLabel("Payroll salary", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.income);
@@ -605,6 +620,7 @@ test("D1 normal IRA authoring saves annual facts and explicit auto-cap", async (
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await openAuthoringSections(page); await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
+  await openContributions(page);
   const form = page.getByRole("region", { name: "Saved investment purchases" });
   await form.getByLabel("Purchase investment", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
   await form.getByLabel("Purchase funding account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.savings);
