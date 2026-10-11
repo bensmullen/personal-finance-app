@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "as_of": "2026-10-10",
+  "as_of": "2026-10-11",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
   "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap.",
   "stage_gates": {
@@ -25,7 +25,8 @@
         100,
         101,
         102,
-        105
+        105,
+        108
       ]
     }
   },
@@ -113,6 +114,26 @@
         "PFA-PLAN-005"
       ],
       "scope": "Independent saved-plan duplication; U1 may expose entry action only if existing semantics safely support it."
+    },
+    {
+      "issue_number": 108,
+      "owner_stage": "O1-alpha-fixtures",
+      "blocking_gate": "R11",
+      "depends_on": [
+        94,
+        103,
+        105
+      ],
+      "spec_requirement_ids": [
+        "PFA-ONB-001",
+        "PFA-ONB-002",
+        "PFA-ONB-003",
+        "PFA-ONB-011",
+        "PFA-ONB-013",
+        "PFA-UX-011",
+        "PFA-PLAN-005"
+      ],
+      "scope": "Eight richly populated synthetic family-linked alpha households (H01-H08), 43 category budget matrix, full modeled multigenerational members, at least four independent saved plans per household using #105-approved semantics, one-click demo/reset, coverage and financial reconciliation, correctly gated unsupported estate/rental/benefits/tax behavior. Account aggregation is separately evaluated and not a prerequisite."
     }
   ],
   "legacy_open_task_reconciliation": {
