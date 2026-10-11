@@ -1,6 +1,7 @@
 # Agent Framework Hardening V2
 
 **Status:** historical — superseded by AGENTS.md, the V3 handoff policy, and origin-based PR bootstrap  
+**Current operating authority:** [AGENTS.md](../../AGENTS.md), [V3 handoff policy](handoff-authoring-policy.md), and [verification policy](verification-policy.md). Do not use the historical V2 task envelope or bootstrap directions.  
 **Purpose:** prevent model/runtime waste and make the Hybrid ChatGPT → Codex →
 GitHub CI workflow enforceable rather than advisory.
 
