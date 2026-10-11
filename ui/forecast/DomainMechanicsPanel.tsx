@@ -17,8 +17,9 @@ const choices = [
   ["mortgage_extra", "Schedule mortgage extra principal"],
 ] as const;
 const record = (value: unknown): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
-export function DomainMechanicsPanel({ draft, setDraft }: { readonly draft: PersonalDraft; readonly setDraft: (draft: PersonalDraft) => void }) {
-  const [kind, setKind] = useState<string>("sale"), [fields, setFields] = useState<Record<string, string>>({ amount: "0", order: "10", replacementAmount: "0", totalPayments: "360", dividendCharacter: "ordinary" }), [message, setMessage] = useState("");
+export function DomainMechanicsPanel({ draft, setDraft, scope }: { readonly draft: PersonalDraft; readonly setDraft: (draft: PersonalDraft) => void; readonly scope: "investment" | "mortgage" }) {
+  const available = choices.filter(([value]) => scope === "mortgage" ? ["mortgage_extra", "refinance"].includes(value) : !["mortgage_extra", "refinance"].includes(value));
+  const [kind, setKind] = useState<string>(scope === "mortgage" ? "mortgage_extra" : "sale"), [fields, setFields] = useState<Record<string, string>>({ amount: "0", order: "10", replacementAmount: "0", totalPayments: "360", dividendCharacter: "ordinary" }), [message, setMessage] = useState("");
   const change = (key: string, value: string) => setFields(prior => ({ ...prior, [key]: value }));
   const text = (key: string, label: string, type = "text") => <label key={key}>{label}<input aria-label={label} type={type} value={fields[key] ?? ""} onChange={event => change(key, event.target.value)} /></label>;
   const select = (key: string, label: string, items: readonly { id: string; label: string }[]) => <label key={key}>{label}<select aria-label={label} value={fields[key] ?? ""} onChange={event => change(key, event.target.value)}><option value="">Choose {label.toLowerCase()}</option>{items.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>;
@@ -26,7 +27,7 @@ export function DomainMechanicsPanel({ draft, setDraft }: { readonly draft: Pers
   const banks = objectEntries(draft, "Account").filter(item => ["checking", "savings"].includes(String(item.account_type))).map(item => ({ id: objectId("Account", item), label: objectLabel("Account", item) }));
   const retirement = ["conversion", "direct_rollover", "mixed_rollover", "indirect_distribution", "indirect_deposit"].includes(kind);
   const events = (draft.objects.Event ?? []).filter(record);
-  const saved = events.filter(event => Array.isArray(event.effect_ids) && event.effect_ids.some(id => (draft.objects.EventEffect ?? []).filter(record).some(effect => effect.event_effect_id === id && ["d1_domain", "d1_refinance", "d1_mortgage_extra"].includes(String(effect.operation)))));
+  const saved = events.filter(event => Array.isArray(event.effect_ids) && event.effect_ids.some(id => (draft.objects.EventEffect ?? []).filter(record).some(effect => effect.event_effect_id === id && (scope === "mortgage" ? ["d1_refinance", "d1_mortgage_extra"] : ["d1_domain"]).includes(String(effect.operation)))));
   const save = () => {
     try {
       const ids = { eventId: crypto.randomUUID(), effectId: crypto.randomUUID(), primitiveId: crypto.randomUUID() };
@@ -53,9 +54,9 @@ export function DomainMechanicsPanel({ draft, setDraft }: { readonly draft: Pers
     } catch (error) { setMessage(authoringFailure(error)); }
   };
   const required = ["operation", "operationDate", ...(kind === "refinance" ? ["operationMortgage", "totalPayments"] : ["operationAmount", "operationOrder"]), ...(kind === "mortgage_extra" ? ["operationMortgage", "operationFunding"] : kind !== "refinance" && kind !== "indirect_deposit" ? ["operationHolding"] : []), ...(["purchase", "sale", "reinvest_dividend", "call_exercise"].includes(kind) ? ["operationUnits"] : []), ...(["purchase", "call_exercise", "indirect_distribution"].includes(kind) ? ["operationFunding"] : []), ...(retirement ? ["operationAcceptance"] : []), ...(retirement && kind !== "indirect_distribution" ? ["operationDestination"] : [])];
-  return <GuidedFields scope="scheduled-activity" required={required}><section className="panel" aria-label="Investment and retirement operations"><h2>Investment, retirement and mortgage operations</h2>
-    <p>Sales and investment income remain in investment account cash. Reinvestment uses that income. Spot crypto and call premiums require checking or savings. Use Investment purchases for ordinary equity/fund purchases. Unsupported products are diagnosed before forecast use.</p>
-    <label>Operation<select aria-label="Domain operation" value={kind} onChange={event => { setKind(event.target.value); setMessage(""); }}>{choices.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+  return <GuidedFields scope="scheduled-activity" required={required}><section className="panel" aria-label={scope === "mortgage" ? "Mortgage operations" : "Investment and retirement operations"}><h2>{scope === "mortgage" ? "Extra principal & refinancing" : "Other investment activity"}</h2>
+    {scope === "investment" && <p>Sales and investment income remain in investment account cash. Reinvestment uses that income. Spot crypto and call premiums require checking or savings. Use Investment purchases for ordinary equity/fund purchases. Unsupported products are diagnosed before forecast use.</p>}
+    <label>Operation<select aria-label="Domain operation" value={kind} onChange={event => { setKind(event.target.value); setMessage(""); }}>{available.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
     {text("date", "Operation date", "date")}
     {kind === "refinance" ? <>{select("liabilityId", "Mortgage to replace", objectEntries(draft, "Liability").filter(item => item.liability_type === "mortgage").map(item => ({ id: objectId("Liability", item), label: objectLabel("Liability", item) })))}<PercentageInput label="Replacement nominal annual rate" required value={fields.annualRate ?? ""} onChange={value => change("annualRate", value)} />{text("totalPayments", "Replacement monthly payments", "number")}<p>Non-cash-out, no fees or escrow. Choose a scheduled payment date with no extra principal at that occurrence. The new loan starts a full-month schedule.</p></> : <>
       {kind !== "indirect_deposit" && kind !== "mortgage_extra" && select("holdingId", "Source / target holding", investments)}
@@ -74,12 +75,12 @@ export function DomainMechanicsPanel({ draft, setDraft }: { readonly draft: Pers
     </>}
     <button className="primary" onClick={save}>Save domain operation</button>{message && <p role="status">{message}</p>}
     <ul>{saved.map(event => <li key={String(event.event_id)}>{String(event.name)} · {String(event.start_date)} <button onClick={() => setDraft({ ...draft, objects: { ...draft.objects, Event: events.map(item => item === event ? { ...item, enabled: item.enabled !== true } : item) } })}>{event.enabled === true ? "Disable" : "Enable"}</button></li>)}</ul>
-    <details><summary>Opening investment lots</summary><p>Enter each opening purchase lot with its actual acquisition date and economic cost basis. The lot units must reconcile to the investment's opening quantity; prior contribution usage is separate.</p>
+    {scope === "investment" && <details><summary>Opening investment lots</summary><p>Enter each opening purchase lot with its actual acquisition date and economic cost basis. The lot units must reconcile to the investment's opening quantity; prior contribution usage is separate.</p>
       {select("lotHolding", "Opening lot investment", investments)}{text("lotAcquired", "Lot acquisition date", "date")}{text("lotQuantity", "Opening lot units")}{text("lotBasis", "Opening lot cost basis")}
       <button onClick={() => { try { setDraft(authorOpeningInvestmentLot(draft, fields.lotHolding ?? "", { id: crypto.randomUUID(), acquired: fields.lotAcquired ?? "", quantity: fields.lotQuantity ?? "", basis: fields.lotBasis ?? "" })); setMessage("Opening lot saved. Complete all lots before forecasting."); } catch (error) { setMessage(error instanceof Error ? error.message : "Lot could not be saved."); } }}>Add opening lot</button>
       <ul>{(draft.objects.Investment ?? []).filter(record).filter(item => item.investment_id === fields.lotHolding).flatMap(item => Array.isArray(item.tax_lots) ? item.tax_lots.filter(record).map(lot => <li key={String(lot.id)}>{String(lot.acquired)} · {String(lot.quantity)} units · basis {String(lot.basis)} <button onClick={() => setDraft({ ...draft, objects: { ...draft.objects, Investment: (draft.objects.Investment ?? []).filter(record).map(investment => investment === item ? { ...investment, tax_lots: (item.tax_lots as readonly JsonObject[]).filter(prior => prior !== lot) } : investment) } })}>Remove lot</button></li>) : [])}</ul>
-    </details>
-    <TermLifeEditor draft={draft} setDraft={setDraft} />
+    </details>}
+    {scope === "investment" && <TermLifeEditor draft={draft} setDraft={setDraft} />}
   </section></GuidedFields>;
 }
 

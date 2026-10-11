@@ -33,6 +33,8 @@ come from posted Money legs, never JavaScript floating-point calculations.
   fallback pending the missing payroll/attribution contracts and #101.
 - Contribution editors and annual capacity/history now live in Investments &
   Retirement. Current Plan shows saved activity and account-context edit links.
+  The existing specialized investment purchase/transfer editor also moved there;
+  Current Plan's operation choices are limited to extra principal/refinancing.
   Existing adapter, persistence and financial semantics remain authoritative.
 - Shared diagnostic presentation bounds the default problem/remedy and preserves
   the full mapped explanation and machine evidence in Technical details. Cutoff

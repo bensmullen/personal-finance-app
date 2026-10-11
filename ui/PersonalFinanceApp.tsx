@@ -929,7 +929,7 @@ export function PersonalFinanceApp() {
                 }}
               />
               <ScheduledActivity draft={draft} />
-              <FinancialSection title="Investment activity & extra mortgage payments"><DomainMechanicsPanel draft={draft} setDraft={updateCanonicalModel} /></FinancialSection>
+              <FinancialSection title="Extra mortgage payments & refinancing"><DomainMechanicsPanel scope="mortgage" draft={draft} setDraft={updateCanonicalModel} /></FinancialSection>
               <details className="panel">
               <summary>Expert standalone forecasts</summary>
               <p>Inspect a supported scope independently. These results are separate from the reconciled household outlook.</p>
@@ -1031,6 +1031,7 @@ export function PersonalFinanceApp() {
             <FinancialSection title="Workplace & HSA contributions" open={contributionTarget?.kind === "payroll"}><PayrollContributionAuthoring key={`payroll:${contributionTarget?.kind === "payroll" ? contributionTarget.investmentId : "overview"}`} draft={draft} setDraft={updateCanonicalModel} initialInvestmentId={contributionTarget?.kind === "payroll" ? contributionTarget.investmentId : undefined} /></FinancialSection>
             <FinancialSection title="Contributions already made this year"><OpeningContributionUsageAuthoring draft={draft} setDraft={updateCanonicalModel} /></FinancialSection>
             <FinancialSection title="Annual contribution allowance"><ContributionCapacityPanel draft={draft} forecast={householdForecast} /></FinancialSection>
+            <FinancialSection title="Other investment activity"><DomainMechanicsPanel scope="investment" draft={draft} setDraft={updateCanonicalModel} /></FinancialSection>
           </>}
           {primary === "Plan" &&
             subnav === "Life Events" &&

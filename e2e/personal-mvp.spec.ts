@@ -40,7 +40,7 @@ const openContributions = async (page: import("@playwright/test").Page) => {
   await openAuthoringSections(page);
 };
 const openAuthoringSections = async (page: import("@playwright/test").Page) => {
-  for (const title of ["IRA & brokerage contributions", "Workplace & HSA contributions", "Contributions already made this year", "Annual contribution allowance", "Investment activity & extra mortgage payments", "Debt & mortgage", "Investments", "Tax payments & refunds", "Employer vesting"]) {
+  for (const title of ["IRA & brokerage contributions", "Workplace & HSA contributions", "Contributions already made this year", "Annual contribution allowance", "Other investment activity", "Extra mortgage payments & refinancing", "Debt & mortgage", "Investments", "Tax payments & refunds", "Employer vesting"]) {
     const summary = page.locator("summary").filter({ hasText: title }).filter({ hasNotText: "Help for" }).first();
     if (await summary.count() && await summary.isVisible() && await summary.locator("..").getAttribute("open") === null) await summary.click();
   }
@@ -84,6 +84,7 @@ test("D1-B normal investment controls persist a bank-funded operation without co
   await openAuthoringSections(page);
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
+  await openContributions(page);
   const panel = page.getByRole("region", { name: "Investment and retirement operations" });
   await panel.getByLabel("Domain operation", { exact: true }).selectOption("purchase");
   await panel.getByLabel("Source / target holding", { exact: true }).selectOption(cryptoId);
@@ -336,7 +337,7 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await mortgage.getByRole("button", { name: "Use calculated contractual maturity 2052-01-01", exact: true }).click();
   await expect(mortgage).toContainText("Calculated final scheduled payment: 2052-01-01");
   await expect(mortgage.getByText(/Schedule mismatch/)).toHaveCount(0);
-  const operations = page.getByRole("region", { name: "Investment and retirement operations" });
+  const operations = page.getByRole("region", { name: "Mortgage operations" });
   await operations.getByLabel("Domain operation", { exact: true }).selectOption("mortgage_extra");
   await operations.getByLabel("Mortgage for extra principal", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.mortgage);
   await operations.getByLabel("Extra principal checking / savings account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.checking);
@@ -440,6 +441,7 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   await openAuthoringSections(page);
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
+  await openContributions(page);
   const operations = page.getByRole("region", { name: "Investment and retirement operations" });
   // The ordinary sales control consumes the same opening lot as the combined
   // arithmetic fixture. No compiler IDs or JSON are entered in the product.
@@ -474,8 +476,8 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   await openAuthoringSections(page);
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
-  await expect(operations).toContainText("Sell investment · 2026-01-23");
   await openContributions(page);
+  await expect(operations).toContainText("Sell investment · 2026-01-23");
   const payroll = page.getByRole("region", { name: "Saved payroll contributions" });
   await expect(payroll).toContainText("traditional 401k");
   await expect(payroll).toContainText("employer hsa");
@@ -499,12 +501,13 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   await page.getByRole("button", { name: "Update forecast", exact: true }).click();
   await showHouseholdDetails(page);
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible();
-  // Exercise an honest supported-floor boundary through the same authoring form.
-  await operations.getByLabel("Domain operation", { exact: true }).selectOption("refinance");
-  await operations.getByLabel("Mortgage to replace", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.mortgage);
-  await operations.getByLabel("Operation date", { exact: true }).fill("2026-01-15");
-  await operations.getByLabel("Replacement nominal annual rate", { exact: true }).fill("4");
-  await operations.getByRole("button", { name: "Save domain operation", exact: true }).click();
+  // Exercise the supported-floor boundary through the mortgage activity form.
+  const mortgageOperations = page.getByRole("region", { name: "Mortgage operations" });
+  await mortgageOperations.getByLabel("Domain operation", { exact: true }).selectOption("refinance");
+  await mortgageOperations.getByLabel("Mortgage to replace", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.mortgage);
+  await mortgageOperations.getByLabel("Operation date", { exact: true }).fill("2026-01-15");
+  await mortgageOperations.getByLabel("Replacement nominal annual rate", { exact: true }).fill("4");
+  await mortgageOperations.getByRole("button", { name: "Save domain operation", exact: true }).click();
   await page.getByRole("button", { name: "Update forecast", exact: true }).click();
   await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-lifecycle", "unsupported");
   await expect(page.getByText(/scheduled monthly.*payment date/).first()).toBeVisible();

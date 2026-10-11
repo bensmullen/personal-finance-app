@@ -72,7 +72,8 @@ const SECTION_PURPOSES: Readonly<Record<string, string>> = {
   "Contributions already made this year": "Earlier contributions reduce the annual allowance available to your forecast.",
   "Debt & mortgage": "Choose which account pays each mortgage and check its contractual payment schedule.",
   "Investments": "Choose whose holdings the forecast includes; account cash and holdings are valued separately.",
-  "Investment activity & extra mortgage payments": "Schedule supported purchases, sales, retirement transfers and extra mortgage principal.",
+  "Other investment activity": "Schedule supported investment purchases, sales, income and retirement transfers.",
+  "Extra mortgage payments & refinancing": "Schedule extra principal or replace a supported fixed mortgage on a payment date.",
 };
 export function FinancialSection({ title, children, open = false, attention = false, id, purpose }: { title: string; children: ReactNode; open?: boolean; attention?: boolean; id?: string; purpose?: string }) {
   const [expanded, setExpanded] = useState(open || attention);
