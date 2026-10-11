@@ -121,16 +121,19 @@
       "blocking_gate": "R11",
       "depends_on": [
         94,
-        103
+        103,
+        105
       ],
       "spec_requirement_ids": [
         "PFA-ONB-001",
         "PFA-ONB-002",
         "PFA-ONB-003",
         "PFA-ONB-011",
-        "PFA-ONB-013"
+        "PFA-ONB-013",
+        "PFA-UX-011",
+        "PFA-PLAN-005"
       ],
-      "scope": "Seven richly populated synthetic alpha households, isolated one-click demo exploration and guided questions, financial/account/transaction/lot reconciliation and capability-gated unsupported domain outputs; no production bank aggregation prerequisite."
+      "scope": "Eight richly populated synthetic family-linked alpha households (H01-H08), 43 category budget matrix, full modeled multigenerational members, at least four independent saved plans per household using #105-approved semantics, one-click demo/reset, coverage and financial reconciliation, correctly gated unsupported estate/rental/benefits/tax behavior. Account aggregation is separately evaluated and not a prerequisite."
     }
   ],
   "legacy_open_task_reconciliation": {
