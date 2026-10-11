@@ -41,14 +41,14 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
         {mode === "paycheck" && <>
           <p><strong>{amount(detail.income)}</strong> recurring household income before modeled employee contributions</p>
           <small>Includes supported salary and other recurring income; employer contributions are excluded.</small>
-          <p role="note">Incomplete allocation: payroll withholding and income-funded cash uses are not reconciled. Review income and tax setup; unallocated coverage is not leftover pay.</p>
+          <p role="note">Incomplete allocation: withholding is not supported yet, and cash uses are not reconciled to this month's income. Unallocated coverage is not leftover pay.</p>
           {Number(detail.income) > 0 ? <div className="paycheck-bar" role="img" aria-label={`Employee contributions ${amount(detail.employee)}; not yet reconciled ${amount(detail.unreconciled)}; total ${amount(detail.income)}`}>
             {Number(detail.employee) > 0 && <span className="paycheck-employee" style={{ flexGrow: Number(detail.employee) / Number(detail.income) }} />}
             {Number(detail.unreconciled) > 0 && <span className="paycheck-unreconciled" style={{ flexGrow: Number(detail.unreconciled) / Number(detail.income) }} />}
           </div> : <p>No recurring income was posted in this month. Cash uses may draw on savings or other sources.</p>}
           <ul className="paycheck-legend"><li>● Employee workplace contributions · {amount(detail.employee)}{Number(detail.income) > 0 && ` (${(Number(detail.employee) / Number(detail.income) * 100).toFixed(1)}%)`}</li><li><button type="button" onClick={setup}>▧ Not yet reconciled · {amount(detail.unreconciled)}{Number(detail.income) > 0 && ` (${(Number(detail.unreconciled) / Number(detail.income) * 100).toFixed(1)}%)`}</button></li></ul>
           <small>Modeled bank deposits: {amount(detail.deposited)}. This excludes unmodeled withholding and is not an after-tax paycheck estimate.</small>
-          <button type="button" onClick={setup}>Review tax & payroll setup</button>
+          <button type="button" onClick={setup}>Review tax payment setup</button>
           {objectEntries(draft, "Income").map(value => <button key={objectId("Income", value)} type="button" onClick={() => review("Income", objectId("Income", value))}>{referenceLabel(draft, "Income", objectId("Income", value))}</button>)}
           {detail.lines.filter(line => line.kind === "employee").map(line => <p key={line.id}>Employee contribution · {amount(line.amount)} · {line.date.slice(0, 10)} {line.holdingIds.map(holdingLink)}</p>)}
         </>}
