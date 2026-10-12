@@ -96,6 +96,14 @@ Local tests, typecheck, builds, validators, browsers/dev servers and dependency
 installation were not run. Current checkpoint CI is pending; prior green CI
 belongs to older heads and does not verify these changes or deployment.
 
+Published partial implementation checkpoint:
+`a37bf58a82373fb33bb59feec6cc871ffec65337`. The Code Review connector observed
+`verification-plan` in progress for that exact SHA in
+[Actions run 38194706651](https://github.com/bensmullen/personal-finance-app/actions/runs/38194706651).
+No successful check or complete suite was reported at that inspection. This
+subsequent evidence-only update also requires its own latest-head CI; it does
+not inherit a passing result from the implementation checkpoint.
+
 ## October 11 continuation after operator synchronization — partial, blocked
 
 This supersedes the missing-registry checkpoint below. PR #112's register and
