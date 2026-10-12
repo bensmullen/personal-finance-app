@@ -5229,6 +5229,102 @@
         "engineering-review",
         "user-uat"
       ]
+    },
+    {
+      "id": "PFA-UX-021",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [
+        "docs/specs/verification/u1-fact-ownership.json"
+      ],
+      "implementation_scope": [
+        "ui/",
+        "src/application/",
+        "app/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-UX-016",
+        "PFA-UX-017",
+        "PFA-UX-019"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-UX-022",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [
+        "docs/specs/verification/u1-fact-ownership.json"
+      ],
+      "implementation_scope": [
+        "ui/",
+        "src/application/",
+        "app/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-UX-021",
+        "PFA-DET-001",
+        "PFA-DET-003"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
+    },
+    {
+      "id": "PFA-UX-023",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [
+        "docs/specs/verification/u1-fact-ownership.json"
+      ],
+      "implementation_scope": [
+        "ui/",
+        "src/application/",
+        "app/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-UX-021",
+        "PFA-UX-022",
+        "PFA-UX-018"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
     }
   ]
 }

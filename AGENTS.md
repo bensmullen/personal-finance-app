@@ -35,8 +35,15 @@ Universal financial constraints:
 
 ## PFM task authorization
 
-Repository mutation requires a compact `PFM_TASK_V3` authorization. Read-only
-questions do not.
+Codex implementation/repair mutation requires a compact `PFM_TASK_V3`
+authorization. Read-only questions do not.
+
+ChatGPT may make explicitly requested, narrowly scoped GitHub documentation,
+specification, roadmap, or small governance/CI corrections directly through a
+reviewable `agent/` pull request. Such PRs must preserve financial/specification
+authority, relevant traceability, selected CI checks, and product-manager merge
+approval. This path does not relax Codex task hooks or authorize unscoped code
+implementation; substantial feature/engine work should use a Codex V3 issue.
 
 The machine-enforced V3 contract is intentionally small:
 

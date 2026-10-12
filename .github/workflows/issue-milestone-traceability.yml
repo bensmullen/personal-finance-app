@@ -1,0 +1,32 @@
+name: Issue milestone traceability
+
+on:
+  issues:
+    types: [opened, reopened, edited]
+  pull_request:
+    paths:
+      - docs/development/milestone-issue-register.json
+      - docs/development/milestone-issue-policy.md
+      - tools/roadmap/verify-issue-stage-register.mjs
+      - .github/workflows/issue-milestone-traceability.yml
+  schedule:
+    - cron: "15 11 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  live-issue-register:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate open issues are stage-registered
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node tools/roadmap/verify-issue-stage-register.mjs

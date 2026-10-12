@@ -190,8 +190,12 @@ LOOKUP_REQUIRED: <exact missing fact>
 
 Blocked partial commits must be pushed. Eligible dirty work is checkpointed by the
 Stop hook. If checkpoint/push fails, preserve all local work and report the precise
-recovery condition; never discard or rewrite history automatically. Issue-specific
-CI/audit acceptance gates must also pass before reporting COMPLETE.
+recovery condition; never discard or rewrite history automatically. A Codex COMPLETE report means the authorized implementation is committed/pushed
+and Codex believes its implementation-level acceptance conditions are fulfilled.
+It does **not** mean that CI, ChatGPT's independent semantic audit, product-owner
+UAT, or final merge approval has passed. External issue-specific CI/audit/UAT
+gates remain required for PR merge or milestone closeout, not for the Stop hook
+to accept a mechanically complete implementation.
 
 ## Compatibility
 

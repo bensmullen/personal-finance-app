@@ -48,6 +48,7 @@ for (const file of files) {
   }
   if (
     file === "AGENTS.md" ||
+    file.endsWith("/AGENTS.md") ||
     file.startsWith(".codex/") ||
     file.startsWith(".agents/") ||
     file.startsWith("tools/codex/")
@@ -80,6 +81,33 @@ for (const file of files) {
     reason.add("agent governance changed");
     continue;
   }
+  if (
+    file === "docs/development/milestone-issue-register.json" ||
+    file === "docs/development/milestone-issue-policy.md"
+  ) {
+    // The register's static dependency/gate/consolidation checks live in Vitest.
+    gates.unit = true;
+    reason.add("milestone issue/register consistency changed");
+    continue;
+  }
+  if (
+    file === "docs/personal_finance_executable_financial_semantics_v0.1.md" ||
+    file === "docs/architecture/system-software-architecture.md" ||
+    file.startsWith("docs/architecture/adr/") ||
+    file === "docs/personal_finance_postgresql_v1.0.sql"
+  ) {
+    gates.spec = true;
+    reason.add("normative financial or architecture documentation changed");
+    continue;
+  }
+  if (
+    file === "docs/personal_finance_model.schema.json" ||
+    file === "docs/personal_finance_simulation_interfaces_v1.0.ts"
+  ) {
+    gates.spec = gates.typecheck = gates.unit = gates.build = gates.e2e = true;
+    reason.add("generated financial interface or model contract changed");
+    continue;
+  }
   if (file.startsWith("docs/")) {
     reason.add("non-normative documentation only");
     continue;
@@ -89,7 +117,7 @@ for (const file of files) {
     reason.add("runtime source changed");
     continue;
   }
-  if (file.startsWith("ui/")) {
+  if (file.startsWith("ui/") || file.startsWith("app/")) {
     gates.typecheck = gates.unit = gates.build = gates.e2e = true;
     reason.add("UI source changed");
     continue;
@@ -117,6 +145,14 @@ for (const file of files) {
 }
 
 if (files.length === 0) full("unable to determine changed files");
+
+// Every successful main push is deployable, including documentation-only merges.
+// The Pages artifact must be built even if PR verification could skip the build.
+if (process.env.GITHUB_EVENT_NAME === "push" &&
+    process.env.GITHUB_REF === "refs/heads/main") {
+  gates.build = true;
+  reason.add("main push requires GitHub Pages build");
+}
 
 const profile =
   gates.e2e ? "full-runtime" :

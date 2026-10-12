@@ -81,18 +81,19 @@ Before emitting an implementation/repair handoff, ChatGPT SHALL:
    roadmap material needed for the task;
 2. consult `docs/development/agent-learning-policy.md` and the active lesson
    ledger before issuing implementation instructions;
-3. resolve material semantic/architectural decisions rather than delegating
+3. consult the live issue-to-milestone register at `docs/development/milestone-issue-register.json` and its policy, reconcile current GitHub issue statuses, and verify that the task's owner stage/dependencies/mandatory closeout gate are allocated; do not silently skip an unresolved required issue or treat a planning backlog entry as V3 task authorization;
+4. resolve material semantic/architectural decisions rather than delegating
    those decisions to Codex;
-4. identify the smallest defensible `ALLOWED_PATHS`;
-5. state the objective and acceptance conditions clearly enough that Codex can
+5. identify the smallest defensible `ALLOWED_PATHS`;
+6. state the objective and acceptance conditions clearly enough that Codex can
    tell whether implementation is complete;
-6. describe material failure/partial/unsupported/stale/cancelled/error behavior
+7. describe material failure/partial/unsupported/stale/cancelled/error behavior
    when relevant;
-7. distinguish supported claims from deferred/not-measured/not-applicable areas;
-8. keep expensive representative/stress/scaling/convergence/provider evidence
+8. distinguish supported claims from deferred/not-measured/not-applicable areas;
+9. keep expensive representative/stress/scaling/convergence/provider evidence
    outside ordinary CI unless the repository verification policy explicitly
    assigns a bounded correctness workload to CI;
-9. perform a contradiction/negative-space review before handing off.
+10. perform a contradiction/negative-space review before handing off.
 
 The brief should be as short as the task allows. Complexity belongs in the
 semantic decisions themselves, not in mandatory envelope ceremony.
@@ -132,6 +133,21 @@ is a framework task.
 Adding a required file outside the authorized scope is not permission for Codex
 to broaden the task. Codex reports a blocker/lookup need; ChatGPT issues a new
 authorization if the scope change is justified.
+
+### Parallel Codex development preflight
+
+When multiple tasks could run concurrently, ChatGPT SHALL first check that
+their architectural decisions are resolved and their prerequisites are satisfied.
+Prefer parallel issues/branches only when interfaces are stable, edit ownership
+is clear, and independently testable scopes minimize conflict. Identify shared
+files/contracts, integration ownership, and merge order explicitly. Do not split
+a coherent task solely to create parallelism, and do not start dependent tasks
+from an unmerged prerequisite. This is planning guidance, not a new V3 parser
+field or a requirement for every one-file repair.
+
+Independent CI checks should remain parallel under the verification planner.
+Do not duplicate expensive checks in Codex turns or move heavy workloads into
+ordinary CI to obtain parallelism.
 
 ## 6. Git handoff lifecycle
 
@@ -253,3 +269,16 @@ If a lesson becomes a universal base contract, codify it in the framework and
 retire the lesson rather than forcing every future prompt to carry marker text.
 
 Candidate issues never enter Codex prompts automatically.
+
+## 9. Direct ChatGPT GitHub maintenance
+
+When the product manager explicitly authorizes a small documentation,
+specification, roadmap, governance or bounded CI-policy correction, ChatGPT may
+implement it directly via a focused `agent/` GitHub PR without opening a Codex
+implementation task. Inspect current file versions and affected validators,
+preserve manifest/requirement and milestone-issue traceability when applicable,
+and wait for latest-head selected CI before claiming merge readiness. Keep
+substantial application/engine development and unresolved product decisions in
+the usual architecture -> V3 issue -> Codex implementation process. A directly
+authored PR is still subject to independent review and product-manager merge
+approval. The ChatGPT direct-edit path does not loosen Codex mutation hooks.
