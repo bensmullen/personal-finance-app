@@ -3,6 +3,8 @@ import { restorePortableHouseholdReplayArtifact } from "../simulation/r3/replayA
 import { replayHouseholdForecastWindow } from "../simulation/householdExecution.js";
 import { instant } from "../time/index.js";
 import { Currency, Money } from "../values/index.js";
+import type { PortableModelEnvelope } from "../model/modelVersion.js";
+import { objects } from "./compiler/shared.js";
 
 export interface MonthlyMoneyLine {
   readonly id: string;
@@ -12,8 +14,19 @@ export interface MonthlyMoneyLine {
   readonly holdingIds: readonly string[];
   readonly kind: "employee" | "transfer";
 }
-/** Inspect committed evidence only. A transfer is never attributed to a paycheck. */
-export function inspectMonthlyMoney(point: HouseholdForecastPoint) {
+export type MonthlyUseKind = "workplace" | "mortgage" | "living" | "ira" | "brokerage" | "tax" | "other";
+export interface MonthlyUse {
+  readonly id: string;
+  readonly kind: MonthlyUseKind;
+  readonly label: string;
+  readonly amount: string;
+  readonly sourceIds: readonly string[];
+  readonly accountIds: readonly string[];
+  readonly holdingIds: readonly string[];
+  readonly liabilityIds: readonly string[];
+}
+/** Read-only budgeting comparison. Posted cash uses do not establish cash origin. */
+export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: PortableModelEnvelope) {
   const ref = point.traceRefs.find(value => value.replayArtifact !== undefined);
   if (!ref) throw new Error("Monthly evidence is unavailable");
   const address = ref.replayArtifact as { basis: unknown; start: string; end: string };
@@ -22,13 +35,60 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint) {
   if (`household:replay:${basis.runMetadata.inputFingerprint}:${address.start}:${address.end}` !== ref.traceId) throw new Error("Monthly evidence identity does not match");
   const replay = replayHouseholdForecastWindow(basis, { start: instant(address.start), end: instant(address.end) });
   const currency = Currency.of(point.cash.currency);
-  let income = Money.zero(currency), employee = Money.zero(currency), deposited = Money.zero(currency);
+  let income = Money.zero(currency), payroll = Money.zero(currency), otherIncome = Money.zero(currency);
+  let employee = Money.zero(currency), deposited = Money.zero(currency), cashChange = Money.zero(currency), otherReceipts = Money.zero(currency);
+  const executable = basis.replay.kernel.executable;
+  const loans = executable.liabilityInput?.loans ?? [];
+  const allocations = executable.cashFlowInput?.incomes.flatMap(item => item.payrollContributions ?? []) ?? [];
+  const uses = new Map<string, MonthlyUse>();
+  const addUse = (kind: MonthlyUseKind, label: string, id: string, amount: Money,
+    refs: { accountIds?: readonly string[]; holdingIds?: readonly string[]; liabilityIds?: readonly string[] } = {}) => {
+    if (!amount.isPositive()) return;
+    const key = `${kind}:${label}:${(refs.holdingIds ?? []).join()}:${(refs.liabilityIds ?? []).join()}`;
+    const prior = uses.get(key);
+    uses.set(key, { id: key, kind, label, amount: (prior ? Money.parse(prior.amount, currency).plus(amount) : amount).amount.toString(),
+      sourceIds: [...(prior?.sourceIds ?? []), id],
+      accountIds: [...new Set([...(prior?.accountIds ?? []), ...(refs.accountIds ?? [])])],
+      holdingIds: [...new Set([...(prior?.holdingIds ?? []), ...(refs.holdingIds ?? [])])],
+      liabilityIds: [...new Set([...(prior?.liabilityIds ?? []), ...(refs.liabilityIds ?? [])])] });
+  };
   const lines: MonthlyMoneyLine[] = [];
   const cashUses: { id: string; date: string; amount: string; accountId: string; label: string }[] = [];
   const seen = new Set<string>();
   for (const period of replay.periods) for (const tx of period.transactions) {
     if (seen.has(tx.id)) continue;
     seen.add(tx.id);
+    const payrollStream = executable.cashFlowInput?.incomes.find(stream =>
+      tx.id.includes(String(stream.id)) || tx.traceRefs.some(ref => ref.traceId.includes(String(stream.id))));
+    const source = model && objects(model, "Income").find(item => item.income_id === payrollStream?.id);
+    const isPay = tx.type === "payroll_income" || tx.type === "income" && source?.income_type === "salary" && source.gross_or_net !== "net";
+    for (const [index, leg] of tx.legs.entries()) {
+      if (leg.type === "cash") {
+        cashChange = leg.posting === "debit" ? cashChange.plus(leg.amount) : cashChange.minus(leg.amount);
+        if (leg.posting === "debit" && tx.type !== "income" && tx.type !== "payroll_income") otherReceipts = otherReceipts.plus(leg.amount);
+        if (leg.posting === "credit") {
+          const id = `${tx.id}:leg:${index}`, accountIds = [String(leg.accountId)];
+          const loan = loans.find(item => tx.legs.some(value => value.type === "liability" &&
+            (value.entityId === item.principalLiabilityId || value.entityId === item.interestPayableLiabilityId)));
+          const holdings = tx.legs.flatMap(value => value.type === "asset" && value.posting === "debit" ? [String(value.entityId)] : []);
+          const purchase = executable.investmentInput?.purchases.find(item => holdings.includes(String(item.targetPositionId)));
+          if (tx.type.startsWith("mortgage_") && loan) addUse("mortgage", "Mortgage payment", id, leg.amount, { accountIds, liabilityIds: [String(loan.principalLiabilityId)] });
+          else if (tx.type === "expense_settlement") addUse("living", "Living costs", id, leg.amount, { accountIds });
+          else if (tx.type === "investment_purchase") addUse(purchase?.contribution?.character.endsWith("_ira") ? "ira" : "brokerage",
+            purchase?.contribution?.character.endsWith("_ira") ? "IRA contribution" : "Brokerage investment", id, leg.amount, { accountIds, holdingIds: holdings });
+          else if (tx.type.includes("tax")) addUse("tax", "Tax cash payment", id, leg.amount, { accountIds });
+          else addUse("other", "Other posted cash uses", id, leg.amount, { accountIds, holdingIds: holdings });
+        }
+      }
+      if ((tx.type === "income" || tx.type === "payroll_income") && leg.type === "income" && leg.posting === "credit") {
+        if (isPay) payroll = payroll.plus(leg.amount); else otherIncome = otherIncome.plus(leg.amount);
+      }
+      if (tx.type === "payroll_income" && leg.type === "asset" && leg.posting === "debit") {
+        const allocation = allocations.find(value => value.positionId === leg.entityId && !value.policy.character.startsWith("employer_"));
+        addUse("workplace", allocation?.policy.character === "employee_hsa" ? "Employee HSA" : "Employee retirement",
+          `${tx.id}:leg:${index}`, leg.amount, { holdingIds: [String(leg.entityId)] });
+      }
+    }
     // Keep other posted money-out visible, without reclassifying it as an
     // income-funded allocation or adding it to consumption totals.
     if (tx.type !== "investment_purchase" && !tx.type.startsWith("mortgage_")) for (const leg of tx.legs) {
@@ -51,7 +111,6 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint) {
       for (const leg of tx.legs) if (leg.type === "cash" && leg.posting === "credit") lines.push({ id: `${tx.id}:${leg.accountId}`, kind: "transfer", date: tx.date, amount: leg.amount.amount.toString(), accountIds: [String(leg.accountId)], holdingIds: holdings });
     }
   }
-  const loans = basis.replay.kernel.executable.liabilityInput?.loans ?? [];
   const mortgages = replay.periods.flatMap(period => (period.liability?.liabilities ?? []).map(item => {
     const loan = loans.find(value => value.id === item.loanId);
     const paid = loan ? period.transactions.filter(tx => ["mortgage_principal_payment", "mortgage_interest_settlement"].includes(tx.type) && tx.date === item.scheduledAt && tx.legs.some(leg => leg.type === "liability" && [loan.principalLiabilityId, loan.interestPayableLiabilityId].includes(leg.entityId)))
@@ -62,7 +121,18 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint) {
       principal: item.scheduledPrincipalPaid.amount.toString(), interest: item.currentInterest.amount.toString(),
       extra: item.extraPrincipalPaid.amount.toString(), status: item.scheduledFundingStatus === "fully_satisfied" ? "Paid" : "Not fully funded" };
   }));
-  return { currency: currency.code, income: income.amount.toString(), employee: employee.amount.toString(), deposited: deposited.amount.toString(),
+  const order: MonthlyUseKind[] = ["workplace", "tax", "mortgage", "living", "ira", "brokerage", "other"];
+  const categories = [...uses.values()].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || a.id.localeCompare(b.id));
+  const denominator = payroll.isPositive() ? payroll : income;
+  const totalUses = categories.reduce((sum, item) => sum.plus(Money.parse(item.amount, currency)), Money.zero(currency));
+  const comparison = denominator.minus(totalUses);
+  return { currency: currency.code, income: income.amount.toString(), payroll: payroll.amount.toString(), otherIncome: otherIncome.amount.toString(),
+    basis: payroll.isPositive() ? "gross_payroll" as const : "household_income" as const,
+    denominator: denominator.amount.toString(), categories, totalUses: totalUses.amount.toString(),
+    unallocated: comparison.isNegative() ? "0" : comparison.amount.toString(),
+    additionalFunding: comparison.isNegative() ? totalUses.minus(denominator).amount.toString() : "0",
+    cashChange: cashChange.amount.toString(), otherReceipts: otherReceipts.amount.toString(),
+    employee: employee.amount.toString(), deposited: deposited.amount.toString(),
     // This is coverage of gross recognition, NOT leftover or spendable income.
     unreconciled: income.minus(employee).amount.toString(), lines, mortgages, cashUses,
     withholding: "not_modeled" as const, status: "incomplete" as const };

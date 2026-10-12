@@ -98,3 +98,14 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .paycheck-employee { background: #376b84; }
 .paycheck-unreconciled { background: repeating-linear-gradient(135deg, #d9e0e4, #d9e0e4 6px, #a9b6be 6px, #a9b6be 8px); }
 .paycheck-legend { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; list-style: none; padding: 0; }
+.paycheck-legend li { display: flex; align-items: flex-start; gap: .5rem; min-width: 0; flex: 1 1 220px; }
+.paycheck-legend small { display: block; }
+.paycheck-key { display: inline-flex; align-items: center; justify-content: center; width: 1.25rem; height: 1.25rem; flex-shrink: 0; border-radius: .25rem; color: white; font-size: .75rem; }
+.paycheck-workplace { background: #376b84; }
+.paycheck-tax { background: #7d507b; }
+.paycheck-mortgage { background: #976536; }
+.paycheck-living { background: #53805a; }
+.paycheck-ira { background: #5c5f9b; }
+.paycheck-brokerage { background: #8d4d55; }
+.paycheck-other { background: #55646f; }
+.paycheck-unallocated { color: #253744; background: repeating-linear-gradient(135deg, #d9e0e4, #d9e0e4 6px, #a9b6be 6px, #a9b6be 8px); }

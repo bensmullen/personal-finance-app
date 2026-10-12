@@ -1,4 +1,5 @@
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
+import { withContributionYearSchedule } from "../contributionYearFacts.js";
 import { compileDomainMechanics, hasDomainMechanics } from "./domainMechanics.js";
 import { compileMortgageLifecycle } from "./mortgageLifecycle.js";
 import { supportsD1SpouseHsaScope, durablePayrollAllocations } from "./payrollAuthoring.js";
@@ -229,8 +230,8 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
       ...(domains?.status === "compiled" ? [domains.value.participant] : []),
       ...(mortgages.value ? [mortgages.value] : []),
       ...(durablePayrollAllocations(model).some(item => item.events.length > 0) ? [createWorkplaceEventParticipant(durablePayrollAllocations(model).flatMap(item => item.events))] : [])]),
-    ...(cash === undefined ? {} : { cashFlowInput: request.forecastLawPolicy === undefined ? cash.value.input : { ...cash.value.input, incomes: cash.value.input.incomes.map(income => ({ ...income, ...(income.payrollContributions === undefined ? {} : { payrollContributions: income.payrollContributions.map(allocation => ({ ...allocation, policy: { ...allocation.policy, forecastLawPolicy: "projected_current_law" as const } })) }) })) } }),
-    ...(investments === undefined ? {} : { investmentInput: request.forecastLawPolicy === undefined ? investments.value.input : { ...investments.value.input, purchases: investments.value.input.purchases.map(purchase => ({ ...purchase, ...(purchase.contribution === undefined ? {} : { contribution: { ...purchase.contribution, forecastLawPolicy: "projected_current_law" as const } }) })) } }),
+    ...(cash === undefined ? {} : { cashFlowInput: request.forecastLawPolicy === undefined ? cash.value.input : { ...cash.value.input, incomes: cash.value.input.incomes.map(income => ({ ...income, ...(income.payrollContributions === undefined ? {} : { payrollContributions: income.payrollContributions.map(allocation => ({ ...allocation, policy: withContributionYearSchedule(model, allocation.policy, firstBoundary.simulationStart, firstBoundary.simulationEnd) })) }) })) } }),
+    ...(investments === undefined ? {} : { investmentInput: request.forecastLawPolicy === undefined ? investments.value.input : { ...investments.value.input, purchases: investments.value.input.purchases.map(purchase => ({ ...purchase, ...(purchase.contribution === undefined ? {} : { contribution: withContributionYearSchedule(model, purchase.contribution, firstBoundary.simulationStart, firstBoundary.simulationEnd) }) })) } }),
     ...(liabilities === undefined ? {} : { liabilityInput: liabilities.value.input }),
     reconciledOpeningState: opening.value,
     reconciledPrimitiveState: primitive.value,

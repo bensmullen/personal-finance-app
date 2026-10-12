@@ -23,15 +23,15 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
   const amount = (value: string) => formatExactMoney(value, detail?.currency ?? point?.cash.currency);
   const inspect = () => {
     if (!point || !current) return;
-    try { cache.set(point.periodStart, inspectMonthlyMoney(point)); setError(""); setRevision(value => value + 1); }
+    try { cache.set(point.periodStart, inspectMonthlyMoney(point, draft)); setError(""); setRevision(value => value + 1); }
     catch { setError("Monthly evidence could not be loaded. Update the forecast and retry this month."); }
   };
   useEffect(() => {
     setError("");
     if (!current || !point || cache.has(point.periodStart)) return;
-    try { cache.set(point.periodStart, inspectMonthlyMoney(point)); setRevision(value => value + 1); }
+    try { cache.set(point.periodStart, inspectMonthlyMoney(point, draft)); setRevision(value => value + 1); }
     catch { setError("Monthly evidence could not be loaded. Update the forecast and retry this month."); }
-  }, [current, point, cache]);
+  }, [current, point, cache, draft]);
   const holdingLink = (id: string) => <button key={id} type="button" onClick={() => review("Investment", id)}>{referenceLabel(draft, "Investment", id)}</button>;
   return <section className="panel monthly-money" aria-label={mode === "paycheck" ? "Your Paycheck" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments and transfers"}>
     <div className="panel-head"><h2>{mode === "paycheck" ? "Your Paycheck" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments & transfers"}</h2>
@@ -45,18 +45,16 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
       {error && <><p role="alert">{error}</p><button type="button" onClick={inspect}>Retry selected month</button><button type="button" onClick={setup}>Review forecast setup</button></>}
       {detail && <>
         {mode === "paycheck" && <>
-          <p><strong>{amount(detail.income)}</strong> recurring household income before modeled employee contributions</p>
-          <small>Includes supported salary and other recurring income; employer contributions are excluded.</small>
-          <p role="note">Incomplete allocation: withholding is not supported yet, and cash uses are not reconciled to this month's income. Unallocated coverage is not leftover pay.</p>
-          {Number(detail.income) > 0 ? <div className="paycheck-bar" role="img" aria-label={`Employee contributions ${amount(detail.employee)}; not yet reconciled ${amount(detail.unreconciled)}; total ${amount(detail.income)}`}>
-            {Number(detail.employee) > 0 && <span className="paycheck-employee" style={{ flexGrow: Number(detail.employee) / Number(detail.income) }} />}
-            {Number(detail.unreconciled) > 0 && <span className="paycheck-unreconciled" style={{ flexGrow: Number(detail.unreconciled) / Number(detail.income) }} />}
-          </div> : <p>No recurring income was posted in this month. Cash uses may draw on savings or other sources.</p>}
-          <ul className="paycheck-legend"><li>● Employee workplace contributions · {amount(detail.employee)}{Number(detail.income) > 0 && ` (${(Number(detail.employee) / Number(detail.income) * 100).toFixed(1)}%)`}</li><li><button type="button" onClick={setup}>▧ Not yet reconciled · {amount(detail.unreconciled)}{Number(detail.income) > 0 && ` (${(Number(detail.unreconciled) / Number(detail.income) * 100).toFixed(1)}%)`}</button></li></ul>
+          <p><strong>{amount(detail.denominator)}</strong> {detail.basis === "gross_payroll" ? "gross payroll earnings" : "recorded household income"}</p>
+          <small>Same-month income versus posted uses · opening savings and employer contributions excluded from income.</small>
+          <p role="note">Incomplete allocation · Taxes withheld: not modeled. Unallocated money is not leftover pay.</p>
+          <PaycheckComparison detail={detail} amount={amount} review={review} setup={setup} />
+          {Number(detail.otherIncome) > 0 && detail.basis === "gross_payroll" && <small>Other recurring income: {amount(detail.otherIncome)} · outside the payroll basis.</small>}
+          {Number(detail.otherReceipts) > 0 && <p>Other posted receipts: {amount(detail.otherReceipts)}. Cash uses may draw on savings or these sources; this comparison does not identify which paycheck funded a payment.</p>}
+          {Number(detail.additionalFunding) > 0 && <p role="status">Cash uses exceed this month's income basis by {amount(detail.additionalFunding)}. Additional money comes from savings or other sources.</p>}
           <small>Modeled bank deposits: {amount(detail.deposited)}. This excludes unmodeled withholding and is not an after-tax paycheck estimate.</small>
           <button type="button" onClick={setup}>Review tax payment setup</button>
           {objectEntries(draft, "Income").map(value => <button key={objectId("Income", value)} type="button" onClick={() => review("Income", objectId("Income", value))}>{referenceLabel(draft, "Income", objectId("Income", value))}</button>)}
-          {detail.lines.filter(line => line.kind === "employee").map(line => <p key={line.id}>Employee contribution · {amount(line.amount)} · {line.date.slice(0, 10)} {line.holdingIds.map(holdingLink)}</p>)}
         </>}
         <details open={mode !== "paycheck"}><summary>Inspect modeled cash uses</summary>
         <div aria-label="Mortgage cash payments">{!detail.mortgages.length && <p>No mortgage payment was scheduled in this modeled month.</p>}{detail.mortgages.map(item => <article key={`${item.liabilityId}:${item.date}`}>
@@ -77,4 +75,45 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
       </>}
     </>}
   </section>;
+}
+
+function PaycheckComparison({ detail, amount, review, setup }: {
+  detail: Detail; amount: (value: string) => string;
+  review: (type: "Income" | "Investment" | "Liability" | "Account", id: string) => void;
+  setup: () => void;
+}) {
+  // Numbers here control display geometry only; all amounts/remainders above
+  // are exact application-layer money. Stable display order is not funding order.
+  const denominator = Number(detail.denominator);
+  const categories = [...detail.categories, ...(Number(detail.unallocated) > 0 ? [{
+    id: "unallocated", kind: "unallocated", label: "Unallocated / not fully modeled", amount: detail.unallocated,
+    sourceIds: [], holdingIds: [], accountIds: [], liabilityIds: [],
+  }] : [])];
+  let remaining = 100;
+  const segments = categories.map(item => {
+    const percent = denominator > 0 ? Number(item.amount) / denominator * 100 : 0;
+    const width = Math.min(remaining, Math.max(0, percent)); remaining -= width;
+    return { ...item, percent, width };
+  });
+  return <>
+    {denominator > 0 ? <div className="paycheck-bar" role="img" aria-label={`${segments.map(item => `${item.label} ${amount(item.amount)}`).join("; ")}; total income basis ${amount(detail.denominator)}; taxes withheld not modeled`}>
+      {segments.map(item => item.width > 0 && <span key={item.id} className={`paycheck-${item.kind}`} style={{ width: `${item.width}%`, flexBasis: "auto" }} title={`${item.label}: ${amount(item.amount)} (${item.percent.toFixed(1)}% of income basis)`} />)}
+    </div> : <p>No income was posted in this month. The amounts below show cash uses from other sources.</p>}
+    <ul className="paycheck-legend">{segments.map((item, index) => <li key={item.id}>
+      <span aria-hidden="true" className={`paycheck-key paycheck-${item.kind}`}>{index + 1}</span>
+      <span><strong>{item.label}</strong> · {amount(item.amount)}{denominator > 0 && ` (${item.percent.toFixed(1)}%)`}
+        {["ira", "brokerage"].includes(item.kind) && <small>Asset transfer · not spending</small>}
+        {item.kind === "mortgage" && <small>Principal & interest · principal repays debt</small>}
+        {item.holdingIds.map(id => <button key={id} type="button" onClick={() => review("Investment", id)}>{referenceLabelForHolding(id)}</button>)}
+        {item.liabilityIds.map(id => <button key={id} type="button" onClick={() => review("Liability", id)}>Review mortgage</button>)}
+        {!item.holdingIds.length && !item.liabilityIds.length && item.accountIds.map(id => <button key={id} type="button" onClick={() => review("Account", id)}>Review payment account</button>)}
+        {item.kind === "unallocated" && <button type="button" onClick={setup}>Review coverage</button>}
+      </span>
+    </li>)}</ul>
+    <details><summary>Comparison details</summary><p>Posted uses: {amount(detail.totalUses)}. Net change in bank cash: {amount(detail.cashChange)}; this is not a bank balance or disposable pay.</p>
+      <p>When uses exceed income, bar widths are capped in display order. Dollar amounts and percentages show the full uncapped uses.</p>
+      <details><summary>Technical details / source transactions</summary><pre>{JSON.stringify(detail.categories.map(item => ({ category: item.label, sources: item.sourceIds })), null, 2)}</pre></details>
+    </details>
+  </>;
+  function referenceLabelForHolding(_id: string) { return "Review contribution or investment"; }
 }
