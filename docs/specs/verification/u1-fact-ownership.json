@@ -191,7 +191,7 @@
       "label": "Bank account receiving take-home pay",
       "kind": "decision",
       "owner_surface": "Money → Income",
-      "semantic_scope": "income ID + forecast instruction/context",
+      "semantic_scope": "household-level session execution routing for modeled recurring income; per-income account routing is not supported yet",
       "canonical_authority": "authoritative household execution cashFlowExecutionAccountId / income routing",
       "derives_from": [
         "income.pay_contract",
@@ -201,7 +201,7 @@
         "Plan → Current Plan",
         "Money → Accounts"
       ],
-      "resolution_policy": "one normal editor next to salary; forecast context may be session-only, labeled explicitly",
+      "resolution_policy": "one forecast-session cash routing choice displayed beside Income; do not invent per-employer allocations; make session-only lifetime explicit",
       "delivery_gate": "U1"
     },
     {
@@ -547,7 +547,7 @@
       "label": "Prior year-to-date historical contribution totals",
       "kind": "source",
       "owner_surface": "Net Worth → Investments & retirement",
-      "semantic_scope": "person + sponsor/plan limit scope + destination/character + tax year + cutoff",
+      "semantic_scope": "actual holding/character/person/employer plan/tax year/cutoff; aggregate legal bucket across related holdings only for limits",
       "canonical_authority": "saved historical contribution usage/canonical observed transactions",
       "derives_from": [
         "investment.account",
@@ -558,7 +558,7 @@
         "Plan → Current Plan",
         "Taxes workspace (#102)"
       ],
-      "resolution_policy": "never infer prior real-world usage from future forecasts; record once per legally shared bucket/date; zero requires confirmation",
+      "resolution_policy": "one observed historical amount per actual account/holding/character; capacity aggregates legal scopes; never infer historical usage from future plan",
       "delivery_gate": "U1"
     },
     {
