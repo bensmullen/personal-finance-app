@@ -115,7 +115,7 @@ For a routine patch:
 2. query the manifest by domain/keyword;
 3. read the owning requirement(s) from the narrow capability specification;
 4. follow parent requirements for decomposition/allocation and dependency links for cross-capability prerequisites only as needed;
-5. implement and run focused verification.
+5. implement or update focused verification coverage; let GitHub Actions execute it outside Codex implementation turns.
 
 For cross-cutting or semantic changes, traverse the relevant parent chain and update traceability when requirements change.
 
