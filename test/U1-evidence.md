@@ -1,5 +1,59 @@
 # U1 implementation evidence — issue #94
 
+## Source-of-truth repair checkpoint (2026-10-11): blocked before implementation
+
+Source review started at `38b033f04cf3d4721a06d5f0b64f5fbb19b2f6bb`.
+This checkpoint supersedes earlier acceptance implications, not existing code or
+revision-specific CI evidence. Independent audit is **NEEDS PATCH**; owner UAT
+is **not accepted**. PR #98 remains draft; Issue #94/D1 remain open.
+
+The required PR #112 architecture is absent from this checkout:
+`docs/specs/verification/u1-fact-ownership.json`, its accompanying
+`u1-fact-ownership-audit.md`, and PFA-UX-021–023 in
+`docs/specs/capabilities/application-ux.md`. Locally cached `origin/main` is
+`1f5c836` (#97); this does not establish current GitHub merge state. Issue #94
+requires the approved ownership register as the starting family inventory and
+assigns existing-branch synchronization to the operator. No replacement registry,
+semantic IDs, controlled-document edits or branch synchronization were introduced.
+
+### Current source inventory (partial; not the exhaustive registry audit)
+
+| Rendered facts / controls | Current source | Required owner from #94 | Exception / boundary |
+| --- | --- | --- | --- |
+| Salary amount/frequency/growth; incoming bank | Income editor; Current Plan session receiving account | Money → Income | Incoming-bank configuration remains outside the income editor |
+| Checking/savings facts | Shared entity editor from Money Accounts and Net Worth bank page | Money → Accounts; shared in-context editor for mirrors | Rendered-route ownership audit pending |
+| Spending/growth; investment return | Expense/Assumption editors and contextual return editor | Money → Spending; Investments & retirement | Plan Assumptions remains an edit route |
+| Mortgage terms/funding/priority | Liability editor; Current Plan `LiabilityExecutionControls` | Net Worth → Debt | Session funding remains on Current Plan; replay is the single payment source |
+| Age/compensation/filing/MAGI/coverage/plan terms | Personal/payroll/historical `AuthoredContributionFacts` snapshots | Household/People or investment plan editor per approved record | Same labels do not establish the same person/year/employer/legal fact |
+| Prior YTD and known-history confirmation | Opening usage snapshot and readiness/options adapters | Investments & retirement | Preserve observed totals, known zero and legal capacity scopes; never post cash |
+| Future annual facts | `AnnualContributionAssumption`; `parseContributionFacts` | Source-qualified derivation or supported assumption at actual owner | Current authored-fact contract accepts only nominal carry-forward; it does not establish growth-qualified compensation/MAGI/coverage |
+| Horizon/simulation/retirement | Current Plan, Model Settings, session retirement override | Current Plan run settings; Life Events retirement | Owner/mirror consolidation pending |
+| Paycheck month/basis/categories | Money Cash Flow `MonthlyEvidence`, `MonthlyMoneyPanel`, `inspectMonthlyMoney` | Money → Cash Flow | Explicit review click; employee/unreconciled segments; other cash uses not attributed to pay |
+
+Approved semantic IDs cannot be mapped until the required 50-family register is
+available. This partial inventory does not establish exhaustive conditional-field
+coverage or zero duplicate writable identities.
+
+### Four reported failures: current completion status
+
+| Failure | Status | Source evidence / required next work |
+| --- | --- | --- |
+| Paycheck visibility/category fidelity | Supported but incomplete; not accepted | Panel renders only employee/unreconciled segments after review. Replay separately grounds mortgages, purchases and cash uses; withholding is explicitly not modeled. Exact income-funded attribution is not demonstrated. |
+| Historical conflict/message | Needs patch | `contributionOpening.ts` keys by holding/character/year and compares almost the entire policy. `u1OwnerRepairs.test.ts` still expects conflict rejection. Approved scoped identity/provenance must precede lossless reconciliation; distinct employers/years stay distinct. |
+| Future-year projection/checkbox | Needs patch; engine boundary unresolved | Checkbox carries compensation/MAGI/coverage nominally. Removing it does not create source-qualified annual facts. Inspect approved registry and executable/statutory contracts before requesting any narrow engine delta. |
+| Cross-screen redundant fields | Blocked on architecture synchronization | `fieldContract.ts` contains presentation metadata, not a typed ownership resolver. Required registry and PFA-UX-021–023 are absent. |
+
+Unblock by making merged PR #112 architecture available in this existing branch
+through the operator-managed synchronization required by Issue #94, then resubmit
+`PFM_TASK_ISSUE: 94`. No additional controlled-document write scope is requested.
+Any necessary statutory projection/payroll attribution delta must be established
+separately after inspecting that authority, rather than invented in React.
+
+This checkpoint changes evidence only. No local tests, builds, validators,
+dependency installation, browser runs or dev servers were executed. New CI,
+independent semantic audit and explicit uncoached owner UAT remain required;
+earlier green CI does not prove these repairs or production deployment.
+
 ## Remaining owner requests: implementation inventory
 
 | Surface | Common | Derived / read-only | Boundary |
