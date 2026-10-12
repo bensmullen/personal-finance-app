@@ -55,12 +55,11 @@ test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and
   await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
   await navigate(page, "Money", "Cash Flow");
   const pay = page.getByRole("region", { name: "Your Paycheck", exact: true });
-  await pay.getByRole("button", { name: "Review selected month" }).click();
+  await expect(pay.getByRole("button", { name: "Review selected month" })).toHaveCount(0);
   await expect(pay).toContainText("Incomplete allocation");
   await expect(pay).toContainText("not leftover pay");
   await expect(pay.getByRole("img")).toHaveAttribute("aria-label", /not yet reconciled.*total/i);
   await pay.getByLabel("paycheck forecast month").selectOption("2026-02");
-  await pay.getByRole("button", { name: "Review selected month" }).click();
   await expect(pay).toContainText("2026-02-01 to 2026-03-01");
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -71,12 +70,12 @@ test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and
   }
   await navigate(page, "Net Worth", "Debt");
   const debt = page.getByRole("region", { name: "Monthly mortgage payments", exact: true });
-  await debt.getByRole("button", { name: "Review selected month" }).click();
+  await expect(debt.locator('[aria-label="Mortgage cash payments"]')).toBeVisible();
   const payment = await debt.locator('[aria-label="Mortgage cash payments"]').innerText();
   await expect(debt).toContainText("contractual payment");
   await navigate(page, "Money", "Spending");
   const spending = page.getByRole("region", { name: "Housing payments and transfers", exact: true });
-  await spending.getByRole("button", { name: "Review selected month" }).click();
+  await expect(spending.locator('[aria-label="Mortgage cash payments"]')).toBeVisible();
   expect(await spending.locator('[aria-label="Mortgage cash payments"]').innerText()).toBe(payment);
   await expect(spending).toContainText("Principal repayment reduces debt");
   await navigate(page, "Plan", "Current Plan");

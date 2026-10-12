@@ -1,5 +1,51 @@
 # U1 implementation evidence — issue #94
 
+## October 11 continuation after operator synchronization — partial, blocked
+
+This supersedes the missing-registry checkpoint below. PR #112's register and
+PFA-UX-021–023 are present at `c3d01f8`. Independent audit remains NEEDS PATCH;
+owner UAT remains not accepted. PR #98 stays draft and #94/D1 stay open.
+
+| Reported failure | Implemented this continuation | Remaining release blocker |
+| --- | --- | --- |
+| Paycheck discovery/category fidelity | Selected committed month loads automatically on Cash Flow, Debt and Spending; failure has Retry and setup actions | Full income-funded categories and withholding are not established; two-segment incomplete view is not owner acceptance |
+| Historical scope conflict | One scoped resolver; compatible same-year copies ignore unused annual projection metadata, excess behavior and rule-reference IDs; money formatting normalizes exactly; original historical confirmation and usage retained | Specific conflicting field/source repair dialog and distinct-sponsor YTD routing still needed; true conflicts remain blocked |
+| Future facts/checkbox | Blanket checkbox removed; unsupported year-by-year coverage stated; existing imported assumption inspectable and explicitly removable on save; calendar-age derivation available in application layer | Executable annual projection lacks a source-qualified year-indexed facts input; age helper is not yet a complete policy migration |
+| Duplicate writable facts | Typed semantic scope includes person/year/household/sponsor/account/holding/scenario/interval/bucket/character, with provenance and owner repair | Whole-registry write bindings and removal of existing editable policy mirrors are not complete |
+
+No local verification ran. Added unit coverage targets deterministic scoped
+coalescing, true conflicts, distinct scopes, age derivation, nonzero historical
+usage, exact money formatting, import/reload and unchanged accounts/holdings.
+Browser assertions now require initial/month-change evidence without a reveal
+click and absence of the blanket checkbox; durable saves must leave unsupported
+future facts unasserted. Latest-head GitHub CI is pending. These are added
+regressions, not claimed passing results or deployment evidence.
+
+### Exact required interface authorization
+
+1. `src/simulation/contributionProjection.ts`, its callers and policy type:
+   accept immutable, source-qualified facts keyed by person, year, sponsor/plan,
+   legal bucket/character and effective scope. Resolve the requested year before
+   capacity/tax evaluation; missing authority must remain incomplete. Preserve
+   original observed usage and current projected-law formulas. Application
+   resolution must supply qualified facts without serializing new stale policy
+   copies. Tests must demonstrate year transitions, growth/termination, distinct
+   employers, unavailable MAGI/coverage and summary/detail/replay consistency.
+   `D1ContributionFacts` in `src/rules/contribution2026.ts` currently exposes only
+   `confirmed_nominal_carry_forward`; any required type change needs explicit
+   scope authorization, not inferred permission to redesign statutory formulas.
+2. Household/payroll replay contract: provide actual modeled withholding coverage
+   and an explicit same-month cash-origin attribution or approved attribution
+   semantics distinguishing opening savings, other income, refunds, transfers
+   and payroll. Posted cash debits alone prove use, not paycheck origin. #101's
+   withholding infrastructure is not implemented by this UI patch. Until this
+   contract exists, mortgage/IRA/living cash uses stay separately grounded and
+   cannot be promised as reconciled paycheck segments or Leftover.
+
+The out-of-scope financial boundary is reached. No simulation/rules/schema/spec
+changes were made. The existing supported-year UI and accounting evidence remain;
+this is a BLOCKED partial implementation, not U1 completion or acceptance.
+
 ## Source-of-truth repair checkpoint (2026-10-11): blocked before implementation
 
 Source review started at `38b033f04cf3d4721a06d5f0b64f5fbb19b2f6bb`.
@@ -277,3 +323,24 @@ while asserting a usable reconciled forecast; that limitation is independent of
 return validity. No local verification or new ChatGPT interactive test was run.
 Latest-head CI, independent ChatGPT re-audit and uncoached owner UAT remain gates;
 PR #98 stays draft and Issue #94, U1 and D1 remain open.
+# October 11 ownership continuation — pre-edit source inventory
+
+The operator merged main at `c3d01f8`; PR #112's ownership register is present.
+This continuation preserves the earlier U1 foundation. This table records the
+specific audited sources before edits; it does not attest full migration.
+
+| Rendered field / output | Semantic identity | Sole intended editor / mirrors | Current authority and boundary |
+| --- | --- | --- | --- |
+| Birthdate / contribution age | `person.birthdate` / `person.age_year_end`, person + year | Household & People / personal, payroll, historical eligibility | Person birthdate; policy ages are compatibility snapshots and may conflict |
+| Historical and future annual eligibility | Registry income/tax/health/employer families, person + year + sponsor where material | Registry's natural owner / contribution policy snapshots | Existing D1 policy facts; whole-policy historical equality wrongly includes forecast metadata |
+| Historical employer group | `income.employer`, person + plan key + year | Income / history and payroll | Different sponsors are distinct; current YTD entry identifies only holding + character and cannot disambiguate two sponsors on one holding |
+| Prior YTD totals and confirmation | `investment.past_usage`, holding + character + year + boundary | Investments & retirement / capacity and forecast | Opening usage adapter; must preserve actual money, ordinary/catch-up split and reconfirmation |
+| Future unchanged-facts checkbox | `investment.contribution_projection`, person + year + legal scope | Derived/read-only boundary / saved compatibility assumption | `simulation/contributionProjection.ts` supports nominal carry-forward only; no year-indexed source-qualified fact input |
+| Paycheck month and bar | `money.paycheck_view`, household + committed calendar period | Money Cash Flow / Debt and Spending cash evidence | Immutable replay; employee deductions known, withholding and paycheck-origin attribution absent |
+
+The annual-fact projection and reconciled paycheck allocation remain potential
+out-of-scope semantic blockers. No gross salary → MAGI, wage → qualified pay,
+bank balance → leftover, or savings → current paycheck inference is authorized.
+The existing 50-family controlled registry remains read-only. An exhaustive
+rendered-field migration and zero duplicate writable identities are not yet proven.
+

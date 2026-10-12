@@ -11,6 +11,7 @@ import { durablePayrollAllocations } from "./payrollAuthoring.js";
 import { durablePersonalPurchaseInstructions } from "./personalPurchases.js";
 import { EXACT_DECIMAL, UUID, objects, utcDate, type CanonicalObject } from "./shared.js";
 import { canonicalSerialize } from "../../simulation/run.js";
+import { resolveAnnualPolicyCopies } from "../contributionFactResolution.js";
 
 const ADAPTER = "d1-opening-contribution-usage/v1";
 const SNAPSHOT_ID = "d1c60000-0000-4000-8000-000000000001";
@@ -44,8 +45,13 @@ export const openingContributionOptions = (model: PortableModelEnvelope) => {
   for (const option of options) {
     const key = `${option.investmentId}:${option.character}:${option.policy.facts.taxYear}`;
     const previous = unique.get(key);
-    if (previous && scopeConfirmation(previous) !== scopeConfirmation(option)) return fail("HISTORICAL_SCOPE_CONFLICT");
-    unique.set(key, option);
+    if (previous && resolveAnnualPolicyCopies(option.investmentId, [
+      { id: "existing", label: "Earlier eligibility source", policy: previous.policy },
+      { id: "candidate", label: "Contribution eligibility source", policy: option.policy },
+    ]).status !== "known") return fail("HISTORICAL_SCOPE_CONFLICT");
+    // Retain the first compatible copy, including historical confirmation
+    // identity. Do not overwrite it with future-only assumption metadata.
+    if (!previous) unique.set(key, option);
   }
   return [...unique.values()];
 };

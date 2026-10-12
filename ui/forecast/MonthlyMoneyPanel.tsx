@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { inspectMonthlyMoney } from "../../src/application/monthlyMoney.js";
 import type { PersonalHouseholdForecastReadModel } from "../../src/application/householdProjection.js";
 import type { PersonalDraft } from "../../src/application/personalMvp.js";
@@ -17,15 +17,21 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
   const [selected, setSelected] = useState("");
   const [error, setError] = useState("");
   const cache = useMemo(() => new Map<string, Detail>(), [forecast]);
-  const [revision, setRevision] = useState(0);
+  const [, setRevision] = useState(0);
   const point = points.find(value => value.periodStart.slice(0, 7) === selected) ?? points[0];
   const detail = current && point ? cache.get(point.periodStart) : undefined;
   const amount = (value: string) => formatExactMoney(value, detail?.currency ?? point?.cash.currency);
   const inspect = () => {
     if (!point || !current) return;
-    try { cache.set(point.periodStart, inspectMonthlyMoney(point)); setError(""); setRevision(revision + 1); }
+    try { cache.set(point.periodStart, inspectMonthlyMoney(point)); setError(""); setRevision(value => value + 1); }
     catch { setError("Monthly evidence could not be loaded. Update the forecast and retry this month."); }
   };
+  useEffect(() => {
+    setError("");
+    if (!current || !point || cache.has(point.periodStart)) return;
+    try { cache.set(point.periodStart, inspectMonthlyMoney(point)); setRevision(value => value + 1); }
+    catch { setError("Monthly evidence could not be loaded. Update the forecast and retry this month."); }
+  }, [current, point, cache]);
   const holdingLink = (id: string) => <button key={id} type="button" onClick={() => review("Investment", id)}>{referenceLabel(draft, "Investment", id)}</button>;
   return <section className="panel monthly-money" aria-label={mode === "paycheck" ? "Your Paycheck" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments and transfers"}>
     <div className="panel-head"><h2>{mode === "paycheck" ? "Your Paycheck" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments & transfers"}</h2>
@@ -35,8 +41,8 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
       {mode !== "paycheck" && objectEntries(draft, "Liability").filter(value => value.liability_type === "mortgage").map(value => <p key={objectId("Liability", value)}>{referenceLabel(draft, "Liability", objectId("Liability", value))} · Payment not available. Review contractual terms and payment funding in Forecast setup.</p>)}
       <button type="button" onClick={setup}>Review forecast setup</button></> : <>
       <small>Household · modeled forecast · {point.periodStart.slice(0, 10)} to {point.periodEnd.slice(0, 10)} (exclusive)</small>
-      {!detail && <button type="button" onClick={inspect}>Review selected month</button>}
-      {error && <p role="alert">{error}</p>}
+      {!detail && !error && <p role="status">Loading this month's committed activity…</p>}
+      {error && <><p role="alert">{error}</p><button type="button" onClick={inspect}>Retry selected month</button><button type="button" onClick={setup}>Review forecast setup</button></>}
       {detail && <>
         {mode === "paycheck" && <>
           <p><strong>{amount(detail.income)}</strong> recurring household income before modeled employee contributions</p>

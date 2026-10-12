@@ -18,7 +18,7 @@ export function diagnosticSummary(diagnostic: DisplayDiagnostic, model?: Persona
   if (diagnostic.entityType === "tax_capability") {
     const category = diagnostic.category ?? "";
     if (category === "payment_funding" || category === "settlement_timing") return { problem: "Tax payments and refunds need forecast setup.", remedy: "Choose their cash accounts and confirm settlement dates in Forecast setup.", explanation };
-    if (category === "contribution_annual_facts") return { problem: "Future annual contribution facts need confirmation.", remedy: "Review annual eligibility and future assumptions in the investment account's contribution editor.", explanation };
+    if (category === "contribution_annual_facts") return { problem: "Future contribution eligibility is not established for this year.", remedy: "Review supported-year results and the contribution account's coverage boundary; year-by-year eligibility is not supported yet.", explanation };
     if (category === "projected_current_law") return { problem: sentences[0]!, remedy: "Review the projected current-law basis before relying on future tax totals.", explanation };
     return { problem: sentences[0]!, remedy: /filing_status|residence_jurisdiction_periods|work_service_jurisdiction_allocations/.test(category)
       ? "Import the missing or corrected dated tax facts; this editor cannot author them."

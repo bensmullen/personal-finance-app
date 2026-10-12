@@ -31,6 +31,7 @@ import {
 } from "recharts";
 import { z } from "zod";
 import { payrollCharacters, authoringFailure } from "./authoring/contributionChoices.js";
+import { futureContributionFactBoundary } from "../src/application/factResolution.js";
 import { financialField, fieldProblem, compareDecimal, unvestedProblem, effectiveAnnualReturnProblem, entityField as financialFieldOrUndefined } from "./authoring/fieldContract.js";
 import { GuidedFields } from "./authoring/GuidedFields.js";
 import { FinancialSection, focusRepair, FinancialInput, commitAtControl } from "./authoring/FieldShell.js";
@@ -2856,7 +2857,7 @@ function PersonalPurchaseAuthoring({ draft, setDraft, initialInvestmentId }: { d
       {destination?.account_type === "traditional_ira" && <label>Traditional IRA deduction MAGI<input inputMode="decimal" value={deductionMagi} onChange={event => setDeductionMagi(event.target.value)} /></label>}
       {[["Workplace plan coverage", covered, setCovered], ["Spouse workplace plan coverage", spouseCovered, setSpouseCovered], ["Lived with spouse during the year", livesWithSpouse, setLivesWithSpouse]].map(([label, value, setter]) => <label key={String(label)}>{String(label)}<select aria-label={String(label)} value={String(value)} onChange={event => { if (typeof setter === "function") setter(event.target.value); }}><option value="">Unknown</option><option value="true">Yes</option><option value="false">No</option></select></label>)}
       <label>Excess contribution policy<select aria-label="Excess contribution policy" value={excessPolicy} onChange={event => setExcessPolicy(event.target.value === "auto_cap" ? "auto_cap" : "reject")}><option value="reject">Reject excess</option><option value="auto_cap">Explicitly cap to available capacity</option></select></label>
-      <AnnualContributionAssumption confirmed={projectAnnualFacts} onChange={setProjectAnnualFacts} />
+      <AnnualContributionAssumption confirmed={projectAnnualFacts} onChange={setProjectAnnualFacts} personId={String(destination?.owner_id ?? "")} holdingId={investmentId} year={Number(date.slice(0, 4))} />
     </fieldset></FinancialSection>}
     <button type="button" disabled={!investmentId || !bankId || purchaseInvalid} onClick={() => {
       const selected = investments.find(investment => objectId("Investment", investment) === investmentId);
@@ -2871,12 +2872,16 @@ function PersonalPurchaseAuthoring({ draft, setDraft, initialInvestmentId }: { d
   </section></GuidedFields>;
 }
 
-function AnnualContributionAssumption({ confirmed, onChange }: { confirmed: boolean; onChange: (value: boolean) => void }) {
-  return <GuidedFields scope="annual-assumption"><section aria-label="Annual contribution forecast assumption">
-    <label><input type="checkbox" checked={confirmed} onChange={event => onChange(event.target.checked)} />Assume these annual personal facts stay unchanged in future years</label>
-    <small>Unconfirmed future-year facts remain incomplete; affected contributions are skipped.</small>
-    <details><summary>What carries forward?</summary><p>Supplied compensation, MAGI, filing status, prior employer wages, plan features, workplace coverage and HSA facts stay nominal. Age advances each year. Salary growth does not change these facts. This assumption is separate from projected current law.</p></details>
-  </section></GuidedFields>;
+function AnnualContributionAssumption({ confirmed, onChange, personId, holdingId, year }: { confirmed: boolean; onChange: (value: boolean) => void; personId: string; holdingId: string; year: number }) {
+  const boundary = futureContributionFactBoundary({ personId, taxYear: year, holdingId }, holdingId);
+  return <section aria-label="Annual contribution forecast boundary">
+    <p>{boundary.reason}</p>
+    {confirmed && <details><summary>Existing forecast assumption</summary>
+      <p>This saved plan carries annual eligibility facts forward unchanged while advancing age. It does not follow salary growth.</p>
+      <button type="button" onClick={() => onChange(false)}>Remove unchanged-facts assumption from draft</button>
+      <small>Save the contribution plan to apply this change. Future years may become incomplete.</small>
+    </details>}
+  </section>;
 }
 
 function contributionFieldHelp(key: string): string {
@@ -2967,7 +2972,7 @@ function PayrollContributionAuthoring({ draft, setDraft, initialInvestmentId }: 
     <FinancialSection title="Annual eligibility facts" open={!!investmentId}><fieldset><legend>Contribution eligibility</legend>{input("taxYear", "Payroll contribution year")}{input("ageAtYearEnd", "Payroll age at year end")}
       <p className="muted">Future payroll facts · {referenceLabel(draft, "Person", destinationAccount?.owner_id)} · {objectLabel("Account", destinationAccount ?? {})} · {fields.taxYear || "choose year"}{!character.endsWith("_hsa") && ` · ${planKey || "choose employer group"}`}. Prior contributions use a separately recorded historical scope; different years and employers remain independent.</p>
       {character.endsWith("_hsa") ? <>{booleanInput("hsaFullYearEligible", "HSA eligible for the full year")}<label>HSA coverage<select aria-label="HSA coverage" value={fields.hsaCoverage ?? ""} onChange={event => setFields({ ...fields, hsaCoverage: event.target.value })}><option value="">Unknown</option><option value="self">Self only</option><option value="family">Family</option></select></label><FieldHelp label="HSA coverage">Choose self-only or family qualifying health coverage. This determines the annual HSA limit. For example select Family for eligible family coverage; do not infer eligibility from owning an HSA.</FieldHelp>{fields.hsaCoverage === "family" && input("hsaFamilyAllocation", "Your share of the family HSA limit")}</> : <>{input("eligiblePlanCompensation", "Annual pay eligible for this plan")}{booleanInput("planHasRoth", "Plan has a Roth feature")}{input("priorYearSponsorWages", "Last year’s pay from this employer")}</>}
-      <AnnualContributionAssumption confirmed={fields.annualFactProjection === "confirmed_nominal_carry_forward"} onChange={confirmed => setFields({ ...fields, annualFactProjection: confirmed ? "confirmed_nominal_carry_forward" : "" })} />
+      <AnnualContributionAssumption confirmed={fields.annualFactProjection === "confirmed_nominal_carry_forward"} onChange={confirmed => setFields({ ...fields, annualFactProjection: confirmed ? "confirmed_nominal_carry_forward" : "" })} personId={String(destinationAccount?.owner_id ?? "")} holdingId={investmentId} year={Number(fields.taxYear)} />
     </fieldset></FinancialSection>
     <label>When a contribution exceeds the limit<select aria-label="When a contribution exceeds the limit" value={excessPolicy} onChange={event => setExcessPolicy(event.target.value === "auto_cap" ? "auto_cap" : "reject")}><option value="reject">Stop and report the excess</option><option value="auto_cap">Reduce to the remaining allowance</option></select></label>
     <FieldHelp label="When a contribution exceeds the limit">Payroll excess policy chooses whether to reject an over-limit contribution or reduce it to the known remaining allowance. For example, if $100 remains and $150 is requested, reducing contributes $100. Missing eligibility facts still stay incomplete.</FieldHelp>
@@ -3068,7 +3073,7 @@ function ContributionCapacityPanel({ draft, forecast }: { draft: PersonalDraft; 
   const { baseline } = useContext(FinancialResultModels);
   const currentForecast = baseline && baseline.resultModel === draft && !baseline.pending && !baseline.stale ? forecast : undefined;
   let rows: ReturnType<typeof getContributionCapacities>;
-  try { rows = currentForecast && currentForecast.status !== "unavailable" ? currentForecast.contributionCapacities : getContributionCapacities(draft); } catch (failure) { return <p role="alert">{failure instanceof Error ? failure.message : "Contribution capacity is unavailable"}</p>; }
+  try { rows = currentForecast && currentForecast.status !== "unavailable" ? currentForecast.contributionCapacities : getContributionCapacities(draft); } catch (failure) { return <AuthoringError reason={failure instanceof Error ? failure.message : "Contribution capacity is unavailable"} route="payroll" />; }
   return <section className="panel" aria-label="Contribution capacity"><h2>Annual contribution capacity</h2><p>Modeled YTD combines authoritative opening usage and committed forecast contributions across every account sharing a bucket.</p>
     <div className="table-scroll"><table><thead><tr><th>Account / year</th><th>Shared categories</th><th>Annual USD limit</th><th>Opening YTD</th><th>Forecast usage</th><th>Modeled YTD</th><th>Remaining</th></tr></thead><tbody>{rows.map(row => <tr key={`${row.accountId}:${row.bucketIdentity}`}><td>{objectLabel("Account", objectEntries(draft, "Account").find(item => item.account_id === row.accountId) ?? {})} / {row.year}{row.provenance === "projected_current_law" && <p>Projected current law · {row.lawVersion}</p>}</td><td>{row.categories.map(value => value.replaceAll("_", " ")).join(", ")}</td><td>{row.annualLimit ?? "Incomplete"}{row.diagnostics.length > 0 && <p role="status">{"Annual capacity needs more recorded facts."}</p>}</td><td>{row.openingUsage ?? "Unknown"}</td><td>{row.forecastUsage ?? "Run plan"}</td><td>{row.yearToDate ?? "Incomplete"}</td><td>{row.remaining ?? "Incomplete"}</td></tr>)}</tbody></table></div>
     {!currentForecast && forecast && <p>Forecast usage will appear when a forecast reflects the current plan. The limits and opening usage shown here use your current saved facts.</p>}
