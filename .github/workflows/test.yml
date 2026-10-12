@@ -243,7 +243,8 @@ jobs:
           retention-days: 30
 
   deploy:
-    if: github.event_name == 'push' && needs.build.result == 'success'
+    # Optional skipped gates must not prevent deployment of a passing main commit.
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && needs.build.result == 'success' }}
     needs: [test, build]
     runs-on: ubuntu-latest
     environment:
