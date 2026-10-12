@@ -458,7 +458,7 @@
     {
       "id": "application-ux",
       "path": "docs/specs/capabilities/application-ux.md",
-      "version": "0.1.5-draft",
+      "version": "0.1.6-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -489,7 +489,11 @@
         "contextual help",
         "linked financial fields",
         "inline validation",
-        "uncoached UAT"
+        "uncoached UAT",
+        "single-source-of-truth",
+        "financial fact ownership",
+        "safe automatic conflict resolution",
+        "derived eligibility facts"
       ],
       "applies_to": [
         "personal-mvp"
@@ -678,7 +682,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.6.6-draft",
+      "version": "0.6.7-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -745,7 +749,9 @@
         "D2 pre-stochastic breadth",
         "GitHub issue-to-stage registry",
         "milestone issue traceability",
-        "private-alpha issue gates"
+        "private-alpha issue gates",
+        "U1 fact ontology",
+        "PFA-UX-021-023"
       ],
       "applies_to": [
         "personal-mvp",
