@@ -67,7 +67,7 @@ const rows: readonly Row[] = [
   ["name", "Name", "A recognizable name for this item.", "text", "name", "Household checking"],
   ["first_name", "First name", "Identifies the person owning financial activity.", "text", "name", "Alex"],
   ["last_name", "Last name", "Identifies this household member.", "text", "name", "Example"],
-  ["date_of_birth", "Date of birth", "Recorded birth date; contribution ages are separate annual facts.", "date", "date", "1990-06-15", "advanced"],
+  ["date_of_birth", "Date of birth", "Recorded birth date; contribution age on December 31 is calculated from this source.", "date", "date", "1990-06-15", "advanced"],
   ["household_type", "Household type", "The people included in your household.", "choice", "category", "Family"],
   ["formation_date", "Household start", "When the household began.", "date", "date", "2020-01-01", "advanced"],
   ["household_id", "Household", "Household this person belongs to.", "choice", "household", "My household"],

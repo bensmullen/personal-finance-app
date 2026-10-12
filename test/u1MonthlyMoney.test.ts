@@ -13,7 +13,7 @@ describe("U1 monthly committed evidence", () => {
     const result = runPersonalHouseholdForecast(model, { compiler: d1IntegratedCompilerRequest(), asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity: "d1940000-0000-4000-8000-000000000094" });
     if (result.status === "unavailable") throw new Error(`Integrated household must have monthly evidence: ${JSON.stringify(result.diagnostics)}`);
     const before = JSON.stringify(result);
-    const month = inspectMonthlyMoney(result.points[0]!);
+    const month = inspectMonthlyMoney(result.points[0]!, model);
     expect(month).toMatchObject({ income: "9000", employee: "550", deposited: "8450", unreconciled: "8450", status: "incomplete", withholding: "not_modeled" });
     expect(month.lines.filter(line => line.kind === "employee")).toHaveLength(2);
     expect(month.lines.some(line => line.holdingIds.includes(integratedIds.match))).toBe(false);
@@ -26,8 +26,20 @@ describe("U1 monthly committed evidence", () => {
     expect(money(mortgage.principal).plus(money(mortgage.interest)).amount.toString()).toBe(mortgage.payment);
     expect(mortgage.paid).toBe(mortgage.payment);
     expect(month.mortgages).toHaveLength(1);
+    expect(month).toMatchObject({ basis: "gross_payroll", denominator: "9000", otherIncome: "0" });
+    const amountFor = (kind: string) => month.categories.filter(row => row.kind === kind).reduce((sum, row) => sum.plus(money(row.amount)), money("0")).amount.toString();
+    expect(amountFor("workplace")).toBe("550");
+    expect(amountFor("mortgage")).toBe(mortgage.paid);
+    expect(amountFor("ira")).toBe("500");
+    expect(amountFor("tax")).toBe("500");
+    const legIds = month.categories.flatMap(row => row.sourceIds);
+    expect(new Set(legIds).size).toBe(legIds.length);
+    expect(month.categories.some(row => row.holdingIds.includes(integratedIds.match))).toBe(false);
+    expect(month.categories.find(row => row.kind === "ira")?.accountIds).toEqual([golden.savings]);
+    expect(money(month.denominator).plus(money(month.additionalFunding)).minus(money(month.totalUses)).amount.toString()).toBe(month.unallocated);
+    expect(month.receipts.some(row => row.label === "Investment sale proceeds")).toBe(true);
     expect(JSON.stringify(result)).toBe(before);
-    expect(inspectMonthlyMoney(result.points[0]!)).toEqual(month);
+    expect(inspectMonthlyMoney(result.points[0]!, model)).toEqual(month);
   });
   it("keeps period identity, different months and unsupported evidence boundaries explicit", () => {
     const result = runPersonalHouseholdForecast(createGoldenHouseholdDraft(), createGoldenHouseholdForecastRequest());

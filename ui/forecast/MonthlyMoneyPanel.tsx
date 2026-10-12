@@ -10,7 +10,7 @@ type Detail = ReturnType<typeof inspectMonthlyMoney>;
 export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setup }: {
   draft: PersonalDraft; forecast?: PersonalHouseholdForecastReadModel | undefined; current: boolean;
   mode: "paycheck" | "debt" | "spending";
-  review: (type: "Income" | "Investment" | "Liability" | "Account", id: string) => void;
+  review: (type: "Income" | "Investment" | "Liability" | "Account" | "Expense", id: string) => void;
   setup: () => void;
 }) {
   const points = forecast && forecast.status !== "unavailable" ? forecast.points : [];
@@ -48,9 +48,9 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
           <p><strong>{amount(detail.denominator)}</strong> {detail.basis === "gross_payroll" ? "gross payroll earnings" : "recorded household income"}</p>
           <small>Same-month income versus posted uses · opening savings and employer contributions excluded from income.</small>
           <p role="note">Incomplete allocation · Taxes withheld: not modeled. Unallocated money is not leftover pay.</p>
-          <PaycheckComparison detail={detail} amount={amount} review={review} setup={setup} />
+          <PaycheckComparison draft={draft} detail={detail} amount={amount} review={review} setup={setup} />
           {Number(detail.otherIncome) > 0 && detail.basis === "gross_payroll" && <small>Other recurring income: {amount(detail.otherIncome)} · outside the payroll basis.</small>}
-          {Number(detail.otherReceipts) > 0 && <p>Other posted receipts: {amount(detail.otherReceipts)}. Cash uses may draw on savings or these sources; this comparison does not identify which paycheck funded a payment.</p>}
+          <small>Cash uses may draw on savings or other receipts; this comparison does not identify which paycheck funded a payment.</small>
           {Number(detail.additionalFunding) > 0 && <p role="status">Cash uses exceed this month's income basis by {amount(detail.additionalFunding)}. Additional money comes from savings or other sources.</p>}
           <small>Modeled bank deposits: {amount(detail.deposited)}. This excludes unmodeled withholding and is not an after-tax paycheck estimate.</small>
           <button type="button" onClick={setup}>Review tax payment setup</button>
@@ -77,9 +77,10 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
   </section>;
 }
 
-function PaycheckComparison({ detail, amount, review, setup }: {
+function PaycheckComparison({ draft, detail, amount, review, setup }: {
+  draft: PersonalDraft;
   detail: Detail; amount: (value: string) => string;
-  review: (type: "Income" | "Investment" | "Liability" | "Account", id: string) => void;
+  review: (type: "Income" | "Investment" | "Liability" | "Account" | "Expense", id: string) => void;
   setup: () => void;
 }) {
   // Numbers here control display geometry only; all amounts/remainders above
@@ -87,7 +88,7 @@ function PaycheckComparison({ detail, amount, review, setup }: {
   const denominator = Number(detail.denominator);
   const categories = [...detail.categories, ...(Number(detail.unallocated) > 0 ? [{
     id: "unallocated", kind: "unallocated", label: "Unallocated / not fully modeled", amount: detail.unallocated,
-    sourceIds: [], holdingIds: [], accountIds: [], liabilityIds: [],
+    sourceIds: [], holdingIds: [], accountIds: [], liabilityIds: [], expenseIds: [],
   }] : [])];
   let remaining = 100;
   const segments = categories.map(item => {
@@ -104,16 +105,17 @@ function PaycheckComparison({ detail, amount, review, setup }: {
       <span><strong>{item.label}</strong> · {amount(item.amount)}{denominator > 0 && ` (${item.percent.toFixed(1)}%)`}
         {["ira", "brokerage"].includes(item.kind) && <small>Asset transfer · not spending</small>}
         {item.kind === "mortgage" && <small>Principal & interest · principal repays debt</small>}
-        {item.holdingIds.map(id => <button key={id} type="button" onClick={() => review("Investment", id)}>{referenceLabelForHolding(id)}</button>)}
-        {item.liabilityIds.map(id => <button key={id} type="button" onClick={() => review("Liability", id)}>Review mortgage</button>)}
-        {!item.holdingIds.length && !item.liabilityIds.length && item.accountIds.map(id => <button key={id} type="button" onClick={() => review("Account", id)}>Review payment account</button>)}
+        {item.holdingIds.map(id => <button key={id} type="button" onClick={() => review("Investment", id)}>{referenceLabel(draft, "Investment", id)}</button>)}
+        {item.liabilityIds.map(id => <button key={id} type="button" onClick={() => review("Liability", id)}>{referenceLabel(draft, "Liability", id)}</button>)}
+        {item.expenseIds.map(id => <button key={id} type="button" onClick={() => review("Expense", id)}>Review {referenceLabel(draft, "Expense", id)}</button>)}
+        {!item.holdingIds.length && !item.liabilityIds.length && !item.expenseIds.length && item.accountIds.map(id => <button key={id} type="button" onClick={() => review("Account", id)}>{referenceLabel(draft, "Account", id)}</button>)}
         {item.kind === "unallocated" && <button type="button" onClick={setup}>Review coverage</button>}
       </span>
     </li>)}</ul>
-    <details><summary>Comparison details</summary><p>Posted uses: {amount(detail.totalUses)}. Net change in bank cash: {amount(detail.cashChange)}; this is not a bank balance or disposable pay.</p>
+    <details><summary>Comparison details</summary><p>Posted uses: {amount(detail.totalUses)}. Net change in modeled account cash: {amount(detail.cashChange)}; this is not a bank balance or disposable pay.</p>
+      {detail.receipts.map(receipt => <p key={receipt.id}>{receipt.label}: {amount(receipt.amount)} · <button type="button" onClick={() => review("Account", receipt.accountId)}>{referenceLabel(draft, "Account", receipt.accountId)}</button></p>)}
       <p>When uses exceed income, bar widths are capped in display order. Dollar amounts and percentages show the full uncapped uses.</p>
       <details><summary>Technical details / source transactions</summary><pre>{JSON.stringify(detail.categories.map(item => ({ category: item.label, sources: item.sourceIds })), null, 2)}</pre></details>
     </details>
   </>;
-  function referenceLabelForHolding(_id: string) { return "Review contribution or investment"; }
 }

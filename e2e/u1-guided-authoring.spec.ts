@@ -58,7 +58,7 @@ test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and
   await expect(pay.getByRole("button", { name: "Review selected month" })).toHaveCount(0);
   await expect(pay).toContainText("Incomplete allocation");
   await expect(pay).toContainText("not leftover pay");
-  await expect(pay.getByRole("img")).toHaveAttribute("aria-label", /not yet reconciled.*total/i);
+  await expect(pay.getByRole("img")).toHaveAttribute("aria-label", /Mortgage payment.*total income basis.*taxes withheld not modeled/i);
   await pay.getByLabel("paycheck forecast month").selectOption("2026-02");
   await expect(pay).toContainText("2026-02-01 to 2026-03-01");
   for (const width of [1440, 390]) {
@@ -239,8 +239,12 @@ test("Owner repair: historical scope and prior YTD save work in one session with
   const usage = page.getByRole("region", { name: "Prior year-to-date contributions" });
   await usage.getByLabel("Historical holding", { exact: true }).selectOption({ label: "RETIREMENT-DEMO" });
   await usage.getByLabel("Employer / plan group", { exact: true }).fill("Example employer");
-  await usage.getByLabel("Age at year end", { exact: true }).fill("36");
-  await usage.getByLabel("Annual pay eligible for this plan", { exact: true }).fill("108000");
+  await open(usage, "Annual eligibility · 2026");
+  await expect(usage.getByLabel("Age at year end", { exact: true })).toHaveCount(0);
+  await usage.getByRole("button", { name: "Review annual pay eligible for this plan", exact: true }).click();
+  const payFact = page.getByRole("dialog", { name: "Edit Annual pay eligible for this plan", exact: true });
+  await payFact.getByLabel("Annual pay eligible for this plan", { exact: true }).fill("108000");
+  await payFact.getByRole("button", { name: "Confirm & save fact", exact: true }).click();
   await usage.getByRole("button", { name: "Save historical scope", exact: true }).click();
   await expect(usage.getByRole("status").filter({ hasText: /Historical eligibility saved/ })).toBeVisible();
   await usage.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
@@ -451,12 +455,13 @@ test("Owner repair: saved investment actions and linked eligibility summaries ar
   await eligibility.getByRole("button", { name: "Review/edit eligibility for IRA-DEMO", exact: true }).click();
   const personal = page.getByRole("region", { name: "Saved investment purchases" });
   await expect(personal.getByLabel("Purchase investment", { exact: true })).toHaveValue("d1cc0000-0000-4000-8000-000000000002");
-  await open(personal, "IRA eligibility & tax facts");
-  await personal.getByLabel("Age at year end", { exact: true }).fill("37");
+  await open(personal, "Annual eligibility · 2026");
+  await expect(personal.getByLabel("Age at year end", { exact: true })).toHaveCount(0);
+  await expect(personal).toContainText("From date of birth · Household & People");
   await personal.getByRole("button", { name: "Save investment purchase", exact: true }).click();
   await navigate(page, "Net Worth", "Investments & retirement");
   await ira.locator(":scope > details > summary").filter({ hasText: /^Saved annual eligibility$/ }).click();
-  await expect(eligibility.locator("dd").filter({ hasText: /^37$/ })).toBeVisible();
+  await expect(eligibility.locator("dd").filter({ hasText: /^36$/ })).toBeVisible();
   expect(errors).toEqual([]);
 });
 

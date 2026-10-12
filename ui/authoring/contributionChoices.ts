@@ -1,4 +1,6 @@
 import type { PayrollContributionPlan } from "../../src/application/personalMvp.js";
+import { annualFieldOwners, type AnnualField } from "../../src/application/financialFacts.js";
+import { financialField } from "./fieldContract.js";
 /** Eligibility filters mirror the existing D1 destination contract; the adapter still validates saves. */
 export function payrollCharacters(accountType: unknown): readonly PayrollContributionPlan["character"][] {
   if (accountType === "hsa" || accountType === "hsa_investment") return ["employee_hsa", "employer_hsa"];
@@ -8,10 +10,15 @@ export function payrollCharacters(accountType: unknown): readonly PayrollContrib
 }
 export function authoringFailure(error: unknown): string {
   const text = error instanceof Error ? error.message : "";
+  if (text.startsWith("ANNUAL_FACT_CONFLICT:")) {
+    const [, field, year, ...names] = text.split(":");
+    const owner = annualFieldOwners[field as AnnualField];
+    return `${owner ? financialField(owner.fieldKey).label : "Annual facts"} for ${year} disagrees between ${names.join(":")}. Reconcile the named sources in the annual fact editor before using this year.`;
+  }
   if (text.includes("HISTORICAL_SCOPE_CONFLICT")) return "The prior-history and future contribution facts for the same holding and year disagree. Review both named eligibility scopes below and make their shared facts consistent before saving prior usage.";
   if (text.includes("OPENING_USAGE_SCOPE_REQUIRED")) return "Define the historical account or employer plan for every retirement holding in the boundary year, then save each scope before confirming prior usage.";
   if (text.includes("CONTRIBUTION_LAW_YEAR_UNAVAILABLE")) return "Historical contribution limits here cover 2026. Choose a 2026 boundary and eligibility year; later historical years require supported law coverage.";
-  if (text.includes("CONTRIBUTION_AGE_REQUIRED")) return "Enter age at the end of the contribution year in the affected annual eligibility facts, then save that scope.";
+  if (text.includes("CONTRIBUTION_AGE_REQUIRED")) return "Age cannot be calculated for this year. Review the person's date of birth in Household & People.";
   if (text.includes("PLAN_COMPENSATION_REQUIRED")) return "Enter annual pay eligible for the affected employer plan, then save its annual eligibility facts.";
   if (text.includes("ROTH_CATCHUP_PLAN_AND_PRIOR_WAGES_REQUIRED")) return "For catch-up eligibility, record whether this employer plan has a Roth feature and, when it does, last year’s wages with that employer.";
   if (text.includes("HSA_FULL_YEAR_ELIGIBILITY_AND_COVERAGE_REQUIRED")) return "Confirm full-year HSA eligibility and choose self or family coverage in the affected scope. Partial-year eligibility is not modeled here.";

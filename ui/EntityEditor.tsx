@@ -119,6 +119,10 @@ export function EditorHub({
   selectedScenarioId,
   onContributions,
   repairTarget,
+  mirror = false,
+  contextOnly = false,
+  onOpenOwner,
+  onClose,
 }: {
   types: readonly PersonalObjectType[];
   draft: PersonalDraft;
@@ -130,6 +134,10 @@ export function EditorHub({
   selectedScenarioId?: string;
   onContributions?: (investmentId: string, kind: "personal" | "payroll") => void;
   repairTarget?: EntityRepair;
+  mirror?: boolean;
+  contextOnly?: boolean;
+  onOpenOwner?: (type: PersonalObjectType, id: string) => void;
+  onClose?: () => void;
 }) {
   return (
     <>
@@ -147,6 +155,10 @@ export function EditorHub({
           selectedScenarioId={selectedScenarioId}
           onContributions={onContributions}
           repairTarget={repairTarget}
+          mirror={mirror}
+          contextOnly={contextOnly}
+          onOpenOwner={onOpenOwner}
+          onClose={onClose}
         />
       ))}
     </>
@@ -179,6 +191,10 @@ function ObjectEditor({
   onContributions,
   repairTarget,
   accountId,
+  mirror = false,
+  contextOnly = false,
+  onOpenOwner,
+  onClose,
 }: {
   type: PersonalObjectType;
   draft: PersonalDraft;
@@ -191,6 +207,10 @@ function ObjectEditor({
   onContributions?: (investmentId: string, kind: "personal" | "payroll") => void;
   repairTarget?: EntityRepair;
   accountId?: string;
+  mirror?: boolean;
+  contextOnly?: boolean;
+  onOpenOwner?: (type: PersonalObjectType, id: string) => void;
+  onClose?: () => void;
 }) {
   const [editing, setEditing] = useState<JsonObject>();
   const [creating, setCreating] = useState(false);
@@ -228,7 +248,7 @@ function ObjectEditor({
   const values = objectEntries(draft, type).filter((item) => belongsToNetWorthSection(draft, type, item, section) && (!accountId || item.account_id === accountId));
   const descriptor = metadata[type];
   const fields = descriptor.fields as Record<string, EditorField>;
-  const close = () => { setEditing(undefined); setCreating(false); setCreationError(""); setTechnicalError(""); setConfirmDiscard(false); };
+  const close = () => { setEditing(undefined); setCreating(false); setCreationError(""); setTechnicalError(""); setConfirmDiscard(false); onClose?.(); };
   const dismiss = () => {
     if (editing && JSON.stringify(editing) !== JSON.stringify(initialEditing.current)) setConfirmDiscard(true);
     else close();
@@ -307,15 +327,16 @@ function ObjectEditor({
   };
   return (
     <section>
+      {!contextOnly && <>
       <div className="page-head compact">
         <div>
           <h1>{section && type === "Account" ? section === "Cash & bank accounts" ? section : "Investment & retirement accounts" : section && type === "Investment" ? "Investment holdings" : TITLES[type]}</h1>
           <p>Review names, amounts, and relationships. Model details are available inside each item.</p>
           {type === "Asset" && <p>Use Investments & retirement for securities and positions in investment accounts. Property & other assets is for standalone real estate, vehicles, businesses, personal property, and other non-security resources. Do not duplicate cash or securities here.</p>}
         </div>
-        <button className="primary" onClick={add}>
+        {!mirror && <button className="primary" onClick={add}>
           + Add {type}
-        </button>
+        </button>}
       </div>
       {(type === "Investment" || type === "Account") && <p className="reference-state" role="note">{RETIREMENT_LIMITATION}</p>}
       {values.length === 0 ? (
@@ -325,6 +346,7 @@ function ObjectEditor({
           {values.map((item) => (
             <article className="object-card" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", minWidth: 0 }} key={objectId(type, item)}>
               <button className="card-main" aria-label={type === "Account" ? `${section === "Investments & retirement" ? "Review" : "Edit"} account ${objectLabel(type, item)}` : type === "Investment" ? `Edit holding ${objectLabel(type, item)}` : undefined} aria-expanded={type === "Account" && section === "Investments & retirement" ? !!expandedAccounts[objectId(type, item)] : undefined} aria-controls={type === "Account" && section === "Investments & retirement" ? `holdings-${objectId(type, item)}` : undefined} style={{ width: "100%", minWidth: 0 }} onClick={() => {
+                if (mirror) { onOpenOwner?.(type, objectId(type, item)); return; }
                 if (type === "Account" && section === "Investments & retirement") { const id = objectId(type, item); setExpandedAccounts(previous => ({ ...previous, [id]: !previous[id] })); }
                 else { initialEditing.current = item; setCreating(false); setEditing(item); }
               }}>
@@ -344,17 +366,18 @@ function ObjectEditor({
                 <summary>Holdings in {objectLabel("Account", item)}</summary>
                 <ObjectEditor type="Investment" draft={draft} setDraft={setDraft} metadata={metadata} setNotice={setNotice} currency={currency} section={section} accountId={objectId("Account", item)} selectedScenarioId={selectedScenarioId} onContributions={onContributions} repairTarget={repairTarget} />
               </details>}
-              {type === "Investment" && <details><summary>Edit projected return</summary><ProjectedReturn investment={item} draft={draft} setDraft={setDraft} selectedScenarioId={selectedScenarioId} /></details>}
+              {type === "Investment" && !mirror && <details><summary>Edit projected return</summary><ProjectedReturn investment={item} draft={draft} setDraft={setDraft} selectedScenarioId={selectedScenarioId} /></details>}
               {(type === "Investment" || type === "Account") && onContributions && <ContextualContributions item={item} type={type} draft={draft} open={onContributions} />}
               {(type === "Investment" || type === "Account" && section === "Investments & retirement") && <EligibilitySummary draft={draft} {...(type === "Account" ? { accountId: objectId(type, item) } : { investmentId: objectId(type, item) })} review={onContributions} />}
               {(type === "Investment" || type === "Account" && section === "Investments & retirement" || type === "Liability") && <ScheduledActivity draft={draft} {...(type === "Account" ? { accountId: objectId(type, item) } : type === "Investment" ? { investmentId: objectId(type, item) } : { liabilityId: objectId(type, item) })} onContributions={onContributions} />}
-              <button className="danger-link" aria-describedby={`${type}-${objectId(type, item)}-label`} onClick={() => remove(item)}>
+              {!mirror && <button className="danger-link" aria-describedby={`${type}-${objectId(type, item)}-label`} onClick={() => remove(item)}>
                 Delete
-              </button>
+              </button>}
             </article>
           ))}
         </div>
       )}
+      </>}
       {editing && (
         <div
           className="drawer-backdrop"
@@ -518,7 +541,7 @@ function ContextualContributions({ item, type, draft, open }: { item: JsonObject
       })}
       {!holdings.length && <p>Add a supported holding in this account before scheduling contributions.</p>}
     </section>;
-  } catch (failure) { return <div><p role="alert">Saved contributions need review. Open Current Plan to review the supported contribution path.</p><details><summary>Technical details</summary><pre>{failure instanceof Error ? failure.message : String(failure)}</pre></details></div>; }
+  } catch (failure) { return <div><p role="alert">Saved contributions need review. Reconcile the annual facts in Investments & retirement.</p><details><summary>Technical details</summary><pre>{failure instanceof Error ? failure.message : String(failure)}</pre></details></div>; }
 }
 
 function FieldControl(props: Parameters<typeof RawFieldControl>[0] & { repairKey?: string; error?: string | undefined }) {

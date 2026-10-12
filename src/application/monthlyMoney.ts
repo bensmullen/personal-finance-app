@@ -24,6 +24,7 @@ export interface MonthlyUse {
   readonly accountIds: readonly string[];
   readonly holdingIds: readonly string[];
   readonly liabilityIds: readonly string[];
+  readonly expenseIds: readonly string[];
 }
 /** Read-only budgeting comparison. Posted cash uses do not establish cash origin. */
 export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: PortableModelEnvelope) {
@@ -42,19 +43,21 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
   const allocations = executable.cashFlowInput?.incomes.flatMap(item => item.payrollContributions ?? []) ?? [];
   const uses = new Map<string, MonthlyUse>();
   const addUse = (kind: MonthlyUseKind, label: string, id: string, amount: Money,
-    refs: { accountIds?: readonly string[]; holdingIds?: readonly string[]; liabilityIds?: readonly string[] } = {}) => {
+    refs: { accountIds?: readonly string[]; holdingIds?: readonly string[]; liabilityIds?: readonly string[]; expenseIds?: readonly string[] } = {}) => {
     if (!amount.isPositive()) return;
-    const key = `${kind}:${label}:${(refs.holdingIds ?? []).join()}:${(refs.liabilityIds ?? []).join()}`;
+    const key = `${kind}:${label}:${(refs.holdingIds ?? []).join()}:${(refs.liabilityIds ?? []).join()}:${(refs.expenseIds ?? []).join()}`;
     const prior = uses.get(key);
     uses.set(key, { id: key, kind, label, amount: (prior ? Money.parse(prior.amount, currency).plus(amount) : amount).amount.toString(),
       sourceIds: [...(prior?.sourceIds ?? []), id],
       accountIds: [...new Set([...(prior?.accountIds ?? []), ...(refs.accountIds ?? [])])],
       holdingIds: [...new Set([...(prior?.holdingIds ?? []), ...(refs.holdingIds ?? [])])],
-      liabilityIds: [...new Set([...(prior?.liabilityIds ?? []), ...(refs.liabilityIds ?? [])])] });
+      liabilityIds: [...new Set([...(prior?.liabilityIds ?? []), ...(refs.liabilityIds ?? [])])],
+      expenseIds: [...new Set([...(prior?.expenseIds ?? []), ...(refs.expenseIds ?? [])])] });
   };
   const lines: MonthlyMoneyLine[] = [];
   const cashUses: { id: string; date: string; amount: string; accountId: string; label: string }[] = [];
   const seen = new Set<string>();
+  const receipts: { id: string; label: string; amount: string; accountId: string }[] = [];
   for (const period of replay.periods) for (const tx of period.transactions) {
     if (seen.has(tx.id)) continue;
     seen.add(tx.id);
@@ -65,16 +68,23 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
     for (const [index, leg] of tx.legs.entries()) {
       if (leg.type === "cash") {
         cashChange = leg.posting === "debit" ? cashChange.plus(leg.amount) : cashChange.minus(leg.amount);
-        if (leg.posting === "debit" && tx.type !== "income" && tx.type !== "payroll_income") otherReceipts = otherReceipts.plus(leg.amount);
-        if (leg.posting === "credit") {
+        const internalTransfer = tx.legs.every(item => item.type === "cash") && tx.legs.some(item => item.posting === "debit") && tx.legs.some(item => item.posting === "credit");
+        if (leg.posting === "debit" && tx.type !== "income" && tx.type !== "payroll_income" && !internalTransfer) {
+          otherReceipts = otherReceipts.plus(leg.amount);
+          receipts.push({ id: `${tx.id}:leg:${index}`, label: tx.type === "tax_refund" ? "Tax refund" : tx.type === "sale" ? "Investment sale proceeds" : tx.type === "death_benefit" ? "Insurance benefit" : "Other posted receipt",
+            amount: leg.amount.amount.toString(), accountId: String(leg.accountId) });
+        }
+        if (leg.posting === "credit" && !internalTransfer) {
           const id = `${tx.id}:leg:${index}`, accountIds = [String(leg.accountId)];
           const loan = loans.find(item => tx.legs.some(value => value.type === "liability" &&
             (value.entityId === item.principalLiabilityId || value.entityId === item.interestPayableLiabilityId)));
           const holdings = tx.legs.flatMap(value => value.type === "asset" && value.posting === "debit" ? [String(value.entityId)] : []);
           const purchase = executable.investmentInput?.purchases.find(item => holdings.includes(String(item.targetPositionId)));
+          const expenseStream = executable.cashFlowInput?.expenses.find(item => tx.legs.some(value => value.type === "liability" && value.entityId === item.payableLiabilityId));
+          const expense = model && objects(model, "Expense").find(item => item.expense_id === expenseStream?.id);
           if (tx.type.startsWith("mortgage_") && loan) addUse("mortgage", "Mortgage payment", id, leg.amount, { accountIds, liabilityIds: [String(loan.principalLiabilityId)] });
-          else if (tx.type === "expense_settlement") addUse("living", "Living costs", id, leg.amount, { accountIds });
-          else if (tx.type === "investment_purchase") addUse(purchase?.contribution?.character.endsWith("_ira") ? "ira" : "brokerage",
+          else if (tx.type === "expense_settlement") addUse("living", String(expense?.category ?? "Living costs"), id, leg.amount, { accountIds, expenseIds: expense ? [String(expense.expense_id)] : [] });
+          else if (tx.type === "investment_purchase" || tx.type === "purchase" && holdings.length > 0) addUse(purchase?.contribution?.character.endsWith("_ira") ? "ira" : "brokerage",
             purchase?.contribution?.character.endsWith("_ira") ? "IRA contribution" : "Brokerage investment", id, leg.amount, { accountIds, holdingIds: holdings });
           else if (tx.type.includes("tax")) addUse("tax", "Tax cash payment", id, leg.amount, { accountIds });
           else addUse("other", "Other posted cash uses", id, leg.amount, { accountIds, holdingIds: holdings });
@@ -131,7 +141,7 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
     denominator: denominator.amount.toString(), categories, totalUses: totalUses.amount.toString(),
     unallocated: comparison.isNegative() ? "0" : comparison.amount.toString(),
     additionalFunding: comparison.isNegative() ? totalUses.minus(denominator).amount.toString() : "0",
-    cashChange: cashChange.amount.toString(), otherReceipts: otherReceipts.amount.toString(),
+    cashChange: cashChange.amount.toString(), otherReceipts: otherReceipts.amount.toString(), receipts,
     employee: employee.amount.toString(), deposited: deposited.amount.toString(),
     // This is coverage of gross recognition, NOT leftover or spendable income.
     unreconciled: income.minus(employee).amount.toString(), lines, mortgages, cashUses,

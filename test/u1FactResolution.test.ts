@@ -65,7 +65,7 @@ describe("U1 scoped fact resolution boundary", () => {
     expect(getOpeningContributionUsage(reloaded)?.entries[0]).toMatchObject({ amount: "1000", ordinaryAmount: "1000" });
     expect(saved.objects.Account).toEqual(model.objects.Account);
     expect(saved.objects.Investment).toEqual(model.objects.Investment);
-    expect(getOpeningContributionReadiness(authorPayrollContributionPlan(history, { primitiveId: "d1940000-0000-4000-8000-000000000022", investmentId: ids.retirementInvestment, incomeId: ids.income,
-      character: "traditional_401k", priority: 10, calculation: { kind: "fixed", amount: "100" }, planKey: "Example employer", vestedFraction: "1", excessPolicy: "reject", facts: { ...facts, eligiblePlanCompensation: "100000" } }), "2026-07-01").ready).toBe(false);
+    expect(() => authorPayrollContributionPlan(history, { primitiveId: "d1940000-0000-4000-8000-000000000022", investmentId: ids.retirementInvestment, incomeId: ids.income,
+      character: "traditional_401k", priority: 10, calculation: { kind: "fixed", amount: "100" }, planKey: "Example employer", vestedFraction: "1", excessPolicy: "reject", facts: { ...facts, eligiblePlanCompensation: "100000" } })).toThrow("ANNUAL_FACT_CONFLICT:eligiblePlanCompensation:2026");
   });
 });

@@ -1,5 +1,101 @@
 # U1 implementation evidence — issue #94
 
+## October 12 source-owner continuation — partial, blocked at household filing status
+
+This is the current checkpoint and supersedes the older blockers below. The
+contribution-year interface and monthly cash-use comparison were authorized by
+Issue #94 and are now present. The merged PR #112 register is available. PR #98
+remains draft; #94 and D1 remain open. Independent audit remains NEEDS PATCH and
+owner UAT remains not accepted.
+
+### Exact new scope boundary
+
+The register requires one dated filing-status authority shared by contributions
+and household tax calculation. The new scoped contribution editor can store a
+person/household/year filing fact. However, `compileHouseholdTax` reads only the
+undated canonical Household/Person `filing_status` values, and
+`HouseholdTaxInput` contains a single `filingStatus` for the entire forecast.
+The tax participant selects every year's rule with that same value; the portable
+codec transports that same fixed input. An application-only change cannot select
+a different authoritative filing status in each tax year without changing this
+execution contract. The draft UI explicitly discloses this limitation; it does
+not claim that saving contribution filing status changes household taxes.
+
+LOOKUP_REQUIRED: authorize `src/simulation/tax/contracts.ts`,
+`src/simulation/tax/participant.ts`, and `src/simulation/tax/replayCodec.ts` for
+an immutable, source-qualified, year-indexed household filing-status input and
+selection before existing rule evaluation. Missing/conflicting year facts must
+produce scoped incompleteness, not reuse an unrelated year. Preserve existing
+statutory formulas, accounting, settlement, funding and event ordering. Replay
+must retain the exact selected year/source and deterministically restore it.
+Legacy undated status needs an explicitly approved temporal interpretation; it
+must not silently become evidence for every future year. No changes to these
+three unauthorized files were made.
+
+DECISION_NEEDED: approve the narrow dated household-tax filing interface and
+state which tax year(s), if any, a legacy undated filing status establishes.
+PRODUCT_IMPACT: a filing-status correction must affect contribution eligibility
+and the same year's household taxes consistently.
+OPTIONS: (A) extend the year-qualified tax interface and explicitly scope legacy
+records; (B) approve a bounded U1 exception that leaves household filing changes
+unsupported and visibly incomplete.
+RECOMMENDATION: A; do not introduce a second independently editable tax status.
+TECHNICAL_REASON: the current tax participant has one fixed status across all
+years, unlike the newly authorized contribution-year interface.
+
+### Implemented source changes; rendered-field audit is still partial
+
+| Actually rendered fields/output | Semantic ID | Source editor / read-only mirrors | Derivation or remaining exception |
+| --- | --- | --- | --- |
+| Date of birth / annual age | `person.birthdate` / `person.age_year_end` | Household & People / personal, payroll and history eligibility | December 31 age uses DOB; no separate age input. Existing immutable birth records require corrected import. |
+| Annual IRA compensation / prior sponsor wages | `income.ira_compensation` / `income.prior_sponsor_wages` | Shared dated Income fact dialog / contribution summaries | Explicit year-qualified evidence only; no salary-to-IRA or current-to-prior-wage inference. |
+| Annual salary read model | `income.annual_pay` | Read-only application reader | Reuses supported monthly recurrence, P08 growth and dated termination; not yet connected to normal UI or a plan compensation definition. |
+| Eligible plan compensation / Roth plan availability | `employer.eligible_pay` / `employer.plan_terms` | Shared dated Investments fact dialog / payroll/history summaries | Explicit person/sponsor/year facts; no guessed legal compensation rule. |
+| Filing status / spouse residence | `tax.filing_status` | Shared dated Household & People dialog / contribution summaries | Household-tax execution still fixed/undated: BLOCKED as above. |
+| Roth and deduction MAGI / workplace coverage | `tax.roth_magi` / `tax.deduction_magi` | Shared Household & People dialog / contribution summaries | Supported explicit yearly facts only; gross salary never substitutes for MAGI. |
+| HSA eligibility, coverage and family allocation | `health.coverage` | Shared dated Household & People dialog / payroll/history summaries | Unknown coverage stays unknown; no inference from owning an HSA. Exhaustive household/spouse scope audit remains. |
+| Income receiving account | `income.receiving_bank` | Money Income session control / Current Plan summary | One household session route; import/load clears it. Per-income routing unsupported. |
+| Bank details | `bank.cash_account` / `bank.interest` | Money Accounts shared entity editor / Net Worth bank mirror | Mirror opens the same contextual editor; investment wrappers filtered from Money Accounts. |
+| Mortgage session funding/schedule; extra principal/refinance | Mortgage register families | Net Worth Debt / Current Plan summary | Existing controls moved; payment/maturity semantics unchanged. Remaining browser setup journeys need migration. |
+| Plan/forecast dates and clock | `plan.horizon` / run-setting register families | Current Plan / Model Settings read-only mirror | Horizon has one editable control; shared context repair drawer preserves page. |
+| Retirement date | `life.retirement` | Life Events / Current Plan summary | Existing canonical retirement adapter retained. |
+| Assumptions / holding return | Growth/return register families | Shared owner entity drawer; holding return editor / Plan Assumptions mirror | Income/spending adjacent growth actions and exhaustive contextual ownership bindings remain unfinished. |
+| Prior contribution usage | `investment.past_usage` | Investments & retirement / capacities and forecast | Source corrections preserve original adapters, original values and prior YTD totals; changed imports reopen conflicts. |
+| Future capacity | `investment.contribution_projection` | Read-only year-qualified schedule / forecast | Source-qualified annual facts, derived DOB age, unchanged nominal statutory law; missing facts do not execute future contributions. No blanket fact carry-forward. |
+| Monthly paycheck comparison | `money.paycheck_view` | Money Cash Flow / Debt and Spending evidence | Recorded gross payroll vs actual posted employee, mortgage, living, IRA, brokerage, tax and other uses. Each cash leg counted once; employer assets/internal cash transfers excluded. Receipts and nonpayroll income separate. |
+
+Paycheck widths are presentation-only and capped at the displayed basis; legends
+retain full amounts/percentages and additional-funding need. Unallocated is
+provisional, never leftover: withholding remains not modeled under #101. Named
+source buttons use the shared contextual entity editor. No cash-origin/FIFO
+assumption or funding precedence was added.
+
+The matrix is **not** the required exhaustive rendered-field mapping for all 50
+registry families. Zero remaining raw normal-user codes and zero duplicate
+writable scoped identities have **not** been established. Additional annual pay
+UI/qualified plan definitions, conditional field bindings, global growth owner
+repair and browser setup-route migration remain unfinished. This checkpoint
+preserves partial work, not implementation acceptance.
+
+### Added/updated evidence; no passing result claimed
+
+- `u1AnnualFinancialFacts.test.ts`: acknowledgement-required reconciliation,
+  original adapter/cash/holding preservation, changed-import conflict, distinct
+  sponsor/year, no nominal carry-forward, exact gross salary/termination reader.
+- `u1MonthlyMoney.test.ts`: actual employee/mortgage/IRA/tax categories, unique
+  posted legs, savings source retained, employer exclusion and exact comparison.
+- `d1ForecastDecisions.test.ts`: synthetic explicit dated future records replace
+  the old checkbox fixture; existing ten-year financial/replay assertions stay.
+- `u1FactResolution.test.ts`: exact named field/year conflict now raised at
+  authoring instead of a vague later historical-scope failure.
+- Browser assertions adapt monthly legend, shared historical correction and
+  read-only DOB-derived age. The remaining source-owner/setup journeys are not
+  represented as complete or CI-green.
+
+Local tests, typecheck, builds, validators, browsers/dev servers and dependency
+installation were not run. Current checkpoint CI is pending; prior green CI
+belongs to older heads and does not verify these changes or deployment.
+
 ## October 11 continuation after operator synchronization — partial, blocked
 
 This supersedes the missing-registry checkpoint below. PR #112's register and
