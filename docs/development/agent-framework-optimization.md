@@ -1,6 +1,7 @@
 # Hybrid ChatGPT + Codex Development Framework
 
-**Status:** superseded by `docs/development/agent-framework-hardening-v2.md`  
+**Status:** historical V1 — superseded by the current V3 policies, not operational guidance  
+**Current authority:** [AGENTS.md](../../AGENTS.md), [V3 handoff policy](handoff-authoring-policy.md), and [verification policy](verification-policy.md).  
 **Scope:** historical V1 framework reference  
 **Last reviewed:** 2026-09-27
 
