@@ -1,0 +1,911 @@
+{
+  "schema_version": 1,
+  "status": "normative architecture inventory; application implementation not yet complete",
+  "source_of_truth_rule": "Exactly one normal-user write owner per scoped semantic fact. The canonical model/financial engine remains economic authority. Other pages only read and deep-link.",
+  "scope_note": "Inventory all current normal-user U1 authoring families and significant derived outputs; new normal fields require registry classification before exposure.",
+  "records": [
+    {
+      "id": "household.membership",
+      "label": "People and household relationships",
+      "kind": "source",
+      "owner_surface": "Settings → Household & People",
+      "semantic_scope": "household + effective interval",
+      "canonical_authority": "Household.members; Person.household_id",
+      "derives_from": [],
+      "read_only_surfaces": [
+        "Forecast setup",
+        "Taxes"
+      ],
+      "resolution_policy": "distinct people and dated relationships must remain distinct",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "person.identity",
+      "label": "Personal name and identity",
+      "kind": "source",
+      "owner_surface": "Settings → Household & People",
+      "semantic_scope": "person ID",
+      "canonical_authority": "Person.first_name / last_name",
+      "derives_from": [],
+      "read_only_surfaces": [
+        "Money",
+        "Investments",
+        "Plan"
+      ],
+      "resolution_policy": "read-only echoes link to Person",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "person.birthdate",
+      "label": "Date of birth",
+      "kind": "source",
+      "owner_surface": "Settings → Household & People",
+      "semantic_scope": "person ID",
+      "canonical_authority": "Person.date_of_birth",
+      "derives_from": [],
+      "read_only_surfaces": [
+        "Investment eligibility",
+        "Tax profile"
+      ],
+      "resolution_policy": "birthdate is authoritative; never ask age as duplicate",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "person.age_year_end",
+      "label": "Age on December 31",
+      "kind": "derived",
+      "owner_surface": "Settings → Household & People",
+      "semantic_scope": "person ID + tax year",
+      "canonical_authority": "date-of-birth and calendar computation",
+      "derives_from": [
+        "person.birthdate",
+        "plan.projection_year"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Investments & retirement",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "show derived age read-only; missing/ambiguous birthdate requires person correction",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "person.residence",
+      "label": "Residence and effective location",
+      "kind": "source",
+      "owner_surface": "Settings → Household & People",
+      "semantic_scope": "person + dated residence interval",
+      "canonical_authority": "Person.residence_jurisdiction; dated tax facts where supported",
+      "derives_from": [],
+      "read_only_surfaces": [
+        "Money → Income",
+        "Taxes workspace (#102)"
+      ],
+      "resolution_policy": "historical relocations stay separate by date; state tax residency is not inferred from current address",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "tax.filing_status",
+      "label": "Tax filing status by year",
+      "kind": "conditional",
+      "owner_surface": "Settings → Household & People → Tax & coverage",
+      "semantic_scope": "filing household/tax year",
+      "canonical_authority": "authoritative dated filing facts; existing contribution.policy.facts.filingStatus until normalized",
+      "derives_from": [
+        "household.membership",
+        "plan.projection_year"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Investments & retirement",
+        "Plan → Current Plan",
+        "Taxes workspace (#102)"
+      ],
+      "resolution_policy": "never derive from marital label alone; same year/filing-unit entry has one editor; historical tax filing differs from forecast assumption",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "health.coverage",
+      "label": "HSA-qualified health coverage and eligibility",
+      "kind": "conditional",
+      "owner_surface": "Settings → Household & People → Health coverage",
+      "semantic_scope": "person or family + dated coverage interval",
+      "canonical_authority": "qualified coverage record or attested historical HSA facts",
+      "derives_from": [
+        "household.membership"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Investments & retirement",
+        "Taxes workspace (#102)"
+      ],
+      "resolution_policy": "do not assume HSA eligibility from having an HSA account; preserve partial-year and spouse differences",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "income.employer",
+      "label": "Employment, employer and sponsor identity",
+      "kind": "source",
+      "owner_surface": "Money → Income",
+      "semantic_scope": "person + employer + employment dates",
+      "canonical_authority": "Income.source/owner_id; employer/plan key binding",
+      "derives_from": [
+        "person.identity"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Investments & retirement",
+        "Settings → Household & People"
+      ],
+      "resolution_policy": "employer ID reference is shared; never match two employers by unqualified display text",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "income.pay_contract",
+      "label": "Salary, wages and gross/net pay basis",
+      "kind": "source",
+      "owner_surface": "Money → Income",
+      "semantic_scope": "person + employer/income ID + effective interval",
+      "canonical_authority": "Income.amount / frequency / gross_or_net / start_date / end_date",
+      "derives_from": [
+        "income.employer"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Net Worth → Investments & retirement"
+      ],
+      "resolution_policy": "record actual dated employment/pay contract; gross and net are different bases",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "income.growth",
+      "label": "Salary growth assumptions",
+      "kind": "assumption",
+      "owner_surface": "Money → Income",
+      "semantic_scope": "income ID + scenario + effective interval",
+      "canonical_authority": "Income.growth_model_id -> Assumption / linked PrimitiveInstance",
+      "derives_from": [
+        "income.pay_contract"
+      ],
+      "read_only_surfaces": [
+        "Plan → Assumptions"
+      ],
+      "resolution_policy": "edit beside linked salary; other Assumptions view is read-only deep link",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "income.payroll_calendar",
+      "label": "Pay frequency and modeled deposit timing",
+      "kind": "conditional",
+      "owner_surface": "Money → Income",
+      "semantic_scope": "income ID + pay period",
+      "canonical_authority": "Income.frequency and supported payroll schedule",
+      "derives_from": [
+        "income.pay_contract"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Net Worth → Investments & retirement"
+      ],
+      "resolution_policy": "do not infer observed deposit time or withholding from annual salary",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "income.receiving_bank",
+      "label": "Bank account receiving take-home pay",
+      "kind": "decision",
+      "owner_surface": "Money → Income",
+      "semantic_scope": "income ID + forecast instruction/context",
+      "canonical_authority": "authoritative household execution cashFlowExecutionAccountId / income routing",
+      "derives_from": [
+        "income.pay_contract",
+        "bank.cash_account"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Money → Accounts"
+      ],
+      "resolution_policy": "one normal editor next to salary; forecast context may be session-only, labeled explicitly",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "income.annual_pay",
+      "label": "Earned wages per tax year",
+      "kind": "conditional",
+      "owner_surface": "Money → Income",
+      "semantic_scope": "person + employer + tax year + supported wage basis",
+      "canonical_authority": "supported deterministic salary occurrence aggregation",
+      "derives_from": [
+        "income.pay_contract",
+        "income.growth",
+        "income.payroll_calendar",
+        "plan.projection_year"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Investments & retirement",
+        "Taxes workspace (#102)"
+      ],
+      "resolution_policy": "derive only for fully supported salary periods and basis; otherwise unknown/recorded evidence",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "income.prior_sponsor_wages",
+      "label": "Last year's wages from this employer",
+      "kind": "conditional",
+      "owner_surface": "Money → Income",
+      "semantic_scope": "person + employer sponsor + prior tax year",
+      "canonical_authority": "completed prior-year payroll/wage history or explicit attested annual wage record",
+      "derives_from": [
+        "income.employer",
+        "income.annual_pay"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Investments & retirement"
+      ],
+      "resolution_policy": "never copy current salary into prior employer wages; distinct employers stay distinct",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "income.ira_compensation",
+      "label": "IRA-eligible annual compensation",
+      "kind": "conditional",
+      "owner_surface": "Money → Income",
+      "semantic_scope": "person or qualifying spouse + tax year",
+      "canonical_authority": "supported legal eligible-compensation derivation or one recorded attested fact",
+      "derives_from": [
+        "income.annual_pay",
+        "tax.filing_status"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Investments & retirement",
+        "Taxes workspace (#102)"
+      ],
+      "resolution_policy": "not identical to gross wages where exclusions or spousal rules apply; show provenance or missing rule",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "tax.roth_magi",
+      "label": "Roth IRA eligibility MAGI",
+      "kind": "conditional",
+      "owner_surface": "Settings → Household & People → Tax & coverage",
+      "semantic_scope": "filing unit + tax year",
+      "canonical_authority": "authoritative complete tax calculation or user-supplied supported tax worksheet",
+      "derives_from": [
+        "tax.filing_status",
+        "income.annual_pay"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Investments & retirement",
+        "Taxes workspace (#102)"
+      ],
+      "resolution_policy": "gross salary is never substituted for MAGI; cannot derive unless tax coverage complete",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "tax.deduction_magi",
+      "label": "Traditional IRA deduction MAGI",
+      "kind": "conditional",
+      "owner_surface": "Settings → Household & People → Tax & coverage",
+      "semantic_scope": "filing unit + tax year",
+      "canonical_authority": "authoritative complete tax calculation or user-supplied supported tax worksheet",
+      "derives_from": [
+        "tax.filing_status",
+        "income.annual_pay"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Investments & retirement",
+        "Taxes workspace (#102)"
+      ],
+      "resolution_policy": "different legal test from Roth MAGI; no invented numbers",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "income.retirement_end",
+      "label": "End of earned salary at retirement",
+      "kind": "conditional",
+      "owner_surface": "Money → Income",
+      "semantic_scope": "person + income ID + effective event",
+      "canonical_authority": "Income end_date if independently dated; linked approved retirement termination event",
+      "derives_from": [
+        "income.pay_contract",
+        "life.retirement"
+      ],
+      "read_only_surfaces": [
+        "Plan → Life Events",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "a retirement event may stop linked salary only under existing explicit binding; do not conflate unrelated end dates",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "spend.recurring",
+      "label": "Recurring living and named expenses",
+      "kind": "source",
+      "owner_surface": "Money → Spending",
+      "semantic_scope": "expense ID + owner + dated interval",
+      "canonical_authority": "Expense.category / amount / frequency / start_date / end_date",
+      "derives_from": [
+        "bank.cash_account"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Money → Cash Flow"
+      ],
+      "resolution_policy": "one expense entry; no duplicate mortgage/IRA/401k spending record",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "spend.inflation",
+      "label": "Spending growth/inflation assumptions",
+      "kind": "assumption",
+      "owner_surface": "Money → Spending",
+      "semantic_scope": "expense ID + scenario + effective interval",
+      "canonical_authority": "Expense.growth_model_id -> linked Assumption/PrimitiveInstance",
+      "derives_from": [
+        "spend.recurring"
+      ],
+      "read_only_surfaces": [
+        "Plan → Assumptions"
+      ],
+      "resolution_policy": "edit beside expense; read-only global view links to expense",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "spend.funding",
+      "label": "Expense payment cash account",
+      "kind": "decision",
+      "owner_surface": "Money → Spending",
+      "semantic_scope": "expense ID + effective funding instruction",
+      "canonical_authority": "Expense.payment_account_id",
+      "derives_from": [
+        "spend.recurring",
+        "bank.cash_account"
+      ],
+      "read_only_surfaces": [
+        "Money → Accounts",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "choose source checking/savings with expense and show cash impact once",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "bank.cash_account",
+      "label": "Checking/savings details, ownership and opening balance",
+      "kind": "source",
+      "owner_surface": "Money → Accounts",
+      "semantic_scope": "account ID + opening valuation instant",
+      "canonical_authority": "Account.account_type / owner_id / opening_balance / opening_date",
+      "derives_from": [
+        "person.identity"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Cash & bank accounts",
+        "Plan"
+      ],
+      "resolution_policy": "Net Worth cash page summary is read-only and links here; opening cash not future bank balance",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "bank.interest",
+      "label": "Bank interest terms and crediting basis",
+      "kind": "source",
+      "owner_surface": "Money → Accounts",
+      "semantic_scope": "cash account + effective dates",
+      "canonical_authority": "Account interest terms and supported linked model",
+      "derives_from": [
+        "bank.cash_account"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Cash & bank accounts"
+      ],
+      "resolution_policy": "interest yield from modeled terms not free-entered as extra income",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.account",
+      "label": "IRA, brokerage, 401k, HSA account wrapper",
+      "kind": "source",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "account ID + owner + tax-character scope",
+      "canonical_authority": "Account type / owner / opening wrapper cash / eligible tax classification",
+      "derives_from": [
+        "person.identity"
+      ],
+      "read_only_surfaces": [
+        "Money → Accounts",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "cash Accounts page must not offer second retirement-account editor; account/holding distinction",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.holding",
+      "label": "Holding instrument identity, quantity, acquisition values",
+      "kind": "source",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "investment ID + account + valuation/basis dates",
+      "canonical_authority": "Investment type/subtype/symbol, units/lots, applicable price/basis facts",
+      "derives_from": [
+        "investment.account"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Net Worth → Overview"
+      ],
+      "resolution_policy": "stock/option/bond subtype fields only when relevant; price and market valuation not coeditable alternatives",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.valuation",
+      "label": "Market value / position value",
+      "kind": "conditional",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "investment ID + quote/evaluation instant",
+      "canonical_authority": "supported quantity × authoritative matching price or recorded valuation method",
+      "derives_from": [
+        "investment.holding"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Overview",
+        "Money → Cash Flow"
+      ],
+      "resolution_policy": "derive if consistent price/date/multiplier; otherwise recorded valued-only source with basis/date, never guessed or dual editable",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.return",
+      "label": "Projected holding return assumption",
+      "kind": "assumption",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "holding/linked return model + scenario + effective interval",
+      "canonical_authority": "Investment.return_model_id -> Assumption/PrimitiveInstance",
+      "derives_from": [
+        "investment.holding"
+      ],
+      "read_only_surfaces": [
+        "Plan → Assumptions"
+      ],
+      "resolution_policy": "edit in holding, linked siblings update, read-only global list",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.purchase",
+      "label": "IRA/brokerage planned purchases and cash-funded contributions",
+      "kind": "decision",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "destination holding + plan/scenario + scheduled event/cadence",
+      "canonical_authority": "durablePersonalPurchaseInstructions / bank source / character / amount / priority",
+      "derives_from": [
+        "investment.holding",
+        "bank.cash_account",
+        "plan.horizon"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Money → Spending",
+        "Money → Cash Flow"
+      ],
+      "resolution_policy": "single account-context editor; mirrored outflow is transfer not expense or extra posting",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.payroll",
+      "label": "401k/workplace HSA employee/employer contribution elections",
+      "kind": "decision",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "person + employer/plan + holding + contribution type + year + policy",
+      "canonical_authority": "durablePayrollAllocations; source linked gross salary",
+      "derives_from": [
+        "investment.account",
+        "investment.holding",
+        "income.pay_contract",
+        "employer.plan_terms"
+      ],
+      "read_only_surfaces": [
+        "Money → Income",
+        "Plan → Current Plan",
+        "Money → Cash Flow"
+      ],
+      "resolution_policy": "edit with workplace account alongside its employer plan, not Current Plan; payroll withholding distinct",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "employer.plan_terms",
+      "label": "Employer retirement plan terms, Roth availability and limit-sharing bucket",
+      "kind": "source",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "employer sponsor + plan + effective year",
+      "canonical_authority": "existing contribution plan policy employer key/planHasRoth and legal plan terms",
+      "derives_from": [
+        "income.employer",
+        "investment.account"
+      ],
+      "read_only_surfaces": [
+        "Money → Income",
+        "Settings → Household & People",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "one plan-level editor, not repeated for every holding, employee and match contribution",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "employer.eligible_pay",
+      "label": "Employer-plan eligible annual compensation",
+      "kind": "conditional",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "person + employer plan + year",
+      "canonical_authority": "authoritative plan-specific compensation definition applied to wage facts, else explicitly sourced eligible pay",
+      "derives_from": [
+        "employer.plan_terms",
+        "income.annual_pay"
+      ],
+      "read_only_surfaces": [
+        "Money → Income",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "not automatically gross salary unless confirmed plan defines entire modeled wage basis",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.past_usage",
+      "label": "Prior year-to-date historical contribution totals",
+      "kind": "source",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "person + sponsor/plan limit scope + destination/character + tax year + cutoff",
+      "canonical_authority": "saved historical contribution usage/canonical observed transactions",
+      "derives_from": [
+        "investment.account",
+        "employer.plan_terms",
+        "plan.projection_year"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Taxes workspace (#102)"
+      ],
+      "resolution_policy": "never infer prior real-world usage from future forecasts; record once per legally shared bucket/date; zero requires confirmation",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.annual_eligibility",
+      "label": "Annual retirement/HSA/IRA capacity & eligibility",
+      "kind": "conditional",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "person/household + legal bucket + employer plan + year",
+      "canonical_authority": "contribution law catalog + scoped fact resolver",
+      "derives_from": [
+        "person.age_year_end",
+        "employer.eligible_pay",
+        "income.ira_compensation",
+        "income.prior_sponsor_wages",
+        "tax.roth_magi",
+        "tax.filing_status",
+        "health.coverage",
+        "employer.plan_terms",
+        "investment.past_usage"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Settings → Household & People"
+      ],
+      "resolution_policy": "calculated read-only; only missing governing facts edited at their owner; cannot assign one whole policy snapshot authority",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.contribution_projection",
+      "label": "Future annual contribution eligibility",
+      "kind": "conditional",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "person + legal bucket + plan + future year",
+      "canonical_authority": "per-year qualified facts from dated source data and supported law",
+      "derives_from": [
+        "investment.annual_eligibility",
+        "income.annual_pay",
+        "plan.projection_year"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Taxes workspace (#102)"
+      ],
+      "resolution_policy": "remove global nominal carry-forward checkbox from normal authoring; unsupported MAGI/coverage remain unknown, not copied",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "debt.mortgage_contract",
+      "label": "Mortgage original terms, current balance and dates",
+      "kind": "source",
+      "owner_surface": "Net Worth → Debt",
+      "semantic_scope": "liability ID + origination/as-of basis",
+      "canonical_authority": "Liability.principal/current_balance/interest_rate/origination_date/maturity_date",
+      "derives_from": [
+        "property.asset"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Money → Spending",
+        "Money → Accounts"
+      ],
+      "resolution_policy": "original principal and as-of balance are distinct facts; no current-balance derivation without complete dated payment history",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "debt.mortgage_schedule",
+      "label": "Contractual scheduled mortgage payment",
+      "kind": "conditional",
+      "owner_surface": "Net Worth → Debt",
+      "semantic_scope": "liability + effective payment start + monthly term",
+      "canonical_authority": "authoritative VS4 monthly mortgage execution terms + rule",
+      "derives_from": [
+        "debt.mortgage_contract",
+        "plan.horizon"
+      ],
+      "read_only_surfaces": [
+        "Money → Spending",
+        "Money → Cash Flow"
+      ],
+      "resolution_policy": "derive/display read-only when terms complete, never another editable monthly expense",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "debt.mortgage_funding",
+      "label": "Mortgage payment source, first due date and execution priority",
+      "kind": "decision",
+      "owner_surface": "Net Worth → Debt",
+      "semantic_scope": "liability ID + applicable forecast execution",
+      "canonical_authority": "existing liabilityExecutionProfiles + ordered bank funding sources",
+      "derives_from": [
+        "debt.mortgage_contract",
+        "bank.cash_account"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Money → Spending"
+      ],
+      "resolution_policy": "one normal edit beside mortgage; session execution bindings may remain session-only with explicit note",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "debt.extra_refinance",
+      "label": "Extra principal, payoff and refinance decisions",
+      "kind": "decision",
+      "owner_surface": "Net Worth → Debt",
+      "semantic_scope": "liability ID + event date + scenario",
+      "canonical_authority": "authorMortgageExtra / authorMortgageRefinance",
+      "derives_from": [
+        "debt.mortgage_contract",
+        "debt.mortgage_funding"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Money → Spending"
+      ],
+      "resolution_policy": "original debt terms remain separate from future event; no second cash deduction",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "property.asset",
+      "label": "Property/other physical asset purchase cost and owner",
+      "kind": "source",
+      "owner_surface": "Net Worth → Property & other assets",
+      "semantic_scope": "asset ID + acquisition date + owner",
+      "canonical_authority": "Asset asset_type/owner_id/acquisition_cost/valuation_method",
+      "derives_from": [
+        "person.identity"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Debt",
+        "Net Worth → Overview"
+      ],
+      "resolution_policy": "property value and debt remain separate assets/liabilities, linked by collateral not duplicate equity entry",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "property.valuation",
+      "label": "Current property value and growth assumption",
+      "kind": "conditional",
+      "owner_surface": "Net Worth → Property & other assets",
+      "semantic_scope": "asset ID + valuation date + scenario",
+      "canonical_authority": "supported valuation method/dated source or linked assumption",
+      "derives_from": [
+        "property.asset"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Net Worth → Overview"
+      ],
+      "resolution_policy": "not silently same as purchase price; if recorded price vs derived future value different time bases",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "life.retirement",
+      "label": "Retirement date and explicit income termination binding",
+      "kind": "decision",
+      "owner_surface": "Plan → Life Events",
+      "semantic_scope": "person + retirement event + plan/scenario",
+      "canonical_authority": "canonical retirement event + explicit RetirementTerminationBinding",
+      "derives_from": [
+        "person.identity",
+        "income.pay_contract"
+      ],
+      "read_only_surfaces": [
+        "Money → Income",
+        "Plan → Current Plan",
+        "Net Worth → Investments & retirement"
+      ],
+      "resolution_policy": "one retirement event editor; income editor links to event; do not duplicate separate arbitrary retirement age/date",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "plan.horizon",
+      "label": "Saved plan horizon and forecast run window",
+      "kind": "decision",
+      "owner_surface": "Plan → Current Plan",
+      "semantic_scope": "scenario ID + simulation run config",
+      "canonical_authority": "Scenario.start_date/end_date; session simulationStart/End",
+      "derives_from": [],
+      "read_only_surfaces": [
+        "Settings → Model Settings",
+        "Money → Income",
+        "Net Worth → Debt"
+      ],
+      "resolution_policy": "saved horizon and selected run window are different dated concepts, grouped one normal editor",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "plan.projection_year",
+      "label": "Tax/forecast calendar year",
+      "kind": "derived",
+      "owner_surface": "Plan → Current Plan",
+      "semantic_scope": "year from scenario + selected run interval",
+      "canonical_authority": "Scenario/forecast clock",
+      "derives_from": [
+        "plan.horizon"
+      ],
+      "read_only_surfaces": [
+        "Settings → Household & People",
+        "Settings → Household & People → Tax & coverage",
+        "Net Worth → Investments & retirement"
+      ],
+      "resolution_policy": "derived year context only, not another manually keyed field",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "plan.forecast_options",
+      "label": "Forecast cash contention, projected law and run settings",
+      "kind": "decision",
+      "owner_surface": "Plan → Current Plan",
+      "semantic_scope": "scenario + run configuration",
+      "canonical_authority": "existing household execution and law policy",
+      "derives_from": [
+        "plan.horizon"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Debt",
+        "Money → Accounts",
+        "Net Worth → Investments & retirement"
+      ],
+      "resolution_policy": "only technical execution choices remain here, not duplicated salary/mortgage/account facts",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "plan.assumption_index",
+      "label": "Plan-wide assumptions listing",
+      "kind": "derived",
+      "owner_surface": "Plan → Current Plan",
+      "semantic_scope": "scenario + linked assumption IDs",
+      "canonical_authority": "projection of linked asset/income/expense assumptions",
+      "derives_from": [
+        "income.growth",
+        "spend.inflation",
+        "investment.return",
+        "property.valuation"
+      ],
+      "read_only_surfaces": [
+        "Money → Income",
+        "Money → Spending",
+        "Net Worth → Investments & retirement",
+        "Net Worth → Property & other assets"
+      ],
+      "resolution_policy": "read-only index with context edit links, never second editable field",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "tax.rules",
+      "label": "Applicable versioned statutory limits and tax rules",
+      "kind": "external",
+      "owner_surface": "Taxes workspace (#102)",
+      "semantic_scope": "jurisdiction + tax year + rule version",
+      "canonical_authority": "versioned TaxRule catalog / rule fingerprint",
+      "derives_from": [
+        "tax.filing_status",
+        "person.residence"
+      ],
+      "read_only_surfaces": [
+        "Net Worth → Investments & retirement",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "not user-editable per household; unsupported rule years do not become invented law",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "tax.withholding",
+      "label": "Paycheck taxes actually withheld",
+      "kind": "conditional",
+      "owner_surface": "Money → Income",
+      "semantic_scope": "person + employer/payroll occurrence + withholding rules",
+      "canonical_authority": "future authoritative wage withholding/settlement (#101)",
+      "derives_from": [
+        "income.pay_contract",
+        "tax.filing_status",
+        "tax.rules"
+      ],
+      "read_only_surfaces": [
+        "Money → Cash Flow",
+        "Taxes workspace (#102)"
+      ],
+      "resolution_policy": "do not substitute computed annual tax liability or equal-per-month estimate",
+      "delivery_gate": "#101"
+    },
+    {
+      "id": "tax.settlement",
+      "label": "Tax payment/refund accounts and dates",
+      "kind": "decision",
+      "owner_surface": "Plan → Current Plan",
+      "semantic_scope": "jurisdiction + tax year + settlement date/forecast scope",
+      "canonical_authority": "current taxSettlementSetup; migrate editor to Taxes in #102",
+      "derives_from": [
+        "bank.cash_account",
+        "tax.rules"
+      ],
+      "read_only_surfaces": [
+        "Money → Income",
+        "Taxes workspace (#102)"
+      ],
+      "resolution_policy": "one temporary editor until Taxes workspace; only one normal owner at a time",
+      "delivery_gate": "#102"
+    },
+    {
+      "id": "money.paycheck_view",
+      "label": "Your Paycheck monthly allocation",
+      "kind": "derived",
+      "owner_surface": "Money → Cash Flow",
+      "semantic_scope": "household/person + month + source-of-funds basis",
+      "canonical_authority": "read-only immutable monthly replay + qualified paycheck attribution",
+      "derives_from": [
+        "income.pay_contract",
+        "income.receiving_bank",
+        "investment.payroll",
+        "investment.purchase",
+        "debt.mortgage_schedule",
+        "spend.recurring",
+        "tax.withholding"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Money → Spending",
+        "Net Worth → Debt"
+      ],
+      "resolution_policy": "proportional segments only for proven same-basis attributions; provisional/unallocated is not leftover; no independent money inputs",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "money.networth",
+      "label": "Net worth, cash movement and financial summaries",
+      "kind": "derived",
+      "owner_surface": "Overview",
+      "semantic_scope": "household + evaluation instant + scenario",
+      "canonical_authority": "authoritative posted ledger / reconciled forecast",
+      "derives_from": [
+        "bank.cash_account",
+        "investment.valuation",
+        "property.valuation",
+        "debt.mortgage_contract",
+        "investment.purchase",
+        "investment.payroll",
+        "spend.recurring"
+      ],
+      "read_only_surfaces": [
+        "Money → Cash Flow",
+        "Net Worth → Overview",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "same transaction counted once; liabilities and transfers retain character",
+      "delivery_gate": "U1"
+    }
+  ]
+}
