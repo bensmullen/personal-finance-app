@@ -51,7 +51,8 @@ test("U1 annual household filing facts have one accessible owner and survive rel
   await dialog.getByLabel("Annual household filing status", { exact: true }).selectOption("married_joint");
   await dialog.getByRole("button", { name: "Confirm & save fact", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(owner).toContainText("married_joint");
+  await expect(owner).toContainText("Married filing jointly");
+  await expect(owner).toContainText("Confirmed annual assumption");
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await owner.getByRole("button", { name: "Review annual household filing status", exact: true }).click();
@@ -77,7 +78,7 @@ test("U1 annual household filing facts have one accessible owner and survive rel
   const download = await pending;
   const restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
   const scope = { personId: GOLDEN_HOUSEHOLD_IDS.person, householdId: GOLDEN_HOUSEHOLD_IDS.household, taxYear: 2027 };
-  expect(resolveAnnualFinancialFact(restored, "filingStatus", scope)).toMatchObject({ status: "known", value: "married_joint" });
+  expect(resolveAnnualFinancialFact(restored, "filingStatus", scope)).toMatchObject({ status: "assumed", value: "married_joint" });
   const tax = compileHouseholdTax(restored, { asOf: "2026-01-01", simulationStart: "2026-01-01", simulationEnd: "2029-01-01", projectedCurrentLawThrough: "2029-01-01" });
   if (tax.status !== "compiled") throw new Error(JSON.stringify(tax.diagnostics));
   expect(tax.value.filingStatuses!["2027"]).toMatchObject({ status: "known", value: "married_joint" });

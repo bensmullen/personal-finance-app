@@ -41,7 +41,7 @@ export interface SourceQualifiedContributionYear {
   readonly effectiveEnd: string;
   readonly status: "known" | "missing" | "true_conflict";
   readonly facts: D1ContributionFacts;
-  readonly sources: readonly { readonly id: string; readonly field: string; readonly ruleVersion: string }[];
+  readonly sources: readonly { readonly id: string; readonly field: string; readonly ruleVersion: string; readonly provenance?: "observed" | "legacy_snapshot" | "commitment" | "calculated" | "assumption" }[];
   readonly problems: readonly string[];
 }
 const invalid = (message: string): never => failValidation({ severity: "error", code: issueCodes.ruleInputInvalid, message, entityType: "contribution" });

@@ -36,7 +36,7 @@ export function resolveContributionYearSchedule(model: PortableModelEnvelope, po
       const problems: string[] = [];
       for (const field of fieldsFor(binding.kind)) {
         const resolved = resolveAnnualFinancialFact(model, field as AnnualField, { personId: policy.personId, householdId: policy.householdId, taxYear: year, ...(sponsorId === undefined ? {} : { sponsorId }) }, openingReference);
-        sources.push(...resolved.sources.map(source => ({ id: source.id, field, ruleVersion: source.ruleVersion ?? "dated-contribution-fact/v1" })));
+        sources.push(...resolved.sources.map(source => ({ id: source.id, field, ruleVersion: source.ruleVersion ?? "dated-contribution-fact/v1", provenance: source.provenance })));
         if (resolved.status === "true_conflict") problems.push(`${year}: conflicting ${field} in ${resolved.sources.map(source => source.label).join(", ")}`);
         else if (resolved.value !== undefined) values[field] = resolved.value;
       }

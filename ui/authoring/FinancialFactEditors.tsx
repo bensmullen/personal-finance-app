@@ -18,6 +18,8 @@ const choices: Partial<Record<AnnualField, readonly string[]>> = {
   hsaCoverage: ["self", "family"], planHasRoth: ["true", "false"], hsaFullYearEligible: ["true", "false"],
   workplacePlanCovered: ["true", "false"], spouseWorkplacePlanCovered: ["true", "false"], livesWithSpouse: ["true", "false"],
 };
+const filingLabels: Readonly<Record<string, string>> = { single: "Single", married_joint: "Married filing jointly", married_separate: "Married filing separately", head_of_household: "Head of household", qualifying_surviving_spouse: "Qualifying surviving spouse" };
+const factLabel = (field: AnnualField, value: unknown) => field === "filingStatus" ? filingLabels[String(value)] ?? "Status needs correction" : typeof value === "boolean" ? value ? "Yes" : "No" : String(value);
 export function AnnualFilingRepair({ draft, personId, year }: { draft: PersonalDraft; personId: string; year: string }) {
   const open = useContext(OwnerEditor);
   const person = objectEntries(draft, "Person").find(item => item.person_id === personId);
@@ -35,6 +37,7 @@ function AnnualFactDialog({ draft, setDraft, field, scope, close }: { draft: Per
   const resolved = resolveAnnualFinancialFact(draft, field, scope, openingReference);
   const meta = financialField(annualFieldOwners[field].fieldKey);
   const original = resolved.value === undefined ? "" : String(resolved.value);
+  const futureAssumption = openingReference !== undefined && scope.taxYear > Number(openingReference.slice(0, 4));
   const [value, setValue] = useState(original), [error, setError] = useState(""), [discard, setDiscard] = useState(false);
   const root = useRef<HTMLElement>(null);
   const dismiss = () => value === original ? close() : setDiscard(true);
@@ -58,17 +61,18 @@ function AnnualFactDialog({ draft, setDraft, field, scope, close }: { draft: Per
       <p>{referenceLabel(draft, "Person", scope.personId)} · {scope.taxYear}{scope.sponsorId && ` · ${scope.sponsorId}`}</p>
       <small>Saved once · {resolved.repair.owner}</small>
       {field === "filingStatus" && <p role="note">One household filing status for all of {scope.taxYear}. Tax calculations and IRA eligibility use this same annual fact.</p>}
+      {futureAssumption && <small>Future-year planning assumption · saving explicitly confirms {scope.taxYear} only.</small>}
       {resolved.status === "true_conflict" && <p role="alert">Recorded sources disagree on this fact for {scope.taxYear}. Confirm the correct value below to reconcile the listed sources.</p>}
-      {!!resolved.sources.length && <details open={resolved.status === "true_conflict"}><summary>Recorded sources</summary><ul>{resolved.sources.map(source => <li key={source.id}>{source.label}: {String(source.value)}</li>)}</ul></details>}
+      {!!resolved.sources.length && <details open={resolved.status === "true_conflict"}><summary>Recorded sources</summary><ul>{resolved.sources.map(source => <li key={source.id}>{source.label}: {factLabel(field, source.value)}</li>)}</ul></details>}
       {field === "ageAtYearEnd" ? <><p>Age on December 31: {original || "Date of birth needed"}. This is calculated from the person's recorded birth date.</p><p>Update the person's date of birth in Household & People; annual age has no independent edit.</p></> :
         <form onSubmit={event => {
           event.preventDefault(); if (problem) return;
           try { setDraft(recordAnnualFinancialFact(draft, { id: crypto.randomUUID(), field, scope,
-            value: value === "true" ? true : value === "false" ? false : value, reconciledSources: resolved.sources.map(source => source.id), ...(openingReference === undefined ? {} : { openingReference }) })); close(); }
+            value: value === "true" ? true : value === "false" ? false : value, provenance: futureAssumption ? "assumption" : "observed", reconciledSources: resolved.sources.map(source => source.id), ...(openingReference === undefined ? {} : { openingReference }) })); close(); }
           catch (failure) { setError(authoringFailure(failure)); }
         }}>
           <FieldShell fieldKey={annualFieldOwners[field].fieldKey} required error={problem} repairKey={`annual:${field}`}>
-            {choices[field] ? <select aria-label={meta.label} value={value} onChange={event => setValue(event.target.value)}><option value="">Not established</option>{choices[field]!.map(option => <option key={option} value={option}>{option === "true" ? "Yes" : option === "false" ? "No" : option.replaceAll("_", " ")}</option>)}</select>
+            {choices[field] ? <select aria-label={meta.label} value={value} onChange={event => setValue(event.target.value)}><option value="">Not established</option>{choices[field]!.map(option => <option key={option} value={option}>{option === "true" ? "Yes" : option === "false" ? "No" : field === "filingStatus" ? filingLabels[option] : option.replaceAll("_", " ")}</option>)}</select>
               : <input aria-label={meta.label} inputMode="decimal" placeholder={meta.example} value={value} onChange={event => setValue(event.target.value)} />}
           </FieldShell>
           <small>Save confirms this year and these named sources only. Original evidence and prior contribution totals are preserved.</small>
@@ -85,7 +89,7 @@ export function AnnualFactsReview({ draft, character, scope }: { draft: Personal
   if (!scope.personId || !Number.isSafeInteger(scope.taxYear)) return <p>Choose an account and contribution year to review eligibility.</p>;
   return <details className="financial-section"><summary>Annual eligibility · {scope.taxYear}</summary><dl>{annualFieldsFor(character).map(field => {
     const resolved = resolveAnnualFinancialFact(draft, field, scope, openingReference), meta = financialField(annualFieldOwners[field].fieldKey);
-    return <div key={field} data-semantic-fact={resolved.semanticId}><dt>{meta.label} <details className="field-help"><summary role="button" aria-label={`Help for ${meta.label}`} title={`${meta.description} Example: ${meta.example}`}>?</summary><span role="note">{meta.description} Unit: {meta.unit}. Example: {meta.example}. {meta.suggestion}</span></details></dt><dd>{resolved.status === "true_conflict" ? "Conflicting sources" : resolved.value === undefined ? "Not established" : String(resolved.value)}
+    return <div key={field} data-semantic-fact={resolved.semanticId}><dt>{meta.label} <details className="field-help"><summary role="button" aria-label={`Help for ${meta.label}`} title={`${meta.description} Example: ${meta.example}`}>?</summary><span role="note">{meta.description} Unit: {meta.unit}. Example: {meta.example}. {meta.suggestion}</span></details></dt><dd>{resolved.status === "true_conflict" ? "Conflicting sources" : resolved.value === undefined ? "Not established" : factLabel(field, resolved.value)}{resolved.status === "assumed" && <small>Confirmed annual assumption</small>}
       {field !== "ageAtYearEnd" && <button type="button" onClick={() => open(field, scope)}>{resolved.status === "true_conflict" ? "Reconcile" : "Review"} {meta.label.toLowerCase()}</button>}
       {field === "ageAtYearEnd" && <small>From date of birth · Household & People</small>}
     </dd></div>;
@@ -104,7 +108,7 @@ export function AnnualFactsOwner({ draft, owner }: { draft: PersonalDraft; owner
     {owner !== "people" && <FieldShell fieldKey="planKey"><select aria-label="Annual facts employer plan" value={sponsorId} onChange={event => setSponsorId(event.target.value)}><option value="">Choose employer plan</option>{[...new Set(sources.flatMap(source => source.scope.personId === scope.personId && source.scope.sponsorId ? [source.scope.sponsorId] : []))].map(id => <option key={id} value={id}>{id}</option>)}</select></FieldShell>}
     <dl>{(Object.keys(annualFieldOwners) as AnnualField[]).filter(field => annualFieldOwners[field].owner === owner && field !== "ageAtYearEnd").map(field => {
       const resolved = resolveAnnualFinancialFact(draft, field, scope, openingReference), meta = financialField(annualFieldOwners[field].fieldKey);
-      return <div key={field}><dt>{meta.label}</dt><dd>{resolved.status === "true_conflict" ? "Conflicting sources" : resolved.value === undefined ? "Not established" : String(resolved.value)} <button type="button" disabled={!scope.personId || !year || Number(year) < 2026 || !!annualFieldOwners[field].sponsor && !sponsorId} onClick={() => open(field, scope)}>Review {meta.label.toLowerCase()}</button></dd></div>;
+      return <div key={field}><dt>{meta.label}</dt><dd>{resolved.status === "true_conflict" ? "Conflicting sources" : resolved.value === undefined ? "Not established" : factLabel(field, resolved.value)}{resolved.status === "assumed" && <small>Confirmed annual assumption</small>} <button type="button" disabled={!scope.personId || !year || Number(year) < 2026 || !!annualFieldOwners[field].sponsor && !sponsorId} onClick={() => open(field, scope)}>Review {meta.label.toLowerCase()}</button></dd></div>;
     })}</dl>
   </details>;
 }

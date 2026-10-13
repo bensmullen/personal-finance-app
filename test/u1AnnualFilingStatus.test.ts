@@ -37,12 +37,13 @@ describe("U1 one annual household filing authority", () => {
   });
   it("selects the exact same dated fact for tax law and IRA capacity, without touching history", () => {
     const original = createD1IntegratedHousehold();
-    const model = recordAnnualFinancialFact(original, { id: integratedId(880), field: "filingStatus", scope: scope(2027), value: "married_joint", reconciledSources: [] });
+    const model = recordAnnualFinancialFact(original, { id: integratedId(880), field: "filingStatus", scope: scope(2027), value: "married_joint", provenance: "assumption", reconciledSources: [] });
     const tax = compile(model), fact = tax.filingStatuses!["2027"]!;
     const policy = getPersonalPurchasePlans(model).find(row => row.contribution)!.contribution!;
     const future = contributionPolicyAt(withContributionYearSchedule(model, policy, "2026-01-01", "2029-01-01", "2026-01-01"), instant("2027-06-01T00:00:00.000Z"));
     expect(future.facts.filingStatus).toBe(fact.value);
     expect(fact.sources.map(source => source.id)).toContain(integratedId(880));
+    expect(fact.sources).toEqual(expect.arrayContaining([expect.objectContaining({ id: integratedId(880), provenance: "assumption" })]));
     const facts = { residenceJurisdictions: ["US:NY"], workJurisdictions: ["US:NY"], eligibility: { federal_base_deduction_only: true } };
     expect(resolveTaxCoreRule(tax.catalog, "US:FEDERAL", fact.value!, instant("2027-06-01T00:00:00.000Z"), facts).rule.filingStatus).toBe("married_joint");
     expect(withAnnualFilingStatus(model, policy, "2026-01-01").facts.filingStatus).toBe("single");

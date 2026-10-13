@@ -2,6 +2,13 @@
 
 ## Ownership-register lookup found during rendered-field audit (2026-10-13)
 
+Final provenance follow-up distinguishes anchored legacy snapshots, recorded
+annual observations and explicitly confirmed future-year assumptions. The UI
+names that distinction before save, uses ordinary filing-status labels, and
+stores the provenance with the original source. Both tax v2 replay and projected
+contribution source evidence retain it; no observed history is relabeled. This
+follow-up also requires its own latest-head CI.
+
 The remaining full migration cannot be truthfully mapped to the controlled
 50-family register without a product/specification decision. The actual
 `DomainMechanicsPanel` normal/advanced controls include **sales, dividends,

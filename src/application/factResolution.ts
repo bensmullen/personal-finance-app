@@ -20,7 +20,7 @@ export interface FactSource<T> {
   readonly label: string;
   readonly scope: FactScope;
   readonly value: T;
-  readonly provenance: "observed" | "commitment" | "calculated" | "assumption";
+  readonly provenance: "observed" | "legacy_snapshot" | "commitment" | "calculated" | "assumption";
   readonly ruleVersion?: string;
 }
 export interface FactRepair {
@@ -58,7 +58,7 @@ export function resolveScopedFact<T>(input: {
   const base = { semanticId: input.semanticId, scope: input.scope, dependencies: input.dependencies, repair: input.repair, sources };
   if (!first) return { ...base, status: "missing" };
   if (sources.some(source => !input.equal(first.value, source.value))) return { ...base, status: "true_conflict" };
-  return { ...base, value: first.value, status: sources.some(source => source.provenance === "observed" || source.provenance === "commitment")
+  return { ...base, value: first.value, status: sources.some(source => source.provenance === "observed" || source.provenance === "legacy_snapshot" || source.provenance === "commitment")
     ? "known" : sources.some(source => source.provenance === "calculated") ? "derived" : "assumed" };
 }
 

@@ -81,7 +81,7 @@ export function resolveAnnualFinancialFact(model: PortableModelEnvelope, field: 
   const records = objects(model, "PrimitiveInstance").flatMap(item => {
     const params = item.parameters;
     if (!isFactRecord(params) || params.adapter !== financialFactAdapter || params.field !== field || !isFactRecord(params.scope) || factScopeKey(annualFactScope(field, params.scope as unknown as FactScope)) !== factScopeKey(scope) || params.value === undefined) return [];
-    return [{ id: String(item.primitive_instance_id), label: "Confirmed source correction", scope, value: params.value, provenance: "observed" as const, ruleVersion: financialFactAdapter }];
+    return [{ id: String(item.primitive_instance_id), label: params.provenance === "assumption" ? "Confirmed future-year assumption" : "Confirmed source correction", scope, value: params.value, provenance: params.provenance === "assumption" ? "assumption" as const : "observed" as const, ruleVersion: financialFactAdapter }];
   });
   // A correction is explicit and names the exact observations reconciled. New
   // imported contradictions still appear; no timestamp or last-write precedence.
@@ -95,7 +95,7 @@ export function resolveAnnualFinancialFact(model: PortableModelEnvelope, field: 
       .flatMap(item => item.filing_status == null ? [] : [{ id: String(item.person_id ?? item.household_id),
         label: `${String(item.name ?? item.first_name ?? "Household member")} · filing status as of ${openingReference!.slice(0, 10)}`,
         scope, value: item.filing_status === "qualifying_widow_er" ? "qualifying_surviving_spouse" : item.filing_status,
-        provenance: "observed" as const, ruleVersion: "legacy-opening-year/v1" }]) : [];
+        provenance: "legacy_snapshot" as const, ruleVersion: "legacy-opening-year/v1" }]) : [];
   const result = resolveScopedFact({ semanticId: family.semanticId, scope, repair, dependencies: ["plan.projection_year"],
     sources: [...[...original, ...legacy].filter(source => !reconciledValues.has(`${source.id}:${canonicalSerialize(source.value)}`)), ...records], equal: (a, b) => {
       if (numericFields.has(field) && typeof a === "string" && typeof b === "string") {
@@ -112,7 +112,7 @@ export function resolveAnnualFinancialFact(model: PortableModelEnvelope, field: 
 
 /** Explicit atomic reconciliation. Preserves original source snapshots and YTD. */
 export function recordAnnualFinancialFact(model: PortableModelEnvelope, input: {
-  id: string; field: AnnualField; scope: FactScope; value: JsonValue; reconciledSources: readonly string[]; openingReference?: string;
+  id: string; field: AnnualField; scope: FactScope; value: JsonValue; reconciledSources: readonly string[]; openingReference?: string; provenance?: "observed" | "assumption";
 }): PortableModelEnvelope {
   if (!UUID.test(input.id) || input.field === "ageAtYearEnd") throw new Error("FINANCIAL_FACT_SOURCE_INVALID");
   const scope = annualFactScope(input.field, input.scope);
@@ -134,7 +134,7 @@ export function recordAnnualFinancialFact(model: PortableModelEnvelope, input: {
   const prior = objects(model, "PrimitiveInstance").filter(item => isFactRecord(item.parameters) && item.parameters.adapter === financialFactAdapter && item.parameters.field === input.field && isFactRecord(item.parameters.scope) && factScopeKey(annualFactScope(input.field, item.parameters.scope as unknown as FactScope)) === factScopeKey(scope));
   const record: CanonicalObject = { primitive_instance_id: input.id, primitive_id: "P03", enabled: false, scenario_id: root.scenario_id!, input_bindings: {},
     parameters: { adapter: financialFactAdapter, field: input.field, semanticId: annualFieldOwners[input.field].semanticId,
-      scope: { ...scope }, scopeKey: factScopeKey(scope), value: input.value,
+      scope: { ...scope }, scopeKey: factScopeKey(scope), value: input.value, provenance: input.provenance ?? "observed",
       reconciledSources: [...new Set([...input.reconciledSources, ...prior.flatMap(item => isFactRecord(item.parameters) && Array.isArray(item.parameters.reconciledSources) ? item.parameters.reconciledSources : [])])],
       originalSources: [...sources.map(source => ({ id: source.id, value: source.value, label: source.label })), ...prior.flatMap(item => isFactRecord(item.parameters) && Array.isArray(item.parameters.originalSources) ? item.parameters.originalSources : [])], priorCorrections: [...prior] } };
   return { ...model, objects: { ...model.objects, PrimitiveInstance: [...objects(model, "PrimitiveInstance").filter(item => !prior.includes(item)), record] } };
