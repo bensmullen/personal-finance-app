@@ -1,0 +1,1350 @@
+{
+  "version": "d2-prep/v1",
+  "scope": "synthetic_contract_effects_only",
+  "cases": [
+    {
+      "id": "ss_retirement",
+      "lane": "D2-A",
+      "family": "social_security",
+      "variant": "retirement",
+      "requirements": ["PFA-DET-016","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-016"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"quotedGrossCents":"100000","authoredWithholdingCents":"10000"},
+        "terms": {"estimate":"synthetic authoritative payment quote; not a claiming formula","claimant":"claimant","beneficiary":"beneficiary","startDate":"2026-01-15","frequency":"monthly","cola":"explicitly no change in this period","coordination":"decision_required"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"withholding","kind":"tax_credit","owner":"claimant","openingCents":"0"},{"id":"benefit","kind":"income","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Benefit identities/coordination and tax characterization need an admitted executable contract; a generic Income does not establish eligibility.",
+        "unknownOutputs": ["eligibility","claiming_age_adjustment","household_coordination","taxable_benefit","tax_liability"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"quoted_payment","date":"2026-01-15","legs":[{"account":"cash","side":"debit","cents":"90000"},{"account":"withholding","side":"debit","cents":"10000"},{"account":"benefit","side":"credit","cents":"100000"}]}],"closingCents":{"cash":"90000","withholding":"10000","benefit":"100000"},"cashDeltaCents":"90000","netWorthDeltaCents":"100000","recognition":{"incomeCents":"100000","expenseCents":"0"},"facts":{"grossBenefitCents":"100000","withholdingCents":"10000","taxCharacter":"decision_required"}}
+      }
+    },
+    {
+      "id": "ss_spousal",
+      "lane": "D2-A",
+      "family": "social_security",
+      "variant": "spousal",
+      "requirements": ["PFA-DET-016","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-016"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"quotedGrossCents":"100000","authoredWithholdingCents":"10000"},
+        "terms": {"estimate":"synthetic authoritative payment quote; not a claiming formula","claimant":"claimant","beneficiary":"beneficiary","startDate":"2026-01-15","frequency":"monthly","cola":"explicitly no change in this period","coordination":"decision_required"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"withholding","kind":"tax_credit","owner":"claimant","openingCents":"0"},{"id":"benefit","kind":"income","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Benefit identities/coordination and tax characterization need an admitted executable contract; a generic Income does not establish eligibility.",
+        "unknownOutputs": ["eligibility","claiming_age_adjustment","household_coordination","taxable_benefit","tax_liability"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"quoted_payment","date":"2026-01-15","legs":[{"account":"cash","side":"debit","cents":"90000"},{"account":"withholding","side":"debit","cents":"10000"},{"account":"benefit","side":"credit","cents":"100000"}]}],"closingCents":{"cash":"90000","withholding":"10000","benefit":"100000"},"cashDeltaCents":"90000","netWorthDeltaCents":"100000","recognition":{"incomeCents":"100000","expenseCents":"0"},"facts":{"grossBenefitCents":"100000","withholdingCents":"10000","taxCharacter":"decision_required"}}
+      }
+    },
+    {
+      "id": "ss_survivor",
+      "lane": "D2-A",
+      "family": "social_security",
+      "variant": "survivor",
+      "requirements": ["PFA-DET-016","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-016"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"quotedGrossCents":"100000","authoredWithholdingCents":"10000"},
+        "terms": {"estimate":"synthetic authoritative payment quote; not a claiming formula","claimant":"claimant","beneficiary":"beneficiary","startDate":"2026-01-15","frequency":"monthly","cola":"explicitly no change in this period","coordination":"decision_required"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"withholding","kind":"tax_credit","owner":"claimant","openingCents":"0"},{"id":"benefit","kind":"income","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Benefit identities/coordination and tax characterization need an admitted executable contract; a generic Income does not establish eligibility.",
+        "unknownOutputs": ["eligibility","claiming_age_adjustment","household_coordination","taxable_benefit","tax_liability"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"quoted_payment","date":"2026-01-15","legs":[{"account":"cash","side":"debit","cents":"90000"},{"account":"withholding","side":"debit","cents":"10000"},{"account":"benefit","side":"credit","cents":"100000"}]}],"closingCents":{"cash":"90000","withholding":"10000","benefit":"100000"},"cashDeltaCents":"90000","netWorthDeltaCents":"100000","recognition":{"incomeCents":"100000","expenseCents":"0"},"facts":{"grossBenefitCents":"100000","withholdingCents":"10000","taxCharacter":"decision_required"}}
+      }
+    },
+    {
+      "id": "ss_cola_coordination",
+      "lane": "D2-A",
+      "family": "social_security",
+      "variant": "cola_coordination",
+      "requirements": ["PFA-DET-016","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-016"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"priorQuoteCents":"100000"},
+        "terms": {"claimDate":"2026-01-15","colaRule":"missing effective-dated rule","spousalOwnBenefit":"must coordinate with own entitlement"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "No rule is selected for COLA, dual entitlement, or survivor transitions.",
+        "unknownOutputs": ["adjusted_benefit","coordination_offset","taxable_benefit"]
+      }
+    },
+    {
+      "id": "pension_quote",
+      "lane": "D2-A",
+      "family": "pension",
+      "variant": "quoted_payment",
+      "requirements": ["PFA-DET-016","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-016"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"quotedGrossCents":"100000","authoredWithholdingCents":"10000"},
+        "terms": {"participant":"claimant","survivor":"beneficiary","commencement":"2026-01-15","frequency":"monthly","cola":"no change in this period","election":"quoted single payment only"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"withholding","kind":"tax_credit","owner":"claimant","openingCents":"0"},{"id":"benefit","kind":"income","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Generic pension income exists but defined-benefit elections, survivor contract and tax law remain incomplete.",
+        "unknownOutputs": ["pension_basis_recovery","tax_liability","survivor_entitlement"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"quoted_payment","date":"2026-01-15","legs":[{"account":"cash","side":"debit","cents":"90000"},{"account":"withholding","side":"debit","cents":"10000"},{"account":"benefit","side":"credit","cents":"100000"}]}],"closingCents":{"cash":"90000","withholding":"10000","benefit":"100000"},"cashDeltaCents":"90000","netWorthDeltaCents":"100000","recognition":{"incomeCents":"100000","expenseCents":"0"},"facts":{"grossBenefitCents":"100000","withholdingCents":"10000","taxCharacter":"decision_required"}}
+      }
+    },
+    {
+      "id": "pension_survivor_end",
+      "lane": "D2-A",
+      "family": "pension",
+      "variant": "survivor_termination",
+      "requirements": ["PFA-DET-016","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-016"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"participantQuoteCents":"100000"},
+        "terms": {"participantDeath":"2026-01-15","election":"survivor continuation terms not resolved","endExclusive":"2026-02-01"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Resolve commencement, payment-at-death, continuation/election, COLA and termination representation before producing a survivor amount.",
+        "unknownOutputs": ["survivor_payment","death_date_payment","termination_state"]
+      }
+    },
+    {
+      "id": "403b_contribution",
+      "lane": "D2-A",
+      "family": "403b",
+      "variant": "contribution",
+      "requirements": ["PFA-DET-017","PFA-INV-025","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-017"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-025"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"authoredContributionCents":"50000","grossCompensationCents":"200000"},
+        "terms": {"employeeEmployerCharacter":"explicit employee/employer allocation required","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll or employer funds; never inferred bank debit"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Canonical labels do not establish payroll support. TSP lacks a named canonical account enum. Resolve the family contract before contribution posting.",
+        "unknownOutputs": ["accepted_contribution","employee_employer_split","statutory_bucket_usage","taxable_wages","payroll_wages","rollover_distribution_compatibility"]
+      }
+    },
+    {
+      "id": "403b_distribution_rollover",
+      "lane": "D2-A",
+      "family": "403b",
+      "variant": "distribution_rollover",
+      "requirements": ["PFA-DET-017","PFA-INV-025","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-017"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-025"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"requestedCents":"50000"},
+        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Plan-specific distribution/rollover acceptance and tax rules are not supplied by a generic 401(k) path.",
+        "unknownOutputs": ["distribution_character","withholding","eligibility","basis_recovery","limit_interaction"]
+      }
+    },
+    {
+      "id": "governmental_457b_contribution",
+      "lane": "D2-A",
+      "family": "governmental_457b",
+      "variant": "contribution",
+      "requirements": ["PFA-DET-017","PFA-INV-025","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-017"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-025"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"authoredContributionCents":"50000","grossCompensationCents":"200000"},
+        "terms": {"employeeEmployerCharacter":"explicit employee/employer allocation required","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll or employer funds; never inferred bank debit"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Canonical labels do not establish payroll support. TSP lacks a named canonical account enum. Resolve the family contract before contribution posting.",
+        "unknownOutputs": ["accepted_contribution","employee_employer_split","statutory_bucket_usage","taxable_wages","payroll_wages","rollover_distribution_compatibility"]
+      }
+    },
+    {
+      "id": "governmental_457b_distribution_rollover",
+      "lane": "D2-A",
+      "family": "governmental_457b",
+      "variant": "distribution_rollover",
+      "requirements": ["PFA-DET-017","PFA-INV-025","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-017"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-025"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"requestedCents":"50000"},
+        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Plan-specific distribution/rollover acceptance and tax rules are not supplied by a generic 401(k) path.",
+        "unknownOutputs": ["distribution_character","withholding","eligibility","basis_recovery","limit_interaction"]
+      }
+    },
+    {
+      "id": "tsp_contribution",
+      "lane": "D2-A",
+      "family": "tsp",
+      "variant": "contribution",
+      "requirements": ["PFA-DET-017","PFA-INV-025","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-017"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-025"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"authoredContributionCents":"50000","grossCompensationCents":"200000"},
+        "terms": {"employeeEmployerCharacter":"explicit employee/employer allocation required","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll or employer funds; never inferred bank debit"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Canonical labels do not establish payroll support. TSP lacks a named canonical account enum. Resolve the family contract before contribution posting.",
+        "unknownOutputs": ["accepted_contribution","employee_employer_split","statutory_bucket_usage","taxable_wages","payroll_wages","rollover_distribution_compatibility"]
+      }
+    },
+    {
+      "id": "tsp_distribution_rollover",
+      "lane": "D2-A",
+      "family": "tsp",
+      "variant": "distribution_rollover",
+      "requirements": ["PFA-DET-017","PFA-INV-025","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-017"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-025"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"requestedCents":"50000"},
+        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Plan-specific distribution/rollover acceptance and tax rules are not supplied by a generic 401(k) path.",
+        "unknownOutputs": ["distribution_character","withholding","eligibility","basis_recovery","limit_interaction"]
+      }
+    },
+    {
+      "id": "sep_ira_contribution",
+      "lane": "D2-A",
+      "family": "sep_ira",
+      "variant": "contribution",
+      "requirements": ["PFA-DET-017","PFA-INV-025","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-017"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-025"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"authoredContributionCents":"50000","grossCompensationCents":"200000"},
+        "terms": {"employeeEmployerCharacter":"employer","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll or employer funds; never inferred bank debit"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Canonical labels do not establish payroll support. TSP lacks a named canonical account enum. Resolve the family contract before contribution posting.",
+        "unknownOutputs": ["accepted_contribution","employee_employer_split","statutory_bucket_usage","taxable_wages","payroll_wages","rollover_distribution_compatibility"]
+      }
+    },
+    {
+      "id": "sep_ira_distribution_rollover",
+      "lane": "D2-A",
+      "family": "sep_ira",
+      "variant": "distribution_rollover",
+      "requirements": ["PFA-DET-017","PFA-INV-025","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-017"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-025"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"requestedCents":"50000"},
+        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Plan-specific distribution/rollover acceptance and tax rules are not supplied by a generic 401(k) path.",
+        "unknownOutputs": ["distribution_character","withholding","eligibility","basis_recovery","limit_interaction"]
+      }
+    },
+    {
+      "id": "simple_ira_contribution",
+      "lane": "D2-A",
+      "family": "simple_ira",
+      "variant": "contribution",
+      "requirements": ["PFA-DET-017","PFA-INV-025","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-017"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-025"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"authoredContributionCents":"50000","grossCompensationCents":"200000"},
+        "terms": {"employeeEmployerCharacter":"explicit employee/employer allocation required","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll or employer funds; never inferred bank debit"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Canonical labels do not establish payroll support. TSP lacks a named canonical account enum. Resolve the family contract before contribution posting.",
+        "unknownOutputs": ["accepted_contribution","employee_employer_split","statutory_bucket_usage","taxable_wages","payroll_wages","rollover_distribution_compatibility"]
+      }
+    },
+    {
+      "id": "simple_ira_distribution_rollover",
+      "lane": "D2-A",
+      "family": "simple_ira",
+      "variant": "distribution_rollover",
+      "requirements": ["PFA-DET-017","PFA-INV-025","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-017"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-025"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"requestedCents":"50000"},
+        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Plan-specific distribution/rollover acceptance and tax rules are not supplied by a generic 401(k) path.",
+        "unknownOutputs": ["distribution_character","withholding","eligibility","basis_recovery","limit_interaction"]
+      }
+    },
+    {
+      "id": "ira_roth_conversion",
+      "lane": "D2-A",
+      "family": "roth_paths",
+      "variant": "ira_conversion",
+      "requirements": ["PFA-DET-018","PFA-INV-026","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-018"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-026"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"requestedCents":"50000","aggregateIraValueCents":"100000","aggregateBasisCents":"20000"},
+        "terms": {"source":"traditional IRA","destination":"Roth IRA","ownership":"same claimant","contributionCharacter":"conversion, not contribution"},
+        "accounts": [{"id":"source","kind":"position","owner":"claimant","openingCents":"100000"},{"id":"destination","kind":"position","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Existing compiler admits same-plan 401(k) conversion only. IRA aggregation/valuation-date and conversion tax rules must be specified separately.",
+        "unknownOutputs": ["taxable_conversion","recovered_basis","remaining_ira_basis","roth_basis_categories","tax_liability"],
+        "effects": {"condition":"Conditional admitted same-owner transfer at par; no sale, valuation change, tax expense, withholding or fee.","transactions":[{"id":"owned_transfer","date":"2026-01-15","legs":[{"account":"source","side":"credit","cents":"50000"},{"account":"destination","side":"debit","cents":"50000"}]}],"closingCents":{"source":"50000","destination":"50000"},"cashDeltaCents":"0","netWorthDeltaCents":"0","recognition":{"incomeCents":"0","expenseCents":"0"},"facts":{"transferCents":"50000","consumption":"none","taxSettlement":"separate"}}
+      }
+    },
+    {
+      "id": "backdoor_aggregate_basis",
+      "lane": "D2-A",
+      "family": "roth_paths",
+      "variant": "backdoor",
+      "requirements": ["PFA-DET-018","PFA-INV-026","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-018"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-026"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"nondeductibleContributionCents":"50000","traditionalIraCents":"100000","sepIraCents":"200000","simpleIraCents":"100000","openingBasisCents":"20000"},
+        "terms": {"steps":"nondeductible contribution then Roth conversion","aggregation":"Traditional, SEP and SIMPLE IRA; effective rule missing","contributionEligibility":"not inferred"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "No aggregate IRA pro-rata denominator/timing rule is defined in executable semantics; D1 single-holding allocation is not this rule.",
+        "unknownOutputs": ["contribution_eligibility","aggregate_basis","taxable_conversion","remaining_basis","annual_limit_usage"]
+      }
+    },
+    {
+      "id": "mega_backdoor_inplan",
+      "lane": "D2-A",
+      "family": "roth_paths",
+      "variant": "mega_inplan",
+      "requirements": ["PFA-DET-018","PFA-INV-026","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-018"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-026"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"21. D1-B bounded deterministic domain operations"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"transferCents":"50000","ownedFairValueCents":"100000","previouslyTaxedBasisCents":"20000"},
+        "terms": {"plan":"same eligible owned/vested 401(k) plan","acceptance":"explicit true","newContribution":"none in this conversion case","annualAdditions":"previous after-tax contribution must be independently validated"},
+        "accounts": [{"id":"source","kind":"position","owner":"claimant","openingCents":"100000"},{"id":"destination","kind":"position","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "not_yet_executable",
+        "integratedRuntimeEvidence": false,
+        "boundary": "D1 already specifies the bounded same-plan conversion accounting. Full mega-backdoor authoring/annual-additions chain is not executable D2 evidence.",
+        "unknownOutputs": ["full_mega_chain_eligibility","contribution_limit_validation","jurisdictional_tax_liability"],
+        "effects": {"condition":"Existing Section 21 eligible same-plan conversion, one owned source holding at par, explicit basis and acceptance; separate tax expense/settlement excluded.","transactions":[{"id":"owned_transfer","date":"2026-01-15","legs":[{"account":"source","side":"credit","cents":"50000"},{"account":"destination","side":"debit","cents":"50000"}]}],"closingCents":{"source":"50000","destination":"50000"},"cashDeltaCents":"0","netWorthDeltaCents":"0","recognition":{"incomeCents":"0","expenseCents":"0"},"facts":{"transferCents":"50000","recoveredBasisCents":"10000","remainingSourceBasisCents":"10000","destinationBasisCents":"50000","taxableConversionCents":"40000","contributionUsageDeltaCents":"0","withholdingCents":"0"}}
+      }
+    },
+    {
+      "id": "mega_backdoor_roth_rollover",
+      "lane": "D2-A",
+      "family": "roth_paths",
+      "variant": "mega_rollover",
+      "requirements": ["PFA-DET-018","PFA-INV-026","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-018"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-026"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"afterTaxContributionCents":"50000"},
+        "terms": {"source":"eligible after-tax workplace plan","destination":"Roth IRA","acceptance":"must be explicit","basis":"must survive contribution/conversion/rollover lineage"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Existing mixed-rollover accounting is reusable only after plan eligibility and full contribution chain are resolved.",
+        "unknownOutputs": ["accepted_rollover","earnings_allocation","basis","annual_additions_usage"]
+      }
+    },
+    {
+      "id": "retirement_ordinary",
+      "lane": "D2-A",
+      "family": "retirement_distributions",
+      "variant": "ordinary",
+      "requirements": ["PFA-DET-004","PFA-DET-015","PFA-DET-017","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-004"},{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-015"},{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-017"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"requestedCents":"50000","openingRetirementCents":"100000"},
+        "terms": {"existingIssue":"103","source":"source","destination":"owned checking","withholding":"not supplied","distributionKind":"ordinary"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Issue #103 owns ordinary retirement distributions/RMDs. Pending indirect-rollover receipts do not establish ordinary withdrawal/RMD semantics.",
+        "unknownOutputs": ["distribution_eligibility","withholding","tax_character","cash_settlement","basis"]
+      }
+    },
+    {
+      "id": "retirement_rmd",
+      "lane": "D2-A",
+      "family": "retirement_distributions",
+      "variant": "rmd",
+      "requirements": ["PFA-DET-004","PFA-DET-015","PFA-DET-017","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-004"},{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-015"},{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-017"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"requestedCents":"50000","openingRetirementCents":"100000"},
+        "terms": {"existingIssue":"103","source":"source","destination":"owned checking","withholding":"not supplied","distributionKind":"rmd"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Issue #103 owns ordinary retirement distributions/RMDs. Pending indirect-rollover receipts do not establish ordinary withdrawal/RMD semantics.",
+        "unknownOutputs": ["distribution_eligibility","rmd_required_amount","withholding","tax_character","cash_settlement","basis"]
+      }
+    },
+    {
+      "id": "auto_zero_rate",
+      "lane": "D2-B",
+      "family": "auto_loan",
+      "variant": "scheduled_payment",
+      "requirements": ["PFA-DET-019"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-019"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"principalCents":"100000","cashCents":"200000"},
+        "terms": {"annualRate":"0","rateConvention":"nominal annual / 12","remainingPayments":"2","frequency":"monthly","capitalization":"none","funding":"cash, all-or-nothing","rounding":"USD cents half_up"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"200000"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"100000"},{"id":"interest","kind":"expense","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "not_yet_executable",
+        "integratedRuntimeEvidence": false,
+        "boundary": "P22 fixed monthly arithmetic exists; canonical non-mortgage execution is rejected by current compiler.",
+        "unknownOutputs": ["auto_product_authoring","integrated_liability_state"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"service","date":"2026-01-15","legs":[{"account":"cash","side":"credit","cents":"50000"},{"account":"principal","side":"debit","cents":"50000"}]}],"closingCents":{"cash":"150000","principal":"50000","interest":"0"},"cashDeltaCents":"-50000","netWorthDeltaCents":"0","recognition":{"incomeCents":"0","expenseCents":"0"},"facts":{"principalPaidCents":"50000","interestPaidCents":"0","remainingPrincipalCents":"50000"}}
+      }
+    },
+    {
+      "id": "auto_final_interest",
+      "lane": "D2-B",
+      "family": "auto_loan",
+      "variant": "final_payment",
+      "requirements": ["PFA-DET-019"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-019"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"principalCents":"100000","cashCents":"200000"},
+        "terms": {"annualRate":"0.12","rateConvention":"nominal annual / 12; simple contractual month","remainingPayments":"1","capitalization":"none","funding":"cash, all-or-nothing","rounding":"USD cents half_up"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"200000"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"100000"},{"id":"interest","kind":"expense","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "not_yet_executable",
+        "integratedRuntimeEvidence": false,
+        "boundary": "The resolved P22 one-month profile can be reused after explicit auto-loan admission; no new amortization formula is needed.",
+        "unknownOutputs": ["auto_product_authoring","integrated_liability_state"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"payoff","date":"2026-01-15","legs":[{"account":"cash","side":"credit","cents":"101000"},{"account":"principal","side":"debit","cents":"100000"},{"account":"interest","side":"debit","cents":"1000"}]}],"closingCents":{"cash":"99000","principal":"0","interest":"1000"},"cashDeltaCents":"-101000","netWorthDeltaCents":"-1000","recognition":{"incomeCents":"0","expenseCents":"1000"},"facts":{"principalPaidCents":"100000","interestPaidCents":"1000","remainingPrincipalCents":"0"}}
+      }
+    },
+    {
+      "id": "student_standard",
+      "lane": "D2-B",
+      "family": "student_loan",
+      "variant": "scheduled_payment",
+      "requirements": ["PFA-DET-019"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-019"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"principalCents":"100000","cashCents":"200000"},
+        "terms": {"annualRate":"0","rateConvention":"nominal annual / 12","remainingPayments":"2","frequency":"monthly","capitalization":"none","funding":"cash, all-or-nothing","specialPrograms":"excluded; separately gated"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"200000"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"100000"},{"id":"interest","kind":"expense","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "not_yet_executable",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Standard fixed monthly profile has reusable P22 arithmetic; student authoring/execution remains absent. No IDR/forgiveness/deferment is inferred.",
+        "unknownOutputs": ["student_product_authoring","integrated_liability_state"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"service","date":"2026-01-15","legs":[{"account":"cash","side":"credit","cents":"50000"},{"account":"principal","side":"debit","cents":"50000"}]}],"closingCents":{"cash":"150000","principal":"50000","interest":"0"},"cashDeltaCents":"-50000","netWorthDeltaCents":"0","recognition":{"incomeCents":"0","expenseCents":"0"},"facts":{"principalPaidCents":"50000","interestPaidCents":"0"}}
+      }
+    },
+    {
+      "id": "consumer_extra_payoff",
+      "lane": "D2-B",
+      "family": "auto_loan",
+      "variant": "extra_payoff",
+      "requirements": ["PFA-DET-019"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-019"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"principalCents":"100000","cashCents":"200000","extraCents":"50000"},
+        "terms": {"annualRate":"0","rateConvention":"nominal annual / 12","remainingPayments":"2","funding":"required service before voluntary extra; all-or-nothing","capitalization":"none"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"200000"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"100000"},{"id":"interest","kind":"expense","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "not_yet_executable",
+        "integratedRuntimeEvidence": false,
+        "boundary": "P22 required-before-extra dependency is reusable; do not introduce cross-domain debt priority.",
+        "unknownOutputs": ["auto_integration"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"service","date":"2026-01-15","legs":[{"account":"cash","side":"credit","cents":"50000"},{"account":"principal","side":"debit","cents":"50000"}]},{"id":"extra","date":"2026-01-15","legs":[{"account":"cash","side":"credit","cents":"50000"},{"account":"principal","side":"debit","cents":"50000"}]}],"closingCents":{"cash":"100000","principal":"0","interest":"0"},"cashDeltaCents":"-100000","netWorthDeltaCents":"0","recognition":{"incomeCents":"0","expenseCents":"0"},"facts":{"principalPaidCents":"100000","interestPaidCents":"0"}}
+      }
+    },
+    {
+      "id": "credit_card_revolve",
+      "lane": "D2-B",
+      "family": "credit_card",
+      "variant": "statement_payment",
+      "requirements": ["PFA-DET-019"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-019"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"openingPrincipalCents":"100000","statementInterestCents":"2000","authoredPaymentCents":"10000"},
+        "terms": {"interest":"explicit synthetic statement amount; no APR inference","allocation":"contract quote: pay stated interest first","minimumPayment":"rule not supplied","funding":"cash"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"200000"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"100000"},{"id":"interest","kind":"expense","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Conditional statement allocation only; daily accrual, minimum payment, new purchases and revolving contract require authoritative terms.",
+        "unknownOutputs": ["accrual_rule","required_minimum","revolving_state","tax_character"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"card_service","date":"2026-01-15","legs":[{"account":"cash","side":"credit","cents":"10000"},{"account":"principal","side":"debit","cents":"8000"},{"account":"interest","side":"debit","cents":"2000"}]}],"closingCents":{"cash":"190000","principal":"92000","interest":"2000"},"cashDeltaCents":"-10000","netWorthDeltaCents":"-2000","recognition":{"incomeCents":"0","expenseCents":"2000"},"facts":{"principalPaidCents":"8000","interestPaidCents":"2000"}}
+      }
+    },
+    {
+      "id": "heloc_draw",
+      "lane": "D2-B",
+      "family": "heloc",
+      "variant": "draw",
+      "requirements": ["PFA-DET-019"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-019"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"drawCents":"50000"},
+        "terms": {"draw":"explicit authorized draw, not invented funding","destination":"cash","rateType":"variable","reset":"missing effective-dated index/spread/caps and payment policy"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Explicit borrowing preserves net worth; HELOC accrual/reset/payment implementation awaits contract.",
+        "unknownOutputs": ["draw_eligibility","interest","payment_reset","remaining_term","capitalization_policy"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"draw","date":"2026-01-15","legs":[{"account":"cash","side":"debit","cents":"50000"},{"account":"principal","side":"credit","cents":"50000"}]}],"closingCents":{"cash":"50000","principal":"50000"},"cashDeltaCents":"50000","netWorthDeltaCents":"0","recognition":{"incomeCents":"0","expenseCents":"0"},"facts":{"newDrawCents":"50000"}}
+      }
+    },
+    {
+      "id": "heloc_reset",
+      "lane": "D2-B",
+      "family": "heloc",
+      "variant": "variable_reset",
+      "requirements": ["PFA-DET-019"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-019"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"openingPrincipalCents":"100000"},
+        "terms": {"resetDate":"2026-01-15","index":"missing","spread":"missing","capsFloors":"missing","paymentReset":"separate from rate reset"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "P22 requires explicit rate/reset/capitalization contracts; cannot substitute fixed mortgage terms.",
+        "unknownOutputs": ["effective_rate","payment","principal_interest_split","ending_liability"]
+      }
+    },
+    {
+      "id": "debt_unfunded",
+      "lane": "D2-B",
+      "family": "auto_loan",
+      "variant": "unfunded_required",
+      "requirements": ["PFA-DET-019"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-019"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"cashCents":"10000","principalCents":"100000","requiredServiceCents":"50000","requestedExtraCents":"5000"},
+        "terms": {"annualRate":"0","remainingPayments":"2","funding":"all-or-nothing; required before extra; no borrowing fallback"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"10000"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"100000"}]
+      },
+      "expected": {
+        "capability": "not_yet_executable",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Under the existing fixed monthly profile, unavailable required funding prevents voluntary extra and any failed candidate mutation.",
+        "unknownOutputs": ["auto_runtime_diagnostic"],
+        "effects": {"condition":"Existing P22 all-or-nothing fixed monthly profile, no alternative funding, before any committed operation.","transactions":[],"closingCents":{"cash":"10000","principal":"100000"},"cashDeltaCents":"0","netWorthDeltaCents":"0","recognition":{"incomeCents":"0","expenseCents":"0"},"facts":{"fundingOutcome":"required_unfunded","extraOutcome":"ineligible","committedMutation":"none"}}
+      }
+    },
+    {
+      "id": "tips_accretion",
+      "lane": "D2-B",
+      "family": "tips",
+      "variant": "inflation_accretion",
+      "requirements": ["PFA-DET-021","PFA-INV-027","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-021"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-027"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"originalPrincipalCents":"100000"},
+        "terms": {"indexBase":"missing effective index, lag and reference convention","deflationFloor":"must resolve at applicable boundary","taxCharacter":"coupon and non-cash accretion separately required"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "TIPS index timing, floor, rounding, carrying/basis and non-cash tax semantics are not defined by ordinary nominal Treasury support.",
+        "unknownOutputs": ["adjusted_principal","accretion","taxable_accretion","basis"]
+      }
+    },
+    {
+      "id": "tips_coupon",
+      "lane": "D2-B",
+      "family": "tips",
+      "variant": "quoted_coupon",
+      "requirements": ["PFA-DET-021","PFA-INV-027","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-021"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-027"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"quotedAdjustedPrincipalCents":"105000","quotedCouponCents":"1000"},
+        "terms": {"coupon":"explicit synthetic statement quote, not a computed coupon","settlement":"wrapper cash; no implicit transfer to checking"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"income","kind":"income","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Known quoted coupon cash flow only; inflation accretion and adjusted-principal coupon algorithm require a separate contract.",
+        "unknownOutputs": ["computed_coupon","inflation_tax_character","basis","tax_liability"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"coupon","date":"2026-01-15","legs":[{"account":"cash","side":"debit","cents":"1000"},{"account":"income","side":"credit","cents":"1000"}]}],"closingCents":{"cash":"1000","income":"1000"},"cashDeltaCents":"1000","netWorthDeltaCents":"1000","recognition":{"incomeCents":"1000","expenseCents":"0"},"facts":{"couponCents":"1000","destination":"wrapper_cash"}}
+      }
+    },
+    {
+      "id": "tips_maturity",
+      "lane": "D2-B",
+      "family": "tips",
+      "variant": "maturity",
+      "requirements": ["PFA-DET-021","PFA-INV-027","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-021"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-027"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"originalPrincipalCents":"100000"},
+        "terms": {"maturity":"2026-01-15","adjustedPrincipal":"unresolved","floor":"unresolved"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Do not borrow ordinary Treasury face-value maturity semantics for inflation-adjusted redemption.",
+        "unknownOutputs": ["redemption","carrying_value","basis","tax_character"]
+      }
+    },
+    {
+      "id": "ee_redemption_quote",
+      "lane": "D2-B",
+      "family": "series_ee",
+      "variant": "redemption",
+      "requirements": ["PFA-DET-021","PFA-INV-027","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-021"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-027"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"purchaseCents":"100000","quotedRedemptionCents":"120000"},
+        "terms": {"issueDate":"2020-01-15","purchaseDate":"2020-01-15","redemptionDate":"2026-01-15","valuation":"explicit quote; carrying value remains purchase cost in this accounting-only scenario","elections":"none inferred"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"bond","kind":"position","owner":"claimant","openingCents":"100000"},{"id":"income","kind":"income","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Quoted cash redemption can be reconciled without inventing rate/guarantee/penalty/tax-election rules; instrument execution is absent.",
+        "unknownOutputs": ["computed_redemption","federal_state_tax","accrual_election"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"redemption","date":"2026-01-15","legs":[{"account":"cash","side":"debit","cents":"120000"},{"account":"bond","side":"credit","cents":"100000"},{"account":"income","side":"credit","cents":"20000"}]}],"closingCents":{"cash":"120000","bond":"0","income":"20000"},"cashDeltaCents":"120000","netWorthDeltaCents":"20000","recognition":{"incomeCents":"20000","expenseCents":"0"},"facts":{"grossInterestCents":"20000"}}
+      }
+    },
+    {
+      "id": "ee_accrual_timing",
+      "lane": "D2-B",
+      "family": "series_ee",
+      "variant": "accrual_maturity",
+      "requirements": ["PFA-DET-021","PFA-INV-027","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-021"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-027"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"purchaseCents":"100000"},
+        "terms": {"issueDate":"2026-01-15","accrualRule":"missing issue-vintage rule","redemptionRestrictions":"missing effective holding/penalty/guarantee rule"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Accrual, maturity/guarantee and redemption timing need explicit versioned rules.",
+        "unknownOutputs": ["accrued_value","redemption_value","earliest_redemption","taxable_interest"]
+      }
+    },
+    {
+      "id": "529_contribution",
+      "lane": "D2-B",
+      "family": "education_529",
+      "variant": "contribution",
+      "requirements": ["PFA-DET-022","PFA-INV-028","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-022"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-028"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"contributionCents":"50000"},
+        "terms": {"owner":"claimant","beneficiary":"beneficiary","funding":"owned cash","valuation":"purchase at par; no fees/growth","jurisdiction":"not supplied"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"education","kind":"position","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Conditional funded acquisition preserves net worth; legal account/beneficiary and jurisdictional tax contracts remain absent.",
+        "unknownOutputs": ["state_deduction_credit","recapture","contribution_eligibility","investment_growth"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"contribution","date":"2026-01-15","legs":[{"account":"cash","side":"credit","cents":"50000"},{"account":"education","side":"debit","cents":"50000"}]}],"closingCents":{"cash":"50000","education":"50000"},"cashDeltaCents":"-50000","netWorthDeltaCents":"0","recognition":{"incomeCents":"0","expenseCents":"0"},"facts":{"contributionCents":"50000","contributedBasisCents":"50000"}}
+      }
+    },
+    {
+      "id": "529_qualified",
+      "lane": "D2-B",
+      "family": "education_529",
+      "variant": "qualified_distribution",
+      "requirements": ["PFA-DET-022","PFA-INV-028","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-022"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-028"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"requestedCents":"50000","balanceCents":"100000","contributedBasisCents":"80000"},
+        "terms": {"owner":"claimant","beneficiary":"beneficiary","distributionCharacter":"qualified","expenseEvidence":"not supplied","settlement":"explicit destination required"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Distribution earnings/basis allocation, qualification, federal penalty and state recapture cannot be inferred.",
+        "unknownOutputs": ["qualified_amount","earnings_basis_split","taxable_earnings","penalty","recapture","cash_settlement"]
+      }
+    },
+    {
+      "id": "529_nonqualified",
+      "lane": "D2-B",
+      "family": "education_529",
+      "variant": "nonqualified_distribution",
+      "requirements": ["PFA-DET-022","PFA-INV-028","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-022"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-028"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"requestedCents":"50000","balanceCents":"100000","contributedBasisCents":"80000"},
+        "terms": {"owner":"claimant","beneficiary":"beneficiary","distributionCharacter":"nonqualified","expenseEvidence":"not supplied","settlement":"explicit destination required"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Distribution earnings/basis allocation, qualification, federal penalty and state recapture cannot be inferred.",
+        "unknownOutputs": ["qualified_amount","earnings_basis_split","taxable_earnings","penalty","recapture","cash_settlement"]
+      }
+    },
+    {
+      "id": "529_plan_rollover",
+      "lane": "D2-B",
+      "family": "education_529",
+      "variant": "plan_rollover",
+      "requirements": ["PFA-DET-022","PFA-INV-028","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-022"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-028"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"transferCents":"50000"},
+        "terms": {"owner":"same claimant","beneficiary":"same beneficiary","eligibility":"must be verified independently","jurisdictions":"missing","valuation":"par; no fees"},
+        "accounts": [{"id":"source","kind":"position","owner":"claimant","openingCents":"100000"},{"id":"destination","kind":"position","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "An admitted same-owner plan transfer preserves net worth; frequency/eligibility/recapture and basis lineage await authoritative rules.",
+        "unknownOutputs": ["rollover_eligibility","basis_allocation","state_recapture"],
+        "effects": {"condition":"Conditional admitted same-owner transfer at par; no sale, valuation change, tax expense, withholding or fee.","transactions":[{"id":"owned_transfer","date":"2026-01-15","legs":[{"account":"source","side":"credit","cents":"50000"},{"account":"destination","side":"debit","cents":"50000"}]}],"closingCents":{"source":"50000","destination":"50000"},"cashDeltaCents":"0","netWorthDeltaCents":"0","recognition":{"incomeCents":"0","expenseCents":"0"},"facts":{"transferCents":"50000","consumption":"none","taxSettlement":"separate"}}
+      }
+    },
+    {
+      "id": "529_beneficiary_change",
+      "lane": "D2-B",
+      "family": "education_529",
+      "variant": "beneficiary_change",
+      "requirements": ["PFA-DET-022","PFA-INV-028","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-022"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-028"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"balanceCents":"100000"},
+        "terms": {"oldBeneficiary":"claimant","newBeneficiary":"beneficiary","relationship":"missing legally material fact","owner":"claimant"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Permitted family/beneficiary change and applicable tax facts need an explicit contract.",
+        "unknownOutputs": ["change_eligibility","gift_generation_tax_character","beneficiary_state"]
+      }
+    },
+    {
+      "id": "529_roth_rollover",
+      "lane": "D2-B",
+      "family": "education_529",
+      "variant": "roth_rollover",
+      "requirements": ["PFA-DET-022","PFA-INV-028","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-022"},{"path":"docs/specs/capabilities/portfolio-planning.md","anchor":"PFA-INV-028"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"requestedCents":"50000","priorLifetimeRolloversCents":"0","currentIraUsageCents":"0"},
+        "terms": {"accountOpened":"2010-01-15","beneficiary":"beneficiary","destinationOwner":"beneficiary","holdingEvidence":"dated contribution/earnings lots missing","statutoryRule":"missing effective lifetime/annual/age/holding/compensation rule"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "No statutory amounts or eligibility are inferred from account age alone; Roth IRA annual-capacity interaction needs authoritative rules.",
+        "unknownOutputs": ["eligible_lots","accepted_rollover","lifetime_usage","annual_ira_usage","tax_character"]
+      }
+    },
+    {
+      "id": "health_after_tax",
+      "lane": "D2-C",
+      "family": "health_insurance",
+      "variant": "after_tax_premium",
+      "requirements": ["PFA-DET-020","PFA-INS-003","PFA-INS-013"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/insurance-planning.md","anchor":"PFA-INS-003"},{"path":"docs/specs/capabilities/insurance-planning.md","anchor":"PFA-INS-013"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"grossPremiumCents":"30000","employerShareCents":"0","householdShareCents":"30000"},
+        "terms": {"coveredMembers":"claimant, beneficiary","effectiveStart":"2026-01-01","effectiveEndExclusive":"2026-02-01","frequency":"monthly","funding":"owned cash after tax"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "not_yet_executable",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Known after-tax premium expense only; richer coverage identity/effective contract must be admitted before live health support.",
+        "unknownOutputs": ["health_coverage_runtime","deduction_eligibility"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"premium_payment","date":"2026-01-15","legs":[{"account":"cash","side":"credit","cents":"30000"},{"account":"premium","side":"debit","cents":"30000"}]}],"closingCents":{"cash":"70000","premium":"30000"},"cashDeltaCents":"-30000","netWorthDeltaCents":"-30000","recognition":{"incomeCents":"0","expenseCents":"30000"},"facts":{"premiumCents":"30000","fundingCharacter":"after_tax"}}
+      }
+    },
+    {
+      "id": "health_pretax_employer",
+      "lane": "D2-C",
+      "family": "health_insurance",
+      "variant": "pretax_employer_share",
+      "requirements": ["PFA-DET-020","PFA-INS-013","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/insurance-planning.md","anchor":"PFA-INS-013"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"grossPremiumCents":"30000","employerShareCents":"10000","employeeShareCents":"20000","grossWagesCents":"200000"},
+        "terms": {"coveredMembers":"claimant, beneficiary","funding":"pre-tax payroll","effectiveStart":"2026-01-01","effectiveEndExclusive":"2026-02-01","frequency":"monthly"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Do not reuse HSA tax-base rules for insurance; employee/employer share recognition and payroll/jurisdiction contract must be synchronized.",
+        "unknownOutputs": ["take_home","taxable_wages","payroll_wages","employer_recognition"]
+      }
+    },
+    {
+      "id": "medicare_part_a",
+      "lane": "D2-C",
+      "family": "medicare",
+      "variant": "part_a",
+      "requirements": ["PFA-DET-020","PFA-INS-013","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/insurance-planning.md","anchor":"PFA-INS-013"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"authoredPremiumCents":"30000"},
+        "terms": {"electedPart":"part_a","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Quoted premium expense is a conditional cash effect; election/eligibility, coordination and income-related adjustments still require an executable contract.",
+        "unknownOutputs": ["medicare_eligibility","income_related_adjustment","coordinated_premiums"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"premium_payment","date":"2026-01-15","legs":[{"account":"cash","side":"credit","cents":"30000"},{"account":"premium","side":"debit","cents":"30000"}]}],"closingCents":{"cash":"70000","premium":"30000"},"cashDeltaCents":"-30000","netWorthDeltaCents":"-30000","recognition":{"incomeCents":"0","expenseCents":"30000"},"facts":{"premiumCents":"30000","fundingCharacter":"after_tax"}}
+      }
+    },
+    {
+      "id": "medicare_part_b",
+      "lane": "D2-C",
+      "family": "medicare",
+      "variant": "part_b",
+      "requirements": ["PFA-DET-020","PFA-INS-013","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/insurance-planning.md","anchor":"PFA-INS-013"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"authoredPremiumCents":"30000"},
+        "terms": {"electedPart":"part_b","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Quoted premium expense is a conditional cash effect; election/eligibility, coordination and income-related adjustments still require an executable contract.",
+        "unknownOutputs": ["medicare_eligibility","income_related_adjustment","coordinated_premiums"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"premium_payment","date":"2026-01-15","legs":[{"account":"cash","side":"credit","cents":"30000"},{"account":"premium","side":"debit","cents":"30000"}]}],"closingCents":{"cash":"70000","premium":"30000"},"cashDeltaCents":"-30000","netWorthDeltaCents":"-30000","recognition":{"incomeCents":"0","expenseCents":"30000"},"facts":{"premiumCents":"30000","fundingCharacter":"after_tax"}}
+      }
+    },
+    {
+      "id": "medicare_part_d",
+      "lane": "D2-C",
+      "family": "medicare",
+      "variant": "part_d",
+      "requirements": ["PFA-DET-020","PFA-INS-013","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/insurance-planning.md","anchor":"PFA-INS-013"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"authoredPremiumCents":"30000"},
+        "terms": {"electedPart":"part_d","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Quoted premium expense is a conditional cash effect; election/eligibility, coordination and income-related adjustments still require an executable contract.",
+        "unknownOutputs": ["medicare_eligibility","income_related_adjustment","coordinated_premiums"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"premium_payment","date":"2026-01-15","legs":[{"account":"cash","side":"credit","cents":"30000"},{"account":"premium","side":"debit","cents":"30000"}]}],"closingCents":{"cash":"70000","premium":"30000"},"cashDeltaCents":"-30000","netWorthDeltaCents":"-30000","recognition":{"incomeCents":"0","expenseCents":"30000"},"facts":{"premiumCents":"30000","fundingCharacter":"after_tax"}}
+      }
+    },
+    {
+      "id": "medicare_advantage",
+      "lane": "D2-C",
+      "family": "medicare",
+      "variant": "advantage",
+      "requirements": ["PFA-DET-020","PFA-INS-013","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/insurance-planning.md","anchor":"PFA-INS-013"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"authoredPremiumCents":"30000"},
+        "terms": {"electedPart":"advantage","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Quoted premium expense is a conditional cash effect; election/eligibility, coordination and income-related adjustments still require an executable contract.",
+        "unknownOutputs": ["medicare_eligibility","income_related_adjustment","coordinated_premiums"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"premium_payment","date":"2026-01-15","legs":[{"account":"cash","side":"credit","cents":"30000"},{"account":"premium","side":"debit","cents":"30000"}]}],"closingCents":{"cash":"70000","premium":"30000"},"cashDeltaCents":"-30000","netWorthDeltaCents":"-30000","recognition":{"incomeCents":"0","expenseCents":"30000"},"facts":{"premiumCents":"30000","fundingCharacter":"after_tax"}}
+      }
+    },
+    {
+      "id": "medicare_medigap",
+      "lane": "D2-C",
+      "family": "medicare",
+      "variant": "medigap",
+      "requirements": ["PFA-DET-020","PFA-INS-013","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/insurance-planning.md","anchor":"PFA-INS-013"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"authoredPremiumCents":"30000"},
+        "terms": {"electedPart":"medigap","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Quoted premium expense is a conditional cash effect; election/eligibility, coordination and income-related adjustments still require an executable contract.",
+        "unknownOutputs": ["medicare_eligibility","income_related_adjustment","coordinated_premiums"],
+        "effects": {"condition":"Only the supplied, admitted gross economic facts are reconciled; eligibility, tax expense and later settlement are excluded.","transactions":[{"id":"premium_payment","date":"2026-01-15","legs":[{"account":"cash","side":"credit","cents":"30000"},{"account":"premium","side":"debit","cents":"30000"}]}],"closingCents":{"cash":"70000","premium":"30000"},"cashDeltaCents":"-30000","netWorthDeltaCents":"-30000","recognition":{"incomeCents":"0","expenseCents":"30000"},"facts":{"premiumCents":"30000","fundingCharacter":"after_tax"}}
+      }
+    },
+    {
+      "id": "medicare_irmaa",
+      "lane": "D2-C",
+      "family": "medicare",
+      "variant": "irmaa",
+      "requirements": ["PFA-DET-020","PFA-INS-013","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/insurance-planning.md","anchor":"PFA-INS-013"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"authoredBasePremiumCents":"30000"},
+        "terms": {"incomeReference":"authoritative income/tax facts required","lookback":"missing effective rule","filingStatus":"missing","surchargeRule":"missing"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "No hard-coded IRMAA surcharge or generic income proxy is permitted.",
+        "unknownOutputs": ["surcharge","total_premium","effective_dates"]
+      }
+    },
+    {
+      "id": "fsa_payroll_contribution",
+      "lane": "D2-C",
+      "family": "health_fsa",
+      "variant": "payroll_contribution",
+      "requirements": ["PFA-DET-020","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"annualElectionCents":"100000","payrollContributionCents":"10000","requestedReimbursementCents":"20000"},
+        "terms": {"planYearStart":"2026-01-01","planYearEndExclusive":"2027-01-01","owner":"claimant","availableBalance":"uniform coverage/availability contract missing","settlement":"explicit reimbursement proof and destination required","yearEndTerms":"payroll_contribution"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Health FSA is not HSA. Resolve availability, payroll tax bases, qualified reimbursement, plan-year cap and authored carryover/grace/forfeiture without inventing an owned investment asset.",
+        "unknownOutputs": ["available_balance","payroll_tax_bases","qualified_reimbursement","carryover_or_grace","forfeiture","net_worth_treatment"]
+      }
+    },
+    {
+      "id": "fsa_reimbursement",
+      "lane": "D2-C",
+      "family": "health_fsa",
+      "variant": "reimbursement",
+      "requirements": ["PFA-DET-020","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"annualElectionCents":"100000","payrollContributionCents":"10000","requestedReimbursementCents":"20000"},
+        "terms": {"planYearStart":"2026-01-01","planYearEndExclusive":"2027-01-01","owner":"claimant","availableBalance":"uniform coverage/availability contract missing","settlement":"explicit reimbursement proof and destination required","yearEndTerms":"reimbursement"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Health FSA is not HSA. Resolve availability, payroll tax bases, qualified reimbursement, plan-year cap and authored carryover/grace/forfeiture without inventing an owned investment asset.",
+        "unknownOutputs": ["available_balance","payroll_tax_bases","qualified_reimbursement","carryover_or_grace","forfeiture","net_worth_treatment"]
+      }
+    },
+    {
+      "id": "fsa_carryover",
+      "lane": "D2-C",
+      "family": "health_fsa",
+      "variant": "carryover",
+      "requirements": ["PFA-DET-020","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"annualElectionCents":"100000","payrollContributionCents":"10000","requestedReimbursementCents":"20000"},
+        "terms": {"planYearStart":"2026-01-01","planYearEndExclusive":"2027-01-01","owner":"claimant","availableBalance":"uniform coverage/availability contract missing","settlement":"explicit reimbursement proof and destination required","yearEndTerms":"carryover"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Health FSA is not HSA. Resolve availability, payroll tax bases, qualified reimbursement, plan-year cap and authored carryover/grace/forfeiture without inventing an owned investment asset.",
+        "unknownOutputs": ["available_balance","payroll_tax_bases","qualified_reimbursement","carryover_or_grace","forfeiture","net_worth_treatment"]
+      }
+    },
+    {
+      "id": "fsa_grace_period",
+      "lane": "D2-C",
+      "family": "health_fsa",
+      "variant": "grace_period",
+      "requirements": ["PFA-DET-020","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"annualElectionCents":"100000","payrollContributionCents":"10000","requestedReimbursementCents":"20000"},
+        "terms": {"planYearStart":"2026-01-01","planYearEndExclusive":"2027-01-01","owner":"claimant","availableBalance":"uniform coverage/availability contract missing","settlement":"explicit reimbursement proof and destination required","yearEndTerms":"grace_period"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Health FSA is not HSA. Resolve availability, payroll tax bases, qualified reimbursement, plan-year cap and authored carryover/grace/forfeiture without inventing an owned investment asset.",
+        "unknownOutputs": ["available_balance","payroll_tax_bases","qualified_reimbursement","carryover_or_grace","forfeiture","net_worth_treatment"]
+      }
+    },
+    {
+      "id": "fsa_forfeiture",
+      "lane": "D2-C",
+      "family": "health_fsa",
+      "variant": "forfeiture",
+      "requirements": ["PFA-DET-020","PFA-TAX-015"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/tax-engine.md","anchor":"PFA-TAX-015"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"annualElectionCents":"100000","payrollContributionCents":"10000","requestedReimbursementCents":"20000"},
+        "terms": {"planYearStart":"2026-01-01","planYearEndExclusive":"2027-01-01","owner":"claimant","availableBalance":"uniform coverage/availability contract missing","settlement":"explicit reimbursement proof and destination required","yearEndTerms":"forfeiture"},
+        "accounts": []
+      },
+      "expected": {
+        "capability": "decision_required",
+        "integratedRuntimeEvidence": false,
+        "boundary": "Health FSA is not HSA. Resolve availability, payroll tax bases, qualified reimbursement, plan-year cap and authored carryover/grace/forfeiture without inventing an owned investment asset.",
+        "unknownOutputs": ["available_balance","payroll_tax_bases","qualified_reimbursement","carryover_or_grace","forfeiture","net_worth_treatment"]
+      }
+    },
+    {
+      "id": "premium_end_exclusive",
+      "lane": "D2-C",
+      "family": "health_insurance",
+      "variant": "end_boundary",
+      "requirements": ["PFA-DET-020","PFA-INS-002","PFA-INS-013"],
+      "authority": [{"path":"docs/specs/capabilities/deterministic-household-financial-semantics.md","anchor":"PFA-DET-020"},{"path":"docs/specs/capabilities/insurance-planning.md","anchor":"PFA-INS-002"},{"path":"docs/specs/capabilities/insurance-planning.md","anchor":"PFA-INS-013"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"4.4 Settlement"},{"path":"docs/personal_finance_executable_financial_semantics_v0.1.md","anchor":"5.3 Consolidated asset aggregation"}],
+      "period": {"start":"2026-01-01","endExclusive":"2026-02-01"},
+      "input": {
+        "currency": "USD",
+        "unit": "integer_cents",
+        "provenance": "synthetic",
+        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "amounts": {"authoredPremiumCents":"30000"},
+        "terms": {"effectiveStart":"2025-12-01","effectiveEndExclusive":"2026-01-01","candidatePayment":"2026-01-01","frequency":"monthly","funding":"cash"},
+        "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
+      },
+      "expected": {
+        "capability": "not_yet_executable",
+        "integratedRuntimeEvidence": false,
+        "boundary": "An obligation excluded by the authored half-open coverage period posts nothing; health runtime remains unimplemented.",
+        "unknownOutputs": ["health_runtime_admission"],
+        "effects": {"condition":"The complete authored coverage period ends at the candidate instant; no arrears, grace or separate settlement is authored.","transactions":[],"closingCents":{"cash":"100000","premium":"0"},"cashDeltaCents":"0","netWorthDeltaCents":"0","recognition":{"incomeCents":"0","expenseCents":"0"},"facts":{"scheduledInsideCoverage":"false"}}
+      }
+    }
+  ]
+}
