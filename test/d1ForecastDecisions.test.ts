@@ -32,7 +32,7 @@ const withDatedFacts = (original: PersonalDraft, endYear: number): PersonalDraft
   for (let year = 2027; year < endYear; year++) for (const source of contributionFactSources(original)) {
     for (const field of Object.keys(annualFieldOwners) as AnnualField[]) {
       if (field === "ageAtYearEnd" || source.facts[field] === undefined) continue;
-      if (!annualFieldsFor(source.accountType).includes(field)) continue;
+      if (!annualFieldsFor(source.accountType.startsWith("hsa") ? "employee_hsa" : source.accountType).includes(field)) continue;
       const scope = annualFactScope(field, { ...source.scope, taxYear: year });
       const key = `${field}:${factScopeKey(scope)}`;
       if (seen.has(key)) continue;

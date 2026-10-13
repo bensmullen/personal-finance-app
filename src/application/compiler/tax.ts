@@ -90,7 +90,7 @@ export const compileHouseholdTax = (model: PortableModelEnvelope, request: House
     const scope = resolveHouseholdScope(model);
     if (scope.status !== "compiled") return scope;
     const household = objects(model, "Household").find(item => canonicalId(item, "household_id") === scope.value.householdId)!;
-    const people = objects(model, "Person").filter(item => scope.value.memberIds.includes(canonicalId(item, "person_id") ?? ""));
+    const people = objects(model, "Person").filter(item => scope.value.memberIds.includes(canonicalId(item, "person_id") ?? "")).sort((a, b) => String(a.person_id).localeCompare(String(b.person_id)));
     const diagnostics: HouseholdTaxInput["diagnostics"][number][] = [];
     const anchor = request.asOf ?? request.simulationStart;
     if (anchor !== undefined && !utcDate(anchor)) fail("Filing status requires a valid explicit opening reference date.");

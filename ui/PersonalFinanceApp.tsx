@@ -31,8 +31,7 @@ import {
 } from "recharts";
 import { z } from "zod";
 import { payrollCharacters, authoringFailure } from "./authoring/contributionChoices.js";
-import { authoredAnnualFacts } from "../src/application/financialFacts.js";
-import { FinancialFactEditors, AnnualFactsOwner, AnnualFactsReview, AnnualFilingRepair } from "./authoring/FinancialFactEditors.js";
+import { FinancialFactEditors, AnnualFactsOwner, AnnualFactsReview, AnnualFilingRepair, useAuthoredAnnualFacts } from "./authoring/FinancialFactEditors.js";
 import { financialField, fieldProblem, compareDecimal, unvestedProblem, effectiveAnnualReturnProblem, entityField as financialFieldOrUndefined } from "./authoring/fieldContract.js";
 import { GuidedFields } from "./authoring/GuidedFields.js";
 import { FinancialSection, focusRepair, FinancialInput, commitAtControl } from "./authoring/FieldShell.js";
@@ -2639,6 +2638,7 @@ function ModelSettings({
         text="Model dates are explicit; wall-clock today is never authoritative."
       />
       {!editable && <PlanHorizonSettings draft={draft} settings={settings} />}
+      {!editable && <ForecastSetupLink target="simulationStart" />}
       <section className="panel form-grid">
         <label>
           Base currency
@@ -2654,6 +2654,7 @@ function ModelSettings({
           <input
             type="date"
             value={settings.asOf}
+            readOnly={!editable}
             onChange={(event) => update("asOf", event.target.value)}
           />
         </label>
@@ -2662,6 +2663,7 @@ function ModelSettings({
           <input
             type="date"
             value={settings.dataCutoff}
+            readOnly={!editable}
             onChange={(event) => update("dataCutoff", event.target.value)}
           />
         </label>
@@ -2670,6 +2672,7 @@ function ModelSettings({
           <input
             type="date"
             value={settings.simulationStart}
+            readOnly
             onChange={(event) => update("simulationStart", event.target.value)}
           />
         </label>
@@ -2678,6 +2681,7 @@ function ModelSettings({
           <input
             type="date"
             value={settings.simulationEnd}
+            readOnly
             onChange={(event) => update("simulationEnd", event.target.value)}
           />
         </label>
@@ -2814,6 +2818,7 @@ function AuthoringError({ reason, route }: { reason: string; route: "personal" |
   return <div ref={root}><p role="alert">{authoringFailure(new Error(reason))}</p>{repairTarget && <button type="button" onClick={() => focusRepair(root.current?.closest("section")?.querySelector<HTMLElement>(`[data-financial-field="${repairTarget}"] :is(input, select)`))}>Review {financialField(repairTarget).label.toLowerCase()}</button>}<details><summary>Technical details</summary><pre>{reason}</pre></details></div>;
 }
 function PersonalPurchaseAuthoring({ draft, setDraft, initialInvestmentId }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void; initialInvestmentId?: string }) {
+  const annualFacts = useAuthoredAnnualFacts(draft);
   const banks = objectEntries(draft, "Account").filter(account => ["checking", "savings"].includes(String(account.account_type)));
   const brokerageIds = new Set(objectEntries(draft, "Account").filter(account => ["taxable_brokerage", "traditional_ira", "roth_ira"].includes(String(account.account_type))).map(account => objectId("Account", account)));
   const investments = objectEntries(draft, "Investment").filter(investment => brokerageIds.has(String(investment.account_id)));
@@ -2878,7 +2883,7 @@ function PersonalPurchaseAuthoring({ draft, setDraft, initialInvestmentId }: { d
     <button type="button" disabled={!investmentId || !bankId || purchaseInvalid} onClick={() => {
       const selected = investments.find(investment => objectId("Investment", investment) === investmentId);
       try {
-        setDraft(authorPersonalPurchasePlan(draft, { primitiveId: typeof selected?.contribution_model_id === "string" ? selected.contribution_model_id : randomId(), investmentId, sourceCashAccountId: bankId, amount, date, frequency, order: Number(order), ...(ira ? { excessPolicy, contributionFacts: authoredAnnualFacts(draft, String(destination?.account_type), { personId: String(destination?.owner_id ?? ""), householdId: String(objectEntries(draft, "Person").find(person => person.person_id === destination?.owner_id)?.household_id ?? ""), taxYear: Number(date.slice(0, 4)) }) } : {}) }));
+        setDraft(authorPersonalPurchasePlan(draft, { primitiveId: typeof selected?.contribution_model_id === "string" ? selected.contribution_model_id : randomId(), investmentId, sourceCashAccountId: bankId, amount, date, frequency, order: Number(order), ...(ira ? { excessPolicy, contributionFacts: annualFacts(String(destination?.account_type), { personId: String(destination?.owner_id ?? ""), householdId: String(objectEntries(draft, "Person").find(person => person.person_id === destination?.owner_id)?.household_id ?? ""), taxYear: Number(date.slice(0, 4)) }) } : {}) }));
         setError("");
       } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
     }}>Save investment purchase</button>
@@ -2905,6 +2910,7 @@ function contributionFieldHelp(key: string): string {
 }
 
 function PayrollContributionAuthoring({ draft, setDraft, initialInvestmentId }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void; initialInvestmentId?: string }) {
+  const annualFacts = useAuthoredAnnualFacts(draft);
   const accounts = objectEntries(draft, "Account").filter(item => ["traditional_401k", "roth_401k", "hsa", "hsa_investment"].includes(String(item.account_type)));
   const destinations = objectEntries(draft, "Investment").filter(item => accounts.some(account => account.account_id === item.account_id));
   const incomes = objectEntries(draft, "Income").filter(item => item.income_type === "salary" && item.gross_or_net !== "net");
@@ -2983,7 +2989,7 @@ function PayrollContributionAuthoring({ draft, setDraft, initialInvestmentId }: 
         const existing = saved.plans.find(item => item.allocation.positionId === investmentId);
         setDraft(authorPayrollContributionPlan(draft, { primitiveId: typeof investment.contribution_model_id === "string" ? investment.contribution_model_id : randomId(), investmentId, incomeId, priority: Number(priority), character, calculation: kind === "fixed" ? { kind, amount } : kind === "percent" ? { kind, rate } : { kind, rate, compensationCapRate: capRate }, planKey, vestedFraction: character === "employer_401k" ? vested : "1", excessPolicy, ...(!character.endsWith("_hsa") ? { openingUnvestedQuantity: openingUnvested } : {}),
           contingentEvents: character !== "employer_401k" ? [] : [...(vestDate ? [{ eventId: existing?.events.find(event => event.kind === "vest")?.eventId ?? randomId(), kind: "vest" as const, date: vestDate }] : []), ...(forfeitDate ? [{ eventId: existing?.events.find(event => event.kind === "forfeit")?.eventId ?? randomId(), kind: "forfeit" as const, date: forfeitDate }] : [])],
-          facts: authoredAnnualFacts(draft, character, { personId: String(destinationAccount?.owner_id ?? ""), householdId: String(objectEntries(draft, "Person").find(person => person.person_id === destinationAccount?.owner_id)?.household_id ?? ""), taxYear: Number(fields.taxYear), ...(planKey ? { sponsorId: planKey } : {}) }) })); setError("");
+          facts: annualFacts(character, { personId: String(destinationAccount?.owner_id ?? ""), householdId: String(objectEntries(draft, "Person").find(person => person.person_id === destinationAccount?.owner_id)?.household_id ?? ""), taxYear: Number(fields.taxYear), ...(planKey ? { sponsorId: planKey } : {}) }) })); setError("");
       } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
     }}>Save payroll contribution</button>
     {(error || saved.error) && <AuthoringError reason={error || saved.error} route="payroll" />}
@@ -2992,6 +2998,7 @@ function PayrollContributionAuthoring({ draft, setDraft, initialInvestmentId }: 
 }
 
 function HistoricalContributionScopeAuthoring({ draft, setDraft }: { draft: PersonalDraft; setDraft: (draft: PersonalDraft) => void }) {
+  const annualFacts = useAuthoredAnnualFacts(draft);
   const accounts = objectEntries(draft, "Account").filter(item => ["traditional_401k", "roth_401k", "traditional_ira", "roth_ira", "hsa", "hsa_investment"].includes(String(item.account_type)));
   const holdings = objectEntries(draft, "Investment").filter(item => accounts.some(account => account.account_id === item.account_id));
   const [investmentId, setInvestmentId] = useState("");
@@ -3018,7 +3025,7 @@ function HistoricalContributionScopeAuthoring({ draft, setDraft }: { draft: Pers
     {investmentId && <AnnualFactsReview draft={draft} character={hsa ? "employee_hsa" : ira ? String(account?.account_type) : "traditional_401k"} scope={{ personId: String(account?.owner_id ?? ""), householdId: String(objectEntries(draft, "Person").find(person => person.person_id === account?.owner_id)?.household_id ?? ""), taxYear: Number(fields.taxYear), ...(planKey ? { sponsorId: planKey } : {}) }} />}
     <button type="button" disabled={!investmentId} onClick={event => {
       try {
-        const facts = authoredAnnualFacts(draft, hsa ? "employee_hsa" : ira ? String(account?.account_type) : "traditional_401k", { personId: String(account?.owner_id ?? ""), householdId: String(objectEntries(draft, "Person").find(person => person.person_id === account?.owner_id)?.household_id ?? ""), taxYear: Number(fields.taxYear), ...(planKey ? { sponsorId: planKey } : {}) });
+        const facts = annualFacts(hsa ? "employee_hsa" : ira ? String(account?.account_type) : "traditional_401k", { personId: String(account?.owner_id ?? ""), householdId: String(objectEntries(draft, "Person").find(person => person.person_id === account?.owner_id)?.household_id ?? ""), taxYear: Number(fields.taxYear), ...(planKey ? { sponsorId: planKey } : {}) });
         const next = authorHistoricalContributionScope(draft, { id: saved.find(item => item.investmentId === investmentId && item.policy.facts.taxYear === facts.taxYear)?.id ?? randomId(), investmentId, facts, ...(!hsa && !ira ? { planKey } : {}) });
         commitAtControl(event.currentTarget, () => { setDraft(next); setError(""); setSuccess(`Historical eligibility saved for ${objectLabel("Investment", holding ?? {})} · ${facts.taxYear}. Review and confirm prior totals below.`); });
       } catch (failure) { setError(failure instanceof Error ? failure.message : "Historical scope could not be saved"); }
@@ -3270,7 +3277,7 @@ function HouseholdForecastVisual({
       {forecast.stoppedAt && <ForecastCutoff forecast={forecast} draft={financialModel} />}
       {!!forecast.projectedLaw?.length && <section className="capability" aria-label="Projected law forecast basis">
         <strong>Projected current law · forecast assumptions</strong>
-        <p>From 2027-01-01, future tax and contribution outputs use nominal carry-forward where verified coverage has ended. No inflation indexing or future legislation is inferred. Future contribution eligibility and annual amounts carry forward authored plan facts; age advances by year. Later verified rules supersede projections.</p>
+        <p>Future statutory limits use explicitly projected current law where verified coverage ends. Personal filing, income and coverage facts need their own annual sources; they are not carried forward. Later verified rules supersede projections.</p>
         <ul>{[...new Map(forecast.projectedLaw.map(item => [`${item.jurisdiction}:${item.baseYear}:${item.from}:${item.until}`, item])).values()].map(item => <li key={`${item.jurisdiction}:${item.from}`}>{item.jurisdiction}: {item.baseYear} source rules projected from {item.from.slice(0, 10)} through {item.until.slice(0, 10)} (exclusive).</li>)}</ul>
         <details><summary>Projected source rule identities</summary><ul>{forecast.projectedLaw.map(item => <li key={`${item.baseRuleId}:${item.from}`}>{item.jurisdiction} · {item.baseRuleId} · base year {item.baseYear}</li>)}</ul></details>
       </section>}

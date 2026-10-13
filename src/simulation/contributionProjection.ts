@@ -52,5 +52,5 @@ export function projectedContributionDiagnostics(policy: ContributionPolicy, at:
     const capacity = deriveD1ContributionCapacity(kind, projected.facts);
     return capacity.status === "incomplete" ? capacity.diagnostics : [];
   })])];
-  return missing.length ? [taxDiagnostic("contribution_annual_facts", `${projected.facts.taxYear} ${policy.character.replaceAll("_", " ")} capacity/tax treatment is incomplete: ${missing.join(", ")}. Future contributions are not executed. Review that year's named income, employer, tax or health-coverage source; base-year facts are not reused automatically.`, "US:FEDERAL", policy.personId)] : [];
+  return missing.length ? [{ ...taxDiagnostic("contribution_annual_facts", `${projected.facts.taxYear} ${policy.character.replaceAll("_", " ")} capacity/tax treatment is incomplete: ${missing.join(", ")}. Future contributions are not executed. Review that year's named income, employer, tax or health-coverage source; base-year facts are not reused automatically.`, "US:FEDERAL", policy.personId), taxYear: String(projected.facts.taxYear) }] : [];
 }

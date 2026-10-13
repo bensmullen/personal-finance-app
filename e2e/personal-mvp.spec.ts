@@ -24,6 +24,8 @@ import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant } from "../src/time/index.js";
 import { USD } from "../src/values/index.js";
 import { forecastDiagnosticMessage } from "../ui/entityPresentation.js";
+import { compileHouseholdTax } from "../src/application/compiler/tax.js";
+import { resolveAnnualFinancialFact } from "../src/application/financialFacts.js";
 
 const loadExample = async (page: import("@playwright/test").Page) => {
   await page.goto("/");
@@ -32,6 +34,57 @@ const loadExample = async (page: import("@playwright/test").Page) => {
     page.getByRole("heading", { name: "How am I doing?" }),
   ).toBeVisible();
 };
+
+test("U1 annual household filing facts have one accessible owner and survive reload", async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  const original = importPersonalModelJson(await readFile(new URL("../test/fixtures/d1-integrated-uat-model.json", import.meta.url), "utf8"));
+  await importDraft(page, original);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Household & People", exact: true }).click();
+  const owner = page.locator('[data-fact-owner="people"]');
+  await owner.locator("summary").first().click();
+  await owner.getByLabel("Annual facts year", { exact: true }).fill("2027");
+  await owner.getByRole("button", { name: "Review annual household filing status", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit Annual household filing status", exact: true });
+  await dialog.getByLabel("Annual household filing status", { exact: true }).selectOption("married_joint");
+  await dialog.getByRole("button", { name: "Confirm & save fact", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(owner).toContainText("married_joint");
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await owner.getByRole("button", { name: "Review annual household filing status", exact: true }).click();
+    const control = dialog.getByLabel("Annual household filing status", { exact: true });
+    await control.focus();
+    await expect(control).toBeFocused();
+    const box = await control.boundingBox();
+    expect(box!.width).toBeGreaterThan(120);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+    await dialog.getByRole("button", { name: "Help for Annual household filing status", exact: true }).click();
+    await expect(dialog.getByRole("note").filter({ hasText: /complete calendar tax year/ })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`annual-filing-${width}.png`), fullPage: true });
+    await page.keyboard.press("Escape");
+    await expect(owner.getByRole("button", { name: "Review annual household filing status", exact: true })).toBeFocused();
+  }
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Load saved model", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  const pending = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const download = await pending;
+  const restored = importPersonalModelJson(await readFile((await download.path())!, "utf8"));
+  const scope = { personId: GOLDEN_HOUSEHOLD_IDS.person, householdId: GOLDEN_HOUSEHOLD_IDS.household, taxYear: 2027 };
+  expect(resolveAnnualFinancialFact(restored, "filingStatus", scope)).toMatchObject({ status: "known", value: "married_joint" });
+  const tax = compileHouseholdTax(restored, { asOf: "2026-01-01", simulationStart: "2026-01-01", simulationEnd: "2029-01-01", projectedCurrentLawThrough: "2029-01-01" });
+  if (tax.status !== "compiled") throw new Error(JSON.stringify(tax.diagnostics));
+  expect(tax.value.filingStatuses!["2027"]).toMatchObject({ status: "known", value: "married_joint" });
+  expect(tax.value.filingStatuses!["2028"]!.status).toBe("missing");
+  expect(restored.objects.Transaction).toEqual(original.objects.Transaction);
+  expect(errors).toEqual([]);
+});
 
 
 const openContributions = async (page: import("@playwright/test").Page) => {
@@ -57,6 +110,19 @@ const openReturnDetails = async (page: import("@playwright/test").Page) => {
   for (const summary of await page.locator("summary").filter({ hasText: /^Edit projected return$/ }).all()) {
     if (await summary.isVisible() && await summary.locator("..").getAttribute("open") === null) await summary.click();
   }
+};
+const openAnnualReview = async (region: import("@playwright/test").Locator) => {
+  const summary = region.locator("summary").filter({ hasText: /^Annual eligibility ·/ }).first();
+  if (await summary.locator("..").getAttribute("open") === null) await summary.click();
+};
+const editAnnualFact = async (page: import("@playwright/test").Page, region: import("@playwright/test").Locator, label: string, value: string, select = false) => {
+  await openAnnualReview(region);
+  await region.getByRole("button", { name: `Review ${label.toLowerCase()}`, exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: `Edit ${label}`, exact: true });
+  if (select) await dialog.getByLabel(label, { exact: true }).selectOption(value);
+  else await dialog.getByLabel(label, { exact: true }).fill(value);
+  await dialog.getByRole("button", { name: "Confirm & save fact", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
 };
 
 const configureTaxSettlement = async (page: import("@playwright/test").Page) => {
@@ -124,8 +190,8 @@ const showHouseholdDetails = async (page: import("@playwright/test").Page, chann
 
 // Interaction tests need a few periods, not the full Golden retirement horizon.
 const useShortHorizon = async (page: import("@playwright/test").Page) => {
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Model Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-04-01");
 };
 
@@ -261,6 +327,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
     await expect(rate).toHaveValue("5");
     await rate.fill("5.25");
     await expect(rate).toHaveValue("5.25");
+    await openAnnualReview(payroll);
     const help = payroll.getByRole("button", { name: "Help for Annual pay eligible for this plan" });
     await help.focus(); await page.keyboard.press("Enter");
     await expect(payroll.getByRole("note").filter({ hasText: /Full-year pay counted/ })).toBeVisible();
@@ -276,9 +343,8 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
     await purchases.getByText("Advanced same-day purchase ordering", { exact: true }).click();
     await purchases.getByRole("button", { name: "Help for Same-day purchase order", exact: true }).click();
     await expect(purchases.getByRole("note").filter({ hasText: /[Ll]ower.*first/ })).toBeVisible();
-    const history = page.getByRole("region", { name: "Prior year-to-date contributions" });
-    await history.getByRole("button", { name: "Help for Age at year end", exact: true }).click();
-    await expect(history.getByRole("note").filter({ hasText: /Age on December 31/ })).toBeVisible();
+    await payroll.getByRole("button", { name: "Help for Age at year end", exact: true }).click();
+    await expect(payroll.getByRole("note").filter({ hasText: /Age on December 31/ })).toBeVisible();
     const rateBox = await rate.boundingBox();
     expect(rateBox!.width).toBeGreaterThan(120);
     expect(rateBox!.x + rateBox!.width).toBeLessThanOrEqual(width);
@@ -436,7 +502,8 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
 test("D1-C authors, saves, reloads and runs a combined household through normal controls", async ({ page }, testInfo) => {
   const uatJson = await readFile(new URL("../test/fixtures/d1-integrated-uat-model.json", import.meta.url), "utf8");
   await importDraft(page, importPersonalModelJson(uatJson));
-  await page.getByRole("button", { name: "Model Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-02-01");
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await openAuthoringSections(page);
@@ -470,8 +537,8 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
 
   await page.reload();
   await page.getByRole("button", { name: "Load saved model" }).click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Model Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-02-01");
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await openAuthoringSections(page);
@@ -531,9 +598,8 @@ test("D1 authors former-employer YTD history without a future contribution instr
   await expect(prior.getByRole("button", { name: "Save prior YTD usage", exact: true })).toBeDisabled();
   await expect(prior.getByRole("alert").filter({ hasText: "Define the historical account" })).toBeVisible();
   await prior.getByLabel("Historical holding", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
-  await prior.getByLabel("Age at year end", { exact: true }).fill("36");
   await prior.getByLabel("Employer / plan group", { exact: true }).fill("employer-a");
-  await prior.getByLabel("Annual pay eligible for this plan", { exact: true }).fill("100000");
+  await editAnnualFact(page, prior, "Annual pay eligible for this plan", "100000");
   await prior.getByRole("button", { name: "Save historical scope", exact: true }).click();
   await prior.getByLabel("YTD forecast boundary", { exact: true }).fill("2026-07-01");
   await prior.getByRole("textbox", { name: /traditional 401k · 2026 prior YTD total$/ }).first().fill("20000");
@@ -590,8 +656,7 @@ test("D1 normal payroll authoring preserves allocations and shared limit identit
   await form.getByLabel("Payroll salary", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.income);
   await form.getByLabel("Payroll contribution rate", { exact: true }).fill("5");
   await form.getByLabel("Employer / plan group", { exact: true }).fill("example-sponsor");
-  await form.getByLabel("Age at year end", { exact: true }).fill("36");
-  await form.getByLabel("Annual pay eligible for this plan", { exact: true }).fill("120000");
+  await editAnnualFact(page, form, "Annual pay eligible for this plan", "120000");
   await openAuthoringSections(page);
   await form.getByLabel("Opening unvested employer units", { exact: true }).fill("100");
   await form.getByRole("button", { name: "Save payroll contribution", exact: true }).click();
@@ -629,9 +694,10 @@ test("D1 normal IRA authoring saves annual facts and explicit auto-cap", async (
   await form.getByLabel("Purchase investment", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
   await form.getByLabel("Purchase funding account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.savings);
   await form.getByLabel("Purchase amount", { exact: true }).fill("8000"); await form.getByLabel("Purchase start date", { exact: true }).fill("2026-02-10");
-  await form.getByLabel("Purchase frequency", { exact: true }).selectOption("once"); await form.getByLabel("Age at year end", { exact: true }).fill("36");
-  await form.getByLabel("Annual earned pay", { exact: true }).fill("120000"); await form.getByLabel("Contribution filing status", { exact: true }).selectOption("single");
-  await form.getByLabel("Income for Roth IRA eligibility", { exact: true }).fill("120000"); await form.getByLabel("Excess contribution policy", { exact: true }).selectOption("auto_cap");
+  await form.getByLabel("Purchase frequency", { exact: true }).selectOption("once");
+  await editAnnualFact(page, form, "Annual earned pay", "120000");
+  await editAnnualFact(page, form, "Annual household filing status", "single", true);
+  await editAnnualFact(page, form, "Income for Roth IRA eligibility", "120000"); await form.getByLabel("Excess contribution policy", { exact: true }).selectOption("auto_cap");
   await form.getByRole("button", { name: "Save investment purchase", exact: true }).click(); await expect(form.getByText(/Saved purchase:.*8000.*one time/)).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click(); await page.getByRole("button", { name: "Import / Export", exact: true }).click();
   const promise = page.waitForEvent("download"); await page.getByRole("button", { name: "Export current model", exact: true }).click();
@@ -1130,8 +1196,8 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
     control.queue.splice(index, 1)[0].deliver();
   });
   await loadExample(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Model Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-02-01");
   await expect(status).toHaveAttribute("data-lifecycle", "running");
   await page.getByRole("button", { name: "Net Worth", exact: true }).click();
@@ -1160,8 +1226,8 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await table.getByText("Explain", { exact: true }).click();
   expect(await page.evaluate(() => (window as any).__r2Worker.requests.length)).toBe(beforeDrillDown);
 
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Model Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-03-01");
   await expect(status).toHaveAttribute("data-lifecycle", "stale");
   await expect(status).toContainText("Old result");
@@ -1184,8 +1250,8 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await expect(table.locator("tbody tr")).toHaveCount(2);
 
   await page.evaluate(() => { (window as any).__r2Worker.errorNext = true; });
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Model Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-04-01");
   await expect(status).toHaveAttribute("data-lifecycle", "error");
   await expect(status).toContainText("Old result");
@@ -1223,17 +1289,15 @@ test("guided setup reaches the Personal-MVP overview", async ({ page }) => {
   await expect(
     page.getByRole("navigation", { name: "Primary navigation" }),
   ).toContainText("OverviewMoneyNet WorthPlanSettings");
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Model Settings", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await expect(page.getByLabel("Simulation end", { exact: true })).toHaveValue("2036-01-01");
 });
 
 test("Technical diagnostics exposes in-memory performance diagnostics", async ({ page }) => {
   await loadExample(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Model Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-02-01");
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   await showHouseholdDetails(page, "baseline");
@@ -1302,10 +1366,8 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("309330.29");
   await expect(page.getByText("535000", { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Model Settings", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByLabel("Simulation end", { exact: true }).fill("2027-01-01");
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await openAuthoringSections(page);
@@ -1347,10 +1409,8 @@ test("session settings drive horizons and block invalid run ordering", async ({
   page,
 }) => {
   await loadExample(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Model Settings", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByLabel("As of", { exact: true }).fill("2026-02-01");
   await page.getByLabel("Data cutoff", { exact: true }).fill("2026-02-01");
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-04-01");
@@ -1366,10 +1426,8 @@ test("session settings drive horizons and block invalid run ordering", async ({
       .locator("tbody tr"),
   ).toHaveCount(3);
 
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Model Settings", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-01-01");
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await openAuthoringSections(page);
@@ -1727,10 +1785,8 @@ test("What If executes deterministic investment return", async ({ page }) => {
     rebalancing_rule_id: null,
   });
   await importDraft(page, draft);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Model Settings", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByLabel("Simulation end", { exact: true }).fill("2027-01-01");
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await openAuthoringSections(page);

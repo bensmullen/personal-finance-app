@@ -1,6 +1,6 @@
 "use client";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { annualFieldOwners, annualFieldsFor, resolveAnnualFinancialFact, recordAnnualFinancialFact, contributionFactSources, type AnnualField } from "../../src/application/financialFacts.js";
+import { annualFieldOwners, annualFieldsFor, resolveAnnualFinancialFact, recordAnnualFinancialFact, contributionFactSources, authoredAnnualFacts, type AnnualField } from "../../src/application/financialFacts.js";
 import type { FactScope } from "../../src/application/factResolution.js";
 import type { PersonalDraft } from "../../src/application/personalMvp.js";
 import { FieldShell, focusRepair } from "./FieldShell.js";
@@ -9,6 +9,10 @@ import { referenceLabel, objectEntries } from "../entityPresentation.js";
 import { authoringFailure } from "./contributionChoices.js";
 const OwnerEditor = createContext<(field: AnnualField, scope: FactScope) => void>(() => {});
 const OpeningReference = createContext<string | undefined>(undefined);
+export function useAuthoredAnnualFacts(draft: PersonalDraft) {
+  const openingReference = useContext(OpeningReference);
+  return (character: string, scope: FactScope) => authoredAnnualFacts(draft, character, scope, openingReference);
+}
 const choices: Partial<Record<AnnualField, readonly string[]>> = {
   filingStatus: ["single", "married_joint", "married_separate", "head_of_household", "qualifying_surviving_spouse"],
   hsaCoverage: ["self", "family"], planHasRoth: ["true", "false"], hsaFullYearEligible: ["true", "false"],
@@ -81,7 +85,7 @@ export function AnnualFactsReview({ draft, character, scope }: { draft: Personal
   if (!scope.personId || !Number.isSafeInteger(scope.taxYear)) return <p>Choose an account and contribution year to review eligibility.</p>;
   return <details className="financial-section"><summary>Annual eligibility · {scope.taxYear}</summary><dl>{annualFieldsFor(character).map(field => {
     const resolved = resolveAnnualFinancialFact(draft, field, scope, openingReference), meta = financialField(annualFieldOwners[field].fieldKey);
-    return <div key={field} data-semantic-fact={resolved.semanticId}><dt>{meta.label}</dt><dd>{resolved.status === "true_conflict" ? "Conflicting sources" : resolved.value === undefined ? "Not established" : String(resolved.value)}
+    return <div key={field} data-semantic-fact={resolved.semanticId}><dt>{meta.label} <details className="field-help"><summary role="button" aria-label={`Help for ${meta.label}`} title={`${meta.description} Example: ${meta.example}`}>?</summary><span role="note">{meta.description} Unit: {meta.unit}. Example: {meta.example}. {meta.suggestion}</span></details></dt><dd>{resolved.status === "true_conflict" ? "Conflicting sources" : resolved.value === undefined ? "Not established" : String(resolved.value)}
       {field !== "ageAtYearEnd" && <button type="button" onClick={() => open(field, scope)}>{resolved.status === "true_conflict" ? "Reconcile" : "Review"} {meta.label.toLowerCase()}</button>}
       {field === "ageAtYearEnd" && <small>From date of birth · Household & People</small>}
     </dd></div>;

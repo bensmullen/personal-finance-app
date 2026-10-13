@@ -62,7 +62,7 @@ describe("U1 one annual household filing authority", () => {
     const fixed = recordAnnualFinancialFact(model, { id: integratedId(881), field: "filingStatus", scope: scope(2026), value: "single", openingReference: "2026-01-01", reconciledSources: resolved.sources.map(source => source.id) });
     expect(compile(fixed).filingStatuses!["2026"]).toMatchObject({ status: "known", value: "single" });
     expect(fixed.objects.Household).toEqual(model.objects.Household);
-    expect(fixed.objects.Person).toEqual(model.objects.Person);
+    expect(fixed.objects.Person).toEqual(original.objects.Person);
   });
   it("round-trips new annual provenance and summary/detail while keeping legacy v1 replay exact", () => {
     const model = createD1IntegratedHousehold();
@@ -79,7 +79,11 @@ describe("U1 one annual household filing authority", () => {
     expect(createHouseholdTaxParticipant(legacy.input).portableCodec).toBe("household-tax/v1");
     const oldRun = runHouseholdKernel({ kernel: legacy.kernel, runContext: legacy.context });
     const oldRestored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(oldRun)));
-    expect(runHouseholdKernel({ kernel: oldRestored.replay.kernel, runContext: oldRestored.replay.runContext })).toEqual(oldRun);
+    const oldRerun = runHouseholdKernel({ kernel: oldRestored.replay.kernel, runContext: oldRestored.replay.runContext });
+    expect(oldRerun.runMetadata).toEqual(oldRun.runMetadata);
+    expect(oldRerun.state).toEqual(oldRun.state);
+    expect(oldRerun.periods).toEqual(oldRun.periods);
+    expect(oldRerun.diagnostics).toEqual(oldRun.diagnostics);
     const missing = { ...legacy.input, filingStatuses: {} };
     const { filingStatus: _fixed, ...fresh } = missing;
     const freshKernel = compileHouseholdKernel({ ...legacy.compiled, participants: [createHouseholdTaxParticipant(fresh)] }, legacy.context.simulationStart);

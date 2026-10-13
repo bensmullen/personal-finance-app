@@ -11,10 +11,10 @@ export function annualFieldsFor(character: string): readonly AnnualField[] {
     : character.includes("401k") ? ["ageAtYearEnd", "eligiblePlanCompensation", "planHasRoth", "priorYearSponsorWages"]
       : ["ageAtYearEnd", "taxableCompensation", "filingStatus", ...(character === "roth_ira" ? ["rothMagi" as const] : ["deductionMagi" as const, "workplacePlanCovered" as const, "spouseWorkplacePlanCovered" as const]), "livesWithSpouse"];
 }
-export function authoredAnnualFacts(model: PortableModelEnvelope, character: string, scope: FactScope): AuthoredContributionFacts {
+export function authoredAnnualFacts(model: PortableModelEnvelope, character: string, scope: FactScope, openingReference?: string): AuthoredContributionFacts {
   const facts: Record<string, JsonValue> = { taxYear: scope.taxYear };
   for (const field of annualFieldsFor(character)) {
-    const resolved = resolveAnnualFinancialFact(model, field, scope);
+    const resolved = resolveAnnualFinancialFact(model, field, scope, openingReference);
     if (resolved.status === "true_conflict") throw new Error(`ANNUAL_FACT_CONFLICT:${field}:${scope.taxYear}:${resolved.sources.map(source => source.label).join(" / ")}`);
     if (resolved.value !== undefined) facts[field] = resolved.value;
   }
@@ -97,7 +97,7 @@ export function resolveAnnualFinancialFact(model: PortableModelEnvelope, field: 
         scope, value: item.filing_status === "qualifying_widow_er" ? "qualifying_surviving_spouse" : item.filing_status,
         provenance: "observed" as const, ruleVersion: "legacy-opening-year/v1" }]) : [];
   const result = resolveScopedFact({ semanticId: family.semanticId, scope, repair, dependencies: ["plan.projection_year"],
-    sources: [...original, ...legacy].filter(source => !reconciledValues.has(`${source.id}:${canonicalSerialize(source.value)}`)).concat(records), equal: (a, b) => {
+    sources: [...[...original, ...legacy].filter(source => !reconciledValues.has(`${source.id}:${canonicalSerialize(source.value)}`)), ...records], equal: (a, b) => {
       if (numericFields.has(field) && typeof a === "string" && typeof b === "string") {
         try { return decimal(a).equals(decimal(b)); } catch { return false; }
       }

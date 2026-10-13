@@ -12,6 +12,7 @@ export interface EditorField {
   readonly enumValues?: readonly string[];
 }
 export function canRepairEntityField(type: PersonalObjectType, name: string, field: EditorField | undefined, value: unknown, draft?: PersonalDraft): boolean {
+  if (name === "filing_status") return false;
   return !!field && !!entityField(name, type) && !field.derived && field.type !== "object" &&
     !(field.ref && referenceTargets(field.ref).length === 0) &&
     !field.type.startsWith("object") && !(value !== null && typeof value === "object" && (!Array.isArray(value) || value.some(item => item !== null && typeof item === "object"))) &&

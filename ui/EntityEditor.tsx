@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { addPersonalObject, deletePersonalObject, patchPersonalObject, getPersonalPurchasePlans, getPayrollContributionPlans, type getPersonalEditorMetadata, type JsonObject, type PersonalDraft, type PersonalObjectType } from "../src/application/personalMvp.js";
-import { objectEntries, objectId, objectLabel, entitySummary, referenceLabel, referenceTargets, formatExactMoney, formatRate, isCashFlowPaymentAccount, belongsToNetWorthSection, linkedReturnAssumption, type NetWorthSection } from "./entityPresentation.js";
+import { objectEntries, objectId, objectLabel, entitySummary, referenceLabel, referenceTargets, formatExactMoney, formatRate, isCashFlowPaymentAccount, belongsToNetWorthSection, linkedReturnAssumption, linkedGrowthAssumption, assumptionOwners, type NetWorthSection } from "./entityPresentation.js";
 import { PercentageInput } from "./forecast/PercentageInput.js";
 import { GuidedFields } from "./authoring/GuidedFields.js";
 import { FieldShell, RepairSummary, focusRepair } from "./authoring/FieldShell.js";
@@ -367,6 +367,12 @@ function ObjectEditor({
                 <ObjectEditor type="Investment" draft={draft} setDraft={setDraft} metadata={metadata} setNotice={setNotice} currency={currency} section={section} accountId={objectId("Account", item)} selectedScenarioId={selectedScenarioId} onContributions={onContributions} repairTarget={repairTarget} />
               </details>}
               {type === "Investment" && !mirror && <details><summary>Edit projected return</summary><ProjectedReturn investment={item} draft={draft} setDraft={setDraft} selectedScenarioId={selectedScenarioId} /></details>}
+              {(type === "Income" || type === "Expense") && onOpenOwner && <>
+                {linkedGrowthAssumption(draft, item) ? <button type="button" onClick={() => onOpenOwner("Assumption", String(linkedGrowthAssumption(draft, item)!.assumption_id))}>
+                  {type === "Income" ? "Review pay growth" : "Review spending growth"} · {formatRate(linkedGrowthAssumption(draft, item)!.value)}
+                </button> : <small>No linked {type === "Income" ? "pay growth" : "spending growth"} assumption. A missing executable relationship requires corrected-model import.</small>}
+              </>}
+              {type === "Assumption" && <small>{assumptionOwners(draft, objectId(type, item)).map(owner => `${owner.label} · ${owner.surface}`).join("; ") || "No supported financial source owns this assumption; inspect its model relationships."}</small>}
               {(type === "Investment" || type === "Account") && onContributions && <ContextualContributions item={item} type={type} draft={draft} open={onContributions} />}
               {(type === "Investment" || type === "Account" && section === "Investments & retirement") && <EligibilitySummary draft={draft} {...(type === "Account" ? { accountId: objectId(type, item) } : { investmentId: objectId(type, item) })} review={onContributions} />}
               {(type === "Investment" || type === "Account" && section === "Investments & retirement" || type === "Liability") && <ScheduledActivity draft={draft} {...(type === "Account" ? { accountId: objectId(type, item) } : type === "Investment" ? { investmentId: objectId(type, item) } : { liabilityId: objectId(type, item) })} onContributions={onContributions} />}
@@ -411,6 +417,7 @@ function ObjectEditor({
             </div>
             {confirmDiscard && <section role="alert" aria-label="Unsaved changes"><p>Discard unsaved changes?</p><button type="button" onClick={close}>Discard changes</button><button type="button" autoFocus onClick={() => setConfirmDiscard(false)}>Continue editing</button></section>}
             {creating && <p>Choose creation-time facts before adding this record. Once set, these facts cannot be overwritten.</p>}
+            {type === "Assumption" && <p role="note">Shared source: {assumptionOwners(draft, editingId!).map(owner => `${owner.label} · ${owner.surface}`).join("; ") || "Recorded assumption"}. All linked views use this saved value.</p>}
             {(type === "Investment" || type === "Account") && <p role="note">{RETIREMENT_LIMITATION}</p>}
             {type === "Investment" && investmentProductNotice(editing) && <p role="note">{investmentProductNotice(editing)}</p>}
             {type === "Investment" && !creating && <ProjectedReturn investment={editing} draft={draft} setDraft={setDraft} selectedScenarioId={selectedScenarioId} />}

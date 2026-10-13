@@ -226,6 +226,7 @@ describe("D1 prior YTD statutory usage", () => {
   });
   it("shares prior HSA employee/employer usage without creating a second balance", () => {
     let model = fixtureFields(createGoldenHouseholdDraft(), "Account", "account_id", ids.retirementAccount, { account_type: "hsa_investment", tax_treatment: "tax_free" });
+    model = fixtureFields(model, "Person", "person_id", ids.person, { date_of_birth: "1971-01-01" });
     model = authorPayrollContributionPlan(model, { primitiveId: id(30), investmentId: ids.retirementInvestment, incomeId: ids.income, character: "employee_hsa", priority: 10, calculation: { kind: "fixed", amount: "1000" }, vestedFraction: "1", excessPolicy: "auto_cap", facts: { taxYear: 2026, ageAtYearEnd: 55, hsaCoverage: "family", hsaFullYearEligible: true, hsaFamilyAllocation: "8750" } });
     model = authorOpeningContributionUsage(model, { asOf: "2026-07-01", allPriorUsageKnown: true, entries: [{ id: id(31), investmentId: ids.retirementInvestment, character: "employee_hsa", amount: "8000", ordinaryAmount: "8000" }, { id: id(32), investmentId: ids.retirementInvestment, character: "employer_hsa", amount: "1000", ordinaryAmount: "750" }] });
     const usage = compileOpeningContributionUsage(model, "2026-07-01"), opening = createAuthoritativeState({ ...payrollOpeningBalances(model, durablePayrollAllocations(model)), contributions: usage.contributions });

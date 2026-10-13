@@ -1,5 +1,59 @@
 # U1 implementation evidence — issue #94
 
+## Ownership-register lookup found during rendered-field audit (2026-10-13)
+
+The remaining full migration cannot be truthfully mapped to the controlled
+50-family register without a product/specification decision. The actual
+`DomainMechanicsPanel` normal/advanced controls include **sales, dividends,
+interest distributions, option exercise, in-plan conversion, direct/split
+rollover and indirect distribution/deposit**, alongside **TermLifeEditor**'s
+policy owner, insured person, beneficiary, premium/benefit accounts and amounts,
+coverage dates and scheduled death date. The register has no insurance or
+retirement-operation election family. `investment.holding` owns recorded
+instrument/units/lots/basis facts; `investment.purchase` owns planned purchases
+and cash-funded contributions. Neither authorizes silently equating these
+different decisions with a position fact or an annual contribution.
+
+LOOKUP_REQUIRED: supply approved semantic family IDs, sole owner surfaces and
+scope/conditional bindings for these existing financial-operation and term-life
+inputs in `docs/specs/verification/u1-fact-ownership.json`, with any controlling
+PFA-UX change required by that decision. Issue #94 expressly requires controlled
+registry classification when a rendered family is missing. These documentation
+paths are not authorized by the current product task; no controlled file was
+edited. Recommendation: classify the existing investment-operation elections
+under Investments & retirement with event/scenario scope; assign term-life
+facts explicitly to an approved insurance owner, preserving the existing D1
+adapters and financial meaning. A controlled specification/governance PR can
+resolve this without a new engine or a new implementation branch.
+
+This blocks the exhaustive rendered-field/zero-duplicate-writer acceptance, not
+the independently authorized annual-filing repair. Other current migration gaps
+(generic global assumption repair, standalone/session mirror cleanup, and full
+browser setup-route migration) remain implementation work after that lookup; no
+zero remaining codes/duplicates or completed whole-registry audit is claimed.
+
+### Four reported failures — current disposition
+
+| Failure | Implemented / grounded | Remaining acceptance |
+| --- | --- | --- |
+| Paycheck discovery/categories | Automatic committed-month comparison; distinct posted workplace, mortgage, living, IRA, brokerage, tax and other amounts; source links; provisional unallocated remainder | Withholding remains not modeled under #101; latest-head browser/visual and uncoached owner acceptance remain pending |
+| Historical conflict/message | Same-scope resolver, named annual fact/year conflict, explicit correction preserving original evidence and YTD; compatible policy copies coalesce | Whole-registry owner binding and all affected browser repair paths still need completion |
+| Future facts/checkbox | Blanket checkbox removed; annual original sources and DOB age; annual household filing now shared by tax and IRA; missing sources remain incomplete | Qualified legal compensation/MAGI/health derivations remain bounded by their actual authority; no guessed future facts |
+| Cross-screen duplicates | Shared annual source dialog; legacy filing input managed/read-only; bank/assumption mirrors; adjacent Income/Spending growth; Model Settings dates read-only | Missing registry families above and remaining known-family owner migrations prevent full compliance |
+
+At implementation commit `a710a84`, GitHub run 38647160353 passed architecture,
+codex-tooling and verification-plan. It reported two typing problems and four
+unit failures; follow-up changes correct nullable source-array typing, fixture
+typing, HSA source-family selection and DOB, annual-status assertions, and compare
+legacy replay's deterministic metadata/state/periods/diagnostics separately from
+its live kernel object. Financial money assertions are retained. E2E was still
+in progress at inspection. Follow-up browser coverage uses the shared annual
+owner dialog and the Current Plan date owner, adds 1440/390 filing screenshots,
+keyboard/focus/help assertions and saved/exported annual tax-fact checks. These
+are authored CI regressions, not locally run or claimed passing evidence.
+
+PR #98 stays draft; #94/D1, independent audit and uncoached owner UAT remain open.
+
 ## Annual household filing continuation (2026-10-13) — implementation in progress
 
 Issue #94 now authorizes the three tax participant/contract/codec files. Fresh
