@@ -73,7 +73,11 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
   const sources = new Map(input.incomes.map(income => [income.id, income]));
   const fingerprint = taxCatalogFingerprint(input.catalog);
   const bindings = new Map<string, ReturnType<typeof resolveTaxCoreRule> | ValidationError>();
-  const annualStatus = (year: string) => input.filingStatuses === undefined ? input.filingStatus : input.filingStatuses[year]?.status === "known" ? input.filingStatuses[year]?.value : undefined;
+  const annualStatus = (year: string) => {
+    if (input.filingStatuses === undefined) return input.filingStatus;
+    const fact = input.filingStatuses[year];
+    return fact?.status === "known" && fact.householdId === String(input.ownerId) && fact.taxYear === year ? fact.value : undefined;
+  };
   const binding = (jurisdiction: string, at: Instant, facts: TaxJurisdictionFacts) => {
     const status = annualStatus(at.slice(0, 4));
     const key = canonicalSerialize({ jurisdiction, at, facts, status });

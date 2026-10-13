@@ -9,6 +9,10 @@ stores the provenance with the original source. Both tax v2 replay and projected
 contribution source evidence retain it; no observed history is relabeled. This
 follow-up also requires its own latest-head CI.
 
+V2 codec/source selection additionally enforces the recorded household identity
+and exact tax year. Added replay transport coverage rejects a filing fact for a
+different household and rejects selecting v1 semantics for a v2 annual artifact.
+
 The remaining full migration cannot be truthfully mapped to the controlled
 50-family register without a product/specification decision. The actual
 `DomainMechanicsPanel` normal/advanced controls include **sales, dividends,

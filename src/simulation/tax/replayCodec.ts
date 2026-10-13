@@ -23,15 +23,15 @@ function taxInputs(value: unknown): value is HouseholdTaxInput & { readonly cata
     (value.refundAccountId === undefined || typeof value.refundAccountId === "string");
 }
 const statuses = ["single", "married_joint", "married_separate", "head_of_household", "qualifying_surviving_spouse"];
-const annualStatuses = (value: unknown): boolean => record(value) && Object.entries(value).every(([year, fact]) =>
-  /^[0-9]{4}$/.test(year) && record(fact) && fact.taxYear === year && typeof fact.householdId === "string" &&
+const annualStatuses = (value: unknown, ownerId: string): boolean => record(value) && Object.entries(value).every(([year, fact]) =>
+  /^[0-9]{4}$/.test(year) && record(fact) && fact.taxYear === year && fact.householdId === ownerId &&
   ["known", "missing", "true_conflict"].includes(String(fact.status)) &&
   (fact.status === "known" ? statuses.includes(String(fact.value)) : fact.value === undefined) &&
   (fact.repairPersonId === undefined || typeof fact.repairPersonId === "string") &&
   Array.isArray(fact.sources) && fact.sources.every(source => record(source) && ["id", "label", "value", "provenance", "ruleVersion"].every(key => typeof source[key] === "string")));
 function restore(value: unknown, version: 1 | 2) {
   if (!taxInputs(value)) throw new Error("HOUSEHOLD_TAX_REPLAY_INVALID: portable facts are malformed");
-  if (version === 1 ? value.filingStatuses !== undefined : !annualStatuses(value.filingStatuses) || value.filingStatus !== undefined) throw new Error("HOUSEHOLD_TAX_REPLAY_INVALID: filing contract does not match codec version");
+  if (version === 1 ? value.filingStatuses !== undefined : !annualStatuses(value.filingStatuses, String(value.ownerId)) || value.filingStatus !== undefined) throw new Error("HOUSEHOLD_TAX_REPLAY_INVALID: filing contract does not match codec version");
   const catalog = createTaxCatalog(value.catalog);
   if (taxCatalogFingerprint(catalog) !== value.catalogFingerprint) throw new Error("HOUSEHOLD_TAX_REPLAY_INVALID: catalog identity changed");
   const { catalogFingerprint: _fingerprint, ...input } = value;

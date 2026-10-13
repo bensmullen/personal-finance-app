@@ -8,6 +8,8 @@ import { createHouseholdTaxParticipant } from "../src/simulation/tax/participant
 import { runHouseholdKernel, replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
 import { compileHouseholdKernel } from "../src/simulation/r3/compiledHousehold.js";
+import { portableHouseholdParticipant, restoreHouseholdParticipant } from "../src/simulation/r3/participantCodec.js";
+import type { HouseholdTaxInput } from "../src/simulation/tax/contracts.js";
 import { canonicalSerialize } from "../src/simulation/run.js";
 import { resolveTaxCoreRule } from "../src/rules/tax/catalog.js";
 import { instant } from "../src/time/index.js";
@@ -23,6 +25,13 @@ const compile = (model = createD1IntegratedHousehold(), options = {}) => {
   return result.value;
 };
 describe("U1 one annual household filing authority", () => {
+  it("rejects replay facts for another filing unit and cannot reinterpret an annual artifact as v1", () => {
+    const transport = portableHouseholdParticipant(createHouseholdTaxParticipant(compile()));
+    const inputs = transport.economicInputs as HouseholdTaxInput;
+    expect(() => restoreHouseholdParticipant({ ...transport, economicInputs: { ...inputs, filingStatuses: { ...inputs.filingStatuses,
+      "2026": { ...inputs.filingStatuses!["2026"], householdId: integratedId(889) } } } })).toThrow("HOUSEHOLD_TAX_REPLAY_INVALID");
+    expect(() => restoreHouseholdParticipant({ ...transport, codec: "household-tax/v1", version: "t1a-household-v1" })).toThrow("HOUSEHOLD_TAX_REPLAY_INVALID");
+  });
   it("anchors legacy status to only the explicit opening year and never a wall-clock/default year", () => {
     const original = createD1IntegratedHousehold();
     const model = { ...original, objects: { ...original.objects, PrimitiveInstance: original.objects.PrimitiveInstance!.filter(item => !isFactRecord(item) || !isFactRecord(item.parameters) || item.parameters.adapter !== "d1-personal-purchase/v1") } };
