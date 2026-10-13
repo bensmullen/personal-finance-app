@@ -109,6 +109,7 @@ import { forecastTaxJurisdictions, forecastTaxSetupProblem, type TaxForecastSett
 import { TaxSettlementControls } from "./forecast/TaxSettlementControls.js";
 import { FieldHelp, PercentageInput } from "./forecast/PercentageInput.js";
 import { DomainMechanicsPanel } from "./forecast/DomainMechanicsPanel.js";
+import { InsuranceSection, InsuredLifeEvents } from "./authoring/InsuranceSection.js";
 import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, groupDiagnostics, isCashFlowPaymentAccount, type NetWorthSection } from "./entityPresentation.js";
 import { calculationFingerprint } from "../src/application/interactiveForecast.js";
 import { HouseholdChart } from "./forecast/HouseholdChart.js";
@@ -155,7 +156,7 @@ const NAV: readonly Primary[] = [
 ];
 const SUBNAV: Record<Primary, readonly string[]> = {
   Overview: ["How am I doing?"],
-  Money: ["Cash Flow", "Income", "Spending", "Accounts"],
+  Money: ["Cash Flow", "Income", "Spending", "Accounts", "Insurance & coverage"],
   "Net Worth": ["Overview", "Cash & bank accounts", "Investments & retirement", "Property & other assets", "Debt"],
   Plan: [
     "Current Plan",
@@ -1036,9 +1037,9 @@ export function PersonalFinanceApp() {
             <FinancialSection title="Contributions already made this year"><OpeningContributionUsageAuthoring draft={draft} setDraft={updateCanonicalModel} /></FinancialSection>
             <AnnualFactsOwner draft={draft} owner="investment" />
             <FinancialSection title="Annual contribution allowance"><ContributionCapacityPanel draft={draft} forecast={householdForecast} /></FinancialSection>
-            <FinancialSection title="Other investment activity"><DomainMechanicsPanel scope="investment" draft={draft} setDraft={updateCanonicalModel} /></FinancialSection>
           </>}
-          {primary === "Plan" && subnav === "Life Events" && <RetirementDateAuthoring draft={draft} setDraft={updateCanonicalModel} />}
+          {primary === "Money" && subnav === "Insurance & coverage" && <InsuranceSection draft={draft} setDraft={updateCanonicalModel} />}
+          {primary === "Plan" && subnav === "Life Events" && <><RetirementDateAuthoring draft={draft} setDraft={updateCanonicalModel} /><InsuredLifeEvents draft={draft} setDraft={updateCanonicalModel} /></>}
           {primary === "Plan" &&
             subnav === "Life Events" &&
             !EDITORS[subnav] && (

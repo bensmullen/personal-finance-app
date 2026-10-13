@@ -1,7 +1,7 @@
 "use client";
 import { Children, cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from "react";
 import { FieldShell, RepairSummary, financialControlValue } from "./FieldShell.js";
-import { FINANCIAL_FIELDS, fieldProblem, type FinancialField } from "./fieldContract.js";
+import { FINANCIAL_FIELDS, financialField, fieldProblem, type FinancialField } from "./fieldContract.js";
 import { FieldHelp } from "../forecast/PercentageInput.js";
 
 /** Migration adapter: existing D1 callbacks survive; presentation is centralized. */
@@ -34,7 +34,7 @@ export function GuidedFields({ children, scope, aliases = {}, required = [], err
       const label = contents.filter(child => typeof child === "string" || typeof child === "number").join("").trim() || control.props["aria-label"] || "";
       const key = aliases[label] ?? FIELD_ALIASES[label] ?? labels.get(label);
       if (!key) throw new Error(`Missing financial field metadata in ${scope}: ${label}`);
-      const field = presentations[key] ?? FINANCIAL_FIELDS[key]!;
+      const field = presentations[key] ?? { ...financialField(key), semanticScope: scope };
       const needed = required.includes(key) || !!control.props.required;
       const value = financialControlValue(key, control.props);
       const problem = control.props.readOnly || control.props.disabled ? undefined : errors[key] ?? fieldProblem(field, value, needed) ?? (control.props["aria-invalid"] ? `Complete ${field.label.toLowerCase()} before forecasting.` : undefined);

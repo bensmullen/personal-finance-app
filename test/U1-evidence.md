@@ -523,6 +523,68 @@ while asserting a usable reconciled forecast; that limitation is independent of
 return validity. No local verification or new ChatGPT interactive test was run.
 Latest-head CI, independent ChatGPT re-audit and uncoached owner UAT remain gates;
 PR #98 stays draft and Issue #94, U1 and D1 remain open.
+# October 13 registry continuation — pre-edit source inventory
+
+PR #117 is present in the operator-synchronized branch at `335c8e8`.
+This continuation preserves the annual-fact, filing-status and paycheck work.
+
+| Actual control group | Registry owner | Before this continuation | Planned migration / source |
+| --- | --- | --- | --- |
+| Sale, distribution, reinvestment, exercise, conversion, direct/split/indirect rollover | Subtype-specific `investment.*` family | One global operation panel with unrestricted holding choice | Same D1 operation adapter, instantiated only inside the source holding; conditional controls bound to subtype and event |
+| Opening lots | `investment.holding` | Global holding selector and lot editor | Existing opening-lot adapter inside that holding; recorded units/basis remain separate from activity |
+| Policy owner/insured/beneficiary/coverage | `insurance.term_life_policy` | Nested under investment operations | Shared Money → Insurance & coverage policy editor |
+| Premium amount/monthly cadence/bank | `insurance.term_life_premium` | Same nested policy form | Same canonical Insurance terms; one compiler-generated premium settlement |
+| Face amount/benefit bank | `insurance.term_life_benefit` | Policy creation requires death | Policy contract independent of optional event; no posted benefit before trigger |
+| Optional death date/scenario/enabled | `life.death_event` | Written implicitly by policy save | One shared Life Events editor, also opened contextually from a saved policy; preserve legacy references |
+| Conditional payout | `insurance.benefit_payout` | Compiler rejects policy without event | Existing D1 payout only for a valid linked scenario event; no editable payout |
+
+Common controls: dates, amounts, named relationships and confirmation where
+required by D1. Advanced: event ordering, lot selection and recorded opening
+lots. Technical/read-only: IDs, adapter lineage and unsupported imported policy
+terms. Derived/hidden: policy/event IDs, beneficiary mirror, option strike and
+multiplier, linked recognition effects. Unsupported policy families remain
+read-only and capability-gated. Latest-head CI and owner UAT remain pending.
+
+| Rendered fields | Semantic family | Sole editor / authoritative adapter | Read-only mirrors / derived exceptions |
+| --- | --- | --- | --- |
+| Source holding, date, amount, units, optional lot/order | `investment.sale` | Holding → Activity & transfers / `authorDomainOperation` | Saved activity and cash-use reports; lot basis/gain from D1 |
+| Call source, date, contracts, bank, optional lot/order | `investment.option_exercise` | Same scoped editor / `authorDomainOperation` | Strike × contracts × multiplier shown as exact calculated exercise cash; funding/settlement remains D1 |
+| Distribution kind/date/amount/order | `investment.income_distribution` | Same scoped editor / `authorDomainOperation` | Tax character selected by subtype; no second Income record |
+| Dividend amount/units/character/date/order | `investment.dividend_reinvestment` | Same scoped editor / `authorDomainOperation` | D1 recognizes dividend and buys once; no separately authored dividend |
+| Date/amount/destination/acceptance/same-plan/order | `investment.retirement_conversion` | Same scoped editor / `authorDomainOperation` | No ordinary consumption or annual contribution |
+| Direct/split date/amount/pre-tax destination/acceptance/order; Roth destination only for split | `investment.retirement_rollover` | Same scoped editor / `authorDomainOperation` | Source-specific same-owner/currency/tax-character choices; D1 basis split |
+| Distribution date/amount/proceeds bank/acceptance; linked deposit date/amount/destination/replacement cash/bank | `investment.indirect_rollover` | Same source-holding editor / `authorDomainOperation` | Original distribution link retained; deposit not exposed in unrelated holdings |
+| Acquisition date/units/basis | `investment.holding` | Holding → Opening investment lots / `authorOpeningInvestmentLot` | No global opening-lot writer; source holding read-only |
+| Owner/insured/beneficiary/start/end | `insurance.term_life_policy` | Money → Insurance & coverage / `authorTermLifePolicy` | Saved policy identity and unsupported legacy terms preserved |
+| Monthly premium/bank | `insurance.term_life_premium` | Same policy editor / Insurance compiler | Fixed supported monthly cadence; no added Expense or transaction |
+| Contract face value/deposit bank | `insurance.term_life_benefit` | Same policy editor / Insurance compiler | Beneficiary read from policy; face value is not current wealth |
+| Plan/date/enabled; insured read from selected policy | `life.death_event` | Shared `InsuredDeathEditor` / `authorInsuredDeathScenario` | Plan and contextual Insurance routes instantiate the same editor; Event/Scenario links preserved |
+| Conditional posted benefit | `insurance.benefit_payout` | Read-only existing D1 settlement | No death link or disabled event means no benefit; dangling/invalid link remains diagnostic |
+
+`fieldOwnership.ts` binds the existing entity inventory and workflow fields to
+the controlled registry. Shared FieldShell rejects a normal control without a
+family; browser inventory assertions verify actual rendered family/binding/scope
+attributes. Annual-fact editors carry their complete resolved scope. This binding
+guard does not itself prove lossless financial-source migration; existing fact
+resolution and forecast regressions remain required. New unit evidence is in
+`u1InsuranceOwnership.test.ts` and `u1RenderedOwnership.test.ts`; the browser
+policy journey covers saved legacy links, no-death policy, shared event route,
+save/reload/export, keyboard/touch help and 1440/390 geometry/screenshots.
+
+Pre-continuation GitHub run `38651185425` at `335c8e8` reported a linked-growth
+adapter type-narrowing error; it is repaired within the existing UI scope.
+No local checks were run. New GitHub results are recorded after publication.
+
+| Previously reported failure | Current implementation disposition | Remaining acceptance boundary |
+| --- | --- | --- |
+| Paycheck visibility/categories | Prior default replay-backed income-vs-uses chart preserved | Posted withholding/net pay remains incomplete pending #101; no income-origin claim; owner UAT pending |
+| Historical-scope conflict | Prior scoped resolver, source repairs and known-history behavior preserved | Latest-head regression plus independent semantic review |
+| Future nominal checkbox | Prior year-qualified fact schedule preserved; no new carry-forward | Unknown legal/tax/coverage facts stay incomplete |
+| Duplicate field ownership | Scoped activity and Money insurance replace global writers; registry binding guard added | Full browser evidence, independent audit and uncoached owner acceptance |
+
+PR #98 stays draft; Issue #94 and D1 remain open. CI does not deploy this PR or
+establish product-owner acceptance.
+
 # October 11 ownership continuation — pre-edit source inventory
 
 The operator merged main at `c3d01f8`; PR #112's ownership register is present.

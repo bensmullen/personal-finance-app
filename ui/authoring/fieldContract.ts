@@ -1,4 +1,5 @@
 /** U1 inventory: only explicitly registered fields may appear in financial forms. */
+import { WORKFLOW_FIELD_OWNERS, entityFieldOwner } from "./fieldOwnership.js";
 export type Disclosure = "common" | "advanced" | "technical" | "derived" | "unsupported";
 export type Format = "text" | "date" | "money" | "integer" | "decimal" | "percent" | "choice" | "monthDay";
 export interface FinancialField {
@@ -7,9 +8,25 @@ export interface FinancialField {
   readonly format: Format; readonly disclosure: Disclosure;
   readonly state: "required" | "optional" | "derived" | "read-only";
   readonly source: string; readonly dependencies: readonly string[]; readonly suggestion: string;
+  readonly semanticFamily?: string;
+  readonly semanticBinding?: string;
+  readonly semanticScope?: string;
 }
 type Row = readonly [string, string, string, Format, string, string, Disclosure?, (readonly string[])?];
 const rows: readonly Row[] = [
+  ["termOwner", "Policy owner", "Household person who owns the term-life contract.", "choice", "person", "Alex"],
+  ["termInsured", "Insured person", "Household person protected by this policy.", "choice", "person", "Alex"],
+  ["termBeneficiary", "Benefit beneficiary", "One person or household receiving the conditional death benefit.", "choice", "beneficiary", "My household"],
+  ["termPremiumBank", "Premium checking / savings account", "The policy owner's bank account paying the premium once per modeled month.", "choice", "USD account", "Checking"],
+  ["termBenefitBank", "Benefit checking / savings account", "The beneficiary's bank account receiving a benefit only if a covered scenario occurs.", "choice", "USD account", "Savings"],
+  ["termPremium", "Monthly premium", "Contractual monthly cost, separate from the conditional benefit.", "money", "USD / month", "50.00"],
+  ["termBenefit", "Lump-sum benefit", "Contracted face amount, not a current asset or an assumed future payment.", "money", "USD", "100000.00"],
+  ["termStart", "Policy start", "First covered day and monthly premium anchor.", "date", "inclusive date", "2026-01-01"],
+  ["termEnd", "Policy end (exclusive)", "Coverage and premiums stop before this day.", "date", "exclusive date", "2036-01-01"],
+  ["deathPolicy", "Covered policy", "Saved policy identifying the insured person for this optional scenario.", "choice", "policy", "Alex's term policy"],
+  ["deathPlan", "Life-event plan", "Current scenario containing the scheduled death event.", "choice", "plan", "Current plan"],
+  ["deathDate", "Scheduled insured death date", "Optional scenario assumption, separate from buying or maintaining insurance.", "date", "scenario date", "2031-01-01"],
+  ["deathEnabled", "Include this life event", "Whether the scenario event is enabled; this does not change the policy contract.", "choice", "enabled status", "Enabled"],
   ["moneyMonth", "Forecast month", "Calendar month of committed household activity to inspect.", "choice", "calendar month", "2026-01", "common", ["simulationStart", "simulationEnd"]],
   ["setupName", "Household name", "Name identifying the household in your plan.", "text", "name", "My household"],
   ["setupIncome", "Monthly income", "Monthly household income in the initial guided cash-flow model.", "money", "USD / month", "6000.00"],
@@ -199,7 +216,7 @@ const contextual: Readonly<Record<string, Partial<FinancialField>>> = {
   "Account.interest_rate": { description: "Annual bank interest rate using the recorded calculation basis.", why: "Sets supported bank interest credits.", dependencies: ["interest_convention"], source: "Recorded bank terms", suggestion: "Use the quoted rate and matching calculation basis." },
   "Liability.interest_rate": { description: "Nominal annual loan rate; supported mortgages use fixed rates and monthly payments.", why: "Sets contractual debt interest under the existing loan model.", dependencies: ["rate_type", "payment_frequency"], source: "Recorded loan agreement", suggestion: "Use the contractual rate, not APR including fees." },
 };
-export function entityField(name: string, context?: string, descriptor?: { required: boolean; derived: boolean; mutable: boolean; type?: string }, creating = false, value?: unknown, recordedUnit?: string): FinancialField | undefined {
+export function entityField(name: string, context?: string, descriptor?: { required: boolean; derived: boolean; mutable: boolean; type?: string }, creating = false, value?: unknown, recordedUnit?: string, accountType?: unknown, assumptionCategory?: unknown): FinancialField | undefined {
   const base = FINANCIAL_FIELDS[name];
   if (!base) return undefined;
   if (!context) return base;
@@ -208,6 +225,7 @@ export function entityField(name: string, context?: string, descriptor?: { requi
     ? { label: "Annual assumption rate", description: "Effective annual growth or return in the linked financial model.", why: "Changes all financial activity sharing this assumption.", format: "percent", unit: "% annually", example: "8", dependencies: ["unit"], suggestion: "Enter 8 for 8%; negative supported growth rates retain their sign." }
     : { format: "decimal", unit: recordedUnit ?? "recorded unit", description: "Exact assumption amount in its recorded unit.", why: "Defines the linked model's planning input.", suggestion: "Keep the established unit when changing this value." } : {};
   return { ...base, why: `${base.description} This is a recorded ${context.toLowerCase()} fact.`,
+    semanticFamily: entityFieldOwner(context, name, accountType, assumptionCategory)!, semanticBinding: name, semanticScope: `Canonical ${context} identity and its effective interval`,
     source: `Recorded ${context.toLowerCase()} ${base.label.toLowerCase()}`,
     suggestion: "Use the established fact; leave unknown optional facts unset.", ...contextual[`${context}.${name}`], ...assumptionValue,
     state: descriptor ? descriptor.derived ? "derived" : !creating && !descriptor.mutable && value !== undefined ? "read-only" : descriptor.required ? "required" : "optional" : base.state };
@@ -215,7 +233,8 @@ export function entityField(name: string, context?: string, descriptor?: { requi
 export function financialField(key: string): FinancialField {
   const field = FINANCIAL_FIELDS[key];
   if (!field) throw new Error(`Missing financial field metadata: ${key}`);
-  return field;
+  const semanticFamily = WORKFLOW_FIELD_OWNERS[key];
+  return semanticFamily ? { ...field, semanticFamily, semanticBinding: key, semanticScope: "Selected source and explicit workflow dates" } : field;
 }
 export const U1_INVENTORY = Object.freeze({
   fields: rows.map(row => row[0]),

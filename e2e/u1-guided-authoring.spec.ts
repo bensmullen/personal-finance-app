@@ -14,12 +14,17 @@ const open = async (scope: Page | Locator, title: string) => {
   if (await summary.locator("..").getAttribute("open") === null) await summary.click();
 };
 const assertContractAndGeometry = async (page: Page, width: number) => {
+  const registry = JSON.parse(readFileSync(new URL("../docs/specs/verification/u1-fact-ownership.json", import.meta.url), "utf8")) as { records: { id: string }[] };
   const controls = page.locator('[data-authoring-scope] input, [data-authoring-scope] select, [data-tax-setup] input, [data-tax-setup] select');
   for (const control of await controls.all()) {
     if (!await control.isVisible()) continue;
     const shell = control.locator('xpath=ancestor::*[@data-financial-field][1]');
     await expect(shell).toHaveCount(1);
     const key = await shell.getAttribute("data-financial-field");
+    const family = await shell.getAttribute("data-semantic-family");
+    expect(registry.records.some(row => row.id === family), `${key}: ${family}`).toBe(true);
+    expect(await shell.getAttribute("data-semantic-binding")).toBeTruthy();
+    expect(await shell.getAttribute("data-semantic-scope")).toBeTruthy();
     const state = await shell.getAttribute("data-field-state");
     if (state === "required") {
       await expect(shell.locator(".field-required")).toBeVisible();

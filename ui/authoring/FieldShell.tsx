@@ -33,12 +33,13 @@ export function FieldShell({ fieldKey, children, required = false, error, hint, 
   fieldKey: string; children: Control; required?: boolean; error?: string | undefined; hint?: string; repairKey?: string | undefined; presentation?: FinancialField | undefined;
 }) {
   const field = presentation ?? financialField(fieldKey), id = useId();
+  if (field.disclosure !== "technical" && !field.semanticFamily) throw new Error(`Missing financial ownership binding: ${fieldKey}`);
   const readOnly = children.props.readOnly || field.state === "read-only" || field.state === "derived";
   const state = field.state === "derived" ? "derived" : readOnly ? "read-only" : required ? "required" : "optional";
   const value = financialControlValue(fieldKey, children.props);
   const problem = readOnly ? undefined : error ?? fieldProblem(field, value, required);
   const help = `${field.description}${field.why === field.description ? "" : ` ${field.why}`} Unit: ${field.unit}. Example: ${field.example}. Source: ${field.source}. ${field.suggestion}`;
-  return <div className={`field-shell${problem ? " field-invalid" : ""}${readOnly ? " field-readonly" : ""}`} data-financial-field={fieldKey} data-disclosure={field.disclosure} data-field-state={state}>
+  return <div className={`field-shell${problem ? " field-invalid" : ""}${readOnly ? " field-readonly" : ""}`} data-financial-field={fieldKey} data-disclosure={field.disclosure} data-field-state={state} data-semantic-family={field.semanticFamily} data-semantic-binding={field.semanticBinding} data-semantic-scope={field.semanticScope}>
     <div className="field-heading"><label htmlFor={id}>{field.label}<FieldStateCue state={state} /></label>
       <details className="field-help"><summary role="button" aria-label={`Help for ${field.label}`} aria-description={help} title={help}>?</summary><div role="note">{help}</div></details>
     </div>

@@ -6,12 +6,13 @@ import { objectEntries, objectId, objectLabel, entitySummary, referenceLabel, re
 import { PercentageInput } from "./forecast/PercentageInput.js";
 import { GuidedFields } from "./authoring/GuidedFields.js";
 import { FieldShell, RepairSummary, focusRepair } from "./authoring/FieldShell.js";
-import { fieldProblem, effectiveAnnualReturnProblem } from "./authoring/fieldContract.js";
+import { fieldProblem, effectiveAnnualReturnProblem, type FinancialField } from "./authoring/fieldContract.js";
 import { entityField } from "./authoring/fieldContract.js";
 import { authoringFailure } from "./authoring/contributionChoices.js";
 import { entityRelationshipProblems } from "./authoring/entityProblems.js";
 import { investmentFieldApplies, investmentProductNotice } from "./authoring/investmentFields.js";
 import { ScheduledActivity } from "./authoring/ScheduledActivity.js";
+import { DomainMechanicsPanel } from "./forecast/DomainMechanicsPanel.js";
 import { EligibilitySummary } from "./authoring/EligibilitySummary.js";
 import { canRepairEntityField, type EditorField } from "./authoring/entityRepair.js";
 export { canRepairEntityField } from "./authoring/entityRepair.js";
@@ -367,6 +368,7 @@ function ObjectEditor({
                 <ObjectEditor type="Investment" draft={draft} setDraft={setDraft} metadata={metadata} setNotice={setNotice} currency={currency} section={section} accountId={objectId("Account", item)} selectedScenarioId={selectedScenarioId} onContributions={onContributions} repairTarget={repairTarget} />
               </details>}
               {type === "Investment" && !mirror && <details><summary>Edit projected return</summary><ProjectedReturn investment={item} draft={draft} setDraft={setDraft} selectedScenarioId={selectedScenarioId} /></details>}
+              {type === "Investment" && !mirror && <details><summary>Activity & transfers for {objectLabel("Investment", item)}</summary><DomainMechanicsPanel key={objectId(type, item)} scope="investment" holdingId={objectId(type, item)} draft={draft} setDraft={setDraft} /></details>}
               {(type === "Income" || type === "Expense") && onOpenOwner && <>
                 {linkedGrowthAssumption(draft, item) ? <button type="button" onClick={() => onOpenOwner("Assumption", String(linkedGrowthAssumption(draft, item)!.assumption_id))}>
                   {type === "Income" ? "Review pay growth" : "Review spending growth"} · {formatRate(linkedGrowthAssumption(draft, item)!.value)}
@@ -436,6 +438,7 @@ function ObjectEditor({
                   creating={creating}
                   recordedUnit={typeof editing.unit === "string" ? editing.unit : undefined}
                   instrumentType={editing.investment_type}
+                  accountType={editing.account_type} assumptionCategory={editing.category}
                   repairKey={`entity:${editingId}:${fieldName}`} error={relationshipProblems[fieldName]}
                   onChange={(value) => saveField(fieldName, value)}
                 />
@@ -460,6 +463,7 @@ function ObjectEditor({
                       creating={creating}
                       recordedUnit={typeof editing.unit === "string" ? editing.unit : undefined}
                       instrumentType={editing.investment_type}
+                      accountType={editing.account_type} assumptionCategory={editing.category}
                       repairKey={`entity:${editingId}:${fieldName}`} error={relationshipProblems[fieldName]}
                       onChange={(value) => saveField(fieldName, value)}
                     />
@@ -551,21 +555,23 @@ function ContextualContributions({ item, type, draft, open }: { item: JsonObject
   } catch (failure) { return <div><p role="alert">Saved contributions need review. Reconcile the annual facts in Investments & retirement.</p><details><summary>Technical details</summary><pre>{failure instanceof Error ? failure.message : String(failure)}</pre></details></div>; }
 }
 
-function FieldControl(props: Parameters<typeof RawFieldControl>[0] & { repairKey?: string; error?: string | undefined }) {
-  const presentation = entityField(props.fieldName, props.entityType, props.field, props.creating, props.value, props.recordedUnit);
+function FieldControl(props: Parameters<typeof RawFieldControl>[0] & { repairKey?: string; error?: string | undefined; accountType?: unknown; assumptionCategory?: unknown }) {
+  const metadata = entityField(props.fieldName, props.entityType, props.field, props.creating, props.value, props.recordedUnit, props.accountType, props.assumptionCategory);
+  const presentation = metadata ? { ...metadata, semanticScope: props.repairKey ?? `new:${props.entityType}` } : undefined;
   if (!presentation) return null;
-  return <GuidedFields scope={`entity-${props.entityType}`} presentations={{ [props.fieldName]: presentation }} aliases={{ [presentation.label]: props.fieldName }} required={props.field?.required ? [props.fieldName] : []} repairKeys={{ [props.fieldName]: props.repairKey }} errors={{ [props.fieldName]: props.error }}>{RawFieldControl(props)}</GuidedFields>;
+  return <GuidedFields scope={`entity-${props.entityType}`} presentations={{ [props.fieldName]: presentation }} aliases={{ [presentation.label]: props.fieldName }} required={props.field?.required ? [props.fieldName] : []} repairKeys={{ [props.fieldName]: props.repairKey }} errors={{ [props.fieldName]: props.error }}>{RawFieldControl({ ...props, presentation })}</GuidedFields>;
 }
 
-function RawFieldControl({ fieldName, field, value, draft, currency, entityType, creating, onChange, repairKey, error, recordedUnit, instrumentType }: {
+function RawFieldControl({ fieldName, field, value, draft, currency, entityType, creating, onChange, repairKey, error, recordedUnit, instrumentType, presentation: suppliedPresentation }: {
   fieldName: string; field: EditorField | undefined; value: unknown; draft: PersonalDraft; currency: unknown;
   entityType: PersonalObjectType; creating: boolean; repairKey?: string; error?: string | undefined;
   recordedUnit?: string;
   instrumentType?: unknown;
+  presentation?: FinancialField;
   onChange: (value: string | boolean | readonly string[] | null) => void;
 }) {
   if (!field || field.derived) return null;
-  const presentation = entityField(fieldName, entityType, field, creating, value, recordedUnit)!;
+  const presentation = suppliedPresentation ?? entityField(fieldName, entityType, field, creating, value, recordedUnit)!;
   const label = presentation.label;
   if (field.type.startsWith("object") || (value !== null && typeof value === "object" && (!field.ref || !Array.isArray(value) || value.some(item => item !== null && typeof item === "object")))) return <section className="financial-fact" aria-label={label}>
     <strong>{label}</strong>

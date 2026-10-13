@@ -43,7 +43,7 @@ export function investmentAccountSummary(account: JsonObject, draft: PersonalDra
   return `Total account value unavailable — review holding prices/currencies · Cash inside account: ${formatExactMoney(account.opening_balance, unit)} · ${holdings.length} holdings`;
 }
 
-export const objectEntries = (draft: PersonalDraft, type: PersonalObjectType): readonly JsonObject[] =>
+export const objectEntries = (draft: PersonalDraft, type: PersonalObjectType | "Insurance" | "Event"): readonly JsonObject[] =>
   (draft.objects[type] ?? []).filter((value): value is JsonObject =>
     typeof value === "object" && value !== null && !Array.isArray(value)) as readonly JsonObject[];
 export const objectId = (type: PersonalObjectType, value: JsonObject) => String(value[`${type.toLowerCase()}_id`]);
@@ -77,7 +77,8 @@ export function linkedReturnAssumption(draft: PersonalDraft, investment: JsonObj
 export function linkedGrowthAssumption(draft: PersonalDraft, item: JsonObject): JsonObject | undefined {
   const primitive = (draft.objects.PrimitiveInstance ?? []).filter(isJsonObject).find(value => value.primitive_instance_id === item.growth_model_id);
   if (!primitive || primitive.primitive_id !== "P08" || primitive.enabled !== true || !isJsonObject(primitive.input_bindings)) return undefined;
-  return objectEntries(draft, "Assumption").find(value => value.assumption_id === primitive.input_bindings.rate);
+  const rateId = primitive.input_bindings.rate;
+  return objectEntries(draft, "Assumption").find(value => value.assumption_id === rateId);
 }
 export function assumptionOwners(draft: PersonalDraft, assumptionId: string) {
   return (["Income", "Expense", "Investment"] as const).flatMap(type => objectEntries(draft, type).flatMap(item =>
@@ -200,7 +201,7 @@ const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g
 
 /** Display-only sanitization; original diagnostic text remains in technical disclosure. */
 export const friendlyText = (value: unknown): string => String(value ?? "").replace(UUID, "unavailable reference");
-export function objectLabel(type: PersonalObjectType, item: JsonObject): string {
+export function objectLabel(type: PersonalObjectType | "Insurance" | "Event", item: JsonObject): string {
   const candidate = type === "Person" ? [item.first_name, item.last_name].filter(Boolean).join(" ")
     : item.name ?? item.source ?? item.category ?? item.symbol;
   return candidate ? friendlyText(candidate) : `Unnamed ${type.toLowerCase()}`;

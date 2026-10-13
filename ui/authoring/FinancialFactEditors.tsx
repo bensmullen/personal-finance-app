@@ -71,7 +71,7 @@ function AnnualFactDialog({ draft, setDraft, field, scope, close }: { draft: Per
             value: value === "true" ? true : value === "false" ? false : value, provenance: futureAssumption ? "assumption" : "observed", reconciledSources: resolved.sources.map(source => source.id), ...(openingReference === undefined ? {} : { openingReference }) })); close(); }
           catch (failure) { setError(authoringFailure(failure)); }
         }}>
-          <FieldShell fieldKey={annualFieldOwners[field].fieldKey} required error={problem} repairKey={`annual:${field}`}>
+          <FieldShell fieldKey={annualFieldOwners[field].fieldKey} required error={problem} repairKey={`annual:${field}`} presentation={{ ...meta, semanticScope: JSON.stringify(scope), source: `${resolved.repair.owner} · ${scope.taxYear} · ${referenceLabel(draft, "Person", scope.personId)}` }}>
             {choices[field] ? <select aria-label={meta.label} value={value} onChange={event => setValue(event.target.value)}><option value="">Not established</option>{choices[field]!.map(option => <option key={option} value={option}>{option === "true" ? "Yes" : option === "false" ? "No" : field === "filingStatus" ? filingLabels[option] : option.replaceAll("_", " ")}</option>)}</select>
               : <input aria-label={meta.label} inputMode="decimal" placeholder={meta.example} value={value} onChange={event => setValue(event.target.value)} />}
           </FieldShell>
@@ -103,7 +103,7 @@ export function AnnualFactsOwner({ draft, owner }: { draft: PersonalDraft; owner
   const person = people.find(item => item.person_id === personId) ?? people[0];
   const scope: FactScope = { personId: String(person?.person_id ?? ""), householdId: String(person?.household_id ?? ""), taxYear: Number(year), ...(sponsorId ? { sponsorId } : {}) };
   return <details className="financial-section" data-fact-owner={owner}><summary>{owner === "people" ? "Tax & health coverage by year" : owner === "income" ? "Annual earned pay & prior employer wages" : "Employer plan eligibility by year"}</summary>
-    <FieldShell fieldKey="owner"><select aria-label="Annual facts person" value={scope.personId} onChange={event => setPersonId(event.target.value)}>{people.map(item => <option key={String(item.person_id)} value={String(item.person_id)}>{referenceLabel(draft, "Person", item.person_id)}</option>)}</select></FieldShell>
+    <FieldShell fieldKey="owner_id"><select aria-label="Annual facts person" value={scope.personId} onChange={event => setPersonId(event.target.value)}>{people.map(item => <option key={String(item.person_id)} value={String(item.person_id)}>{referenceLabel(draft, "Person", item.person_id)}</option>)}</select></FieldShell>
     <FieldShell fieldKey="taxYear" required><input aria-label="Annual facts year" type="number" min="2026" max="9998" value={year} onChange={event => setYear(event.target.value)} /></FieldShell>
     {owner !== "people" && <FieldShell fieldKey="planKey"><select aria-label="Annual facts employer plan" value={sponsorId} onChange={event => setSponsorId(event.target.value)}><option value="">Choose employer plan</option>{[...new Set(sources.flatMap(source => source.scope.personId === scope.personId && source.scope.sponsorId ? [source.scope.sponsorId] : []))].map(id => <option key={id} value={id}>{id}</option>)}</select></FieldShell>}
     <dl>{(Object.keys(annualFieldOwners) as AnnualField[]).filter(field => annualFieldOwners[field].owner === owner && field !== "ageAtYearEnd").map(field => {

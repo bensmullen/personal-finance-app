@@ -93,6 +93,16 @@ const openContributions = async (page: import("@playwright/test").Page) => {
   await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
   await openAuthoringSections(page);
 };
+const openHoldingActivity = async (page: import("@playwright/test").Page, holdingId: string) => {
+  await openContributions(page);
+  for (const summary of await page.locator(".account-holdings > summary").all()) {
+    if (await summary.locator("..").getAttribute("open") === null) await summary.click();
+  }
+  const panel = page.locator(`[data-source-holding="${holdingId}"]`);
+  const details = panel.locator("xpath=ancestor::details[1]");
+  if (await details.getAttribute("open") === null) await details.locator(":scope > summary").click();
+  return panel;
+};
 const openAuthoringSections = async (page: import("@playwright/test").Page) => {
   for (const title of ["IRA & brokerage contributions", "Workplace & HSA contributions", "Contributions already made this year", "Annual contribution allowance", "Other investment activity", "Extra mortgage payments & refinancing", "Debt & mortgage", "Investments", "Tax payments & refunds", "Employer vesting"]) {
     const summary = page.locator("summary").filter({ hasText: title }).filter({ hasNotText: "Help for" }).first();
@@ -152,9 +162,10 @@ test("D1-B normal investment controls persist a bank-funded operation without co
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
   await openContributions(page);
-  const panel = page.getByRole("region", { name: "Investment and retirement operations" });
+  const panel = await openHoldingActivity(page, cryptoId);
   await panel.getByLabel("Domain operation", { exact: true }).selectOption("purchase");
-  await panel.getByLabel("Source / target holding", { exact: true }).selectOption(cryptoId);
+  await expect(panel.getByLabel("Source / target holding", { exact: true })).toHaveValue(cryptoId);
+  await expect(panel.getByLabel("Source / target holding", { exact: true })).toBeDisabled();
   await panel.getByLabel("Operation date", { exact: true }).fill("2026-01-10");
   await panel.getByLabel("Operation cash amount", { exact: true }).fill("100");
   await panel.getByLabel("Units / call contracts", { exact: true }).fill("1");
@@ -221,6 +232,78 @@ const importDraft = async (
 };
 
 const rawUuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+test("U1 insurance has one policy owner, optional shared life events and durable legacy links", async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  const original = importPersonalModelJson(await readFile(new URL("../test/fixtures/d1-integrated-uat-model.json", import.meta.url), "utf8"));
+  const legacy = original.objects.Insurance![0] as JsonObject;
+  await importDraft(page, original);
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Insurance & coverage", exact: true }).click();
+  const insurance = page.getByRole("region", { name: "Insurance & coverage", exact: true });
+  await insurance.getByRole("button", { name: "Edit policy", exact: true }).click();
+  const editor = page.getByRole("region", { name: "Edit term-life policy", exact: true });
+  await editor.getByLabel("Monthly premium", { exact: true }).fill("60");
+  await editor.getByRole("button", { name: "Save term-life policy", exact: true }).click();
+  await insurance.getByRole("button", { name: "Add term-life policy", exact: true }).click();
+  await editor.getByLabel("Policy owner", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.person);
+  await editor.getByLabel("Insured person", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.person);
+  await editor.getByLabel("Benefit beneficiary", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.household);
+  await editor.getByLabel("Premium checking / savings account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.checking);
+  await editor.getByLabel("Benefit checking / savings account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.savings);
+  await editor.getByLabel("Monthly premium", { exact: true }).fill("25.50");
+  await editor.getByLabel("Lump-sum benefit", { exact: true }).fill("200000");
+  await editor.getByLabel("Policy start", { exact: true }).fill("2026-01-01");
+  await editor.getByLabel("Policy end (exclusive)", { exact: true }).fill("2027-01-01");
+  await expect(editor.getByLabel("Scheduled insured death date", { exact: true })).toHaveCount(0);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const input of await editor.locator("input, select").all()) {
+      const box = await input.boundingBox();
+      expect(box!.width).toBeGreaterThan(120);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+      const shell = input.locator('xpath=ancestor::*[@data-semantic-family][1]');
+      await expect(shell).toHaveCount(1);
+      expect(await shell.getAttribute("data-semantic-family")).toMatch(/^insurance\.term_life_/);
+    }
+    await editor.getByRole("button", { name: "Help for Lump-sum benefit", exact: true }).click();
+    await expect(editor.getByRole("note").filter({ hasText: "not a current asset" })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`insurance-policy-${width}.png`), fullPage: true });
+    await editor.getByRole("button", { name: "Help for Lump-sum benefit", exact: true }).click();
+  }
+  await editor.getByRole("button", { name: "Save term-life policy", exact: true }).click();
+  await expect(insurance).toContainText("200,000 USD");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Load saved model", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
+  const pending = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const restored = importPersonalModelJson(await readFile((await (await pending).path())!, "utf8"));
+  const policies = restored.objects.Insurance as readonly JsonObject[];
+  expect(policies).toHaveLength(2);
+  expect(policies.find(item => item.insurance_id === legacy.insurance_id)).toMatchObject({ ...legacy, premium: "60" });
+  expect(policies.find(item => item.insurance_id !== legacy.insurance_id)).not.toHaveProperty("death_event_id");
+  expect(restored.objects.Event).toEqual(original.objects.Event);
+  expect(restored.objects.Scenario).toEqual(original.objects.Scenario);
+  expect(restored.objects.Expense).toEqual(original.objects.Expense);
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Insurance & coverage", exact: true }).click();
+  for (const summary of await insurance.locator("summary").filter({ hasText: /^Payment & scenario details$/ }).all()) await summary.click();
+  await insurance.getByRole("button", { name: "Add optional death scenario", exact: true }).click();
+  const life = page.getByRole("region", { name: "Edit insured death scenario", exact: true });
+  await life.getByLabel("Scheduled insured death date", { exact: true }).fill("2026-06-01");
+  await life.getByRole("button", { name: "Save life event", exact: true }).click();
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Life Events", exact: true }).click();
+  await page.getByRole("region", { name: "Insured life events", exact: true }).getByRole("button", { name: "Review life event", exact: true }).last().click();
+  await expect(life.getByLabel("Scheduled insured death date", { exact: true })).toHaveValue("2026-06-01");
+  await expect(life.locator('[data-semantic-family="life.death_event"]')).toHaveCount(3);
+  expect(errors).toEqual([]);
+});
 
 const openSalaryFacts = async (page: import("@playwright/test").Page) => {
   await page.getByRole("button", { name: "Money", exact: true }).click();
@@ -511,11 +594,11 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
   await openContributions(page);
-  const operations = page.getByRole("region", { name: "Investment and retirement operations" });
+  const operations = await openHoldingActivity(page, GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
   // The ordinary sales control consumes the same opening lot as the combined
   // arithmetic fixture. No compiler IDs or JSON are entered in the product.
   await operations.getByLabel("Domain operation", { exact: true }).selectOption("sale");
-  await operations.getByLabel("Source / target holding", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
+  await expect(operations.getByLabel("Source / target holding", { exact: true })).toHaveValue(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
   await operations.getByLabel("Operation date", { exact: true }).fill("2026-01-23");
   await operations.getByLabel("Operation cash amount", { exact: true }).fill("550");
   await operations.getByLabel("Units / call contracts", { exact: true }).fill("5");
