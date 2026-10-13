@@ -14,9 +14,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"benefit","kind":"account","owner":"claimant","accountType":"income"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"withholding","kind":"account","owner":"claimant","accountType":"tax_credit"}],
+        "roles": {"owner":"claimant","source":"benefit","destination":"cash","beneficiary":"beneficiary"},
         "amounts": {"quotedGrossCents":"100000","authoredWithholdingCents":"10000"},
-        "terms": {"estimate":"synthetic authoritative payment quote; not a claiming formula","claimant":"claimant","beneficiary":"beneficiary","startDate":"2026-01-15","frequency":"monthly","cola":"explicitly no change in this period","coordination":"decision_required"},
+        "terms": {"estimate":"synthetic authoritative payment quote; not a claiming formula","claimant":"claimant","beneficiary":"beneficiary","startDate":"2026-01-15","frequency":"monthly","cola":"explicitly no change in this period","coordination":"decision_required","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"withholding","kind":"tax_credit","owner":"claimant","openingCents":"0"},{"id":"benefit","kind":"income","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -39,9 +40,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"benefit","kind":"account","owner":"claimant","accountType":"income"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"withholding","kind":"account","owner":"claimant","accountType":"tax_credit"}],
+        "roles": {"owner":"claimant","source":"benefit","destination":"cash","beneficiary":"beneficiary"},
         "amounts": {"quotedGrossCents":"100000","authoredWithholdingCents":"10000"},
-        "terms": {"estimate":"synthetic authoritative payment quote; not a claiming formula","claimant":"claimant","beneficiary":"beneficiary","startDate":"2026-01-15","frequency":"monthly","cola":"explicitly no change in this period","coordination":"decision_required"},
+        "terms": {"estimate":"synthetic authoritative payment quote; not a claiming formula","claimant":"claimant","beneficiary":"beneficiary","startDate":"2026-01-15","frequency":"monthly","cola":"explicitly no change in this period","coordination":"decision_required","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"withholding","kind":"tax_credit","owner":"claimant","openingCents":"0"},{"id":"benefit","kind":"income","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -64,9 +66,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"benefit","kind":"account","owner":"claimant","accountType":"income"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"withholding","kind":"account","owner":"claimant","accountType":"tax_credit"}],
+        "roles": {"owner":"claimant","source":"benefit","destination":"cash","beneficiary":"beneficiary"},
         "amounts": {"quotedGrossCents":"100000","authoredWithholdingCents":"10000"},
-        "terms": {"estimate":"synthetic authoritative payment quote; not a claiming formula","claimant":"claimant","beneficiary":"beneficiary","startDate":"2026-01-15","frequency":"monthly","cola":"explicitly no change in this period","coordination":"decision_required"},
+        "terms": {"estimate":"synthetic authoritative payment quote; not a claiming formula","claimant":"claimant","beneficiary":"beneficiary","startDate":"2026-01-15","frequency":"monthly","cola":"explicitly no change in this period","coordination":"decision_required","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"withholding","kind":"tax_credit","owner":"claimant","openingCents":"0"},{"id":"benefit","kind":"income","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -89,7 +92,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"benefit","kind":"account","owner":"claimant","accountType":"income"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"}],
+        "roles": {"owner":"claimant","source":"benefit","destination":"cash","beneficiary":"beneficiary"},
         "amounts": {"priorQuoteCents":"100000"},
         "terms": {"claimDate":"2026-01-15","colaRule":"missing effective-dated rule","spousalOwnBenefit":"must coordinate with own entitlement"},
         "accounts": []
@@ -113,9 +117,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"pension"},{"id":"benefit","kind":"account","owner":"claimant","plan":"plan","accountType":"income"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"withholding","kind":"account","owner":"claimant","accountType":"tax_credit"}],
+        "roles": {"owner":"claimant","source":"benefit","destination":"cash","beneficiary":"beneficiary","plan":"plan"},
         "amounts": {"quotedGrossCents":"100000","authoredWithholdingCents":"10000"},
-        "terms": {"participant":"claimant","survivor":"beneficiary","commencement":"2026-01-15","frequency":"monthly","cola":"no change in this period","election":"quoted single payment only"},
+        "terms": {"participant":"claimant","survivor":"beneficiary","commencement":"2026-01-15","frequency":"monthly","cola":"no change in this period","election":"quoted single payment only","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"withholding","kind":"tax_credit","owner":"claimant","openingCents":"0"},{"id":"benefit","kind":"income","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -138,7 +143,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"pension"},{"id":"benefit","kind":"account","owner":"claimant","plan":"plan","accountType":"income"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"}],
+        "roles": {"owner":"claimant","source":"benefit","destination":"cash","beneficiary":"beneficiary","plan":"plan"},
         "amounts": {"participantQuoteCents":"100000"},
         "terms": {"participantDeath":"2026-01-15","election":"survivor continuation terms not resolved","endExclusive":"2026-02-01"},
         "accounts": []
@@ -162,15 +168,16 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"403b","sponsor":"employer"},{"id":"payroll_source","kind":"account","owner":"claimant","accountType":"payroll"},{"id":"retirement_account","kind":"account","owner":"claimant","plan":"plan","accountType":"403b"}],
+        "roles": {"owner":"claimant","source":"payroll_source","destination":"retirement_account","plan":"plan","employer":"employer"},
         "amounts": {"authoredContributionCents":"50000","grossCompensationCents":"200000"},
-        "terms": {"employeeEmployerCharacter":"explicit employee/employer allocation required","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll or employer funds; never inferred bank debit"},
+        "terms": {"employeeEmployerCharacter":"employee","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll_source","contributionSource":"employee_salary_deferral","sourceDescription":"Synthetic employee salary deferral from payroll; employer contributions are a separate unresolved variant."},
         "accounts": []
       },
       "expected": {
         "capability": "decision_required",
         "integratedRuntimeEvidence": false,
-        "boundary": "Canonical labels do not establish payroll support. TSP lacks a named canonical account enum. Resolve the family contract before contribution posting.",
+        "boundary": "403(b) elective-deferral and employer-contribution scopes, service catch-up eligibility, and distribution/rollover acceptance need effective-dated rules.",
         "unknownOutputs": ["accepted_contribution","employee_employer_split","statutory_bucket_usage","taxable_wages","payroll_wages","rollover_distribution_compatibility"]
       }
     },
@@ -186,15 +193,16 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"403b","sponsor":"employer"},{"id":"source","kind":"account","owner":"claimant","plan":"plan","accountType":"403b"},{"id":"destination","kind":"account","owner":"claimant","accountType":"traditional_ira"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination","plan":"plan","employer":"employer"},
         "amounts": {"requestedCents":"50000"},
-        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites"},
+        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites","planIdentity":"plan","destinationDescription":"Traditional IRA candidate; family-specific distribution and rollover acceptance remains unresolved."},
         "accounts": []
       },
       "expected": {
         "capability": "decision_required",
         "integratedRuntimeEvidence": false,
-        "boundary": "Plan-specific distribution/rollover acceptance and tax rules are not supplied by a generic 401(k) path.",
+        "boundary": "403(b) elective-deferral and employer-contribution scopes, service catch-up eligibility, and distribution/rollover acceptance need effective-dated rules.",
         "unknownOutputs": ["distribution_character","withholding","eligibility","basis_recovery","limit_interaction"]
       }
     },
@@ -210,15 +218,16 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"governmental_457b","sponsor":"employer"},{"id":"payroll_source","kind":"account","owner":"claimant","accountType":"payroll"},{"id":"retirement_account","kind":"account","owner":"claimant","plan":"plan","accountType":"governmental_457b"}],
+        "roles": {"owner":"claimant","source":"payroll_source","destination":"retirement_account","plan":"plan","employer":"employer"},
         "amounts": {"authoredContributionCents":"50000","grossCompensationCents":"200000"},
-        "terms": {"employeeEmployerCharacter":"explicit employee/employer allocation required","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll or employer funds; never inferred bank debit"},
+        "terms": {"employeeEmployerCharacter":"employee","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll_source","contributionSource":"employee_salary_deferral","sourceDescription":"Synthetic employee salary deferral from payroll; employer contributions are a separate unresolved variant."},
         "accounts": []
       },
       "expected": {
         "capability": "decision_required",
         "integratedRuntimeEvidence": false,
-        "boundary": "Canonical labels do not establish payroll support. TSP lacks a named canonical account enum. Resolve the family contract before contribution posting.",
+        "boundary": "Governmental 457(b) separate deferral scope, applicable catch-up coordination, distribution timing and rollover tax character need effective-dated rules.",
         "unknownOutputs": ["accepted_contribution","employee_employer_split","statutory_bucket_usage","taxable_wages","payroll_wages","rollover_distribution_compatibility"]
       }
     },
@@ -234,15 +243,16 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"governmental_457b","sponsor":"employer"},{"id":"source","kind":"account","owner":"claimant","plan":"plan","accountType":"governmental_457b"},{"id":"destination","kind":"account","owner":"claimant","accountType":"traditional_ira"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination","plan":"plan","employer":"employer"},
         "amounts": {"requestedCents":"50000"},
-        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites"},
+        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites","planIdentity":"plan","destinationDescription":"Traditional IRA candidate; family-specific distribution and rollover acceptance remains unresolved."},
         "accounts": []
       },
       "expected": {
         "capability": "decision_required",
         "integratedRuntimeEvidence": false,
-        "boundary": "Plan-specific distribution/rollover acceptance and tax rules are not supplied by a generic 401(k) path.",
+        "boundary": "Governmental 457(b) separate deferral scope, applicable catch-up coordination, distribution timing and rollover tax character need effective-dated rules.",
         "unknownOutputs": ["distribution_character","withholding","eligibility","basis_recovery","limit_interaction"]
       }
     },
@@ -258,15 +268,16 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"tsp","sponsor":"employer"},{"id":"payroll_source","kind":"account","owner":"claimant","accountType":"payroll"},{"id":"retirement_account","kind":"account","owner":"claimant","plan":"plan","accountType":"tsp"}],
+        "roles": {"owner":"claimant","source":"payroll_source","destination":"retirement_account","plan":"plan","employer":"employer"},
         "amounts": {"authoredContributionCents":"50000","grossCompensationCents":"200000"},
-        "terms": {"employeeEmployerCharacter":"explicit employee/employer allocation required","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll or employer funds; never inferred bank debit"},
+        "terms": {"employeeEmployerCharacter":"employee","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll_source","contributionSource":"employee_salary_deferral","sourceDescription":"Synthetic employee salary deferral from payroll; employer contributions are a separate unresolved variant."},
         "accounts": []
       },
       "expected": {
         "capability": "decision_required",
         "integratedRuntimeEvidence": false,
-        "boundary": "Canonical labels do not establish payroll support. TSP lacks a named canonical account enum. Resolve the family contract before contribution posting.",
+        "boundary": "TSP employee deferrals and agency contributions, Traditional/Roth balances and rollover acceptance need effective-dated rules; the canonical account enum lacks a named TSP label.",
         "unknownOutputs": ["accepted_contribution","employee_employer_split","statutory_bucket_usage","taxable_wages","payroll_wages","rollover_distribution_compatibility"]
       }
     },
@@ -282,15 +293,16 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"tsp","sponsor":"employer"},{"id":"source","kind":"account","owner":"claimant","plan":"plan","accountType":"tsp"},{"id":"destination","kind":"account","owner":"claimant","accountType":"traditional_ira"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination","plan":"plan","employer":"employer"},
         "amounts": {"requestedCents":"50000"},
-        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites"},
+        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites","planIdentity":"plan","destinationDescription":"Traditional IRA candidate; family-specific distribution and rollover acceptance remains unresolved."},
         "accounts": []
       },
       "expected": {
         "capability": "decision_required",
         "integratedRuntimeEvidence": false,
-        "boundary": "Plan-specific distribution/rollover acceptance and tax rules are not supplied by a generic 401(k) path.",
+        "boundary": "TSP employee deferrals and agency contributions, Traditional/Roth balances and rollover acceptance need effective-dated rules; the canonical account enum lacks a named TSP label.",
         "unknownOutputs": ["distribution_character","withholding","eligibility","basis_recovery","limit_interaction"]
       }
     },
@@ -306,15 +318,16 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"sep_ira","sponsor":"employer"},{"id":"payroll_source","kind":"account","owner":"employer","accountType":"bank_cash"},{"id":"retirement_account","kind":"account","owner":"claimant","plan":"plan","accountType":"sep_ira"}],
+        "roles": {"owner":"claimant","source":"payroll_source","destination":"retirement_account","plan":"plan","employer":"employer"},
         "amounts": {"authoredContributionCents":"50000","grossCompensationCents":"200000"},
-        "terms": {"employeeEmployerCharacter":"employer","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll or employer funds; never inferred bank debit"},
+        "terms": {"employeeEmployerCharacter":"employer","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll_source","contributionSource":"employer_contribution","sourceDescription":"Synthetic employer-funded contribution; no employee payroll deduction."},
         "accounts": []
       },
       "expected": {
         "capability": "decision_required",
         "integratedRuntimeEvidence": false,
-        "boundary": "Canonical labels do not establish payroll support. TSP lacks a named canonical account enum. Resolve the family contract before contribution posting.",
+        "boundary": "Ordinary SEP IRA employer contributions require compensation and employer-limit rules; IRA aggregation and distribution/rollover character remain unresolved. This is not a salary-reduction SEP case.",
         "unknownOutputs": ["accepted_contribution","employee_employer_split","statutory_bucket_usage","taxable_wages","payroll_wages","rollover_distribution_compatibility"]
       }
     },
@@ -330,15 +343,16 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"sep_ira","sponsor":"employer"},{"id":"source","kind":"account","owner":"claimant","plan":"plan","accountType":"sep_ira"},{"id":"destination","kind":"account","owner":"claimant","accountType":"traditional_ira"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination","plan":"plan","employer":"employer"},
         "amounts": {"requestedCents":"50000"},
-        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites"},
+        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites","planIdentity":"plan","destinationDescription":"Traditional IRA candidate; family-specific distribution and rollover acceptance remains unresolved."},
         "accounts": []
       },
       "expected": {
         "capability": "decision_required",
         "integratedRuntimeEvidence": false,
-        "boundary": "Plan-specific distribution/rollover acceptance and tax rules are not supplied by a generic 401(k) path.",
+        "boundary": "Ordinary SEP IRA employer contributions require compensation and employer-limit rules; IRA aggregation and distribution/rollover character remain unresolved. This is not a salary-reduction SEP case.",
         "unknownOutputs": ["distribution_character","withholding","eligibility","basis_recovery","limit_interaction"]
       }
     },
@@ -354,15 +368,16 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"simple_ira","sponsor":"employer"},{"id":"payroll_source","kind":"account","owner":"claimant","accountType":"payroll"},{"id":"retirement_account","kind":"account","owner":"claimant","plan":"plan","accountType":"simple_ira"}],
+        "roles": {"owner":"claimant","source":"payroll_source","destination":"retirement_account","plan":"plan","employer":"employer"},
         "amounts": {"authoredContributionCents":"50000","grossCompensationCents":"200000"},
-        "terms": {"employeeEmployerCharacter":"explicit employee/employer allocation required","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll or employer funds; never inferred bank debit"},
+        "terms": {"employeeEmployerCharacter":"employee","planIdentity":"plan","taxYear":"2026","effectiveRule":"missing plan-specific effective-dated limit and tax rule","source":"payroll_source","contributionSource":"employee_salary_deferral","sourceDescription":"Synthetic employee salary deferral from payroll; employer contributions are a separate unresolved variant."},
         "accounts": []
       },
       "expected": {
         "capability": "decision_required",
         "integratedRuntimeEvidence": false,
-        "boundary": "Canonical labels do not establish payroll support. TSP lacks a named canonical account enum. Resolve the family contract before contribution posting.",
+        "boundary": "SIMPLE IRA salary reductions and employer match/nonelective contributions need distinct limit rules; participation-period distribution/rollover restrictions remain unresolved.",
         "unknownOutputs": ["accepted_contribution","employee_employer_split","statutory_bucket_usage","taxable_wages","payroll_wages","rollover_distribution_compatibility"]
       }
     },
@@ -378,15 +393,16 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"simple_ira","sponsor":"employer"},{"id":"source","kind":"account","owner":"claimant","plan":"plan","accountType":"simple_ira"},{"id":"destination","kind":"account","owner":"claimant","accountType":"traditional_ira"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination","plan":"plan","employer":"employer"},
         "amounts": {"requestedCents":"50000"},
-        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites"},
+        "terms": {"source":"source","destination":"destination","owner":"claimant","acceptance":"missing family-specific distribution and rollover prerequisites","planIdentity":"plan","destinationDescription":"Traditional IRA candidate; family-specific distribution and rollover acceptance remains unresolved."},
         "accounts": []
       },
       "expected": {
         "capability": "decision_required",
         "integratedRuntimeEvidence": false,
-        "boundary": "Plan-specific distribution/rollover acceptance and tax rules are not supplied by a generic 401(k) path.",
+        "boundary": "SIMPLE IRA salary reductions and employer match/nonelective contributions need distinct limit rules; participation-period distribution/rollover restrictions remain unresolved.",
         "unknownOutputs": ["distribution_character","withholding","eligibility","basis_recovery","limit_interaction"]
       }
     },
@@ -402,9 +418,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"source","kind":"account","owner":"claimant","accountType":"traditional_ira"},{"id":"destination","kind":"account","owner":"claimant","accountType":"roth_ira"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination"},
         "amounts": {"requestedCents":"50000","aggregateIraValueCents":"100000","aggregateBasisCents":"20000"},
-        "terms": {"source":"traditional IRA","destination":"Roth IRA","ownership":"same claimant","contributionCharacter":"conversion, not contribution"},
+        "terms": {"source":"source","destination":"destination","ownership":"claimant","contributionCharacter":"conversion, not contribution","sourceDescription":"traditional IRA","destinationDescription":"Roth IRA","ownershipDescription":"same claimant","eventDate":"2026-01-15"},
         "accounts": [{"id":"source","kind":"position","owner":"claimant","openingCents":"100000"},{"id":"destination","kind":"position","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -427,7 +444,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"source","kind":"account","owner":"claimant","accountType":"traditional_ira"},{"id":"destination","kind":"account","owner":"claimant","accountType":"roth_ira"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination"},
         "amounts": {"nondeductibleContributionCents":"50000","traditionalIraCents":"100000","sepIraCents":"200000","simpleIraCents":"100000","openingBasisCents":"20000"},
         "terms": {"steps":"nondeductible contribution then Roth conversion","aggregation":"Traditional, SEP and SIMPLE IRA; effective rule missing","contributionEligibility":"not inferred"},
         "accounts": []
@@ -451,9 +469,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"401k"},{"id":"source","kind":"account","owner":"claimant","plan":"plan","accountType":"after_tax_401k"},{"id":"destination","kind":"account","owner":"claimant","plan":"plan","accountType":"roth_401k"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination","plan":"plan"},
         "amounts": {"transferCents":"50000","ownedFairValueCents":"100000","previouslyTaxedBasisCents":"20000"},
-        "terms": {"plan":"same eligible owned/vested 401(k) plan","acceptance":"explicit true","newContribution":"none in this conversion case","annualAdditions":"previous after-tax contribution must be independently validated"},
+        "terms": {"plan":"plan","acceptance":"explicit true","newContribution":"none in this conversion case","annualAdditions":"previous after-tax contribution must be independently validated","planDescription":"same eligible owned/vested 401(k) plan","eventDate":"2026-01-15"},
         "accounts": [{"id":"source","kind":"position","owner":"claimant","openingCents":"100000"},{"id":"destination","kind":"position","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -476,9 +495,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"401k"},{"id":"source","kind":"account","owner":"claimant","plan":"plan","accountType":"after_tax_401k"},{"id":"destination","kind":"account","owner":"claimant","accountType":"roth_ira"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination","plan":"plan"},
         "amounts": {"afterTaxContributionCents":"50000"},
-        "terms": {"source":"eligible after-tax workplace plan","destination":"Roth IRA","acceptance":"must be explicit","basis":"must survive contribution/conversion/rollover lineage"},
+        "terms": {"source":"source","destination":"destination","acceptance":"must be explicit","basis":"must survive contribution/conversion/rollover lineage","sourceDescription":"eligible after-tax workplace plan","destinationDescription":"Roth IRA"},
         "accounts": []
       },
       "expected": {
@@ -500,9 +520,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"source","kind":"account","owner":"claimant","accountType":"retirement_account"},{"id":"destination","kind":"account","owner":"claimant","accountType":"bank_cash"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination"},
         "amounts": {"requestedCents":"50000","openingRetirementCents":"100000"},
-        "terms": {"existingIssue":"103","source":"source","destination":"owned checking","withholding":"not supplied","distributionKind":"ordinary"},
+        "terms": {"existingIssue":"103","source":"source","destination":"destination","withholding":"not supplied","distributionKind":"ordinary","destinationDescription":"owned checking"},
         "accounts": []
       },
       "expected": {
@@ -524,9 +545,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"source","kind":"account","owner":"claimant","accountType":"retirement_account"},{"id":"destination","kind":"account","owner":"claimant","accountType":"bank_cash"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination"},
         "amounts": {"requestedCents":"50000","openingRetirementCents":"100000"},
-        "terms": {"existingIssue":"103","source":"source","destination":"owned checking","withholding":"not supplied","distributionKind":"rmd"},
+        "terms": {"existingIssue":"103","source":"source","destination":"destination","withholding":"not supplied","distributionKind":"rmd","destinationDescription":"owned checking"},
         "accounts": []
       },
       "expected": {
@@ -548,9 +570,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
-        "amounts": {"principalCents":"100000","cashCents":"200000"},
-        "terms": {"annualRate":"0","rateConvention":"nominal annual / 12","remainingPayments":"2","frequency":"monthly","capitalization":"none","funding":"cash, all-or-nothing","rounding":"USD cents half_up"},
+        "identities": [{"id":"claimant","kind":"person"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"principal","kind":"account","owner":"claimant","accountType":"auto_loan"},{"id":"interest","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"principal"},
+        "amounts": {"principalCents":"100000","cashCents":"200000","quotedScheduledPrincipalCents":"50000","quotedScheduledInterestCents":"0"},
+        "terms": {"annualRate":"0","rateConvention":"nominal annual / 12","remainingPayments":"2","frequency":"monthly","capitalization":"none","funding":"cash, all-or-nothing","rounding":"USD cents half_up","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"200000"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"100000"},{"id":"interest","kind":"expense","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -573,9 +596,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
-        "amounts": {"principalCents":"100000","cashCents":"200000"},
-        "terms": {"annualRate":"0.12","rateConvention":"nominal annual / 12; simple contractual month","remainingPayments":"1","capitalization":"none","funding":"cash, all-or-nothing","rounding":"USD cents half_up"},
+        "identities": [{"id":"claimant","kind":"person"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"principal","kind":"account","owner":"claimant","accountType":"auto_loan"},{"id":"interest","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"principal"},
+        "amounts": {"principalCents":"100000","cashCents":"200000","quotedScheduledPrincipalCents":"100000","quotedScheduledInterestCents":"1000"},
+        "terms": {"annualRate":"0.12","rateConvention":"nominal annual / 12; simple contractual month","remainingPayments":"1","capitalization":"none","funding":"cash, all-or-nothing","rounding":"USD cents half_up","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"200000"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"100000"},{"id":"interest","kind":"expense","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -598,9 +622,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
-        "amounts": {"principalCents":"100000","cashCents":"200000"},
-        "terms": {"annualRate":"0","rateConvention":"nominal annual / 12","remainingPayments":"2","frequency":"monthly","capitalization":"none","funding":"cash, all-or-nothing","specialPrograms":"excluded; separately gated"},
+        "identities": [{"id":"claimant","kind":"person"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"principal","kind":"account","owner":"claimant","accountType":"student_loan"},{"id":"interest","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"principal"},
+        "amounts": {"principalCents":"100000","cashCents":"200000","quotedScheduledPrincipalCents":"50000","quotedScheduledInterestCents":"0"},
+        "terms": {"annualRate":"0","rateConvention":"nominal annual / 12","remainingPayments":"2","frequency":"monthly","capitalization":"none","funding":"cash, all-or-nothing","specialPrograms":"excluded; separately gated","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"200000"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"100000"},{"id":"interest","kind":"expense","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -623,9 +648,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
-        "amounts": {"principalCents":"100000","cashCents":"200000","extraCents":"50000"},
-        "terms": {"annualRate":"0","rateConvention":"nominal annual / 12","remainingPayments":"2","funding":"required service before voluntary extra; all-or-nothing","capitalization":"none"},
+        "identities": [{"id":"claimant","kind":"person"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"principal","kind":"account","owner":"claimant","accountType":"auto_loan"},{"id":"interest","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"principal"},
+        "amounts": {"principalCents":"100000","cashCents":"200000","extraCents":"50000","quotedScheduledPrincipalCents":"50000","quotedScheduledInterestCents":"0"},
+        "terms": {"annualRate":"0","rateConvention":"nominal annual / 12","remainingPayments":"2","funding":"required service before voluntary extra; all-or-nothing","capitalization":"none","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"200000"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"100000"},{"id":"interest","kind":"expense","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -648,9 +674,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"principal","kind":"account","owner":"claimant","accountType":"credit_card"},{"id":"interest","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"principal"},
         "amounts": {"openingPrincipalCents":"100000","statementInterestCents":"2000","authoredPaymentCents":"10000"},
-        "terms": {"interest":"explicit synthetic statement amount; no APR inference","allocation":"contract quote: pay stated interest first","minimumPayment":"rule not supplied","funding":"cash"},
+        "terms": {"interest":"explicit synthetic statement amount; no APR inference","allocation":"contract quote: pay stated interest first","minimumPayment":"rule not supplied","funding":"cash","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"200000"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"100000"},{"id":"interest","kind":"expense","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -673,9 +700,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"principal","kind":"account","owner":"claimant","accountType":"heloc"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"}],
+        "roles": {"owner":"claimant","source":"principal","destination":"cash"},
         "amounts": {"drawCents":"50000"},
-        "terms": {"draw":"explicit authorized draw, not invented funding","destination":"cash","rateType":"variable","reset":"missing effective-dated index/spread/caps and payment policy"},
+        "terms": {"draw":"explicit authorized draw, not invented funding","destination":"cash","rateType":"variable","reset":"missing effective-dated index/spread/caps and payment policy","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -698,7 +726,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"principal","kind":"account","owner":"claimant","accountType":"heloc"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"principal"},
         "amounts": {"openingPrincipalCents":"100000"},
         "terms": {"resetDate":"2026-01-15","index":"missing","spread":"missing","capsFloors":"missing","paymentReset":"separate from rate reset"},
         "accounts": []
@@ -722,9 +751,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"principal","kind":"account","owner":"claimant","accountType":"auto_loan"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"principal"},
         "amounts": {"cashCents":"10000","principalCents":"100000","requiredServiceCents":"50000","requestedExtraCents":"5000"},
-        "terms": {"annualRate":"0","remainingPayments":"2","funding":"all-or-nothing; required before extra; no borrowing fallback"},
+        "terms": {"annualRate":"0","remainingPayments":"2","funding":"all-or-nothing; required before extra; no borrowing fallback","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"10000"},{"id":"principal","kind":"liability","owner":"claimant","openingCents":"100000"}]
       },
       "expected": {
@@ -747,7 +777,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"bond","kind":"account","owner":"claimant","accountType":"tips"},{"id":"cash","kind":"account","owner":"claimant","accountType":"wrapper_cash"}],
+        "roles": {"owner":"claimant","source":"bond","destination":"cash"},
         "amounts": {"originalPrincipalCents":"100000"},
         "terms": {"indexBase":"missing effective index, lag and reference convention","deflationFloor":"must resolve at applicable boundary","taxCharacter":"coupon and non-cash accretion separately required"},
         "accounts": []
@@ -771,9 +802,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"bond","kind":"account","owner":"claimant","accountType":"tips"},{"id":"cash","kind":"account","owner":"claimant","accountType":"wrapper_cash"},{"id":"income","kind":"account","owner":"claimant","accountType":"income"}],
+        "roles": {"owner":"claimant","source":"bond","destination":"cash"},
         "amounts": {"quotedAdjustedPrincipalCents":"105000","quotedCouponCents":"1000"},
-        "terms": {"coupon":"explicit synthetic statement quote, not a computed coupon","settlement":"wrapper cash; no implicit transfer to checking"},
+        "terms": {"coupon":"explicit synthetic statement quote, not a computed coupon","settlement":"wrapper cash; no implicit transfer to checking","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"income","kind":"income","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -796,7 +828,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"bond","kind":"account","owner":"claimant","accountType":"tips"},{"id":"cash","kind":"account","owner":"claimant","accountType":"wrapper_cash"}],
+        "roles": {"owner":"claimant","source":"bond","destination":"cash"},
         "amounts": {"originalPrincipalCents":"100000"},
         "terms": {"maturity":"2026-01-15","adjustedPrincipal":"unresolved","floor":"unresolved"},
         "accounts": []
@@ -820,9 +853,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"bond","kind":"account","owner":"claimant","accountType":"series_ee"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"income","kind":"account","owner":"claimant","accountType":"income"}],
+        "roles": {"owner":"claimant","source":"bond","destination":"cash"},
         "amounts": {"purchaseCents":"100000","quotedRedemptionCents":"120000"},
-        "terms": {"issueDate":"2020-01-15","purchaseDate":"2020-01-15","redemptionDate":"2026-01-15","valuation":"explicit quote; carrying value remains purchase cost in this accounting-only scenario","elections":"none inferred"},
+        "terms": {"issueDate":"2020-01-15","purchaseDate":"2020-01-15","redemptionDate":"2026-01-15","valuation":"explicit quote; carrying value remains purchase cost in this accounting-only scenario","elections":"none inferred","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"0"},{"id":"bond","kind":"position","owner":"claimant","openingCents":"100000"},{"id":"income","kind":"income","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -845,7 +879,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"bond","kind":"account","owner":"claimant","accountType":"series_ee"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"}],
+        "roles": {"owner":"claimant","source":"bond","destination":"cash"},
         "amounts": {"purchaseCents":"100000"},
         "terms": {"issueDate":"2026-01-15","accrualRule":"missing issue-vintage rule","redemptionRestrictions":"missing effective holding/penalty/guarantee rule"},
         "accounts": []
@@ -869,9 +904,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"education_529"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"education","kind":"account","owner":"claimant","plan":"plan","accountType":"education_529"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"education","beneficiary":"beneficiary","plan":"plan"},
         "amounts": {"contributionCents":"50000"},
-        "terms": {"owner":"claimant","beneficiary":"beneficiary","funding":"owned cash","valuation":"purchase at par; no fees/growth","jurisdiction":"not supplied"},
+        "terms": {"owner":"claimant","beneficiary":"beneficiary","funding":"owned cash","valuation":"purchase at par; no fees/growth","jurisdiction":"not supplied","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"education","kind":"position","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -894,7 +930,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"education_529"},{"id":"source","kind":"account","owner":"claimant","plan":"plan","accountType":"education_529"},{"id":"destination","kind":"account","owner":"claimant","accountType":"bank_cash"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination","beneficiary":"beneficiary","plan":"plan"},
         "amounts": {"requestedCents":"50000","balanceCents":"100000","contributedBasisCents":"80000"},
         "terms": {"owner":"claimant","beneficiary":"beneficiary","distributionCharacter":"qualified","expenseEvidence":"not supplied","settlement":"explicit destination required"},
         "accounts": []
@@ -918,7 +955,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"education_529"},{"id":"source","kind":"account","owner":"claimant","plan":"plan","accountType":"education_529"},{"id":"destination","kind":"account","owner":"claimant","accountType":"bank_cash"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination","beneficiary":"beneficiary","plan":"plan"},
         "amounts": {"requestedCents":"50000","balanceCents":"100000","contributedBasisCents":"80000"},
         "terms": {"owner":"claimant","beneficiary":"beneficiary","distributionCharacter":"nonqualified","expenseEvidence":"not supplied","settlement":"explicit destination required"},
         "accounts": []
@@ -942,9 +980,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"education_529"},{"id":"destination_plan","kind":"plan","owner":"claimant","family":"education_529"},{"id":"source","kind":"account","owner":"claimant","plan":"plan","accountType":"education_529"},{"id":"destination","kind":"account","owner":"claimant","plan":"destination_plan","accountType":"education_529"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination","beneficiary":"beneficiary","plan":"plan","destinationPlan":"destination_plan"},
         "amounts": {"transferCents":"50000"},
-        "terms": {"owner":"same claimant","beneficiary":"same beneficiary","eligibility":"must be verified independently","jurisdictions":"missing","valuation":"par; no fees"},
+        "terms": {"owner":"claimant","beneficiary":"beneficiary","eligibility":"must be verified independently","jurisdictions":"missing","valuation":"par; no fees","ownerDescription":"same claimant","beneficiaryDescription":"same beneficiary","eventDate":"2026-01-15"},
         "accounts": [{"id":"source","kind":"position","owner":"claimant","openingCents":"100000"},{"id":"destination","kind":"position","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -967,7 +1006,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"education_529"},{"id":"education","kind":"account","owner":"claimant","plan":"plan","accountType":"education_529"}],
+        "roles": {"owner":"claimant","source":"education","destination":"education","beneficiary":"beneficiary","plan":"plan","previousBeneficiary":"claimant"},
         "amounts": {"balanceCents":"100000"},
         "terms": {"oldBeneficiary":"claimant","newBeneficiary":"beneficiary","relationship":"missing legally material fact","owner":"claimant"},
         "accounts": []
@@ -991,7 +1031,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"education_529"},{"id":"source","kind":"account","owner":"claimant","plan":"plan","accountType":"education_529"},{"id":"destination","kind":"account","owner":"beneficiary","accountType":"roth_ira"}],
+        "roles": {"owner":"claimant","source":"source","destination":"destination","beneficiary":"beneficiary","plan":"plan"},
         "amounts": {"requestedCents":"50000","priorLifetimeRolloversCents":"0","currentIraUsageCents":"0"},
         "terms": {"accountOpened":"2010-01-15","beneficiary":"beneficiary","destinationOwner":"beneficiary","holdingEvidence":"dated contribution/earnings lots missing","statutoryRule":"missing effective lifetime/annual/age/holding/compensation rule"},
         "accounts": []
@@ -1015,9 +1056,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"health_insurance"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"premium","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"premium","plan":"plan","coveredMembers":["claimant","beneficiary"]},
         "amounts": {"grossPremiumCents":"30000","employerShareCents":"0","householdShareCents":"30000"},
-        "terms": {"coveredMembers":"claimant, beneficiary","effectiveStart":"2026-01-01","effectiveEndExclusive":"2026-02-01","frequency":"monthly","funding":"owned cash after tax"},
+        "terms": {"coveredMembers":"claimant, beneficiary","effectiveStart":"2026-01-01","effectiveEndExclusive":"2026-02-01","frequency":"monthly","funding":"owned cash after tax","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -1040,7 +1082,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"beneficiary","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"health_insurance","sponsor":"employer"},{"id":"cash","kind":"account","owner":"claimant","accountType":"payroll"},{"id":"premium","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"premium","plan":"plan","coveredMembers":["claimant","beneficiary"],"employer":"employer"},
         "amounts": {"grossPremiumCents":"30000","employerShareCents":"10000","employeeShareCents":"20000","grossWagesCents":"200000"},
         "terms": {"coveredMembers":"claimant, beneficiary","funding":"pre-tax payroll","effectiveStart":"2026-01-01","effectiveEndExclusive":"2026-02-01","frequency":"monthly"},
         "accounts": []
@@ -1064,9 +1107,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"medicare"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"premium","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"premium","plan":"plan","coveredMembers":["claimant"]},
         "amounts": {"authoredPremiumCents":"30000"},
-        "terms": {"electedPart":"part_a","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case"},
+        "terms": {"electedPart":"part_a","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -1089,9 +1133,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"medicare"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"premium","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"premium","plan":"plan","coveredMembers":["claimant"]},
         "amounts": {"authoredPremiumCents":"30000"},
-        "terms": {"electedPart":"part_b","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case"},
+        "terms": {"electedPart":"part_b","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -1114,9 +1159,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"medicare"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"premium","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"premium","plan":"plan","coveredMembers":["claimant"]},
         "amounts": {"authoredPremiumCents":"30000"},
-        "terms": {"electedPart":"part_d","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case"},
+        "terms": {"electedPart":"part_d","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -1139,9 +1185,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"medicare"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"premium","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"premium","plan":"plan","coveredMembers":["claimant"]},
         "amounts": {"authoredPremiumCents":"30000"},
-        "terms": {"electedPart":"advantage","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case"},
+        "terms": {"electedPart":"advantage","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -1164,9 +1211,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"medicare"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"premium","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"premium","plan":"plan","coveredMembers":["claimant"]},
         "amounts": {"authoredPremiumCents":"30000"},
-        "terms": {"electedPart":"medigap","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case"},
+        "terms": {"electedPart":"medigap","coveredMember":"claimant","eligibility":"explicit future contract; never derive from generic age alone","schedule":"authored quote on 2026-01-15","funding":"owned cash, separate from benefit withholding in this case","eventDate":"2026-01-15"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
       },
       "expected": {
@@ -1189,7 +1237,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"medicare"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"premium","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"premium","plan":"plan","coveredMembers":["claimant"]},
         "amounts": {"authoredBasePremiumCents":"30000"},
         "terms": {"incomeReference":"authoritative income/tax facts required","lookback":"missing effective rule","filingStatus":"missing","surchargeRule":"missing"},
         "accounts": []
@@ -1213,7 +1262,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"health_fsa","sponsor":"employer"},{"id":"payroll_source","kind":"account","owner":"claimant","accountType":"payroll"},{"id":"reimbursement_cash","kind":"account","owner":"claimant","accountType":"bank_cash"}],
+        "roles": {"owner":"claimant","source":"payroll_source","destination":"reimbursement_cash","plan":"plan","employer":"employer"},
         "amounts": {"annualElectionCents":"100000","payrollContributionCents":"10000","requestedReimbursementCents":"20000"},
         "terms": {"planYearStart":"2026-01-01","planYearEndExclusive":"2027-01-01","owner":"claimant","availableBalance":"uniform coverage/availability contract missing","settlement":"explicit reimbursement proof and destination required","yearEndTerms":"payroll_contribution"},
         "accounts": []
@@ -1237,7 +1287,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"health_fsa","sponsor":"employer"},{"id":"payroll_source","kind":"account","owner":"claimant","accountType":"payroll"},{"id":"reimbursement_cash","kind":"account","owner":"claimant","accountType":"bank_cash"}],
+        "roles": {"owner":"claimant","source":"payroll_source","destination":"reimbursement_cash","plan":"plan","employer":"employer"},
         "amounts": {"annualElectionCents":"100000","payrollContributionCents":"10000","requestedReimbursementCents":"20000"},
         "terms": {"planYearStart":"2026-01-01","planYearEndExclusive":"2027-01-01","owner":"claimant","availableBalance":"uniform coverage/availability contract missing","settlement":"explicit reimbursement proof and destination required","yearEndTerms":"reimbursement"},
         "accounts": []
@@ -1261,7 +1312,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"health_fsa","sponsor":"employer"},{"id":"payroll_source","kind":"account","owner":"claimant","accountType":"payroll"},{"id":"reimbursement_cash","kind":"account","owner":"claimant","accountType":"bank_cash"}],
+        "roles": {"owner":"claimant","source":"payroll_source","destination":"reimbursement_cash","plan":"plan","employer":"employer"},
         "amounts": {"annualElectionCents":"100000","payrollContributionCents":"10000","requestedReimbursementCents":"20000"},
         "terms": {"planYearStart":"2026-01-01","planYearEndExclusive":"2027-01-01","owner":"claimant","availableBalance":"uniform coverage/availability contract missing","settlement":"explicit reimbursement proof and destination required","yearEndTerms":"carryover"},
         "accounts": []
@@ -1285,7 +1337,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"health_fsa","sponsor":"employer"},{"id":"payroll_source","kind":"account","owner":"claimant","accountType":"payroll"},{"id":"reimbursement_cash","kind":"account","owner":"claimant","accountType":"bank_cash"}],
+        "roles": {"owner":"claimant","source":"payroll_source","destination":"reimbursement_cash","plan":"plan","employer":"employer"},
         "amounts": {"annualElectionCents":"100000","payrollContributionCents":"10000","requestedReimbursementCents":"20000"},
         "terms": {"planYearStart":"2026-01-01","planYearEndExclusive":"2027-01-01","owner":"claimant","availableBalance":"uniform coverage/availability contract missing","settlement":"explicit reimbursement proof and destination required","yearEndTerms":"grace_period"},
         "accounts": []
@@ -1309,7 +1362,8 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"employer","kind":"employer"},{"id":"plan","kind":"plan","owner":"claimant","family":"health_fsa","sponsor":"employer"},{"id":"payroll_source","kind":"account","owner":"claimant","accountType":"payroll"},{"id":"reimbursement_cash","kind":"account","owner":"claimant","accountType":"bank_cash"}],
+        "roles": {"owner":"claimant","source":"payroll_source","destination":"reimbursement_cash","plan":"plan","employer":"employer"},
         "amounts": {"annualElectionCents":"100000","payrollContributionCents":"10000","requestedReimbursementCents":"20000"},
         "terms": {"planYearStart":"2026-01-01","planYearEndExclusive":"2027-01-01","owner":"claimant","availableBalance":"uniform coverage/availability contract missing","settlement":"explicit reimbursement proof and destination required","yearEndTerms":"forfeiture"},
         "accounts": []
@@ -1333,9 +1387,10 @@
         "currency": "USD",
         "unit": "integer_cents",
         "provenance": "synthetic",
-        "identities": ["claimant","beneficiary","employer","plan","source","destination"],
+        "identities": [{"id":"claimant","kind":"person"},{"id":"plan","kind":"plan","owner":"claimant","family":"health_insurance"},{"id":"cash","kind":"account","owner":"claimant","accountType":"bank_cash"},{"id":"premium","kind":"account","owner":"claimant","accountType":"expense"}],
+        "roles": {"owner":"claimant","source":"cash","destination":"premium","plan":"plan","coveredMembers":["claimant"]},
         "amounts": {"authoredPremiumCents":"30000"},
-        "terms": {"effectiveStart":"2025-12-01","effectiveEndExclusive":"2026-01-01","candidatePayment":"2026-01-01","frequency":"monthly","funding":"cash"},
+        "terms": {"effectiveStart":"2025-12-01","effectiveEndExclusive":"2026-01-01","candidatePayment":"2026-01-01","frequency":"monthly","funding":"cash","eventDate":"2026-01-01"},
         "accounts": [{"id":"cash","kind":"cash","owner":"claimant","openingCents":"100000"},{"id":"premium","kind":"expense","owner":"claimant","openingCents":"0"}]
       },
       "expected": {

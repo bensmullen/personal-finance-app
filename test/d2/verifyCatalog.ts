@@ -1,4 +1,6 @@
 import { catalogSchema, centsSchema, type D2Case } from "../fixtures/d2/schema.js";
+import { verifyFamilyInput } from "../fixtures/d2/inputContracts.js";
+import { verifyEconomicContract } from "./verifyEconomicContract.js";
 
 /** Test-only reconciliation of stated economic legs. This does not execute a
  * D2 product, calculate tax law, select funding, or resolve capability gaps. */
@@ -53,7 +55,7 @@ export function verifyCatalog(value: unknown) {
     if (ids.has(item.id)) throw new Error("duplicate case");
     ids.add(item.id);
     if (item.period.start >= item.period.endExclusive) throw new Error("empty or reversed period");
-    const identities = new Set(item.input.identities);
+    const identities = new Set(item.input.identities.map(identity => identity.id));
     if (identities.size !== item.input.identities.length) throw new Error("duplicate identity");
     for (const account of item.input.accounts) {
       if (!identities.has(account.owner)) throw new Error("unknown account owner");
@@ -67,6 +69,8 @@ export function verifyCatalog(value: unknown) {
       if (JSON.stringify(reconciled.closingCents) !== JSON.stringify(Object.fromEntries(Object.entries(effects.closingCents).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)))) throw new Error("closing balance mismatch");
       if (reconciled.cashDeltaCents !== effects.cashDeltaCents || reconciled.netWorthDeltaCents !== effects.netWorthDeltaCents || reconciled.recognition.incomeCents !== effects.recognition.incomeCents || reconciled.recognition.expenseCents !== effects.recognition.expenseCents) throw new Error("expected effect mismatch");
     }
+    verifyFamilyInput(item);
+    verifyEconomicContract(item);
   }
   return catalog;
 }

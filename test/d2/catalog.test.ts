@@ -73,8 +73,10 @@ describe("D2 preparation catalog (no integrated runtime claims)", () => {
     for (const item of catalog.cases) {
       const reordered = structuredClone(item);
       reordered.input.accounts.reverse();
+      reordered.input.identities.reverse();
       reordered.expected.effects?.transactions.forEach(transaction => transaction.legs.reverse());
       expect(reconcileStatedEffects(reordered)).toEqual(reconcileStatedEffects(item));
+      expect(verifyCatalog({ ...catalog, cases: [reordered] }).cases[0]).toEqual(reordered);
       expect(reconcileStatedEffects(item)).toEqual(reconcileStatedEffects(structuredClone(item)));
     }
     expect(JSON.stringify(catalog)).toBe(before);
@@ -119,7 +121,7 @@ describe("D2 preparation catalog (no integrated runtime claims)", () => {
     ["duplicate account", (value: D2Catalog) => { value.cases[0]!.input.accounts.push(structuredClone(value.cases[0]!.input.accounts[0]!)); }],
     ["duplicate transaction", (value: D2Catalog) => { value.cases[0]!.expected.effects!.transactions.push(structuredClone(value.cases[0]!.expected.effects!.transactions[0]!)); }],
     ["empty or reversed period", (value: D2Catalog) => { value.cases[0]!.period.endExclusive = value.cases[0]!.period.start; }],
-    ["duplicate identity", (value: D2Catalog) => { value.cases[0]!.input.identities.push("claimant"); }],
+    ["duplicate identity", (value: D2Catalog) => { value.cases[0]!.input.identities.push({ id: "claimant", kind: "person" }); }],
     ["negative financial balance", (value: D2Catalog) => { value.cases[0]!.input.accounts[0]!.openingCents = "-100000"; }],
   ] as const)("rejects %s", (message, change) => {
     const altered = clone();
