@@ -311,11 +311,11 @@ function ObjectEditor({
   };
   const incompatibleFields = type === "Investment" && editing ? Object.keys(fields).filter(name => !investmentFieldApplies(name, editing)) : [];
   const editableFields = Object.keys(fields).filter((name) =>
-    name !== descriptor.idField && !fields[name]!.derived && !internalReference(fields[name]!) && !incompatibleFields.includes(name));
+    name !== "filing_status" && name !== descriptor.idField && !fields[name]!.derived && !internalReference(fields[name]!) && !incompatibleFields.includes(name));
   const commonFields = editableFields.filter((name) => entityField(name, type)?.disclosure === "common" || type === "Investment" && name === "instrument_subtype" || (creating && entityField(name, type) && fields[name]!.required && !fields[name]!.mutable));
   const secondaryFields = editableFields.filter((name) => entityField(name, type) && !commonFields.includes(name));
   const expertFields: string[] = [];
-  const managedFields = Object.keys(fields).filter((name) => internalReference(fields[name]!) || (!entityField(name, type) && name !== descriptor.idField));
+  const managedFields = Object.keys(fields).filter((name) => name === "filing_status" || internalReference(fields[name]!) || (!entityField(name, type) && name !== descriptor.idField));
   const remove = (item: JsonObject) => {
     const result = deletePersonalObject(draft, type, objectId(type, item));
     if (!result.deleted) {

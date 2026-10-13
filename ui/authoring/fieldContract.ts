@@ -140,7 +140,7 @@ const rows: readonly Row[] = [
   ["purchaseOrder", "Same-day purchase order", "Lower numbers buy first when purchases compete for bank cash.", "integer", "nonnegative order", "10", "advanced", ["purchaseFunding"]],
   ["age", "Age at year end", "Age on December 31 used for catch-up eligibility.", "integer", "years", "36", "advanced", ["taxYear"]],
   ["taxableCompensation", "Annual earned pay", "Full-year IRA-eligible taxable compensation; investment income is excluded.", "money", "USD / year", "108000.00", "advanced"],
-  ["filingStatus", "Contribution filing status", "Established filing status for the contribution year.", "choice", "status", "Single", "advanced"],
+  ["filingStatus", "Annual household filing status", "One status for the complete calendar tax year, shared by household taxes and IRA eligibility.", "choice", "status", "Single", "advanced"],
   ["rothMagi", "Income for Roth IRA eligibility", "Modified adjusted gross income from the Roth IRA worksheet, not gross salary.", "money", "USD / year", "108000.00", "advanced", ["filingStatus"]],
   ["deductionMagi", "Income for IRA deduction", "Modified adjusted gross income from the traditional IRA deduction worksheet.", "money", "USD / year", "108000.00", "advanced", ["filingStatus", "covered"]],
   ["covered", "Workplace plan coverage", "Whether you are covered by a workplace retirement plan.", "choice", "yes / no / unknown", "Yes", "advanced"],

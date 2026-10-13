@@ -21,7 +21,7 @@ import { summarizeHouseholdPeriod } from "../src/simulation/r3/forecastSummary.j
 import { federalBaseDeductionOnlyEligibilityKey, fullYearResidentEligibilityKey } from "../src/rules/tax/contracts.js";
 import { recognizedGrossTaxableBaseEligibilityKey } from "../src/rules/tax/recognition.js";
 import { createD1IntegratedHousehold, d1IntegratedCompilerRequest, integratedId, integratedIds } from "./fixtures/d1IntegratedHousehold.js";
-import { contributionFactSources, annualFieldOwners, recordAnnualFinancialFact, annualFactScope, type AnnualField } from "../src/application/financialFacts.js";
+import { contributionFactSources, annualFieldOwners, annualFieldsFor, recordAnnualFinancialFact, annualFactScope, type AnnualField } from "../src/application/financialFacts.js";
 import { factScopeKey } from "../src/application/factResolution.js";
 import { withContributionYearSchedule } from "../src/application/contributionYearFacts.js";
 
@@ -32,6 +32,7 @@ const withDatedFacts = (original: PersonalDraft, endYear: number): PersonalDraft
   for (let year = 2027; year < endYear; year++) for (const source of contributionFactSources(original)) {
     for (const field of Object.keys(annualFieldOwners) as AnnualField[]) {
       if (field === "ageAtYearEnd" || source.facts[field] === undefined) continue;
+      if (!annualFieldsFor(source.accountType).includes(field)) continue;
       const scope = annualFactScope(field, { ...source.scope, taxYear: year });
       const key = `${field}:${factScopeKey(scope)}`;
       if (seen.has(key)) continue;

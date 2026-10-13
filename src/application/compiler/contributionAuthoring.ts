@@ -101,7 +101,7 @@ export const compileContributionPolicy = (model: PortableModelEnvelope, account:
   });
   if (character.includes("401k") && limits.filter(binding => binding.kind === "401k_additions").length !== 1) return fail("ANNUAL_ADDITIONS_ACCOUNT_PLAN_AMBIGUOUS");
   const original = parseContributionFacts(value.facts);
-  const raw = record(value.facts) ? { ...value.facts } : { taxYear: original.taxYear };
+  const raw: Record<string, JsonValue> = record(value.facts) ? { ...value.facts } : { taxYear: original.taxYear };
   const sponsorId = limits.find(binding => binding.kind === "401k_additions")?.bucketKey.slice("401k_additions:".length);
   const relevant: AnnualField[] = character.endsWith("_hsa") ? ["ageAtYearEnd", "hsaFullYearEligible", "hsaCoverage", "hsaFamilyAllocation"]
     : character.includes("401k") ? ["ageAtYearEnd", "eligiblePlanCompensation", "priorYearSponsorWages", "planHasRoth"]

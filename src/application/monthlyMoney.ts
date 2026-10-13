@@ -62,7 +62,7 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
     if (seen.has(tx.id)) continue;
     seen.add(tx.id);
     const payrollStream = executable.cashFlowInput?.incomes.find(stream =>
-      tx.id.includes(String(stream.id)) || tx.traceRefs.some(ref => ref.traceId.includes(String(stream.id))));
+      tx.id.includes(String(stream.id)) || tx.traceRefs?.some(ref => ref.traceId.includes(String(stream.id))));
     const source = model && objects(model, "Income").find(item => item.income_id === payrollStream?.id);
     const isPay = tx.type === "payroll_income" || tx.type === "income" && source?.income_type === "salary" && source.gross_or_net !== "net";
     for (const [index, leg] of tx.legs.entries()) {

@@ -1,4 +1,4 @@
-import type { VerticalSlice2Input } from "../simulation/verticalSlice2.js";
+import type { CompiledCashFlow } from "./compiler/cashFlow.js";
 import type { PortableModelEnvelope } from "../model/modelVersion.js";
 import { evaluatePrimitive, primitiveEvaluationContext } from "../primitives/index.js";
 import { domainId } from "../identity/index.js";
@@ -7,7 +7,7 @@ import { Money, RateBasis, RoundingPolicy } from "../values/index.js";
 import { monthlyOccurrences, objects } from "./compiler/shared.js";
 
 /** Reuse D1 recurrence and P08 growth; this read model posts no money or usage. */
-export function projectAnnualPay(model: PortableModelEnvelope, input: VerticalSlice2Input, personId: string, year: number, sponsorId?: string) {
+export function projectAnnualPay(model: PortableModelEnvelope, input: CompiledCashFlow["input"], personId: string, year: number, sponsorId?: string) {
   const start = instant(`${year}-01-01T00:00:00.000Z`), end = instant(`${year + 1}-01-01T00:00:00.000Z`);
   const salaries = input.incomes.filter(stream => stream.ownerId === personId && objects(model, "Income").some(source => source.income_id === stream.id && source.income_type === "salary" && source.gross_or_net !== "net") &&
     (sponsorId === undefined || stream.payrollContributions?.some(allocation => allocation.policy.limits.some(binding => binding.kind === "401k_additions" && binding.bucketKey === `401k_additions:${sponsorId}`))));

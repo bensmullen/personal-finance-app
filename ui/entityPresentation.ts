@@ -4,6 +4,7 @@ import { openingInvestmentAccountValues } from "../src/application/presentation.
 export { percentageToRate, rateToPercentage } from "../src/application/presentation.js";
 
 export interface DisplayDiagnostic {
+  readonly taxYear?: string;
   readonly code?: string;
   readonly message?: string;
   readonly entityType?: string;
@@ -20,7 +21,7 @@ export function groupDiagnostics(diagnostics: readonly DisplayDiagnostic[]) {
   for (const diagnostic of diagnostics) {
     // Tax roots recur for different income records and outputs. The same remedy
     // is shared, while their individual record context stays in technical detail.
-    const key = JSON.stringify([diagnostic.code, diagnostic.category, diagnostic.jurisdiction,
+    const key = JSON.stringify([diagnostic.code, diagnostic.category, diagnostic.jurisdiction, diagnostic.taxYear,
       diagnostic.entityType === "tax_capability" ? undefined : diagnostic.entityId,
       diagnostic.fieldPath, diagnostic.entityType === "tax_capability" && diagnostic.category ? undefined : diagnostic.message,
       [...(diagnostic.relatedIds ?? [])].sort()]);

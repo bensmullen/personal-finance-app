@@ -4,6 +4,15 @@ import type { D1ContributionFacts } from "../rules/contribution2026.js";
 import { deriveD1ContributionCapacity } from "../rules/contribution2026.js";
 import { parseContributionFacts } from "./compiler/contributionAuthoring.js";
 import { resolveAnnualFinancialFact, type AnnualField } from "./financialFacts.js";
+import type { FilingStatus } from "../rules/tax/contracts.js";
+
+/** Fresh execution uses the same filing unit/year authority as household taxes. */
+export function withAnnualFilingStatus(model: PortableModelEnvelope, policy: ContributionPolicy, openingReference?: string): ContributionPolicy {
+  if (!policy.character.endsWith("_ira")) return policy;
+  const resolved = resolveAnnualFinancialFact(model, "filingStatus", { personId: policy.personId, householdId: policy.householdId, taxYear: policy.facts.taxYear }, openingReference);
+  const { filingStatus: _old, ...facts } = policy.facts;
+  return { ...policy, facts: { ...facts, ...(resolved.value === undefined || resolved.status === "true_conflict" ? {} : { filingStatus: resolved.value as FilingStatus }) } };
+}
 
 const fieldsFor = (kind: string): readonly (keyof D1ContributionFacts)[] => kind === "401k_additions" ? ["eligiblePlanCompensation"]
   : kind === "401k_elective" ? ["ageAtYearEnd", "priorYearSponsorWages", "planHasRoth"]
@@ -13,7 +22,7 @@ const fieldsFor = (kind: string): readonly (keyof D1ContributionFacts)[] => kind
 
 /** Original dated facts only. Adapter snapshots never propagate into another year. */
 export function resolveContributionYearSchedule(model: PortableModelEnvelope, policy: ContributionPolicy,
-  start: string, end: string): readonly SourceQualifiedContributionYear[] {
+  start: string, end: string, openingReference?: string): readonly SourceQualifiedContributionYear[] {
   const rows: SourceQualifiedContributionYear[] = [];
   // Dates are compiler-validated UTC boundaries. End is exclusive.
   const first = Number(start.slice(0, 4)), last = Number(end.slice(0, 4));
@@ -26,7 +35,7 @@ export function resolveContributionYearSchedule(model: PortableModelEnvelope, po
       const sources: SourceQualifiedContributionYear["sources"][number][] = [];
       const problems: string[] = [];
       for (const field of fieldsFor(binding.kind)) {
-        const resolved = resolveAnnualFinancialFact(model, field as AnnualField, { personId: policy.personId, householdId: policy.householdId, taxYear: year, ...(sponsorId === undefined ? {} : { sponsorId }) });
+        const resolved = resolveAnnualFinancialFact(model, field as AnnualField, { personId: policy.personId, householdId: policy.householdId, taxYear: year, ...(sponsorId === undefined ? {} : { sponsorId }) }, openingReference);
         sources.push(...resolved.sources.map(source => ({ id: source.id, field, ruleVersion: source.ruleVersion ?? "dated-contribution-fact/v1" })));
         if (resolved.status === "true_conflict") problems.push(`${year}: conflicting ${field} in ${resolved.sources.map(source => source.label).join(", ")}`);
         else if (resolved.value !== undefined) values[field] = resolved.value;
@@ -44,6 +53,6 @@ export function resolveContributionYearSchedule(model: PortableModelEnvelope, po
   return Object.freeze(rows);
 }
 
-export function withContributionYearSchedule(model: PortableModelEnvelope, policy: ContributionPolicy, start: string, end: string): ContributionPolicy {
-  return { ...policy, forecastLawPolicy: "projected_current_law", annualFacts: resolveContributionYearSchedule(model, policy, start, end) };
+export function withContributionYearSchedule(model: PortableModelEnvelope, policy: ContributionPolicy, start: string, end: string, openingReference?: string): ContributionPolicy {
+  return { ...withAnnualFilingStatus(model, policy, openingReference), forecastLawPolicy: "projected_current_law", annualFacts: resolveContributionYearSchedule(model, policy, start, end, openingReference) };
 }

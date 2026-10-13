@@ -32,7 +32,7 @@ import {
 import { z } from "zod";
 import { payrollCharacters, authoringFailure } from "./authoring/contributionChoices.js";
 import { authoredAnnualFacts } from "../src/application/financialFacts.js";
-import { FinancialFactEditors, AnnualFactsOwner, AnnualFactsReview } from "./authoring/FinancialFactEditors.js";
+import { FinancialFactEditors, AnnualFactsOwner, AnnualFactsReview, AnnualFilingRepair } from "./authoring/FinancialFactEditors.js";
 import { financialField, fieldProblem, compareDecimal, unvestedProblem, effectiveAnnualReturnProblem, entityField as financialFieldOrUndefined } from "./authoring/fieldContract.js";
 import { GuidedFields } from "./authoring/GuidedFields.js";
 import { FinancialSection, focusRepair, FinancialInput, commitAtControl } from "./authoring/FieldShell.js";
@@ -722,7 +722,7 @@ export function PersonalFinanceApp() {
   };
 
   return (
-    <FinancialFactEditors draft={draft} setDraft={updateCanonicalModel}>
+    <FinancialFactEditors draft={draft} setDraft={updateCanonicalModel} openingReference={sessionSettings.asOf || sessionSettings.simulationStart}>
     <FinancialResultModels.Provider value={{ model: draft, baseline: interactive.baseline, comparison: interactive.comparison, explanations,
       reviewContributions: (investmentId, kind) => {
         setContributionTarget(investmentId && kind ? { investmentId, kind } : undefined);
@@ -2768,6 +2768,7 @@ function DiagnosticList({
           <div key={group.key} data-diagnostic-root={group.key}>
             <p>{diagnosticSummary(group.diagnostic, model ?? currentModel).problem}</p>
             <p>{diagnosticSummary(group.diagnostic, model ?? currentModel).remedy}</p>
+            {(model ?? currentModel) && group.diagnostic.category?.startsWith("filing_status") && group.diagnostic.entityId && group.diagnostic.taxYear && <AnnualFilingRepair draft={(model ?? currentModel)!} personId={group.diagnostic.entityId} year={group.diagnostic.taxYear} />}
             {(group.diagnostic.category === "payment_funding" || group.diagnostic.category === "settlement_timing") && <ForecastSetupLink target="taxSetup" />}
             {(model ?? currentModel) && <DiagnosticReferences targets={diagnosticTargets((model ?? currentModel)!, group.diagnostic)} />}
           </div>

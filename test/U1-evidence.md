@@ -1,5 +1,36 @@
 # U1 implementation evidence — issue #94
 
+## Annual household filing continuation (2026-10-13) — implementation in progress
+
+Issue #94 now authorizes the three tax participant/contract/codec files. Fresh
+compilation transports one immutable household filing-unit record per tax year,
+resolved by the same annual source reader used by IRA eligibility. An undated
+Household/Person status establishes only the explicit as-of year (or explicit
+opening simulation-start year); no wall-clock year or perpetual fallback exists.
+Matching authorities coalesce; disagreements require an acknowledged source
+correction in the shared Household & People annual editor. Canonical legacy
+snapshots and historical contribution money are preserved.
+
+New artifacts use household-tax/v2; household-tax/v1 retains its historical
+fixed-status calculation, participant version and portable input. Annual source
+identity/version/status travels in v2 and tax traces. Missing/conflicting years
+produce year-specific incompleteness and an in-context filing repair action;
+the old canonical filing-status input is now a managed read-only snapshot.
+
+Added `u1AnnualFilingStatus.test.ts` covers anchored/unanchored legacy years,
+explicit 2027 status shared with IRA facts, catalog selection, named conflicts,
+acknowledged repair, import/reload, new replay parity and unchanged v1 arithmetic.
+Existing synthetic catch-up fixtures now supply DOB matching their intended
+50/55-year-old participants; their monetary expectations are unchanged.
+
+Starting head `3cbb519` failed GitHub CI (run 38194779215): typecheck, build,
+architecture and seven unit cases. This continuation repairs the reported
+readonly/optional typing, uses the compiler-owned cash-flow boundary for annual
+pay, and limits explicit future fixture facts to their applicable legal family.
+No local verification ran. New-head CI is pending. The whole-registry ownership
+migration and browser journeys remain active work; this entry claims neither
+complete U1 acceptance nor green CI. PR #98 stays draft and #94/D1 remain open.
+
 ## October 12 source-owner continuation — partial, blocked at household filing status
 
 This is the current checkpoint and supersedes the older blockers below. The

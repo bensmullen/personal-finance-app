@@ -8,6 +8,7 @@ import { exportPersonalModelJson, importPersonalModelJson, getPayrollContributio
 import { instant } from "../src/time/index.js";
 import { GOLDEN_HOUSEHOLD_IDS as golden } from "../src/application/goldenHousehold.js";
 import { createD1IntegratedHousehold, d1IntegratedCompilerRequest, integratedId } from "./fixtures/d1IntegratedHousehold.js";
+import { isFactRecord } from "../src/application/financialFacts.js";
 
 describe("U1 original annual sources and audited corrections", () => {
   const scope = { personId: golden.person, householdId: golden.household, taxYear: 2026, sponsorId: "golden-employer" };
@@ -21,10 +22,10 @@ describe("U1 original annual sources and audited corrections", () => {
     expect(resolveAnnualFinancialFact(corrected, "eligiblePlanCompensation", scope)).toMatchObject({ status: "known", value: "120000" });
     expect(corrected.objects.Account).toEqual(model.objects.Account);
     expect(corrected.objects.Investment).toEqual(model.objects.Investment);
-    expect(corrected.objects.PrimitiveInstance).toEqual(expect.arrayContaining(model.objects.PrimitiveInstance!));
+    for (const primitive of model.objects.PrimitiveInstance!) expect(corrected.objects.PrimitiveInstance).toContainEqual(primitive);
     expect(importPersonalModelJson(exportPersonalModelJson(corrected))).toEqual(corrected);
     const imported = { ...corrected, objects: { ...corrected.objects, PrimitiveInstance: corrected.objects.PrimitiveInstance!.map(item => {
-      if (item === null || Array.isArray(item) || typeof item !== "object" || item.primitive_instance_id !== source.id) return item;
+      if (!isFactRecord(item) || item.primitive_instance_id !== source.id) return item;
       const parameters = item.parameters as Record<string, unknown>;
       const contribution = parameters.contribution as Record<string, unknown>;
       return { ...item, parameters: { ...parameters, contribution: { ...contribution, facts: { ...contribution.facts as object, eligiblePlanCompensation: "130000" } } } };
