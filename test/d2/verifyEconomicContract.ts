@@ -10,7 +10,8 @@ export const conditionalCases = [
   "credit_card_revolve", "heloc_draw", "debt_unfunded", "tips_coupon",
   "ee_redemption_quote", "529_contribution", "health_after_tax",
   "medicare_part_a", "medicare_part_b", "medicare_part_d", "medicare_advantage",
-  "medicare_medigap", "premium_end_exclusive",+] as const;
+  "medicare_medigap", "premium_end_exclusive",
+] as const;
 
 export function verifyEconomicContract(item: D2Case) {
   const effects = item.expected.effects;
