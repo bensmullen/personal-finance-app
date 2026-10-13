@@ -36,7 +36,7 @@ const rows: readonly Row[] = [
   ["setupSpending", "Monthly spending", "Recurring monthly household spending.", "money", "USD / month", "4200.00"],
   ["setupHorizon", "Projection horizon (years)", "Initial planning duration; forecast dates can be changed after setup.", "integer", "years", "10", "common", ["setupStart"]],
   ["setupStart", "Projection start date", "First day of the opening forecast month.", "date", "date", "2026-01-01", "common", ["setupHorizon"]],
-  ["operation", "Operation", "Scheduled financial activity using existing supported plan operations.", "choice", "activity", "Schedule mortgage extra principal"],
+  ["operation", "Activity type", "Choose the supported transaction or change to schedule for this financial item.", "choice", "activity", "Schedule mortgage extra principal"],
   ["operationDate", "Operation date", "Date the saved activity occurs; mortgage operations require a scheduled payment date.", "date", "date", "2031-01-01", "common", ["paymentAnchor"]],
   ["operationMortgage", "Mortgage", "Existing fixed mortgage affected by this activity.", "choice", "loan", "Example mortgage"],
   ["operationAmount", "Operation cash amount", "Cash used for the selected activity, separate from investment units.", "money", "currency", "100.00"],

@@ -37,9 +37,9 @@ test("U1 source-holding activity owns distributions, exercise and linked retirem
   await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
   const stock = await activity(page, ids.brokerageInvestment);
   await expect(stock.getByLabel("Source / target holding", { exact: true })).toBeDisabled();
-  await expect(stock.getByLabel("Domain operation", { exact: true }).locator('option[value="call_exercise"]')).toHaveCount(0);
+  await expect(stock.getByLabel("Activity type", { exact: true }).locator('option[value="call_exercise"]')).toHaveCount(0);
   for (const [kind, date, amount] of [["ordinary_dividend", "2026-01-05", "20"], ["qualified_dividend", "2026-01-06", "10"], ["reinvest_dividend", "2026-01-07", "100"], ["sale", "2026-01-08", "550"]]) {
-    await stock.getByLabel("Domain operation", { exact: true }).selectOption(kind!);
+    await stock.getByLabel("Activity type", { exact: true }).selectOption(kind!);
     await stock.getByLabel("Operation date", { exact: true }).fill(date!);
     await stock.getByLabel("Operation cash amount", { exact: true }).fill(amount!);
     if (kind === "reinvest_dividend") {
@@ -50,20 +50,24 @@ test("U1 source-holding activity owns distributions, exercise and linked retirem
       await stock.getByLabel("Units / call contracts", { exact: true }).fill("5");
       await stock.getByLabel("Specific opening lot (optional)", { exact: true }).selectOption(`${ids.brokerageInvestment}:opening`);
     }
-    await stock.getByRole("button", { name: "Save domain operation", exact: true }).click();
-    await expect(stock.getByRole("status")).toContainText("Operation saved");
+    await stock.getByRole("button", { name: "Save activity", exact: true }).click();
+    await expect(stock.getByRole("status")).toContainText("Activity saved");
   }
+  await stock.getByRole("button", { name: "Edit activity", exact: true }).last().click();
+  await stock.getByLabel("Operation cash amount", { exact: true }).fill("600");
+  await stock.getByRole("button", { name: "Save activity", exact: true }).click();
+  await stock.getByRole("button", { name: "Finish editing / new activity", exact: true }).click();
   const call = await activity(page, id(7));
-  await call.getByLabel("Domain operation", { exact: true }).selectOption("call_exercise");
+  await call.getByLabel("Activity type", { exact: true }).selectOption("call_exercise");
   await call.getByLabel("Operation date", { exact: true }).fill("2026-01-09");
   await call.getByLabel("Units / call contracts", { exact: true }).fill("1");
   await expect(call.getByLabel("Operation cash amount", { exact: true })).toHaveValue("5000");
   await expect(call.getByLabel("Operation cash amount", { exact: true })).toHaveAttribute("readonly", "");
   await call.getByLabel("Purchase / exercise funding account", { exact: true }).selectOption(ids.checking);
-  await call.getByRole("button", { name: "Save domain operation", exact: true }).click();
+  await call.getByRole("button", { name: "Save activity", exact: true }).click();
   const workplace = await activity(page, ids.retirementInvestment);
   for (const [kind, date] of [["conversion", "2026-01-10"], ["direct_rollover", "2026-01-11"], ["mixed_rollover", "2026-01-12"], ["indirect_distribution", "2026-01-13"], ["indirect_deposit", "2026-01-14"]]) {
-    await workplace.getByLabel("Domain operation", { exact: true }).selectOption(kind!);
+    await workplace.getByLabel("Activity type", { exact: true }).selectOption(kind!);
     await workplace.getByLabel("Operation date", { exact: true }).fill(date!);
     await workplace.getByLabel("Operation cash amount", { exact: true }).fill("1000");
     await workplace.getByLabel("Confirm eligibility and destination acceptance", { exact: true }).check();
@@ -82,8 +86,13 @@ test("U1 source-holding activity owns distributions, exercise and linked retirem
       await workplace.getByLabel("Withholding replacement cash", { exact: true }).fill("200");
       await workplace.getByLabel("Replacement funding account", { exact: true }).selectOption(ids.checking);
     }
-    await workplace.getByRole("button", { name: "Save domain operation", exact: true }).click();
-    await expect(workplace.getByRole("status")).toContainText("Operation saved");
+    await workplace.getByRole("button", { name: "Save activity", exact: true }).click();
+    await expect(workplace.getByRole("status")).toContainText("Activity saved");
+    const family = kind === "conversion" ? "investment.retirement_conversion" : kind!.startsWith("indirect_") ? "investment.indirect_rollover" : "investment.retirement_rollover";
+    for (const control of await workplace.locator("input, select").all()) {
+      if (!await control.isVisible()) continue;
+      await expect(control.locator('xpath=ancestor::*[@data-semantic-family][1]')).toHaveAttribute("data-semantic-family", family);
+    }
   }
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
@@ -101,6 +110,7 @@ test("U1 source-holding activity owns distributions, exercise and linked retirem
   expect(restored.objects.Expense).toEqual(original.objects.Expense);
   expect(restored.objects.Transaction).toEqual(original.objects.Transaction);
   expect(holdingDomainActivities(restored, ids.brokerageInvestment).map(row => row.terms.kind)).toEqual(["ordinary_dividend", "qualified_dividend", "reinvest_dividend", "sale"]);
+  expect(holdingDomainActivities(restored, ids.brokerageInvestment).find(row => row.terms.kind === "sale")?.terms.amount).toBe("600");
   const rollovers = holdingDomainActivities(restored, ids.retirementInvestment);
   expect(rollovers.map(row => row.terms.kind)).toEqual(["conversion", "direct_rollover", "mixed_rollover", "indirect_distribution", "indirect_deposit"]);
   expect(rollovers[4]!.terms.linkedOperationId).toBe(rollovers[3]!.event.event_id);

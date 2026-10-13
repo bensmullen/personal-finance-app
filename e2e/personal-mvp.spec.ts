@@ -163,7 +163,7 @@ test("D1-B normal investment controls persist a bank-funded operation without co
   await openAuthoringSections(page);
   await openContributions(page);
   const panel = await openHoldingActivity(page, cryptoId);
-  await panel.getByLabel("Domain operation", { exact: true }).selectOption("purchase");
+  await panel.getByLabel("Activity type", { exact: true }).selectOption("purchase");
   await expect(panel.getByLabel("Source / target holding", { exact: true })).toHaveValue(cryptoId);
   await expect(panel.getByLabel("Source / target holding", { exact: true })).toBeDisabled();
   await panel.getByLabel("Operation date", { exact: true }).fill("2026-01-10");
@@ -172,8 +172,8 @@ test("D1-B normal investment controls persist a bank-funded operation without co
   const funding = panel.getByLabel("Purchase / exercise funding account", { exact: true });
   await expect(funding.locator(`option[value="${GOLDEN_HOUSEHOLD_IDS.brokerageAccount}"]`)).toHaveCount(0);
   await funding.selectOption(GOLDEN_HOUSEHOLD_IDS.checking);
-  await panel.getByRole("button", { name: "Save domain operation", exact: true }).click();
-  await expect(panel.getByRole("status")).toContainText("Operation saved in the plan");
+  await panel.getByRole("button", { name: "Save activity", exact: true }).click();
+  await expect(panel.getByRole("status")).toContainText("Activity saved.");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Import / Export", exact: true }).click();
   const pending = page.waitForEvent("download");
@@ -491,12 +491,12 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await expect(mortgage).toContainText("Calculated final scheduled payment: 2052-01-01");
   await expect(mortgage.getByText(/Schedule mismatch/)).toHaveCount(0);
   const operations = page.getByRole("region", { name: "Mortgage operations" });
-  await operations.getByLabel("Domain operation", { exact: true }).selectOption("mortgage_extra");
+  await operations.getByLabel("Activity type", { exact: true }).selectOption("mortgage_extra");
   await operations.getByLabel("Mortgage for extra principal", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.mortgage);
   await operations.getByLabel("Extra principal checking / savings account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.checking);
   await operations.getByLabel("Operation date", { exact: true }).fill("2031-01-01");
   await operations.getByLabel("Operation cash amount", { exact: true }).fill("300000");
-  await operations.getByRole("button", { name: "Save domain operation", exact: true }).click();
+  await operations.getByRole("button", { name: "Save activity", exact: true }).click();
   await expect(page.getByRole("region", { name: "Projected mortgage payoff" })).toContainText("2031-01-01", { timeout: 30_000 });
   await expect(mortgage).toContainText("Contractual final payment / maturity: 2052-01-01");
 
@@ -597,14 +597,14 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   const operations = await openHoldingActivity(page, GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
   // The ordinary sales control consumes the same opening lot as the combined
   // arithmetic fixture. No compiler IDs or JSON are entered in the product.
-  await operations.getByLabel("Domain operation", { exact: true }).selectOption("sale");
+  await operations.getByLabel("Activity type", { exact: true }).selectOption("sale");
   await expect(operations.getByLabel("Source / target holding", { exact: true })).toHaveValue(GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
   await operations.getByLabel("Operation date", { exact: true }).fill("2026-01-23");
   await operations.getByLabel("Operation cash amount", { exact: true }).fill("550");
   await operations.getByLabel("Units / call contracts", { exact: true }).fill("5");
-  await operations.getByRole("button", { name: "Save domain operation", exact: true }).click();
-  await expect(operations.getByRole("status")).toContainText("Operation saved in the plan");
-  await expect(operations.getByLabel("Domain operation", { exact: true }).locator('option[value="put"]')).toHaveCount(0);
+  await operations.getByRole("button", { name: "Save activity", exact: true }).click();
+  await expect(operations.getByRole("status")).toContainText("Activity saved.");
+  await expect(operations.getByLabel("Activity type", { exact: true }).locator('option[value="put"]')).toHaveCount(0);
   await expect(operations).toContainText("Unsupported products are diagnosed before forecast use");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Canonical model saved to this browser")).toBeVisible();
@@ -655,11 +655,11 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible();
   // Exercise the supported-floor boundary through the mortgage activity form.
   const mortgageOperations = page.getByRole("region", { name: "Mortgage operations" });
-  await mortgageOperations.getByLabel("Domain operation", { exact: true }).selectOption("refinance");
+  await mortgageOperations.getByLabel("Activity type", { exact: true }).selectOption("refinance");
   await mortgageOperations.getByLabel("Mortgage to replace", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.mortgage);
   await mortgageOperations.getByLabel("Operation date", { exact: true }).fill("2026-01-15");
   await mortgageOperations.getByLabel("Replacement nominal annual rate", { exact: true }).fill("4");
-  await mortgageOperations.getByRole("button", { name: "Save domain operation", exact: true }).click();
+  await mortgageOperations.getByRole("button", { name: "Save activity", exact: true }).click();
   await page.getByRole("button", { name: "Update forecast", exact: true }).click();
   await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-lifecycle", "unsupported");
   await expect(page.getByText(/scheduled monthly.*payment date/).first()).toBeVisible();

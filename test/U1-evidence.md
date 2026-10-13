@@ -596,6 +596,16 @@ to the same Money policy editor. No new debit or Expense is authored. The
 monthly replay regression asserts one traced 50 USD premium from checking;
 conditional benefits remain separate receipts, never payroll income.
 
+At `c25581b`, run `38654606663`, typecheck, build, architecture and unit passed.
+Browser verification remained in progress during the source-preservation
+follow-up. That follow-up preserves activity names, event/effect/primitive IDs,
+disabled status and plan lineage, checks changed selector compatibility before
+save, and uses Activity type / Save activity wording. Registry bindings now
+distinguish opening quantity/price from derived valuation, run currency from
+bank currency, and annual IRA coverage from employer-plan terms. Annual dialogs
+take their family directly from the existing fact resolver's owner contract.
+No external audit, production deployment or owner acceptance is inferred.
+
 | Previously reported failure | Current implementation disposition | Remaining acceptance boundary |
 | --- | --- | --- |
 | Paycheck visibility/categories | Prior default replay-backed income-vs-uses chart preserved | Posted withholding/net pay remains incomplete pending #101; no income-origin claim; owner UAT pending |

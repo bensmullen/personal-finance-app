@@ -55,7 +55,6 @@ export function DomainMechanicsPanel({ draft, setDraft, scope, holdingId }: { re
   const retirement = ["conversion", "direct_rollover", "mixed_rollover", "indirect_distribution", "indirect_deposit"].includes(kind);
   const events = (draft.objects.Event ?? []).filter(record);
   const savedRows = scope === "investment" ? holdingDomainActivities(draft, holdingId ?? "") : domainActivities(draft).filter(row => ["d1_refinance", "d1_mortgage_extra"].includes(String(row.effect.operation)));
-  const saved = savedRows.map(row => row.event);
   const save = () => {
     try {
       const previous = savedRows.find(row => row.event.event_id === editingEvent);
@@ -65,7 +64,7 @@ export function DomainMechanicsPanel({ draft, setDraft, scope, holdingId }: { re
       } else if (kind === "refinance") {
         setDraft(authorMortgageRefinance(draft, { ...ids, liabilityId: fields.liabilityId ?? "", date: fields.date ?? "", annualRate: fields.annualRate ?? "", totalPayments: Number(fields.totalPayments) }));
       } else {
-        const plan: AuthoredDomainOperation = { ...ids, name: choices.find(item => item[0] === kind)?.[1] ?? kind, date: fields.date ?? "", kind: kind as AuthoredDomainOperation["kind"], amount: fields.amount ?? "0", order: Number(fields.order),
+        const plan: AuthoredDomainOperation = { ...ids, name: typeof previous?.event.name === "string" ? previous.event.name : choices.find(item => item[0] === kind)?.[1] ?? kind, date: fields.date ?? "", kind: kind as AuthoredDomainOperation["kind"], amount: fields.amount ?? "0", order: Number(fields.order),
           ...(kind === "indirect_deposit" ? {} : { holdingId: fields.holdingId ?? "" }),
           ...(["purchase", "call_exercise", "indirect_distribution"].includes(kind) ? { cashAccountId: fields.cashAccountId ?? "" } : {}),
           ...(["purchase", "sale", "reinvest_dividend", "call_exercise"].includes(kind) ? { quantity: fields.quantity ?? "" } : {}),
@@ -79,7 +78,7 @@ export function DomainMechanicsPanel({ draft, setDraft, scope, holdingId }: { re
         };
         setDraft(authorDomainOperation(draft, plan));
       }
-      setMessage("Operation saved in the plan. Forecast compilation will check eligibility, funding and timing.");
+      setMessage("Activity saved. Update the forecast to check eligibility, funding and timing.");
     } catch (error) { setMessage(authoringFailure(error)); }
   };
   const required = ["operation", "operationDate", ...(kind === "refinance" ? ["operationMortgage", "totalPayments"] : ["operationAmount", "operationOrder"]), ...(kind === "mortgage_extra" ? ["operationMortgage", "operationFunding"] : kind !== "refinance" && kind !== "indirect_deposit" ? ["operationHolding"] : []), ...(["purchase", "sale", "reinvest_dividend", "call_exercise"].includes(kind) ? ["operationUnits"] : []), ...(["purchase", "call_exercise", "indirect_distribution"].includes(kind) ? ["operationFunding"] : []), ...(retirement ? ["operationAcceptance"] : []), ...(retirement && kind !== "indirect_distribution" ? ["operationDestination"] : [])];
@@ -93,10 +92,16 @@ export function DomainMechanicsPanel({ draft, setDraft, scope, holdingId }: { re
   presentations.lotHolding = { ...presentations.lotHolding!, state: "read-only" };
   const labelKeys: Record<string, string> = { date: "operationDate", amount: "operationAmount", quantity: "operationUnits", holdingId: "operationHolding", cashAccountId: "operationFunding", order: "operationOrder", destinationHoldingId: "operationDestination", rothHoldingId: "rothDestination", linkedOperationId: "linkedDistribution", replacementAmount: "replacementCash", totalPayments: "totalPayments", liabilityId: "operationMortgage" };
   const draftProblems = Object.entries(labelKeys).filter(([, key]) => required.includes(key)).map(([name, key]) => fieldProblem(presentations[key]!, fields[name], true)).filter(Boolean);
+  const selectionProblems = {
+    operation: available.some(([value]) => value === kind) ? undefined : "Choose an activity supported by this account and holding.",
+    operationUnits: kind === "call_exercise" && !callExerciseAmount(draft, holdingId ?? "", fields.quantity ?? "") ? "Enter positive whole call contracts with established strike and multiplier terms." : undefined,
+    operationDestination: retirement && kind !== "indirect_distribution" && fields.destinationHoldingId && !destinations.some(item => item.id === fields.destinationHoldingId) ? "Choose a compatible destination owned by the same person." : undefined,
+    operationFunding: ["purchase", "call_exercise", "indirect_distribution", "mortgage_extra"].includes(kind) && fields.cashAccountId && !banks.some(item => item.id === fields.cashAccountId) ? "Choose a compatible checking or savings account." : kind === "indirect_deposit" && fields.sourceAccountId && !banks.some(item => item.id === fields.sourceAccountId) ? "Choose compatible replacement funding." : undefined,
+  };
   if (scope === "investment" && !available.length) return <p role="note">{fixedIncome ? "Use this holding's instrument terms for acquisition, interest and maturity; additional transactions are not supported." : "Activity for this account type is not supported yet."}</p>;
-  return <GuidedFields scope="scheduled-activity" required={required} presentations={presentations} errors={{ operationUnits: kind === "call_exercise" && !callExerciseAmount(draft, holdingId ?? "", fields.quantity ?? "") ? "Enter positive whole call contracts with established strike and multiplier terms." : undefined }}><section className="panel" aria-label={scope === "mortgage" ? "Mortgage operations" : "Investment and retirement operations"} data-source-holding={holdingId}><h2>{scope === "mortgage" ? "Extra principal & refinancing" : "Activity & transfers"}</h2>
+  return <GuidedFields scope="scheduled-activity" required={required} presentations={presentations} errors={selectionProblems}><section className="panel" aria-label={scope === "mortgage" ? "Mortgage operations" : "Investment and retirement operations"} data-source-holding={holdingId}><h2>{scope === "mortgage" ? "Extra principal & refinancing" : "Activity & transfers"}</h2>
     {scope === "investment" && <p>{objectLabel("Investment", holding!)} · {objectLabel("Account", account!)}. Saved activity uses this holding's funds and recorded basis.</p>}
-    <label>Operation<select aria-label="Domain operation" value={kind} disabled={!!editingEvent} onChange={event => { setKind(event.target.value); setFields(prior => ({ holdingId: holdingId ?? "", lotHolding: holdingId ?? "", order: prior.order ?? "10", replacementAmount: "0", totalPayments: "360", dividendCharacter: "ordinary" })); setMessage(""); }}>{available.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+    <label>Activity type<select aria-label="Activity type" value={kind} disabled={!!editingEvent} onChange={event => { setKind(event.target.value); setFields(prior => ({ holdingId: holdingId ?? "", lotHolding: holdingId ?? "", order: prior.order ?? "10", replacementAmount: "0", totalPayments: "360", dividendCharacter: "ordinary" })); setMessage(""); }}>{available.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
     {text("date", "Operation date", "date")}
     {kind === "refinance" ? <>{select("liabilityId", "Mortgage to replace", objectEntries(draft, "Liability").filter(item => item.liability_type === "mortgage").map(item => ({ id: objectId("Liability", item), label: objectLabel("Liability", item) })))}<PercentageInput label="Replacement nominal annual rate" required value={fields.annualRate ?? ""} onChange={value => change("annualRate", value)} />{text("totalPayments", "Replacement monthly payments", "number")}<p>Non-cash-out, no fees or escrow. Choose a scheduled payment date with no extra principal at that occurrence. The new loan starts a full-month schedule.</p></> : <>
       {kind !== "indirect_deposit" && kind !== "mortgage_extra" && select("holdingId", "Source / target holding", investments)}
@@ -113,7 +118,7 @@ export function DomainMechanicsPanel({ draft, setDraft, scope, holdingId }: { re
       {["sale", "call_exercise"].includes(kind) && <p>Lots use FIFO within this holding/account unless selected below.</p>}
       {["sale", "call_exercise"].includes(kind) && select("lotIds", "Specific opening lot (optional)", (draft.objects.Investment ?? []).filter(record).filter(item => item.investment_id === fields.holdingId).flatMap(item => Array.isArray(item.tax_lots) ? item.tax_lots.filter(record).map(lot => ({ id: String(lot.id), label: String(lot.acquired) + " · " + String(lot.quantity) + " units · basis " + String(lot.basis) })) : item.acquisition_date != null ? [{ id: String(item.investment_id) + ":opening", label: String(item.acquisition_date) + " · opening lot" }] : []))}
     </>}
-    <button className="primary" disabled={draftProblems.length > 0 || retirement && fields.acceptance !== "yes" || kind === "conversion" && fields.samePlan !== "yes" || kind === "mixed_rollover" && !fields.rothHoldingId || kind === "indirect_deposit" && !fields.linkedOperationId} onClick={save}>Save domain operation</button>{message && <p role="status">{message}</p>}
+    <button className="primary" disabled={draftProblems.length > 0 || Object.values(selectionProblems).some(Boolean) || retirement && fields.acceptance !== "yes" || kind === "conversion" && fields.samePlan !== "yes" || kind === "mixed_rollover" && !fields.rothHoldingId || kind === "indirect_deposit" && !fields.linkedOperationId} onClick={save}>Save activity</button>{message && <p role="status">{message}</p>}
     {editingEvent && <button onClick={() => { setEditingEvent(undefined); setMessage(""); setFields({ holdingId: holdingId ?? "", lotHolding: holdingId ?? "", amount: "", order: "10", replacementAmount: "0", totalPayments: "360", dividendCharacter: "ordinary" }); }}>Finish editing / new activity</button>}
     <ul>{savedRows.map(row => <li key={String(row.event.event_id)}>{String(row.event.name)} · {String(row.event.start_date)}
       {scope === "investment" && available.some(([value]) => value === row.terms.kind) && <button onClick={() => {

@@ -71,7 +71,7 @@ function AnnualFactDialog({ draft, setDraft, field, scope, close }: { draft: Per
             value: value === "true" ? true : value === "false" ? false : value, provenance: futureAssumption ? "assumption" : "observed", reconciledSources: resolved.sources.map(source => source.id), ...(openingReference === undefined ? {} : { openingReference }) })); close(); }
           catch (failure) { setError(authoringFailure(failure)); }
         }}>
-          <FieldShell fieldKey={annualFieldOwners[field].fieldKey} required error={problem} repairKey={`annual:${field}`} presentation={{ ...meta, semanticScope: JSON.stringify(scope), source: `${resolved.repair.owner} · ${scope.taxYear} · ${referenceLabel(draft, "Person", scope.personId)}` }}>
+          <FieldShell fieldKey={annualFieldOwners[field].fieldKey} required error={problem} repairKey={`annual:${field}`} presentation={{ ...meta, semanticFamily: annualFieldOwners[field].semanticId, semanticBinding: field, semanticScope: JSON.stringify(scope), source: `${resolved.repair.owner} · ${scope.taxYear} · ${referenceLabel(draft, "Person", scope.personId)}` }}>
             {choices[field] ? <select aria-label={meta.label} value={value} onChange={event => setValue(event.target.value)}><option value="">Not established</option>{choices[field]!.map(option => <option key={option} value={option}>{option === "true" ? "Yes" : option === "false" ? "No" : field === "filingStatus" ? filingLabels[option] : option.replaceAll("_", " ")}</option>)}</select>
               : <input aria-label={meta.label} inputMode="decimal" placeholder={meta.example} value={value} onChange={event => setValue(event.target.value)} />}
           </FieldShell>
