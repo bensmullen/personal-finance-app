@@ -575,6 +575,27 @@ Pre-continuation GitHub run `38651185425` at `335c8e8` reported a linked-growth
 adapter type-narrowing error; it is repaired within the existing UI scope.
 No local checks were run. New GitHub results are recorded after publication.
 
+First continuation CI at `d06347a`, run `38654142271`, passed build, unit and
+architecture. Typecheck found test-fixture inference errors (not financial
+assertion failures); the fixture is now explicitly typed and the event identity
+assertion uses canonical object lookup. Browser verification was still running
+when the next implementation revision was prepared.
+
+The additional `u1-investment-activity.spec.ts` uses normal import/account/holding
+controls to author sale with an opening lot, ordinary/qualified dividends,
+self-contained reinvestment, option exercise with calculated strike cash,
+conversion, direct/split rollover, and a linked distribution/redeposit. It
+asserts durable source/destination/event identities, absence of new Income,
+Expense or Transaction records, exact supported compilation, geometry,
+screenshots and console cleanliness after save/reload/export. Existing D1
+economic tests remain the settlement, basis, annual-limit and replay authority.
+
+Insurance premium presentation now categorizes the original posted bank debit
+as insurance spending, links its exact traced policy and bank, and routes repair
+to the same Money policy editor. No new debit or Expense is authored. The
+monthly replay regression asserts one traced 50 USD premium from checking;
+conditional benefits remain separate receipts, never payroll income.
+
 | Previously reported failure | Current implementation disposition | Remaining acceptance boundary |
 | --- | --- | --- |
 | Paycheck visibility/categories | Prior default replay-backed income-vs-uses chart preserved | Posted withholding/net pay remains incomplete pending #101; no income-origin claim; owner UAT pending |

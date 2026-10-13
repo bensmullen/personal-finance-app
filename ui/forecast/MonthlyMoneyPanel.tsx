@@ -10,7 +10,7 @@ type Detail = ReturnType<typeof inspectMonthlyMoney>;
 export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setup }: {
   draft: PersonalDraft; forecast?: PersonalHouseholdForecastReadModel | undefined; current: boolean;
   mode: "paycheck" | "debt" | "spending";
-  review: (type: "Income" | "Investment" | "Liability" | "Account" | "Expense", id: string) => void;
+  review: (type: "Income" | "Investment" | "Liability" | "Account" | "Expense" | "Insurance", id: string) => void;
   setup: () => void;
 }) {
   const points = forecast && forecast.status !== "unavailable" ? forecast.points : [];
@@ -71,6 +71,7 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
           <small>Posted investment funding is shown once; its source may include opening savings. It is not added to spending or attributed to this month's pay.</small>
         </div>}
         {mode !== "debt" && <div aria-label="Other posted cash uses">{detail.cashUses.map(line => <p key={line.id}>{line.label} · {amount(line.amount)} · {line.date.slice(0, 10)} <button type="button" onClick={() => review("Account", line.accountId)}>{referenceLabel(draft, "Account", line.accountId)}</button></p>)}</div>}
+        {mode !== "debt" && detail.categories.some(item => item.policyIds.length) && <section aria-label="Insurance payments"><h3>Insurance premiums paid</h3>{detail.categories.filter(item => item.policyIds.length).map(item => <p key={item.id}>{item.label} · {amount(item.amount)}{item.policyIds.map(id => <button key={id} type="button" onClick={() => review("Insurance", id)}>Review policy</button>)}{item.accountIds.map(id => <button key={id} type="button" onClick={() => review("Account", id)}>{referenceLabel(draft, "Account", id)}</button>)}</p>)}</section>}
         </details>
       </>}
     </>}
@@ -80,7 +81,7 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
 function PaycheckComparison({ draft, detail, amount, review, setup }: {
   draft: PersonalDraft;
   detail: Detail; amount: (value: string) => string;
-  review: (type: "Income" | "Investment" | "Liability" | "Account" | "Expense", id: string) => void;
+  review: (type: "Income" | "Investment" | "Liability" | "Account" | "Expense" | "Insurance", id: string) => void;
   setup: () => void;
 }) {
   // Numbers here control display geometry only; all amounts/remainders above
@@ -88,7 +89,7 @@ function PaycheckComparison({ draft, detail, amount, review, setup }: {
   const denominator = Number(detail.denominator);
   const categories = [...detail.categories, ...(Number(detail.unallocated) > 0 ? [{
     id: "unallocated", kind: "unallocated", label: "Unallocated / not fully modeled", amount: detail.unallocated,
-    sourceIds: [], holdingIds: [], accountIds: [], liabilityIds: [], expenseIds: [],
+    sourceIds: [], holdingIds: [], accountIds: [], liabilityIds: [], expenseIds: [], policyIds: [],
   }] : [])];
   let remaining = 100;
   const segments = categories.map(item => {
@@ -108,6 +109,7 @@ function PaycheckComparison({ draft, detail, amount, review, setup }: {
         {item.holdingIds.map(id => <button key={id} type="button" onClick={() => review("Investment", id)}>{referenceLabel(draft, "Investment", id)}</button>)}
         {item.liabilityIds.map(id => <button key={id} type="button" onClick={() => review("Liability", id)}>{referenceLabel(draft, "Liability", id)}</button>)}
         {item.expenseIds.map(id => <button key={id} type="button" onClick={() => review("Expense", id)}>Review {referenceLabel(draft, "Expense", id)}</button>)}
+        {item.policyIds.map(id => <button key={id} type="button" onClick={() => review("Insurance", id)}>Review insurance policy</button>)}
         {!item.holdingIds.length && !item.liabilityIds.length && !item.expenseIds.length && item.accountIds.map(id => <button key={id} type="button" onClick={() => review("Account", id)}>{referenceLabel(draft, "Account", id)}</button>)}
         {item.kind === "unallocated" && <button type="button" onClick={setup}>Review coverage</button>}
       </span>

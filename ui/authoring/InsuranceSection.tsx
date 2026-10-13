@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { authorTermLifePolicy, authorInsuredDeathScenario, unlinkPolicyDeathScenario, termLifeProblems, type TermLifeTerms } from "../../src/application/insuranceAuthoring.js";
+import { InsuranceAuthoringError, authorTermLifePolicy, authorInsuredDeathScenario, unlinkPolicyDeathScenario, termLifeProblems, type TermLifeTerms } from "../../src/application/insuranceAuthoring.js";
 import type { PersonalDraft, JsonObject } from "../../src/application/personalMvp.js";
 import { objectEntries, objectLabel, referenceLabel, formatExactMoney } from "../entityPresentation.js";
 import { FieldShell, RepairSummary, focusRepair } from "./FieldShell.js";
@@ -15,8 +15,8 @@ const termsOf = (policy?: JsonObject): TermLifeTerms => ({
 });
 const supported = (policy: JsonObject) => policy.insurance_type === "life" && policy.policy_family === "term_life_lump_sum" && policy.premium_frequency === "monthly" && policy.claim_probability_model_id == null;
 
-export function InsuranceSection({ draft, setDraft }: Props) {
-  const [editing, setEditing] = useState<string>(), [lifePolicy, setLifePolicy] = useState<string>();
+export function InsuranceSection({ draft, setDraft, initialPolicyId }: Props & { initialPolicyId?: string | undefined }) {
+  const [editing, setEditing] = useState<string | undefined>(initialPolicyId), [lifePolicy, setLifePolicy] = useState<string>();
   const policies = objectEntries(draft, "Insurance");
   return <section aria-label="Insurance & coverage" className="panel">
     <div className="page-head compact"><div><h1>Insurance & coverage</h1><p>Term-life protection, monthly premiums and a conditional benefit.</p></div><button className="primary" onClick={() => setEditing("new")}>Add term-life policy</button></div>
@@ -47,6 +47,7 @@ export function InsuranceSection({ draft, setDraft }: Props) {
 function PolicyEditor({ draft, setDraft, policyId, close }: Props & { policyId: string | undefined; close: () => void }) {
   const original = objectEntries(draft, "Insurance").find(item => item.insurance_id === policyId);
   const [terms, setTerms] = useState(() => termsOf(original)), [message, setMessage] = useState(""), [discard, setDiscard] = useState(false);
+  const [technical, setTechnical] = useState("");
   const problems = termLifeProblems(draft, terms), identity = policyId ?? "new-policy";
   const people = objectEntries(draft, "Person"), owner = people.find(item => item.person_id === terms.owner);
   const personChoices = people.filter(item => !owner || item.household_id === owner.household_id).map(item => ({ id: String(item.person_id), label: objectLabel("Person", item) }));
@@ -60,19 +61,20 @@ function PolicyEditor({ draft, setDraft, policyId, close }: Props & { policyId: 
   const control = (key: keyof TermLifeTerms) => {
     const [fieldKey, family, binding] = TERM_BINDINGS[key], choices = options[key];
     return <FieldShell key={key} fieldKey={fieldKey} required error={problems[key]} repairKey={`policy:${identity}:${key}`} presentation={ownedField(fieldKey, family, binding, identity, "This saved Insurance policy's contract terms")}>
-      {choices ? <select value={terms[key]} onChange={event => setTerms(prior => ({ ...prior, [key]: event.target.value }))}><option value="">Choose</option>{choices.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
+      {choices ? <select autoFocus={key === "owner"} value={terms[key]} onChange={event => setTerms(prior => ({ ...prior, [key]: event.target.value }))}><option value="">Choose</option>{choices.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
         : <input type={key === "start" || key === "end" ? "date" : "text"} inputMode={key === "premium" || key === "benefit" ? "decimal" : undefined} value={terms[key]} onChange={event => setTerms(prior => ({ ...prior, [key]: event.target.value }))} />}
     </FieldShell>;
   };
   const cancel = () => { if (JSON.stringify(terms) !== JSON.stringify(termsOf(original))) setDiscard(true); else close(); };
   return <section className="panel" aria-label="Edit term-life policy" data-authoring-scope="term-life-policy">
     <h2>{original ? "Edit term-life policy" : "New term-life policy"}</h2>
-    <form onSubmit={event => { event.preventDefault(); try { setDraft(authorTermLifePolicy(draft, policyId ?? crypto.randomUUID(), terms)); close(); } catch (failure) { setMessage(failure instanceof Error ? failure.message : "Policy could not be saved. Review the terms and retry."); } }}>
+    <form onSubmit={event => { event.preventDefault(); try { setDraft(authorTermLifePolicy(draft, policyId ?? crypto.randomUUID(), terms)); close(); } catch (failure) { setMessage(failure instanceof InsuranceAuthoringError ? failure.message : "Policy could not be saved. Review the terms and retry."); setTechnical(failure instanceof Error ? failure.message : "Unknown save failure"); } }}>
       <RepairSummary errors={Object.entries(problems).map(([key, message]) => ({ target: `policy:${identity}:${key}`, message }))} />
       <div className="form-grid">{(["owner", "insured", "beneficiary", "benefit", "start", "end"] as const).map(control)}</div>
       <h3>Premiums & benefit deposit</h3><div className="form-grid">{(["premium", "premiumAccount", "benefitAccount"] as const).map(control)}</div>
       <button type="submit" className="primary" disabled={Object.keys(problems).length > 0}>Save term-life policy</button><button type="button" onClick={cancel}>Cancel policy edit</button>
       {message && <p role="alert">{message}</p>}
+      {technical && <details><summary>Technical details</summary><pre>{technical}</pre></details>}
       {discard && <div role="alert"><p>There are unsaved policy changes.</p><button type="button" onClick={close}>Discard changes</button><button type="button" onClick={() => setDiscard(false)}>Continue editing</button></div>}
     </form>
   </section>;
@@ -84,16 +86,18 @@ export function InsuredDeathEditor({ draft, setDraft, policyId, close }: Props &
   const prior = objectEntries(draft, "Event").find(item => item.event_id === policy.death_event_id);
   const scenarios = objectEntries(draft, "Scenario").filter(item => item.enabled === true && item.base_scenario_id == null);
   const [date, setDate] = useState(String(prior?.start_date ?? "")), [scenario, setScenario] = useState(String(prior?.scenario_id ?? (scenarios.length === 1 ? scenarios[0]!.scenario_id : ""))), [enabled, setEnabled] = useState(prior?.enabled !== false), [message, setMessage] = useState(""), [discard, setDiscard] = useState(false);
+  const [technical, setTechnical] = useState("");
   const problem = fieldProblem(ownedField("deathDate", "life.death_event", "eventDate", policyId, "Scheduled Event in the selected plan"), date, true) ?? (date < String(policy.start_date) || date >= String(policy.end_date) ? "Choose a date within this policy's coverage interval." : undefined);
   const cancel = () => { if (date !== String(prior?.start_date ?? "") || scenario !== String(prior?.scenario_id ?? (scenarios.length === 1 ? scenarios[0]!.scenario_id : "")) || enabled !== (prior?.enabled !== false)) setDiscard(true); else close(); };
   return <section className="panel" aria-label="Edit insured death scenario" data-authoring-scope="life-death-event">
     <h2>Optional life event</h2><p>{referenceLabel(draft, "Person", policy.insured_person_id)} · This scenario changes the forecast; it is separate from the policy contract.</p>
-    <form onSubmit={event => { event.preventDefault(); try { setDraft(authorInsuredDeathScenario(draft, { policyId, eventId: String(prior?.event_id ?? crypto.randomUUID()), scenarioId: scenario, date, enabled })); close(); } catch (failure) { setMessage(failure instanceof Error ? failure.message : "Life event could not be saved. Review the scenario and retry."); } }}>
+    <form onSubmit={event => { event.preventDefault(); try { setDraft(authorInsuredDeathScenario(draft, { policyId, eventId: String(prior?.event_id ?? crypto.randomUUID()), scenarioId: scenario, date, enabled })); close(); } catch (failure) { setMessage(failure instanceof InsuranceAuthoringError ? failure.message : "Life event could not be saved. Review the scenario and retry."); setTechnical(failure instanceof Error ? failure.message : "Unknown save failure"); } }}>
       <FieldShell fieldKey="deathPlan" required presentation={ownedField("deathPlan", "life.death_event", "scenarioId", policyId, "Selected canonical Scenario")}><select value={scenario} onChange={event => setScenario(event.target.value)}><option value="">Choose plan</option>{scenarios.map(item => <option key={String(item.scenario_id)} value={String(item.scenario_id)}>{objectLabel("Scenario", item)}</option>)}</select></FieldShell>
       <FieldShell fieldKey="deathDate" required error={problem} presentation={ownedField("deathDate", "life.death_event", "eventDate", policyId, "Scheduled canonical Event")}><input autoFocus type="date" value={date} onChange={event => setDate(event.target.value)} /></FieldShell>
       <FieldShell fieldKey="deathEnabled" presentation={ownedField("deathEnabled", "life.death_event", "enabled", policyId, "Scheduled canonical Event")}><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} /></FieldShell>
       <button className="primary" type="submit" disabled={!!problem || !scenario}>Save life event</button><button type="button" onClick={cancel}>Cancel life event edit</button>
       {message && <p role="alert">{message}</p>}
+      {technical && <details><summary>Technical details</summary><pre>{technical}</pre></details>}
       {discard && <div role="alert"><p>There are unsaved life-event changes.</p><button type="button" onClick={close}>Discard changes</button><button type="button" onClick={() => setDiscard(false)}>Continue editing</button></div>}
     </form>
   </section>;

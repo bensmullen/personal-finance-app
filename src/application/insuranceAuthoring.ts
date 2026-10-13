@@ -1,6 +1,7 @@
 import type { JsonObject, PersonalDraft } from "./personalMvp.js";
 import { objects, UUID, utcDate } from "./compiler/shared.js";
 import { decimal } from "../values/index.js";
+export class InsuranceAuthoringError extends Error {}
 
 export interface TermLifeTerms {
   readonly owner: string; readonly insured: string; readonly beneficiary: string;
@@ -28,12 +29,12 @@ export function termLifeProblems(model: PersonalDraft, terms: TermLifeTerms): Re
   return errors;
 }
 export function authorTermLifePolicy(model: PersonalDraft, policyId: string, terms: TermLifeTerms): PersonalDraft {
-  if (!UUID.test(policyId) || Object.keys(termLifeProblems(model, terms)).length) throw new Error("Review the highlighted policy terms before saving.");
+  if (!UUID.test(policyId) || Object.keys(termLifeProblems(model, terms)).length) throw new InsuranceAuthoringError("Review the highlighted policy terms before saving.");
   const prior = objects(model, "Insurance").find(item => item.insurance_id === policyId);
-  if (prior && (prior.policy_family !== "term_life_lump_sum" || prior.insurance_type !== "life")) throw new Error("This policy type is not supported by the term-life editor. Import corrected policy terms.");
-  if (prior?.death_event_id != null && prior.insured_person_id !== terms.insured) throw new Error("Unlink the death scenario before changing the insured person.");
+  if (prior && (prior.policy_family !== "term_life_lump_sum" || prior.insurance_type !== "life")) throw new InsuranceAuthoringError("This policy type is not supported by the term-life editor. Import corrected policy terms.");
+  if (prior?.death_event_id != null && prior.insured_person_id !== terms.insured) throw new InsuranceAuthoringError("Unlink the death scenario before changing the insured person.");
   const death = objects(model, "Event").find(item => item.event_id === prior?.death_event_id);
-  if (death && (String(death.start_date) < terms.start || String(death.start_date) >= terms.end)) throw new Error("The linked death scenario falls outside these coverage dates. Review the life event or unlink it before changing coverage.");
+  if (death && (String(death.start_date) < terms.start || String(death.start_date) >= terms.end)) throw new InsuranceAuthoringError("The linked death scenario falls outside these coverage dates. Review the life event or unlink it before changing coverage.");
   const policy: JsonObject = { ...prior, insurance_id: policyId, owner_id: terms.owner, insured_person_id: terms.insured, beneficiary_id: terms.beneficiary,
     insurance_type: "life", policy_family: "term_life_lump_sum", premium_frequency: "monthly", premium: terms.premium, coverage_amount: terms.benefit,
     premium_account_id: terms.premiumAccount, benefit_account_id: terms.benefitAccount, start_date: terms.start, end_date: terms.end };
@@ -44,13 +45,13 @@ export interface DeathScenarioTerms { readonly eventId: string; readonly policyI
 export function authorInsuredDeathScenario(model: PersonalDraft, terms: DeathScenarioTerms): PersonalDraft {
   const policy = objects(model, "Insurance").find(item => item.insurance_id === terms.policyId);
   const scenario = objects(model, "Scenario").find(item => item.scenario_id === terms.scenarioId && item.enabled === true && item.base_scenario_id == null);
-  if (!UUID.test(terms.eventId) || !policy || !scenario || !utcDate(terms.date)) throw new Error("Choose a saved policy, an enabled current plan and a valid scenario date.");
-  if (terms.date < String(policy.start_date) || terms.date >= String(policy.end_date)) throw new Error("Choose a death scenario date within the policy's coverage dates.");
+  if (!UUID.test(terms.eventId) || !policy || !scenario || !utcDate(terms.date)) throw new InsuranceAuthoringError("Choose a saved policy, an enabled current plan and a valid scenario date.");
+  if (terms.date < String(policy.start_date) || terms.date >= String(policy.end_date)) throw new InsuranceAuthoringError("Choose a death scenario date within the policy's coverage dates.");
   const prior = objects(model, "Event").find(item => item.event_id === terms.eventId);
-  if (prior && (prior.event_type !== "death" || prior.trigger_type !== "scheduled" || prior.trigger_condition != null || prior.probability_model_id != null)) throw new Error("This existing event cannot be edited as a scheduled death scenario. Preserve it and import a corrected scenario.");
+  if (prior && (prior.event_type !== "death" || prior.trigger_type !== "scheduled" || prior.trigger_condition != null || prior.probability_model_id != null)) throw new InsuranceAuthoringError("This existing event cannot be edited as a scheduled death scenario. Preserve it and import a corrected scenario.");
   // Shared legacy triggers cannot silently change another policy's insured/date.
   const linked = objects(model, "Insurance").filter(item => item.death_event_id === terms.eventId);
-  if (linked.some(item => item.insured_person_id !== policy.insured_person_id || terms.date < String(item.start_date) || terms.date >= String(item.end_date))) throw new Error("This event is shared with another policy whose insured person or coverage dates conflict. Review those policies before changing it.");
+  if (linked.some(item => item.insured_person_id !== policy.insured_person_id || terms.date < String(item.start_date) || terms.date >= String(item.end_date))) throw new InsuranceAuthoringError("This event is shared with another policy whose insured person or coverage dates conflict. Review those policies before changing it.");
   const event: JsonObject = { ...prior, event_id: terms.eventId, name: prior?.name ?? "Insured death scenario", event_type: "death", trigger_type: "scheduled", start_date: terms.date, scenario_id: terms.scenarioId, enabled: terms.enabled,
     effect_ids: prior?.effect_ids ?? [], dependencies: prior?.dependencies ?? [], precedence: prior?.precedence ?? 0 };
   return { ...model, objects: { ...model.objects,

@@ -122,6 +122,7 @@ type FinancialExplanation = ReturnType<typeof resolveHouseholdExplanation>;
 const FinancialResultModels = createContext<{ model?: PersonalDraft; baseline?: ForecastView; comparison?: ForecastView;
   reviewTarget?: (target: DiagnosticTarget) => void; reviewMortgageFunding?: (liabilityId: string) => void; importCorrection?: () => void;
   reviewContributions?: (investmentId?: string, kind?: "personal" | "payroll") => void;
+  reviewInsurance?: (policyId: string) => void;
   explanations?: { baseline: ResultExplanationCache<FinancialExplanation>; comparison: ResultExplanationCache<FinancialExplanation> } }>({});
 
 type Primary = "Overview" | "Money" | "Net Worth" | "Plan" | "Settings";
@@ -262,6 +263,7 @@ export function PersonalFinanceApp() {
   const [draft, setDraft] = useState<PersonalDraft | undefined>();
   const [entityRepair, setEntityRepair] = useState<import("./EntityEditor.js").EntityRepair>();
   const [contributionTarget, setContributionTarget] = useState<{ investmentId: string; kind: "personal" | "payroll" }>();
+  const [insuranceTarget, setInsuranceTarget] = useState<string>();
   const [replacementIdentity, setReplacementIdentity] = useState(0);
   const browserRequest = useRef<BrowserPerformanceRequest | undefined>(undefined);
   const [explanations] = useState(() => ({ baseline: new ResultExplanationCache<FinancialExplanation>(), comparison: new ResultExplanationCache<FinancialExplanation>() }));
@@ -382,6 +384,7 @@ export function PersonalFinanceApp() {
 
   const replaceCanonicalModel = (next: PersonalDraft, message: string) => {
     setContributionTarget(undefined);
+    setInsuranceTarget(undefined);
     setReplacementIdentity(value => value + 1);
     updateCanonicalModel(next);
     setLiabilityConfig(emptyLiabilityConfig());
@@ -724,6 +727,7 @@ export function PersonalFinanceApp() {
   return (
     <FinancialFactEditors draft={draft} setDraft={updateCanonicalModel} openingReference={sessionSettings.asOf || sessionSettings.simulationStart}>
     <FinancialResultModels.Provider value={{ model: draft, baseline: interactive.baseline, comparison: interactive.comparison, explanations,
+      reviewInsurance: policyId => { setInsuranceTarget(policyId); navigate("Money"); setSubnav("Insurance & coverage"); requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>('[data-authoring-scope="term-life-policy"] select'))); },
       reviewContributions: (investmentId, kind) => {
         setContributionTarget(investmentId && kind ? { investmentId, kind } : undefined);
         navigate("Net Worth"); setSubnav("Investments & retirement");
@@ -1038,7 +1042,7 @@ export function PersonalFinanceApp() {
             <AnnualFactsOwner draft={draft} owner="investment" />
             <FinancialSection title="Annual contribution allowance"><ContributionCapacityPanel draft={draft} forecast={householdForecast} /></FinancialSection>
           </>}
-          {primary === "Money" && subnav === "Insurance & coverage" && <InsuranceSection draft={draft} setDraft={updateCanonicalModel} />}
+          {primary === "Money" && subnav === "Insurance & coverage" && <InsuranceSection key={insuranceTarget ?? "insurance-overview"} initialPolicyId={insuranceTarget} draft={draft} setDraft={updateCanonicalModel} />}
           {primary === "Plan" && subnav === "Life Events" && <><RetirementDateAuthoring draft={draft} setDraft={updateCanonicalModel} /><InsuredLifeEvents draft={draft} setDraft={updateCanonicalModel} /></>}
           {primary === "Plan" &&
             subnav === "Life Events" &&
@@ -1321,7 +1325,8 @@ function MonthlyEvidence({ draft, forecast, mode }: { draft: PersonalDraft; fore
   return <MonthlyMoneyPanel draft={draft} forecast={forecast} current={current} mode={mode}
     setup={() => models.reviewTarget?.({ id: "", type: "Forecast setup", label: "Forecast setup", editable: false })}
     review={(type, id) => {
-      if (type === "Investment") {
+      if (type === "Insurance") models.reviewInsurance?.(id);
+      else if (type === "Investment") {
         const holding = objectEntries(draft, "Investment").find(item => item.investment_id === id);
         const account = objectEntries(draft, "Account").find(item => item.account_id === holding?.account_id);
         models.reviewContributions?.(id, ["traditional_401k", "roth_401k", "hsa", "hsa_investment"].includes(String(account?.account_type)) ? "payroll" : "personal");

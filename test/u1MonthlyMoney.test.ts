@@ -32,6 +32,9 @@ describe("U1 monthly committed evidence", () => {
     expect(amountFor("mortgage")).toBe(mortgage.paid);
     expect(amountFor("ira")).toBe("500");
     expect(amountFor("tax")).toBe("500");
+    const premiums = month.categories.filter(row => row.policyIds.includes(integratedIds.policy));
+    expect(premiums).toMatchObject([{ kind: "living", amount: "50", accountIds: [golden.checking], policyIds: [integratedIds.policy] }]);
+    expect(premiums.flatMap(row => row.sourceIds)).toHaveLength(1);
     const legIds = month.categories.flatMap(row => row.sourceIds);
     expect(new Set(legIds).size).toBe(legIds.length);
     expect(month.categories.some(row => row.holdingIds.includes(integratedIds.match))).toBe(false);

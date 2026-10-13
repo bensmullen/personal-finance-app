@@ -25,6 +25,7 @@ export interface MonthlyUse {
   readonly holdingIds: readonly string[];
   readonly liabilityIds: readonly string[];
   readonly expenseIds: readonly string[];
+  readonly policyIds: readonly string[];
 }
 /** Read-only budgeting comparison. Posted cash uses do not establish cash origin. */
 export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: PortableModelEnvelope) {
@@ -43,16 +44,17 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
   const allocations = executable.cashFlowInput?.incomes.flatMap(item => item.payrollContributions ?? []) ?? [];
   const uses = new Map<string, MonthlyUse>();
   const addUse = (kind: MonthlyUseKind, label: string, id: string, amount: Money,
-    refs: { accountIds?: readonly string[]; holdingIds?: readonly string[]; liabilityIds?: readonly string[]; expenseIds?: readonly string[] } = {}) => {
+    refs: { accountIds?: readonly string[]; holdingIds?: readonly string[]; liabilityIds?: readonly string[]; expenseIds?: readonly string[]; policyIds?: readonly string[] } = {}) => {
     if (!amount.isPositive()) return;
-    const key = `${kind}:${label}:${(refs.holdingIds ?? []).join()}:${(refs.liabilityIds ?? []).join()}:${(refs.expenseIds ?? []).join()}`;
+    const key = `${kind}:${label}:${(refs.holdingIds ?? []).join()}:${(refs.liabilityIds ?? []).join()}:${(refs.expenseIds ?? []).join()}:${(refs.policyIds ?? []).join()}`;
     const prior = uses.get(key);
     uses.set(key, { id: key, kind, label, amount: (prior ? Money.parse(prior.amount, currency).plus(amount) : amount).amount.toString(),
       sourceIds: [...(prior?.sourceIds ?? []), id],
       accountIds: [...new Set([...(prior?.accountIds ?? []), ...(refs.accountIds ?? [])])],
       holdingIds: [...new Set([...(prior?.holdingIds ?? []), ...(refs.holdingIds ?? [])])],
       liabilityIds: [...new Set([...(prior?.liabilityIds ?? []), ...(refs.liabilityIds ?? [])])],
-      expenseIds: [...new Set([...(prior?.expenseIds ?? []), ...(refs.expenseIds ?? [])])] });
+      expenseIds: [...new Set([...(prior?.expenseIds ?? []), ...(refs.expenseIds ?? [])])],
+      policyIds: [...new Set([...(prior?.policyIds ?? []), ...(refs.policyIds ?? [])])] });
   };
   const lines: MonthlyMoneyLine[] = [];
   const cashUses: { id: string; date: string; amount: string; accountId: string; label: string }[] = [];
@@ -82,8 +84,10 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
           const purchase = executable.investmentInput?.purchases.find(item => holdings.includes(String(item.targetPositionId)));
           const expenseStream = executable.cashFlowInput?.expenses.find(item => tx.legs.some(value => value.type === "liability" && value.entityId === item.payableLiabilityId));
           const expense = model && objects(model, "Expense").find(item => item.expense_id === expenseStream?.id);
+          const policy = model && objects(model, "Insurance").find(item => tx.traceRefs?.some(ref => ref.traceId === `compiler:canonical:Insurance:${item.insurance_id}`));
           if (tx.type.startsWith("mortgage_") && loan) addUse("mortgage", "Mortgage payment", id, leg.amount, { accountIds, liabilityIds: [String(loan.principalLiabilityId)] });
           else if (tx.type === "expense_settlement") addUse("living", String(expense?.category ?? "Living costs"), id, leg.amount, { accountIds, expenseIds: expense ? [String(expense.expense_id)] : [] });
+          else if (tx.type === "insurance_premium") addUse("living", typeof policy?.name === "string" ? policy.name : "Insurance premiums", id, leg.amount, { accountIds, policyIds: policy ? [String(policy.insurance_id)] : [] });
           else if (tx.type === "investment_purchase" || tx.type === "purchase" && holdings.length > 0) addUse(purchase?.contribution?.character.endsWith("_ira") ? "ira" : "brokerage",
             purchase?.contribution?.character.endsWith("_ira") ? "IRA contribution" : "Brokerage investment", id, leg.amount, { accountIds, holdingIds: holdings });
           else if (tx.type.includes("tax")) addUse("tax", "Tax cash payment", id, leg.amount, { accountIds });
@@ -101,7 +105,7 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
     }
     // Keep other posted money-out visible, without reclassifying it as an
     // income-funded allocation or adding it to consumption totals.
-    if (tx.type !== "investment_purchase" && !tx.type.startsWith("mortgage_")) for (const leg of tx.legs) {
+    if (tx.type !== "investment_purchase" && tx.type !== "insurance_premium" && !tx.type.startsWith("mortgage_")) for (const leg of tx.legs) {
       if (leg.type === "cash" && leg.posting === "credit") cashUses.push({ id: `${tx.id}:${leg.accountId}`, date: tx.date,
         amount: leg.amount.amount.toString(), accountId: String(leg.accountId),
         label: tx.type === "expense_settlement" ? "Living costs paid" : "Other modeled cash movement" });

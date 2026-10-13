@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
+import { createGoldenHouseholdDraft, type PersonalDraft } from "../src/application/personalMvp.js";
+import { objects } from "../src/application/compiler/shared.js";
 import { GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 import { authorTermLifePolicy, authorInsuredDeathScenario, unlinkPolicyDeathScenario, termLifeProblems } from "../src/application/insuranceAuthoring.js";
 import { compileDomainMechanics } from "../src/application/compiler/domainMechanics.js";
@@ -8,7 +9,7 @@ import { exportPersonalModelJson, importPersonalModelJson } from "../src/applica
 const policyId = "ab940000-0000-4000-8000-000000000001", eventId = "ab940000-0000-4000-8000-000000000002";
 const terms = { owner: ids.person, insured: ids.person, beneficiary: ids.household, premiumAccount: ids.checking, benefitAccount: ids.savings, premium: "50.25", benefit: "100000", start: "2026-01-01", end: "2027-01-01" };
 const request = { baseCurrency: "USD", asOf: "2026-01-01", simulationStart: "2026-01-01", simulationEnd: "2027-01-01", executionOwnerId: ids.person };
-const base = () => {
+const base = (): PersonalDraft => {
   const draft = createGoldenHouseholdDraft();
   // No other domain mechanics needed for the insurance-only regression.
   return { ...draft, objects: { ...draft.objects, Investment: [] } };
@@ -44,7 +45,7 @@ describe("U1 insurance contract and scenario have separate shared owners", () =>
     ]);
     expect(compiled.value.input.operations[2]?.sourceRefs).toEqual([`compiler:canonical:Insurance:${policyId}`, `compiler:canonical:Event:${eventId}`]);
     const revised = authorInsuredDeathScenario(edited, { policyId, eventId, scenarioId: ids.rootScenario, date: "2026-04-01", enabled: true });
-    expect(revised.objects.Event?.filter(item => typeof item === "object" && item !== null && !Array.isArray(item) && item.event_id === eventId)).toHaveLength(1);
+    expect(objects(revised, "Event").filter(item => item.event_id === eventId)).toHaveLength(1);
     expect(() => authorTermLifePolicy(revised, policyId, { ...terms, end: "2026-04-01" })).toThrow(/outside/);
   });
   it("disabling or unlinking the optional event keeps premiums and historical lineage", () => {
