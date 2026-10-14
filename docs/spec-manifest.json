@@ -682,7 +682,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.6.7-draft",
+      "version": "0.6.8-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -751,7 +751,8 @@
         "milestone issue traceability",
         "private-alpha issue gates",
         "U1 fact ontology",
-        "PFA-UX-021-023"
+        "PFA-UX-021-023",
+        "D2 parallel preparation"
       ],
       "applies_to": [
         "personal-mvp",
