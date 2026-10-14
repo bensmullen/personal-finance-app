@@ -634,6 +634,17 @@ specific audited sources before edits; it does not attest full migration.
 The annual-fact projection and reconciled paycheck allocation remain potential
 out-of-scope semantic blockers. No gross salary → MAGI, wage → qualified pay,
 bank balance → leftover, or savings → current paycheck inference is authorized.
-The existing 50-family controlled registry remains read-only. An exhaustive
+The merged 62-family controlled registry remains read-only. An exhaustive
 rendered-field migration and zero duplicate writable identities are not yet proven.
+
+At `7302fc1`, GitHub run `38655384140` passed typecheck, build,
+architecture and all 1,383 unit tests across 72 files. Browser verification
+reported 10 failures among 58 tests. The new insurance save/reload and shared
+Life Events journey passed. Follow-up corrections move legacy browser selectors
+to Money income routing and Net Worth debt funding, scope the editable forecast
+clock, inspect year-qualified eligibility summaries, and provide the option
+multiplier as an authoritative decimal string. Financial expectations, including
+contract maturity, unsupported refinance dates, incomplete future eligibility
+and saved-model identity, are preserved. These corrections require a fresh CI
+run; neither browser success nor U1 acceptance is asserted from this run.
 

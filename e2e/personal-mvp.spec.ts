@@ -209,8 +209,43 @@ const useShortHorizon = async (page: import("@playwright/test").Page) => {
 
 const openPlanDetails = async (page: import("@playwright/test").Page) => {
   await expect(page.getByRole("heading", { name: "Forecast setup", exact: true })).toBeVisible();
-  await page.getByText("Technical retirement binding override", { exact: true }).click();
-  await page.getByText("Expert standalone forecasts", { exact: true }).click();
+  for (const name of ["Technical retirement binding override", "Expert standalone forecasts"]) {
+    const summary = page.locator("summary").filter({ hasText: new RegExp(`^${name}$`) });
+    if (await summary.locator("..").getAttribute("open") === null) await summary.click();
+  }
+};
+
+const openIncomeOwner = async (page: import("@playwright/test").Page) => {
+  await page.getByRole("button", { name: "Money", exact: true }).click();
+  await page.getByRole("button", { name: "Income", exact: true }).click();
+  return page.getByRole("region", { name: "Income deposit routing", exact: true });
+};
+const openDebtOwner = async (page: import("@playwright/test").Page) => {
+  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Debt", exact: true }).click();
+  await openAuthoringSections(page);
+  return page.getByRole("group", { name: "Example mortgage", exact: true });
+};
+const returnToCurrentPlan = async (page: import("@playwright/test").Page) => {
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  await openAuthoringSections(page);
+};
+/** Exercise each sole source editor, then return to run-level setup. */
+const configureOwnedFunding = async (page: import("@playwright/test").Page, options: { missingIncome?: boolean; calculateSchedule?: boolean } = {}) => {
+  const income = (await openIncomeOwner(page)).getByLabel("Income receiving account", { exact: true });
+  if (options.missingIncome) await expect(income).toHaveAttribute("aria-invalid", "true");
+  await income.selectOption({ label: "Everyday checking" });
+  const mortgage = await openDebtOwner(page);
+  await page.getByLabel("Debt owner", { exact: true }).selectOption({ label: "Taylor Example" });
+  await mortgage.getByLabel("First monthly payment", { exact: true }).fill("2022-02-01");
+  if (options.calculateSchedule) await mortgage.getByRole("button", { name: "Calculate schedule: use 360 payments from first payment through recorded maturity", exact: true }).click();
+  else await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("360");
+  await expect(mortgage.getByLabel("Number of monthly payments", { exact: true })).toHaveValue("360");
+  await mortgage.getByLabel("Mortgage payment account", { exact: true }).selectOption({ label: "Everyday checking" });
+  await mortgage.getByLabel("Same-day mortgage order", { exact: true }).fill("1");
+  await returnToCurrentPlan(page);
+  await page.getByRole("region", { name: "Household execution configuration", exact: true }).getByLabel("Investment owner", { exact: true }).selectOption({ label: "Taylor Example" });
 };
 
 const importDraft = async (
@@ -360,15 +395,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   await expect(checklist).toContainText("clears session-only forecast choices");
   await checklist.getByRole("button", { name: "Complete forecast setup", exact: true }).click();
   const configuration = page.getByRole("region", { name: "Household execution configuration" });
-  await expect(configuration.getByLabel("Income receiving account", { exact: true })).toHaveAttribute("aria-invalid", "true");
-  await configuration.getByLabel("Income receiving account", { exact: true }).selectOption({ label: "Everyday checking" });
-  await configuration.getByRole("heading", { name: "Investments" }).locator("..").getByLabel(/^(Investment owner|Debt owner)$/).selectOption({ label: "Taylor Example" });
-  await configuration.getByRole("heading", { name: "Mortgage terms & funding" }).locator("..").getByLabel(/^(Investment owner|Debt owner)$/).selectOption({ label: "Taylor Example" });
-  const mortgage = configuration.getByRole("group", { name: "Example mortgage" });
-  await mortgage.getByLabel("First monthly payment", { exact: true }).fill("2022-02-01");
-  await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("360");
-  await mortgage.getByLabel("Mortgage payment account", { exact: true }).selectOption({ label: "Everyday checking" });
-  await mortgage.getByLabel("Same-day mortgage order", { exact: true }).fill("1");
+  await configureOwnedFunding(page, { missingIncome: true });
   await configureTaxSettlement(page);
   await expect(checklist).toContainText("Required choices are complete");
   await configuration.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
@@ -480,7 +507,7 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   const status = page.getByRole("status", { name: "Household forecast status" });
   await expect(status).toHaveAttribute("data-pending", "false");
   await expect(page.getByText("Completed through 2036-01-01 · Some outputs are partially modeled", { exact: true })).toBeVisible();
-  const mortgage = page.getByRole("region", { name: "Household execution configuration" }).getByRole("group", { name: "Example mortgage" });
+  const mortgage = await openDebtOwner(page);
   await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("359");
   await expect(mortgage).toContainText("Schedule mismatch");
   await expect(mortgage.getByRole("button", { name: "Use calculated contractual maturity 2051-12-01", exact: true })).toBeVisible();
@@ -497,7 +524,9 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await operations.getByLabel("Operation date", { exact: true }).fill("2031-01-01");
   await operations.getByLabel("Operation cash amount", { exact: true }).fill("300000");
   await operations.getByRole("button", { name: "Save activity", exact: true }).click();
+  await returnToCurrentPlan(page);
   await expect(page.getByRole("region", { name: "Projected mortgage payoff" })).toContainText("2031-01-01", { timeout: 30_000 });
+  await openDebtOwner(page);
   await expect(mortgage).toContainText("Contractual final payment / maturity: 2052-01-01");
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -518,18 +547,20 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await expect(purchases.getByLabel("Purchase investment", { exact: true })).toHaveValue("d1cc0000-0000-4000-8000-000000000002");
   await purchases.getByLabel("Purchase amount", { exact: true }).fill("501");
   await purchases.getByLabel("Purchase frequency", { exact: true }).selectOption("monthly");
-  const iraAssumption = purchases.getByRole("region", { name: "Annual contribution forecast boundary" });
+  await openAnnualReview(purchases);
+  const iraAssumption = purchases.locator("summary").filter({ hasText: /^Annual eligibility ·/ }).locator("..");
   await expect(iraAssumption.getByRole("checkbox")).toHaveCount(0);
-  await expect(iraAssumption).toContainText("Year-by-year eligibility is not supported yet");
+  await expect(iraAssumption).toContainText("Later years need their own dated facts.");
   await purchases.getByRole("button", { name: "Save investment purchase", exact: true }).click();
   await expect(purchases).toContainText("501");
   await manage("Health savings investments", "HSA-EMPLOYEE");
   const payroll = page.getByRole("region", { name: "Saved payroll contributions" });
   await expect(payroll.getByLabel("Payroll destination", { exact: true })).toHaveValue("d1cc0000-0000-4000-8000-000000000005");
   await payroll.getByLabel("Payroll contribution amount", { exact: true }).fill("101");
-  const hsaAssumption = payroll.getByRole("region", { name: "Annual contribution forecast boundary" });
+  await openAnnualReview(payroll);
+  const hsaAssumption = payroll.locator("summary").filter({ hasText: /^Annual eligibility ·/ }).locator("..");
   await expect(hsaAssumption.getByRole("checkbox")).toHaveCount(0);
-  await expect(hsaAssumption).toContainText("Year-by-year eligibility is not supported yet");
+  await expect(hsaAssumption).toContainText("Later years need their own dated facts.");
   await payroll.getByRole("button", { name: "Save payroll contribution", exact: true }).click();
   // Export and inspect the same authoritative plans, proving contextual routes
   // updated existing plans rather than introducing duplicate economic routes.
@@ -551,15 +582,7 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
   const configuration = page.getByRole("region", { name: "Household execution configuration" });
-  await configuration.getByLabel("Income receiving account", { exact: true }).selectOption({ label: "Everyday checking" });
-  await configuration.getByRole("heading", { name: "Investments" }).locator("..").getByLabel(/^(Investment owner|Debt owner)$/).selectOption({ label: "Taylor Example" });
-  await configuration.getByRole("heading", { name: "Mortgage terms & funding" }).locator("..").getByLabel(/^(Investment owner|Debt owner)$/).selectOption({ label: "Taylor Example" });
-  const importedMortgage = configuration.getByRole("group", { name: "Example mortgage" });
-  await importedMortgage.getByLabel("First monthly payment", { exact: true }).fill("2022-02-01");
-  await importedMortgage.getByRole("button", { name: "Calculate schedule: use 360 payments from first payment through recorded maturity", exact: true }).click();
-  await expect(importedMortgage.getByLabel("Number of monthly payments", { exact: true })).toHaveValue("360");
-  await importedMortgage.getByLabel("Mortgage payment account", { exact: true }).selectOption({ label: "Everyday checking" });
-  await importedMortgage.getByLabel("Same-day mortgage order", { exact: true }).fill("1");
+  await configureOwnedFunding(page, { calculateSchedule: true });
   await configureTaxSettlement(page);
   await configuration.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
   await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
@@ -572,8 +595,8 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("Projected current law");
   await expect(status).not.toContainText("Tax payments & refunds: choose");
   await expect(status).toContainText("New York");
-  await expect(status).toContainText("Future annual contribution facts need confirmation");
-  await expect(status).toContainText("Unconfirmed contributions are skipped; wages and other household activity continue");
+  await expect(status).toContainText("Future contribution eligibility is not established for this year.");
+  await expect(status).toContainText("Affected contributions are skipped; wages and other household activity continue");
   const primaryMessages = await status.locator("[data-diagnostic-root]").allTextContents();
   expect(new Set(primaryMessages).size).toBe(primaryMessages.length);
   await status.getByText("Technical diagnostic details", { exact: true }).click();
@@ -605,7 +628,8 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   await operations.getByRole("button", { name: "Save activity", exact: true }).click();
   await expect(operations.getByRole("status")).toContainText("Activity saved.");
   await expect(operations.getByLabel("Activity type", { exact: true }).locator('option[value="put"]')).toHaveCount(0);
-  await expect(operations).toContainText("Unsupported products are diagnosed before forecast use");
+  await expect(operations.getByLabel("Source / target holding", { exact: true })).toBeDisabled();
+  await expect(operations.getByLabel("Activity type", { exact: true }).locator('option[value="call_exercise"]')).toHaveCount(0);
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Canonical model saved to this browser")).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -629,7 +653,10 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
   await openContributions(page);
+  await openHoldingActivity(page, GOLDEN_HOUSEHOLD_IDS.brokerageInvestment);
   await expect(operations).toContainText("Sell investment · 2026-01-23");
+  await returnToCurrentPlan(page);
+  await openContributions(page);
   const payroll = page.getByRole("region", { name: "Saved payroll contributions" });
   await expect(payroll).toContainText("traditional 401k");
   await expect(payroll).toContainText("employer hsa");
@@ -638,28 +665,25 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   await openAuthoringSections(page);
   await expect(page.getByRole("heading", { name: "Forecast setup", exact: true })).toBeVisible();
   const configuration = page.getByRole("region", { name: "Household execution configuration" });
-  await expect(configuration.getByLabel("Income receiving account", { exact: true })).toHaveValue("");
+  await expect(configuration.getByLabel("Income receiving account", { exact: true })).toHaveCount(0);
+  await expect((await openIncomeOwner(page)).getByLabel("Income receiving account", { exact: true })).toHaveValue("");
+  await returnToCurrentPlan(page);
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toHaveCount(0);
-  await configuration.getByLabel("Income receiving account", { exact: true }).selectOption({ label: "Everyday checking" });
-  await configuration.getByRole("heading", { name: "Investments" }).locator("..").getByLabel(/^(Investment owner|Debt owner)$/).selectOption({ label: "Taylor Example" });
-  await configuration.getByRole("heading", { name: "Mortgage terms & funding" }).locator("..").getByLabel(/^(Investment owner|Debt owner)$/).selectOption({ label: "Taylor Example" });
-  const mortgage = configuration.getByRole("group", { name: "Example mortgage" });
-  await mortgage.getByLabel("First monthly payment", { exact: true }).fill("2022-02-01");
-  await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("360");
-  await mortgage.getByLabel("Mortgage payment account", { exact: true }).selectOption({ label: "Everyday checking" });
-  await mortgage.getByLabel("Same-day mortgage order", { exact: true }).fill("1");
+  await configureOwnedFunding(page);
   await configureTaxSettlement(page);
   await configuration.getByRole("button", { name: "Apply setup & run forecast" }).click();
   await page.getByRole("button", { name: "Update forecast", exact: true }).click();
   await showHouseholdDetails(page);
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible();
   // Exercise the supported-floor boundary through the mortgage activity form.
+  await openDebtOwner(page);
   const mortgageOperations = page.getByRole("region", { name: "Mortgage operations" });
   await mortgageOperations.getByLabel("Activity type", { exact: true }).selectOption("refinance");
   await mortgageOperations.getByLabel("Mortgage to replace", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.mortgage);
   await mortgageOperations.getByLabel("Operation date", { exact: true }).fill("2026-01-15");
   await mortgageOperations.getByLabel("Replacement nominal annual rate", { exact: true }).fill("4");
   await mortgageOperations.getByRole("button", { name: "Save activity", exact: true }).click();
+  await returnToCurrentPlan(page);
   await page.getByRole("button", { name: "Update forecast", exact: true }).click();
   await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-lifecycle", "unsupported");
   await expect(page.getByText(/scheduled monthly.*payment date/).first()).toBeVisible();
@@ -1125,7 +1149,8 @@ test("R4 current plan shows setup and opens technical details without recalculat
   await expect(page.getByRole("region", { name: "Standalone forecast drill-down" })).toHaveCount(0);
   const request = await status.getAttribute("data-request-id");
   await openPlanDetails(page);
-  await expect(page.getByLabel("Income receiving account", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Household execution configuration" })).toContainText("Income receiving account: Everyday checking");
+  await expect(page.getByLabel("Income receiving account", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Forecast scope", { exact: true })).toBeVisible();
   await expect(status).toHaveAttribute("data-request-id", request!);
   expect(await page.locator("#main-content").innerText()).not.toMatch(rawUuid);
@@ -1495,8 +1520,10 @@ test("session settings drive horizons and block invalid run ordering", async ({
   await loadExample(page);
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
-  await page.getByLabel("As of", { exact: true }).fill("2026-02-01");
-  await page.getByLabel("Data cutoff", { exact: true }).fill("2026-02-01");
+  await page.getByText("Forecast clock & conventions", { exact: true }).click();
+  const clock = page.locator('[data-authoring-scope="forecast-dates"]');
+  await clock.getByLabel("As of", { exact: true }).fill("2026-02-01");
+  await clock.getByLabel("Data cutoff", { exact: true }).fill("2026-02-01");
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-04-01");
   await page.getByRole("button", { name: "Plan", exact: true }).click();
   await openAuthoringSections(page);
@@ -1880,26 +1907,7 @@ test("What If executes deterministic investment return", async ({ page }) => {
   const configuration = page.getByRole("region", {
     name: "Household execution configuration",
   });
-  const mortgage = configuration.getByRole("group", {
-    name: "Example mortgage",
-  });
-  await configuration
-    .getByLabel("Income receiving account", { exact: true })
-    .selectOption({ label: "Everyday checking" });
-  await configuration
-    .getByLabel(/^(Investment owner|Debt owner)$/)
-    .first()
-    .selectOption({ label: "Taylor Example" });
-  await configuration
-    .getByLabel(/^(Investment owner|Debt owner)$/)
-    .last()
-    .selectOption({ label: "Taylor Example" });
-  await mortgage.getByLabel("First monthly payment", { exact: true }).fill("2022-02-01");
-  await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("360");
-  await mortgage
-    .getByLabel("Mortgage payment account", { exact: true })
-    .selectOption({ label: "Everyday checking" });
-  await mortgage.getByLabel("Same-day mortgage order", { exact: true }).fill("1");
+  await configureOwnedFunding(page);
   await configureTaxSettlement(page);
   await configuration
     .getByRole("button", { name: "Apply setup & run forecast" })
@@ -2143,7 +2151,9 @@ test("PR21 closeout: configure save reload reconfigure", async ({ page }) => {
   await openPlanDetails(page);
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await openAuthoringSections(page);
-  await expect(page.getByLabel("Income receiving account", { exact: true })).toHaveValue("");
+  await expect((await openIncomeOwner(page)).getByLabel("Income receiving account", { exact: true })).toHaveValue("");
+  await returnToCurrentPlan(page);
+  await openPlanDetails(page);
   await expect(page.getByLabel("Baseline retirement income", { exact: true })).toHaveValue("");
   await expect(page.getByLabel("Baseline canonical retirement event", { exact: true })).toHaveValue("");
   await expect(
@@ -2155,30 +2165,8 @@ test("PR21 closeout: configure save reload reconfigure", async ({ page }) => {
   const configuration = page.getByRole("region", {
     name: "Household execution configuration",
   });
-  const investmentConfiguration = configuration
-    .getByRole("heading", { name: "Investments" })
-    .locator("..");
-  const debtConfiguration = configuration
-    .getByRole("heading", { name: "Mortgage terms & funding" })
-    .locator("..");
-  const mortgage = configuration.getByRole("group", {
-    name: "Example mortgage",
-  });
-  await configuration
-    .getByLabel("Income receiving account", { exact: true })
-    .selectOption({ label: "Everyday checking" });
-  await investmentConfiguration
-    .getByLabel(/^(Investment owner|Debt owner)$/)
-    .selectOption({ label: "Taylor Example" });
-  await debtConfiguration
-    .getByLabel(/^(Investment owner|Debt owner)$/)
-    .selectOption({ label: "Taylor Example" });
-  await mortgage.getByLabel("First monthly payment", { exact: true }).fill("2022-02-01");
-  await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("360");
-  await mortgage
-    .getByLabel("Mortgage payment account", { exact: true })
-    .selectOption({ label: "Everyday checking" });
-  await mortgage.getByLabel("Same-day mortgage order", { exact: true }).fill("1");
+  await configureOwnedFunding(page);
+  await openPlanDetails(page);
   await configuration
     .getByLabel("Baseline retirement income", { exact: true })
     .selectOption({ label: "Example salary" });

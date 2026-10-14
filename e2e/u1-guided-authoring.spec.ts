@@ -152,24 +152,29 @@ test("U1 normal navigation, staged salary, direct repair, mortgage and horizon g
   await dates.getByRole("button", { name: "Apply Current Plan dates", exact: true }).click();
   await expect(dates).toContainText("2037-01-01");
 
-  await open(page, "Debt & mortgage");
+  await navigate(page, "Net Worth", "Debt");
   const mortgage = page.getByRole("group", { name: "Example mortgage" });
   await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("359");
   await expect(mortgage.getByLabel("Number of monthly payments", { exact: true })).toHaveAttribute("aria-invalid", "true");
+  await navigate(page, "Plan", "Current Plan");
   await expect(page.getByRole("button", { name: "Apply setup & run forecast", exact: true })).toBeDisabled();
+  await navigate(page, "Net Worth", "Debt");
   await mortgage.getByRole("button", { name: "Use calculated contractual maturity 2051-12-01", exact: true }).click();
   await expect(mortgage).toContainText("Contractual final payment / maturity: 2051-12-01");
   await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("360");
   await mortgage.getByRole("button", { name: "Use calculated contractual maturity 2052-01-01", exact: true }).click();
 
+  await navigate(page, "Money", "Income");
   const income = page.getByLabel("Income receiving account", { exact: true });
   const account = await income.inputValue();
   await income.selectOption("");
+  await navigate(page, "Plan", "Current Plan");
   const checklist = page.getByRole("region", { name: "Forecast setup checklist" });
   await checklist.getByRole("button", { name: /^Income receiving account:/ }).click();
   await expect(income).toBeFocused();
   await expect(income).toHaveAttribute("aria-invalid", "true");
   await income.selectOption(account);
+  await navigate(page, "Plan", "Current Plan");
   await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
   await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
   await expect(page.getByText("Completed through 2036-01-01 · Some outputs are partially modeled", { exact: true })).toBeVisible();
@@ -487,8 +492,9 @@ test("Owner repair: isolated mortgage shortfalls name the evaluated payment acco
   await expect(explanation).toContainText("Payment account: Everyday checking");
   await expect(explanation).toContainText("Required"); await expect(explanation).toContainText("available");
   await explanation.getByRole("button", { name: "Review mortgage payment account", exact: true }).click();
-  const funding = page.getByRole("region", { name: "Household execution configuration", exact: true }).getByLabel("Mortgage payment account", { exact: true });
+  const funding = page.getByLabel("Mortgage payment account", { exact: true });
   await expect(funding).toBeFocused(); await expect(funding).toBeVisible();
+  await navigate(page, "Plan", "Current Plan");
   await open(page, "Expert standalone forecasts");
   await standalone.getByLabel("Forecast scope", { exact: true }).selectOption("cash_flow");
   await standalone.getByRole("button", { name: "Run cash flow forecast", exact: true }).click();
