@@ -680,3 +680,24 @@ the obsolete blanket-projection expectation. Annual eligibility diagnostics
 name their actual tax year so distinct missing-year roots are not identical
 generic messages. No contribution capacity or posting formula changed.
 
+## Passing implementation evidence
+
+Code head `ed3295c36b14ce88f2fc40a07fb299a625279baf` passed GitHub Actions
+[run 38683329071](https://github.com/bensmullen/personal-finance-app/actions/runs/38683329071):
+typecheck, build, architecture, all **1,383 unit tests / 72 files**, all
+**58 browser tests**, verification-plan and aggregate gate. Specification and
+tooling jobs were skipped by the selected plan; deployment was skipped.
+The final following commit records this evidence only; current PR checks remain
+the authority for its exact head. No local verification was run.
+
+The browser evidence includes source-holding activity and legacy identity
+round-trips, a linked policy and a policy with no death scenario, shared Life
+Events editing, desktop/mobile help and insurance overflow checks, source-owner
+navigation, and the explicit 2027 filing repair while later facts remain
+unknown. The prior annual-fact, historical-scope, paycheck, mortgage, spending,
+diagnostic and current-position journeys remain in the passing suite.
+
+This is implementation/CI evidence. Independent ChatGPT semantic review and
+uncoached product-owner UAT remain **not accepted**. PR #98 stays draft; #94,
+U1 and D1 stay open. Exact posted withholding/take-home pay still requires #101.
+
