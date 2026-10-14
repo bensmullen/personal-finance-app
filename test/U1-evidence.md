@@ -662,3 +662,13 @@ looked for a detail region before opening forecast details and expected older
 wording. It now opens those details and retains the exact federal source year
 and projection start assertion. A fresh current-head run is required.
 
+At `b826838`, run `38682395287` again passed typecheck, build, architecture
+and unit checks, with 57/58 browser tests passing. The remaining journey
+confirmed that absent future household filing facts suppress projected tax-law
+output even after details are opened. The synthetic journey now explicitly
+records its 2027 single-filing planning assumption through the shared annual
+editor before asserting the federal projection source/start. It also asserts
+2028 still requires filing facts, preserves unknown contribution eligibility,
+and recognizes the existing filing-status diagnostic category. This changes
+test preconditions; production financial behavior is unchanged.
+

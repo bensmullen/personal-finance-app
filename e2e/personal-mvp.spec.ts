@@ -590,6 +590,16 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await configureTaxSettlement(page);
   await configuration.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
   await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  // Projected statutory law cannot supply a household's future filing facts.
+  // Confirm this synthetic household's 2027 assumption through its sole editor;
+  // all other future annual eligibility facts intentionally remain unknown.
+  await status.getByRole("button", { name: "Review 2027 filing status · Taylor Example", exact: true }).click();
+  const filing = page.getByRole("dialog", { name: "Edit Annual household filing status", exact: true });
+  await filing.getByLabel("Annual household filing status", { exact: true }).selectOption("single");
+  await filing.getByRole("button", { name: "Confirm & save fact", exact: true }).click();
+  await expect(filing).toHaveCount(0);
+  await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  await expect(status.getByRole("button", { name: "Review 2028 filing status · Taylor Example", exact: true })).toBeVisible();
   await expect(page.getByRole("alert", { name: "Forecast stopped early" })).toHaveCount(0);
   await expect(page.getByText("Completed through 2036-01-01 · Some outputs are partially modeled", { exact: true })).toBeVisible();
   await showHouseholdDetails(page);
@@ -605,7 +615,7 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   expect(new Set(primaryMessages).size).toBe(primaryMessages.length);
   await status.getByText("Technical diagnostic details", { exact: true }).click();
   const roots = await status.locator("details details > summary").allTextContents();
-  expect(roots.filter(root => root.includes("PFA-TAX-009")).every(root => /rule_selection|local_residence_jurisdiction|canonical_rule_reference|payment_funding|settlement_timing|legal_base_or_component|projected_current_law|contribution_jurisdiction_base|contribution_annual_facts|term_life/.test(root))).toBe(true);
+  expect(roots.filter(root => root.includes("PFA-TAX-009")).every(root => /rule_selection|local_residence_jurisdiction|canonical_rule_reference|payment_funding|settlement_timing|legal_base_or_component|projected_current_law|contribution_jurisdiction_base|contribution_annual_facts|filing_status|term_life/.test(root))).toBe(true);
   expect(roots.some(root => root.includes("contribution_annual_facts"))).toBe(true);
   expect(errors).toEqual([]);
 });
