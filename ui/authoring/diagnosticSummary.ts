@@ -18,7 +18,7 @@ export function diagnosticSummary(diagnostic: DisplayDiagnostic, model?: Persona
   if (diagnostic.entityType === "tax_capability") {
     const category = diagnostic.category ?? "";
     if (category === "payment_funding" || category === "settlement_timing") return { problem: "Tax payments and refunds need forecast setup.", remedy: "Choose their cash accounts and confirm settlement dates in Forecast setup.", explanation };
-    if (category === "contribution_annual_facts") return { problem: "Future contribution eligibility is not established for this year.", remedy: "Review this year's income, employer plan, tax or health-coverage facts in their named source editor.", explanation };
+    if (category === "contribution_annual_facts") return { problem: `Future contribution eligibility is not established for ${diagnostic.taxYear ?? "this year"}.`, remedy: "Review this year's income, employer plan, tax or health-coverage facts in their named source editor.", explanation };
     if (category.startsWith("filing_status")) return { problem: category === "filing_status_conflict" ? `Recorded filing statuses disagree for ${diagnostic.taxYear ?? "this year"}.` : `Household filing status is missing for ${diagnostic.taxYear ?? "this year"}.`, remedy: "Confirm the annual household status in Household & People; earlier years do not establish later years.", explanation };
     if (category === "projected_current_law") return { problem: sentences[0]!, remedy: "Review the projected current-law basis before relying on future tax totals.", explanation };
     return { problem: sentences[0]!, remedy: /filing_status|residence_jurisdiction_periods|work_service_jurisdiction_allocations/.test(category)

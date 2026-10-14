@@ -606,10 +606,14 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   const basis = page.getByRole("region", { name: "Projected law forecast basis" });
   await expect(basis).toContainText("US:FEDERAL: 2026 source rules projected from 2027-01-01");
   await openContributions(page);
-  await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("Projected current law");
+  // Future capacity rows require committed eligible contributions; projected
+  // tax law and one filing fact cannot create an annual contribution allowance.
+  const capacity = page.getByRole("region", { name: "Contribution capacity" });
+  await expect(capacity).not.toContainText("Projected current law");
+  await expect(capacity.locator("tbody tr").filter({ hasText: /\/ 2027\b/ })).toHaveCount(0);
   await expect(status).not.toContainText("Tax payments & refunds: choose");
   await expect(status).toContainText("New York");
-  await expect(status).toContainText("Future contribution eligibility is not established for this year.");
+  await expect(status).toContainText("Future contribution eligibility is not established for 2027.");
   await expect(status).toContainText("Affected contributions are skipped; wages and other household activity continue");
   const primaryMessages = await status.locator("[data-diagnostic-root]").allTextContents();
   expect(new Set(primaryMessages).size).toBe(primaryMessages.length);

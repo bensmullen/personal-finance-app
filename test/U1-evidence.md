@@ -672,3 +672,11 @@ editor before asserting the federal projection source/start. It also asserts
 and recognizes the existing filing-status diagnostic category. This changes
 test preconditions; production financial behavior is unchanged.
 
+Source review of the remaining assertions also confirms that future capacity
+rows come only from committed projected-law contribution buckets. Unknown
+eligibility must therefore produce no inferred 2027 allowance, even after
+filing status is confirmed. The journey now checks that boundary instead of
+the obsolete blanket-projection expectation. Annual eligibility diagnostics
+name their actual tax year so distinct missing-year roots are not identical
+generic messages. No contribution capacity or posting formula changed.
+
