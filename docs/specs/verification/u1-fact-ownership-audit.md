@@ -53,3 +53,33 @@
 - Owner UAT must be uncoached: edit salary growth from Income, correct plan eligibility from the account, repair historical YTD from the same panel, change mortgage payment bank from Debt, and navigate across read-only mirrors with no stale contradictory values or page-hopping.
 
 **Audit verdict: architecture consistency verified; current app still has redundant editors/ambiguous sources and owner-reported errors.** Codex implementation and independent post-implementation audit are required. A passing PR containing only this register/test/specs cannot be described as a completed single-source-of-truth UI.
+
+## 2026-10-14 controlled registry extension — existing investment operations and term-life insurance
+
+**Scope of this addendum:** Latest reviewed U1 draft PR #98, commit `7149798c3158eef925ed963210ee19aa3c6148ba`, `ui/forecast/DomainMechanicsPanel.tsx` and `TermLifeEditor`, with authoritative PFA-DET-002/004/005/009/010/011, PFA-INS-001–005/012 and PFA-INV-015/022. The initial 50-family audit above was correct for its time and **not** an exhaustive UI inventory. The controlled registry now includes **62 total families** (12 added), with exact D1 operation-kind mapping and owner-level conditional field binding metadata.
+
+### Approved current-U1 classification
+
+| D1 authoring controls / operations | Registry owner family | Sole natural normal editor | Important semantic boundary |
+| --- | --- | --- | --- |
+| `purchase` for supported crypto/long call | `investment.purchase` (existing) | Investments & retirement → selected holding | Ordinary planned purchase is not a sale, dividend or cash expense |
+| `sale` and optional tax-lot selection | `investment.sale` | Investments & retirement → holding → Activity & transfers | Opening tax lots are `investment.holding`; disposition creates one realized transaction, no manual gain |
+| `call_exercise` | `investment.option_exercise` | Same holding activity panel | Contract multiplier/strike/basis come from qualified holding facts, not duplicate event inputs |
+| `ordinary_dividend`, `qualified_dividend`, `interest` | `investment.income_distribution` | Same holding activity panel | Qualifying tax character cannot be assumed; no additional editable Income row |
+| `reinvest_dividend` | `investment.dividend_reinvestment` | Same holding activity panel | One saved instruction executes *income recognition + linked purchase*; no duplicate dividend or transfer |
+| `conversion` | `investment.retirement_conversion` | Investments & retirement → affected retirement plan and source/destination holdings | Same-plan Roth conversion distinct from rollover, distribution and annual contribution |
+| `direct_rollover`, `mixed_rollover` | `investment.retirement_rollover` | Investments & retirement → Transfers & rollovers | Source/destination and split-basis tax character explicit; second Roth destination field only when split |
+| `indirect_distribution`, `indirect_deposit` | `investment.indirect_rollover` | Investments & retirement → Transfers & rollovers | One linked **two-event** 60-day workflow; withholding and replacement cash separately preserved, not an ordinary contribution |
+| `mortgage_extra`, `refinance` | `debt.extra_refinance` (existing) | Net Worth → Debt | Already owned; do not create new competing operation owner |
+| Term-life owner, insured, beneficiary, effective coverage | `insurance.term_life_policy` | **Money → Insurance & coverage** → policy | A contract is protection, not an investment asset |
+| Term-life monthly premium and account | `insurance.term_life_premium` | **Same policy editor** | Mirrors to Spending/Cash Flow only; never a second editable Expense or twice-posted debit |
+| Face amount and benefit deposit account | `insurance.term_life_benefit` | **Same policy editor** | Beneficiary is reused from policy once; contract face amount is not currently paid cash |
+| Executed covered death benefit | `insurance.benefit_payout` (derived/conditional) | Read-only in policy | Recognized only on qualifying D1 claim/event, not independently editable |
+| Insured death date, scenario, enabled | `life.death_event` | **Plan → Life Events**; open same editor inline from policy | Policy may exist without a forecast death scenario; event is separate but can be configured adjacently |
+
+**Source-code implementation gap at this head:** `DomainMechanicsPanel` currently bundles all investment operations and the nested `TermLifeEditor` under Investments & retirement. It also creates a scheduled death event when a term-life policy is saved. Neither behavior satisfies the separated, intuitive single owner described above: Codex must move/reuse the policy editor under Money Insurance & coverage, make the death event independently optional and owned by Life Events, preserve the legacy `Insurance.death_event_id`/Event/Scenario references, and route the contextual "simulate death" action through the SAME Life Events editor. A new policy must not require an invented date of death; insurance premiums/benefits must retain exact existing D1 semantics.
+
+**Source and conditional editor integrity:** The new registry records `authored_domain_operation_kinds` and `ui_fact_bindings`. The independently added unit guard checks the **14 existing supported** investment/debt operation kinds each have exactly one mapped registry owner, conditional split-rollover and linked indirect deposit fields are scoped, and insurance policy/benefit/event ownership is disjoint. These checks are *architecture contract tests*, not proof that actual live UI was migrated or that user-facing forms have no remaining duplicate data. They do not validate D1 cash/tax execution outcomes by themselves.
+
+**Closeout remains blocked until:** real rendered-field → exact registry family → sole editor mapping is exhaustive; UI sections navigate directly to an affected holding/policy; no duplicate insurance premium or dividend-income writer; no automatic death assumption; exact D1 cash basis/tax/lot/rollover/payout regression parity; browser UAT for a term policy without a death event and the separate covered-death scenario; original U1 owner tests, CI and independent semantic audit. Do not mark U1 accepted from a registry-only PR.
+
