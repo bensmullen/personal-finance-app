@@ -2,7 +2,7 @@
   "schema_version": 1,
   "status": "normative architecture inventory; application implementation not yet complete",
   "source_of_truth_rule": "Exactly one normal-user write owner per scoped semantic fact. The canonical model/financial engine remains economic authority. Other pages only read and deep-link.",
-  "scope_note": "Inventory all current normal-user U1 authoring families and significant derived outputs; new normal fields require registry classification before exposure.",
+  "scope_note": "Classify every rendered U1 normal/advanced field, including insurance, investment transactions and life-event operations, under its semantic family before release. New controls require controlled registry update.",
   "records": [
     {
       "id": "household.membership",
@@ -905,6 +905,215 @@
         "Plan → Current Plan"
       ],
       "resolution_policy": "same transaction counted once; liabilities and transfers retain character",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.sale",
+      "label": "Sale or disposal of an owned investment position",
+      "kind": "decision",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "holding + account + scheduled event ID + scenario + execution date + quantity/lot selection",
+      "canonical_authority": "existing D1 Event/EventEffect/PrimitiveInstance domain operation kind=sale; holding opening lots and exact settlement evidence",
+      "derives_from": [
+        "investment.holding",
+        "investment.account"
+      ],
+      "read_only_surfaces": [
+        "Money → Cash Flow",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "Cash proceeds, realized gain and basis reduction are derived from one executed sale; user chooses disposition date/quantity/lot only where needed. No separately editable capital gain or duplicate cash receipt. Holding context is the only ordinary editor.",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.option_exercise",
+      "label": "Exercise a supported long equity call",
+      "kind": "decision",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "owned option holding + linked underlying + account + event date + contract quantity + lot election",
+      "canonical_authority": "existing D1 domain operation kind=call_exercise and authoritative option multiplier/strike/lot basis from holding",
+      "derives_from": [
+        "investment.holding",
+        "investment.account"
+      ],
+      "read_only_surfaces": [
+        "Money → Cash Flow",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "Premium/basis, multiplier, strike and acquired underlying cost are derived when fully supported; require an explicit linked funding account and lot election only when economically material. Unsupported exercise/assignment is capability gated, not approximated.",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.income_distribution",
+      "label": "Dividend or interest recognition and cash distribution",
+      "kind": "decision",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "income-producing holding + account + dated distribution event + tax character + actual/forecast source",
+      "canonical_authority": "existing D1 domain operation kinds ordinary_dividend, qualified_dividend, interest with source-backed cash settlement",
+      "derives_from": [
+        "investment.holding",
+        "investment.account"
+      ],
+      "read_only_surfaces": [
+        "Money → Income",
+        "Money → Cash Flow",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "Recognize actual or expressly scheduled distributions once; distinguish eligible qualified dividends from ordinary/interest and income from proceeds. Do not separately author an identical Income record or infer qualified tax character from the holding label. Date, tax character and amount come from this event.",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.dividend_reinvestment",
+      "label": "Reinvest an identified investment dividend",
+      "kind": "decision",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "source holding + account + linked dividend income event + execution date + destination holding/quantity",
+      "canonical_authority": "existing D1 domain operation kind=reinvest_dividend, linked dividend recognition followed by investment purchase",
+      "derives_from": [
+        "investment.income_distribution",
+        "investment.holding",
+        "investment.account"
+      ],
+      "read_only_surfaces": [
+        "Money → Cash Flow",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "One identified dividend event and one related purchase; never create a second dividend, generic contribution, extra bank expense or unsupported automatic recurrence. Reinvestment price/units derive where authoritative, otherwise request the missing execution fact.",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.retirement_conversion",
+      "label": "In-plan Roth conversion of eligible retirement funds",
+      "kind": "decision",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "source and destination compartments + same employer plan + tax year + dated conversion event + tax/basis character",
+      "canonical_authority": "existing D1 domain operation kind=conversion with samePlanConfirmed, source/destination holdings and eligibility acceptance",
+      "derives_from": [
+        "investment.account",
+        "investment.holding",
+        "employer.plan_terms"
+      ],
+      "read_only_surfaces": [
+        "Plan → Life Events",
+        "Money → Cash Flow",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "Source/destination plan identity, pre/post-tax character and actual basis must agree; confirmation of same plan is one scoped attestation, not repeated in every mirror. Conversion is not spending or new annual contribution; tax recognition and payment are separate.",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.retirement_rollover",
+      "label": "Direct or split rollover between supported retirement accounts",
+      "kind": "decision",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "source account/holding + destination account(s)/holding(s) + dated operation + eligible tax and basis character",
+      "canonical_authority": "existing D1 domain operation kinds direct_rollover and mixed_rollover with explicit pre-tax/Roth destinations and acceptance",
+      "derives_from": [
+        "investment.account",
+        "investment.holding",
+        "employer.plan_terms"
+      ],
+      "read_only_surfaces": [
+        "Plan → Current Plan",
+        "Money → Cash Flow"
+      ],
+      "resolution_policy": "Direct and split rollovers share the same transfer owner; only show Roth/after-tax destination fields for split character. Preserve basis and eligibility, link both accounts, no duplicated ordinary contribution, income or spending.",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "investment.indirect_rollover",
+      "label": "Participant distribution and linked 60-day rollover completion",
+      "kind": "decision",
+      "owner_surface": "Net Worth → Investments & retirement",
+      "semantic_scope": "distribution event ID + owned retirement source + proceeds bank + tax year + deposit event ID + destination holding + replacement funding",
+      "canonical_authority": "existing D1 domain operations indirect_distribution and indirect_deposit linked by original operation ID; explicit receipt, 20% withholding and replacement amount",
+      "derives_from": [
+        "investment.retirement_rollover",
+        "investment.account",
+        "bank.cash_account"
+      ],
+      "read_only_surfaces": [
+        "Money → Cash Flow",
+        "Money → Accounts",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "One auditable workflow with distinct actual distribution and follow-up rollover-deposit events. Link deposit to the original receipt and deadlines; withheld cash, replacement funding and limits retain their existing legal meaning. Do not create phantom refunds or treat the rollover as new contribution.",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "insurance.term_life_policy",
+      "label": "Term-life policy identity, insured, beneficiary and coverage terms",
+      "kind": "source",
+      "owner_surface": "Money → Insurance & coverage",
+      "semantic_scope": "insurance policy ID + owner/insured person + beneficiary + coverage-effective start/end + policy family",
+      "canonical_authority": "existing canonical Insurance object term_life_lump_sum; owner_id, insured_person_id, beneficiary_id, coverage start/end, actual policy source",
+      "derives_from": [
+        "person.identity",
+        "household.membership"
+      ],
+      "read_only_surfaces": [
+        "Money → Spending",
+        "Net Worth → Overview",
+        "Plan → Life Events"
+      ],
+      "resolution_policy": "Single policy editor owns the contract and insured/beneficiary relationships. A term benefit is conditional protection, NOT current household net-worth asset or ordinary investment. Unsupported cash value, transfer-for-value and installment-interest terms explicitly gated.",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "insurance.term_life_premium",
+      "label": "Term-life premium amount, cadence and payment source",
+      "kind": "source",
+      "owner_surface": "Money → Insurance & coverage",
+      "semantic_scope": "policy ID + premium schedule/amount/frequency + effective date + funding cash account",
+      "canonical_authority": "existing Insurance premium, premium_frequency, premium_account_id and D1 insurance premium settlement adapter",
+      "derives_from": [
+        "insurance.term_life_policy",
+        "bank.cash_account"
+      ],
+      "read_only_surfaces": [
+        "Money → Spending",
+        "Money → Cash Flow",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "Premium is authored ONCE with policy, appears as ordinary insurance spending and a bank outflow once, not a second Expense object. Cash flow schedule derives from premium/frequency/coverage only when complete; zero and missed funding are not presumed paid.",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "insurance.term_life_benefit",
+      "label": "Contracted term-life death benefit and settlement destination",
+      "kind": "source",
+      "owner_surface": "Money → Insurance & coverage",
+      "semantic_scope": "policy ID + beneficiary + agreed face amount + settlement bank account + covered triggering event",
+      "canonical_authority": "existing Insurance coverage_amount, benefit_account_id, beneficiary_id and D1 deterministic death benefit payout adapter",
+      "derives_from": [
+        "insurance.term_life_policy",
+        "bank.cash_account",
+        "life.death_event"
+      ],
+      "read_only_surfaces": [
+        "Money → Cash Flow",
+        "Net Worth → Overview",
+        "Plan → Life Events"
+      ],
+      "resolution_policy": "Benefit amount and destination are edited beside the policy; the payout is computed only if the separately owned event actually occurs within valid coverage. No extra Income editor, no assumed mortality, no cash balance before payment, and beneficiary identity is shared with the policy.",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "life.death_event",
+      "label": "Scheduled insured death or other supported life-event trigger",
+      "kind": "decision",
+      "owner_surface": "Plan → Life Events",
+      "semantic_scope": "insured person + dated event ID + scenario + event enabled status",
+      "canonical_authority": "canonical Event event_type=death, trigger_type=scheduled; policy death_event_id is only a reference",
+      "derives_from": [
+        "person.identity",
+        "plan.horizon"
+      ],
+      "read_only_surfaces": [
+        "Money → Insurance & coverage",
+        "Plan → Current Plan"
+      ],
+      "resolution_policy": "The scenario event is distinct from the policy contract. Edit it in the same Life Events editor opened contextually from Insurance; choosing a policy does not automatically assert death. Existing policy-linked legacy death events retain IDs/links and do not cause an extra payout.",
       "delivery_gate": "U1"
     }
   ]
