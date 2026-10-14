@@ -648,3 +648,9 @@ contract maturity, unsupported refinance dates, incomplete future eligibility
 and saved-model identity, are preserved. These corrections require a fresh CI
 run; neither browser success nor U1 acceptance is asserted from this run.
 
+Visual inspection of that run's insurance desktop and mobile PNGs found the
+generic object-card row squeezed the policy summary and overflowed the narrow
+page. Policy cards now use a scoped vertical layout; the insurance browser
+journey checks page scroll width as well as individual input and card bounds.
+This is source-corrected pending the next GitHub screenshot/geometry result.
+

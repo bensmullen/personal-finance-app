@@ -23,12 +23,12 @@ export function InsuranceSection({ draft, setDraft, initialPolicyId }: Props & {
     {!policies.length && !editing && <p>No saved policies.</p>}
     <div className="object-grid">{policies.map(policy => {
       const id = String(policy.insurance_id), death = objectEntries(draft, "Event").find(item => item.event_id === policy.death_event_id);
-      return <article className="object-card" key={id} aria-label={`Policy for ${referenceLabel(draft, "Person", policy.insured_person_id)}`}>
+      return <article className="object-card insurance-card" key={id} aria-label={`Policy for ${referenceLabel(draft, "Person", policy.insured_person_id)}`}>
         <h2>Term life · {referenceLabel(draft, "Person", policy.insured_person_id)}</h2>
         <p>{formatExactMoney(policy.coverage_amount, "USD")} protection · {formatExactMoney(policy.premium, "USD")} monthly premium</p>
         <small>{String(policy.start_date)}–{String(policy.end_date)} (end excluded)</small>
         <p>Beneficiary: {referenceLabel(draft, "Person|Household", policy.beneficiary_id)}</p>
-        {supported(policy) ? <button onClick={() => setEditing(id)}>Edit policy</button> : <p role="note">This policy type is not modeled by this editor. Import corrected supported terms; the saved record is preserved.</p>}
+        {supported(policy) ? <button className="secondary" onClick={() => setEditing(id)}>Edit policy</button> : <p role="note">This policy type is not modeled by this editor. Import corrected supported terms; the saved record is preserved.</p>}
         <details><summary>Payment & scenario details</summary>
           <p>Premiums: {referenceLabel(draft, "Account", policy.premium_account_id)}. Conditional benefit deposit: {referenceLabel(draft, "Account", policy.benefit_account_id)}.</p>
           <p>{death ? `${objectLabel("Event", death)} · ${String(death.start_date)} · ${death.enabled === true ? "Enabled" : "Disabled"}` : policy.death_event_id != null ? "The linked life event is missing. Review or unlink the scenario." : "No death scenario. The face amount is protection, not a forecast cash receipt."}</p>
@@ -72,7 +72,7 @@ function PolicyEditor({ draft, setDraft, policyId, close }: Props & { policyId: 
       <RepairSummary errors={Object.entries(problems).map(([key, message]) => ({ target: `policy:${identity}:${key}`, message }))} />
       <div className="form-grid">{(["owner", "insured", "beneficiary", "benefit", "start", "end"] as const).map(control)}</div>
       <h3>Premiums & benefit deposit</h3><div className="form-grid">{(["premium", "premiumAccount", "benefitAccount"] as const).map(control)}</div>
-      <button type="submit" className="primary" disabled={Object.keys(problems).length > 0}>Save term-life policy</button><button type="button" onClick={cancel}>Cancel policy edit</button>
+      <button type="submit" className="primary" disabled={Object.keys(problems).length > 0}>Save term-life policy</button><button className="ghost" type="button" onClick={cancel}>Cancel policy edit</button>
       {message && <p role="alert">{message}</p>}
       {technical && <details><summary>Technical details</summary><pre>{technical}</pre></details>}
       {discard && <div role="alert"><p>There are unsaved policy changes.</p><button type="button" onClick={close}>Discard changes</button><button type="button" onClick={() => setDiscard(false)}>Continue editing</button></div>}

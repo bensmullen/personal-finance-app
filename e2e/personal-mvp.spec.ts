@@ -305,6 +305,10 @@ test("U1 insurance has one policy owner, optional shared life events and durable
     }
     await editor.getByRole("button", { name: "Help for Lump-sum benefit", exact: true }).click();
     await expect(editor.getByRole("note").filter({ hasText: "not a current asset" })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    const policyCard = insurance.getByRole("article").first();
+    const cardBox = await policyCard.boundingBox();
+    expect(cardBox!.x + cardBox!.width).toBeLessThanOrEqual(width);
     await page.screenshot({ path: testInfo.outputPath(`insurance-policy-${width}.png`), fullPage: true });
     await editor.getByRole("button", { name: "Help for Lump-sum benefit", exact: true }).click();
   }
