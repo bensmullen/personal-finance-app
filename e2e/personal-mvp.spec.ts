@@ -596,8 +596,10 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await status.getByRole("button", { name: "Review 2027 filing status · Taylor Example", exact: true }).click();
   const filing = page.getByRole("dialog", { name: "Edit Annual household filing status", exact: true });
   await filing.getByLabel("Annual household filing status", { exact: true }).selectOption("single");
+  const beforeFilingRequest = await status.getAttribute("data-request-id");
   await filing.getByRole("button", { name: "Confirm & save fact", exact: true }).click();
   await expect(filing).toHaveCount(0);
+  await expect(status).not.toHaveAttribute("data-request-id", beforeFilingRequest!, { timeout: 30_000 });
   await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
   await expect(status.getByRole("button", { name: "Review 2028 filing status · Taylor Example", exact: true })).toBeVisible();
   await expect(page.getByRole("alert", { name: "Forecast stopped early" })).toHaveCount(0);
