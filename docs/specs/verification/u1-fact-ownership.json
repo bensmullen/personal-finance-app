@@ -970,7 +970,6 @@
       "semantic_scope": "source holding + account + linked dividend income event + execution date + destination holding/quantity",
       "canonical_authority": "existing D1 domain operation kind=reinvest_dividend, linked dividend recognition followed by investment purchase",
       "derives_from": [
-        "investment.income_distribution",
         "investment.holding",
         "investment.account"
       ],
@@ -978,7 +977,7 @@
         "Money → Cash Flow",
         "Plan → Current Plan"
       ],
-      "resolution_policy": "One identified dividend event and one related purchase; never create a second dividend, generic contribution, extra bank expense or unsupported automatic recurrence. Reinvestment price/units derive where authoritative, otherwise request the missing execution fact.",
+      "resolution_policy": "One authored reinvest event must create a linked dividend-recognition/settlement and purchase pair; alternatively link to an already-authorized dividend without recognizing it again. Do not require two independent cash/dividend inputs or post extra household cash. Distribution character remains source qualified; recurrence stays #100.",
       "delivery_gate": "U1"
     },
     {
@@ -1084,18 +1083,17 @@
       "kind": "source",
       "owner_surface": "Money → Insurance & coverage",
       "semantic_scope": "policy ID + beneficiary + agreed face amount + settlement bank account + covered triggering event",
-      "canonical_authority": "existing Insurance coverage_amount, benefit_account_id, beneficiary_id and D1 deterministic death benefit payout adapter",
+      "canonical_authority": "existing Insurance coverage_amount and benefit_account_id; named beneficiary_id is a read-only reference to insurance.term_life_policy",
       "derives_from": [
         "insurance.term_life_policy",
-        "bank.cash_account",
-        "life.death_event"
+        "bank.cash_account"
       ],
       "read_only_surfaces": [
         "Money → Cash Flow",
         "Net Worth → Overview",
         "Plan → Life Events"
       ],
-      "resolution_policy": "Benefit amount and destination are edited beside the policy; the payout is computed only if the separately owned event actually occurs within valid coverage. No extra Income editor, no assumed mortality, no cash balance before payment, and beneficiary identity is shared with the policy.",
+      "resolution_policy": "Edit the contracted face value and benefit deposit account beside the policy; the policy's beneficiary identity is shown read-only from that same policy record, not entered again. No benefit is posted before an independently supported death event actually triggers coverage.",
       "delivery_gate": "U1"
     },
     {
@@ -1114,6 +1112,27 @@
         "Plan → Current Plan"
       ],
       "resolution_policy": "The scenario event is distinct from the policy contract. Edit it in the same Life Events editor opened contextually from Insurance; choosing a policy does not automatically assert death. Existing policy-linked legacy death events retain IDs/links and do not cause an extra payout.",
+      "delivery_gate": "U1"
+    },
+    {
+      "id": "insurance.benefit_payout",
+      "label": "Actual modeled term-life death benefit payment",
+      "kind": "conditional",
+      "owner_surface": "Money → Insurance & coverage",
+      "semantic_scope": "policy ID + insured person + scenario-linked death Event ID + coverage-active instant + beneficiary/funding destination",
+      "canonical_authority": "authoritative existing D1 term-life contingency/benefit accounting and funding settlement read model",
+      "derives_from": [
+        "insurance.term_life_policy",
+        "insurance.term_life_benefit",
+        "life.death_event",
+        "bank.cash_account"
+      ],
+      "read_only_surfaces": [
+        "Money → Cash Flow",
+        "Net Worth → Overview",
+        "Plan → Life Events"
+      ],
+      "resolution_policy": "Never editable payout dollars. Recognize once only when linked scheduled death satisfies coverage and beneficiary/settlement rules, without counting death benefit as current net worth or inventing cash. An untriggered policy shows contract face amount but zero posted benefit, not an assumed return.",
       "delivery_gate": "U1"
     }
   ]
