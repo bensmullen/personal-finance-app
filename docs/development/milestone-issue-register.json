@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "as_of": "2026-10-11",
+  "as_of": "2026-10-14",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
   "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap.",
   "stage_gates": {
@@ -12,10 +12,11 @@
       ]
     },
     "D2": {
-      "stage": "D2-A / D2 closeout",
+      "stage": "D2 preparation, D2-A and D2 closeout",
       "blocking_transition": "Declare D2 complete or start stochastic R5",
       "required_issue_numbers": [
-        103
+        103,
+        114
       ]
     },
     "R11": {
@@ -100,6 +101,25 @@
         "PFA-TAX-015"
       ],
       "scope": "Ordinary retirement distribution/withdrawal and applicable tax rules; distinguish rollover."
+    },
+    {
+      "issue_number": 114,
+      "owner_stage": "D2-prep",
+      "blocking_gate": "D2",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-DET-015",
+        "PFA-DET-016",
+        "PFA-DET-017",
+        "PFA-DET-018",
+        "PFA-DET-019",
+        "PFA-DET-020",
+        "PFA-DET-021",
+        "PFA-DET-022",
+        "PFA-DET-023",
+        "PFA-TAX-015"
+      ],
+      "scope": "U1-parallel isolated D2-A/B/C coverage map, synthetic expected-effect cases, bounded fixture checks, and optional wholly isolated pure helpers under already-decided contracts. No shared U1 UI/application, canonical/financial semantics, execution or tax integration; issue closure is prep only, not D2 acceptance."
     },
     {
       "issue_number": 105,

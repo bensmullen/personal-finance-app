@@ -282,3 +282,52 @@ substantial application/engine development and unresolved product decisions in
 the usual architecture -> V3 issue -> Codex implementation process. A directly
 authored PR is still subject to independent review and product-manager merge
 approval. The ChatGPT direct-edit path does not loosen Codex mutation hooks.
+
+## 10. Post-implementation audit and issue synchronization
+
+After each substantive Codex implementation/repair audit, ChatGPT SHALL reconcile
+the **existing GitHub implementation issue** with the latest observed PR and
+requirement state before declaring a repair handoff ready. The issue remains
+Codex's authoritative next-turn contract, not just a record of its initial
+authorization. Use a short, dated **Current audit checkpoint** in the issue body,
+preserving the original V3 authorization at the beginning and historical audit
+evidence instead of overwriting earlier claims without explanation.
+
+The current checkpoint SHALL distinguish:
+
+1. **Implementation status:** implemented and evidenced, implemented but
+   unverified, partially implemented, not implemented, or blocked. Cite the
+   specific PR/commit and latest relevant CI, audit, or UAT evidence. Codex's
+   `TASK_STATUS: COMPLETE` does not establish CI success, semantic acceptance,
+   merge readiness, or product-owner UAT.
+2. **Remaining work:** each material defect or unsatisfied acceptance criterion,
+   expected behavior and negative/boundary cases, verification required, and
+   whether work is needed before merge or at a later explicitly authorized gate.
+3. **Scope additions or corrections:** newly discovered requirements, changed
+   acceptance criteria, required `ALLOWED_PATHS`, prerequisites, and exclusions.
+   Clearly distinguish **proposed / decision pending** work from **approved**
+   Codex authorization. Do not silently widen financial semantics, task scope,
+   edit paths, or milestone commitments.
+4. **Disposition and next action:** merge-ready, needs patch, or blocked; any
+   required product decision; remaining CI/heavy-validation/UAT; and the exact
+   existing issue/PR/branch for continuation.
+
+When the audit identifies changes within the original coherent task, amend the
+**same open issue** to make the next Codex implementation contract self-contained,
+including any approved V3 authorization updates and actionable repair criteria.
+Do not create a duplicate patch issue. Open a separate issue only for genuinely
+independent work with distinct ownership or timing, and maintain roadmap and
+issue-register traceability. Product/repair tasks must still not authorize
+framework-control paths.
+
+Never rewrite or broaden an issue's live task authorization while Codex is
+executing it. Reconcile the issue between turns; honor the hook's provenance and
+continuation safeguards, and use operator-owned remote bootstrap for a resumed
+branch when required. Keep completed functionality clearly separated from
+remaining repairs so Codex does not reimplement accepted work.
+
+For a fully accepted implementation, record final PR/CI/audit/UAT evidence and
+close the issue only when the repository's milestone issue policy permits.
+Do not manufacture repeated issue edits when a new audit produces no material
+change from an already current checkpoint. If GitHub is unavailable, explicitly
+report that issue synchronization is pending; do not imply it was performed.
