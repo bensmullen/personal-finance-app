@@ -592,9 +592,9 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
   await expect(page.getByRole("alert", { name: "Forecast stopped early" })).toHaveCount(0);
   await expect(page.getByText("Completed through 2036-01-01 · Some outputs are partially modeled", { exact: true })).toBeVisible();
+  await showHouseholdDetails(page);
   const basis = page.getByRole("region", { name: "Projected law forecast basis" });
-  await expect(basis).toContainText("From 2027-01-01");
-  await expect(basis).toContainText("US:FEDERAL: 2026 source rules projected");
+  await expect(basis).toContainText("US:FEDERAL: 2026 source rules projected from 2027-01-01");
   await openContributions(page);
   await expect(page.getByRole("region", { name: "Contribution capacity" })).toContainText("Projected current law");
   await expect(status).not.toContainText("Tax payments & refunds: choose");

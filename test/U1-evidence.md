@@ -654,3 +654,11 @@ page. Policy cards now use a scoped vertical layout; the insurance browser
 journey checks page scroll width as well as individual input and card bounds.
 This is source-corrected pending the next GitHub screenshot/geometry result.
 
+At `445c701`, GitHub run `38681717312` passed typecheck, build,
+architecture and unit checks. Browser verification passed 57 of 58 tests,
+including the insurance page/card overflow guard and the complete investment
+activity save/reload/compile journey. The remaining legacy projected-law test
+looked for a detail region before opening forecast details and expected older
+wording. It now opens those details and retains the exact federal source year
+and projection start assertion. A fresh current-head run is required.
+
