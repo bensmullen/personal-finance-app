@@ -482,7 +482,10 @@
         "Money → Cash Flow"
       ],
       "resolution_policy": "single account-context editor; mirrored outflow is transfer not expense or extra posting",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "authored_domain_operation_kinds": [
+        "purchase"
+      ]
     },
     {
       "id": "investment.payroll",
@@ -675,7 +678,11 @@
         "Money → Spending"
       ],
       "resolution_policy": "original debt terms remain separate from future event; no second cash deduction",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "authored_domain_operation_kinds": [
+        "mortgage_extra",
+        "refinance"
+      ]
     },
     {
       "id": "property.asset",
@@ -923,7 +930,22 @@
         "Plan → Current Plan"
       ],
       "resolution_policy": "Cash proceeds, realized gain and basis reduction are derived from one executed sale; user chooses disposition date/quantity/lot only where needed. No separately editable capital gain or duplicate cash receipt. Holding context is the only ordinary editor.",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "authored_domain_operation_kinds": [
+        "sale"
+      ],
+      "ui_fact_bindings": {
+        "always": [
+          "sourceHoldingId",
+          "at",
+          "amount",
+          "quantity"
+        ],
+        "optional": [
+          "lotIds",
+          "sameDayOrder"
+        ]
+      }
     },
     {
       "id": "investment.option_exercise",
@@ -941,7 +963,27 @@
         "Plan → Current Plan"
       ],
       "resolution_policy": "Premium/basis, multiplier, strike and acquired underlying cost are derived when fully supported; require an explicit linked funding account and lot election only when economically material. Unsupported exercise/assignment is capability gated, not approximated.",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "authored_domain_operation_kinds": [
+        "call_exercise"
+      ],
+      "ui_fact_bindings": {
+        "always": [
+          "sourceOptionHoldingId",
+          "at",
+          "contracts",
+          "fundingCashAccountId"
+        ],
+        "optional": [
+          "lotIds",
+          "sameDayOrder"
+        ],
+        "derived": [
+          "strikeFromHolding",
+          "multiplierFromHolding",
+          "basisFromOpeningLots"
+        ]
+      }
     },
     {
       "id": "investment.income_distribution",
@@ -960,7 +1002,26 @@
         "Plan → Current Plan"
       ],
       "resolution_policy": "Recognize actual or expressly scheduled distributions once; distinguish eligible qualified dividends from ordinary/interest and income from proceeds. Do not separately author an identical Income record or infer qualified tax character from the holding label. Date, tax character and amount come from this event.",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "authored_domain_operation_kinds": [
+        "ordinary_dividend",
+        "qualified_dividend",
+        "interest"
+      ],
+      "ui_fact_bindings": {
+        "always": [
+          "sourceHoldingId",
+          "at",
+          "amount",
+          "taxCharacter"
+        ],
+        "optional": [
+          "sameDayOrder"
+        ],
+        "conditional": [
+          "qualifiedDividendRequiresEligibleTaxCharacter"
+        ]
+      }
     },
     {
       "id": "investment.dividend_reinvestment",
@@ -978,7 +1039,27 @@
         "Plan → Current Plan"
       ],
       "resolution_policy": "One authored reinvest event must create a linked dividend-recognition/settlement and purchase pair; alternatively link to an already-authorized dividend without recognizing it again. Do not require two independent cash/dividend inputs or post extra household cash. Distribution character remains source qualified; recurrence stays #100.",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "authored_domain_operation_kinds": [
+        "reinvest_dividend"
+      ],
+      "ui_fact_bindings": {
+        "always": [
+          "sourceHoldingId",
+          "at",
+          "dividendAmount",
+          "purchasedQuantity"
+        ],
+        "optional": [
+          "sameDayOrder"
+        ],
+        "conditional": [
+          "dividendCharacterRequiresSourceQualification"
+        ],
+        "derived": [
+          "linkedIncomeRecognitionAndPurchase"
+        ]
+      }
     },
     {
       "id": "investment.retirement_conversion",
@@ -998,7 +1079,26 @@
         "Plan → Current Plan"
       ],
       "resolution_policy": "Source/destination plan identity, pre/post-tax character and actual basis must agree; confirmation of same plan is one scoped attestation, not repeated in every mirror. Conversion is not spending or new annual contribution; tax recognition and payment are separate.",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "authored_domain_operation_kinds": [
+        "conversion"
+      ],
+      "ui_fact_bindings": {
+        "always": [
+          "sourceHoldingId",
+          "rothDestinationHoldingId",
+          "at",
+          "amount",
+          "eligibilityConfirmation",
+          "samePlanConfirmation"
+        ],
+        "optional": [
+          "sameDayOrder"
+        ],
+        "derived": [
+          "linkedBasisAndTaxRecognition"
+        ]
+      }
     },
     {
       "id": "investment.retirement_rollover",
@@ -1017,7 +1117,29 @@
         "Money → Cash Flow"
       ],
       "resolution_policy": "Direct and split rollovers share the same transfer owner; only show Roth/after-tax destination fields for split character. Preserve basis and eligibility, link both accounts, no duplicated ordinary contribution, income or spending.",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "authored_domain_operation_kinds": [
+        "direct_rollover",
+        "mixed_rollover"
+      ],
+      "ui_fact_bindings": {
+        "always": [
+          "sourceHoldingId",
+          "preTaxDestinationHoldingId",
+          "at",
+          "amount",
+          "destinationAcceptance"
+        ],
+        "conditional": [
+          "mixed_rollover:rothDestinationHoldingId"
+        ],
+        "optional": [
+          "sameDayOrder"
+        ],
+        "derived": [
+          "linkedBasisAndTaxRecognition"
+        ]
+      }
     },
     {
       "id": "investment.indirect_rollover",
@@ -1037,7 +1159,30 @@
         "Plan → Current Plan"
       ],
       "resolution_policy": "One auditable workflow with distinct actual distribution and follow-up rollover-deposit events. Link deposit to the original receipt and deadlines; withheld cash, replacement funding and limits retain their existing legal meaning. Do not create phantom refunds or treat the rollover as new contribution.",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "authored_domain_operation_kinds": [
+        "indirect_distribution",
+        "indirect_deposit"
+      ],
+      "ui_fact_bindings": {
+        "always": [
+          "sourceRetirementHoldingId",
+          "distributionAt",
+          "distributionAmount",
+          "proceedsCashAccountId",
+          "eligibilityConfirmation"
+        ],
+        "conditional": [
+          "indirect_deposit:linkedDistributionEventId",
+          "indirect_deposit:destinationHoldingId",
+          "indirect_deposit:depositAt",
+          "indirect_deposit:replacementAmount",
+          "indirect_deposit:replacementFundingBankId"
+        ],
+        "derived": [
+          "withholdingAndDeadlineEffectsFromD1"
+        ]
+      }
     },
     {
       "id": "insurance.term_life_policy",
@@ -1056,7 +1201,20 @@
         "Plan → Life Events"
       ],
       "resolution_policy": "Single policy editor owns the contract and insured/beneficiary relationships. A term benefit is conditional protection, NOT current household net-worth asset or ordinary investment. Unsupported cash value, transfer-for-value and installment-interest terms explicitly gated.",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "ui_fact_bindings": {
+        "always": [
+          "ownerId",
+          "insuredPersonId",
+          "beneficiaryId",
+          "coverageStart",
+          "coverageEnd",
+          "policyFamily"
+        ],
+        "derived": [
+          "policyIdentity"
+        ]
+      }
     },
     {
       "id": "insurance.term_life_premium",
@@ -1075,7 +1233,18 @@
         "Plan → Current Plan"
       ],
       "resolution_policy": "Premium is authored ONCE with policy, appears as ordinary insurance spending and a bank outflow once, not a second Expense object. Cash flow schedule derives from premium/frequency/coverage only when complete; zero and missed funding are not presumed paid.",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "ui_fact_bindings": {
+        "always": [
+          "policyId",
+          "premiumAmount",
+          "premiumFrequency",
+          "premiumFundingBankId"
+        ],
+        "derived": [
+          "premiumCashScheduleFromD1"
+        ]
+      }
     },
     {
       "id": "insurance.term_life_benefit",
@@ -1094,7 +1263,17 @@
         "Plan → Life Events"
       ],
       "resolution_policy": "Edit the contracted face value and benefit deposit account beside the policy; the policy's beneficiary identity is shown read-only from that same policy record, not entered again. No benefit is posted before an independently supported death event actually triggers coverage.",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "ui_fact_bindings": {
+        "always": [
+          "policyId",
+          "faceAmount",
+          "benefitDepositBankId"
+        ],
+        "derived": [
+          "beneficiaryIdFromPolicy"
+        ]
+      }
     },
     {
       "id": "life.death_event",
@@ -1112,7 +1291,18 @@
         "Plan → Current Plan"
       ],
       "resolution_policy": "The scenario event is distinct from the policy contract. Edit it in the same Life Events editor opened contextually from Insurance; choosing a policy does not automatically assert death. Existing policy-linked legacy death events retain IDs/links and do not cause an extra payout.",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "ui_fact_bindings": {
+        "always": [
+          "insuredPersonId",
+          "scenarioId",
+          "eventDate",
+          "enabled"
+        ],
+        "derived": [
+          "scenarioEventReference"
+        ]
+      }
     },
     {
       "id": "insurance.benefit_payout",
@@ -1133,7 +1323,13 @@
         "Plan → Life Events"
       ],
       "resolution_policy": "Never editable payout dollars. Recognize once only when linked scheduled death satisfies coverage and beneficiary/settlement rules, without counting death benefit as current net worth or inventing cash. An untriggered policy shows contract face amount but zero posted benefit, not an assumed return.",
-      "delivery_gate": "U1"
+      "delivery_gate": "U1",
+      "ui_fact_bindings": {
+        "always": [],
+        "derived": [
+          "coveredDeathEventAndPolicyTermsDeterminePayout"
+        ]
+      }
     }
   ]
 }
