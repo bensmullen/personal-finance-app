@@ -76,6 +76,61 @@ describe("U1 financial fact single-owner architecture", () => {
     expect(f("tax.settlement").delivery_gate).toBe("#102");
   });
 
+  it("classifies each D1 investment and debt operation at exactly one normal editor", () => {
+    const operations = new Map<string, string[]>();
+    for (const row of reg.records as Array<Row & { authored_domain_operation_kinds?: string[] }>) {
+      for (const kind of row.authored_domain_operation_kinds ?? []) {
+        operations.set(kind, [...(operations.get(kind) ?? []), row.id]);
+      }
+    }
+    const kinds = [
+      "purchase", "sale", "ordinary_dividend", "qualified_dividend", "interest",
+      "reinvest_dividend", "call_exercise", "conversion", "direct_rollover",
+      "mixed_rollover", "indirect_distribution", "indirect_deposit", "mortgage_extra", "refinance",
+    ];
+    expect([...operations.keys()].sort()).toEqual(kinds.sort());
+    for (const [kind, owners] of operations) {
+      expect(owners, kind).toHaveLength(1);
+      const owner = reg.records.find(row => row.id === owners[0])!;
+      expect(owner.owner_surface, kind).toMatch(kind.startsWith("mortgage") || kind === "refinance" ? /^Net Worth → Debt$/ : /^Net Worth → Investments & retirement$/);
+    }
+  });
+
+  it("separates insurance contract and contingency, and makes conditional operations testable", () => {
+    const rows = new Map(reg.records.map(row => [row.id, row]));
+    const policy = rows.get("insurance.term_life_policy")!;
+    const premium = rows.get("insurance.term_life_premium")!;
+    const benefit = rows.get("insurance.term_life_benefit")!;
+    const payout = rows.get("insurance.benefit_payout")!;
+    const death = rows.get("life.death_event")!;
+    for (const item of [policy, premium, benefit, payout]) {
+      expect(item.owner_surface).toBe("Money → Insurance & coverage");
+    }
+    expect(death.owner_surface).toBe("Plan → Life Events");
+    expect(death.read_only_surfaces).toContain(policy.owner_surface);
+    expect(policy.derives_from).not.toContain("life.death_event");
+    expect(benefit.derives_from).not.toContain("life.death_event");
+    expect(payout.kind).toBe("conditional");
+    expect(payout.derives_from).toContain("life.death_event");
+    expect(premium.resolution_policy).toMatch(/once/);
+    for (const id of [
+      "investment.sale", "investment.option_exercise", "investment.income_distribution",
+      "investment.dividend_reinvestment", "investment.retirement_conversion",
+      "investment.retirement_rollover", "investment.indirect_rollover",
+      "insurance.term_life_policy", "insurance.term_life_premium",
+      "insurance.term_life_benefit", "insurance.benefit_payout", "life.death_event",
+    ]) {
+      const row = rows.get(id) as (Row & { ui_fact_bindings?: { always: string[]; derived?: string[]; conditional?: string[] } }) | undefined;
+      expect(row?.ui_fact_bindings, id).toBeDefined();
+      const bindings = row!.ui_fact_bindings!;
+      expect((bindings.always?.length ?? 0) + (bindings.derived?.length ?? 0), id).toBeGreaterThan(0);
+    }
+    const rollovers = rows.get("investment.retirement_rollover") as Row & { ui_fact_bindings: { conditional: string[] } };
+    expect(rollovers.ui_fact_bindings.conditional).toContain("mixed_rollover:rothDestinationHoldingId");
+    const indirect = rows.get("investment.indirect_rollover") as Row & { ui_fact_bindings: { conditional: string[] } };
+    expect(indirect.ui_fact_bindings.conditional).toContain("indirect_deposit:linkedDistributionEventId");
+  });
+
   it("keeps requirements, controlled UX spec and D1/U1 roadmap in agreement", () => {
     for (const id of ["PFA-UX-021", "PFA-UX-022", "PFA-UX-023"]) {
       expect(ux).toContain(`### ${id}`);

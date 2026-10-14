@@ -458,7 +458,7 @@
     {
       "id": "application-ux",
       "path": "docs/specs/capabilities/application-ux.md",
-      "version": "0.1.6-draft",
+      "version": "0.1.7-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -493,7 +493,11 @@
         "single-source-of-truth",
         "financial fact ownership",
         "safe automatic conflict resolution",
-        "derived eligibility facts"
+        "derived eligibility facts",
+        "term-life policy owner",
+        "insurance coverage & beneficiary",
+        "investment transaction authoring",
+        "retirement rollover editor"
       ],
       "applies_to": [
         "personal-mvp"
@@ -682,7 +686,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.6.8-draft",
+      "version": "0.6.9-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -752,7 +756,8 @@
         "private-alpha issue gates",
         "U1 fact ontology",
         "PFA-UX-021-023",
-        "D2 parallel preparation"
+        "D2 parallel preparation",
+        "U1 investment insurance ownership registry"
       ],
       "applies_to": [
         "personal-mvp",
