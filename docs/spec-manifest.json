@@ -686,7 +686,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.6.9-draft",
+      "version": "0.6.10-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -757,7 +757,10 @@
         "U1 fact ontology",
         "PFA-UX-021-023",
         "D2 parallel preparation",
-        "U1 investment insurance ownership registry"
+        "U1 investment insurance ownership registry",
+        "U1B UX acceptance",
+        "Issue 120",
+        "U1 technical checkpoint handoff"
       ],
       "applies_to": [
         "personal-mvp",
