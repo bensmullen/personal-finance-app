@@ -2,13 +2,12 @@
   "schema_version": 1,
   "as_of": "2026-10-15",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
-  "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. Transitional U1 handoff: both #94 technical foundation landing and #120 final owner UX/UAT block D1 while PR #98 is unmerged. After #98 lands with product-manager approval, move #94 to superseded/technical-baseline in closed_consolidations, retarget outstanding dependencies to #120 and leave #120 as the U1/D1 acceptance gate. No U1 acceptance implied by closing the predecessor.",
+  "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120.",
   "stage_gates": {
     "D1_U1": {
       "stage": "U1 / D1 final acceptance",
       "blocking_transition": "Declare D1 complete or start D1-gated integrated implementation",
       "required_issue_numbers": [
-        94,
         120
       ]
     },
@@ -34,28 +33,11 @@
   },
   "issues": [
     {
-      "issue_number": 94,
-      "owner_stage": "U1",
-      "blocking_gate": "D1_U1",
-      "depends_on": [],
-      "spec_requirement_ids": [
-        "PFA-UX-015",
-        "PFA-UX-016",
-        "PFA-UX-017",
-        "PFA-UX-018",
-        "PFA-UX-019",
-        "PFA-UX-020",
-        "PFA-DET-013",
-        "PFA-DET-014"
-      ],
-      "scope": "Guided authoring/owner UAT PLUS the fully consolidated #99 account-specific mortgage funding reconciliation; do not close D1 before both are accepted."
-    },
-    {
       "issue_number": 100,
       "owner_stage": "R11-financial-UX",
       "blocking_gate": "R11",
       "depends_on": [
-        94
+        120
       ],
       "spec_requirement_ids": [
         "PFA-DET-013",
@@ -68,7 +50,7 @@
       "owner_stage": "T1A-tax-completeness",
       "blocking_gate": "R11",
       "depends_on": [
-        94
+        120
       ],
       "spec_requirement_ids": [
         "PFA-TAX-010",
@@ -82,7 +64,7 @@
       "blocking_gate": "R11",
       "depends_on": [
         101,
-        94
+        120
       ],
       "spec_requirement_ids": [
         "PFA-UX-015",
@@ -95,7 +77,7 @@
       "owner_stage": "D2-A",
       "blocking_gate": "D2",
       "depends_on": [
-        94
+        120
       ],
       "spec_requirement_ids": [
         "PFA-DET-017",
@@ -127,7 +109,7 @@
       "owner_stage": "P1-planning-UX",
       "blocking_gate": "R11",
       "depends_on": [
-        94
+        120
       ],
       "spec_requirement_ids": [
         "PFA-UX-011",
@@ -141,9 +123,9 @@
       "owner_stage": "O1-alpha-fixtures",
       "blocking_gate": "R11",
       "depends_on": [
-        94,
         103,
-        105
+        105,
+        120
       ],
       "spec_requirement_ids": [
         "PFA-ONB-001",
@@ -160,10 +142,11 @@
       "issue_number": 120,
       "owner_stage": "U1",
       "blocking_gate": "D1_U1",
-      "depends_on": [
-        94
-      ],
+      "depends_on": [],
       "spec_requirement_ids": [
+        "PFA-DET-013",
+        "PFA-DET-014",
+        "PFA-DET-015",
         "PFA-UX-015",
         "PFA-UX-016",
         "PFA-UX-017",
@@ -172,11 +155,9 @@
         "PFA-UX-020",
         "PFA-UX-021",
         "PFA-UX-022",
-        "PFA-UX-023",
-        "PFA-DET-014",
-        "PFA-DET-015"
+        "PFA-UX-023"
       ],
-      "scope": "U1B user-comprehension, visual hierarchy and source-owner UX final acceptance after #94 / PR #98 is safely landed as a technical foundation without claiming owner UAT; financial-law/engine changes not authorized."
+      "scope": "Final U1/D1 guided financial-authoring visual comprehension, source-of-truth UX/diagnostics and uncoached owner acceptance, inheriting original #94 UX criteria and consolidated #99 mortgage-account funding UAT. PR #98 is merged as CI-green technical foundation only; no D1 or U1 acceptance yet."
     }
   ],
   "legacy_open_task_reconciliation": {
@@ -212,6 +193,16 @@
       "closed_as": "duplicate",
       "original_gate": "R11",
       "retained_requirement": "Recurring IRA/brokerage bank-funded purchase schedules with selectable frequencies, calendar edge semantics, caps, funding, persistence and replay."
+    },
+    {
+      "issue_number": 94,
+      "consolidated_into": 120,
+      "closed_as": "superseded",
+      "original_gate": "D1_U1",
+      "technical_foundation_pr": 98,
+      "merged_head": "f978f3848837e95e76c46f8966c942f3d6d37a4f",
+      "merge_commit": "0c494c1c6f84df98cd659d555b8fdfa7d3fea239",
+      "retained_requirement": "All remaining U1/D1 usability acceptance (PFA-UX-015–023), owner UAT, and consolidated #99 mortgage funding reconciliation transfer to #120. PR #98 is a merged CI-green technical implementation baseline, not UX or D1 acceptance."
     }
   ]
 }
