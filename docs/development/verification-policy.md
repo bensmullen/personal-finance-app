@@ -31,6 +31,22 @@ Unknown/toolchain/CI changes default to the full safe matrix.
 - `e2e/`: typecheck + build + E2E;
 - unknown/package/toolchain/workflow changes: full matrix.
 
+**Roadmap metadata exception (narrow and fail-closed):** the manifest also contains
+non-executable roadmap record metadata. If the **only** changes to
+`docs/spec-manifest.json` are the `version` and `keywords` of the existing
+`post-pr21-implementation-roadmap` planning record, after checking both Git
+revisions, run spec/traceability validation without treating that as a runtime
+contract change. The separately changed issue register and unit tests still run
+their normal unit/typecheck gates. Any other manifest change, unreadable base,
+missing metadata, or changed runtime version conservatively selects the full
+runtime matrix. No change to a tax/model/financial specification is exempt.
+
+**Parallel E2E:** real runtime/UI/E2E changes run the full Playwright suite in
+two independent GitHub-hosted shards. A failed or cancelled shard fails the
+aggregate `test` job; each shard uploads distinct failure artifacts. This
+reduces elapsed test time without dropping cases. The existing 20-minute per-job
+ceiling remains damage containment, not a performance allowance.
+
 The aggregate job remains named `test` for branch protection.
 
 Ordinary unit and E2E jobs have explicit 20-minute damage-containment ceilings.
