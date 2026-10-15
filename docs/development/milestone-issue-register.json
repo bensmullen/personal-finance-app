@@ -1,14 +1,15 @@
 {
   "schema_version": 1,
-  "as_of": "2026-10-14",
+  "as_of": "2026-10-15",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
-  "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap.",
+  "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. Transitional U1 handoff: both #94 technical foundation landing and #120 final owner UX/UAT block D1 while PR #98 is unmerged. After #98 lands with product-manager approval, move #94 to superseded/technical-baseline in closed_consolidations, retarget outstanding dependencies to #120 and leave #120 as the U1/D1 acceptance gate. No U1 acceptance implied by closing the predecessor.",
   "stage_gates": {
     "D1_U1": {
       "stage": "U1 / D1 final acceptance",
       "blocking_transition": "Declare D1 complete or start D1-gated integrated implementation",
       "required_issue_numbers": [
-        94
+        94,
+        120
       ]
     },
     "D2": {
@@ -154,6 +155,28 @@
         "PFA-PLAN-005"
       ],
       "scope": "Eight richly populated synthetic family-linked alpha households (H01-H08), 43 category budget matrix, full modeled multigenerational members, at least four independent saved plans per household using #105-approved semantics, one-click demo/reset, coverage and financial reconciliation, correctly gated unsupported estate/rental/benefits/tax behavior. Account aggregation is separately evaluated and not a prerequisite."
+    },
+    {
+      "issue_number": 120,
+      "owner_stage": "U1",
+      "blocking_gate": "D1_U1",
+      "depends_on": [
+        94
+      ],
+      "spec_requirement_ids": [
+        "PFA-UX-015",
+        "PFA-UX-016",
+        "PFA-UX-017",
+        "PFA-UX-018",
+        "PFA-UX-019",
+        "PFA-UX-020",
+        "PFA-UX-021",
+        "PFA-UX-022",
+        "PFA-UX-023",
+        "PFA-DET-014",
+        "PFA-DET-015"
+      ],
+      "scope": "U1B user-comprehension, visual hierarchy and source-owner UX final acceptance after #94 / PR #98 is safely landed as a technical foundation without claiming owner UAT; financial-law/engine changes not authorized."
     }
   ],
   "legacy_open_task_reconciliation": {
