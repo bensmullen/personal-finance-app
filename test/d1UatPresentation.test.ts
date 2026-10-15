@@ -65,10 +65,10 @@ describe("D1 UAT presentation boundaries", () => {
   });
   it("supplies explicit known facts for the normal example without changing the audited fixture", () => {
     const example = createGoldenHouseholdExampleDraft();
-    const tax = compileHouseholdTax(example);
+    const tax = compileHouseholdTax(example, { asOf: "2026-01-01", simulationStart: "2026-01-01", simulationEnd: "2027-01-01" });
     expect(tax.status).toBe("compiled");
     if (tax.status !== "compiled") return;
-    expect(tax.value.filingStatus).toBe("single");
+    expect(tax.value.filingStatuses!["2026"]).toMatchObject({ status: "known", value: "single" });
     expect(tax.value.diagnostics.some(item => item.category === "filing_status")).toBe(false);
     expect(tax.value.incomes[0]!.residence).toEqual([{ effective_date: "2026-01-01", state_jurisdiction: "US-NY" }]);
     expect(tax.value.incomes[0]!.work).toEqual([{ effective_date: "2026-01-01", state_jurisdiction: "US-NY", allocation: "1" }]);

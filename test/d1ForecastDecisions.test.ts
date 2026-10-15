@@ -21,6 +21,27 @@ import { summarizeHouseholdPeriod } from "../src/simulation/r3/forecastSummary.j
 import { federalBaseDeductionOnlyEligibilityKey, fullYearResidentEligibilityKey } from "../src/rules/tax/contracts.js";
 import { recognizedGrossTaxableBaseEligibilityKey } from "../src/rules/tax/recognition.js";
 import { createD1IntegratedHousehold, d1IntegratedCompilerRequest, integratedId, integratedIds } from "./fixtures/d1IntegratedHousehold.js";
+import { contributionFactSources, annualFieldOwners, annualFieldsFor, recordAnnualFinancialFact, annualFactScope, type AnnualField } from "../src/application/financialFacts.js";
+import { factScopeKey } from "../src/application/factResolution.js";
+import { withContributionYearSchedule } from "../src/application/contributionYearFacts.js";
+
+// Synthetic explicit annual records, not a runtime base-year carry-forward rule.
+const withDatedFacts = (original: PersonalDraft, endYear: number): PersonalDraft => {
+  let model = original, ordinal = 2000;
+  const seen = new Set<string>();
+  for (let year = 2027; year < endYear; year++) for (const source of contributionFactSources(original)) {
+    for (const field of Object.keys(annualFieldOwners) as AnnualField[]) {
+      if (field === "ageAtYearEnd" || source.facts[field] === undefined) continue;
+      if (!annualFieldsFor(source.accountType.startsWith("hsa") ? "employee_hsa" : source.accountType).includes(field)) continue;
+      const scope = annualFactScope(field, { ...source.scope, taxYear: year });
+      const key = `${field}:${factScopeKey(scope)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      model = recordAnnualFinancialFact(model, { id: integratedId(ordinal++), field, scope, value: source.facts[field]!, reconciledSources: [] });
+    }
+  }
+  return model;
+};
 
 const replacementId = integratedId(991);
 const settlementSetup = {
@@ -113,7 +134,7 @@ describe("Issue 80 resolved forecast decisions", () => {
     const long = requestThrough("2036-01-01", 120);
     // The audited fixture's IRA purchase is one-time. Author a recurring IRA
     // through the normal contract to prove future personal contributions too.
-    const recurring = authorPersonalPurchasePlan(createD1IntegratedHousehold({ projectAnnualFacts: true }), { primitiveId: integratedId(30), investmentId: integratedIds.ira, sourceCashAccountId: golden.savings, amount: "500", frequency: "monthly", date: "2026-01-10", order: 10, excessPolicy: "auto_cap", contributionFacts: { annualFactProjection: "confirmed_nominal_carry_forward", taxYear: 2026, ageAtYearEnd: 36, taxableCompensation: "108000", filingStatus: "single", rothMagi: "108000", workplacePlanCovered: true } });
+    const recurring = withDatedFacts(authorPersonalPurchasePlan(createD1IntegratedHousehold(), { primitiveId: integratedId(30), investmentId: integratedIds.ira, sourceCashAccountId: golden.savings, amount: "500", frequency: "monthly", date: "2026-01-10", order: 10, excessPolicy: "auto_cap", contributionFacts: { taxYear: 2026, ageAtYearEnd: 36, taxableCompensation: "108000", filingStatus: "single", rothMagi: "108000", workplacePlanCovered: true } }), 2036);
     const result = runHouseholdKernel({ kernel: kernel({ ...long, forecastLawPolicy: "projected_current_law", tax: compileForecastTaxSettlements(settlementSetup, "2026-01-01", "2036-01-01") }, recurring), runContext: context("2036-01-01") });
     expect(result.stoppedAt, JSON.stringify(result.diagnostics)).toBeUndefined();
     expect(result.reachedThrough).toBe("2036-01-01T00:00:00.000Z");
@@ -136,7 +157,7 @@ describe("Issue 80 resolved forecast decisions", () => {
     model = patchPersonalObject(model, "Assumption", golden.salaryGrowthAssumption, { value: "0.20" });
     model = authorPersonalPurchasePlan(model, { primitiveId: integratedId(30), investmentId: integratedIds.ira, sourceCashAccountId: golden.savings, amount: "500", frequency: "monthly", date: "2026-01-10", order: 10, excessPolicy: "auto_cap", contributionFacts: { taxYear: 2026, ageAtYearEnd: 36, taxableCompensation: "162000", filingStatus: "single", rothMagi: "162000" } });
     const ira = getPersonalPurchasePlans(model).find(plan => plan.investmentId === integratedIds.ira)!.contribution!;
-    const futureIra = contributionPolicyAt({ ...ira, forecastLawPolicy: "projected_current_law" }, instant("2027-01-10T00:00:00.000Z"));
+    const futureIra = contributionPolicyAt(withContributionYearSchedule(model, ira, "2026-01-01", "2028-01-01"), instant("2027-01-10T00:00:00.000Z"));
     expect(futureIra.facts).toEqual({ taxYear: 2027, ageAtYearEnd: 37, lawProjection: "projected_current_law" });
     for (const plan of getPayrollContributionPlans(model)) {
       const future = contributionPolicyAt({ ...plan.allocation.policy, forecastLawPolicy: "projected_current_law" }, instant("2027-01-01T00:00:00.000Z"));
@@ -166,8 +187,8 @@ describe("Issue 80 resolved forecast decisions", () => {
   });
 
   it("gives projected contribution applications distinct stable identities and resolvable base-rule lineage", () => {
-    const model = createD1IntegratedHousehold({ projectAnnualFacts: true });
-    const policy = { ...getPersonalPurchasePlans(model).find(plan => plan.investmentId === integratedIds.ira)!.contribution!, forecastLawPolicy: "projected_current_law" as const };
+    const model = withDatedFacts(createD1IntegratedHousehold(), 2031);
+    const policy = withContributionYearSchedule(model, getPersonalPurchasePlans(model).find(plan => plan.investmentId === integratedIds.ira)!.contribution!, "2026-01-01", "2031-01-01");
     const state = runHouseholdKernel({ kernel: kernel(d1IntegratedCompilerRequest(), model), runContext: context("2026-02-01") }).state;
     const decide = (year: number) => decideContribution(state, policy, integratedIds.iraAccount, instant(`${year}-02-01T00:00:00.000Z`), money("100", USD));
     const verified = decide(2026), projected = decide(2027), repeated = decide(2027), later = decide(2030);
@@ -179,7 +200,7 @@ describe("Issue 80 resolved forecast decisions", () => {
       expect(identity).not.toBe(binding.ruleId);
       expect(later.buckets.some(bucket => bucket.ruleId === identity)).toBe(false);
       const bucket = projected.buckets.find(bucket => bucket.ruleId === identity)!;
-      expect(bucket.facts).toMatchObject({ provenance: "projected_current_law", baseRuleId: binding.ruleId, baseYear: "2026", projectedYear: "2027", projectionPolicy: "nominal_carry_forward", annualFacts: "explicit_confirmed_forecast_assumption" });
+      expect(bucket.facts).toMatchObject({ provenance: "projected_current_law", baseRuleId: binding.ruleId, baseYear: "2026", projectedYear: "2027", projectionPolicy: "nominal_statutory_law", annualFacts: "source_qualified_year_facts" });
       expect(projected.applications.find(application => application.ruleId === identity)!.traceRefs![0]!.ruleIds).toEqual(expect.arrayContaining([identity, binding.ruleId]));
     }
     expect(importPersonalModelJson(exportPersonalModelJson(model))).toEqual(model);

@@ -4,6 +4,7 @@ import { openingInvestmentAccountValues } from "../src/application/presentation.
 export { percentageToRate, rateToPercentage } from "../src/application/presentation.js";
 
 export interface DisplayDiagnostic {
+  readonly taxYear?: string;
   readonly code?: string;
   readonly message?: string;
   readonly entityType?: string;
@@ -20,7 +21,7 @@ export function groupDiagnostics(diagnostics: readonly DisplayDiagnostic[]) {
   for (const diagnostic of diagnostics) {
     // Tax roots recur for different income records and outputs. The same remedy
     // is shared, while their individual record context stays in technical detail.
-    const key = JSON.stringify([diagnostic.code, diagnostic.category, diagnostic.jurisdiction,
+    const key = JSON.stringify([diagnostic.code, diagnostic.category, diagnostic.jurisdiction, diagnostic.taxYear,
       diagnostic.entityType === "tax_capability" ? undefined : diagnostic.entityId,
       diagnostic.fieldPath, diagnostic.entityType === "tax_capability" && diagnostic.category ? undefined : diagnostic.message,
       [...(diagnostic.relatedIds ?? [])].sort()]);
@@ -42,7 +43,7 @@ export function investmentAccountSummary(account: JsonObject, draft: PersonalDra
   return `Total account value unavailable — review holding prices/currencies · Cash inside account: ${formatExactMoney(account.opening_balance, unit)} · ${holdings.length} holdings`;
 }
 
-export const objectEntries = (draft: PersonalDraft, type: PersonalObjectType): readonly JsonObject[] =>
+export const objectEntries = (draft: PersonalDraft, type: PersonalObjectType | "Insurance" | "Event"): readonly JsonObject[] =>
   (draft.objects[type] ?? []).filter((value): value is JsonObject =>
     typeof value === "object" && value !== null && !Array.isArray(value)) as readonly JsonObject[];
 export const objectId = (type: PersonalObjectType, value: JsonObject) => String(value[`${type.toLowerCase()}_id`]);
@@ -72,6 +73,18 @@ export function linkedReturnAssumption(draft: PersonalDraft, investment: JsonObj
     assumption.distribution_type != null || assumption.distribution_parameters != null || assumption.correlation_group != null) return undefined;
   return assumption;
 }
+/** Read the existing P08 source link; authoring never creates a growth model. */
+export function linkedGrowthAssumption(draft: PersonalDraft, item: JsonObject): JsonObject | undefined {
+  const primitive = (draft.objects.PrimitiveInstance ?? []).filter(isJsonObject).find(value => value.primitive_instance_id === item.growth_model_id);
+  if (!primitive || primitive.primitive_id !== "P08" || primitive.enabled !== true || !isJsonObject(primitive.input_bindings)) return undefined;
+  const rateId = primitive.input_bindings.rate;
+  return objectEntries(draft, "Assumption").find(value => value.assumption_id === rateId);
+}
+export function assumptionOwners(draft: PersonalDraft, assumptionId: string) {
+  return (["Income", "Expense", "Investment"] as const).flatMap(type => objectEntries(draft, type).flatMap(item =>
+    (type === "Investment" ? linkedReturnAssumption(draft, item, String(item.scenario_id ?? objectEntries(draft, "Assumption").find(value => value.assumption_id === assumptionId)?.scenario_id)) : linkedGrowthAssumption(draft, item))?.assumption_id === assumptionId
+      ? [{ type, id: objectId(type, item), label: objectLabel(type, item), surface: type === "Income" ? "Money → Income" : type === "Expense" ? "Money → Spending" : "Net Worth → Investments & retirement" }] : []));
+}
 export function forecastDiagnosticMessage(diagnostic: {
   code?: string; message?: string; entityType?: string; entityId?: string; fieldPath?: string; relatedIds?: readonly string[];
 }, draft?: PersonalDraft): string {
@@ -83,6 +96,9 @@ export function forecastDiagnosticMessage(diagnostic: {
     case "PFA-TAX-008":
     case "PFA-TAX-009": {
       const tax = diagnostic as DisplayDiagnostic;
+      if (tax.category === "filing_status_year_unknown" || tax.category === "filing_status_conflict") return tax.category === "filing_status_conflict"
+        ? `Recorded household filing statuses disagree for ${tax.taxYear ?? "this year"}. Confirm the annual status in Household & People; tax-affected totals for that year remain incomplete.`
+        : `Household filing status is missing for ${tax.taxYear ?? "this year"}. Confirm that year's status in Household & People; earlier years do not establish later years.`;
       if (tax.category === "filing_status") return "Tax filing status is missing or conflicting. Import a model with an explicit, consistent household/person filing status. The current editor cannot author this derived tax fact. Tax-dependent totals remain incomplete until this is resolved.";
       if (tax.category === "residence_jurisdiction_periods" || tax.category === "work_service_jurisdiction_allocations")
         return "Dated residence or work-location facts are missing. Import corrected dated tax facts; the current editor cannot author those intervals. Current positions and recognized income remain available, but tax-dependent totals are incomplete.";
@@ -90,7 +106,7 @@ export function forecastDiagnosticMessage(diagnostic: {
       if (tax.category === "local_residence_jurisdiction") return `Local tax applicability for ${jurisdiction} is unknown. Current-position values and recognized income remain available; after-tax totals are incomplete. Review the dated tax facts in the imported model; local law coverage may also be unsupported.`;
       if (tax.category === "payment_funding" || tax.category === "settlement_timing") return "Needs setup · Tax payments & refunds: choose payment/refund accounts and confirm forecast settlement dates under Plan → Current Plan → Forecast setup. Current positions and recognized income remain usable; tax-dependent cash and after-tax totals need this setup.";
       if (tax.category === "projected_current_law") return `Projected taxes for ${jurisdiction}. ${diagnostic.message ?? "Nominal carry-forward of the latest verified rule; no inflation indexing or future legislation inferred."}`;
-      if (tax.category === "contribution_annual_facts") return "Future annual contribution facts need confirmation. Under Net Worth → Investments & retirement → Manage/Add contributions, review the plan’s annual personal facts and future assumptions. Unconfirmed contributions are skipped; wages and other household activity continue. Dependent contribution capacity and after-tax totals remain incomplete. Projected current law alone does not establish future personal eligibility.";
+      if (tax.category === "contribution_annual_facts") return `Contribution eligibility is not established for ${tax.taxYear ?? "this year"}. Review that year's income, employer plan, tax or health-coverage source in the annual editor. Affected contributions are skipped; wages and other household activity continue. Projected current law does not establish personal eligibility.`;
       return `Forecast ran with partially modeled taxes for ${jurisdiction}. Current-position values and recognized income remain available; tax-dependent cash, net worth and after-tax totals are incomplete. Review the original reason in Technical diagnostic details before relying on those totals.`;
     }
     case "RULE_INPUT_INVALID":
@@ -185,7 +201,7 @@ const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g
 
 /** Display-only sanitization; original diagnostic text remains in technical disclosure. */
 export const friendlyText = (value: unknown): string => String(value ?? "").replace(UUID, "unavailable reference");
-export function objectLabel(type: PersonalObjectType, item: JsonObject): string {
+export function objectLabel(type: PersonalObjectType | "Insurance" | "Event", item: JsonObject): string {
   const candidate = type === "Person" ? [item.first_name, item.last_name].filter(Boolean).join(" ")
     : item.name ?? item.source ?? item.category ?? item.symbol;
   return candidate ? friendlyText(candidate) : `Unnamed ${type.toLowerCase()}`;

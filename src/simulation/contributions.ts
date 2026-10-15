@@ -27,6 +27,22 @@ export interface ContributionPolicy {
   readonly facts: D1ContributionFacts;
   readonly limits: readonly ContributionLimitBinding[];
   readonly excessPolicy: "reject" | "auto_cap";
+  /** Application-resolved immutable evidence; never an editable year snapshot. */
+  readonly annualFacts?: readonly SourceQualifiedContributionYear[];
+}
+export interface SourceQualifiedContributionYear {
+  readonly personId: string;
+  readonly householdId: string;
+  readonly year: number;
+  readonly bucketKey: string;
+  readonly sponsorId?: string;
+  readonly character: ContributionCharacter;
+  readonly effectiveStart: string;
+  readonly effectiveEnd: string;
+  readonly status: "known" | "missing" | "true_conflict";
+  readonly facts: D1ContributionFacts;
+  readonly sources: readonly { readonly id: string; readonly field: string; readonly ruleVersion: string; readonly provenance?: "observed" | "legacy_snapshot" | "commitment" | "calculated" | "assumption" }[];
+  readonly problems: readonly string[];
 }
 const invalid = (message: string): never => failValidation({ severity: "error", code: issueCodes.ruleInputInvalid, message, entityType: "contribution" });
 const usage = (state: AuthoritativeState) => Object.values(state.contributions ?? {}).flatMap(entry => entry.buckets.map(bucket => ({ contributionId: entry.id, bucketIdentity: bucket.identity, character: entry.character, amount: bucket.amount })));
@@ -59,7 +75,8 @@ export const decideContribution = (state: AuthoritativeState, policy: Contributi
     return { id: domainId("tax-rule", contributionRuleIdAt(binding.ruleId, basePolicy, at)), kind: "annual_contribution_limit", target: binding.target, bucketKey: binding.bucketKey, includedCharacters: binding.includedCharacters,
       effectiveFrom: instant(`${policy.facts.taxYear}-01-01T00:00:00.000Z`), effectiveUntil: instant(`${policy.facts.taxYear + 1}-01-01T00:00:00.000Z`), calendarYear: policy.facts.taxYear, calendar: "utc", annualLimit: capacity.capacity,
       capacityFacts: { lawVersion: capacity.lawVersion, kind: binding.kind,
-        ...(policy.facts.lawProjection === undefined ? {} : { provenance: policy.facts.lawProjection, baseRuleId: binding.ruleId, baseYear: "2026", projectedYear: String(policy.facts.taxYear), projectionPolicy: "nominal_carry_forward", annualFacts: basePolicy.facts.taxYear === policy.facts.taxYear ? "explicit_year_facts" : "explicit_confirmed_forecast_assumption" }),
+        ...(policy.facts.lawProjection === undefined ? {} : { provenance: policy.facts.lawProjection, baseRuleId: binding.ruleId, baseYear: "2026", projectedYear: String(policy.facts.taxYear), projectionPolicy: "nominal_statutory_law", annualFacts: basePolicy.facts.taxYear === policy.facts.taxYear ? "explicit_year_facts" : "source_qualified_year_facts",
+          annualFactSources: JSON.stringify(basePolicy.annualFacts?.filter(row => row.year === policy.facts.taxYear && row.bucketKey === binding.bucketKey).flatMap(row => row.sources) ?? []) }),
         ...Object.fromEntries(Object.entries(policy.facts).filter(([, value]) => value !== undefined).map(([key, value]) => [key, typeof value === "boolean" ? value : value instanceof Money ? `${value.amount.toString()} ${value.currency.code}` : String(value)])) } };
   });
   const resolved = resolveContributionLimitBindings(catalog, catalog.map(rule => rule.id), [

@@ -30,7 +30,7 @@ const object = (value: JsonValue): value is Readonly<Record<string, JsonValue>> 
 const fixtureFields = (model: PersonalDraft, collection: string, idField: string, id: string, fields: Readonly<Record<string, JsonValue>>): PersonalDraft => ({ ...model, objects: { ...model.objects,
   [collection]: model.objects[collection]!.map(value => object(value) && value[idField] === id ? { ...value, ...fields } : value),
 } });
-const workplace = (openingUnvestedQuantity = "0") => authorPayrollContributionPlan(createGoldenHouseholdDraft(), {
+const workplace = (openingUnvestedQuantity = "0") => authorPayrollContributionPlan(fixtureFields(createGoldenHouseholdDraft(), "Person", "person_id", ids.person, { date_of_birth: "1976-01-01" }), {
   primitiveId: id(1), investmentId: ids.retirementInvestment, incomeId: ids.income, character: "employer_401k", priority: 10,
   calculation: { kind: "fixed", amount: "100" }, planKey: "sponsor", vestedFraction: "0.25", openingUnvestedQuantity, excessPolicy: "reject",
   facts: { taxYear: 2026, ageAtYearEnd: 50, eligiblePlanCompensation: "100000", planHasRoth: true, priorYearSponsorWages: "100000" },
@@ -80,6 +80,7 @@ describe("D1 authoritative opening employer ownership", () => {
 describe("D1 prior YTD statutory usage", () => {
   it.each(["traditional_401k", "roth_401k"] as const)("keeps inactive Employer A %s and additions separate from active Employer B", character => {
     let model = fixtureFields(createGoldenHouseholdDraft(), "Account", "account_id", ids.brokerageAccount, { account_type: character, tax_treatment: character === "roth_401k" ? "tax_free" : "tax_deferred" });
+    model = fixtureFields(model, "Person", "person_id", ids.person, { date_of_birth: "1976-01-01" });
     const facts = { taxYear: 2026, ageAtYearEnd: 50, eligiblePlanCompensation: "100000", planHasRoth: true, priorYearSponsorWages: "100000" };
     model = authorHistoricalContributionScope(model, { id: id(50), investmentId: ids.brokerageInvestment, planKey: "employer-a", facts });
     model = authorPayrollContributionPlan(model, { primitiveId: id(51), investmentId: ids.retirementInvestment, incomeId: ids.income, character: "traditional_401k", priority: 10, calculation: { kind: "fixed", amount: "20000" }, planKey: "employer-b", vestedFraction: "1", excessPolicy: "auto_cap", facts });
@@ -133,6 +134,7 @@ describe("D1 prior YTD statutory usage", () => {
   });
   it("keeps inactive spouse HSA ordinary usage shared and individual catch-up separate", () => {
     let model = patchPersonalObject(createGoldenHouseholdDraft(), "Household", ids.household, { members: [ids.person, id(70)], filing_status: "married_joint", household_type: "couple" });
+    model = fixtureFields(model, "Person", "person_id", ids.person, { date_of_birth: "1971-01-01" });
     model = addPersonalObject(model, "Person", id(70), { household_id: ids.household, first_name: "Spouse", last_name: "Example", date_of_birth: "1971-01-01", residence_jurisdiction: "US-NY" });
     model = fixtureFields(model, "Account", "account_id", ids.brokerageAccount, { account_type: "hsa_investment", tax_treatment: "tax_free", owner_id: id(70) });
     model = fixtureFields(model, "Investment", "investment_id", ids.brokerageInvestment, { owner_id: id(70), tax_treatment: "tax_free" });
@@ -224,6 +226,7 @@ describe("D1 prior YTD statutory usage", () => {
   });
   it("shares prior HSA employee/employer usage without creating a second balance", () => {
     let model = fixtureFields(createGoldenHouseholdDraft(), "Account", "account_id", ids.retirementAccount, { account_type: "hsa_investment", tax_treatment: "tax_free" });
+    model = fixtureFields(model, "Person", "person_id", ids.person, { date_of_birth: "1971-01-01" });
     model = authorPayrollContributionPlan(model, { primitiveId: id(30), investmentId: ids.retirementInvestment, incomeId: ids.income, character: "employee_hsa", priority: 10, calculation: { kind: "fixed", amount: "1000" }, vestedFraction: "1", excessPolicy: "auto_cap", facts: { taxYear: 2026, ageAtYearEnd: 55, hsaCoverage: "family", hsaFullYearEligible: true, hsaFamilyAllocation: "8750" } });
     model = authorOpeningContributionUsage(model, { asOf: "2026-07-01", allPriorUsageKnown: true, entries: [{ id: id(31), investmentId: ids.retirementInvestment, character: "employee_hsa", amount: "8000", ordinaryAmount: "8000" }, { id: id(32), investmentId: ids.retirementInvestment, character: "employer_hsa", amount: "1000", ordinaryAmount: "750" }] });
     const usage = compileOpeningContributionUsage(model, "2026-07-01"), opening = createAuthoritativeState({ ...payrollOpeningBalances(model, durablePayrollAllocations(model)), contributions: usage.contributions });

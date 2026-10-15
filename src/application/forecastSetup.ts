@@ -9,6 +9,8 @@ export function currentPlan(model: PersonalDraft): JsonObject | undefined {
 }
 
 export function simulationWindowProblem(model: PersonalDraft, start: string, end: string): string | undefined {
+  if (!utcDate(start) || !utcDate(end) || start >= end) return "Choose valid Simulation dates with end after start.";
+  if (!start.endsWith("-01") || !end.endsWith("-01")) return "Choose Simulation dates on the first day of a month.";
   const plan = currentPlan(model);
   if (!plan) return "Choose one enabled Current Plan before configuring the simulation window.";
   if (typeof plan.start_date === "string" && start < plan.start_date)

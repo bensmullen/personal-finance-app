@@ -73,13 +73,19 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
   const sources = new Map(input.incomes.map(income => [income.id, income]));
   const fingerprint = taxCatalogFingerprint(input.catalog);
   const bindings = new Map<string, ReturnType<typeof resolveTaxCoreRule> | ValidationError>();
+  const annualStatus = (year: string) => {
+    if (input.filingStatuses === undefined) return input.filingStatus;
+    const fact = input.filingStatuses[year];
+    return fact?.status === "known" && fact.householdId === String(input.ownerId) && fact.taxYear === year ? fact.value : undefined;
+  };
   const binding = (jurisdiction: string, at: Instant, facts: TaxJurisdictionFacts) => {
-    const key = canonicalSerialize({ jurisdiction, at, facts, status: input.filingStatus });
+    const status = annualStatus(at.slice(0, 4));
+    const key = canonicalSerialize({ jurisdiction, at, facts, status });
     const cached = bindings.get(key);
     if (cached instanceof ValidationError) throw cached;
     if (cached !== undefined) return cached;
     try {
-      const selected = resolveTaxCoreRule(input.catalog, jurisdiction, input.filingStatus!, at, facts);
+      const selected = resolveTaxCoreRule(input.catalog, jurisdiction, status!, at, facts);
       bindings.set(key, selected); return selected;
     } catch (error) {
       if (error instanceof ValidationError) bindings.set(key, error);
@@ -87,7 +93,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
     }
   };
   return Object.freeze({
-    id: "tax", version: "t1a-household-v1", portableCodec: "household-tax/v1", economicInputs: Object.freeze({ ...input, catalogFingerprint: fingerprint }),
+    id: "tax", version: input.filingStatuses === undefined ? "t1a-household-v1" : "t1a-household-v2", portableCodec: input.filingStatuses === undefined ? "household-tax/v1" : "household-tax/v2", economicInputs: Object.freeze({ ...input, catalogFingerprint: fingerprint }),
     observe: (descriptor, facts, runtime) => {
       if (facts.taxEconomics !== undefined || facts.taxDiagnostics !== undefined) {
         const year = descriptor.sequencingInstant.slice(0, 4), prior = yearRuntime(taxRuntime(runtime), year);
@@ -160,6 +166,13 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           const material = contributions.length > 0 || prior.economics.some(economic => Object.values(economic.income).some(amount => !amount.isZero())) || prior.diagnostics.size > 0 || instruction !== undefined || finalSettlement !== undefined;
           if (!material) return { ...opening, facts: { outputCapabilities: taxOutputCapabilities([]) } };
           const diagnostics: TaxCapabilityDiagnostic[] = [...input.diagnostics, ...prior.diagnostics];
+          const filing = input.filingStatuses?.[year];
+          if (input.filingStatuses !== undefined && !annualStatus(year)) diagnostics.push({ ...taxDiagnostic(
+            filing?.status === "true_conflict" ? "filing_status_conflict" : "filing_status_year_unknown",
+            filing?.status === "true_conflict"
+              ? `Filing status sources disagree for ${year}: ${filing.sources.map(source => `${source.label} (${source.value.replaceAll("_", " ")})`).join("; ")}. Confirm the annual status in Household & People.`
+              : `Filing status is not established for ${year}. Confirm that year's status in Household & People.`,
+            undefined, filing?.repairPersonId), taxYear: year });
           for (const entry of contributions) if (entry.character === "traditional_ira" && entry.eligibleDeduction === undefined) diagnostics.push(taxDiagnostic("ira_deduction_eligibility", "Traditional IRA deductibility requires explicit MAGI and workplace/spouse coverage facts.", "US:FEDERAL", entry.id));
           if (context.baseCurrency.code !== "USD") diagnostics.push(taxDiagnostic("currency", "The T1A law catalog requires USD bases and payments."));
           if (input.simulationStart !== undefined && input.simulationStart.slice(0, 4) === year && !input.simulationStart.startsWith(`${year}-01-01T00:00:00.000Z`)) diagnostics.push(taxDiagnostic("opening_tax_year", "A partial-year opening lacks prior recognized economics and payment credits."));
@@ -197,7 +210,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
             if (wages && economic.facts.workJurisdictions.some(value => ["US:PA", "US:CO"].includes(value)) && economic.facts.workJurisdictions.length === 1) diagnostics.push(taxDiagnostic("local_work_jurisdiction", "Local service-tax applicability is unknown.", economic.facts.workJurisdictions[0]));
             if (residence.some(value => ["US:PA", "US:NY"].includes(value)) && residence.length === 1) diagnostics.push(taxDiagnostic("local_residence_jurisdiction", "Local residence-tax applicability is unknown.", residence[0]));
             for (const jurisdiction of targets) {
-              if (!input.filingStatus) continue;
+              if (!annualStatus(year)) continue;
               try {
                 const resolved = binding(jurisdiction, economic.at, economic.facts);
                 const rule = resolved.rule;
@@ -253,8 +266,9 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
                 ...(resolved.rule.periodicEmployeeTax === undefined ? {} : { periodicWages: { unit: resolved.rule.periodicEmployeeTax.unit, wages: income.wages } }) });
               totals.set(group.jurisdiction, (totals.get(group.jurisdiction) ?? zero()).plus(application.result.totalLiability));
               const contributionTraces = contributions.map(entry => calculationTraceRef(calculationTraceId(`tax:contribution:${entry.id}`), entry.buckets.flatMap(bucket => bucket.ruleIds.map(ruleId => domainId("tax-rule", ruleId)))));
-              appliedTraces.set(group.jurisdiction, mergeTraceRefs(appliedTraces.get(group.jurisdiction), application.traceRefs, group.entries.flatMap(entry => entry.traceRefs), contributionTraces) ?? []);
-              ruleTraces.push(...application.traceRefs, ...group.entries.flatMap(entry => entry.traceRefs));
+              const filingTraces = filing?.sources.map(source => calculationTraceRef(calculationTraceId(`tax:filing:${filing.householdId}:${year}:${source.id}:${source.ruleVersion}:${source.value}`))) ?? [];
+              appliedTraces.set(group.jurisdiction, mergeTraceRefs(appliedTraces.get(group.jurisdiction), application.traceRefs, group.entries.flatMap(entry => entry.traceRefs), contributionTraces, filingTraces) ?? []);
+              ruleTraces.push(...application.traceRefs, ...group.entries.flatMap(entry => entry.traceRefs), ...filingTraces);
             } catch (error) {
               if (!(error instanceof ValidationError)) throw error;
               diagnostics.push(taxDiagnostic("legal_base_or_component", error.message, group.jurisdiction));
