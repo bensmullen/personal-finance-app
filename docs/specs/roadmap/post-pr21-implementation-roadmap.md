@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.6.9-draft
+**Version:** 0.6.10-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -359,7 +359,7 @@ Implement PFA-UX with emphasis on:
 
 **User validation:** required. Milestone closeout SHALL provide a concise walkthrough covering novice comprehension, entity editing, advanced-detail discoverability, chart readability, and any remaining confusing/dead controls.
 
-## 8A. U1 — Guided financial authoring and usability acceptance (Issue #94)
+## 8A. U1 — Financial authoring technical foundation (#94) and UX acceptance (#120)
 
 **Start condition:** audited D1-C semantic integration (Issue #80 / PR #89) is merged to main. U1 is the **normal-user usability acceptance dependency for D1**, not a new financial domain, a second R4, or the D2 scope.
 
@@ -377,7 +377,13 @@ Deterministic source-qualified derivations (age from DOB, eligible preceding-yea
 
 **Implementation seam:** resolve input/fact provenance and build the shared `src/application/**` resolver + single owner-screen hooks in existing PR #98, preserving D1 law/ledger. The registry, PFA-UX-021/022/023 and requirement index arrive through this separate documentation PR on `main`. Codex must sync the merged normative spec through operator-owned bootstrap before claiming complete compliance; do not silently modify frozen financial engine/canonical schema under #94. If a required future-year law or payroll withholding calculation is unavailable within the authorized interface, report the precise missing authority as a release blocker; do not claim a complete forecast with guessed amounts. Browser UAT must exercise every currently rendered normal-user input against its recorded single owner, deep-link sheet, actual source/derived values and unsuppressed exceptions. CI alone cannot prove the current code meets this contract.
 
-**Acceptance:** green CI + ChatGPT UX/semantic audit + uncoached product-owner goal-based UAT, then merge. Until then, D1 is not accepted and D1-gated financial/stochastic integration remains blocked. D2-PREP #114 is the limited exception for independent fixtures, mapping and contract-complete pure helpers; it cannot edit or integrate into U1-owned paths, financial authority, or the live application. Shared normal-user UI stays U1-owned.
+**U1 execution handoff (2026-10-15):** Issue #94 / PR #98 is a large, CI-green financial-authoring **implementation checkpoint** (current reported head `833959c`, 49 commits and 62 files). The product owner explicitly reports the resulting UI remains unacceptable. To avoid inefficient expansion of the original task, Issue **#120** is the designated small **U1B visual/comprehension and owner-UAT successor**. Its Codex implementation uses a new branch based on the U1A technical foundation after integration into main; do not copy all #94 history or repeat its financial adapters. #120's owner/editor UI work remains governed by the controlled 62-family registry and PFA-UX-015–023, and the owner accepts normal-user readability only after fresh uncoached UAT.
+
+**Provisional technical-baseline exception:** PR #98 may be merged *only after a targeted independent semantic check and explicit product-manager approval to land a technically validated but UX-unaccepted U1A checkpoint*. That merge does **not** close the U1/D1 acceptance gate, waive unresolved UX requirements or imply successful UAT. If that exception is not approved, keep #98 open; do not close/delete it or present a replacement PR against main as small, since its entire unmerged patch would still be inherited. Once #98 is safely integrated, close #94 as **superseded / technical baseline (not user-accepted)**, move remaining U1 final acceptance and downstream D1-blocking dependencies to #120 in the controlled milestone register, and start its new clean PR. Preserve #99 mortgage acceptance in the successor. #101 payroll withholding stays a separate unresolved financial completion dependency.
+
+**Final U1/D1 acceptance after handoff:** green latest-head CI, ChatGPT UX/financial-semantic audit and uncoached product-owner goal-based UAT on **#120**; no U1 or D1 completion from a foundation-only merge.
+
+**Acceptance:** green CI + ChatGPT UX/semantic audit + uncoached product-owner goal-based UAT, then accept the final U1 milestone. Until then, D1 is not accepted and D1-gated financial/stochastic integration remains blocked. D2-PREP #114 is the limited exception for independent fixtures, mapping and contract-complete pure helpers; it cannot edit or integrate into U1-owned paths, financial authority, or the live application. Shared normal-user UI stays U1-owned.
 
 ## 9. O1 — Assisted onboarding and import foundation
 
