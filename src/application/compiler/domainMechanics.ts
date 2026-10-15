@@ -57,14 +57,18 @@ export const authorDomainOperation = (model: PortableModelEnvelope, plan: Author
   if (roots.length !== 1) throw new Error("Choose one enabled root plan before adding a domain operation.");
   const priorEvent = objects(model, "Event").find(item => item.event_id === plan.eventId);
   if (priorEvent && (!Array.isArray(priorEvent.effect_ids) || priorEvent.effect_ids.length !== 1 || priorEvent.effect_ids[0] !== plan.effectId)) throw new Error("DOMAIN_OPERATION_ID_COLLISION");
+  if (priorEvent && priorEvent.scenario_id !== roots[0]!.scenario_id) throw new Error("This activity belongs to another plan. Review its original plan before editing it.");
+  const priorEffect = objects(model, "EventEffect").find(item => item.event_effect_id === plan.effectId);
+  const priorPrimitive = objects(model, "PrimitiveInstance").find(item => item.primitive_instance_id === plan.primitiveId);
+  if (priorEvent && (!priorEffect || priorEffect.primitive_instance_id !== plan.primitiveId || priorEffect.operation !== "d1_domain" || !priorPrimitive || !record(priorPrimitive.parameters) || priorPrimitive.parameters.adapter !== ADAPTER)) throw new Error("DOMAIN_OPERATION_ID_COLLISION");
   for (const [collection, idField, id] of [["EventEffect", "event_effect_id", plan.effectId], ["PrimitiveInstance", "primitive_instance_id", plan.primitiveId]] as const) {
     if (!priorEvent && objects(model, collection).some(item => item[idField] === id)) throw new Error("DOMAIN_OPERATION_ID_COLLISION");
   }
   const parameters: Record<string, JsonValue> = { adapter: ADAPTER, kind: plan.kind, amount: plan.amount, order: plan.order };
   for (const [key, value] of Object.entries(plan)) if (!["eventId", "effectId", "primitiveId", "date", "name"].includes(key) && value !== undefined) parameters[key] = value as JsonValue;
-  const event: Record<string, JsonValue> = { event_id: plan.eventId, name: plan.name, event_type: "other", start_date: plan.date, trigger_type: "scheduled", effect_ids: [plan.effectId], dependencies: [], precedence: plan.order, scenario_id: String(roots[0]!.scenario_id), enabled: true };
-  const effect: Record<string, JsonValue> = { event_effect_id: plan.effectId, target_entity_type: plan.holdingId || plan.destinationHoldingId ? "Investment" : "Account", target_entity_id: plan.holdingId ?? plan.destinationHoldingId ?? plan.cashAccountId ?? plan.eventId, operation: "d1_domain", primitive_instance_id: plan.primitiveId };
-  const primitive: Record<string, JsonValue> = { primitive_instance_id: plan.primitiveId, primitive_id: "P27", enabled: true, scenario_id: String(roots[0]!.scenario_id), input_bindings: {}, parameters };
+  const event: Record<string, JsonValue> = { ...priorEvent, event_id: plan.eventId, name: plan.name, event_type: "other", start_date: plan.date, trigger_type: "scheduled", effect_ids: [plan.effectId], dependencies: priorEvent?.dependencies ?? [], precedence: plan.order, scenario_id: String(roots[0]!.scenario_id), enabled: priorEvent?.enabled ?? true };
+  const effect: Record<string, JsonValue> = { ...priorEffect, event_effect_id: plan.effectId, target_entity_type: plan.holdingId || plan.destinationHoldingId ? "Investment" : "Account", target_entity_id: plan.holdingId ?? plan.destinationHoldingId ?? plan.cashAccountId ?? plan.eventId, operation: "d1_domain", primitive_instance_id: plan.primitiveId };
+  const primitive: Record<string, JsonValue> = { ...priorPrimitive, primitive_instance_id: plan.primitiveId, primitive_id: "P27", enabled: priorPrimitive?.enabled ?? true, scenario_id: String(roots[0]!.scenario_id), input_bindings: priorPrimitive?.input_bindings ?? {}, parameters };
   const replace = (collection: string, field: string, item: CanonicalObject) => [...objects(model, collection).filter(old => old[field] !== item[field]), item];
   return { ...model, objects: { ...model.objects, Event: replace("Event", "event_id", event), EventEffect: replace("EventEffect", "event_effect_id", effect), PrimitiveInstance: replace("PrimitiveInstance", "primitive_instance_id", primitive),
     Scenario: objects(model, "Scenario").map(item => item === roots[0] ? { ...item, event_ids: [...new Set([...(Array.isArray(item.event_ids) ? item.event_ids : []), plan.eventId])] } : item) } };
@@ -204,12 +208,16 @@ export const compileDomainMechanics = (model: PortableModelEnvelope, request: Do
       const recipient = beneficiary === scope.value.householdId ? String(destinationAccount.owner_id) : beneficiary;
       if (!scope.value.memberIds.includes(recipient)) throw new Error("A household beneficiary requires an explicit member-owned destination with supported jurisdictional facts.");
       const from = date(policy.start_date, "Policy start is required."), until = date(policy.end_date, "Term policy end is required."), death = objects(model, "Event").find(item => item.event_id === policy.death_event_id);
-      if (!death || death.event_type !== "death" || death.enabled !== true || death.scenario_id !== selected.value.id || death.trigger_type !== "scheduled" || death.trigger_condition != null || death.probability_model_id != null) throw new Error("Choose one scheduled death event in the active scenario.");
-      const deathDate = date(death.start_date, "Death event date is invalid.");
-      if (until <= from || deathDate < from || deathDate >= until) throw new Error("The scheduled death must fall inside the policy's half-open coverage interval.");
+      if (policy.death_event_id != null && (!death || death.event_type !== "death" || death.scenario_id !== selected.value.id || death.trigger_type !== "scheduled" || death.trigger_condition != null || death.probability_model_id != null)) throw new Error("Choose one scheduled death event in the active scenario, or remove the policy's scenario link.");
+      const recordedDeathDate = death ? date(death.start_date, "Death event date is invalid.") : undefined;
+      const deathDate = death?.enabled === true ? recordedDeathDate : undefined;
+      if (until <= from) throw new Error("Policy end must follow its coverage start.");
+      if (recordedDeathDate !== undefined && (recordedDeathDate < from || recordedDeathDate >= until)) throw new Error("The scheduled death must fall inside the policy's half-open coverage interval.");
       const id = String(policy.insurance_id), premium = exact(policy.premium, "Monthly premium is required."), benefit = exact(policy.coverage_amount, "Lump-sum coverage amount is required.");
-      for (const at of utcMonthlyOccurrences(utcDate(from)!, { start, end }, "skip")) if (at.slice(0, 10) < deathDate && at.slice(0, 10) < until) add({ id: id + ":premium:" + at, at, order: 900020, kind: "insurance_premium", cashAccountId: source, amount: premium, taxFacts: taxFactsAt(at, owner) });
-      const at = utcDate(deathDate)!; if (start <= at && at < end) add({ id: id + ":benefit", at, order: 900021, kind: "death_benefit", cashAccountId: destination, amount: benefit, taxFacts: taxFactsAt(at, recipient) });
+      for (const at of utcMonthlyOccurrences(utcDate(from)!, { start, end }, "skip")) if ((deathDate === undefined || at.slice(0, 10) < deathDate) && at.slice(0, 10) < until) add({ id: id + ":premium:" + at, at, order: 900020, kind: "insurance_premium", cashAccountId: source, amount: premium, taxFacts: taxFactsAt(at, owner) });
+      if (deathDate !== undefined) {
+        const at = utcDate(deathDate)!; if (start <= at && at < end) add({ id: id + ":benefit", at, order: 900021, kind: "death_benefit", cashAccountId: destination, amount: benefit, taxFacts: taxFactsAt(at, recipient) });
+      }
     }
     const effects = new Map(objects(model, "EventEffect").map(item => [String(item.event_effect_id), item]));
     const primitives = new Map(objects(model, "PrimitiveInstance").map(item => [String(item.primitive_instance_id), item]));

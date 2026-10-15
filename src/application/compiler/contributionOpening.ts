@@ -11,6 +11,7 @@ import { durablePayrollAllocations } from "./payrollAuthoring.js";
 import { durablePersonalPurchaseInstructions } from "./personalPurchases.js";
 import { EXACT_DECIMAL, UUID, objects, utcDate, type CanonicalObject } from "./shared.js";
 import { canonicalSerialize } from "../../simulation/run.js";
+import { resolveAnnualPolicyCopies } from "../contributionFactResolution.js";
 
 const ADAPTER = "d1-opening-contribution-usage/v1";
 const SNAPSHOT_ID = "d1c60000-0000-4000-8000-000000000001";
@@ -44,8 +45,13 @@ export const openingContributionOptions = (model: PortableModelEnvelope) => {
   for (const option of options) {
     const key = `${option.investmentId}:${option.character}:${option.policy.facts.taxYear}`;
     const previous = unique.get(key);
-    if (previous && scopeConfirmation(previous) !== scopeConfirmation(option)) return fail("HISTORICAL_SCOPE_CONFLICT");
-    unique.set(key, option);
+    if (previous && resolveAnnualPolicyCopies(option.investmentId, [
+      { id: "existing", label: "Earlier eligibility source", policy: previous.policy },
+      { id: "candidate", label: "Contribution eligibility source", policy: option.policy },
+    ]).status !== "known") return fail("HISTORICAL_SCOPE_CONFLICT");
+    // Retain the first compatible copy, including historical confirmation
+    // identity. Do not overwrite it with future-only assumption metadata.
+    if (!previous) unique.set(key, option);
   }
   return [...unique.values()];
 };
@@ -67,6 +73,18 @@ const requireRepresentableHistory = (model: PortableModelEnvelope, year: number)
       if (capacity.status !== "complete") return fail(`OPENING_USAGE_SCOPE_INCOMPLETE: ${capacity.diagnostics.join(", ")}`);
     }
   }
+};
+
+/** Authoring read model of existing prerequisites; no usage or economics is posted. */
+export const openingContributionReadiness = (model: PortableModelEnvelope, boundary: string): { readonly ready: boolean; readonly reason?: string; readonly missingAccountIds: readonly string[] } => {
+  if (!utcDate(boundary)) return { ready: false, reason: "OPENING_USAGE_BOUNDARY_INVALID", missingAccountIds: [] };
+  const year = Number(boundary.slice(0, 4));
+  try {
+    const missingAccountIds = unrepresentedHistoricalAccounts(model, year).map(account => String(account.account_id));
+    if (missingAccountIds.length) return { ready: false, reason: "OPENING_USAGE_SCOPE_REQUIRED", missingAccountIds };
+    requireRepresentableHistory(model, year);
+    return { ready: true, missingAccountIds: [] };
+  } catch (failure) { return { ready: false, reason: failure instanceof Error ? failure.message : "OPENING_USAGE_SCOPE_INCOMPLETE", missingAccountIds: [] }; }
 };
 
 export interface OpeningContributionUsageEntry {

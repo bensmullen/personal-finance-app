@@ -6,6 +6,7 @@ import { domainId } from "../../identity/index.js";
 import { money, USD } from "../../values/index.js";
 import { normalizeContributionLimitRuleIds } from "./contributionBindings.js";
 import { UUID, EXACT_DECIMAL, objects, canonicalId, type CanonicalObject } from "./shared.js";
+import { resolveAnnualFinancialFact, type AnnualField } from "../financialFacts.js";
 
 export interface AuthoredContributionFacts {
   readonly annualFactProjection?: "confirmed_nominal_carry_forward";
@@ -99,5 +100,17 @@ export const compileContributionPolicy = (model: PortableModelEnvelope, account:
     return { ruleId, kind, target: { targetType, targetId: domainId(targetType, targetId) }, bucketKey, includedCharacters: included.map(String) };
   });
   if (character.includes("401k") && limits.filter(binding => binding.kind === "401k_additions").length !== 1) return fail("ANNUAL_ADDITIONS_ACCOUNT_PLAN_AMBIGUOUS");
-  return { character, personId: value.personId, householdId: value.householdId, facts: parseContributionFacts(value.facts), excessPolicy: value.excessPolicy, limits };
+  const original = parseContributionFacts(value.facts);
+  const raw: Record<string, JsonValue> = record(value.facts) ? { ...value.facts } : { taxYear: original.taxYear };
+  const sponsorId = limits.find(binding => binding.kind === "401k_additions")?.bucketKey.slice("401k_additions:".length);
+  const relevant: AnnualField[] = character.endsWith("_hsa") ? ["ageAtYearEnd", "hsaFullYearEligible", "hsaCoverage", "hsaFamilyAllocation"]
+    : character.includes("401k") ? ["ageAtYearEnd", "eligiblePlanCompensation", "priorYearSponsorWages", "planHasRoth"]
+      : ["ageAtYearEnd", "taxableCompensation", "filingStatus", "rothMagi", "deductionMagi", "livesWithSpouse", "workplacePlanCovered", "spouseWorkplacePlanCovered"];
+  for (const field of relevant) {
+    const resolved = resolveAnnualFinancialFact(model, field, { personId: value.personId, householdId: value.householdId, taxYear: original.taxYear, ...(sponsorId === undefined ? {} : { sponsorId }) });
+    if (resolved.status === "true_conflict") return fail(`ANNUAL_FACT_CONFLICT:${field}:${original.taxYear}:${resolved.sources.map(source => source.label).join(" / ")}`);
+    if (resolved.value !== undefined) raw[field] = resolved.value;
+    else if (field === "ageAtYearEnd") delete raw[field];
+  }
+  return { character, personId: value.personId, householdId: value.householdId, facts: parseContributionFacts(raw), excessPolicy: value.excessPolicy, limits };
 };

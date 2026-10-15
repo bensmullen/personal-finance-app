@@ -1,4 +1,6 @@
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
+import { withContributionYearSchedule, withAnnualFilingStatus } from "../contributionYearFacts.js";
+import type { ContributionPolicy } from "../../simulation/contributions.js";
 import { compileDomainMechanics, hasDomainMechanics } from "./domainMechanics.js";
 import { compileMortgageLifecycle } from "./mortgageLifecycle.js";
 import { supportsD1SpouseHsaScope, durablePayrollAllocations } from "./payrollAuthoring.js";
@@ -198,8 +200,13 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   if (scenarios.size !== 1 || horizons.size !== 1 || currencies.size !== 1 || households.size !== 1 || owners.size !== 1 || starts.size !== 1 || ends.size !== 1 || asOfs.size > 1) return invalid("HOUSEHOLD_COMPILER_DISAGREEMENT", "Participating compilers must agree on Household, execution owner, currency, scenario, as-of boundary, and exact horizon.");
   const standalone = compileStandaloneAssets(model, firstBoundary.baseCurrency, firstBoundary.simulationStart, firstBoundary.simulationEnd);
   if (standalone.status !== "compiled") return standalone;
-  const tax = compileHouseholdTax(model, { ...request.tax, ...(request.forecastLawPolicy === "projected_current_law" ? { projectedCurrentLawThrough: firstBoundary.simulationEnd } : {}) });
+  const tax = compileHouseholdTax(model, { ...request.tax, asOf: firstBoundary.asOf ?? firstBoundary.simulationStart,
+    simulationStart: firstBoundary.simulationStart, simulationEnd: firstBoundary.simulationEnd,
+    ...(request.forecastLawPolicy === "projected_current_law" ? { projectedCurrentLawThrough: firstBoundary.simulationEnd } : {}) });
   if (tax.status !== "compiled") return tax;
+  const annualPolicy = (policy: ContributionPolicy) => request.forecastLawPolicy === undefined
+    ? withAnnualFilingStatus(model, policy, firstBoundary.asOf ?? firstBoundary.simulationStart)
+    : withContributionYearSchedule(model, policy, firstBoundary.simulationStart, firstBoundary.simulationEnd, firstBoundary.asOf ?? firstBoundary.simulationStart);
   const taxLocations = [...tax.value.incomes.flatMap(income => [...income.residence, ...income.work]),
     ...objects(model, "Person").filter(person => scope.value.memberIds.includes(canonicalId(person, "person_id") ?? "")).flatMap(person => (person.residence_jurisdiction_periods ?? []) as readonly CanonicalObject[])];
   const taxJurisdictions = new Set(taxLocations.flatMap(taxLocation => [String(taxLocation.state_jurisdiction).replace(/^US-/, "US:"), String(taxLocation.local_jurisdiction ?? "")]));
@@ -222,15 +229,15 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
     ...(liabilities === undefined ? {} : { liabilities: liabilities.value.scenarioBindings }),
   });
   const value: CompiledHouseholdProjection = Object.freeze({
-    ...(request.forecastLawPolicy === undefined ? {} : { projectedLaw: tax.value.catalog.flatMap(rule => rule.provenance.type === "projected_current_law" && (tax.value.filingStatus === rule.filingStatus || rule.filingStatus === "all") && (rule.jurisdiction === "US:FEDERAL" || taxJurisdictions.has(rule.jurisdiction) || taxJurisdictions.has(rule.jurisdiction.replace(/:(WAGE|OPT)$/, ""))) ? [{ jurisdiction: rule.jurisdiction, baseYear: rule.provenance.baseYear, baseRuleId: String(rule.provenance.baseRuleId), from: rule.effectiveFrom, until: rule.effectiveUntil }] : []) }),
+    ...(request.forecastLawPolicy === undefined ? {} : { projectedLaw: tax.value.catalog.flatMap(rule => rule.provenance.type === "projected_current_law" && (Object.values(tax.value.filingStatuses ?? {}).some(fact => fact.status === "known" && fact.value === rule.filingStatus && `${fact.taxYear}-01-01` < rule.effectiveUntil && `${Number(fact.taxYear) + 1}-01-01` > rule.effectiveFrom) || rule.filingStatus === "all") && (rule.jurisdiction === "US:FEDERAL" || taxJurisdictions.has(rule.jurisdiction) || taxJurisdictions.has(rule.jurisdiction.replace(/:(WAGE|OPT)$/, ""))) ? [{ jurisdiction: rule.jurisdiction, baseYear: rule.provenance.baseYear, baseRuleId: String(rule.provenance.baseRuleId), from: rule.effectiveFrom, until: rule.effectiveUntil }] : []) }),
     nonInvestmentPositionIds: taxCreditPositionIds(tax.value),
     participants: Object.freeze([createHouseholdTaxParticipant({ ...tax.value, simulationStart: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`),
       domainOperations: domains?.status === "compiled" ? domains.value.input.operations.map(item => ({ id: item.id, at: instant(item.at) })).sort((a, b) => a.id.localeCompare(b.id)) : [] }),
       ...(domains?.status === "compiled" ? [domains.value.participant] : []),
       ...(mortgages.value ? [mortgages.value] : []),
       ...(durablePayrollAllocations(model).some(item => item.events.length > 0) ? [createWorkplaceEventParticipant(durablePayrollAllocations(model).flatMap(item => item.events))] : [])]),
-    ...(cash === undefined ? {} : { cashFlowInput: request.forecastLawPolicy === undefined ? cash.value.input : { ...cash.value.input, incomes: cash.value.input.incomes.map(income => ({ ...income, ...(income.payrollContributions === undefined ? {} : { payrollContributions: income.payrollContributions.map(allocation => ({ ...allocation, policy: { ...allocation.policy, forecastLawPolicy: "projected_current_law" as const } })) }) })) } }),
-    ...(investments === undefined ? {} : { investmentInput: request.forecastLawPolicy === undefined ? investments.value.input : { ...investments.value.input, purchases: investments.value.input.purchases.map(purchase => ({ ...purchase, ...(purchase.contribution === undefined ? {} : { contribution: { ...purchase.contribution, forecastLawPolicy: "projected_current_law" as const } }) })) } }),
+    ...(cash === undefined ? {} : { cashFlowInput: { ...cash.value.input, incomes: cash.value.input.incomes.map(income => ({ ...income, ...(income.payrollContributions === undefined ? {} : { payrollContributions: income.payrollContributions.map(allocation => ({ ...allocation, policy: annualPolicy(allocation.policy) })) }) })) } }),
+    ...(investments === undefined ? {} : { investmentInput: { ...investments.value.input, purchases: investments.value.input.purchases.map(purchase => ({ ...purchase, ...(purchase.contribution === undefined ? {} : { contribution: annualPolicy(purchase.contribution) }) })) } }),
     ...(liabilities === undefined ? {} : { liabilityInput: liabilities.value.input }),
     reconciledOpeningState: opening.value,
     reconciledPrimitiveState: primitive.value,

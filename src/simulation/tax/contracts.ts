@@ -42,6 +42,15 @@ export interface TaxSettlementInstruction {
   readonly taxYear: string;
   readonly at: Instant;
 }
+/** One modeled household filing unit; annual facts apply to the entire year. */
+export interface AnnualHouseholdFilingStatus {
+  readonly householdId: string;
+  readonly taxYear: string;
+  readonly status: "known" | "missing" | "true_conflict";
+  readonly value?: FilingStatus;
+  readonly sources: readonly { readonly id: string; readonly label: string; readonly value: string; readonly provenance: string; readonly ruleVersion: string }[];
+  readonly repairPersonId?: string;
+}
 export interface HouseholdTaxInput {
   readonly domainOperations?: readonly { readonly id: string; readonly at: Instant }[];
   readonly accountTaxTreatments?: Readonly<Record<string, string>>;
@@ -49,6 +58,8 @@ export interface HouseholdTaxInput {
   readonly simulationStart?: Instant;
   readonly catalog: readonly TaxCoreRule[];
   readonly filingStatus?: FilingStatus;
+  /** Absent only for the historical fixed-status v1 execution contract. */
+  readonly filingStatuses?: Readonly<Record<string, AnnualHouseholdFilingStatus>>;
   readonly ownerId: DomainId<string>;
   readonly incomes: readonly CompiledTaxIncome[];
   readonly eligibility: readonly TaxEligibilityPeriod[];
@@ -59,6 +70,7 @@ export interface HouseholdTaxInput {
   readonly diagnostics: readonly TaxCapabilityDiagnostic[];
 }
 export interface TaxCapabilityDiagnostic {
+  readonly taxYear?: string;
   readonly severity: "warning";
   readonly code: "PFA-TAX-008" | "PFA-TAX-009";
   readonly message: string;

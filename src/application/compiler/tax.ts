@@ -17,9 +17,14 @@ import { canonicalId, objects, resolveHouseholdScope, resolveOwnerScope, utcDate
 import type { CanonicalObject } from "./shared.js";
 import type { CompileResult } from "./types.js";
 import { activeTaxFact as active, resolveTaxEligibility } from "../../simulation/tax/facts.js";
+import { resolveAnnualFinancialFact } from "../financialFacts.js";
+import type { AnnualHouseholdFilingStatus } from "../../simulation/tax/contracts.js";
 export { activeTaxFact, resolveTaxEligibility } from "../../simulation/tax/facts.js";
 
 export interface HouseholdTaxCompilerRequest {
+  readonly asOf?: string;
+  readonly simulationStart?: string;
+  readonly simulationEnd?: string;
   readonly projectedCurrentLawThrough?: string;
   readonly catalog?: readonly TaxCoreRule[];
   readonly fundingPolicy?: FundingPolicy;
@@ -85,12 +90,10 @@ export const compileHouseholdTax = (model: PortableModelEnvelope, request: House
     const scope = resolveHouseholdScope(model);
     if (scope.status !== "compiled") return scope;
     const household = objects(model, "Household").find(item => canonicalId(item, "household_id") === scope.value.householdId)!;
-    const people = objects(model, "Person").filter(item => scope.value.memberIds.includes(canonicalId(item, "person_id") ?? ""));
-    const statuses = [household, ...people].flatMap(item => item.filing_status == null ? [] : [item.filing_status === "qualifying_widow_er" ? "qualifying_surviving_spouse" : item.filing_status]);
-    const diagnostics = [];
-    const validStatuses = ["single", "married_joint", "married_separate", "head_of_household", "qualifying_surviving_spouse"];
-    if (statuses.some(status => !validStatuses.includes(String(status)))) fail("Noncanonical filing status.");
-    if (!statuses.length || new Set(statuses).size !== 1) diagnostics.push(taxDiagnostic("filing_status", "Explicit unambiguous filing status is required."));
+    const people = objects(model, "Person").filter(item => scope.value.memberIds.includes(canonicalId(item, "person_id") ?? "")).sort((a, b) => String(a.person_id).localeCompare(String(b.person_id)));
+    const diagnostics: HouseholdTaxInput["diagnostics"][number][] = [];
+    const anchor = request.asOf ?? request.simulationStart;
+    if (anchor !== undefined && !utcDate(anchor)) fail("Filing status requires a valid explicit opening reference date.");
     const sharedEligibility = eligibility(household);
     const personEligibility = new Map(people.map(person => [canonicalId(person, "person_id")!, eligibility(person)] as const));
     const residences = new Map(people.map(person => {
@@ -123,6 +126,27 @@ export const compileHouseholdTax = (model: PortableModelEnvelope, request: House
     for (const income of incomes) for (const at of allEligibility.map(item => item.effective_date)) resolveTaxEligibility([...sharedEligibility, ...income.eligibility], at);
     const verified = request.catalog ?? [...federal2024TaxCatalog, ...federal2026TaxCatalog, ...alphaStateTaxCatalog, ...alphaLocalTaxCatalog];
     const catalog = request.projectedCurrentLawThrough === undefined ? createTaxCatalog(verified) : projectedCurrentLawCatalog(verified, request.projectedCurrentLawThrough);
+    const filingStatuses: Record<string, AnnualHouseholdFilingStatus> = {};
+    const firstYear = Number((request.simulationStart ?? anchor ?? catalog[0]?.effectiveFrom)?.slice(0, 4));
+    const end = request.simulationEnd ?? request.projectedCurrentLawThrough;
+    const lastYear = end ? Number(end.slice(0, 4)) : firstYear;
+    const years = new Set((request.settlements ?? []).map(item => Number(item.taxYear)));
+    if (request.simulationStart === undefined && anchor === undefined && end === undefined) for (const rule of catalog) {
+      for (let year = Number(rule.effectiveFrom.slice(0, 4)); `${year}-01-01` < rule.effectiveUntil; year++) years.add(year);
+    }
+    for (let year = firstYear; year <= lastYear; year++) {
+      if (end && `${year}-01-01` >= end) break;
+      years.add(year);
+    }
+    for (const year of [...years].sort((a, b) => a - b)) {
+      const personId = canonicalId(people[0] ?? {}, "person_id");
+      const resolved = resolveAnnualFinancialFact(model, "filingStatus", { personId: personId ?? scope.value.householdId, householdId: scope.value.householdId, taxYear: year }, anchor);
+      filingStatuses[String(year)] = { householdId: scope.value.householdId, taxYear: String(year),
+        status: resolved.status === "true_conflict" ? "true_conflict" : resolved.value === undefined ? "missing" : "known",
+        ...(resolved.value === undefined ? {} : { value: resolved.value as FilingStatus }),
+        ...(personId === undefined ? {} : { repairPersonId: personId }),
+        sources: resolved.sources.map(source => ({ id: source.id, label: source.label, value: String(source.value), provenance: source.provenance, ruleVersion: source.ruleVersion ?? "dated-filing-fact/v1" })) };
+    }
     const accountTaxTreatments: Record<string, string> = {};
     for (const account of objects(model, "Account")) {
       const id = canonicalId(account, "account_id"); if (!id) continue;
@@ -150,7 +174,7 @@ export const compileHouseholdTax = (model: PortableModelEnvelope, request: House
     }
     const canonicalOrder = <T>(values: readonly T[]): readonly T[] => [...values].sort((a, b) => canonicalSerialize(a).localeCompare(canonicalSerialize(b)));
     return { status: "compiled", diagnostics: Object.freeze([]), value: immutableConfiguration({ catalog, accountTaxTreatments, taxRuleReferences: canonicalOrder(taxRuleReferences),
-      ...(new Set(statuses).size === 1 ? { filingStatus: statuses[0] as FilingStatus } : {}), ownerId: domainId("household", scope.value.householdId), incomes: canonicalOrder(incomes.map(income => ({ ...income, residence: canonicalOrder(income.residence), work: canonicalOrder(income.work), eligibility: canonicalOrder(income.eligibility) }))), eligibility: canonicalOrder(sharedEligibility),
+      filingStatuses, ownerId: domainId("household", scope.value.householdId), incomes: canonicalOrder(incomes.map(income => ({ ...income, residence: canonicalOrder(income.residence), work: canonicalOrder(income.work), eligibility: canonicalOrder(income.eligibility) }))), eligibility: canonicalOrder(sharedEligibility),
       ...(request.fundingPolicy === undefined ? {} : { fundingPolicy: request.fundingPolicy }), ...(request.refundAccountId === undefined ? {} : { refundAccountId: request.refundAccountId }), payments: request.payments ?? [],
       settlements: request.settlements ?? [], diagnostics }) };
   } catch (error) {
