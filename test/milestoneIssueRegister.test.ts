@@ -31,8 +31,9 @@ describe("issue-backed roadmap traceability", () => {
     expect(registry.schema_version).toBe(1);
     const ids = registry.issues.map(item => item.issue_number);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const id of [94, 100, 101, 102, 103, 105]) expect(ids).toContain(id);
-    for (const id of [99, 104]) expect(ids).not.toContain(id);
+    for (const id of [100, 101, 102, 103, 105, 120]) expect(ids).toContain(id);
+    for (const id of [94, 99, 104]) expect(ids).not.toContain(id);
+    expect(registry.stage_gates.D1_U1.required_issue_numbers).toEqual([120]);
     for (const row of registry.issues) {
       expect(Number.isSafeInteger(row.issue_number) && row.issue_number > 0).toBe(true);
       expect(row.owner_stage.trim()).not.toBe("");
@@ -64,18 +65,29 @@ describe("issue-backed roadmap traceability", () => {
   });
   it("keeps consolidated historical issues linked to surviving gate owners", () => {
     const merges = new Map(registry.closed_consolidations.map(x => [x.issue_number, x.consolidated_into]));
+    // Preserve historical provenance while resolving through superseded owners.
     expect(merges.get(99)).toBe(94);
+    expect(merges.get(94)).toBe(120);
     expect(merges.get(104)).toBe(100);
     const ids = new Set(registry.issues.map(x => x.issue_number));
     expect(merges.size).toBe(registry.closed_consolidations.length);
     for (const merger of registry.closed_consolidations) {
-      expect(merger.closed_as).toBe("duplicate");
+      expect(["duplicate", "superseded"]).toContain(merger.closed_as);
+      if (merger.issue_number === 94) expect(merger.closed_as).toBe("superseded");
       expect(ids.has(merger.issue_number)).toBe(false);
-      expect(ids.has(merger.consolidated_into)).toBe(true);
       expect(merger.retained_requirement.trim()).not.toBe("");
-      expect(registry.issues.find(x => x.issue_number === merger.consolidated_into)?.blocking_gate).toBe(merger.original_gate);
+      const visited = new Set<number>([merger.issue_number]);
+      let owner = merger.consolidated_into;
+      while (!ids.has(owner)) {
+        expect(visited.has(owner), `Consolidation cycle involving #${owner}`).toBe(false);
+        visited.add(owner);
+        expect(merges.has(owner), `No surviving gate owner for #${merger.issue_number}`).toBe(true);
+        owner = merges.get(owner)!;
+      }
+      expect(registry.issues.find(x => x.issue_number === owner)?.blocking_gate).toBe(merger.original_gate);
       expect(roadmap).toContain(`#${merger.issue_number}`);
       expect(roadmap).toContain(`#${merger.consolidated_into}`);
+      expect(roadmap).toContain(`#${owner}`);
     }
   });
   it("watches live GitHub issue creation and avoids silently missing new product issues", () => {
