@@ -144,11 +144,15 @@ jobs:
           path: dist
 
   e2e:
-    name: e2e
+    name: e2e (shard ${{ matrix.shard }}/2)
     needs: plan
     if: needs.plan.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -157,12 +161,12 @@ jobs:
           cache: npm
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
-      - run: npm run codex:e2e
+      - run: npm run codex:e2e -- --shard=${{ matrix.shard }}/2
       - name: Upload E2E diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-diagnostics
+          name: e2e-diagnostics-${{ matrix.shard }}
           path: |
             .codex/logs/
             playwright-report/
