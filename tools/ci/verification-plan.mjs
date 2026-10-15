@@ -21,6 +21,35 @@ if (files.length === 0) {
   if (result.status === 0) files = result.stdout.split(/\r?\n/).filter(Boolean);
 }
 
+// The manifest carries both runtime contracts and non-runtime planning metadata.
+// Only the two metadata fields of the established roadmap record are safe to
+// ignore here. Missing revisions, invalid JSON, or any other change fail closed.
+const roadmapMetadataOnly = () => {
+  if (!base || /^0+$/.test(base)) return false;
+  const read = (rev) => {
+    const result = git(["show", `${rev}:docs/spec-manifest.json`]);
+    if (result.status !== 0) return null;
+    try { return JSON.parse(result.stdout); } catch { return null; }
+  };
+  const before = read(base), after = read(head);
+  if (!before || !after) return false;
+  const normalized = (original) => {
+    const manifest = structuredClone(original);
+    if (!Array.isArray(manifest.specifications)) return null;
+    const roadmap = manifest.specifications.find(
+      (spec) => spec.id === "post-pr21-implementation-roadmap"
+    );
+    if (!roadmap ||
+        roadmap.authority !== "planning" ||
+        roadmap.path !== "docs/specs/roadmap/post-pr21-implementation-roadmap.md") return null;
+    delete roadmap.version;
+    delete roadmap.keywords;
+    return manifest;
+  };
+  const a = normalized(before), b = normalized(after);
+  return a !== null && b !== null && JSON.stringify(a) === JSON.stringify(b);
+};
+
 const gates = {
   spec: false,
   architecture: false,
@@ -57,9 +86,18 @@ for (const file of files) {
     reason.add("agent framework changed");
     continue;
   }
+  if (file === "docs/spec-manifest.json") {
+    gates.spec = true;
+    if (roadmapMetadataOnly()) {
+      reason.add("roadmap version/keywords metadata only");
+    } else {
+      gates.typecheck = gates.unit = gates.build = gates.e2e = true;
+      reason.add("manifest runtime authority changed or not provably metadata-only");
+    }
+    continue;
+  }
   if (
     file.startsWith("docs/specs/") ||
-    file === "docs/spec-manifest.json" ||
     file === "docs/personal_finance_canonical_schema_v1.0.json" ||
     file.startsWith("tools/validate-spec") ||
     file.startsWith("tools/generate-editor")
