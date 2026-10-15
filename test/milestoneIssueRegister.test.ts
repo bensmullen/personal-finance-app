@@ -33,7 +33,7 @@ describe("issue-backed roadmap traceability", () => {
     expect(new Set(ids).size).toBe(ids.length);
     for (const id of [100, 101, 102, 103, 105, 120]) expect(ids).toContain(id);
     for (const id of [94, 99, 104]) expect(ids).not.toContain(id);
-    expect(registry.stage_gates.D1_U1.required_issue_numbers).toEqual([120]);
+    expect(registry.stage_gates.D1_U1?.required_issue_numbers).toEqual([120]);
     for (const row of registry.issues) {
       expect(Number.isSafeInteger(row.issue_number) && row.issue_number > 0).toBe(true);
       expect(row.owner_stage.trim()).not.toBe("");
