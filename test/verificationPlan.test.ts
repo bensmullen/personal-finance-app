@@ -39,7 +39,71 @@ function planFor(changedPath: string, mainPush = false): Gates {
     rmSync(directory, { recursive: true, force: true });
   }
 }
+function planForManifestChange(before: object, after: object): Gates {
+  const directory = mkdtempSync(join(tmpdir(), "pfm-verification-manifest-"));
+  try {
+    execute(directory, "git", ["init", "-q"]);
+    const filepath = join(directory, "docs/spec-manifest.json");
+    mkdirSync(dirname(filepath), { recursive: true });
+    writeFileSync(filepath, JSON.stringify(before, null, 2) + "\n");
+    execute(directory, "git", ["add", "."]);
+    execute(directory, "git", ["-c", "user.name=PFM Test", "-c", "user.email=pfm@example.test", "commit", "-qm", "baseline"]);
+    const base = execute(directory, "git", ["rev-parse", "HEAD"]);
+    writeFileSync(filepath, JSON.stringify(after, null, 2) + "\n");
+    execute(directory, "git", ["add", "."]);
+    execute(directory, "git", ["-c", "user.name=PFM Test", "-c", "user.email=pfm@example.test", "commit", "-qm", "change"]);
+    const head = execute(directory, "git", ["rev-parse", "HEAD"]);
+    const output = execute(directory, process.execPath, [planner, "--base", base, "--head", head], {
+      ...process.env,
+      GITHUB_EVENT_NAME: "pull_request",
+      GITHUB_REF: "refs/pull/1/merge",
+      GITHUB_OUTPUT: "",
+    });
+    return (JSON.parse(output) as { gates: Gates }).gates;
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+const roadmapManifest = {
+  manifest_version: "1.2.0",
+  canonical_schema_version: "1.0.4",
+  specifications: [
+    { id: "post-pr21-implementation-roadmap", authority: "planning", path: "docs/specs/roadmap/post-pr21-implementation-roadmap.md", version: "0.6.9-draft", keywords: ["U1"] },
+    { id: "tax-engine", authority: "level-2", path: "docs/specs/capabilities/tax-engine.md", version: "1.0", keywords: ["tax"] },
+  ],
+};
+
 describe("selective verification and main deployment", () => {
+  it("routes roadmap version and keywords in the manifest to specs only", () => {
+    const changed = structuredClone(roadmapManifest);
+    changed.specifications[0]!.version = "0.6.10-draft";
+    changed.specifications[0]!.keywords.push("U1B");
+    const gates = planForManifestChange(roadmapManifest, changed);
+    expect(gates.spec).toBe(true);
+    for (const name of ["architecture", "tooling", "typecheck", "unit", "build", "e2e"] as const) expect(gates[name], name).toBe(false);
+  });
+  it("keeps full runtime checks for a changed manifest engine version", () => {
+    const changed = { ...roadmapManifest, canonical_schema_version: "2.0.0" };
+    const gates = planForManifestChange(roadmapManifest, changed);
+    expect(gates.spec && gates.typecheck && gates.unit && gates.build && gates.e2e).toBe(true);
+  });
+  it("keeps full runtime checks when the roadmap record changes authority or path", () => {
+    const changed = structuredClone(roadmapManifest);
+    changed.specifications[0]!.path = "src/new-file.ts";
+    const gates = planForManifestChange(roadmapManifest, changed);
+    expect(gates.e2e && gates.unit && gates.typecheck && gates.spec).toBe(true);
+  });
+  it("keeps full runtime checks for other controlled spec versions", () => {
+    const changed = structuredClone(roadmapManifest);
+    changed.specifications[1]!.version = "2.0";
+    expect(planForManifestChange(roadmapManifest, changed).e2e).toBe(true);
+  });
+  it("runs two independent Playwright CI shards and preserves aggregate gating", () => {
+    expect(workflow).toContain("shard: [1, 2]");
+    expect(workflow).toContain("npm run codex:e2e -- --shard=${{ matrix.shard }}/2");
+    expect(workflow).toContain("name: e2e-diagnostics-${{ matrix.shard }}");
+    expect(workflow).toContain("require_gate e2e");
+  });
   it("keeps non-normative documentation-only PRs inexpensive", () => {
     const gates = planFor("docs/meeting-notes.md");
     expect(Object.values(gates).every(enabled => !enabled)).toBe(true);
