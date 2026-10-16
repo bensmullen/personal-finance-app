@@ -1,6 +1,6 @@
 # Level 3 interaction traces — H04/H08 pilot plus all 33 use cases
 
-**Status:** proposed interaction design, not implemented. Read with [evidence and navigation/screen contracts](level3-visual-baseline-navigation.md), [existing Level 2 audit](user-journey-level3.md) and PFA-UX-015–023. The explicit "S" surface IDs are defined in the navigation contract; they are conceptual screens mapped to current navigation, not new frontend routes or a request to create 17 distinct pages. No interface screenshot or executable fixture proving these end states currently exists. Pilot: **H04 Barlow primary**, **H08 Ortega complexity**.
+**Status:** proposed interaction design, not implemented. The [first successful manual UX evidence run](https://github.com/bensmullen/personal-finance-app/actions/runs/38971983269) provided 12 existing-demo screenshots; [H04/H08 pilot screen-state requirements](level3-pilot-state-matrix.md) explicitly specify target states not yet shown in those screenshots. Read with [evidence and navigation/screen contracts](level3-visual-baseline-navigation.md), [existing Level 2 audit](user-journey-level3.md) and PFA-UX-015–023. The explicit "S" surface IDs are defined in the navigation contract; they are conceptual screens mapped to current navigation, not new frontend routes or a request to create 17 distinct pages. No interface screenshot or executable fixture proving these end states currently exists. Pilot: **H04 Barlow primary**, **H08 Ortega complexity**.
 
 ## Interaction trace format and shared mechanics
 
