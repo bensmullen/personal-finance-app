@@ -149,6 +149,15 @@ Independent CI checks should remain parallel under the verification planner.
 Do not duplicate expensive checks in Codex turns or move heavy workloads into
 ordinary CI to obtain parallelism.
 
+
+## UX design-ready handoff for substantial user-facing changes
+
+For major changes to navigation, multi-screen authoring, onboarding, complex financial forms, repair flows or forecast interpretation, consult `.agents/skills/pfm-ux-review/SKILL.md` before the Codex implementation handoff. The ChatGPT planning/review layer owns a concise task-first interaction contract and approved reference state (rendered screenshots/prototype where applicable). Product ownership, source-of-truth and financial limitations remain governed by PFA-UX-015–023 and financial specifications. The owner approves material design/experience tradeoffs; do not leave them for Codex to invent.
+
+Visual evidence and interaction diagnosis are collected outside Codex implementation turns using the manual UX evidence workflow or another independent browser review. Codex's ban on local servers, Playwright and CI polling is unchanged. Codex receives the reference/evidence plus scoped acceptance criteria and can implement autonomously within the V3 contract. A small isolated copy, layout or accessibility repair with no altered journey/ownership does **not** need a new design prototype or a product-wide audit. Independent post-implementation visual/semantic review and uncoached human UAT remain separate from CI.
+
+Parallel UX research and backend/D2 work are encouraged when owned paths and stable interfaces do not overlap; explicitly identify prerequisites, shared seam ownership and merge order. Stop repeated cross-journey patch cycles after two failed same-cause repair rounds and return to focused design review rather than widening an implementation issue.
+
 ## 6. Git handoff lifecycle
 
 Git bootstrap is an **external operator action performed before the Codex
