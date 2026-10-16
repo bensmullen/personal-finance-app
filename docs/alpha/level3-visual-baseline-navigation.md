@@ -1,6 +1,6 @@
 # Level 3 pilot: evidence-based navigation and screen contracts
 
-**Status:** UX planning/design contract for review, not implemented application behavior. Companion to [all Level 3 tasks](user-journey-level3.md) and [interaction traces](level3-interaction-traces.md). Existing authority: PFA-UX-015–023, [financial fact ownership registry](../specs/verification/u1-fact-ownership.json), PFA-PLAN-001–013, PFA-ONB-003–007. Do not treat route design as authorization to edit canonical financial semantics or backend logic.
+**Status:** UX planning/design contract for review, not implemented application behavior. [Full 33 task-level navigation and recovery traces](level3-interaction-traces.md) and [H04/H08 pilot state matrix](level3-pilot-state-matrix.md) extend this visual review into testable interactions. Companion to [all Level 3 tasks](user-journey-level3.md) and [interaction traces](level3-interaction-traces.md). Existing authority: PFA-UX-015–023, [financial fact ownership registry](../specs/verification/u1-fact-ownership.json), PFA-PLAN-001–013, PFA-ONB-003–007. Do not treat route design as authorization to edit canonical financial semantics or backend logic.
 
 ## 1. Visual evidence, what was actually reviewed, and limitations
 
