@@ -1,6 +1,8 @@
 # User journey audit and Level 3 interaction contracts
 
-**Status:** non-normative product/UX design proposal, **not** implementation permission or proof of rendered UX. 2026-10-16. Traces to [six-stage discovery](user-journey-discovery.md), the [eight fictional household blueprints](household-blueprints.md), Issue #108, and PFA-UX-015–023. Specific default values and ownership remain governed by PFA-UX-016/019/021/022. These interactions define intended tasks and recovery states; **they are not screen layouts, routes, or executable financial formulas**. Implementation authorization and U1B #120 restructuring happen after visual pilot approval.
+**Status:** non-normative product/UX design proposal, **not** implementation permission or proof of rendered UX. 2026-10-16.
+
+**Detailed Level 3 expansion:** [reviewed visual baseline, chosen H04/H08 pilot, route and screen ownership](level3-visual-baseline-navigation.md) and [33 stepwise user/system/decision/recovery interaction traces with six task diagrams](level3-interaction-traces.md). This file remains the compact stage/use-case index, **not** the entire Level 3 design. The dedicated six-view manual screenshot run is still missing and is an explicit Level 4 visual-review gate; existing E2E screenshots are partial evidence only. Traces to [six-stage discovery](user-journey-discovery.md), the [eight fictional household blueprints](household-blueprints.md), Issue #108, and PFA-UX-015–023. Specific default values and ownership remain governed by PFA-UX-016/019/021/022. These interactions define intended tasks and recovery states; **they are not screen layouts, routes, or executable financial formulas**. Implementation authorization and U1B #120 restructuring happen after visual pilot approval.
 
 ## A. Independent Level 2 audit: gaps, remedies, and readiness
 
