@@ -1,0 +1,40 @@
+name: UX evidence (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ux-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    name: synthetic UX screenshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CI: "true"
+      PFM_UX_EVIDENCE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - name: Capture bounded synthetic user journey
+        run: npx playwright test e2e/ux-evidence.spec.ts --workers=1 --retries=0 --reporter=line
+      - name: Publish screenshots and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-evidence-${{ github.run_id }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: warn
+          retention-days: 14
