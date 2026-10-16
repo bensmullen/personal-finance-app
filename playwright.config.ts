@@ -2,6 +2,8 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  // Manual UX captures must not enter normal CI discovery or reshuffle E2E shards.
+  testIgnore: process.env.PFM_UX_EVIDENCE === "1" ? [] : ["**/ux-evidence.spec.ts"],
   // Keep local runs predictable, but let independent tests within the single
   // E2E spec file use multiple workers in CI to reduce wall-clock time.
   fullyParallel: Boolean(process.env.CI),

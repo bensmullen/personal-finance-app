@@ -54,6 +54,13 @@ These are not performance budgets and must never be used as correctness
 thresholds. A timeout is process evidence requiring diagnosis, not permission to
 raise the ceiling or weaken the workload blindly.
 
+
+### Independent UX evidence (manual, not a new required CI gate)
+
+For substantial journey/interaction changes, ChatGPT or a separate reviewer may use `.github/workflows/ux-evidence.yml` (**Actions → UX evidence (manual) → Run workflow**, select the exact PR branch/head). It runs `e2e/ux-evidence.spec.ts` only under `PFM_UX_EVIDENCE=1`, using an isolated synthetic example and fixed 1440px/390px captures of overview, income/edit, investments, debt and plan. The workflow is single-worker, retry-free, time-bounded and uploads 14-day screenshot/diagnostic artifacts on success or failure. Ordinary selected Playwright E2E remains unchanged; the manual spec is skipped in ordinary CI. A workflow update itself still gets the existing conservative CI routing.
+
+Capture a baseline before UX design and a changed-head comparison after implementation when warranted. The screenshots are review evidence, not automated proof of usability, accessibility, financial correctness or PM acceptance; browser interaction and uncoached UAT remain independently necessary. Do not capture users' real models, live connected financial accounts, secrets or external source records. Capture once per meaningful version, avoid repeated runs/polling, and document exact commit/ref reviewed. Codex must not start a browser/dev server or monitor this workflow during its implementation turn. If the manual workflow cannot access a needed state, state the limitation and use a separate authorized reviewer rather than relaxing the Codex execution policy.
+
 ## 3. Task risk profiles
 
 ChatGPT may describe a semantic/risk profile in the handoff when it helps Codex
