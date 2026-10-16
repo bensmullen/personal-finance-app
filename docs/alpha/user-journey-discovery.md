@@ -39,7 +39,7 @@ For each persona:
 - Can they trace a questionable number to its single source, understand whether it is editable, and recover from an incomplete/invalid setup?
 - Can they say what data or life event would change the interpretation, without being forced through unnecessary forms?
 
-**Next artifact after PM review:** journey-level task map for 2–3 representative pilot personas (likely H04 novice investor, H02 cash-stressed family, H08 retirement/care or H03 family planning), followed by explicit screen flows and interactive prototypes. Do not implement those flows until the UX evidence baseline and design gate exist.
+**Level 3 follow-on:** [audited use cases, exception handling and activity flows](user-journey-level3.md) now map all six stages (33 interaction contracts). This is a non-normative design proposal; after PM review, select 2–3 pilot personas (H04 novice investor, H02 cash-stressed family, H08 retirement/care or H03 family planning) for visual flows and interactive prototypes. Do not implement those flows until UX evidence and design approval exist.
 
 ## Parallel development boundaries
 
