@@ -5,8 +5,6 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
  * Use the dedicated workflow_dispatch on the branch/head being reviewed.
  * Never load a real/imported/user-saved household; fresh context + synthetic example only.
  */
-test.skip(process.env.PFM_UX_EVIDENCE !== "1", "Only run via the manually triggered UX evidence workflow.");
-
 const navigate = async (page: Page, area: string, section: string) => {
   await page.getByRole("navigation", { name: "Primary navigation" })
     .getByRole("button", { name: area, exact: true }).click();
@@ -15,6 +13,7 @@ const navigate = async (page: Page, area: string, section: string) => {
 };
 
 test("synthetic account, income and forecast UX at desktop and narrow viewport", async ({ page }, testInfo: TestInfo) => {
+  test.skip(process.env.PFM_UX_EVIDENCE !== "1", "Only run via the manually triggered UX evidence workflow.");
   test.setTimeout(180_000);
   const consoleErrors: string[] = [];
   page.on("pageerror", error => consoleErrors.push(error.message));
@@ -24,7 +23,7 @@ test("synthetic account, income and forecast UX at desktop and narrow viewport",
   // Fails closed rather than screenshot an existing household or an imported financial model.
   await expect(page.getByRole("button", { name: "Use synthetic example", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
-  await expect(page.getByRole("status", { name: "Household forecast status" })).toBeVisible();
+  await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
 
   const capture = async (label: string, width: number) => {
     const path = testInfo.outputPath(`${label}-${width}.png`);
