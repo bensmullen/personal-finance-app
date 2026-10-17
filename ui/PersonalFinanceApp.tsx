@@ -110,10 +110,12 @@ import { TaxSettlementControls } from "./forecast/TaxSettlementControls.js";
 import { FieldHelp, PercentageInput } from "./forecast/PercentageInput.js";
 import { DomainMechanicsPanel } from "./forecast/DomainMechanicsPanel.js";
 import { InsuranceSection, InsuredLifeEvents } from "./authoring/InsuranceSection.js";
-import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, groupDiagnostics, isCashFlowPaymentAccount, belongsToNetWorthSection, entitySummary, type NetWorthSection } from "./entityPresentation.js";
+import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, groupDiagnostics, isCashFlowPaymentAccount, belongsToNetWorthSection, entitySummary, formatExactMoney, type NetWorthSection } from "./entityPresentation.js";
 import { calculationFingerprint } from "../src/application/interactiveForecast.js";
 import { HouseholdChart } from "./forecast/HouseholdChart.js";
 import { MonthlyMoneyPanel } from "./forecast/MonthlyMoneyPanel.js";
+import { LiabilityBalanceOutlook, MortgageAmortization } from "./forecast/MortgageAmortization.js";
+import { inspectLiabilityBalanceWindow, MortgageWindowCache, type MortgageWindow } from "../src/application/mortgageChartData.js";
 import { ForecastDetails, LazyExplanation, ExplanationCache } from "./forecast/details.js";
 import { ResultExplanationCache } from "./forecast/explanations.js";
 import { FINANCIAL_DESTINATIONS, financialDestination } from "./navigation.js";
@@ -267,6 +269,8 @@ export function PersonalFinanceApp() {
   const [primary, setPrimary] = useState<Primary>("Overview");
   const [subnav, setSubnav] = useState("How am I doing?");
   const [cashMonth, setCashMonth] = useState("");
+  const [mortgageMonth, setMortgageMonth] = useState("");
+  const [mortgageLoan, setMortgageLoan] = useState("");
   const [cashReturn, setCashReturn] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreButton = useRef<HTMLButtonElement>(null);
@@ -916,9 +920,10 @@ export function PersonalFinanceApp() {
               }}
             />
           )}
+          {primary === "Net Worth" && subnav === "Real Estate" && <MortgageOutlook draft={draft} forecast={householdForecast} property currency={sessionSettings.baseCurrency} asOf={sessionSettings.asOf} selectedMonth={mortgageMonth} selectMonth={setMortgageMonth} selectedLoan={mortgageLoan} selectLoan={setMortgageLoan} />}
           {primary === "Net Worth" && (subnav === "Real Estate" || subnav === "Other Assets") && <AssetSection draft={draft} property={subnav === "Real Estate"} edit={(type, id) => setEntityRepair({ objectType: type, objectId: id, field: "", token: randomId() })} />}
           {primary === "Net Worth" && subnav === "Investments & retirement" && <section className="panel section-outlook" aria-label="Investing outlook"><p className="eyebrow">Investing</p><h1>Your investments</h1><p>{objectEntries(draft, "Investment").length ? "Recorded holdings are listed by account below. Performance attribution is not available in this view." : "No investment holdings recorded. Add only accounts and holdings you own; no returns or contributions are assumed."}</p><p className="chart-placeholder">Account outlook · no supported attribution chart yet</p><a href="#investment-sources">Review investment sources</a></section>}
-          {primary === "Net Worth" && subnav === "Debt" && <section className="panel section-outlook" aria-label="Debt outlook"><p className="eyebrow">Debt</p><h1>Your borrowing</h1><p>Current household liabilities: {position!.liabilities?.display ?? "Unavailable"}. Source: recorded liability balances.</p><p className="chart-placeholder">Liability balance outlook · chart not yet available</p><a href="#debt-sources">Review loan sources</a></section>}
+          {primary === "Net Worth" && subnav === "Debt" && <MortgageOutlook draft={draft} forecast={householdForecast} currency={sessionSettings.baseCurrency} asOf={sessionSettings.asOf} selectedMonth={mortgageMonth} selectMonth={setMortgageMonth} selectedLoan={mortgageLoan} selectLoan={setMortgageLoan} />}
           {primary === "Money" && subnav === "Cash Flow" && (
             <CashFlow
               position={position!}
@@ -1312,14 +1317,79 @@ function ForecastStatus({ label, state }: { label: string; state: ForecastView }
   </section>;
 }
 
+function MortgageOutlook({ draft, forecast, property = false, currency, selectedMonth, selectMonth, selectedLoan, selectLoan }: {
+  draft: PersonalDraft; forecast: PersonalHouseholdForecastReadModel | undefined; property?: boolean;
+  currency: string; asOf: string;
+  selectedMonth: string; selectMonth: (month: string) => void; selectedLoan: string; selectLoan: (loan: string) => void;
+}) {
+  const models = useContext(FinancialResultModels);
+  const current = !!models.baseline && models.baseline.lastGoodResult === forecast && models.baseline.resultModel === draft &&
+    !models.baseline.pending && !models.baseline.stale && !models.setupChangesPending;
+  const loans = objectEntries(draft, "Liability").filter(value => value.liability_type === "mortgage");
+  const selected = loans.find(value => value.liability_id === selectedLoan) ?? loans[0];
+  const liabilityId = selected ? objectId("Liability", selected) : "";
+  const points = forecast && forecast.status !== "unavailable" ? forecast.points : [];
+  const selectedIndex = Math.max(0, points.findIndex(point => point.periodStart === selectedMonth));
+  const startIndex = Math.floor(selectedIndex / 12) * 12;
+  const selectedStart = points[selectedIndex]?.periodStart ?? "";
+  const liabilityData = useMemo(() => current && forecast && points.length ? inspectLiabilityBalanceWindow(forecast, startIndex) : undefined, [current, forecast, points.length, startIndex]);
+  const cache = useMemo(() => current && forecast ? new MortgageWindowCache(forecast) : undefined, [current, forecast, draft]);
+  const [evidence, setEvidence] = useState<{ cache: MortgageWindowCache; id: string; index: number; window?: MortgageWindow; error?: string }>();
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (!cache || !liabilityId || !points.length) { setEvidence(undefined); return; }
+    try { setEvidence({ cache, id: liabilityId, index: startIndex, window: cache.get(liabilityId, startIndex) }); }
+    catch (error) { setEvidence({ cache, id: liabilityId, index: startIndex, error: error instanceof Error ? error.message : "Mortgage replay failed. Update the forecast and retry." }); }
+  }, [cache, liabilityId, startIndex, points.length, retry]);
+  const active = evidence?.cache === cache && evidence?.id === liabilityId && evidence?.index === startIndex ? evidence : undefined;
+  const review = (id: string) => models.reviewTarget?.({ id, type: "Liability", objectType: "Liability", label: referenceLabel(draft, "Liability", id), editable: false });
+  const setup = () => models.reviewTarget?.({ id: "", type: "Forecast setup", label: "Forecast setup", editable: false });
+  return <section className="panel section-outlook mortgage-outlook" aria-label={property ? "Property mortgage outlook" : "Debt outlook"}
+    data-evidence-state={!loans.length ? "unavailable" : models.baseline?.pending ? "pending" : models.baseline?.lifecycle === "error" ? "error" : models.baseline?.lifecycle === "unsupported" ? "unsupported" : !forecast ? "unavailable" : !current ? "stale" : active?.error ? "error" : active?.window?.status ?? "loading"}>
+    <p className="eyebrow">{property ? "Real Estate" : "Debt"}</p><h1>{property ? "Your property" : "Your borrowing"}</h1>
+    {!property && (liabilityData ? <>
+      <LiabilityBalanceOutlook data={liabilityData} selectedStart={selectedStart} selectMonth={selectMonth} />
+      <div className="mortgage-window-controls" aria-label="Household liability chart window">
+        <button disabled={startIndex === 0} onClick={() => selectMonth(points[Math.max(0, startIndex - 12)]!.periodStart)}>Previous liability months</button>
+        <button disabled={startIndex + 12 >= points.length} onClick={() => selectMonth(points[startIndex + 12]!.periodStart)}>Next liability months</button>
+      </div>
+    </> : <section aria-label="Household liability balance outlook" data-evidence-state={models.baseline?.pending ? "pending" : models.baseline?.lifecycle === "error" ? "error" : !forecast || forecast.status === "unavailable" ? "unavailable" : "stale"}>
+      <h2>Household liability balance outlook</h2><p role="status">{models.baseline?.pending ? "Updating forecast · liability balances pending." : models.baseline?.lifecycle === "error" ? "Forecast failed · liability balances unavailable." : !current ? "Update the forecast to view current modeled household liabilities." : "Liability forecast unavailable for the current source coverage."}</p><button onClick={setup}>Review liability forecast setup</button>
+    </section>)}
+    <p>See how funded payments reduce one named mortgage. Recorded current balances and modeled future principal have different dates.</p>
+    {!!loans.length && <label>Mortgage<select aria-label="Mortgage" value={liabilityId} onChange={event => selectLoan(event.target.value)}>{loans.map(loan => <option key={objectId("Liability", loan)} value={objectId("Liability", loan)}>{objectLabel("Liability", loan)}</option>)}</select></label>}
+    {!loans.length ? <p>No mortgage recorded. Add a mortgage through Net Worth → Debt; other debt is listed separately.</p> : <>
+      <p>{objectLabel("Liability", selected!)} · recorded current principal: {typeof selected!.current_balance === "string" ? formatExactMoney(selected!.current_balance, currency) : "Not recorded"}. Balance observation date not supplied here. Source: Net Worth → Debt.</p>
+      <button type="button" onClick={() => review(liabilityId)}>Review mortgage source</button>
+      {!current || !points.length ? <><p role="status">{models.baseline?.pending ? "Updating forecast · mortgage evidence is pending." : models.baseline?.lifecycle === "error" ? "Forecast failed · update needed before mortgage evidence can be shown." : models.baseline?.lifecycle === "unsupported" ? "Mortgage forecast unsupported · review the forecast setup and source guidance." : !forecast ? "Mortgage evidence unavailable · apply a supported household forecast." : "Out of date · update needed before retained mortgage evidence can be shown."}</p><button onClick={setup}>Review forecast setup</button></>
+        : <><div className="mortgage-window-controls" aria-label="Mortgage chart window">
+          <button disabled={startIndex === 0} onClick={() => selectMonth(points[Math.max(0, startIndex - 12)]!.periodStart)}>Previous 12 months</button>
+          <span>{points[startIndex]?.periodStart.slice(0, 10)} → {points[Math.min(points.length - 1, startIndex + 11)]?.periodEnd.slice(0, 10)} (exclusive)</span>
+          <button disabled={startIndex + 12 >= points.length} onClick={() => selectMonth(points[startIndex + 12]!.periodStart)}>Next 12 months</button>
+        </div>
+        {forecast?.status === "incomplete" && <p>Partial forecast horizon · only successfully modeled periods are available.</p>}
+        {selectedMonth && !points.some(point => point.periodStart === selectedMonth) && <p>The previously selected month is outside this forecast. Showing the first supported month.</p>}
+        {points.slice(startIndex, startIndex + 12).length < 12 && <p>Partial window at the forecast boundary · no months beyond the supported result are assumed.</p>}
+        {active?.error ? <><p role="alert">{active.error}</p><button onClick={() => setRetry(value => value + 1)}>Retry mortgage evidence</button><button onClick={setup}>Review forecast setup</button></>
+          : active?.window ? <MortgageAmortization window={active.window} loanName={objectLabel("Liability", selected!)} selectedStart={selectedStart} selectMonth={selectMonth} /> : <p role="status">Loading bounded mortgage evidence…</p>}
+        </>}
+      {property && <p>{selected?.collateral_id && objectEntries(draft, "Asset").some(asset => asset.asset_id === selected.collateral_id && asset.asset_type === "real_estate")
+        ? `Linked property: ${referenceLabel(draft, "Asset", String(selected.collateral_id))}.` : "No matching property collateral is recorded for this mortgage."} Current equity cannot be reconciled without a compatible current valuation and all linked liens at the same date and currency.</p>}
+    </>}
+    {!property && <section aria-label="Other debt sources"><h2>Other borrowing</h2>{objectEntries(draft, "Liability").filter(value => value.liability_type !== "mortgage").map(value => <p key={objectId("Liability", value)}>{objectLabel("Liability", value)} · current recorded balance {typeof value.current_balance === "string" ? formatExactMoney(value.current_balance, currency) : "unavailable"} · observation date not supplied here · {String(value.liability_type).replaceAll("_", " ")}. Mortgage amortization unavailable for this debt type. <button onClick={() => review(objectId("Liability", value))}>Review {objectLabel("Liability", value)}</button></p>)}</section>}
+    {property ? <AssetOwnerLink /> : <a href="#debt-sources">Review loan sources &amp; payment setup</a>}
+  </section>;
+}
+
 function AssetSection({ draft, property, edit }: { draft: PersonalDraft; property: boolean; edit: (type: PersonalObjectType, id: string) => void }) {
   const assets = objectEntries(draft, "Asset").filter(item => belongsToNetWorthSection(draft, "Asset", item, "Property & other assets") && (item.asset_type === "real_estate") === property);
   const title = property ? "Real Estate" : "Other Assets";
   return <section className="panel section-outlook" aria-label={`${title} outlook`}>
-    <p className="eyebrow">{title}</p><h1>{property ? "Your property" : "Your other assets"}</h1>
-    <p className="chart-placeholder">{assets.length ? "Recorded assets available · historical value and attribution chart not yet supported" : `No ${property ? "property" : "other assets"} recorded · no chart data`}</p>
+    <p className="eyebrow">{title}</p>{property ? <h2>Property sources</h2> : <h1>Your other assets</h1>}
+    {!property && <p className="chart-placeholder">{assets.length ? "Recorded assets available · historical value and attribution chart not yet supported" : "No other assets recorded · no chart data"}</p>}
     <p>Source: Net Worth → Property &amp; other assets. Recorded acquisition cost is not current market value or home equity.</p>
     {assets.length ? <ul className="asset-sources">{assets.map(item => <li key={objectId("Asset", item)}><strong>{objectLabel("Asset", item)}</strong><p>{entitySummary("Asset", item, draft)}</p>
+      {property && <p>Recorded acquisition cost: {typeof item.acquisition_cost === "string" ? item.acquisition_cost : "Unavailable"}; acquisition date: {String(item.acquisition_date ?? "Not recorded")}. Current market value and home equity are unavailable from this cost source.</p>}
       <button onClick={() => edit("Asset", objectId("Asset", item))}>Edit {objectLabel("Asset", item)}</button>
       {property && objectEntries(draft, "Liability").filter(debt => debt.collateral_id === item.asset_id).map(debt => <p key={objectId("Liability", debt)}>Secured debt: {objectLabel("Liability", debt)} <button onClick={() => edit("Liability", objectId("Liability", debt))}>Review loan</button></p>)}
     </li>)}</ul> : <p>Add a supported source asset in the owner editor when you have its facts.</p>}
