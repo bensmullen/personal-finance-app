@@ -43,7 +43,7 @@ const request = (profiles = [profile()], months = 1) => ({
   executionOwnerId: ids.person, executionProfiles: profiles,
 });
 const forecastRequest = (profiles = [profile()], months = 1) => ({
-  ...request(profiles, months), scope: "liabilities" as const, dataCutoff: "2026-01-01",
+  ...request(profiles, months), months, scope: "liabilities" as const, dataCutoff: "2026-01-01",
   sameInstantCashFlowOrder: "income_before_expense" as const, liabilityExecutionProfiles: profiles,
 });
 const compile = (draft = model(), profiles = [profile()], months = 1) => {
@@ -66,10 +66,10 @@ const fromCents = (cents: string) => {
   const digits = (negative ? cents.slice(1) : cents).padStart(3, "0");
   return money(`${negative ? "-" : ""}${digits.slice(0, -2)}.${digits.slice(-2)}`);
 };
-const expectGate = (draft: PersonalDraft, code: string, profiles = [profile()]) => {
+const expectGate = (draft: PersonalDraft, code: string, profiles = [profile()], entityId = ids.debt) => {
   const result = compileLiabilities(draft, request(profiles));
   expect(result.status).toBe("unsupported");
-  expect(result.diagnostics).toContainEqual(expect.objectContaining({ code, entityId: ids.debt }));
+  expect(result.diagnostics).toContainEqual(expect.objectContaining({ code, entityId }));
 };
 
 describe("D2-B phase 1 canonical fixed consumer-loan admission", () => {
@@ -92,8 +92,15 @@ describe("D2-B phase 1 canonical fixed consumer-loan admission", () => {
     expect(result.state.accounts[ids.cash]!.cash.equals(fromCents(effects.closingCents.cash!))).toBe(true);
     expect(result.state.liabilities[ids.debt]!.balance.equals(fromCents(effects.closingCents.principal!))).toBe(true);
     expect(result.state.liabilities[loan.interestPayableLiabilityId]!.balance.isZero()).toBe(true);
-    expect(period.statements.netWorth.minus(money("1000")).equals(fromCents(effects.netWorthDeltaCents))).toBe(true);
-    expect(period.recognitions.every(fact => fact.category === `${family}_loan_interest_expense`)).toBe(true);
+    // Opening net worth depends on the fixture cash and debt, not a fixed $1,000.
+    const openingNetWorth = fromCents(amounts.cashCents!).minus(fromCents(amounts.principalCents!));
+    expect(period.statements.netWorth.minus(openingNetWorth).equals(fromCents(effects.netWorthDeltaCents))).toBe(true);
+    // Principal becoming due is an obligation, not interest expense; extra
+    // principal is a separate option recognition, not a second consumption.
+    const categories = [`${family}_loan_principal_due`, `${family}_loan_interest_expense`, `${family}_loan_extra_principal_option`];
+    expect(period.recognitions.every(fact => categories.includes(fact.category))).toBe(true);
+    expect(period.recognitions.some(fact => fact.category === `${family}_loan_principal_due`)).toBe(true);
+    expect(period.recognitions.filter(fact => fact.category === `${family}_loan_interest_expense`).reduce((total, fact) => total.plus(fact.amount), money("0")).equals(period.interestExpense)).toBe(true);
     for (const tx of period.transactions) assertBalanced(tx);
     expect(run(compiled)).toEqual(result);
     expect(compile(draft, [p])).toEqual(compiled);
@@ -155,7 +162,9 @@ describe("D2-B phase 1 canonical fixed consumer-loan admission", () => {
         d.objects.PrimitiveInstance!.push({ primitive_instance_id: uuid(10), primitive_id: "P22", scenario_id: ids.scenario, enabled: true, input_bindings: {}, parameters });
         d.objects.Liability![0]!.amortization_model_id = uuid(10);
       });
-      expectGate(draft, "LIABILITY_AMORTIZATION_CONFIGURATION_UNSUPPORTED");
+      // The diagnostic is located at the P22 PrimitiveInstance and points back
+      // to the owning liability, rather than misattributing the source entity.
+      expectGate(draft, "LIABILITY_AMORTIZATION_CONFIGURATION_UNSUPPORTED", [profile()], uuid(10));
     }
     const unknown = { ...profile(), interestCapitalization: "monthly" };
     expectGate(model(), "LIABILITY_PROFILE_CONFIGURATION_UNSUPPORTED", [unknown]);
@@ -209,7 +218,7 @@ describe("D2-B phase 1 canonical fixed consumer-loan admission", () => {
   });
 
   it("keeps mandatory shortfalls exact and optional extra failure distinct in the real read model", () => {
-    for (const [cash, amount, origin, missing] of [["100", "10", "required_debt_service", "400"], ["600", "500", "extra_principal", "500"]] as const) {
+    for (const [cash, amount, origin, missing] of [["100", "10", "required_debt_service", "400"], ["600", "500", "extra_principal", "400"]] as const) {
       const draft = model("auto", "1000", "0", cash);
       const before = JSON.stringify(draft);
       const result = runPersonalForecast(draft, forecastRequest([profile({ extraPrincipalPayments: [extra(amount)] })]));
