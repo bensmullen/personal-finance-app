@@ -1,10 +1,10 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { FINANCIAL_FIELDS, entityField } from "../ui/authoring/fieldContract.js";
 import { readFileSync } from "node:fs";
+import { navigateOwner, showReadiness } from "./navigation.js";
 
 const navigate = async (page: Page, area: string, section: string) => {
-  await page.getByRole("button", { name: area, exact: true }).click();
-  await page.getByRole("button", { name: section, exact: true }).click();
+  await navigateOwner(page, area, section);
   if (section === "Investments & retirement") for (const summary of await page.locator(".account-holdings > summary").all()) {
     if (await summary.locator("..").getAttribute("open") === null) await summary.click();
   }
@@ -170,6 +170,7 @@ test("U1 normal navigation, staged salary, direct repair, mortgage and horizon g
   await income.selectOption("");
   await navigate(page, "Plan", "Current Plan");
   const checklist = page.getByRole("region", { name: "Forecast setup checklist" });
+  await showReadiness(page);
   await checklist.getByRole("button", { name: /^Income receiving account:/ }).click();
   await expect(income).toBeFocused();
   await expect(income).toHaveAttribute("aria-invalid", "true");
@@ -195,7 +196,7 @@ test("Owner repair: account-first holdings and subtype-specific controls remain 
   await navigate(page, "Settings", "Import / Export");
   await page.locator('input[type="file"]').setInputFiles("test/fixtures/d1-integrated-uat-model.json");
   await page.getByRole("button", { name: "Import into session", exact: true }).click();
-  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Investing", exact: true }).click();
   await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
   await expect(page.getByRole("button", { name: "Edit holding BROKERAGE-DEMO", exact: true })).toBeHidden();
   const brokerage = page.locator(".account-holdings").filter({ has: page.locator("summary", { hasText: /^Holdings in Taxable brokerage$/ }) });
@@ -401,6 +402,7 @@ test("U1 saved-fact repair distinguishes editable facts from immutable correctio
   await page.locator('input[type="file"]').setInputFiles({ name: "incomplete-synthetic.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(model)) });
   await page.getByRole("button", { name: "Import into session", exact: true }).click();
   const banner = page.getByRole("alert", { name: "Saved plan needs attention" });
+  await showReadiness(page);
   await expect(banner).toBeVisible();
   await expect(banner.getByRole("button", { name: "Review cash balance", exact: true })).toHaveCount(0);
   await banner.getByRole("button", { name: "Review amount", exact: true }).click();

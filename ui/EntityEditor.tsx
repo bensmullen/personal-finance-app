@@ -240,7 +240,9 @@ function ObjectEditor({
     const opener = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    drawer.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const firstField = Array.from(drawer.current?.querySelectorAll<HTMLElement>("input:not(:disabled), select:not(:disabled)") ?? [])
+      .find(control => control.getClientRects().length > 0);
+    (firstField ?? drawer.current?.querySelector<HTMLButtonElement>("button"))?.focus();
     return () => {
       document.body.style.overflow = previousOverflow;
       if (opener?.isConnected) opener.focus();

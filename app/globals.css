@@ -114,3 +114,61 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .insurance-card details { width: 100%; }
 .insurance-card pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .insurance-card button { max-width: 100%; white-space: normal; }
+/* Calm shell: financial destinations and concise, sourced current facts. */
+.app-shell { display: grid; grid-template-columns: 190px minmax(0, 1fr); }
+.app-shell > .topbar { grid-column: 1 / -1; background: var(--paper); color: var(--ink); border-color: var(--line); }
+.topbar .session-banner { color: var(--muted); font-size: 12px; }
+.topbar .session-banner button { color: var(--green); }
+.app-shell > .primary-nav { grid-column: 1; grid-row: 2; height: auto; padding: 26px 12px; gap: 8px; flex-direction: column; border-right: 1px solid var(--line); background: #f0f3ee; }
+.primary-nav button { text-align: left; padding: 13px 14px; border: 0; border-radius: 10px; }
+.primary-nav button.active { background: var(--paper); box-shadow: 0 2px 8px #17231f08; }
+.app-shell > .workspace { grid-column: 2; grid-row: 2; grid-template-columns: minmax(0, 1fr); align-content: start; }
+.workspace > .subnav { display: flex; flex-wrap: wrap; gap: 4px; padding: 10px 24px; background: var(--paper); border-right: 0; border-bottom: 1px solid var(--line); }
+.subnav > .eyebrow, .subnav .model-health { display: none; }
+.workspace > .subnav button { width: auto; font-size: 12px; padding: 9px 11px; margin: 0; white-space: normal; }
+.workspace > .subnav button.active { background: var(--mint); box-shadow: none; }
+main#main-content { padding: 24px 32px 64px; }
+.household-summary { border-bottom: 1px solid var(--line); padding: 0 0 14px; margin-bottom: 14px; }
+.household-summary p { margin: 0 0 6px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.household-summary dl { display: flex; flex-wrap: wrap; gap: 12px 32px; margin: 12px 0 4px; }
+.household-summary dt { color: var(--muted); font-size: 12px; }
+.household-summary dd { margin: 4px 0; font-size: 22px; font-family: Georgia, serif; }
+.household-summary summary, .task-readiness > summary { font-size: 12px; color: var(--green-dark); }
+.household-summary button, .compact-blocker button { border: 0; background: transparent; color: var(--green-dark); text-decoration: underline; padding: 4px; }
+.forecast-status { font-size: 12px; padding: 8px 12px; margin: 0 0 8px; gap: 6px 12px; }
+.forecast-status details { margin-left: 0; }
+.task-readiness { margin: 0 0 16px; }
+.compact-blocker { font-size: 12px; line-height: 1.5; margin: 8px 0; color: var(--warn); }
+.page-head { margin-bottom: 18px; }
+.page-head h1, .section-outlook h1 { font-family: Georgia, serif; font-size: 32px; font-weight: 500; margin: 0 0 10px; }
+.chart-placeholder { display: grid; place-items: center; min-height: 135px; padding: 24px; background: #f5f8f4; border: 1px dashed #bbcbbf; border-radius: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
+.section-outlook a { color: var(--green-dark); font-weight: 650; }
+.asset-sources { padding: 0; list-style: none; }
+.asset-sources li { padding: 16px 0; border-top: 1px solid var(--line); }
+.capability { text-align: left; padding: 16px; margin-top: 12px; }
+.capability p { margin: 8px 0; }
+.mobile-more { display: none; }
+.mobile-session { display: none; }
+.forecast-update { margin-bottom: 10px; padding: 6px 12px; font-size: 12px; }
+.more-destinations { position: fixed; z-index: 8; bottom: 72px; left: 12px; right: 12px; max-height: 65vh; overflow: auto; background: white; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 12px; }
+.more-destinations button { display: block; width: 100%; padding: 12px; text-align: left; border: 0; border-radius: 6px; background: white; color: var(--green-dark); }
+@media (max-width: 900px) {
+  .app-shell { grid-template-columns: minmax(0, 1fr); }
+  .app-shell > .workspace { grid-column: 1; }
+  .app-shell > .primary-nav { position: fixed; z-index: 7; bottom: 0; left: 0; right: 0; grid-column: auto; grid-row: auto; flex-direction: row; justify-content: space-around; gap: 0; padding: 7px 4px max(7px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: white; }
+  .primary-nav button { text-align: center; padding: 12px 6px; font-size: 12px; }
+  .primary-nav .desktop-destination { display: none; }
+  .primary-nav .mobile-more { display: block; }
+  .workspace > .subnav { overflow: visible; padding: 8px 12px; }
+  main#main-content { padding: 18px 16px 100px; }
+  .topbar .session-banner { display: none; }
+  .mobile-session { display: block; font-size: 11px; color: var(--muted); }
+  .settings-button { margin-left: auto; }
+}
+@media (max-width: 560px) {
+  .household-summary dl { gap: 8px 18px; }
+  .household-summary dd { font-size: 19px; }
+  .forecast-status details { flex-basis: auto; }
+  .workspace > .subnav button { padding: 8px; }
+  .panel.outlook { padding: 16px; }
+}

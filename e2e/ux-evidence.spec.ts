@@ -1,4 +1,5 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { clickFinancialDestination, navigateOwner } from "./navigation.js";
 
 /**
  * Manual, external-to-Codex UX evidence. Intentionally skipped in ordinary CI.
@@ -6,10 +7,7 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
  * Never load a real/imported/user-saved household; fresh context + synthetic example only.
  */
 const navigate = async (page: Page, area: string, section: string) => {
-  await page.getByRole("navigation", { name: "Primary navigation" })
-    .getByRole("button", { name: area, exact: true }).click();
-  await page.getByRole("navigation", { name: `${area} sections` })
-    .getByRole("button", { name: section, exact: true }).click();
+  await navigateOwner(page, area, section);
 };
 
 test("synthetic account, income and forecast UX at desktop and narrow viewport", async ({ page }, testInfo: TestInfo) => {
@@ -54,6 +52,10 @@ test("synthetic account, income and forecast UX at desktop and narrow viewport",
 
     await navigate(page, "Plan", "Current Plan");
     await capture("06-current-plan", width);
+    for (const label of ["Cash", "Real Estate", "Other Assets"]) {
+      await clickFinancialDestination(page, label);
+      await capture(`07-${label.toLowerCase().replaceAll(" ", "-")}`, width);
+    }
   }
 
   expect(consoleErrors, "No unexpected browser exceptions during synthetic review").toEqual([]);
