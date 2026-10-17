@@ -93,6 +93,59 @@ and retain:
 Allowed dispositions are `pending`, `promoted`, `codified`, `rejected`,
 and `duplicate`. Pending candidates have no task-routing effect.
 
+### Curated review triggers and efficient automation
+
+ChatGPT owns candidate curation and lesson-governance review. Codex, CI, hooks,
+and generated artifacts may supply evidence but do not decide candidate
+dispositions or mutate the lesson ledger.
+
+Scheduled and in-thread learning reviews SHALL be evidence-change driven rather
+than repeatedly re-reviewing an unchanged queue. Start from compact candidate
+metadata (disposition, recurrence count, last-seen/review state, linked
+resolution) plus the active lesson ledger. Read full candidate bodies or related
+framework evidence only when a trigger or ambiguity requires it.
+
+A pending candidate receives substantive curation when one of these conditions
+becomes newly true:
+
+1. the pending-candidate count crosses above 5 since the prior curated review;
+2. its recurrence count increases to 2 or more after the last curated review;
+3. material new evidence is added after the last curated review;
+4. it has remained unresolved for 14 days since the later of last-seen or
+   last-curated, unless a concrete future evidence/dependency trigger is already
+   recorded;
+5. a framework-maintenance/audit pass touches the candidate's applicable
+   surface; or
+6. a linked resolution/promotion PR merges or closes without merge.
+
+The fact that a recurrence count remains at 2+ or that the total pending count
+remains above 5 is not, by itself, a reason to repeat the same review every day.
+
+Candidate issues may record lightweight review state such as
+`Last-Curated`, `Reviewed-Recurrence-Count`, `Resolution-PR`, and
+`Next-Review-Trigger`. These fields are curation metadata only and do not
+affect task routing or authorization.
+
+When a candidate already has an open promotion/codification/resolution PR and
+no material evidence has changed, suppress substantive rereview until that PR
+merges, closes without merge, or new evidence arrives. On merge, ChatGPT SHALL
+finish the lifecycle in the same review: update the source candidate to
+`promoted` or `codified` as appropriate and close it. If the PR closes
+without merge, return the candidate to normal pending review. When a base
+framework change permanently subsumes an active lesson, review the lesson for
+retirement instead of retaining redundant active guidance.
+
+Routine bookkeeping reviews are silent. Notify the product manager only when a
+material product/governance decision is required, a material framework action
+needs approval, or an attempted durable update fails. In an active PFM thread,
+surface that decision there; for scheduled reviews, emit no notification when
+nothing requires attention.
+
+The 14-day stale review is a curation backstop, not an automatic promotion.
+After reviewing a still-valid pending candidate, record either a concrete
+next-review event/date or a reason it remains pending so the same unchanged
+evidence does not trigger daily rereads.
+
 ## 3. Promotion is curated
 
 `docs/development/agent-lessons.json` is the curated active/retired ledger.
