@@ -148,7 +148,11 @@ export const householdDomainParticipants = (
             if (balance !== undefined) statuses.set(operation.descriptor.id, balance.scheduledFundingStatus);
             return { state: result.state, primitiveState: result.primitiveState, facts: { summary: { evidence: sink.snapshot(), debt: result.summary } } };
           }
-          return { state: result.state, primitiveState: result.primitiveState, facts: {} };
+          // An extra-principal operation also posts a real financing settlement.
+          // Retain its summary cash-flow/lineage evidence, just as required
+          // debt service retains its own summary evidence.
+          return { state: result.state, primitiveState: result.primitiveState,
+            facts: { summary: { evidence: sink.snapshot() } } };
         }
         const result = executePreparedVerticalSlice4Operation(prepared.liabilities!, operation,
           opening.state, opening.primitiveState, input.liabilityInput!, context);
@@ -157,8 +161,12 @@ export const householdDomainParticipants = (
           if (loan !== undefined) statuses.set(operation.descriptor.id, loan.scheduledFundingStatus);
           return { state: result.state, primitiveState: result.primitiveState, facts: { liability: result.period } };
         }
-        // Preserve the reference household's extra-principal summary/lineage behavior.
-        return { state: result.state, primitiveState: result.primitiveState, facts: {} };
+        // Extra-principal debits already changed authoritative loan state above.
+        // Expose the *same posted settlement* and its trace to detailed replay;
+        // otherwise reported principal falls without any corresponding paid
+        // transaction, and summary/detail money-flow evidence diverges.
+        return { state: result.state, primitiveState: result.primitiveState,
+          facts: { transactions: result.transactions, traceRefs: result.traceRefs } };
       },
     })) },
   ] satisfies readonly PreparedOperationParticipant<HouseholdOperationFacts>[]);

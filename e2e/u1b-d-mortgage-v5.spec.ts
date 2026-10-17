@@ -42,13 +42,22 @@ async function setup(page: Page, width: number, denied = false) {
   await page.goto("/");
   await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
   if (denied) {
-    const bankId = "d1610000-0000-4000-8000-000000000003";
-    const model = addPersonalObject(createGoldenHouseholdDraft(), "Account", bankId, { name: "Isolated mortgage bank", account_type: "checking", owner_id: ids.person, opening_date: "2026-01-01", opening_balance: "0" });
-    await navigateOwner(page, "Settings", "Import / Export");
-    await page.locator('input[type="file"]').setInputFiles({ name: "synthetic-unfunded-mortgage.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(model)) });
-    await page.getByRole("button", { name: "Import into session", exact: true }).click();
+    // Author the zero-funded account through the existing owner instead of
+    // importing a bare model: import intentionally clears session execution
+    // choices, making this a forecast-setup test rather than a funding test.
+    const bankName = "Isolated mortgage bank";
+    await navigateOwner(page, "Money", "Accounts");
+    await page.getByRole("button", { name: "+ Add Account", exact: true }).click();
+    const editor = page.getByRole("dialog", { name: "Create Account", exact: true });
+    await editor.getByLabel("Name", { exact: true }).fill(bankName);
+    await editor.getByLabel("Account type", { exact: true }).selectOption("checking");
+    await editor.getByLabel("Owner", { exact: true }).selectOption(ids.person);
+    await editor.getByLabel("Opening date", { exact: true }).fill("2026-01-01");
+    await editor.getByLabel("Cash balance", { exact: true }).fill("0");
+    await editor.getByRole("button", { name: "Create Account", exact: true }).click();
+    await expect(editor).toHaveCount(0);
     await clickFinancialDestination(page, "Debt");
-    await page.getByLabel("Mortgage payment account", { exact: true }).selectOption(bankId);
+    await page.getByLabel("Mortgage payment account", { exact: true }).selectOption({ label: bankName });
   }
   await navigateOwner(page, "Plan", "Current Plan");
   await page.getByLabel("Simulation start", { exact: true }).fill("2026-01-01");
