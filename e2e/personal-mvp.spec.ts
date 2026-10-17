@@ -1303,7 +1303,7 @@ test("R4 narrow and wide layouts retain readable status, chart and keyboard edit
     await expect(status).toHaveAttribute("data-lifecycle", "unsupported");
     await expect(status.locator(".forecast-primary-guidance")).toContainText("schedule this monthly forecast cannot execute");
     await expect(status.locator(".forecast-guidance")).not.toHaveAttribute("open");
-    const repair = status.locator(".forecast-primary-guidance").getByRole("button", { name: "Review frequency", exact: true });
+    const repair = status.locator(".forecast-primary-guidance").getByRole("button", { name: "Review Frequency", exact: true });
     await repair.click();
     await expect(editor.getByLabel("Frequency", { exact: true })).toBeFocused();
     await expect(editor.getByLabel("Frequency", { exact: true })).toBeVisible();
