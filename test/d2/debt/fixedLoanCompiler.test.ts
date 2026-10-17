@@ -171,7 +171,7 @@ describe("D2-B phase 1 canonical fixed consumer-loan admission", () => {
     expectGate(model(), "LIABILITY_PROFILE_CONFIGURATION_UNSUPPORTED", [profile({ extraPrincipalPayments: [{ ...extra(), fee: "1" } as ReturnType<typeof extra>] })]);
     for (const field of ["fee_rule_id", "prepayment_rule_id"]) {
       const draft = edit(model(), d => {
-        d.objects.TaxRule!.push({ tax_rule_id: uuid(11) });
+        (d.objects.TaxRule ??= []).push({ tax_rule_id: uuid(11) });
         d.objects.Liability![0]![field] = uuid(11);
       });
       expectGate(draft, field === "fee_rule_id" ? "LIABILITY_FEE_RULE_UNSUPPORTED" : "LIABILITY_PREPAYMENT_RULE_UNSUPPORTED");
