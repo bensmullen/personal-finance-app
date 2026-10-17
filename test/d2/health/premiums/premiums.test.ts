@@ -132,6 +132,19 @@ describe("D2-C source-quoted premium foundation (isolated proposals only)", () =
     expect(codes(r)).toContain("INCOMPATIBLE_MEDICARE_PLANS");
   });
 
+  it("prevents duplicate Medicare Part premiums across distinct plan IDs, even when overlap is authorized", () => {
+    const a = medicare("part_b");
+    const b = { ...medicare("part_b"), id: "other-b", planId: "other-b",
+      eligibility: coverage("other-b").eligibility };
+    const coordination: PremiumRequest["coordination"] = [{
+      coverageIds: [a.id, b.id], memberId: "claimant", admitsDistinctPremiums: true, evidence: source,
+    }];
+    const r = proposePremiums({ ...request([a, b]), coordination });
+    expect(r.proposals).toEqual([]);
+    expect(codes(r)).toContain("DUPLICATE_PLAN_RECURRENCE");
+    expect(r.quotedPremiumCoverage).toBe("incomplete");
+  });
+
   it("blocks unadmitted membership, source, payer and enrollment independently", () => {
     const c = coverage();
     const variants: PremiumCoverage[] = [
