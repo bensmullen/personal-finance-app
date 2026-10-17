@@ -31,9 +31,12 @@ describe("issue-backed roadmap traceability", () => {
     expect(registry.schema_version).toBe(1);
     const ids = registry.issues.map(item => item.issue_number);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const id of [100, 101, 102, 103, 105, 120]) expect(ids).toContain(id);
-    for (const id of [94, 99, 104]) expect(ids).not.toContain(id);
+    for (const id of [100, 101, 102, 105, 120, 146, 147, 148, 149]) expect(ids).toContain(id);
+    for (const id of [94, 99, 103, 104]) expect(ids).not.toContain(id);
     expect(registry.stage_gates.D1_U1?.required_issue_numbers).toEqual([120]);
+    expect(registry.stage_gates.D2?.required_issue_numbers).toEqual([114, 146, 147, 148, 149]);
+    for (const id of [146, 147, 148]) expect(registry.issues.find(row => row.issue_number === id)?.depends_on).not.toContain(120);
+    expect(registry.issues.find(row => row.issue_number === 149)?.depends_on).toContain(120);
     for (const row of registry.issues) {
       expect(Number.isSafeInteger(row.issue_number) && row.issue_number > 0).toBe(true);
       expect(row.owner_stage.trim()).not.toBe("");
@@ -69,6 +72,7 @@ describe("issue-backed roadmap traceability", () => {
     expect(merges.get(99)).toBe(94);
     expect(merges.get(94)).toBe(120);
     expect(merges.get(104)).toBe(100);
+    expect(merges.get(103)).toBe(146);
     const ids = new Set(registry.issues.map(x => x.issue_number));
     expect(merges.size).toBe(registry.closed_consolidations.length);
     for (const merger of registry.closed_consolidations) {

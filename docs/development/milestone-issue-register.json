@@ -2,7 +2,7 @@
   "schema_version": 1,
   "as_of": "2026-10-17",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
-  "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120.",
+  "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120. D2 parallel reallocation 2026-10-17: #103's unimplemented retirement distribution/RMD scope is consolidated into #146; backend #146/#147/#148 may overlap U1 #120 after approved financial contracts and #149 shared interface freeze. #149 alone owns deferred cross-domain/UI seams and final D2-D acceptance. #114 is merged preparation, not D2 functionality.",
   "stage_gates": {
     "D1_U1": {
       "stage": "U1 / D1 final acceptance",
@@ -12,11 +12,14 @@
       ]
     },
     "D2": {
-      "stage": "D2 preparation, D2-A and D2 closeout",
-      "blocking_transition": "Declare D2 complete or start stochastic R5",
+      "stage": "D2-A/B/C parallel backend; D2-D shared integration and final acceptance",
+      "blocking_transition": "Declare D2 accepted or start stochastic R5; D2 backend development itself does not wait on final U1 owner UAT",
       "required_issue_numbers": [
-        103,
-        114
+        114,
+        146,
+        147,
+        148,
+        149
       ]
     },
     "R11": {
@@ -89,17 +92,38 @@
       "scope": "Top-level Taxes workspace after trustworthy withholding and tax read models exist."
     },
     {
-      "issue_number": 103,
-      "owner_stage": "D2-A",
-      "blocking_gate": "D2",
+      "issue_number": 105,
+      "owner_stage": "P1-planning-UX",
+      "blocking_gate": "R11",
       "depends_on": [
         120
       ],
       "spec_requirement_ids": [
-        "PFA-DET-017",
-        "PFA-TAX-015"
+        "PFA-UX-011",
+        "PFA-UX-012",
+        "PFA-PLAN-005"
       ],
-      "scope": "Ordinary retirement distribution/withdrawal and applicable tax rules; distinguish rollover."
+      "scope": "Independent saved-plan duplication; U1 may expose entry action only if existing semantics safely support it."
+    },
+    {
+      "issue_number": 108,
+      "owner_stage": "O1-alpha-fixtures",
+      "blocking_gate": "R11",
+      "depends_on": [
+        149,
+        105,
+        120
+      ],
+      "spec_requirement_ids": [
+        "PFA-ONB-001",
+        "PFA-ONB-002",
+        "PFA-ONB-003",
+        "PFA-ONB-011",
+        "PFA-ONB-013",
+        "PFA-UX-011",
+        "PFA-PLAN-005"
+      ],
+      "scope": "Eight richly populated synthetic family-linked alpha households (H01-H08), 43 category budget matrix, full modeled multigenerational members, at least four independent saved plans per household using #105-approved semantics, one-click demo/reset, coverage and financial reconciliation, correctly gated unsupported estate/rental/benefits/tax behavior. Account aggregation is separately evaluated and not a prerequisite. Final D2-integrated family examples depend on #149, not closed #103."
     },
     {
       "issue_number": 114,
@@ -119,40 +143,6 @@
         "PFA-TAX-015"
       ],
       "scope": "U1-parallel isolated D2-A/B/C coverage map, synthetic expected-effect cases, bounded fixture checks, and optional wholly isolated pure helpers under already-decided contracts. No shared U1 UI/application, canonical/financial semantics, execution or tax integration; issue closure is prep only, not D2 acceptance."
-    },
-    {
-      "issue_number": 105,
-      "owner_stage": "P1-planning-UX",
-      "blocking_gate": "R11",
-      "depends_on": [
-        120
-      ],
-      "spec_requirement_ids": [
-        "PFA-UX-011",
-        "PFA-UX-012",
-        "PFA-PLAN-005"
-      ],
-      "scope": "Independent saved-plan duplication; U1 may expose entry action only if existing semantics safely support it."
-    },
-    {
-      "issue_number": 108,
-      "owner_stage": "O1-alpha-fixtures",
-      "blocking_gate": "R11",
-      "depends_on": [
-        103,
-        105,
-        120
-      ],
-      "spec_requirement_ids": [
-        "PFA-ONB-001",
-        "PFA-ONB-002",
-        "PFA-ONB-003",
-        "PFA-ONB-011",
-        "PFA-ONB-013",
-        "PFA-UX-011",
-        "PFA-PLAN-005"
-      ],
-      "scope": "Eight richly populated synthetic family-linked alpha households (H01-H08), 43 category budget matrix, full modeled multigenerational members, at least four independent saved plans per household using #105-approved semantics, one-click demo/reset, coverage and financial reconciliation, correctly gated unsupported estate/rental/benefits/tax behavior. Account aggregation is separately evaluated and not a prerequisite."
     },
     {
       "issue_number": 120,
@@ -241,6 +231,72 @@
         "PFA-UX-023"
       ],
       "scope": "Codex V3 U1B-C after merged U1B-B: Cash Income/Spending/Accounts/Insurance task navigation and selected-month partial source-backed V4 categorized-use comparison using existing replay evidence. Unknown withholding is not zero/disposable cash; no new financial writer. #120 remains U1/D1 owner UAT; dependent shared-UI D/E serialized."
+    },
+    {
+      "issue_number": 146,
+      "owner_stage": "D2-A-retirement-benefits",
+      "blocking_gate": "D2",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-DET-016",
+        "PFA-DET-017",
+        "PFA-DET-018",
+        "PFA-TAX-015",
+        "PFA-INV-025",
+        "PFA-INV-026"
+      ],
+      "scope": "Consolidated retirement/benefit engine: Social Security retirement/spousal/survivor, pensions, five added retirement plan families, IRA/backdoor/mega conversions and all original closed #103 ordinary withdrawal/RMD/basis/withholding requirements. Domain backend may start during U1 after PM financial-contract approval; shared and UI seams remain #149."
+    },
+    {
+      "issue_number": 147,
+      "owner_stage": "D2-B-debt-fixed-income-education",
+      "blocking_gate": "D2",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-DET-019",
+        "PFA-DET-021",
+        "PFA-DET-022",
+        "PFA-TAX-015",
+        "PFA-INV-027",
+        "PFA-INV-028"
+      ],
+      "scope": "Consolidated consumer debt/HELOC, TIPS/EE and 529/beneficiary/529-Roth mechanics; independent backend contract phases may overlap U1, while cross-domain IRA capacity and shared engine/authoring are integrated through #149."
+    },
+    {
+      "issue_number": 148,
+      "owner_stage": "D2-C-health-Medicare-FSA",
+      "blocking_gate": "D2",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-DET-020",
+        "PFA-TAX-015",
+        "PFA-INS-013"
+      ],
+      "scope": "Consolidated health coverage/premiums, Medicare/IRMAA and health FSA entitlement/reimbursement mechanics; independent backend work alongside U1 after contract approval, with SSA/payroll/tax/UI seams routed to #149."
+    },
+    {
+      "issue_number": 149,
+      "owner_stage": "D2-D-shared-integration-closeout",
+      "blocking_gate": "D2",
+      "depends_on": [
+        146,
+        147,
+        148,
+        120
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-015",
+        "PFA-DET-023",
+        "PFA-TAX-015",
+        "PFA-DET-016",
+        "PFA-DET-017",
+        "PFA-DET-018",
+        "PFA-DET-019",
+        "PFA-DET-020",
+        "PFA-DET-021",
+        "PFA-DET-022"
+      ],
+      "scope": "Early S1-S8 shared finance contract freeze, one-writer compiler/ledger/scheduler/payroll/tax/read-model integration, explicit A-B-C and U1 #120/withholding #101/tax #138 seam ledger, later U1-authoring handshake, all-domain truth table and final accepted PM UAT. #120 dependency is for D2-D closeout, not early D2 module work."
     }
   ],
   "legacy_open_task_reconciliation": {
@@ -286,6 +342,13 @@
       "merged_head": "f978f3848837e95e76c46f8966c942f3d6d37a4f",
       "merge_commit": "0c494c1c6f84df98cd659d555b8fdfa7d3fea239",
       "retained_requirement": "All remaining U1/D1 usability acceptance (PFA-UX-015–023), owner UAT, and consolidated #99 mortgage funding reconciliation transfer to #120. PR #98 is a merged CI-green technical implementation baseline, not UX or D1 acceptance."
+    },
+    {
+      "issue_number": 103,
+      "consolidated_into": 146,
+      "closed_as": "duplicate",
+      "original_gate": "D2",
+      "retained_requirement": "All ordinary retirement distributions/withdrawals (account and bank funding, sales, owned position/basis, withholding/penalties, tax, ordinary/Roth/plan distinctions), RMD annual requirement/satisfaction, account-first authoring and standalone + D2-D truth-table/UAT. Closing #103 is administrative only; no implementation completion."
     }
   ]
 }
