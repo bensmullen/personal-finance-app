@@ -31,10 +31,11 @@
       ]
     },
     "U1B_B": {
-      "stage": "U1B-B chart-data prerequisite",
-      "blocking_transition": "Start or accept U1B-B frontend financial chart integration without the audited source-only chart-data read model",
+      "stage": "U1B-B chart-data and production visual integration",
+      "blocking_transition": "Declare U1B-B V1–V3 source/chart integration complete or begin dependent shared-UI C–E phases",
       "required_issue_numbers": [
-        129
+        129,
+        136
       ]
     }
   },
@@ -181,6 +182,26 @@
         "PFA-UX-021"
       ],
       "scope": "Exclusive two-file U1B-B0 pure read-only forecast-chart data selector: exact source period/yearly stock/flow aggregation, net-worth/cash identities, per-metric incomplete coverage, and total modeled cash distinguished from bank-accessible cash. Independent prerequisite to #120 U1B-B chart UI, not a second D1_U1 final user-acceptance owner. #120 alone retains U1/D1 UAT acceptance."
+    },
+    {
+      "issue_number": 136,
+      "owner_stage": "U1B-B-production-charts",
+      "blocking_gate": "U1B_B",
+      "depends_on": [
+        129
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-014",
+        "PFA-UX-007",
+        "PFA-UX-009",
+        "PFA-UX-015",
+        "PFA-UX-016",
+        "PFA-UX-019",
+        "PFA-UX-020",
+        "PFA-UX-021",
+        "PFA-UX-022"
+      ],
+      "scope": "Separate Codex V3 implementation for visual U1B Phase B (V1 net worth/assets/liabilities, V2 total modeled all-wrapper cash and signed changes, V3 recognized income/expenses) in shared Calm Overview/Cash UI using merged source selector #129. No new domain writers; #120 remains the sole D1/U1 final acceptance and PM UAT owner. Later C/D/E UI phases stay serialized and require fresh scoped authorization."
     }
   ],
   "legacy_open_task_reconciliation": {
