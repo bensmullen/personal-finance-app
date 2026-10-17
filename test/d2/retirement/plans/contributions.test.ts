@@ -42,7 +42,7 @@ const request = (family: PlanFamily = "403b", id = family as string, payer: "emp
 // Explicit synthetic capacity facts, supplied by tests, not a statutory catalog.
 const priors = (requests: readonly ContributionRequest[]): PriorCapacity[] => {
   const map = new Map<string, PriorCapacity>();
-  for (const r of requests) for (const ref of r.rules!.permissions[0]!.capacities) {
+  for (const r of requests) for (const ref of r.rules?.permissions?.[0]?.capacities ?? []) {
     map.set(capacityKey(r.personId, r.taxYear, ref), { ...ref, personId: r.personId, taxYear: r.taxYear,
       source: source(ref.ruleSnapshotId, r.taxYear), usageSource: source(`synthetic:observed-usage:${ref.limitScope.kind}`, r.taxYear),
       maximum: money("2000"), used: money("0"), asOf: date(`${r.taxYear}-01-01`), completeness: "complete" });
