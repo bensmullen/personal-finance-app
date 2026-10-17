@@ -2,7 +2,7 @@
   "schema_version": 1,
   "as_of": "2026-10-17",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
-  "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120. D2 parallel reallocation 2026-10-17: #103's unimplemented retirement distribution/RMD scope is consolidated into #146; backend #146/#147/#148 may overlap U1 #120 after approved financial contracts and #149 shared interface freeze. #149 alone owns deferred cross-domain/UI seams and final D2-D acceptance. #114 is merged preparation, not D2 functionality.",
+  "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120. D2 parallel reallocation 2026-10-17: #103's unimplemented retirement distribution/RMD scope is consolidated into #146; backend #146/#147/#148 may overlap U1 #120 after approved financial contracts and #149 shared interface freeze. #149 alone owns deferred cross-domain/UI seams and final D2-D acceptance. #114 is merged preparation, not D2 functionality. U1B-C #142 closed after PR #157 merged; U1B-D #161 newly allocated to its own stage, implementation sequential after merged registration PR, not blocked by final #120 UAT. U1B-E requires separate later authorization.",
   "stage_gates": {
     "D1_U1": {
       "stage": "U1 / D1 final acceptance",
@@ -44,9 +44,16 @@
     },
     "U1B_C": {
       "stage": "U1B-C Cash task-first UX and capability-aware selected-month V4 allocation",
-      "blocking_transition": "Declare U1B-C completed or begin dependent shared-UI U1B-D/E integration",
+      "blocking_transition": "Declare U1B-C completed; U1B-D now follows merged PR #157",
       "required_issue_numbers": [
         142
+      ]
+    },
+    "U1B_D": {
+      "stage": "U1B-D Real Estate and Debt source-backed V5 mortgage amortization",
+      "blocking_transition": "Declare U1B-D complete or begin dependent shared-UI U1B-E",
+      "required_issue_numbers": [
+        161
       ]
     }
   },
@@ -230,7 +237,26 @@
         "PFA-UX-022",
         "PFA-UX-023"
       ],
-      "scope": "Codex V3 U1B-C after merged U1B-B: Cash Income/Spending/Accounts/Insurance task navigation and selected-month partial source-backed V4 categorized-use comparison using existing replay evidence. Unknown withholding is not zero/disposable cash; no new financial writer. #120 remains U1/D1 owner UAT; dependent shared-UI D/E serialized."
+      "scope": "COMPLETED and closed: U1B-C Cash task links and selected-month partial source-backed V4, merged PR #157 (c8c41d835184871f31dbde587d1cf3c927017e0c), final branch-head CI successful and independently audited. Withholding remains outside scope (#101), final U1/D1 PM UAT #120 remains open. U1B-D follows serially."
+    },
+    {
+      "issue_number": 161,
+      "owner_stage": "U1B-D-real-estate-debt-V5-amortization",
+      "blocking_gate": "U1B_D",
+      "depends_on": [
+        142
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-008",
+        "PFA-DET-014",
+        "PFA-UX-015",
+        "PFA-UX-019",
+        "PFA-UX-020",
+        "PFA-UX-021",
+        "PFA-UX-022",
+        "PFA-UX-023"
+      ],
+      "scope": "New bounded Codex V3 task: Real Estate/Debt chart-first V5 actual *paid* mortgage interest/scheduled/extra principal, correctly scoped cumulative totals, selected-loan balance, read-only same-date property equity and original Debt/Asset writer; lazy bounded replay evidence and honest unavailable/stale. Only begins after this registration PR merges; U1B-E follows after D; overall PM owner UAT #120 separately gates D1_U1. D2-A/B/C modules remain disjoint."
     },
     {
       "issue_number": 146,

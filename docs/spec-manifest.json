@@ -686,7 +686,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.6.16-draft",
+      "version": "0.6.17-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -763,7 +763,10 @@
         "U1 technical checkpoint handoff",
         "Issue 142",
         "U1B-C",
-        "capability-aware V4 Cash allocation"
+        "capability-aware V4 Cash allocation",
+        "U1B-D",
+        "Issue 161",
+        "V5 source-backed mortgage amortization"
       ],
       "applies_to": [
         "personal-mvp",
