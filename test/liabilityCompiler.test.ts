@@ -203,13 +203,25 @@ describe("canonical liability compiler", () => {
   it("executes a supported mortgage while individually gating another debt type", () => {
     const secondId = "97000000-0000-4000-8000-000000000001";
     const model = modelWith((draft) => {
-      draft.objects.Liability!.push({ ...draft.objects.Liability![0]!, liability_id: secondId, liability_type: "auto", current_balance: "10000", principal: "10000" });
+      draft.objects.Liability!.push({ ...draft.objects.Liability![0]!, liability_id: secondId, liability_type: "credit_card", current_balance: "10000", principal: "10000" });
     });
     const result = compileLiabilities(model, compilerRequest([profile(), profile({ liabilityId: secondId, settlementPriority: 2 })]));
     expect(result.status).toBe("compiled");
     if (result.status !== "compiled") return;
     expect(result.value.input.loans).toHaveLength(1);
     expect(result.value.capabilityDiagnostics).toContainEqual(expect.objectContaining({ code: "LIABILITY_TYPE_UNSUPPORTED", entityId: secondId }));
+  });
+
+  it("admits a fixed auto through the shared P22 contract without changing mortgage output", () => {
+    const original = compileLiabilities(createSyntheticPersonalDraft(), compilerRequest());
+    const auto = compileLiabilities(modelWith(draft => { draft.objects.Liability![0]!.liability_type = "auto"; }), compilerRequest());
+    expect(auto.status).toBe("compiled");
+    if (auto.status !== "compiled" || original.status !== "compiled") throw new Error("expected fixed loans");
+    const { debtFamily, ...contract } = auto.value.input.loans[0]!;
+    expect(debtFamily).toBe("auto");
+    expect(contract).toEqual(original.value.input.loans[0]);
+    expect(auto.value.openingState).toEqual(original.value.openingState);
+    expect(auto.value.primitiveState).toEqual(original.value.primitiveState);
   });
 
   it("does not infer funding or a profile from the only checking account", () => {

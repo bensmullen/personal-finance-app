@@ -8,6 +8,7 @@ export interface MortgageFundingContext {
 /** Preserve execution bindings at result creation, rather than reading edited session settings. */
 export function mortgageFundingContext(input: VerticalSlice4Input | undefined, policyId: string): MortgageFundingContext | undefined {
   const matches = input?.loans.flatMap<MortgageFundingContext>(loan => {
+    if (loan.debtFamily !== undefined && loan.debtFamily !== "mortgage") return [];
     if (String(loan.fundingPolicy.id) === policyId) return [{ liabilityId: String(loan.principalLiabilityId), fundingAccountIds: loan.fundingPolicy.orderedSources.map(source => String(source.accountId)), settlementPriority: loan.settlementPriority }];
     return (loan.extraPrincipalPayments ?? []).filter(extra => String(extra.fundingPolicy.id) === policyId).map(extra => ({ liabilityId: String(loan.principalLiabilityId), fundingAccountIds: extra.fundingPolicy.orderedSources.map(source => String(source.accountId)) }));
   }) ?? [];

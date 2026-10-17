@@ -275,8 +275,38 @@ export const compileLiabilities = (
   const scenarioResult = selectScenario(model, { capabilityName: "liability_forecast", executionLabel: "Liability", ...(request.scenarioId === undefined ? {} : { scenarioId: request.scenarioId }), simulationStart: request.simulationStart, simulationEnd: request.simulationEnd });
   if (scenarioResult.status !== "compiled") return scenarioResult;
   const selectedScenario = scenarioResult.value;
+  const consumerIds = new Set(objects(model, "Liability")
+    .filter(liability => liability.liability_type === "auto" || liability.liability_type === "student")
+    .map(liability => canonicalId(liability, "liability_id")!));
+  // Keep every event targeting a consumer loan (including multi-effect
+  // events) out of the mortgage-only adapter. The per-liability validation
+  // below retains the original event/effect identity as a typed diagnostic.
+  const effectsById = new Map(objects(model, "EventEffect").map(effect => [
+    String(effect.event_effect_id).toLowerCase(), effect,
+  ]));
+  // A single scheduled event spanning both consumer and non-consumer targets
+  // cannot be partially dropped: doing so would silently discard a mortgage
+  // operation. Preserve its identity and reject this unsupported atomic event.
+  const mixedEvent = objects(model, "Event").find(event => {
+    if (event.enabled !== true || String(event.scenario_id).toLowerCase() !== selectedScenario.id || !Array.isArray(event.effect_ids)) return false;
+    const targets = event.effect_ids.map(effectId => effectsById.get(String(effectId).toLowerCase()))
+      .filter((effect): effect is NonNullable<typeof effect> => effect !== undefined)
+      .map(effect => String(effect.target_entity_id).toLowerCase());
+    return targets.some(id => consumerIds.has(id)) && targets.some(id => !consumerIds.has(id));
+  });
+  if (mixedEvent) return { status: "unsupported", diagnostics: [
+    diagnostic("LIABILITY_MIXED_AUTHORED_OPERATION_UNSUPPORTED",
+      "One authored event targets both a consumer loan and another entity; split it into independently authorized operations.",
+      "Event", String(mixedEvent.event_id), "effect_ids", mixedEvent.effect_ids as string[]),
+  ] };
+  const mortgageEvents = objects(model, "Event").filter(event =>
+    !Array.isArray(event.effect_ids) || !event.effect_ids.some(effectId => {
+      const effect = effectsById.get(String(effectId).toLowerCase());
+      return effect !== undefined && consumerIds.has(String(effect.target_entity_id).toLowerCase());
+    }),
+  );
   try {
-    const extras = durableMortgageExtras(model, selectedScenario.id);
+    const extras = durableMortgageExtras({ ...model, objects: { ...model.objects, Event: mortgageEvents } }, selectedScenario.id);
     request = { ...request, executionProfiles: request.executionProfiles.map(profile => ({ ...profile, extraPrincipalPayments: [...(profile.extraPrincipalPayments ?? []), ...extras.filter(extra => extra.liabilityId === profile.liabilityId).map(({ liabilityId: _liabilityId, ...extra }) => extra)] })) };
     if (extras.some(extra => !request.executionProfiles.some(profile => profile.liabilityId === extra.liabilityId))) return { status: "unsupported", diagnostics: [diagnostic("MORTGAGE_EXTRA_PROFILE_REQUIRED", "Configure scheduled payments for the mortgage before adding extra principal.")] };
   } catch (error) { return { status: "unsupported", diagnostics: [diagnostic("MORTGAGE_EXTRA_UNSUPPORTED", error instanceof Error ? error.message : "Extra principal terms are incomplete.")] }; }
@@ -478,8 +508,20 @@ export const compileLiabilities = (
       continue;
     }
     // Intrinsic capability gates apply only to active, already-originated contracts.
-    if (liability.liability_type !== "mortgage")
-      reject(diagnostic("LIABILITY_TYPE_UNSUPPORTED", `Liability ${id} type ${String(liability.liability_type)} is not supported by mortgage-specific VS4 accounting.`, "Liability", id, "liability_type"));
+    const consumerLoan = liability.liability_type === "auto" || liability.liability_type === "student";
+    if (liability.liability_type !== "mortgage" && !consumerLoan)
+      reject(diagnostic("LIABILITY_TYPE_UNSUPPORTED", `Liability ${id} type ${String(liability.liability_type)} is outside the fixed mortgage/auto/standard student capability.`, "Liability", id, "liability_type"));
+    if (consumerLoan) {
+      // Mortgage lifecycle adapters and other authored operations cannot supply
+      // consumer-loan terms. Only explicit execution-profile extras are admitted.
+      for (const event of objects(model, "Event")) {
+        if (event.enabled !== true || String(event.scenario_id).toLowerCase() !== selectedScenario.id || !Array.isArray(event.effect_ids)) continue;
+        for (const effect of objects(model, "EventEffect")) {
+          if (!event.effect_ids.some(effectId => typeof effectId === "string" && effectId.toLowerCase() === String(effect.event_effect_id).toLowerCase()) || String(effect.target_entity_id).toLowerCase() !== id) continue;
+          reject(diagnostic("LIABILITY_AUTHORED_OPERATION_UNSUPPORTED", `Liability ${id} has an authored operation; consumer loans support only fixed contractual service and explicit execution-profile extra principal.`, "Liability", id, "event_ids", [String(event.event_id), String(effect.event_effect_id)]));
+        }
+      }
+    }
     if (liability.rate_type !== "fixed")
       reject(diagnostic("LIABILITY_RATE_STRUCTURE_UNSUPPORTED", `Liability ${id} requires a fixed rate.`, "Liability", id, "rate_type"));
     if (liability.payment_frequency !== "monthly")
@@ -503,6 +545,20 @@ export const compileLiabilities = (
     }
     if (profile.kind !== "vs4_fixed_monthly_fully_amortizing")
       reject(diagnostic("LIABILITY_RATE_CONVENTION_UNSUPPORTED", `Liability ${id} execution profile kind is unsupported.`, "LiabilityExecutionProfile", id, "kind"));
+    if (consumerLoan) {
+      const fields = new Set(["liabilityId", "kind", "paymentAnchor", "totalPayments", "fundingAccountId", "settlementPriority", "openingContractStatus", "extraPrincipalPayments"]);
+      for (const field of Object.keys(profile)) {
+        if (!fields.has(field))
+          reject(diagnostic("LIABILITY_PROFILE_CONFIGURATION_UNSUPPORTED", `Liability ${id} execution profile has an unknown authored rule ${field}; use the fixed monthly fully amortizing contract.`, "LiabilityExecutionProfile", id, field));
+      }
+      const extraFields = new Set(["id", "scheduledAt", "amount", "fundingAccountId"]);
+      for (const extra of profile.extraPrincipalPayments ?? []) {
+        for (const field of Object.keys(extra)) {
+          if (!extraFields.has(field))
+            reject(diagnostic("LIABILITY_PROFILE_CONFIGURATION_UNSUPPORTED", `Liability ${id} extra principal has an unknown authored rule ${field}; supply a dated amount and cash source.`, "LiabilityExecutionProfile", id, `extraPrincipalPayments.${field}`, [extra.id]));
+        }
+      }
+    }
     const anchor = utcDate(profile.paymentAnchor)!;
     if (anchor < origination)
       return invalidResult("LIABILITY_PAYMENT_ANCHOR_INVALID", `Liability ${id} paymentAnchor cannot precede origination_date.`, "LiabilityExecutionProfile", id, "paymentAnchor", [id]);
@@ -519,6 +575,15 @@ export const compileLiabilities = (
     if (priorOccurrences === 0 && currentPrincipal.compare(originalPrincipal) < 0)
         reject(diagnostic("LIABILITY_UNEXPLAINED_HISTORY_UNSUPPORTED", `Liability ${id} balance is below original principal before its first contractual payment.`, "Liability", id, "current_balance"));
     const annualRate = Rate.fromDecimal(String(liability.interest_rate), rateConvention.nominalAnnual(12));
+    if (consumerLoan) {
+      const contractualPayment = fixedMortgagePayment(originalPrincipal, annualRate, profile.totalPayments, postingRounding);
+      for (const field of ["scheduled_payment", "minimum_payment"] as const) {
+        if (liability[field] === undefined || liability[field] === null) continue;
+        const authored = exactMoney(liability[field], currency)!;
+        if (field === "scheduled_payment" ? !authored.equals(contractualPayment) : authored.compare(contractualPayment) > 0)
+          reject(diagnostic("LIABILITY_PAYMENT_PROFILE_MISMATCH", `Liability ${id} ${field} is incompatible with the fixed fully amortizing contractual payment; reconcile the canonical amount and execution profile.`, "Liability", id, field));
+      }
+    }
     const compatibleOpeningPrincipal = fixedMortgagePrincipalAfterPayments(originalPrincipal, annualRate, profile.totalPayments, priorOccurrences, postingRounding);
     if (currentPrincipal.compare(compatibleOpeningPrincipal) > 0)
       reject(diagnostic("LIABILITY_OPENING_HISTORY_UNSUPPORTED", `Liability ${id} current balance exceeds the fixed no-recast contractual balance at the forecast opening.`, "Liability", id, "current_balance"));
@@ -641,6 +706,7 @@ export const compileLiabilities = (
     fundingIds.set(id, primaryFundingSources);
     loans.push(Object.freeze({
       id: loanId,
+      ...(consumerLoan ? { debtFamily: liability.liability_type as "auto" | "student" } : {}),
       ownerId: domainId(ownerId === scope.householdId ? "household" : "person", ownerId),
       principalLiabilityId: principalId,
       interestPayableLiabilityId: interestId,

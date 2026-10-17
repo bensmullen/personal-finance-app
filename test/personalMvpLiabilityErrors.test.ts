@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 describe("liability forecast engine errors", () => {
-  it("preserves structured VS4 ValidationError issues instead of reducing them to a generic message", async () => {
+  it.each(["mortgage", "auto", "student"])("preserves structured VS4 ValidationError issues for %s instead of reducing them to a generic message", async family => {
     vi.resetModules();
     const { ValidationError, validationIssue } = await import("../src/diagnostics/index.js");
     const engineIssue = validationIssue({ severity: "error", code: "VS4_TEST_VALIDATION", message: "VS4 rejected the deliberately invalid execution state.", entityType: "vertical_slice_4", entityId: "test-engine-issue" });
@@ -10,7 +10,9 @@ describe("liability forecast engine errors", () => {
       runVerticalSlice4: () => { throw new ValidationError([engineIssue]); },
     }));
     const { createSyntheticPersonalDraft, runPersonalForecast } = await import("../src/application/index.js");
-    const result = runPersonalForecast(createSyntheticPersonalDraft(), {
+    const draft = structuredClone(createSyntheticPersonalDraft());
+    (draft.objects.Liability![0] as unknown as Record<string, unknown>).liability_type = family;
+    const result = runPersonalForecast(draft, {
       scope: "liabilities", baseCurrency: "USD", asOf: "2026-01-01", dataCutoff: "2026-01-01",
       simulationStart: "2026-01-01", simulationEnd: "2026-04-01", months: 3,
       sameInstantCashFlowOrder: "income_before_expense",
