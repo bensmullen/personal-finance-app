@@ -37,6 +37,18 @@ function source(options: { partial?: boolean; missing?: boolean; noInvestments?:
 const render = (forecast: PersonalHouseholdForecastReadModel, cashFlowOnly = true, stale = false) => renderToStaticMarkup(React.createElement(HouseholdChart, { forecast, cashFlowOnly, stale }));
 
 describe("U1B exact chart presentation", () => {
+  it("gives each chart select its own exact external label and unique association", () => {
+    const html = render(source());
+    // Wrapping a select in a label includes all option text in exact label
+    // lookup, even though the computed combobox name omits those options.
+    const labels = [...html.matchAll(/<label for="([^"]+)">([^<]+)<\/label><select id="([^"]+)"/g)];
+    expect(labels.map(match => match[2])).toEqual([
+      "Period grouping", "Selected projected period",
+      "Period grouping", "Monthly range starting", "Selected projected period",
+    ]);
+    for (const match of labels) expect(match[1]).toBe(match[3]);
+    expect(new Set(labels.map(match => match[1])).size).toBe(5);
+  });
   it("separates all-account cash, signed changes and recognized statements", () => {
     const html = render(source());
     expect(html).toContain("Total modeled cash (including cash in investment accounts)");

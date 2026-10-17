@@ -59,7 +59,7 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .financial-chart h3 { font-family: Georgia,serif; font-size: 24px; font-weight: 500; overflow-wrap: anywhere; }
 .financial-charts > .chart-coverage,.chart-axis-note,.chart-qualification { font-size: 12px; line-height: 1.5; color: #52605b; }
 .chart-controls { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0 10px; }
-.chart-controls label { display: flex; flex: 1 1 170px; min-width: 0; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 650; }
+.chart-control { display: flex; flex: 1 1 170px; min-width: 0; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 650; }
 .chart-controls select { min-width: 0; width: 100%; min-height: 44px; padding: 8px; border: 1px solid #bbc5bf; border-radius: 8px; color: var(--ink); background: white; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; }
 .chart-legend button { padding: 8px; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); font-size: 12px; text-align: left; }
