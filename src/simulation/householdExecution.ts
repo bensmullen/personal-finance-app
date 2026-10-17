@@ -1139,7 +1139,8 @@ export interface HouseholdForecastSummaryResult extends Omit<CompiledHouseholdPr
   readonly replay: { readonly kernel: CompiledHouseholdKernel; readonly runContext: RunContext };
 }
 
-interface HouseholdReplayCheckpoint {
+export interface HouseholdReplayCheckpoint {
+  readonly runId: RunMetadata["runId"];
   readonly outputCapabilities?: import("./tax/contracts.js").TaxOutputCapabilities;
   readonly runtime: Readonly<Record<string, unknown>>;
   readonly at: Instant;
@@ -1152,6 +1153,49 @@ interface HouseholdReplayCheckpoint {
 // Their audit trees share unchanged nodes with the execution stream. Transported
 // forecasts without these optional roots can still replay from the opening basis.
 const forecastCheckpoints = new WeakMap<object, readonly HouseholdReplayCheckpoint[]>();
+
+/** Materialized data only; private persistent indexes never cross transport. */
+export const exportHouseholdReplayCheckpoints = (forecast: HouseholdForecastSummaryResult): readonly HouseholdReplayCheckpoint[] =>
+  Object.freeze((forecastCheckpoints.get(forecast) ?? []).map(checkpoint => Object.freeze({ ...checkpoint,
+    state: createAuthoritativeState(checkpoint.state),
+    primitiveState: materializePrimitiveRuntimeStateStore(checkpoint.primitiveState),
+  })));
+
+/** Restore sparse continuation roots only after checking their immutable source. */
+export const registerHouseholdReplayCheckpoints = (
+  forecast: Pick<HouseholdForecastSummaryResult, "periods" | "runMetadata" | "replay">,
+  checkpoints: readonly HouseholdReplayCheckpoint[],
+): void => {
+  const mismatch = (): never => { throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: invalid portable checkpoints"); };
+  const { runContext, kernel } = forecast.replay;
+  if (canonicalSerialize(createRunMetadata(runContext, forecast.runMetadata.inputFingerprint)) !== canonicalSerialize(forecast.runMetadata)) mismatch();
+  if (!Array.isArray(checkpoints)) mismatch();
+  const expected = forecast.periods.filter((period, index) => (index + 1) % 12 === 0 && period.period.end < runContext.simulationEnd);
+  if (checkpoints.length !== expected.length) mismatch();
+  for (let index = 0; index < forecast.periods.length; index += 1) {
+    const period = forecast.periods[index]!.period;
+    if (canonicalSerialize(period) !== canonicalSerialize(kernel.horizon.periods[index] ?? null) ||
+      period.start >= period.end || period.start !== (index === 0 ? runContext.simulationStart : forecast.periods[index - 1]!.period.end)) mismatch();
+    const capabilities = forecast.periods[index]!.outputCapabilities;
+    if (capabilities !== undefined && (capabilities === null || typeof capabilities !== "object" || Array.isArray(capabilities) ||
+      Object.values(capabilities).some(value => !value || !["complete", "incomplete"].includes(value.status) ||
+        !["tax_independent", "tax_affected"].includes(value.dependency) || !Array.isArray(value.diagnostics)))) mismatch();
+  }
+  const restored = checkpoints.map((checkpoint, index) => {
+    const period = expected[index]!;
+    if (checkpoint.runId !== forecast.runMetadata.runId || checkpoint.at !== period.period.end || checkpoint.fingerprint !== forecast.runMetadata.inputFingerprint ||
+      canonicalSerialize(checkpoint.outputCapabilities ?? null) !== canonicalSerialize(period.outputCapabilities ?? null) ||
+      checkpoint.runtime === null || typeof checkpoint.runtime !== "object" || Array.isArray(checkpoint.runtime)) mismatch();
+    const state = createAuthoritativeState(checkpoint.state);
+    assertAuthoritativeStateCurrency(state, runContext.baseCurrency);
+    const metrics = householdExecutionMetrics(state, runContext.baseCurrency, kernel.executable);
+    for (const [metric, key] of [["cash", "cash"], ["investmentValue", "investmentValue"], ["totalAssets", "assets"], ["totalLiabilities", "liabilities"], ["netWorth", "netWorth"]] as const)
+      if (!metrics[metric].equals(period[key])) mismatch();
+    return Object.freeze({ ...checkpoint, state: createIndexedExecutionState(state),
+      primitiveState: createPrimitiveRuntimeStateStore(checkpoint.primitiveState) });
+  });
+  forecastCheckpoints.set(forecast, Object.freeze(restored));
+};
 
 /** Direct summary evaluation. Financial operations are shared with the detailed adapter. */
 export const runHouseholdForecastSummary = (
@@ -1176,7 +1220,7 @@ export const runHouseholdForecastSummary = (
         // Twelve display periods is the initial engineering choice, not a
         // measured product budget. Never retain an unused terminal checkpoint.
         if ((summaries.length + 1) % 12 !== 0 || period.end >= runContext.simulationEnd) return;
-        checkpoints.push(Object.freeze({ at: period.end, fingerprint: metadata.inputFingerprint,
+        checkpoints.push(Object.freeze({ at: period.end, fingerprint: metadata.inputFingerprint, runId: metadata.runId,
           ...(outputCapabilities === undefined ? {} : { outputCapabilities }),
           runtime: operationRuntime(state),
           state: cloneAuthoritativeState(state), primitiveState: createPrimitiveRuntimeStateStore(primitiveState) }));
