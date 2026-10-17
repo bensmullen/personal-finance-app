@@ -185,6 +185,35 @@ describe("D2-B phase 1 canonical fixed consumer-loan admission", () => {
       expect(result.status).toBe("unsupported");
       expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "LIABILITY_AUTHORED_OPERATION_UNSUPPORTED", entityId: ids.debt, relatedIds: [plan.eventId, plan.effectId] }));
     }
+    // A multi-effect consumer event must never be parsed as a mortgage extra.
+    const multipleConsumerEffects = edit(authorMortgageExtra(model(family), plan), d => {
+      const event = d.objects.Event!.find(item => item.event_id === plan.eventId)!;
+      const effect = d.objects.EventEffect!.find(item => item.event_effect_id === plan.effectId)!;
+      event.effect_ids = [plan.effectId, uuid(23)];
+      d.objects.EventEffect!.push({ ...effect, event_effect_id: uuid(23) });
+    });
+    const multiResult = compileLiabilities(multipleConsumerEffects, request());
+    expect(multiResult.status).toBe("unsupported");
+    expect(multiResult.diagnostics).toContainEqual(expect.objectContaining({
+      code: "LIABILITY_AUTHORED_OPERATION_UNSUPPORTED", entityId: ids.debt,
+      relatedIds: [plan.eventId, plan.effectId],
+    }));
+    expect(multiResult.diagnostics.map(item => item.code)).not.toContain("MORTGAGE_EXTRA_UNSUPPORTED");
+
+    // A mixed mortgage/consumer event is atomic and cannot silently lose
+    // its mortgage effect when consumer behavior is capability-gated.
+    const mixed = edit(authorMortgageExtra(model(family), plan), d => {
+      d.objects.Liability!.push({ ...d.objects.Liability![0]!, liability_id: uuid(24), liability_type: "mortgage" });
+      const event = d.objects.Event!.find(item => item.event_id === plan.eventId)!;
+      const effect = d.objects.EventEffect!.find(item => item.event_effect_id === plan.effectId)!;
+      event.effect_ids = [plan.effectId, uuid(25)];
+      d.objects.EventEffect!.push({ ...effect, event_effect_id: uuid(25), target_entity_id: uuid(24) });
+    });
+    const mixedResult = compileLiabilities(mixed, request([profile(), profile({ liabilityId: uuid(24), settlementPriority: 2 })]));
+    expect(mixedResult.status).toBe("unsupported");
+    expect(mixedResult.diagnostics).toContainEqual(expect.objectContaining({
+      code: "LIABILITY_MIXED_AUTHORED_OPERATION_UNSUPPORTED", entityId: plan.eventId,
+    }));
     const unknown = edit(authorMortgageRefinance(model(family), plan), d => { d.objects.EventEffect!.find(effect => effect.event_effect_id === plan.effectId)!.operation = "forgive_student_debt"; });
     expectGate(unknown, "LIABILITY_AUTHORED_OPERATION_UNSUPPORTED");
     const incomplete = edit(authorMortgageExtra(model(family), plan), d => { d.objects.PrimitiveInstance!.find(primitive => primitive.primitive_instance_id === plan.primitiveId)!.enabled = false; });
