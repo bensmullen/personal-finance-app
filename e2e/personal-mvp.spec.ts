@@ -1253,11 +1253,13 @@ test("R4 empty relationship collections show actionable state instead of a Choos
     (control as HTMLSelectElement).options.length > 1))).toBe(true);
 });
 
-test("R4 narrow and wide layouts retain readable status, chart and keyboard editor controls", async ({ page }) => {
-  test.setTimeout(60_000);
-  await loadExample(page);
-  await useShortHorizon(page);
-  for (const width of [390, 1440]) {
+// Separate viewport assertions so a mobile failure cannot hide desktop
+// keyboard/repair regressions; each scenario starts from a fresh example.
+for (const width of [390, 1440]) {
+  test(`R4 responsive status, chart and keyboard editor controls at ${width}px`, async ({ page }) => {
+    test.setTimeout(60_000);
+    await loadExample(page);
+    await useShortHorizon(page);
     await page.setViewportSize({ width, height: 900 });
     await clickFinancialDestination(page, "Overview");
     const status = page.getByRole("status", { name: "Household forecast status" });
@@ -1321,8 +1323,8 @@ test("R4 narrow and wide layouts retain readable status, chart and keyboard edit
     await editor.getByRole("button", { name: "Save changes", exact: true }).click();
     await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  }
-});
+  });
+}
 
 test("R2 real Worker baseline stays responsive, retains stale results and accepts only the latest request", async ({ page }) => {
   test.setTimeout(120_000);
