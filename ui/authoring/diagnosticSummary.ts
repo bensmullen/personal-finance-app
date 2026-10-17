@@ -1,6 +1,14 @@
 import type { PersonalDraft } from "../../src/application/personalMvp.js";
 import { forecastDiagnosticMessage, type DisplayDiagnostic } from "../entityPresentation.js";
 
+/** Execution blockers precede scoped tax limitations in compact global status. */
+export function primaryForecastDiagnostic<T extends DisplayDiagnostic & { readonly severity?: string }>(diagnostics: readonly T[]): T | undefined {
+  return diagnostics.find(item => item.code === "MORTGAGE_REFINANCE_UNSUPPORTED")
+    ?? diagnostics.find(item => item.entityType !== "tax_capability" && item.severity === "error")
+    ?? diagnostics.find(item => item.severity === "error")
+    ?? diagnostics[0];
+}
+
 /** Normal diagnostics have a bounded problem and an honest next action. */
 export function diagnosticSummary(diagnostic: DisplayDiagnostic, model?: PersonalDraft) {
   const explanation = forecastDiagnosticMessage(diagnostic, model);

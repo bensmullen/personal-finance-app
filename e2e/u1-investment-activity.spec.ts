@@ -33,7 +33,7 @@ test("U1 source-holding activity owns distributions, exercise and linked retirem
   await page.getByRole("button", { name: "Import / Export", exact: true }).click();
   await page.locator('input[type="file"]').setInputFiles({ name: "synthetic-activity.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(draft)) });
   await page.getByRole("button", { name: "Import into session", exact: true }).click();
-  await page.getByRole("button", { name: "Net Worth", exact: true }).click();
+  await page.getByRole("button", { name: "Investing", exact: true }).click();
   await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
   const stock = await activity(page, ids.brokerageInvestment);
   await expect(stock.getByLabel("Source / target holding", { exact: true })).toBeDisabled();

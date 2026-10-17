@@ -37,7 +37,7 @@ import { GuidedFields } from "./authoring/GuidedFields.js";
 import { FinancialSection, focusRepair, FinancialInput, commitAtControl } from "./authoring/FieldShell.js";
 import { ScheduledActivity } from "./authoring/ScheduledActivity.js";
 import { diagnosticTargets, exactDiagnosticTargets, type DiagnosticTarget } from "./authoring/diagnosticTargets.js";
-import { diagnosticSummary } from "./authoring/diagnosticSummary.js";
+import { diagnosticSummary, primaryForecastDiagnostic } from "./authoring/diagnosticSummary.js";
 import {
   createGoldenHouseholdExampleDraft,
   editPersonalRetirementDate,
@@ -110,12 +110,13 @@ import { TaxSettlementControls } from "./forecast/TaxSettlementControls.js";
 import { FieldHelp, PercentageInput } from "./forecast/PercentageInput.js";
 import { DomainMechanicsPanel } from "./forecast/DomainMechanicsPanel.js";
 import { InsuranceSection, InsuredLifeEvents } from "./authoring/InsuranceSection.js";
-import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, groupDiagnostics, isCashFlowPaymentAccount, type NetWorthSection } from "./entityPresentation.js";
+import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, groupDiagnostics, isCashFlowPaymentAccount, belongsToNetWorthSection, entitySummary, type NetWorthSection } from "./entityPresentation.js";
 import { calculationFingerprint } from "../src/application/interactiveForecast.js";
 import { HouseholdChart } from "./forecast/HouseholdChart.js";
 import { MonthlyMoneyPanel } from "./forecast/MonthlyMoneyPanel.js";
 import { ForecastDetails, LazyExplanation, ExplanationCache } from "./forecast/details.js";
 import { ResultExplanationCache } from "./forecast/explanations.js";
+import { FINANCIAL_DESTINATIONS, financialDestination } from "./navigation.js";
 import type { ForecastView } from "./forecast/controller.js";
 
 type FinancialExplanation = ReturnType<typeof resolveHouseholdExplanation>;
@@ -123,6 +124,7 @@ const FinancialResultModels = createContext<{ model?: PersonalDraft; baseline?: 
   reviewTarget?: (target: DiagnosticTarget) => void; reviewMortgageFunding?: (liabilityId: string) => void; importCorrection?: () => void;
   reviewContributions?: (investmentId?: string, kind?: "personal" | "payroll") => void;
   reviewInsurance?: (policyId: string) => void;
+  reviewMortgageOperations?: () => void;
   explanations?: { baseline: ResultExplanationCache<FinancialExplanation>; comparison: ResultExplanationCache<FinancialExplanation> } }>({});
 
 type Primary = "Overview" | "Money" | "Net Worth" | "Plan" | "Settings";
@@ -148,17 +150,10 @@ const resolveExplanationMeasured = (scope: BrowserPerformanceRequest | undefined
     if (scope?.active && started !== undefined && ended !== undefined) recordBrowserDuration("ui.explanation_resolution", ended - started, scope.context);
   }
 };
-const NAV: readonly Primary[] = [
-  "Overview",
-  "Money",
-  "Net Worth",
-  "Plan",
-  "Settings",
-];
 const SUBNAV: Record<Primary, readonly string[]> = {
   Overview: ["How am I doing?"],
   Money: ["Cash Flow", "Income", "Spending", "Accounts", "Insurance & coverage"],
-  "Net Worth": ["Overview", "Cash & bank accounts", "Investments & retirement", "Property & other assets", "Debt"],
+  "Net Worth": ["Overview", "Cash & bank accounts", "Investments & retirement", "Real Estate", "Other Assets", "Property & other assets", "Debt"],
   Plan: [
     "Current Plan",
     "Life Events",
@@ -270,6 +265,32 @@ export function PersonalFinanceApp() {
   useEffect(() => { if (browserRequest.current !== undefined) browserRequest.current.active = false; });
   const [primary, setPrimary] = useState<Primary>("Overview");
   const [subnav, setSubnav] = useState("How am I doing?");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const morePanel = useRef<HTMLElement>(null);
+  const destination = financialDestination(primary, subnav);
+  useEffect(() => {
+    if (!moreOpen) return;
+    morePanel.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const dismiss = () => { setMoreOpen(false); moreButton.current?.focus(); };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); dismiss(); }
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !morePanel.current?.contains(event.target) && !moreButton.current?.contains(event.target)) dismiss();
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      if (event.target instanceof Node && !morePanel.current?.contains(event.target) && !moreButton.current?.contains(event.target)) setMoreOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("focusin", onFocusIn);
+    };
+  }, [moreOpen]);
   const [setupStep, setSetupStep] = useState(0);
   const [forecastScope, setForecastScope] =
     useState<ForecastRequest["scope"]>("cash_flow");
@@ -498,9 +519,11 @@ export function PersonalFinanceApp() {
     setNotice("Exact saved bytes exported as a recovery backup");
   };
 
-  const navigate = (next: Primary) => {
+  const navigate = (next: Primary, section = SUBNAV[next][0]!) => {
+    if (moreOpen) requestAnimationFrame(() => document.getElementById("main-content")?.focus());
+    setMoreOpen(false);
     setPrimary(next);
-    setSubnav(SUBNAV[next][0]!);
+    setSubnav(section);
   };
   const completeSetup = setup.handleSubmit((values) => {
     const next = createGuidedSetupDraft({
@@ -679,6 +702,10 @@ export function PersonalFinanceApp() {
       focusRepair(control ?? setup);
     });
   };
+  const openForecastDates = () => {
+    navigate("Plan", "Current Plan");
+    requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>('[data-authoring-scope="plan-horizon"] [aria-label="Simulation end"]')));
+  };
   const runHouseholdForecast = () => {
     const resolved = resolvePersonalSessionSettings(sessionSettings, "cash_flow");
     if (!resolved.request) { setRunSettingsError(resolved.error ?? "Run settings are not valid."); return; }
@@ -735,7 +762,9 @@ export function PersonalFinanceApp() {
       },
       importCorrection: () => { navigate("Settings"); setSubnav("Import / Export"); },
       reviewMortgageFunding: (id) => { navigate("Net Worth"); setSubnav("Debt"); requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>(`[data-repair="${CSS.escape(`mortgage:${id}:mortgageFunding`)}"]`))); },
+      reviewMortgageOperations: () => { navigate("Net Worth", "Debt"); requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>('[aria-label="Mortgage operations"]'))); },
       reviewTarget: (target) => {
+        if (target.type === "Asset sources") { navigate("Net Worth", "Property & other assets"); return; }
         if (!target.objectType) { openForecastSetup(target.field ? { target: target.field, message: target.label } : undefined); return; }
         setEntityRepair({ objectType: target.objectType, objectId: target.id, field: target.editable ? target.field ?? "" : "", token: randomId() });
       } }}>
@@ -765,26 +794,38 @@ export function PersonalFinanceApp() {
             </>
           )}
         </div>
-        <button className="avatar" aria-label="Open model settings" onClick={() => { navigate("Settings"); setSubnav("Model Settings"); }}>
-          ME
+        <button className="secondary settings-button" onClick={() => navigate("Settings")}>
+          Settings
         </button>
       </header>
       <nav className="primary-nav" aria-label="Primary navigation">
-        {NAV.map((item) => (
+        {FINANCIAL_DESTINATIONS.map((item) => (
           <button
-            key={item}
-            className={primary === item ? "active" : ""}
-            aria-current={primary === item ? "page" : undefined}
-            onClick={() => navigate(item)}
+            key={item.label}
+            className={`${destination === item.label ? "active" : ""} ${["Real Estate", "Other Assets", "Debt"].includes(item.label) ? "desktop-destination" : ""}`}
+            aria-current={destination === item.label ? "page" : undefined}
+            onClick={() => navigate(item.owner, item.section)}
           >
-            {item}
+            {item.label}
           </button>
         ))}
+        <button ref={moreButton} className="mobile-more" aria-expanded={moreOpen} aria-controls="more-destinations" onClick={() => setMoreOpen(!moreOpen)}>More</button>
       </nav>
+      {moreOpen && <nav ref={morePanel} id="more-destinations" className="more-destinations" aria-label="More destinations">
+        {FINANCIAL_DESTINATIONS.filter(item => ["Real Estate", "Other Assets", "Debt"].includes(item.label)).map(item => <button key={item.label} onClick={() => navigate(item.owner, item.section)}>{item.label}</button>)}
+        <button onClick={() => navigate("Settings", "Household & People")}>Household &amp; People</button>
+        <button onClick={() => { navigate("Settings", "Import / Export"); if (persistenceMode === "enabled") void saveToBrowser(); else exportModel(); }}>Save / Return</button>
+        <button onClick={() => navigate("Net Worth", "Property & other assets")}>Property &amp; other assets sources</button>
+        <button onClick={() => navigate("Settings", "Model Settings")}>Model Settings</button>
+        <button onClick={() => navigate("Settings", "Technical diagnostics")}>Technical Details</button>
+        {(["Money", "Plan"] as const).map(owner => <div key={owner}><p className="eyebrow">{owner === "Money" ? "Cash sources" : "Planning tasks"}</p>{SUBNAV[owner].map(section => <button key={section} onClick={() => navigate(owner, section)}>{section}</button>)}</div>)}
+        <button onClick={() => navigate("Net Worth", "Investments & retirement")}>Investments &amp; retirement</button>
+        <button onClick={() => navigate("Settings", "Import / Export")}>Data Management</button>
+      </nav>}
       <div className="workspace">
-        <nav className="subnav" aria-label={`${primary} sections`}>
-          <p className="eyebrow">{primary}</p>
-          {SUBNAV[primary].map((item) => (
+        <nav className="subnav" aria-label={`${destination} sections`}>
+          <p className="eyebrow">{destination}</p>
+          {SUBNAV[primary].filter(item => !["Real Estate", "Other Assets", "Debt"].includes(item)).map((item) => (
             <button
               key={item}
               className={subnav === item ? "active" : ""}
@@ -802,14 +843,28 @@ export function PersonalFinanceApp() {
           </div>
         </nav>
         <main id="main-content" tabIndex={-1} style={{ minWidth: 0 }}>
+          <section className="household-summary" aria-label="Household current summary">
+            <div><p className="eyebrow">{objectEntries(draft, "Household").map(item => objectLabel("Household", item)).join(" · ") || "Household"} · as of {sessionSettings.asOf}</p>
+              <p>Recorded current position · {position!.status} · {sessionSettings.baseCurrency}</p></div>
+            <dl><div><dt>Cash</dt><dd>{position!.cash?.display ?? "Unavailable"}</dd></div><div><dt>Debt</dt><dd>{position!.liabilities?.display ?? "Unavailable"}</dd></div><div><dt>Net worth</dt><dd>{position!.netWorth?.display ?? "Unavailable"}</dd></div></dl>
+            <details><summary>Sources &amp; basis</summary><p>Current-position read model from this household’s recorded accounts, holdings, assets and liabilities at {sessionSettings.asOf}; data cutoff {sessionSettings.dataCutoff}. These are current inputs, separate from forecast results.</p>
+              <button onClick={() => navigate("Money", "Accounts")}>Review accounts</button> <button onClick={() => navigate("Net Worth", "Debt")}>Review debt</button> <button onClick={() => navigate("Net Worth", "Property & other assets")}>Review asset sources</button></details>
+          </section>
           <ForecastStatus label="Household forecast" state={interactive.baseline} />
+          {interactive.available && !setupChangesPending && <button className="secondary forecast-update" onClick={runHouseholdForecast}>Update forecast</button>}
+          {settingsProblem && <p className="compact-blocker" role="alert">{settingsProblem} <button onClick={openForecastDates}>Review forecast dates</button></p>}
+          {setupMissing.filter(item => item.target !== "taxSetup").length > 0 && <section className="compact-blocker" aria-label="Required forecast corrections"><ul>{setupMissing.filter(item => item.target !== "taxSetup").map(item => <li key={item.target}><button onClick={() => openForecastSetup(item)}>{item.message}</button></li>)}</ul></section>}
+          {(!interactive.available || setupChangesPending) && <p className="compact-blocker" role="status">{setupMissing[0]?.message ?? "Forecast setup needs confirmation."} <button onClick={() => openForecastSetup(setupMissing[0])}>Review setup</button></p>}
+          {issues.length > 0 && <p className="compact-blocker" role="alert">{issues.length} recorded fact issues require review before relying on forecast results. <button onClick={() => { const panel = document.querySelector<HTMLDetailsElement>(".task-readiness"); if (panel) { panel.open = true; focusRepair(panel); } }}>Review recorded facts</button></p>}
+          <details className="task-readiness">
+          <summary>{issues.length ? "Recorded facts need attention" : setupChangesPending ? "Forecast setup changed" : !interactive.available ? "Forecast needs setup" : taxSetupProblem ? "Tax setup needs attention" : "Forecast actions & setup"}</summary>
+          {(!interactive.available || setupChangesPending) && <p>{setupMissing[0]?.message ?? "Apply the household forecast setup in Current Plan."}</p>}
           {setupChangesPending && <section className="forecast-status stale" role="status" aria-label="Forecast setup changes"><strong>Update needed · setup choices changed</strong><span>The retained forecast uses the last applied setup.</span><button onClick={() => openForecastSetup()}>Review &amp; apply setup</button></section>}
           {taxSetupProblem && interactive.available && <section className="panel capability" aria-label="Tax forecast needs setup"><strong>Needs setup · Tax payments &amp; refunds</strong><p>{taxSetupProblem}</p><button onClick={() => openForecastSetup()}>Set up tax payments &amp; refunds</button></section>}
-          {interactive.available && !setupChangesPending ? <button className="primary" onClick={runHouseholdForecast}>Update forecast</button> : <section className="panel capability" aria-label="Forecast setup checklist">
+          {(!interactive.available || setupChangesPending) && <section className="panel capability" aria-label="Forecast setup checklist">
             <h2>Needs setup · household forecast not run</h2>
             <p>Loading or importing a model clears session-only forecast choices. Complete these choices to run this household; saved purchases and contributions remain in the plan.</p>
             {setupMissing.length > 0 && <ul>{setupMissing.map(item => <li key={item.target}><button type="button" onClick={() => openForecastSetup(item)}>{item.message}</button></li>)}</ul>}
-            {settingsProblem && <p role="alert">{settingsProblem} <button onClick={() => { navigate("Settings"); setSubnav("Model Settings"); }}>Review forecast dates</button></p>}
             {!setupMissing.length && !settingsProblem && <p>Required choices are complete. Apply setup &amp; run forecast in Current Plan.</p>}
             <button className="primary" onClick={() => openForecastSetup()}>Complete forecast setup</button>
           </section>}
@@ -824,19 +879,18 @@ export function PersonalFinanceApp() {
               return <li key={index}>{name} · {presentation?.label ?? "Recorded relationship"}: {repairable ? "Review this fact before relying on the forecast." : "This recorded fact needs correction. Import corrected records; it cannot be edited here."}
                 {!repairable && <button onClick={() => { navigate("Settings"); setSubnav("Import / Export"); }}>Import corrected records</button>}
                 {repairable && presentation && type && issue.objectId && <button onClick={() => {
-                  const location: Record<PersonalObjectType, [Primary, string]> = { Household: ["Settings", "Household & People"], Person: ["Settings", "Household & People"], Account: ["Money", "Accounts"], Income: ["Money", "Income"], Expense: ["Money", "Spending"], Investment: ["Net Worth", "Investments & retirement"], Asset: ["Net Worth", "Property & other assets"], Liability: ["Net Worth", "Debt"], Assumption: ["Plan", "Assumptions"], Scenario: ["Plan", "What If?"] };
-                  const [page, section] = location[type]; navigate(page); setSubnav(section);
                   setEntityRepair({ objectType: type, objectId: issue.objectId!, field: issue.field!, token: randomId() });
                 }}>Review {presentation.label.toLowerCase()}</button>}
               </li>;
             })}</ul>
             <details><summary>Technical saved-fact details</summary><pre>{JSON.stringify(issues, null, 2)}</pre></details>
           </section>}
+          </details>
           {primary === "Plan" && subnav === "Compare Plans" && <ForecastStatus label="Household comparison" state={interactive.comparison} />}
 
           {notice && (
             <div className="notice" role="status">
-              {notice}
+              <span>{notice}</span>
               <button aria-label="Dismiss" onClick={() => setNotice("")}>
                 ×
               </button>
@@ -854,6 +908,9 @@ export function PersonalFinanceApp() {
               }}
             />
           )}
+          {primary === "Net Worth" && (subnav === "Real Estate" || subnav === "Other Assets") && <AssetSection draft={draft} property={subnav === "Real Estate"} edit={(type, id) => setEntityRepair({ objectType: type, objectId: id, field: "", token: randomId() })} />}
+          {primary === "Net Worth" && subnav === "Investments & retirement" && <section className="panel section-outlook" aria-label="Investing outlook"><p className="eyebrow">Investing</p><h1>Your investments</h1><p>{objectEntries(draft, "Investment").length ? "Recorded holdings are listed by account below. Performance attribution is not available in this view." : "No investment holdings recorded. Add only accounts and holdings you own; no returns or contributions are assumed."}</p><p className="chart-placeholder">Account outlook · no supported attribution chart yet</p><a href="#investment-sources">Review investment sources</a></section>}
+          {primary === "Net Worth" && subnav === "Debt" && <section className="panel section-outlook" aria-label="Debt outlook"><p className="eyebrow">Debt</p><h1>Your borrowing</h1><p>Current household liabilities: {position!.liabilities?.display ?? "Unavailable"}. Source: recorded liability balances.</p><p className="chart-placeholder">Liability balance outlook · chart not yet available</p><a href="#debt-sources">Review loan sources</a></section>}
           {primary === "Money" && subnav === "Cash Flow" && (
             <CashFlow
               position={position!}
@@ -872,7 +929,7 @@ export function PersonalFinanceApp() {
             />
           )}
           {primary === "Net Worth" && subnav === "Debt" && (
-            <>
+            <div id="debt-sources">
               <MonthlyEvidence draft={draft} forecast={householdForecast} mode="debt" />
               <EditorHub
                 currency={sessionSettings.baseCurrency}
@@ -891,14 +948,15 @@ export function PersonalFinanceApp() {
                 forecast={forecast}
                 error={runSettingsError}
               />
-            </>
+            </div>
           )}
           {primary === "Plan" && subnav === "Current Plan" && (
             <>
+              <section className="panel section-outlook" aria-label="Planning outlook"><p className="eyebrow">Planning</p><h1>Your current plan</h1><p>Projection dates: {String(currentPlan(draft)?.start_date ?? "Not recorded")} → {String(currentPlan(draft)?.end_date ?? "Not recorded")} (exclusive end). Source: Current Plan.</p><p className="chart-placeholder">Retirement income composition · chart not yet available; no benefits or withdrawals assumed</p><a href="#forecast-setup">Review forecast setup</a></section>
               <HouseholdPlan
                 draft={draft}
                 settings={sessionSettings}
-                setSettings={setSessionSettings}
+                setSettings={value => { setRunSettingsError(""); setSessionSettings(value); }}
                 setDraft={updateCanonicalModel}
                 forecast={householdForecast}
                 run={runHouseholdForecast}
@@ -1011,6 +1069,7 @@ export function PersonalFinanceApp() {
           )}
           {EDITORS[subnav] &&
             !(primary === "Net Worth" && subnav === "Debt") && (
+              <div id={subnav === "Investments & retirement" ? "investment-sources" : undefined}>
               <EditorHub
                 currency={sessionSettings.baseCurrency}
                 types={EDITORS[subnav]!}
@@ -1028,6 +1087,7 @@ export function PersonalFinanceApp() {
                 metadata={metadata}
                 setNotice={setNotice}
               />
+              </div>
             )}
           {primary === "Money" && subnav === "Income" && <><IncomeReceivingAccount draft={draft} value={cashFlowExecutionAccountId} onChange={setCashFlowExecutionAccountId} /><AnnualFactsOwner draft={draft} owner="income" /></>}
           {primary === "Settings" && subnav === "Household & People" && <AnnualFactsOwner draft={draft} owner="people" />}
@@ -1205,17 +1265,33 @@ function SetupWizard({
 }
 
 function ForecastStatus({ label, state }: { label: string; state: ForecastView }) {
+  const { model: currentModel, reviewMortgageOperations } = useContext(FinancialResultModels);
+  const diagnosticModel = state.latestResult?.status === "unavailable" ? currentModel : state.resultModel;
+  const diagnostics = (state.latestResult ?? state.lastGoodResult)?.diagnostics ?? [];
+  const firstDiagnostic = primaryForecastDiagnostic(diagnostics);
+  const blocked = state.lifecycle === "unsupported";
+  const summary = firstDiagnostic && diagnosticSummary(firstDiagnostic, diagnosticModel);
   return <section className={`forecast-status ${state.stale ? "stale" : ""}`} role="status" aria-label={`${label} status`}
     data-lifecycle={state.lifecycle} data-pending={state.pending} data-fingerprint={state.fingerprint} data-request-id={state.requestId}>
-    <strong>{label} · {state.pending ? "Running" : state.stale ? "Update needed" : state.lifecycle === "completed" ? "Ready" : state.lifecycle === "incomplete" ? "Partially modeled" : state.lifecycle === "unsupported" ? "Unsupported" : state.lifecycle === "idle" ? "Needs setup" : "Update needed"}</strong>
+    <strong>{label} · {state.pending ? "Running" : state.lifecycle === "error" ? "Failed" : state.stale ? "Update needed" : state.lifecycle === "completed" ? "Ready" : state.lifecycle === "incomplete" ? "Partially modeled" : state.lifecycle === "unsupported" ? "Unsupported" : state.lifecycle === "idle" ? "Needs setup" : "Update needed"}</strong>
     {state.pending && <span>{state.lastGoodResult ? "Recalculating" : "Running"} deterministic forecast…</span>}
-    {state.stale && <span>Old result — inputs changed; these numbers are not current. Update forecast or complete setup below.</span>}
+    {state.stale && <span>Old result — inputs changed; these numbers are not current.</span>}
     {!state.pending && !state.stale && state.lifecycle === "completed" && <span>Current result</span>}
-    {!state.pending && !state.stale && state.lifecycle === "incomplete" && <><span>Forecast ran. Some outputs are incomplete; review the scoped reasons below before using after-tax totals.</span>
-      {state.lastGoodResult && <DiagnosticList diagnostics={state.lastGoodResult.diagnostics ?? []} model={state.resultModel} />}</>}
-    {state.lifecycle === "unsupported" && <span>Review the guidance below, correct the supported setup or import a supported model, then Update forecast.</span>}
-    {state.message && <span>{state.lifecycle === "unsupported" && state.latestResult?.status === "unavailable" && state.latestResult.diagnostics.length > 0 ? "Review the forecast guidance below." : friendlyText(state.message)}</span>}
-    {state.lifecycle === "unsupported" && state.latestResult?.status === "unavailable" && state.latestResult.diagnostics.length > 0 && <DiagnosticList diagnostics={state.latestResult.diagnostics} />}
+    {!state.pending && !state.stale && state.lifecycle === "incomplete" && <><span>Some outputs are incomplete; after-tax totals may be unavailable.</span>
+      </>}
+    {blocked && !summary && <span>Review the guidance below, correct the supported setup or import a supported model, then Update forecast.</span>}
+    {state.message && !(blocked && summary) && <span>{friendlyText(state.message)}</span>}
+    {firstDiagnostic && summary && !state.pending && <div className="forecast-primary-guidance">
+      <p>{summary.problem}</p>
+      {blocked && <>
+        <p>{summary.remedy}</p>
+        {firstDiagnostic.code === "MORTGAGE_REFINANCE_UNSUPPORTED"
+          ? <button type="button" onClick={reviewMortgageOperations}>Review saved refinance</button>
+          : <>{diagnosticModel && <DiagnosticReferences targets={diagnosticTargets(diagnosticModel, firstDiagnostic)} />}
+            {("category" in firstDiagnostic && (firstDiagnostic.category === "payment_funding" || firstDiagnostic.category === "settlement_timing")) && <ForecastSetupLink target="taxSetup" />}</>}
+      </>}
+    </div>}
+    {diagnostics.length > 0 && <details className="forecast-guidance"><summary>Review forecast limitations</summary><DiagnosticList diagnostics={diagnostics} model={diagnosticModel} /></details>}
     <details><summary>Technical forecast details</summary>
       <dl><dt>Lifecycle</dt><dd>{state.lifecycle}</dd><dt>Request</dt><dd>{state.requestId ?? "Not submitted"}</dd>
         <dt>Cache</dt><dd>{state.cacheState ?? "Not applicable"}</dd>
@@ -1223,6 +1299,25 @@ function ForecastStatus({ label, state }: { label: string; state: ForecastView }
       </dl>
     </details>
   </section>;
+}
+
+function AssetSection({ draft, property, edit }: { draft: PersonalDraft; property: boolean; edit: (type: PersonalObjectType, id: string) => void }) {
+  const assets = objectEntries(draft, "Asset").filter(item => belongsToNetWorthSection(draft, "Asset", item, "Property & other assets") && (item.asset_type === "real_estate") === property);
+  const title = property ? "Real Estate" : "Other Assets";
+  return <section className="panel section-outlook" aria-label={`${title} outlook`}>
+    <p className="eyebrow">{title}</p><h1>{property ? "Your property" : "Your other assets"}</h1>
+    <p className="chart-placeholder">{assets.length ? "Recorded assets available · historical value and attribution chart not yet supported" : `No ${property ? "property" : "other assets"} recorded · no chart data`}</p>
+    <p>Source: Net Worth → Property &amp; other assets. Recorded acquisition cost is not current market value or home equity.</p>
+    {assets.length ? <ul className="asset-sources">{assets.map(item => <li key={objectId("Asset", item)}><strong>{objectLabel("Asset", item)}</strong><p>{entitySummary("Asset", item, draft)}</p>
+      <button onClick={() => edit("Asset", objectId("Asset", item))}>Edit {objectLabel("Asset", item)}</button>
+      {property && objectEntries(draft, "Liability").filter(debt => debt.collateral_id === item.asset_id).map(debt => <p key={objectId("Liability", debt)}>Secured debt: {objectLabel("Liability", debt)} <button onClick={() => edit("Liability", objectId("Liability", debt))}>Review loan</button></p>)}
+    </li>)}</ul> : <p>Add a supported source asset in the owner editor when you have its facts.</p>}
+    <AssetOwnerLink />
+  </section>;
+}
+function AssetOwnerLink() {
+  const { reviewTarget } = useContext(FinancialResultModels);
+  return <button onClick={() => reviewTarget?.({ id: "", type: "Asset sources", label: "Property & other assets", editable: false })}>Open asset sources</button>;
 }
 
 function Overview({
@@ -1254,17 +1349,6 @@ function Overview({
         text="A clear view of your current position and the modeled path ahead."
       />
       <p className="scope-badge">Current position · {position.status}</p>
-      <section className="kpi-grid">
-        {cards.map(([label, value]) => (
-          <article className="kpi" key={label}>
-            <span>{label}</span>
-            <strong>
-              {value?.display ?? "Unavailable"}
-            </strong>
-            {!value && <small>Needs supported model data</small>}
-          </article>
-        ))}
-      </section>
       <section className="panel outlook">
         <div className="panel-head">
           <div>
@@ -1296,12 +1380,15 @@ function Overview({
                 one authoritative reconciled run.
               </p>
             )}
-            <button className="primary" onClick={run}>
+            <button className="secondary" onClick={run}>
               Run household forecast
             </button>
           </div>
         )}
       </section>
+      <details className="panel"><summary>Current position details</summary><section className="kpi-grid">
+        {cards.map(([label, value]) => <Kpi key={label} label={label} value={value?.display} />)}
+      </section></details>
       <section className="insight-grid">
         <article className="panel">
           <h3>Next best action</h3>
@@ -1349,19 +1436,10 @@ function CashFlow({
   return (
     <>
       <PageHead
-        eyebrow="Money · Cash Flow"
+        eyebrow="Cash · Cash Flow"
         title="What comes in and goes out?"
         text="Follow monthly income, spending, and liquidity without losing the exact source values."
       />
-      <section className="kpi-grid three">
-        <Kpi label="Monthly income" value={position.monthlyIncome?.display} />
-        <Kpi
-          label="Monthly spending"
-          value={position.monthlySpending?.display}
-        />
-        <Kpi label="Net cash flow" value={position.monthlyCashFlow?.display} />
-      </section>
-      <MonthlyEvidence draft={draft} forecast={forecast} mode="paycheck" />
       <section className="panel">
         <div className="panel-head">
           <h2>Income vs spending</h2>
@@ -1387,9 +1465,15 @@ function CashFlow({
             fallback={forecast.message}
           />
         ) : (
-          <Empty text="Run the supported cash-flow scope to see a trend and detailed table." />
+          <Empty text="No supported cash forecast yet. Run the household forecast to see its cash trend; no deposits or spending are inferred." />
         )}
       </section>
+      <section className="kpi-grid three">
+        <Kpi label="Monthly income" value={position.monthlyIncome?.display} />
+        <Kpi label="Monthly spending" value={position.monthlySpending?.display} />
+        <Kpi label="Net cash flow" value={position.monthlyCashFlow?.display} />
+      </section>
+      <MonthlyEvidence draft={draft} forecast={forecast} mode="paycheck" />
     </>
   );
 }
@@ -2766,15 +2850,15 @@ function DiagnosticList({
   model?: PersonalDraft;
 }) {
   const currentModel = useContext(FinancialResultModels).model;
-  const groups = groupDiagnostics(diagnostics);
+  const groups = groupDiagnostics(diagnostics).sort((left, right) => Number("severity" in right.diagnostic && right.diagnostic.severity === "error") - Number("severity" in left.diagnostic && left.diagnostic.severity === "error"));
   const summaries = [...new Map(groups.map(group => [forecastDiagnosticMessage(group.diagnostic, model ?? currentModel), group])).entries()];
   return (
     <div className="capability">
-      <strong>{diagnostics.every(item => item.entityType === "tax_capability") ? "Partially modeled · tax limitations" : "Forecast needs attention"}</strong>
+      <strong>{diagnostics.length > 0 && diagnostics.every(item => item.entityType === "tax_capability") ? "Partially modeled · tax limitations" : "Forecast needs attention"}</strong>
       {diagnostics.length === 0 ? (
         <p>The forecast is unavailable. Review the original explanation in Technical diagnostic details; no more specific editor remedy is available.</p>
       ) : (
-        summaries.map(([_message, group]) => (
+        summaries.slice(0, 1).map(([_message, group]) => (
           <div key={group.key} data-diagnostic-root={group.key}>
             <p>{diagnosticSummary(group.diagnostic, model ?? currentModel).problem}</p>
             <p>{diagnosticSummary(group.diagnostic, model ?? currentModel).remedy}</p>
@@ -2784,6 +2868,12 @@ function DiagnosticList({
           </div>
         ))
       )}
+      {summaries.length > 1 && <details><summary>Review {summaries.length - 1} more scoped limitations</summary>{summaries.slice(1).map(([_message, group]) => <section key={group.key} data-diagnostic-root={group.key}>
+        <p>{diagnosticSummary(group.diagnostic, model ?? currentModel).problem}</p><p>{diagnosticSummary(group.diagnostic, model ?? currentModel).remedy}</p>
+        {(model ?? currentModel) && group.diagnostic.category?.startsWith("filing_status") && group.diagnostic.entityId && group.diagnostic.taxYear && <AnnualFilingRepair draft={(model ?? currentModel)!} personId={group.diagnostic.entityId} year={group.diagnostic.taxYear} />}
+        {(group.diagnostic.category === "payment_funding" || group.diagnostic.category === "settlement_timing") && <ForecastSetupLink target="taxSetup" />}
+        {(model ?? currentModel) && <DiagnosticReferences targets={diagnosticTargets((model ?? currentModel)!, group.diagnostic)} />}
+      </section>)}</details>}
       <details><summary>Technical diagnostic details</summary>
         {groups.map(group => <details key={group.key}><summary>{group.diagnostic.code} · {group.diagnostic.category ?? group.diagnostic.entityType ?? "execution"} · {group.diagnostic.jurisdiction ?? "household"} · {group.occurrences} occurrences · {group.affectedOutputs.length} affected outputs</summary>
           <p>{forecastDiagnosticMessage(group.diagnostic, model ?? currentModel)}</p>
@@ -3281,6 +3371,9 @@ function HouseholdForecastVisual({
         </span>
       </div>
       {forecast.stoppedAt && <ForecastCutoff forecast={forecast} draft={financialModel} />}
+      <Profiler id="forecast-chart" onRender={(_id, _phase, duration) => {
+        if (scope?.active) recordBrowserDuration("ui.chart_render", duration, scope.context);
+      }}><HouseholdChart forecast={forecast} cashFlowOnly={cashFlowOnly} /></Profiler>
       {!!forecast.projectedLaw?.length && <section className="capability" aria-label="Projected law forecast basis">
         <strong>Projected current law · forecast assumptions</strong>
         <p>Future statutory limits use explicitly projected current law where verified coverage ends. Personal filing, income and coverage facts need their own annual sources; they are not carried forward. Later verified rules supersede projections.</p>
@@ -3316,11 +3409,6 @@ function HouseholdForecastVisual({
           <Kpi label="Ending liabilities" value={householdMoney(ending?.totalLiabilities)} />
         </section>
       )}
-      <div>
-          <Profiler id="forecast-chart" onRender={(_id, _phase, duration) => {
-            if (scope?.active) recordBrowserDuration("ui.chart_render", duration, scope.context);
-          }}><HouseholdChart forecast={forecast} cashFlowOnly={cashFlowOnly} /></Profiler>
-        </div>
       <ForecastDetails result={forecast} rows={forecast.points} label="forecast details">
         {(rows) => (
       <div className="table-scroll" role="region" aria-label="Scrollable financial table" tabIndex={0}>
