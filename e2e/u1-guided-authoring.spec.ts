@@ -461,8 +461,8 @@ test("Owner repair: saved investment actions and linked eligibility summaries ar
   await expect(activity).not.toContainText("IRA-DEMO");
   await expect(activity.getByRole("button", { name: "Edit event", exact: true })).toHaveCount(0);
   const ira = page.locator("article").filter({ has: page.locator("strong", { hasText: /^Personal Roth IRA$/ }) });
-  await ira.locator(":scope > details > summary").filter({ hasText: /^Saved annual eligibility$/ }).click();
-  const eligibility = ira.getByRole("region", { name: "Eligibility for IRA-DEMO" }).last();
+  const eligibility = ira.locator(':scope > details > section[aria-label="Eligibility for IRA-DEMO"]');
+  await open(eligibility.locator(".."), "Saved annual eligibility");
   await expect(eligibility).toContainText("Taylor Example"); await expect(eligibility).toContainText("2026");
   await eligibility.getByRole("button", { name: "Review/edit eligibility for IRA-DEMO", exact: true }).click();
   const personal = page.getByRole("region", { name: "Saved investment purchases" });
@@ -472,7 +472,7 @@ test("Owner repair: saved investment actions and linked eligibility summaries ar
   await expect(personal).toContainText("From date of birth · Household & People");
   await personal.getByRole("button", { name: "Save investment purchase", exact: true }).click();
   await navigate(page, "Net Worth", "Investments & retirement");
-  await ira.locator(":scope > details > summary").filter({ hasText: /^Saved annual eligibility$/ }).click();
+  await open(eligibility.locator(".."), "Saved annual eligibility");
   await expect(eligibility.locator("dd").filter({ hasText: /^36$/ })).toBeVisible();
   expect(errors).toEqual([]);
 });

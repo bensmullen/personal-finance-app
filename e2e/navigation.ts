@@ -2,6 +2,8 @@ import type { Page } from "@playwright/test";
 
 /** Follow the same visible destination/More navigation at both supported sizes. */
 export async function clickFinancialDestination(page: Page, label: string) {
+  const more = page.getByRole("button", { name: "More", exact: true });
+  if (await more.isVisible() && await more.getAttribute("aria-expanded") === "true") await page.keyboard.press("Escape");
   const destination = page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: label, exact: true });
   if (await destination.isVisible()) { await destination.click(); return; }
   await page.getByRole("button", { name: "More", exact: true }).click();

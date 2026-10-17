@@ -517,6 +517,10 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   const mortgage = await openDebtOwner(page);
   await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("359");
   await expect(mortgage).toContainText("Schedule mismatch");
+  const correction = page.getByRole("region", { name: "Required forecast corrections" }).getByRole("button", { name: /Schedule differs from recorded maturity/ });
+  await expect(correction).toBeVisible();
+  await correction.click();
+  await expect(mortgage.getByLabel("Number of monthly payments", { exact: true })).toBeFocused();
   await expect(mortgage.getByRole("button", { name: "Use calculated contractual maturity 2051-12-01", exact: true })).toBeVisible();
   await mortgage.getByRole("button", { name: "Use calculated contractual maturity 2051-12-01", exact: true }).click();
   await expect(mortgage).toContainText("Contractual final payment / maturity: 2051-12-01");
@@ -1198,7 +1202,7 @@ test("R4 editor uses friendly financial identity and distinct expert/technical d
   await opener.focus();
   await page.keyboard.press("Enter");
   const editor = page.getByRole("dialog", { name: "Edit Income" });
-  await expect(editor.getByRole("button", { name: "Close editor" })).toBeFocused();
+  await expect(editor.getByLabel("Source / name", { exact: true })).toBeFocused();
   await openEditorFinancialDetails(editor);
   await expect(editor.getByLabel("Owner", { exact: true })).toContainText("Taylor Example");
   await expect(editor.getByLabel("Amount", { exact: true })).toHaveValue("9000.00");
@@ -1245,7 +1249,7 @@ test("R4 narrow and wide layouts retain readable status, chart and keyboard edit
   await useShortHorizon(page);
   for (const width of [390, 1440]) {
     await page.setViewportSize({ width, height: 900 });
-    await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
+    await clickFinancialDestination(page, "Overview");
     const status = page.getByRole("status", { name: "Household forecast status" });
     await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
     await expect(status).toContainText(/Ready|Partially modeled/);
@@ -1272,6 +1276,7 @@ test("R4 narrow and wide layouts retain readable status, chart and keyboard edit
     const opener = page.getByRole("button", { name: /Example salary/ });
     await opener.focus(); await page.keyboard.press("Enter");
     const editor = page.getByRole("dialog", { name: "Edit Income" });
+    await expect(editor.getByLabel("Source / name", { exact: true })).toBeFocused();
   await openEditorFinancialDetails(editor);
     await expect(editor.getByLabel("Amount", { exact: true })).toBeVisible();
     await editor.getByRole("button", { name: "Close editor" }).focus();
@@ -1338,7 +1343,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await page.getByRole("button", { name: "Investing", exact: true }).click();
   await page.locator(".subnav").getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByRole("heading", { name: "What do I own and owe?" })).toBeVisible();
-  await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("309330.29");
+  await expect(page.getByRole("region", { name: "Household current summary" }).locator("dl > div").filter({ has: page.getByText("Net worth", { exact: true }) })).toContainText("309330.29");
   await waitQueued();
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toHaveCount(0);
@@ -1403,7 +1408,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await expect(status).toHaveAttribute("data-lifecycle", "stale");
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   // A future income amount changes the forecast, not opening net worth.
-  await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("309330.29");
+  await expect(page.getByRole("region", { name: "Household current summary" }).locator("dl > div").filter({ has: page.getByText("Net worth", { exact: true }) })).toContainText("309330.29");
   await expect(page.getByText(/Requested 2026-01-01 → 2026-03-01/)).toBeVisible();
   await waitQueued(); await releaseCurrent();
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
@@ -1500,7 +1505,7 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
 
   await page.getByRole("button", { name: "Investing", exact: true }).click();
   await page.locator(".subnav").getByRole("button", { name: "Overview", exact: true }).click();
-  await expect(page.locator(".kpi").filter({ hasText: "Net worth" }).first()).toContainText("309330.29");
+  await expect(page.getByRole("region", { name: "Household current summary" }).locator("dl > div").filter({ has: page.getByText("Net worth", { exact: true }) })).toContainText("309330.29");
   await expect(page.getByText("535000", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Planning", exact: true }).click();
@@ -1575,6 +1580,10 @@ test("session settings drive horizons and block invalid run ordering", async ({
   await expect(
     page.getByText("Simulation start must be before simulation end.").first(),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Review forecast dates", exact: true }).click();
+  await expect(page.getByLabel("Simulation end", { exact: true })).toBeFocused();
+  await page.getByLabel("Simulation end", { exact: true }).fill("2026-04-01");
+  await expect(page.getByText("Simulation start must be before simulation end.", { exact: true })).toHaveCount(0);
 });
 
 test("Money cash-flow run uses its explicit scope after Plan selects investments", async ({

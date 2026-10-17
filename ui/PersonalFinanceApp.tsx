@@ -265,9 +265,30 @@ export function PersonalFinanceApp() {
   const [primary, setPrimary] = useState<Primary>("Overview");
   const [subnav, setSubnav] = useState("How am I doing?");
   const [moreOpen, setMoreOpen] = useState(false);
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const morePanel = useRef<HTMLElement>(null);
   const destination = financialDestination(primary, subnav);
   useEffect(() => {
-    if (moreOpen) document.querySelector<HTMLButtonElement>("#more-destinations button")?.focus();
+    if (!moreOpen) return;
+    morePanel.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const dismiss = () => { setMoreOpen(false); moreButton.current?.focus(); };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); dismiss(); }
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !morePanel.current?.contains(event.target) && !moreButton.current?.contains(event.target)) dismiss();
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      if (event.target instanceof Node && !morePanel.current?.contains(event.target) && !moreButton.current?.contains(event.target)) setMoreOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("focusin", onFocusIn);
+    };
   }, [moreOpen]);
   const [setupStep, setSetupStep] = useState(0);
   const [forecastScope, setForecastScope] =
@@ -680,6 +701,10 @@ export function PersonalFinanceApp() {
       focusRepair(control ?? setup);
     });
   };
+  const openForecastDates = () => {
+    navigate("Plan", "Current Plan");
+    requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>('[data-authoring-scope="plan-horizon"] [aria-label="Simulation end"]')));
+  };
   const runHouseholdForecast = () => {
     const resolved = resolvePersonalSessionSettings(sessionSettings, "cash_flow");
     if (!resolved.request) { setRunSettingsError(resolved.error ?? "Run settings are not valid."); return; }
@@ -767,7 +792,6 @@ export function PersonalFinanceApp() {
             </>
           )}
         </div>
-        <span className="mobile-session">Session draft · manual save</span>
         <button className="secondary settings-button" onClick={() => navigate("Settings")}>
           Settings
         </button>
@@ -783,14 +807,12 @@ export function PersonalFinanceApp() {
             {item.label}
           </button>
         ))}
-        <button className="mobile-more" aria-expanded={moreOpen} aria-controls="more-destinations" onClick={() => setMoreOpen(!moreOpen)}>More</button>
+        <button ref={moreButton} className="mobile-more" aria-expanded={moreOpen} aria-controls="more-destinations" onClick={() => setMoreOpen(!moreOpen)}>More</button>
       </nav>
-      {moreOpen && <nav id="more-destinations" className="more-destinations" aria-label="More destinations" onKeyDown={event => {
-        if (event.key === "Escape") { setMoreOpen(false); document.querySelector<HTMLButtonElement>(".mobile-more")?.focus(); }
-      }}>
+      {moreOpen && <nav ref={morePanel} id="more-destinations" className="more-destinations" aria-label="More destinations">
         {FINANCIAL_DESTINATIONS.filter(item => ["Real Estate", "Other Assets", "Debt"].includes(item.label)).map(item => <button key={item.label} onClick={() => navigate(item.owner, item.section)}>{item.label}</button>)}
         <button onClick={() => navigate("Settings", "Household & People")}>Household &amp; People</button>
-        <button onClick={() => navigate("Settings", "Import / Export")}>Save / Return</button>
+        <button onClick={() => { navigate("Settings", "Import / Export"); if (persistenceMode === "enabled") void saveToBrowser(); else exportModel(); }}>Save / Return</button>
         <button onClick={() => navigate("Net Worth", "Property & other assets")}>Property &amp; other assets sources</button>
         <button onClick={() => navigate("Settings", "Model Settings")}>Model Settings</button>
         <button onClick={() => navigate("Settings", "Technical diagnostics")}>Technical Details</button>
@@ -828,6 +850,8 @@ export function PersonalFinanceApp() {
           </section>
           <ForecastStatus label="Household forecast" state={interactive.baseline} />
           {interactive.available && !setupChangesPending && <button className="secondary forecast-update" onClick={runHouseholdForecast}>Update forecast</button>}
+          {settingsProblem && <p className="compact-blocker" role="alert">{settingsProblem} <button onClick={openForecastDates}>Review forecast dates</button></p>}
+          {setupMissing.filter(item => item.target !== "taxSetup").length > 0 && <section className="compact-blocker" aria-label="Required forecast corrections"><ul>{setupMissing.filter(item => item.target !== "taxSetup").map(item => <li key={item.target}><button onClick={() => openForecastSetup(item)}>{item.message}</button></li>)}</ul></section>}
           {(!interactive.available || setupChangesPending) && <p className="compact-blocker" role="status">{setupMissing[0]?.message ?? "Forecast setup needs confirmation."} <button onClick={() => openForecastSetup(setupMissing[0])}>Review setup</button></p>}
           {issues.length > 0 && <p className="compact-blocker" role="alert">{issues.length} recorded fact issues require review before relying on forecast results. <button onClick={() => { const panel = document.querySelector<HTMLDetailsElement>(".task-readiness"); if (panel) { panel.open = true; focusRepair(panel); } }}>Review recorded facts</button></p>}
           <details className="task-readiness">
@@ -839,7 +863,6 @@ export function PersonalFinanceApp() {
             <h2>Needs setup · household forecast not run</h2>
             <p>Loading or importing a model clears session-only forecast choices. Complete these choices to run this household; saved purchases and contributions remain in the plan.</p>
             {setupMissing.length > 0 && <ul>{setupMissing.map(item => <li key={item.target}><button type="button" onClick={() => openForecastSetup(item)}>{item.message}</button></li>)}</ul>}
-            {settingsProblem && <p role="alert">{settingsProblem} <button onClick={() => { navigate("Settings"); setSubnav("Model Settings"); }}>Review forecast dates</button></p>}
             {!setupMissing.length && !settingsProblem && <p>Required choices are complete. Apply setup &amp; run forecast in Current Plan.</p>}
             <button className="primary" onClick={() => openForecastSetup()}>Complete forecast setup</button>
           </section>}
@@ -931,7 +954,7 @@ export function PersonalFinanceApp() {
               <HouseholdPlan
                 draft={draft}
                 settings={sessionSettings}
-                setSettings={setSessionSettings}
+                setSettings={value => { setRunSettingsError(""); setSessionSettings(value); }}
                 setDraft={updateCanonicalModel}
                 forecast={householdForecast}
                 run={runHouseholdForecast}

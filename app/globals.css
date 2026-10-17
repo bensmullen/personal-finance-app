@@ -148,7 +148,6 @@ main#main-content { padding: 24px 32px 64px; }
 .capability { text-align: left; padding: 16px; margin-top: 12px; }
 .capability p { margin: 8px 0; }
 .mobile-more { display: none; }
-.mobile-session { display: none; }
 .forecast-update { margin-bottom: 10px; padding: 6px 12px; font-size: 12px; }
 .more-destinations { position: fixed; z-index: 8; bottom: 72px; left: 12px; right: 12px; max-height: 65vh; overflow: auto; background: white; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 12px; }
 .more-destinations button { display: block; width: 100%; padding: 12px; text-align: left; border: 0; border-radius: 6px; background: white; color: var(--green-dark); }
@@ -161,8 +160,9 @@ main#main-content { padding: 24px 32px 64px; }
   .primary-nav .mobile-more { display: block; }
   .workspace > .subnav { overflow: visible; padding: 8px 12px; }
   main#main-content { padding: 18px 16px 100px; }
-  .topbar .session-banner { display: none; }
-  .mobile-session { display: block; font-size: 11px; color: var(--muted); }
+  .app-shell > .topbar { height: auto; min-height: 64px; flex-wrap: wrap; gap: 10px; padding-block: 12px; }
+  .topbar .session-banner { display: block; flex-basis: 100%; order: 3; margin: 0; line-height: 1.5; }
+  .topbar .session-banner button { min-height: 44px; padding: 8px; }
   .settings-button { margin-left: auto; }
 }
 @media (max-width: 560px) {

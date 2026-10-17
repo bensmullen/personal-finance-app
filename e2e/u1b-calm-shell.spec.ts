@@ -30,10 +30,20 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
     await page.keyboard.press("Escape");
     await expect(more).toBeFocused();
     await expect(more).toHaveAttribute("aria-expanded", "false");
+    await more.click();
+    await page.getByRole("region", { name: "Household current summary" }).getByText("Recorded current position", { exact: false }).click();
+    await expect(destinations).toHaveCount(0);
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+    await more.click();
+    // Shared navigation must dismiss an open More panel before a primary tap.
+    await clickFinancialDestination(page, "Overview");
+    await expect(destinations).toHaveCount(0);
   }
 
+  const headings: Record<string, string> = { Overview: "How am I doing?", Cash: "What comes in and goes out?", Investing: "Your investments", "Real Estate": "Your property", "Other Assets": "Your other assets", Debt: "Your borrowing", Planning: "Your current plan" };
   for (const label of ["Overview", "Cash", "Investing", "Real Estate", "Other Assets", "Debt", "Planning"]) {
     await clickFinancialDestination(page, label);
+    await expect(page.getByRole("heading", { name: headings[label], exact: true })).toBeVisible();
     const summary = page.getByRole("region", { name: "Household current summary" });
     await expect(summary).toBeVisible();
     await expect(summary).toContainText("as of 2026-01-01");
@@ -53,6 +63,7 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
   const salary = paycheck.getByRole("button", { name: "Example salary", exact: true });
   await salary.click();
   const income = page.getByRole("dialog", { name: "Edit Income", exact: true });
+  await expect(income.getByLabel("Source / name", { exact: true })).toBeFocused();
   const amount = income.getByLabel("Amount", { exact: true });
   const original = await amount.inputValue();
   await amount.fill("12345.67");
@@ -63,7 +74,9 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
   await expect(salary).toBeFocused();
   await salary.click();
   await expect(amount).toHaveValue(original);
-  await income.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(income).toHaveCount(0);
+  await expect(salary).toBeFocused();
   expect(await exportedModel(page)).toEqual(before);
 
   await clickFinancialDestination(page, "Real Estate");
@@ -81,6 +94,16 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
   const expected = structuredClone(before);
   expected.objects.Asset.find((item: { name: string }) => item.name === "Example home").name = "Reviewed example home";
   expect(after).toEqual(expected);
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeVisible();
+  if (width === 390) {
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page.getByRole("navigation", { name: "More destinations" }).getByRole("button", { name: "Save / Return", exact: true }).click();
+    await expect(page.getByRole("button", { name: "More", exact: true })).toHaveAttribute("aria-expanded", "false");
+  } else await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Canonical model saved to this browser", { exact: true })).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Load saved model", exact: true }).click();
+  expect(await exportedModel(page)).toEqual(expected);
 
   // Missing assets/holdings cannot turn into generated chart data.
   const empty = structuredClone(before);
