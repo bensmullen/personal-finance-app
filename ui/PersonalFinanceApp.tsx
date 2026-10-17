@@ -890,7 +890,7 @@ export function PersonalFinanceApp() {
 
           {notice && (
             <div className="notice" role="status">
-              {notice}
+              <span>{notice}</span>
               <button aria-label="Dismiss" onClick={() => setNotice("")}>
                 ×
               </button>
@@ -1288,7 +1288,7 @@ function ForecastStatus({ label, state }: { label: string; state: ForecastView }
         {firstDiagnostic.code === "MORTGAGE_REFINANCE_UNSUPPORTED"
           ? <button type="button" onClick={reviewMortgageOperations}>Review saved refinance</button>
           : <>{diagnosticModel && <DiagnosticReferences targets={diagnosticTargets(diagnosticModel, firstDiagnostic)} />}
-            {(firstDiagnostic.category === "payment_funding" || firstDiagnostic.category === "settlement_timing") && <ForecastSetupLink target="taxSetup" />}</>}
+            {("category" in firstDiagnostic && (firstDiagnostic.category === "payment_funding" || firstDiagnostic.category === "settlement_timing")) && <ForecastSetupLink target="taxSetup" />}</>}
       </>}
     </div>}
     {diagnostics.length > 0 && <details className="forecast-guidance"><summary>Review forecast limitations</summary><DiagnosticList diagnostics={diagnostics} model={diagnosticModel} /></details>}
