@@ -33,7 +33,10 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
     await page.keyboard.press("Escape");
     await expect(more).toBeFocused();
     await expect(more).toHaveAttribute("aria-expanded", "false");
-    await more.click();
+    // Escape restores the opener, so keyboard users can immediately reopen it.
+    await page.keyboard.press("Enter");
+    await expect(destinations).toBeVisible();
+    await expect(more).toHaveAttribute("aria-expanded", "true");
     await page.getByRole("region", { name: "Household current summary" }).getByText("Recorded current position", { exact: false }).click();
     await expect(destinations).toHaveCount(0);
     await expect(more).toHaveAttribute("aria-expanded", "false");
