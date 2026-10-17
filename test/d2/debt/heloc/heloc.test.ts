@@ -148,6 +148,9 @@ describe("isolated sourced HELOC draw-phase proposals", () => {
     reject(rate(r, { observations: [late] }), "SOURCE_UNAVAILABLE");
     reject({ ...r, evaluatedAsOf: d("2026-01-13") }, "SOURCE_UNAVAILABLE");
     reject(rate(r, { observations: [{ ...r.rate!.observations[0]!, source: { ...source(), projectionStatus: "explicit_projected" } }] }), "SOURCE_UNAVAILABLE");
+    // A verified source dated before the underlying observation is an index
+    // chronology error, whereas projected evidence is not admissible at all.
+    reject(rate(r, { observations: [{ ...r.rate!.observations[0]!, source: source() }] }), "INDEX_UNAVAILABLE");
     reject(rate(r, { source: { ...source(), endExclusive: d("2026-01-20") } }), "SOURCE_UNAVAILABLE");
   });
 
