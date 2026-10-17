@@ -228,7 +228,7 @@ R3 SHALL implement PFA-PERF-019 through PFA-PERF-023 and satisfy the reusable ex
 
 ## 5A. D1 — Deterministic household financial-semantic readiness
 
-D1 is the original deterministic financial-semantic milestone. It implements and verifies PFA-DET-001 through PFA-DET-014 after R3's reusable execution foundation and T1A Phase B's applicable tax integration are available. D1-C may merge its audited financial semantics before user acceptance, but **D1 remains open until U1 (Issue #94) passes ChatGPT review and uncoached normal-user UAT**. D2 is a separate subsequent hard gate before R5; PFA-DET-015 combines the D1 and D2 readiness conditions. R4 was a prior editor cleanup, not proof that U1's normal-user interaction contract is satisfied.
+D1 is the original deterministic financial-semantic milestone. It implements and verifies PFA-DET-001 through PFA-DET-014 after R3's reusable execution foundation and T1A Phase B's applicable tax integration are available. D1-C computational/financial code is merged, but **D1 acceptance still requires current U1 owner Issue #120 to pass independent ChatGPT review and uncoached normal-user UAT**. D2's *backend implementation* can progress alongside that U1 work from the audited merged D1-C baseline and separately approved domain contracts; D2-D and R5 cannot close ahead of accepted D1/U1. PFA-DET-015 combines the D1 and D2 readiness conditions. R4 was prior editor cleanup, not U1 acceptance.
 
 D1 SHALL complete the deterministic semantic audit from user input through canonical representation, executable behavior, accounting/state effects, tax characterization, and user-visible result for the initial private-alpha scope.
 
