@@ -1,13 +1,12 @@
 "use client";
 import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
-import { inspectMonthlyMoney } from "../../src/application/monthlyMoney.js";
+import { inspectMonthlyMoney, isPositiveMonthlyMoney } from "../../src/application/monthlyMoney.js";
 import type { PersonalHouseholdForecastReadModel } from "../../src/application/householdProjection.js";
 import type { PersonalDraft } from "../../src/application/personalMvp.js";
 import { formatExactMoney, referenceLabel, objectEntries, objectId } from "../entityPresentation.js";
 import { FieldShell } from "../authoring/FieldShell.js";
 import { CashAllocation } from "./CashAllocation.js";
-import { decimal } from "../../src/values/index.js";
 
 type Detail = ReturnType<typeof inspectMonthlyMoney>;
 export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setup, coverageSetup, selectedMonth, selectMonth }: {
@@ -59,7 +58,7 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
           <p><strong>{amount(detail.denominator)}</strong> {detail.basis === "gross_payroll" ? "gross payroll earnings" : "recorded household income"}</p>
           <small>Same-month income versus posted uses · opening savings and employer contributions excluded from income.</small>
           <CashAllocation draft={draft} detail={detail} review={review} setup={coverageSetup ?? setup} />
-          {decimal(detail.otherIncome).isPositive() && detail.basis === "gross_payroll" && <small>Other recurring income: {amount(detail.otherIncome)} · outside the payroll basis.</small>}
+          {isPositiveMonthlyMoney(detail.otherIncome) && detail.basis === "gross_payroll" && <small>Other recurring income: {amount(detail.otherIncome)} · outside the payroll basis.</small>}
           <small>Modeled bank deposits: {amount(detail.deposited)}. This excludes unmodeled withholding and is not an after-tax paycheck estimate.</small>
           {objectEntries(draft, "Income").map(value => <button key={objectId("Income", value)} type="button" onClick={() => review("Income", objectId("Income", value))}>{referenceLabel(draft, "Income", objectId("Income", value))}</button>)}
         </>}
