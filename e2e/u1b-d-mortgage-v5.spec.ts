@@ -52,7 +52,7 @@ async function setup(page: Page, width: number, denied = false) {
     await editor.getByLabel("Name", { exact: true }).fill(bankName);
     await editor.getByLabel("Account type", { exact: true }).selectOption("checking");
     await editor.getByLabel("Owner", { exact: true }).selectOption(ids.person);
-    await editor.getByLabel("Opening date", { exact: true }).fill("2026-01-01");
+    await editor.getByLabel("Account opened", { exact: true }).fill("2026-01-01");
     await editor.getByLabel("Cash balance", { exact: true }).fill("0");
     await editor.getByRole("button", { name: "Create Account", exact: true }).click();
     await expect(editor).toHaveCount(0);
