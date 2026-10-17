@@ -33,6 +33,108 @@
       "review_criteria": "Retire as codified when the base handoff and verification contracts plus self-tests make omission impossible without relying on the lesson entry.",
       "retirement_reason": "Codified as a universal base rule in docs/development/verification-policy.md and docs/development/handoff-authoring-policy.md; prompt marker enforcement is no longer needed.",
       "superseded_by": null
+    },
+    {
+      "id": "AL-002",
+      "title": "Keep Codex task authority compact",
+      "status": "active",
+      "severity": "high",
+      "source_evidence": [
+        "Agent candidate #118: U1 Issue #94 grew to roughly 125k characters / 736 lines, while comparable implementation issues remained near 13–16k characters.",
+        "The V3 issue-pointer hook binds repository issue content into task context; oversized historical checkpoints therefore create avoidable retrieval/context cost and can obscure the current operative contract."
+      ],
+      "applicability": {
+        "task_kinds": [
+          "framework",
+          "product",
+          "repair"
+        ],
+        "ci_profiles": [
+          "*"
+        ],
+        "heavy_validation_profiles": [
+          "*"
+        ],
+        "task_continuities": [
+          "existing_pr",
+          "new_pr"
+        ]
+      },
+      "required_markers": [],
+      "rule": "Keep a repository task issue bounded to the current V3 authorization, unresolved acceptance criteria, approved semantic decisions, scope restrictions, and latest actionable evidence. Move superseded audit checkpoints and historical narrative to linked comments or durable records rather than repeatedly carrying the full history into Codex task context.",
+      "do_not_generalize_to": "Do not remove unresolved acceptance criteria, approved decisions, provenance needed for safe continuation, current ALLOWED_PATHS, or other information required to keep the active implementation contract self-contained.",
+      "promotion_reason": "The failure mode is a high-cost, generalizable context-management problem and the current handoff policy requires self-contained issues without yet bounding historical accumulation.",
+      "counterevidence": "Large hook payloads may spill to disk instead of being ingested verbatim; the concern is avoidable retrieval/parsing cost and loss of signal, not a claim that every historical character always consumes model context.",
+      "review_criteria": "Retire as codified when repository handoff/issue-maintenance policy provides a tested history-preserving compaction mechanism and prevents unbounded task-body growth without losing active authority.",
+      "superseded_by": null
+    },
+    {
+      "id": "AL-003",
+      "title": "End Codex turns after publication instead of supervising CI",
+      "status": "active",
+      "severity": "high",
+      "source_evidence": [
+        "Agent candidate #119: on 2026-10-14 the product owner reported roughly 10% of a five-hour Codex allowance was consumed repeatedly checking external GitHub CI rather than implementing.",
+        "Current V3 policy makes GitHub Actions the verification authority, but the base task skill does not yet explicitly prohibit post-publication CI polling or waiting."
+      ],
+      "applicability": {
+        "task_kinds": [
+          "framework",
+          "product",
+          "repair"
+        ],
+        "ci_profiles": [
+          "*"
+        ],
+        "heavy_validation_profiles": [
+          "*"
+        ],
+        "task_continuities": [
+          "existing_pr",
+          "new_pr"
+        ]
+      },
+      "required_markers": [],
+      "rule": "After an authorized implementation or repair is committed and pushed, Codex should finish the turn without polling, watching, repeatedly querying, or waiting for GitHub Actions. Hand off the commit/PR identifiers; completed CI evidence is reviewed externally by ChatGPT or the product owner.",
+      "do_not_generalize_to": "Do not block the one-time safe PR publication action, or a separately scoped ChatGPT/human audit that inspects CI after the relevant jobs have completed. Pending CI is not acceptance.",
+      "promotion_reason": "The resource failure was severe, directly measured by the product owner, broadly applicable, deterministic to prevent, and not yet fully encoded in the base Codex completion contract.",
+      "counterevidence": "A single lightweight publication/status check may be appropriate when needed to return the PR identifier; the lesson targets repeated waiting and supervision, not ordinary publication.",
+      "review_criteria": "Retire as codified when AGENTS/task-skill policy and tooling make post-publication CI supervision explicitly out of scope for Codex implementation turns and cover the pending-CI handoff path.",
+      "superseded_by": null
+    },
+    {
+      "id": "AL-004",
+      "title": "Make independent E2E acceptance flows independently runnable",
+      "status": "active",
+      "severity": "high",
+      "source_evidence": [
+        "Agent candidate #135 / PR #128: one long UI E2E test exposed multiple unrelated failures only serially across repeated CI repair turns because earlier assertions prevented downstream scenarios from executing.",
+        "PR #139 confirmed the same failure class: GitHub Actions runs 39049670578 and 39050829151 both failed at the first chart selector assertion, including after a repair added setup/readiness checks, leaving independent tooltip, legend, bar-geometry, exact-table, export, stale-state, and mobile assertions unexercised.",
+        "Four-way Playwright sharding reduces wall-clock runtime but cannot reveal independent failures hidden behind earlier assertions within the same test."
+      ],
+      "applicability": {
+        "task_kinds": [
+          "product",
+          "repair"
+        ],
+        "ci_profiles": [
+          "e2e"
+        ],
+        "heavy_validation_profiles": [
+          "ci-only"
+        ],
+        "task_continuities": [
+          "existing_pr",
+          "new_pr"
+        ]
+      },
+      "required_markers": [],
+      "rule": "When a UI E2E test contains multiple independently meaningful acceptance flows, separate them into independently runnable tests or subcases with bounded reusable fixtures so one early failure does not hide unrelated defects. Preserve at least one holistic end-to-end journey where integration semantics matter.",
+      "do_not_generalize_to": "Do not split an inherently atomic user journey, remove persistence/ownership integration coverage, multiply expensive fixture setup without measuring the cost, or replace end-to-end coverage with shallow unit tests.",
+      "promotion_reason": "The same deterministic test-structure failure recurred across PRs #128 and #139, causing repeated CI/repair cycles while unrelated downstream acceptance checks remained hidden. The preventive rule is narrow, low-risk, and applicable to future UI-heavy milestones.",
+      "counterevidence": "Excessive test splitting can increase fixture startup, total runner-minutes, and maintenance cost. Apply only where scenarios are independently meaningful, reuse bounded deterministic fixtures, and preserve holistic integration coverage.",
+      "review_criteria": "Retire as codified when verification/UX testing policy explicitly requires independently runnable acceptance flows where appropriate, preserves at least one holistic end-to-end journey plus the aggregate shard gate, and repository evidence shows acceptable fixture startup, runner-minutes, max-shard latency, deterministic repeat rate, and diagnostic signal.",
+      "superseded_by": null
     }
   ]
 }
