@@ -284,6 +284,21 @@ export const compileLiabilities = (
   const effectsById = new Map(objects(model, "EventEffect").map(effect => [
     String(effect.event_effect_id).toLowerCase(), effect,
   ]));
+  // A single scheduled event spanning both consumer and non-consumer targets
+  // cannot be partially dropped: doing so would silently discard a mortgage
+  // operation. Preserve its identity and reject this unsupported atomic event.
+  const mixedEvent = objects(model, "Event").find(event => {
+    if (event.enabled !== true || String(event.scenario_id).toLowerCase() !== selectedScenario.id || !Array.isArray(event.effect_ids)) return false;
+    const targets = event.effect_ids.map(effectId => effectsById.get(String(effectId).toLowerCase()))
+      .filter((effect): effect is NonNullable<typeof effect> => effect !== undefined)
+      .map(effect => String(effect.target_entity_id).toLowerCase());
+    return targets.some(id => consumerIds.has(id)) && targets.some(id => !consumerIds.has(id));
+  });
+  if (mixedEvent) return { status: "unsupported", diagnostics: [
+    diagnostic("LIABILITY_MIXED_AUTHORED_OPERATION_UNSUPPORTED",
+      "One authored event targets both a consumer loan and another entity; split it into independently authorized operations.",
+      "Event", String(mixedEvent.event_id), "effect_ids", mixedEvent.effect_ids as string[]),
+  ] };
   const mortgageEvents = objects(model, "Event").filter(event =>
     !Array.isArray(event.effect_ids) || !event.effect_ids.some(effectId => {
       const effect = effectsById.get(String(effectId).toLowerCase());
