@@ -114,7 +114,7 @@ const restoreCheckpointDeltas = (deltas: readonly CheckpointDelta[]): readonly H
     if (!records || !identities) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: malformed checkpoint");
     const stateRecords = Object.fromEntries(recordKeys.flatMap(key => {
       const change = records[key];
-      if (!change || !Array.isArray(change.remove) || change.remove.some(id => typeof id !== "string") ||
+      if (!change || !Array.isArray(change.remove) || change.remove.some((id: unknown) => typeof id !== "string") ||
         new Set(change.remove).size !== change.remove.length || !change.set || typeof change.set !== "object" || Array.isArray(change.set) ||
         change.present !== undefined && typeof change.present !== "boolean") throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: malformed state delta");
       const next = { ...before[key], ...change.set };
