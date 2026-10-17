@@ -715,8 +715,18 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   await mortgageOperations.getByRole("button", { name: "Save activity", exact: true }).click();
   await returnToCurrentPlan(page);
   await page.getByRole("button", { name: "Update forecast", exact: true }).click();
-  await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-lifecycle", "unsupported");
-  await expect(page.getByText(/scheduled monthly.*payment date/).first()).toBeVisible();
+  const unsupported = page.getByRole("status", { name: "Household forecast status" });
+  await expect(unsupported).toHaveAttribute("data-lifecycle", "unsupported");
+  await expect(unsupported.locator(".forecast-primary-guidance")).toContainText(/scheduled monthly.*payment date/);
+  await expect(unsupported.locator(".forecast-primary-guidance")).toBeVisible();
+  await expect(unsupported).toContainText("Old result — inputs changed; these numbers are not current.");
+  await expect(unsupported.locator(".forecast-guidance")).not.toHaveAttribute("open");
+  await expect(unsupported.locator("[data-diagnostic-root]:visible")).toHaveCount(0);
+  await unsupported.getByRole("button", { name: "Review saved refinance", exact: true }).click();
+  await expect(mortgageOperations).toBeVisible();
+  await expect(mortgageOperations).toBeFocused();
+  await expect(mortgageOperations).toContainText("2026-01-15");
+  await expect(mortgageOperations.getByRole("button", { name: "Disable", exact: true })).toBeVisible();
 });
 
 test("D1 authors former-employer YTD history without a future contribution instruction", async ({ page }) => {
@@ -1286,6 +1296,24 @@ test("R4 narrow and wide layouts retain readable status, chart and keyboard edit
     await expect(editor.getByRole("button", { name: "Close editor" })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(opener).toBeFocused();
+    // A requested source repair must win over normal Source/name entry focus.
+    await opener.click();
+    await editor.getByLabel("Frequency", { exact: true }).selectOption("weekly");
+    await editor.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(status).toHaveAttribute("data-lifecycle", "unsupported");
+    await expect(status.locator(".forecast-primary-guidance")).toContainText("schedule this monthly forecast cannot execute");
+    await expect(status.locator(".forecast-guidance")).not.toHaveAttribute("open");
+    const repair = status.locator(".forecast-primary-guidance").getByRole("button", { name: "Review frequency", exact: true });
+    await repair.click();
+    await expect(editor.getByLabel("Frequency", { exact: true })).toBeFocused();
+    await expect(editor.getByLabel("Source / name", { exact: true })).not.toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(repair).toBeFocused();
+    await repair.click();
+    await expect(editor.getByLabel("Frequency", { exact: true })).toBeFocused();
+    await editor.getByLabel("Frequency", { exact: true }).selectOption("monthly");
+    await editor.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   }
 });

@@ -228,26 +228,36 @@ function ObjectEditor({
     if (item) { initialEditing.current = item; setCreating(false); setEditing(item); }
   }, [repairTarget]);
   useEffect(() => {
-    if (!repairTarget?.field || editingId !== repairTarget.objectId) return;
-    requestAnimationFrame(() => {
-      const target = drawer.current?.querySelector<HTMLElement>(`[data-repair="${CSS.escape(`entity:${editingId}:${repairTarget.field}`)}"]`);
-      if (target) focusRepair(target);
-      else setCreationError("This recorded fact cannot be changed here. Import corrected records in Settings → Import / Export.");
-    });
-  }, [editingId, repairTarget]);
-  useEffect(() => {
     if (!editingId) return;
     const opener = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const firstField = Array.from(drawer.current?.querySelectorAll<HTMLElement>('input:not(:disabled):not([readonly]), select:not(:disabled)') ?? [])
-      .find(control => control.getClientRects().length > 0);
-    (firstField ?? drawer.current?.querySelector<HTMLButtonElement>("button"))?.focus();
     return () => {
       document.body.style.overflow = previousOverflow;
       if (opener?.isConnected) opener.focus();
     };
   }, [editingId]);
+  useEffect(() => {
+    if (!editingId) return;
+    // One focus owner: explicit repairs take precedence over ordinary entry.
+    // Cancel stale callbacks when the drawer closes or its target changes.
+    const frame = requestAnimationFrame(() => {
+      const root = drawer.current;
+      if (!root) return;
+      const repairField = repairTarget?.objectType === type && repairTarget.objectId === editingId ? repairTarget.field : "";
+      if (repairField) {
+        const target = root.querySelector<HTMLElement>(`[data-repair="${CSS.escape(`entity:${editingId}:${repairField}`)}"]`);
+        if (target && !target.matches(":disabled, [readonly]")) { focusRepair(target); return; }
+        setCreationError("This recorded fact cannot be changed here. Import corrected records in Settings → Import / Export.");
+      }
+      const fields = Array.from(root.querySelectorAll<HTMLElement>('form input:not(:disabled):not([readonly]), form select:not(:disabled), form textarea:not(:disabled):not([readonly])'))
+        .filter(control => control.getClientRects().length > 0);
+      // Income opens on its recognizable source, independent of schema key order.
+      const source = type === "Income" ? fields.find(control => control.dataset.repair === `entity:${editingId}:source`) : undefined;
+      (source ?? fields[0] ?? root.querySelector<HTMLButtonElement>("button"))?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [editingId, repairTarget, type]);
   const values = objectEntries(draft, type).filter((item) => belongsToNetWorthSection(draft, type, item, section) && (!accountId || item.account_id === accountId));
   const descriptor = metadata[type];
   const fields = descriptor.fields as Record<string, EditorField>;

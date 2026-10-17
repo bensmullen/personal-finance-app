@@ -11,6 +11,8 @@ const nextConfig = {
   trailingSlash: true,
   basePath,
   assetPrefix: basePath || undefined,
+  // CI's next dev indicator overlaps the mobile nav; error reporting stays on.
+  devIndicators: process.env.CI === "true" ? false : undefined,
   images: { unoptimized: true },
   typescript: { tsconfigPath: "./tsconfig.next.json" },
 };

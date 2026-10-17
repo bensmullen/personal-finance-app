@@ -37,7 +37,7 @@ import { GuidedFields } from "./authoring/GuidedFields.js";
 import { FinancialSection, focusRepair, FinancialInput, commitAtControl } from "./authoring/FieldShell.js";
 import { ScheduledActivity } from "./authoring/ScheduledActivity.js";
 import { diagnosticTargets, exactDiagnosticTargets, type DiagnosticTarget } from "./authoring/diagnosticTargets.js";
-import { diagnosticSummary } from "./authoring/diagnosticSummary.js";
+import { diagnosticSummary, primaryForecastDiagnostic } from "./authoring/diagnosticSummary.js";
 import {
   createGoldenHouseholdExampleDraft,
   editPersonalRetirementDate,
@@ -124,6 +124,7 @@ const FinancialResultModels = createContext<{ model?: PersonalDraft; baseline?: 
   reviewTarget?: (target: DiagnosticTarget) => void; reviewMortgageFunding?: (liabilityId: string) => void; importCorrection?: () => void;
   reviewContributions?: (investmentId?: string, kind?: "personal" | "payroll") => void;
   reviewInsurance?: (policyId: string) => void;
+  reviewMortgageOperations?: () => void;
   explanations?: { baseline: ResultExplanationCache<FinancialExplanation>; comparison: ResultExplanationCache<FinancialExplanation> } }>({});
 
 type Primary = "Overview" | "Money" | "Net Worth" | "Plan" | "Settings";
@@ -761,6 +762,7 @@ export function PersonalFinanceApp() {
       },
       importCorrection: () => { navigate("Settings"); setSubnav("Import / Export"); },
       reviewMortgageFunding: (id) => { navigate("Net Worth"); setSubnav("Debt"); requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>(`[data-repair="${CSS.escape(`mortgage:${id}:mortgageFunding`)}"]`))); },
+      reviewMortgageOperations: () => { navigate("Net Worth", "Debt"); requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>('[aria-label="Mortgage operations"]'))); },
       reviewTarget: (target) => {
         if (target.type === "Asset sources") { navigate("Net Worth", "Property & other assets"); return; }
         if (!target.objectType) { openForecastSetup(target.field ? { target: target.field, message: target.label } : undefined); return; }
@@ -1263,10 +1265,12 @@ function SetupWizard({
 }
 
 function ForecastStatus({ label, state }: { label: string; state: ForecastView }) {
-  const currentModel = useContext(FinancialResultModels).model;
+  const { model: currentModel, reviewMortgageOperations } = useContext(FinancialResultModels);
   const diagnosticModel = state.latestResult?.status === "unavailable" ? currentModel : state.resultModel;
   const diagnostics = (state.latestResult ?? state.lastGoodResult)?.diagnostics ?? [];
-  const firstDiagnostic = diagnostics.find(item => "severity" in item && item.severity === "error") ?? diagnostics[0];
+  const firstDiagnostic = primaryForecastDiagnostic(diagnostics);
+  const blocked = state.lifecycle === "unsupported";
+  const summary = firstDiagnostic && diagnosticSummary(firstDiagnostic, diagnosticModel);
   return <section className={`forecast-status ${state.stale ? "stale" : ""}`} role="status" aria-label={`${label} status`}
     data-lifecycle={state.lifecycle} data-pending={state.pending} data-fingerprint={state.fingerprint} data-request-id={state.requestId}>
     <strong>{label} · {state.pending ? "Running" : state.lifecycle === "error" ? "Failed" : state.stale ? "Update needed" : state.lifecycle === "completed" ? "Ready" : state.lifecycle === "incomplete" ? "Partially modeled" : state.lifecycle === "unsupported" ? "Unsupported" : state.lifecycle === "idle" ? "Needs setup" : "Update needed"}</strong>
@@ -1275,9 +1279,18 @@ function ForecastStatus({ label, state }: { label: string; state: ForecastView }
     {!state.pending && !state.stale && state.lifecycle === "completed" && <span>Current result</span>}
     {!state.pending && !state.stale && state.lifecycle === "incomplete" && <><span>Some outputs are incomplete; after-tax totals may be unavailable.</span>
       </>}
-    {state.lifecycle === "unsupported" && <span>Review the guidance below, correct the supported setup or import a supported model, then Update forecast.</span>}
-    {state.message && <span>{state.lifecycle === "unsupported" && state.latestResult?.status === "unavailable" && state.latestResult.diagnostics.length > 0 ? "Review the forecast guidance below." : friendlyText(state.message)}</span>}
-    {firstDiagnostic && !state.pending && <span>{diagnosticSummary(firstDiagnostic, diagnosticModel).problem}</span>}
+    {blocked && !summary && <span>Review the guidance below, correct the supported setup or import a supported model, then Update forecast.</span>}
+    {state.message && !(blocked && summary) && <span>{friendlyText(state.message)}</span>}
+    {firstDiagnostic && summary && !state.pending && <div className="forecast-primary-guidance">
+      <p>{summary.problem}</p>
+      {blocked && <>
+        <p>{summary.remedy}</p>
+        {firstDiagnostic.code === "MORTGAGE_REFINANCE_UNSUPPORTED"
+          ? <button type="button" onClick={reviewMortgageOperations}>Review saved refinance</button>
+          : <>{diagnosticModel && <DiagnosticReferences targets={diagnosticTargets(diagnosticModel, firstDiagnostic)} />}
+            {(firstDiagnostic.category === "payment_funding" || firstDiagnostic.category === "settlement_timing") && <ForecastSetupLink target="taxSetup" />}</>}
+      </>}
+    </div>}
     {diagnostics.length > 0 && <details className="forecast-guidance"><summary>Review forecast limitations</summary><DiagnosticList diagnostics={diagnostics} model={diagnosticModel} /></details>}
     <details><summary>Technical forecast details</summary>
       <dl><dt>Lifecycle</dt><dd>{state.lifecycle}</dd><dt>Request</dt><dd>{state.requestId ?? "Not submitted"}</dd>

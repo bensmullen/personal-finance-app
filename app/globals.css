@@ -36,6 +36,8 @@
 @media (max-width: 560px) { .guided-grid { grid-template-columns: minmax(0, 1fr); } .field-heading > label { min-width: 0; } .controls label { min-width: 0; } .row { flex-wrap: wrap; } }
 .forecast-status { display: flex; flex-wrap: wrap; gap: .5rem 1rem; padding: .8rem 1rem; margin-bottom: .75rem; border: 1px solid #b8cec7; border-radius: .6rem; background: #eef6f2; }
 .forecast-status.stale { background: #fff6e5; border-color: #d6b579; }
+.forecast-primary-guidance { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.forecast-primary-guidance p { margin: 0 0 .35rem; }
 .forecast-details { margin-top: 1rem; }
 .forecast-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin: .75rem 0; }
 /* R4: readable disclosures, keyboard focus, and layouts that retain controls. */

@@ -2,13 +2,15 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { clickFinancialDestination, navigateOwner } from "./navigation.js";
 
-async function exportedModel(page: Page) {
+async function exportedModelBytes(page: Page) {
   await navigateOwner(page, "Settings", "Import / Export");
   const pending = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export current model", exact: true }).click();
   const download = await pending;
-  return JSON.parse(await readFile((await download.path())!, "utf8"));
+  return readFile((await download.path())!, "utf8");
 }
+
+async function exportedModel(page: Page) { return JSON.parse(await exportedModelBytes(page)); }
 
 for (const width of [1440, 390]) test(`Calm destinations, source repair and Cancel at ${width}px`, async ({ page }) => {
   test.setTimeout(120_000);
@@ -19,7 +21,8 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
   await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
   const status = page.getByRole("status", { name: "Household forecast status" });
   await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
-  const before = await exportedModel(page);
+  const beforeBytes = await exportedModelBytes(page);
+  const before = JSON.parse(beforeBytes);
   if (width === 390) {
     const more = page.getByRole("button", { name: "More", exact: true });
     await more.click();
@@ -77,7 +80,7 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
   await page.keyboard.press("Escape");
   await expect(income).toHaveCount(0);
   await expect(salary).toBeFocused();
-  expect(await exportedModel(page)).toEqual(before);
+  expect(await exportedModelBytes(page)).toBe(beforeBytes);
 
   await clickFinancialDestination(page, "Real Estate");
   const property = page.getByRole("region", { name: "Real Estate outlook" });
