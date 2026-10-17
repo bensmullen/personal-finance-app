@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.6.13-draft
+**Version:** 0.6.14-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -132,6 +132,7 @@ This coordination contract controls implementation sequencing only. It does not 
 | `D2` — before stochastic R5 | D2-A retirement breadth | **#103** ordinary retirement distributions and tax/liquidity effects |
 | `R11` — before private alpha | Post-U1 investment activity | **#100** dividend reinvestment AND flexible IRA/brokerage contribution schedules (merged from closed #104) |
 | `R11` — before private alpha | T1A/T1B tax closeout | **#101** routine payroll withholding and net tax settlement |
+| `R11` — before private alpha | T1B pure federal rule foundation (not final integration) | **#138** four PFA-TAX-016 tax-rule families, closed and Codex-inaccessible pending PM contract approval/merge; downstream shared-authority integration remains mandatory |
 | `R11` — before private alpha | Tax workspace | **#102** user-facing Federal/State/Local taxes, **after #101** |
 | `R11` — before private alpha | P1 planning/plan management | **#105** independent plan duplication and comparison after safe scenario/identity semantics are confirmed |
 | `R11` — before private alpha | O1 guided exploration | **#108** eight rich linked-family synthetic households, 4+ independently saved plans/persona, resettable demos, reconciled finances and capability-gated outputs |
@@ -440,6 +441,8 @@ Examples of tax-independent results may continue to display in accordance with P
 ### T1B — Advanced/specialized tax domains
 
 Add specialized capital-gains, retirement, equity-compensation, real-estate, and other jurisdiction/product mechanics alongside the capabilities that require them. T1B now contains one mandatory private-alpha slice under PFA-TAX-016: wash-sale handling, capital-loss netting/carryforward, tax-loss harvesting evaluation, and a bounded Section 1031 real-property exchange contract. These four mechanics SHALL be complete before R11/private alpha. Other T1B behavior gates only materially affected outputs unless the alpha cohort requires it.
+
+**Isolated T1B implementation gate (2026-10-17):** [Issue #138](https://github.com/bensmullen/personal-finance-app/issues/138) is the single consolidated pure-rule preparation owner, closed until this controlled contract is approved and merged. The proposed bounded 1031 scope is one-for-one US non-depreciable investment land; supporting rentals/depreciation is a separate product/legal expansion, not implicit alpha coverage. After #138 implements and passes semantic audit, a separately authorized shared-household/tax/planning integration is still necessary to satisfy PFA-TAX-016 before R11. This pure tax rules lane is parallel to U1B #136 and isolated D2-A/B/C only while writes remain disjoint.
 
 T1B may parallelize safely at the rule/catalog layer when it adds isolated effective-dated rules behind the existing tax contract. A T1B slice that changes household compilation, recognition ordering, funding/settlement, or shared tax-execution interfaces SHALL wait for the current owner of that shared boundary to merge, or use a dedicated synchronization change before both lanes continue.
 
