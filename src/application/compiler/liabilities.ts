@@ -278,15 +278,18 @@ export const compileLiabilities = (
   const consumerIds = new Set(objects(model, "Liability")
     .filter(liability => liability.liability_type === "auto" || liability.liability_type === "student")
     .map(liability => canonicalId(liability, "liability_id")!));
-  // Keep consumer operations out of the mortgage adapter, including incomplete
-  // ones. They receive source-linked per-liability diagnostics below instead.
-  const mortgageEvents = objects(model, "Event").filter(event => {
-    if (!Array.isArray(event.effect_ids) || event.effect_ids.length !== 1) return true;
-    const effectId = String(event.effect_ids[0]).toLowerCase();
-    return !objects(model, "EventEffect").some(effect =>
-      String(effect.event_effect_id).toLowerCase() === effectId && consumerIds.has(String(effect.target_entity_id).toLowerCase()),
-    );
-  });
+  // Keep every event targeting a consumer loan (including multi-effect
+  // events) out of the mortgage-only adapter. The per-liability validation
+  // below retains the original event/effect identity as a typed diagnostic.
+  const effectsById = new Map(objects(model, "EventEffect").map(effect => [
+    String(effect.event_effect_id).toLowerCase(), effect,
+  ]));
+  const mortgageEvents = objects(model, "Event").filter(event =>
+    !Array.isArray(event.effect_ids) || !event.effect_ids.some(effectId => {
+      const effect = effectsById.get(String(effectId).toLowerCase());
+      return effect !== undefined && consumerIds.has(String(effect.target_entity_id).toLowerCase());
+    }),
+  );
   try {
     const extras = durableMortgageExtras({ ...model, objects: { ...model.objects, Event: mortgageEvents } }, selectedScenario.id);
     request = { ...request, executionProfiles: request.executionProfiles.map(profile => ({ ...profile, extraPrincipalPayments: [...(profile.extraPrincipalPayments ?? []), ...extras.filter(extra => extra.liabilityId === profile.liabilityId).map(({ liabilityId: _liabilityId, ...extra }) => extra)] })) };
