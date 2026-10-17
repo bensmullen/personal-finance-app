@@ -199,7 +199,10 @@ export function proposePremiums(request: PremiumRequest) {
     const shared = a.memberIds.filter(id => b.memberIds.includes(id));
     const scope = intersect(intersect(a, b), request.period);
     if (shared.length === 0) continue;
-    const duplicate = a.planId === b.planId && a.medicare?.premiumFor === b.medicare?.premiumFor;
+    // Medicare Part A/B/D obligations are member-and-Part scoped, not issuer-plan-ID scoped.
+    // Renaming the plan cannot authorize two concurrent charges for the same elected Part.
+    const duplicate = (a.planId === b.planId && a.medicare?.premiumFor === b.medicare?.premiumFor)
+      || (!!a.medicare && !!b.medicare && a.medicare.premiumFor === b.medicare.premiumFor);
     const invalidMedicare = a.medicare && b.medicare && incompatible([...a.medicare.elected, ...b.medicare.elected]);
     const coordinated = shared.every(id => request.coordination.some(f => f.memberId === id && f.coverageIds.includes(a.id)
       && f.coverageIds.includes(b.id) && f.admitsDistinctPremiums === true && admitted(f.evidence, scope)));
