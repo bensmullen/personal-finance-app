@@ -181,6 +181,9 @@ type InstantExecution = {
   readonly cashPeriods: readonly VerticalSlice2PeriodResult[];
   readonly investmentPeriods: readonly HouseholdInvestmentOperationResult[];
   readonly liabilityPeriods: readonly VerticalSlice4PeriodResult[];
+  /** Already-posted extra principal sits outside required-service period rows. */
+  readonly extraPrincipalTransactions: readonly AccountingTransaction[];
+  readonly extraPrincipalTraceRefs: readonly CalculationTraceRef[];
 };
 
 /** Internal operation facts only; never a fabricated standalone VS3 result. */
@@ -507,6 +510,8 @@ const runCompiledHouseholdProjectionInternal = (
       const cashPeriods: VerticalSlice2PeriodResult[] = [];
       const investmentPeriods: HouseholdInvestmentOperationResult[] = [];
       const liabilityPeriods: VerticalSlice4PeriodResult[] = [];
+      const extraPrincipalTransactions: AccountingTransaction[] = [];
+      const extraPrincipalTraceRefs: CalculationTraceRef[] = [];
       const prepared = performance.measure("engine.prepare", () => preparePeriod(
         period,
         candidateState,
@@ -564,6 +569,8 @@ const runCompiledHouseholdProjectionInternal = (
         const cashResults: VerticalSlice2PeriodResult[] = [];
         const investmentResults: HouseholdInvestmentOperationResult[] = [];
         const liabilityResults: VerticalSlice4PeriodResult[] = [];
+        const extraPrincipalTransactions: AccountingTransaction[] = [];
+        const extraPrincipalTraceRefs: CalculationTraceRef[] = [];
         const periodContext = Object.freeze({
           ...runContext,
           simulationStart: period.start,
@@ -651,6 +658,13 @@ const runCompiledHouseholdProjectionInternal = (
                 );
               liabilityResults.push(result.period);
             }
+            if (liability.kind === "extra_principal") {
+              // The settlement has already mutated authoritative state. The
+              // reference must retain its very same cash-backed transaction
+              // and lineage, not synthesize another payment or drop evidence.
+              extraPrincipalTransactions.push(...result.transactions);
+              extraPrincipalTraceRefs.push(...result.traceRefs);
+            }
           }
         }
         return Object.freeze({
@@ -659,6 +673,8 @@ const runCompiledHouseholdProjectionInternal = (
           cashPeriods: Object.freeze(cashResults),
           investmentPeriods: Object.freeze(investmentResults),
           liabilityPeriods: Object.freeze(liabilityResults),
+          extraPrincipalTransactions: Object.freeze(extraPrincipalTransactions),
+          extraPrincipalTraceRefs: Object.freeze(extraPrincipalTraceRefs),
         });
       };
       const allAt = performance.measure("engine.schedule_contention", () => [
@@ -868,6 +884,8 @@ const runCompiledHouseholdProjectionInternal = (
         cashPeriods.push(...executed.cashPeriods);
         investmentPeriods.push(...executed.investmentPeriods);
         liabilityPeriods.push(...executed.liabilityPeriods);
+        extraPrincipalTransactions.push(...executed.extraPrincipalTransactions);
+        extraPrincipalTraceRefs.push(...executed.extraPrincipalTraceRefs);
         liability = liabilityPeriods[liabilityPeriods.length - 1];
       }
       if (!eventRuntimeCommitted) {
@@ -999,6 +1017,7 @@ const runCompiledHouseholdProjectionInternal = (
           ...cashPeriods.flatMap((item) => item.transactions),
           ...investmentPeriods.flatMap((item) => item.transactions),
           ...liabilityPeriods.flatMap((item) => item.transactions),
+          ...extraPrincipalTransactions,
         ].sort(
           (left, right) =>
             left.date.localeCompare(right.date) ||
@@ -1103,6 +1122,7 @@ const runCompiledHouseholdProjectionInternal = (
             ...cashPeriods.map((item) => item.traceRefs),
             ...investmentPeriods.map((item) => item.traceRefs),
             ...liabilityPeriods.map((item) => item.traceRefs),
+            extraPrincipalTraceRefs,
           ) ?? Object.freeze([]),
         ...(cashFlow === undefined ? {} : { cashFlow }),
         ...(investments === undefined ? {} : { investments }),
