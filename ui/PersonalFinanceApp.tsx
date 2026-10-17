@@ -121,6 +121,7 @@ import type { ForecastView } from "./forecast/controller.js";
 
 type FinancialExplanation = ReturnType<typeof resolveHouseholdExplanation>;
 const FinancialResultModels = createContext<{ model?: PersonalDraft; baseline?: ForecastView; comparison?: ForecastView;
+  setupChangesPending?: boolean;
   reviewTarget?: (target: DiagnosticTarget) => void; reviewMortgageFunding?: (liabilityId: string) => void; importCorrection?: () => void;
   reviewContributions?: (investmentId?: string, kind?: "personal" | "payroll") => void;
   reviewInsurance?: (policyId: string) => void;
@@ -753,7 +754,7 @@ export function PersonalFinanceApp() {
 
   return (
     <FinancialFactEditors draft={draft} setDraft={updateCanonicalModel} openingReference={sessionSettings.asOf || sessionSettings.simulationStart}>
-    <FinancialResultModels.Provider value={{ model: draft, baseline: interactive.baseline, comparison: interactive.comparison, explanations,
+    <FinancialResultModels.Provider value={{ model: draft, baseline: interactive.baseline, comparison: interactive.comparison, explanations, setupChangesPending,
       reviewInsurance: policyId => { setInsuranceTarget(policyId); navigate("Money"); setSubnav("Insurance & coverage"); requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>('[data-authoring-scope="term-life-policy"] select'))); },
       reviewContributions: (investmentId, kind) => {
         setContributionTarget(investmentId && kind ? { investmentId, kind } : undefined);
@@ -1348,12 +1349,11 @@ function Overview({
         title="How am I doing?"
         text="A clear view of your current position and the modeled path ahead."
       />
-      <p className="scope-badge">Current position · {position.status}</p>
       <section className="panel outlook">
         <div className="panel-head">
           <div>
             <p className="eyebrow">Your financial outlook</p>
-            <h2>Current position and supported forecasts</h2>
+            <h2>Your modeled financial path</h2>
           </div>
           <button className="primary" onClick={onPlan}>
             Explore my plan
@@ -1442,7 +1442,7 @@ function CashFlow({
       />
       <section className="panel">
         <div className="panel-head">
-          <h2>Income vs spending</h2>
+          <h2>Cash balance and modeled activity</h2>
           <button className="primary" onClick={run}>
             Run cash-flow forecast
           </button>
@@ -3353,27 +3353,17 @@ function HouseholdForecastVisual({
   const context = models.baseline?.performanceContext;
   const scope = context && models.baseline?.lastGoodResult === forecast
     ? { active: true, context: { ...context, executionLocation: "browser_main" as const }, model: financialModel, forecast } : request;
-  const ending = forecast.points.at(-1);
   return (
     <>
-      <div className="boundary-banner">
-        <strong>As of {forecast.asOf}</strong>
-        <span>Reconciled household forecast{cashFlowOnly ? " · cash-flow view" : ""}</span>
-        <span>No observed history loaded</span>
-        <span>
-          Requested {forecast.requestedHorizon.start.slice(0, 10)} →{" "}
-          {forecast.requestedHorizon.end.slice(0, 10)}
-        </span>
-        <span>
-          {forecast.stoppedAt
-            ? `Incomplete; stopped at ${forecast.stoppedAt.slice(0, 10)}`
-            : `Completed through ${forecast.reachedThrough?.slice(0, 10)}${forecast.status === "incomplete" ? " · Some outputs are partially modeled" : ""}`}
-        </span>
-      </div>
       {forecast.stoppedAt && <ForecastCutoff forecast={forecast} draft={financialModel} />}
       <Profiler id="forecast-chart" onRender={(_id, _phase, duration) => {
         if (scope?.active) recordBrowserDuration("ui.chart_render", duration, scope.context);
-      }}><HouseholdChart forecast={forecast} cashFlowOnly={cashFlowOnly} /></Profiler>
+      }}><HouseholdChart forecast={forecast} cashFlowOnly={cashFlowOnly}
+        stale={!models.baseline || models.baseline.lastGoodResult !== forecast || models.baseline.resultModel !== draft || models.baseline.pending || models.baseline.stale || !!models.setupChangesPending}
+        sourceFingerprint={models.baseline?.lastGoodResult === forecast ? models.baseline.resultFingerprint : undefined} /></Profiler>
+      <p className="muted">{forecast.stoppedAt
+        ? `Incomplete; stopped at ${forecast.stoppedAt.slice(0, 10)}`
+        : `Completed through ${forecast.reachedThrough?.slice(0, 10)}${forecast.status === "incomplete" ? " · Some outputs are partially modeled" : ""}`}</p>
       {!!forecast.projectedLaw?.length && <section className="capability" aria-label="Projected law forecast basis">
         <strong>Projected current law · forecast assumptions</strong>
         <p>Future statutory limits use explicitly projected current law where verified coverage ends. Personal filing, income and coverage facts need their own annual sources; they are not carried forward. Later verified rules supersede projections.</p>
@@ -3401,14 +3391,6 @@ function HouseholdForecastVisual({
       {!cashFlowOnly && forecast.debtPayoffs.length > 0 && <section className="panel" aria-label="Projected mortgage payoff"><h3>Projected payoff date</h3>
         {forecast.debtPayoffs.map(payoff => <p key={payoff.loanId}>{payoff.scheduledAt.slice(0, 10)} · Contractual maturity is unchanged. Technical loan reference is available in forecast details.</p>)}
       </section>}
-      {!cashFlowOnly && (
-        <section className="kpi-grid">
-          <Kpi label="Ending net worth" value={householdMoney(ending?.netWorth)} />
-          <Kpi label="Ending cash" value={householdMoney(ending?.cash)} />
-          <Kpi label="Ending assets" value={householdMoney(ending?.totalAssets)} />
-          <Kpi label="Ending liabilities" value={householdMoney(ending?.totalLiabilities)} />
-        </section>
-      )}
       <ForecastDetails result={forecast} rows={forecast.points} label="forecast details">
         {(rows) => (
       <div className="table-scroll" role="region" aria-label="Scrollable financial table" tabIndex={0}>
