@@ -1,8 +1,8 @@
 # D2 financial-semantic decision proposals — 2026-10-17
 
-**Status: PROPOSED / NOT NORMATIVE / NOT IMPLEMENTATION AUTHORIZATION.** Architecture-owned decision register for PM review. No U1, D1, D2, R5, tax-completeness, or user-acceptance gate is satisfied by this document. Until PM acceptance and separately governed controlled-spec changes, these are recommendations, not executable product policy.
+**Status: PM APPROVED A1–A4/B1–B3/C1–C3 on 2026-10-17; HISTORICAL DECISION RATIONALE, NOT NORMATIVE SPEC OR CODE AUTHORIZATION.** Controlled implementation authority is PFA-DET §5 (v0.3.2-draft), plus PFA-TAX-015, PFA-INV-025–028 and PFA-INS-013, after their coordinated specification PR merges. No D1/U1/D2/R5/alpha acceptance follows from this approval.
 
-**Baseline verified:** merged D2-PREP PR #116 (55 synthetic cases; 24 conditional accounting cases, 31 explicitly unresolved; zero integrated D2 execution). This remains a **proposal**, not financial policy. The 2026-10-17 PM sequencing decision removes final U1 #120 UAT as a dependency for disjoint D2 backend implementation, **not** for D2-D closeout or shared UI editing. New consolidated owners: D2-A #146 includes **all** unimplemented retirement distributions/RMDs from closed #103; D2-B #147, D2-C #148; D2-D #149 owns S1–S8 integration and final U1 handshake. Merged D2-PREP #114/PR #116 is preparation only. Follow `follow-on-plan.md` for exact conflict/deferral rules.
+**Baseline verified:** merged D2-PREP PR #116 (55 synthetic cases; 24 conditional accounting cases, 31 explicitly unresolved; zero integrated D2 execution). The PM-approved choices are promoted to the controlled PFA-DET §5 contract through the companion specification PR; the original analysis below is preserved for review. The 2026-10-17 PM sequencing decision removes final U1 #120 UAT as a dependency for disjoint D2 backend implementation, **not** for D2-D closeout or shared UI editing. New consolidated owners: D2-A #146 includes **all** unimplemented retirement distributions/RMDs from closed #103; D2-B #147, D2-C #148; D2-D #149 owns S1–S8 integration and final U1 handshake. Merged D2-PREP #114/PR #116 is preparation only. Follow `follow-on-plan.md` for exact conflict/deferral rules.
 
 ## 1. Architecture-wide resolved invariants (existing authority, not new PM choices)
 
@@ -14,24 +14,24 @@
 
 ## 2. Decision register
 
-Status uses **R** = invariant already resolved by existing authority, **P** = architecture recommendation awaiting PM approval, **B** = material integration/interface dependency, **D** = specialized exception deferred outside ordinary D2, explicitly diagnosed. No P is a product approval.
+Status uses **R** = invariant already resolved by existing authority, **P** = historical proposal (NOW PM-approved A1–C3, pending merged controlled spec), **B** = material integration/interface dependency, **D** = specialized exception deferred outside ordinary D2, explicitly diagnosed. The A1–C3 rows are now expressly approved by the PM. **APPROVED+B** means approved financial behavior but shared interface/authoritative implementation still pending; approval alone does not make unsupported law values available.
 
 | ID | State | Recommendation / material alternative | Complexity & gate |
 | --- | --- | --- | --- |
-| A1 | P+B | Social Security identity-linked **quoted estimate first, rule-calculated only with sufficient SSA facts**, coordinated own/spousal/survivor streams; pension quoted-payment or fully specified formula. Alternative generic income rejected. | High; benefit+tax contracts before implementation |
-| A2 | P+B | Named 403(b), **governmental** 457(b), TSP, SEP IRA, SIMPLE IRA with distinct buckets and plan capabilities; unsupported nongovernmental 457(b)/SARSEPs diagnosed. Alternative all-as-401(k) rejected. | High; canonical identity and limit registry |
-| A3 | P+B | Per-person aggregate Traditional/SEP/SIMPLE IRA basis and tax-year 8606 facts; conversion versus contribution versus rollover distinct; bounded after-tax mega flows only if plan admits operation. Alternative isolated-per-IRA pro-rata rejected. | Very high; A2 + shared tax/capacity |
-| A4 | P+B | Separate ordinary distribution from sale/conversion/rollover; RMD obligation calculated before chosen satisfaction, paid from eligible owned source. Reallocated from **closed #103 into consolidated #146**; no duplicate implementation issue. | High; tax, liquidity, scheduler |
-| B1 | P+B | Fixed auto/student reuse P22; revolving card uses statement/accrual/payment profile; HELOC is explicit draw and adjustable-rate contract. No guessed minimum or reset. | Medium/high; liability profile seam |
-| B2 | P+B | TIPS inflation-indexed principal and coupon with taxable noncash OID; EE issue-vintage values, redemption and elective tax timing. | High; indexed dates + tax basis |
-| B3 | P+B | Funded 529 position plus owner/beneficiary, qualified expense evidence, allocable earnings/basis, statutory eligibility for transfers and 529→beneficiary Roth. | High; education + IRA capacity |
-| C1 | P+B | Coverage/premium schedule by person and payer; pretax employer payroll versus after-tax cash as distinct, never duplicate net premium. | Medium; payroll ownership |
-| C2 | P+B | Member-specific elected Medicare Parts/plan premiums; dated IRMAA with tax-year lookback and one settlement payer (SSA deduction or bank). | Medium/high; A1 + tax facts |
-| C3 | P+B | Health FSA as **restricted reimbursement entitlement, not ordinary investable/net-worth cash**; plan-year uniform availability versus earned contributions; reimbursement and carryover/grace/lapse. | High; entitlement separate from assets |
+| A1 | APPROVED+B | Social Security identity-linked **quoted estimate first, rule-calculated only with sufficient SSA facts**, coordinated own/spousal/survivor streams; pension quoted-payment or fully specified formula. Alternative generic income rejected. | High; benefit+tax contracts before implementation |
+| A2 | APPROVED+B | Named 403(b), **governmental** 457(b), TSP, SEP IRA, SIMPLE IRA with distinct buckets and plan capabilities; unsupported nongovernmental 457(b)/SARSEPs diagnosed. Alternative all-as-401(k) rejected. | High; canonical identity and limit registry |
+| A3 | APPROVED+B | Per-person aggregate Traditional/SEP/SIMPLE IRA basis and tax-year 8606 facts; conversion versus contribution versus rollover distinct; bounded after-tax mega flows only if plan admits operation. Alternative isolated-per-IRA pro-rata rejected. | Very high; A2 + shared tax/capacity |
+| A4 | APPROVED+B | Separate ordinary distribution from sale/conversion/rollover; RMD obligation calculated before chosen satisfaction, paid from eligible owned source. Reallocated from **closed #103 into consolidated #146**; no duplicate implementation issue. | High; tax, liquidity, scheduler |
+| B1 | APPROVED+B | Fixed auto/student reuse P22; revolving card uses statement/accrual/payment profile; HELOC is explicit draw and adjustable-rate contract. No guessed minimum or reset. | Medium/high; liability profile seam |
+| B2 | APPROVED+B | TIPS inflation-indexed principal and coupon with taxable noncash OID; EE issue-vintage values, redemption and elective tax timing. | High; indexed dates + tax basis |
+| B3 | APPROVED+B | Funded 529 position plus owner/beneficiary, qualified expense evidence, allocable earnings/basis, statutory eligibility for transfers and 529→beneficiary Roth. | High; education + IRA capacity |
+| C1 | APPROVED+B | Coverage/premium schedule by person and payer; pretax employer payroll versus after-tax cash as distinct, never duplicate net premium. | Medium; payroll ownership |
+| C2 | APPROVED+B | Member-specific elected Medicare Parts/plan premiums; dated IRMAA with tax-year lookback and one settlement payer (SSA deduction or bank). | Medium/high; A1 + tax facts |
+| C3 | APPROVED+B | Health FSA as **restricted reimbursement entitlement, not ordinary investable/net-worth cash**; plan-year uniform availability versus earned contributions; reimbursement and carryover/grace/lapse. | High; entitlement separate from assets |
 | X1 | B | Freeze shared event, effects, rule snapshot, limit/basis, liquidity, diagnostic, schedule dependency and tax-event interfaces before siblings code. | Integration owner only |
 | X2 | D | Rare SSA family exceptions; specialized pension elections; nongovernmental 457(b), SARSEP, uncommon catch-ups; student IDR/forgiveness; card promotions; complex HELOC; secondary-market TIPS; legacy EE vintage without complete rates; advanced 529 state rules; medical claims. **No deferral of ordinary required behavior.** | Typed gating, not abandonment |
 
-## 3. Proposed exact economic contracts
+## 3. PM-approved economic decision rationale (controlled contract: PFA-DET §5)
 
 ### A1 — Social Security and pensions [DET-016; TAX-015]
 
@@ -83,7 +83,7 @@ Medicare is per member: Part A premium status, Part B election, Part D plan, Med
 
 Model employer plan **plan-year** with per-member election, pre-tax wage reduction source, employer contributions if any, plan-year cash/elected total versus **uniformly available reimbursement cap** (benefits are not limited to paycheck-funded-to-date contributions), substantiated qualified incurred expenses and receipts/reimbursements, designated bank destination and selected carryover/grace/lapse term. Do not model available reimbursement as ordinary liquid investment/cash or double-add to net worth: it is a conditional employer-plan entitlement. Contribution reduces employee taxable wages and take-home per legally applicable income/payroll bases; a reimbursed qualified medical claim creates a payment/offset/settlement, **not a second wage income**. Distinguish expense incurred/paid and reimbursement so household net worth changes only via actual wages, cash, consumption and recoverable claim facts. Store forfeited unused eligibility at year end; carryover/grace only if plan offers it and compliant rule version permits it. 2026 plan-year employee salary reduction ceiling $3,400; optional max carryover $680, not automatic. Dependent-care FSA and HSA are different families. Acceptance: January reimbursement exceeding YTD withheld but within election; insufficient plan eligible entitlement; same receipt can't reimburse twice; no invented household FSA asset; carryover versus grace mutually valid; reimbursement fails without expense proof; no double salary-tax reduction.
 
-## 4. Exact proposed interface seams and sequencing (none authorized for edits now)
+## 4. Historical S1–S8 interface design (controlled logical freeze: PFA-DET §5.11)
 
 Freeze each consumed versioned public contract on merged main through **D2-D #149 as the single shared integration owner**, in parallel with U1 #120 after applicable PM-approved financial decisions. Final U1 UAT is **not** a prerequisite to D2 backend domain work; occupied U1 editor/application files remain locked until explicitly released:
 
@@ -115,22 +115,11 @@ Following the PM-approved **sequencing** change, D2 backend implementation may r
 
 Final merge order: approved authority and shared interfaces → concurrent disjoint A/B/C domain phases → staged #149 common compiler/settlement integration → delayed released-UI authoring/read-model integration → #149 D2-D integrated household and uncoached PM UAT **after #120 U1 acceptance**. R5 remains gated.
 
-## 6. PM approval needed before normative promotion
+## 6. PM decision record and implementation gates
 
-**Approve or revise each decision group; no default approval from silence.**
+**Approved by PM 2026-10-17:** A1 quote-first SSA/pension with sourced adjustments; A2 distinct 403(b)/governmental 457(b)/TSP/SEP/SIMPLE; A3 aggregate year-end IRA basis, Roth vintage and plan-controlled backdoors; A4 separately recognized funded distributions and statutory RMD obligations; B1 issuer/contract-backed cards and explicit indexed HELOC plus reused P22 auto/student; B2 official TIPS/EE indexed/vintage rules; B3 beneficiary-linked federal-first 529 with source-qualified eligible Roth rollover; C1 explicit gross/employer/employee payroll/bank premium flow; C2 sourced Medicare/IRMAA and one payer; C3 health FSA as uniformly available restricted entitlement. **Also approved:** U1-parallel disjoint D2 domain development, #149 shared owner, and closed #103's outstanding work transferred to #146.
 
-1. **SSA:** Approve *quote-first with qualified rule-derived option*; require complete worker/claim/eligibility facts for computed spousal/survivor results; no optimistic benefit default?
-2. **Retirement:** Approve five named plan families including governmental-only 457, ordinary source/limit tax buckets, and gating of rare catch-ups while preserving required ordinary contributions/distributions?
-3. **IRA:** Approve tax-year Form-8606 aggregation, separate Roth vintages, eligible plan-controlled mega and beneficiary-specific 529-to-Roth IRA capacity, even if this entails year-end reconciliation beyond month-by-month pass?
-4. **RMD:** Approve separate mandatory-year requirement and user-configurable withdrawal/funding, with supported auto-scheduling only once an explicit banking/liquidation policy is present, and no invisible transfers?
-5. **Debt:** Approve issuer-/contract-authored card minimum and indexed HELOC terms rather than heuristic generic credit minimums or extrapolated reset rates?
-6. **Bonds and 529:** Approve official-data/index-vintage dependence and federal-first 529 federal tax calculations with state-specific taxes gated unless supported jurisdiction rules are loaded?
-7. **Healthcare:** Approve member-specific premiums and Medicare IRMAA using actual two-year tax facts and one premium settlement route, not assumed constant surcharge?
-8. **FSA:** Approve entitlement (not ordinary liquid NW asset), uniform coverage availability, validated reimbursement and plan-year carryover/grace/forfeiture?
-9. **Concurrency (PM sequencing approved 2026-10-17):** #149 is the one shared contract/integration owner while U1 is active; allow independent approved D2 backend work without U1 final UAT, but prohibit sibling common-file or active U1 editor writes. Authoring/read-model handshake and D2-D closeout still require the specific file release and final #120 acceptance.
-10. **#103 governance (PM approved consolidation):** closed #103 transfers all outstanding distribution/RMD scope to new consolidated D2-A **#146**; the milestone register records the successor. No feature-completion claim follows from the old closure.
-
-Recommendations 1–8 above remain **proposed financial policies requiring explicit PM approval**, not silently accepted by the sequencing decision. Items 9–10 have PM-approved **scheduling/consolidation** decisions, with gate/traceability preserved. No Codex financial implementation authorization until relevant normative contracts and bounded V3 phase are merged; final D2-D UAT remains downstream.
+**Not yet implemented or accepted:** The controlled normative elaboration is PFA-DET §5 / `d2-shared/v1`, subject to merge of the accompanying capability/manifest PR. Each A/B/C Codex phase requires one bounded V3 authorization, stable consumed merged interface, applicable effective-dated source evidence, and exclusive paths. Unknown specialty law/cash/tax facts stay output-incomplete. #149 retains the shared state, scheduler, tax, payroll, U1 interface and A↔B↔C seams. D2 final acceptance waits for integrated truth tables, TAX-015 and U1 #120 owner UAT. The original questions are resolved and should not be re-asked as new PM decisions without a new material conflict.
 
 ## 7. Authoritative rule sources for eventual versioned snapshots
 
