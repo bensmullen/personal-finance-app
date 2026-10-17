@@ -108,7 +108,8 @@
       "status": "active",
       "severity": "high",
       "source_evidence": [
-        "Agent candidate #135 / PR #128: one long E2E test exposed multiple unrelated failures only serially across repeated CI repair turns because earlier assertions prevented downstream scenarios from executing.",
+        "Agent candidate #135 / PR #128: one long UI E2E test exposed multiple unrelated failures only serially across repeated CI repair turns because earlier assertions prevented downstream scenarios from executing.",
+        "PR #139 confirmed the same failure class: GitHub Actions runs 39049670578 and 39050829151 both failed at the first chart selector assertion, including after a repair added setup/readiness checks, leaving independent tooltip, legend, bar-geometry, exact-table, export, stale-state, and mobile assertions unexercised.",
         "Four-way Playwright sharding reduces wall-clock runtime but cannot reveal independent failures hidden behind earlier assertions within the same test."
       ],
       "applicability": {
@@ -130,9 +131,9 @@
       "required_markers": [],
       "rule": "When a UI E2E test contains multiple independently meaningful acceptance flows, separate them into independently runnable tests or subcases with bounded reusable fixtures so one early failure does not hide unrelated defects. Preserve at least one holistic end-to-end journey where integration semantics matter.",
       "do_not_generalize_to": "Do not split an inherently atomic user journey, remove persistence/ownership integration coverage, multiply expensive fixture setup without measuring the cost, or replace end-to-end coverage with shallow unit tests.",
-      "promotion_reason": "The candidate exposed repeated wasted CI/repair cycles from deterministic test structure, and the preventive rule is narrow, low-risk, and likely to recur in UI-heavy milestones.",
-      "counterevidence": "Excessive test splitting can increase runner time and fixture cost; apply only where scenarios are independently meaningful and can share bounded setup.",
-      "review_criteria": "Retire as codified when verification/UX testing policy explicitly requires independently runnable acceptance flows where appropriate and repository E2E structure or review checks make hidden downstream assertions unlikely.",
+      "promotion_reason": "The same deterministic test-structure failure recurred across PRs #128 and #139, causing repeated CI/repair cycles while unrelated downstream acceptance checks remained hidden. The preventive rule is narrow, low-risk, and applicable to future UI-heavy milestones.",
+      "counterevidence": "Excessive test splitting can increase fixture startup, total runner-minutes, and maintenance cost. Apply only where scenarios are independently meaningful, reuse bounded deterministic fixtures, and preserve holistic integration coverage.",
+      "review_criteria": "Retire as codified when verification/UX testing policy explicitly requires independently runnable acceptance flows where appropriate, preserves at least one holistic end-to-end journey plus the aggregate shard gate, and repository evidence shows acceptable fixture startup, runner-minutes, max-shard latency, deterministic repeat rate, and diagnostic signal.",
       "superseded_by": null
     }
   ]
