@@ -94,6 +94,20 @@ Before emitting an implementation/repair handoff, ChatGPT SHALL:
    outside ordinary CI unless the repository verification policy explicitly
    assigns a bounded correctness workload to CI;
 10. perform a contradiction/negative-space review before handing off.
+11. preview how the proposed edits affect selected GitHub CI gates and
+    existing test expectations, including type/build, accessible selectors,
+    state transitions, fixtures, viewports, integration boundaries, and
+    independently runnable acceptance journeys where relevant. Trace any new
+    exact pixel/layout/test threshold to an approved requirement or defensible
+    domain invariant; do not invent stricter numeric acceptance gates from
+    qualitative product language. Identify potentially obsolete tests for
+    reviewer classification rather than letting Codex silently delete them.
+
+For a repair caused by CI, include the classified root cause and any
+sibling or downstream tests vulnerable to the same issue, so that a patch
+addresses the complete failure class rather than only the first failing
+assertion. Do not use extra required task-envelope fields or a blanket E2E
+execution requirement for this preview.
 
 The brief should be as short as the task allows. Complexity belongs in the
 semantic decisions themselves, not in mandatory envelope ceremony.

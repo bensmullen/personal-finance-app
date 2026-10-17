@@ -42,12 +42,62 @@ missing metadata, or changed runtime version conservatively selects the full
 runtime matrix. No change to a tax/model/financial specification is exempt.
 
 **Parallel E2E:** real runtime/UI/E2E changes run the full Playwright suite in
-two independent GitHub-hosted shards. A failed or cancelled shard fails the
+four independent GitHub-hosted shards. A failed or cancelled shard fails the
 aggregate `test` job; each shard uploads distinct failure artifacts. This
 reduces elapsed test time without dropping cases. The existing 20-minute per-job
 ceiling remains damage containment, not a performance allowance.
 
 The aggregate job remains named `test` for branch protection.
+
+### Prevention-first CI and test-contract review
+
+Before authorizing a product or repair implementation, the ChatGPT planning layer
+performs a **targeted CI-impact preview**, using the proposed edit paths, current
+verification routing, affected existing tests, shared selectors/fixtures, and
+the actual product/specification contract. The handoff identifies expected CI
+gates and likely incompatibilities (typing/build, navigation/accessible names,
+layout/viewport, state/ownership, financial meaning, persistence, and async
+readiness) when relevant. Anticipate a coordinated test update **only** when the
+approved behavior changes; preserve tests for unchanged behavior. Record
+non-obvious risks briefly in the issue, not in repetitive global boilerplate.
+This is a pre-handoff reasoning check, not an additional runner or Codex gate.
+
+**Acceptance assertion provenance:** Behavioral, accessibility, financial,
+boundary, error-state, and meaningful responsive-layout invariants belong in
+automated tests. Every new or changed exact numerical geometry constraint,
+string/casing assertion, DOM/selector dependency, or screenshot pixel comparison
+must have a product/specification/accessibility invariant or a documented
+measurement rationale. Do not turn a qualitative request such as "bars close
+together" into an unapproved `<= 1px` gap gate. Prefer relative layout
+properties, observable functionality and accessible roles/labels over arbitrary
+pixel-perfect or implementation-coupled checks. Exact mathematical alignments
+(e.g. positive/negative bars originating at a true zero baseline), precision
+boundaries and explicitly approved visual constraints remain legitimate: measure
+in the correct coordinate system and justify any tolerance without masking
+real defects.
+
+Use independently runnable E2E acceptance flows for unrelated outcomes, with
+bounded reusable fixtures, while preserving at least one holistic journey and
+the full aggregate CI gate (active AL-004). A test that fails on an old UI label,
+hidden DOM structure, or obsolete navigation is **not automatically obsolete**:
+first determine whether its underlying user-facing requirement still applies.
+For a real obsolete assertion, record the superseded requirement, remove or
+rewrite the assertion, and preserve equivalent surviving financial, workflow,
+accessibility and error-recovery coverage. Do not silently skip, weaken, or
+delete an inconvenient failing test.
+
+**CI/test grooming:** Trigger a targeted review after a repeated same-cause
+CI failure or a changed user journey invalidates existing tests. Also review
+recent failure clusters and test age/ownership opportunistically about monthly
+or after roughly ten substantive UI PRs, whichever comes first; this is an
+owner/reviewer checklist, **not** a scheduled GitHub test run or mandatory merge
+barrier. Inspect only frequent offenders/changed surfaces first. Classify each
+case as real regression, obsolete expectation, brittle assertion/locator,
+unstable fixture/readiness, or workflow/environment issue. Resolve the
+smallest evidence-backed cluster, benchmark runner-minutes and shard critical
+path, and avoid churn in stable tests. CI incident artifacts are inputs, not
+automatic deletion or autonomous repair authorization.
+
 
 Ordinary unit and E2E jobs have explicit 20-minute damage-containment ceilings.
 These are not performance budgets and must never be used as correctness
@@ -124,9 +174,14 @@ coding-model turn.
 
 Initial implementation is followed by GitHub CI and ChatGPT review.
 
-When CI or semantic audit finds a defect, ChatGPT issues a focused repair
-handoff containing the exact failure evidence, authorized edit scope, and
-acceptance criteria. Codex does not autonomously broaden the repair or redefine
+When CI or semantic audit finds a defect, ChatGPT first classifies the
+root cause (product regression, invalid/obsolete test expectation, fragile
+locator or fixture, or environment/CI policy), checks sibling assertions and
+selected downstream scenarios for the **same cause**, and then issues a focused
+repair handoff containing the exact failure evidence, authorized edit scope,
+and acceptance criteria. Review completed CI once per head rather than asking
+Codex to poll, and distinguish blocked downstream assertions from tests actually
+executed. Never replace a valid acceptance contract with a green-only patch. Codex does not autonomously broaden the repair or redefine
 acceptance.
 
 The task hook does not require a numeric repair-round field. Repair sequencing
