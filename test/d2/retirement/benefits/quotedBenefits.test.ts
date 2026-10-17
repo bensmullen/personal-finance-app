@@ -132,12 +132,26 @@ describe("D2-A isolated verified quoted schedules (no statutory or integrated cl
     expect(r.proposals.map(p => p.actorId)).toEqual(["claimant", "beneficiary", "beneficiary"]);
     expect(r.proposals[1]).not.toHaveProperty("withholdingInstruction");
   });
-  it("preserves the sourced participant installment until the transition and ends continuation exclusively", () => {
+  it("does not invent a deceased participant payment before survivor commencement", () => {
     const a = award("pension");
     const r = run([{ ...a, participantDeathDate: date("2026-01-10"),
       election: { ...a.election!, continuation: { ...factor("0.5"), beneficiaryId: "beneficiary", effectiveAt: date("2026-02-15"), coversDeathBeforeCommencement: true, endExclusive: date("2026-03-15") } } }], period("2026-01-01", "2026-04-01"));
-    expect(amounts(r)).toEqual(["1000", "500"]);
-    expect(r.coverage.grossSchedule).toBe("complete");
+    expect(amounts(r)).toEqual(["500"]);
+    expect(r.diagnostics.map(d => d.diagnosticCode)).toContain("UNVERIFIED_PENSION_DEATH_TRANSITION_GAP");
+    expect(r.recipientMonths).toContainEqual(expect.objectContaining({
+      effectiveAt: "2026-01-15", coverage: "incomplete",
+    }));
+    expect(r.coverage.grossSchedule).toBe("incomplete");
+  });
+  it("projects a source-qualified survivor election while the participant is alive", () => {
+    const a = award("pension");
+    const elected = { ...a, election: { ...a.election!, continuation: {
+      ...factor("0.5"), beneficiaryId: "beneficiary", effectiveAt: date("2026-07-15"),
+      coversDeathBeforeCommencement: false,
+    } } };
+    const r = run([elected], period("2026-01-01", "2026-04-01"));
+    expect(amounts(r)).toEqual(["1000", "1000", "1000"]);
+    expect(r.diagnostics).toEqual([]);
   });
   it("requires explicit pre-commencement-death and beneficiary-death terms", () => {
     const a = award("pension");
