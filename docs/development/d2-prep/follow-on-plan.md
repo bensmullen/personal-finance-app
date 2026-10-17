@@ -1,6 +1,6 @@
 # D2 consolidated follow-on owners and parallel integration contract
 
-**Current planning status (2026-10-17):** merged D1-C financial semantics (PR #89) and D2-PREP synthetic cases (PR #116 / #114) form the baseline. D2-A/B/C *financial domain/backend implementation* may progress **in parallel with U1 #120**, subject to approved authoritative A1–C3 financial contracts, stable merged consumed interfaces and exclusive file ownership. Final D1 acceptance still requires U1 uncoached UAT; final D2-D and R5 require accepted D1/U1. This scheduling approval does not approve the proposed financial rules in `financial-semantic-decision-proposals.md`.
+**Current planning status (2026-10-17):** merged D1-C financial semantics (PR #89) and D2-PREP synthetic cases (PR #116 / #114) form the baseline. D2-A/B/C *financial domain/backend implementation* may progress **in parallel with U1 #120**, subject to approved authoritative A1–C3 financial contracts, stable merged consumed interfaces and exclusive file ownership. Final D1 acceptance still requires U1 uncoached UAT; final D2-D and R5 require accepted D1/U1. The PM subsequently approved A1–A4/B1–B3/C1–C3 on 2026-10-17. Controlled authority is PFA-DET §5 (`d2-shared/v1`) and corresponding versioned PFA-TAX/PFA-INV/PFA-INS updates **after the linked contract PR merges**; this follow-on plan remains non-normative.
 
 **Owners, not nine micro-issues:** the following are four durable issues. Domain submodules/tests may be phased under the same issue, but no additional issue is needed merely because a distinct financial family exists. These planning issues do not yet contain a V3 Codex authorization. Any future scoped Codex phase must follow the live handoff policy with exact ALLOWED_PATHS and operator bootstrap from merged main.
 
@@ -23,9 +23,9 @@
 
 No concurrent sibling branch may write shared `src/application/compiler/**`, household execution/projection, ledger/accounting/funding, `src/simulation/tax/**`, canonical schema, or active U1 UI/authoring files. A shared-seam change is a dedicated #149 step merged *before* dependent sibling use. A contract needs a named owner, exact interface version/commit and impacted validation. File release is not a substitute for financial correctness review. Neither green domain CI nor merged fixtures close D2-D.
 
-## Financial/product decision queue
+## Approved financial policies / historical technical lookup queue
 
-These are exact future lookup boundaries found during preparation. They do not prevent authoring the catalog/inventory; they prevent implementing the affected financial behavior. The preparation issue chooses no new economic policy. Product/architecture review should resolve representation first, then authoritative effective-dated rule sources and admitted scope. None of the ordinary required families may be deferred out of D2.
+**The PM approved the A1–C3 product choices on 2026-10-17; the following are historical lookup gaps now resolved in principle by PFA-DET §5.** They are NOT an invitation for Codex to invent law values or edit shared interfaces. Some require sourced effective-dated IRS/SSA/Treasury/CMS/plan data, retained as evidence prerequisites for the affected implementation phase. No ordinary required D2 family may be silently deferred.
 
 | Lookup key | Exact missing fact / required review | Affected fixture families |
 | --- | --- | --- |

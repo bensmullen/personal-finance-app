@@ -1,6 +1,6 @@
 # Tax Engine Capability
 
-**Version:** 0.4.1-draft
+**Version:** 0.4.2-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-TAX
 
@@ -129,6 +129,8 @@ The supported floor includes, where applicable:
 - income facts required for supported Medicare income-related premium adjustments.
 
 Missing material rules SHALL block only affected after-tax outputs, but R5 SHALL NOT start while an item required by the admitted D2 deterministic household contract lacks a defined supported or explicitly gated tax path.
+
+**D2-A/B/C PM approval cross-reference (2026-10-17):** PFA-TAX-015 SHALL use the detailed A1–C3 and S6 contract in PFA-DET §5 (`d2-shared/v1`) as the approved input/traceability boundary, while **PFA-TAX alone** owns law interpretation and authoritative tax liability/withholding/settlement. In particular: Social Security provisional-income treatment is not a blanket 85% inclusion; pension employee basis is tracked; per-person Traditional/SEP/SIMPLE IRA pro-rata basis is reconciled using applicable tax-year December-31 facts; conversion/rollover/regular-contribution/RMD characters remain distinct; eligible mega after-tax basis is not taxed twice; TIPS noncash accretion and Series EE vintage/election treatment cannot be assumed cash; 529 qualification and beneficiary Roth transfer are conditioned on sourced law/annual capacity; FSA and health premium pretax wage effects are not duplicated; Medicare IRMAA consumes sourced historical tax facts. Future rule values and missing material inputs yield output-level incompleteness, never a fabricated complete net-cash projection. This cross-reference authorizes no new T1B code or duplicate tax engine and preserves the independent #101 payroll withholding owner.
 
 ### PFA-TAX-016 — Private-alpha capital-loss, wash-sale, tax-loss-harvesting, and 1031 floor
 

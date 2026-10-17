@@ -1,6 +1,6 @@
 # Portfolio & Investment Planning
 
-**Version:** 0.5.1-draft
+**Version:** 0.5.2-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-INV
 
@@ -189,6 +189,8 @@ TIPS SHALL preserve inflation-adjusted principal, coupon cash flow, maturity val
 Before R5, 529 plans SHALL be first-class supported education-savings accounts rather than generic taxable investments.
 
 The supported deterministic contract SHALL preserve owner and beneficiary identity, contributions, investment holdings/value, qualified versus non-qualified distributions, earnings/basis character, and the rollover paths required by PFA-DET, including supported plan-to-plan rollovers, beneficiary changes, and bounded 529-to-Roth-IRA rollovers subject to authoritative eligibility/limit rules.
+
+**PM-approved D2 semantics (2026-10-17):** PFA-INV-025–028 consume PFA-DET §5's A2/A3/B2/B3 and S1/S2/S5/S6 (`d2-shared/v1`) as the bounded domain contract: five legally distinct plan families; annual per-person deferral/additions capacity; Traditional/SEP/SIMPLE IRA aggregate tax-year basis and Roth vintages; verified plan-permitted non-Roth after-tax mega paths; sourced TIPS index/lot/accretion and EE issue-vintage terms; 529 owner/beneficiary investment positions counted once and federal-first state-qualified result completeness; and beneficiary Roth transfer eligibility sharing authoritative IRA capacity. Shared account/ledger/tax/authoring integration remains #149; pure investment-domain work may proceed in disjoint modules only after the controlled contract merges. Neither a missing law/index input nor a green isolated test asserts a completed portfolio or D2 capability.
 
 ## 3. Relationship to specialized equity capability
 

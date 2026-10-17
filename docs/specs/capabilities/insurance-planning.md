@@ -1,6 +1,6 @@
 # Insurance Planning
 
-**Version:** 0.3.0-draft
+**Version:** 0.3.1-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-INS
 
@@ -77,6 +77,8 @@ For employer or individually purchased health coverage, the supported contract S
 For Medicare-age households, the supported deterministic cost floor SHALL represent the applicable elected/supported Medicare premium structure, including Part A premium when applicable, Part B, Part D, and explicitly authored Medicare Advantage, Medigap, or other supplemental premiums. Income-related premium adjustments such as IRMAA SHALL use authoritative income/tax facts when materially applicable rather than a hard-coded surcharge.
 
 This requirement does not require medical-claim adjudication, provider-network modeling, prescription formularies, or probabilistic healthcare utilization. Those remain capability-gated until separately implemented.
+
+**PM-approved C1–C3 premium and FSA contract (2026-10-17):** PFA-INS-013 consumes PFA-DET §5.8–5.10 and S1–S8 (`d2-shared/v1`). Coverage is member/effective-period/payer-scoped; employer subsidy, pretax wage reduction and household after-tax bank-funded premium are mutually reconciled and counted once. Medicare requires admitted elected Parts/plan configuration, dated evidence for IRMAA lookback/filing/MAGI and exactly one Social Security deduction or bank premium settlement. Employer health FSA is a uniformly available qualified-reimbursement **entitlement**, not extra liquid cash or net worth; receipt substantiation, payroll source and plan-specific carryover/grace/forfeiture are mandatory. Missing tax/law/plan facts become affected-output incompleteness, not estimated zero. The #149 integration owner coordinates payroll #101, SSA #146, liability funding #147 and U1 #120; #148's isolated health-domain tasks may not edit shared application, tax or U1 surfaces.
 
 ## 3. Initial scope
 
