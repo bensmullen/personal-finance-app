@@ -266,6 +266,8 @@ export function PersonalFinanceApp() {
   useEffect(() => { if (browserRequest.current !== undefined) browserRequest.current.active = false; });
   const [primary, setPrimary] = useState<Primary>("Overview");
   const [subnav, setSubnav] = useState("How am I doing?");
+  const [cashMonth, setCashMonth] = useState("");
+  const [cashReturn, setCashReturn] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreButton = useRef<HTMLButtonElement>(null);
   const morePanel = useRef<HTMLElement>(null);
@@ -405,6 +407,8 @@ export function PersonalFinanceApp() {
   };
 
   const replaceCanonicalModel = (next: PersonalDraft, message: string) => {
+    setCashMonth("");
+    setCashReturn(false);
     setContributionTarget(undefined);
     setInsuranceTarget(undefined);
     setReplacementIdentity(value => value + 1);
@@ -755,8 +759,9 @@ export function PersonalFinanceApp() {
   return (
     <FinancialFactEditors draft={draft} setDraft={updateCanonicalModel} openingReference={sessionSettings.asOf || sessionSettings.simulationStart}>
     <FinancialResultModels.Provider value={{ model: draft, baseline: interactive.baseline, comparison: interactive.comparison, explanations, setupChangesPending,
-      reviewInsurance: policyId => { setInsuranceTarget(policyId); navigate("Money"); setSubnav("Insurance & coverage"); requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>('[data-authoring-scope="term-life-policy"] select'))); },
+      reviewInsurance: policyId => { if (primary === "Money" && subnav === "Cash Flow") setCashReturn(true); setInsuranceTarget(policyId); navigate("Money"); setSubnav("Insurance & coverage"); requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>('[data-authoring-scope="term-life-policy"] select'))); },
       reviewContributions: (investmentId, kind) => {
+        if (primary === "Money" && subnav === "Cash Flow") setCashReturn(true);
         setContributionTarget(investmentId && kind ? { investmentId, kind } : undefined);
         navigate("Net Worth"); setSubnav("Investments & retirement");
         requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>(investmentId && kind ? `#${kind === "personal" ? "personal-contributions" : "payroll-contributions"} select` : "#investment-contribution-summary")));
@@ -765,6 +770,7 @@ export function PersonalFinanceApp() {
       reviewMortgageFunding: (id) => { navigate("Net Worth"); setSubnav("Debt"); requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>(`[data-repair="${CSS.escape(`mortgage:${id}:mortgageFunding`)}"]`))); },
       reviewMortgageOperations: () => { navigate("Net Worth", "Debt"); requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>('[aria-label="Mortgage operations"]'))); },
       reviewTarget: (target) => {
+        if (primary === "Money" && subnav === "Cash Flow" && (!target.objectType || target.type === "Asset sources")) setCashReturn(true);
         if (target.type === "Asset sources") { navigate("Net Worth", "Property & other assets"); return; }
         if (!target.objectType) { openForecastSetup(target.field ? { target: target.field, message: target.label } : undefined); return; }
         setEntityRepair({ objectType: target.objectType, objectId: target.id, field: target.editable ? target.field ?? "" : "", token: randomId() });
@@ -844,6 +850,7 @@ export function PersonalFinanceApp() {
           </div>
         </nav>
         <main id="main-content" tabIndex={-1} style={{ minWidth: 0 }}>
+          {cashReturn && !(primary === "Money" && subnav === "Cash Flow") && <div className="cash-return"><button type="button" onClick={() => { setCashReturn(false); navigate("Money", "Cash Flow"); requestAnimationFrame(() => document.querySelector<HTMLSelectElement>('.monthly-money select')?.focus()); }}>Return to Cash breakdown</button><small>Your selected modeled month is retained.</small></div>}
           <section className="household-summary" aria-label="Household current summary">
             <div><p className="eyebrow">{objectEntries(draft, "Household").map(item => objectLabel("Household", item)).join(" · ") || "Household"} · as of {sessionSettings.asOf}</p>
               <p>Recorded current position · {position!.status} · {sessionSettings.baseCurrency}</p></div>
@@ -919,6 +926,9 @@ export function PersonalFinanceApp() {
               draft={draft}
               run={runHouseholdForecast}
               error={runSettingsError}
+              selectedMonth={cashMonth}
+              selectMonth={setCashMonth}
+              openOwner={section => { setCashReturn(true); navigate("Money", section); requestAnimationFrame(() => document.getElementById("main-content")?.focus()); }}
             />
           )}
           {primary === "Net Worth" && subnav === "Overview" && (
@@ -1406,11 +1416,12 @@ function Overview({
     </>
   );
 }
-function MonthlyEvidence({ draft, forecast, mode }: { draft: PersonalDraft; forecast?: PersonalHouseholdForecastReadModel | undefined; mode: "paycheck" | "debt" | "spending" }) {
+function MonthlyEvidence({ draft, forecast, mode, selectedMonth, selectMonth }: { draft: PersonalDraft; forecast?: PersonalHouseholdForecastReadModel | undefined; mode: "paycheck" | "debt" | "spending"; selectedMonth?: string | undefined; selectMonth?: ((month: string) => void) | undefined }) {
   const models = useContext(FinancialResultModels);
-  const current = !!models.baseline && models.baseline.resultModel === draft && !models.baseline.pending && !models.baseline.stale;
-  return <MonthlyMoneyPanel draft={draft} forecast={forecast} current={current} mode={mode}
+  const current = !!models.baseline && models.baseline.lastGoodResult === forecast && models.baseline.resultModel === draft && !models.baseline.pending && !models.baseline.stale && !models.setupChangesPending;
+  return <MonthlyMoneyPanel draft={models.baseline?.resultModel ?? draft} forecast={forecast} current={current} mode={mode} selectedMonth={selectedMonth} selectMonth={selectMonth}
     setup={() => models.reviewTarget?.({ id: "", type: "Forecast setup", label: "Forecast setup", editable: false })}
+    coverageSetup={() => models.reviewTarget?.({ id: "", type: "Forecast setup", label: "Tax coverage & setup", field: "taxSetup", editable: false })}
     review={(type, id) => {
       if (type === "Insurance") models.reviewInsurance?.(id);
       else if (type === "Investment") {
@@ -1426,12 +1437,18 @@ function CashFlow({
   run,
   draft,
   error,
+  selectedMonth,
+  selectMonth,
+  openOwner,
 }: {
   position: ReturnType<typeof getCurrentPosition>;
   forecast: PersonalHouseholdForecastReadModel | undefined;
   run: () => void;
   draft: PersonalDraft;
   error: string;
+  selectedMonth: string;
+  selectMonth: (month: string) => void;
+  openOwner: (section: string) => void;
 }) {
   return (
     <>
@@ -1440,6 +1457,9 @@ function CashFlow({
         title="What comes in and goes out?"
         text="Follow monthly income, spending, and liquidity without losing the exact source values."
       />
+      <nav className="cash-tasks" aria-label="Cash tasks">
+        {(["Income", "Spending", "Accounts", "Insurance & coverage"] as const).map(section => <button key={section} type="button" aria-label={`Review ${section} sources`} onClick={() => openOwner(section)}>{section}</button>)}
+      </nav>
       <section className="panel">
         <div className="panel-head">
           <h2>Cash balance and modeled activity</h2>
@@ -1473,7 +1493,7 @@ function CashFlow({
         <Kpi label="Monthly spending" value={position.monthlySpending?.display} />
         <Kpi label="Net cash flow" value={position.monthlyCashFlow?.display} />
       </section>
-      <MonthlyEvidence draft={draft} forecast={forecast} mode="paycheck" />
+      <MonthlyEvidence draft={draft} forecast={forecast} mode="paycheck" selectedMonth={selectedMonth} selectMonth={selectMonth} />
     </>
   );
 }
