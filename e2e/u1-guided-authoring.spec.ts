@@ -362,6 +362,10 @@ test("U1 account actions choose the authoritative personal and workplace paths",
 });
 
 test("U1 rendered assumption and fixed-income guidance use their own financial meaning", async ({ page }) => {
+  // CI exhausted the default whole-test budget. This journey checks every
+  // visible field's contract and geometry three times across two editors and
+  // both viewport widths; retain all assertions with a bounded per-test budget.
+  test.setTimeout(120_000);
   await page.goto("/"); await page.getByRole("button", { name: "Use synthetic example" }).click();
   await navigate(page, "Settings", "Import / Export");
   await page.locator('input[type="file"]').setInputFiles("test/fixtures/d1-integrated-uat-model.json");

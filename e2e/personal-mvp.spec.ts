@@ -1274,7 +1274,11 @@ test("R4 narrow and wide layouts retain readable status, chart and keyboard edit
     await plot.focus();
     await page.keyboard.press("ArrowRight");
     await expect(chart.locator(".chart-readout")).toBeVisible();
-    await expect(chart.locator(".chart-readout")).toContainText("Month starting");
+    await expect(chart.locator(".chart-readout")).toContainText("Annual modeled period [start, end)");
+    await expect(chart.locator(".chart-readout")).toContainText("Projected 2026-01-01 → 2026-04-01 (exclusive) · partial year, 3 months");
+    await expect(chart.locator(".chart-readout dd")).toHaveText(
+      await chart.getByRole("status", { name: "Assets, liabilities and net worth exact selected period", exact: true }).locator("dd").allTextContents(),
+    );
     await expect(status).toHaveAttribute("data-request-id", request!);
     const reveal = page.getByRole("button", { name: "Show forecast details", exact: true });
     await reveal.focus(); await page.keyboard.press("Enter");
