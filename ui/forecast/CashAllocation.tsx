@@ -1,6 +1,7 @@
 "use client";
 import * as React from "react";
-import { Currency, decimal, RoundingPolicy } from "../../src/values/index.js";
+import { cashComparison } from "../../src/application/monthlyMoney.js";
+export { cashComparison };
 import type { inspectMonthlyMoney } from "../../src/application/monthlyMoney.js";
 import type { PersonalDraft } from "../../src/application/personalMvp.js";
 import { formatExactMoney, referenceLabel } from "../entityPresentation.js";
@@ -8,27 +9,6 @@ import { formatExactMoney, referenceLabel } from "../entityPresentation.js";
 export type MonthlyEvidenceDetail = ReturnType<typeof inspectMonthlyMoney>;
 export type CashSourceReview = (type: "Income" | "Investment" | "Liability" | "Account" | "Expense" | "Insurance", id: string) => void;
 
-/** Presentation only: exact source values/order, disposable bounded coordinates. */
-export function cashComparison(detail: MonthlyEvidenceDetail) {
-  try {
-    Currency.of(detail.currency);
-    const income = decimal(detail.denominator), uses = decimal(detail.totalUses);
-    const remainder = decimal(detail.unallocated), excess = decimal(detail.additionalFunding);
-    const categories = detail.categories.filter(item => !decimal(item.amount).isZero()).slice().sort((a, b) =>
-      decimal(b.amount).compare(decimal(a.amount)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    const sum = categories.reduce((value, item) => value.plus(decimal(item.amount)), decimal("0"));
-    const sourceIds = categories.flatMap(item => item.sourceIds);
-    const coherent = new Set(sourceIds).size === sourceIds.length && !uses.isNegative() && !remainder.isNegative() && !excess.isNegative()
-      && categories.every(item => decimal(item.amount).isPositive() && item.sourceIds.length > 0)
-      && sum.equals(uses) && income.minus(uses).equals(remainder.minus(excess))
-      && !(remainder.isPositive() && excess.isPositive());
-    const scale = uses.compare(income) > 0 ? uses : income;
-    const percent = (value: string) => scale.isPositive()
-      ? Number(decimal(value).dividedBy(scale, new RoundingPolicy(8, "half_even")).times(decimal("100")).toString()) : 0;
-    return { categories, coherent, drawable: coherent && income.isPositive() && categories.length > 0,
-      overflow: excess.isPositive(), remainder: remainder.isPositive(), scale: scale.toString(), percent };
-  } catch { return undefined; }
-}
 
 export function CashAllocation({ draft, detail, review, setup }: {
   draft: PersonalDraft; detail: MonthlyEvidenceDetail; review: CashSourceReview; setup: () => void;
