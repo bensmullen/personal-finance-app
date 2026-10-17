@@ -1,6 +1,6 @@
 # Level 4 UX pilot — reviewable design target and sign-off criteria
 
-**Status:** Level 4 **visual/interaction candidate**, with independent browser smoke tests complete and **product-manager approval pending**. Date: 2026-10-16. Non-normative design reference only; do not implement from this draft until PM explicitly approves the chosen visual/interaction direction. Existing authoritative specs and source-of-truth registry remain unchanged.
+**Status:** **Calm visual direction approved by the product manager** on 2026-10-16. Navigation taxonomy and chart placements are defined for review, but **the new interactive chart layouts and end-to-end chart UAT are not yet visually approved**. Existing browser prototype smoke tests covered the earlier pilot views. Date: 2026-10-16. Non-normative design reference only; do not implement from this draft until PM explicitly approves the chosen visual/interaction direction. Existing authoritative specs and source-of-truth registry remain unchanged.
 
 ## References and scope
 
@@ -17,7 +17,7 @@
 | **Focus compact** | Straighter corners and tighter financial-information density | Good for repeat/advanced users who navigate many accounts | May reintroduce wall-of-data fatigue for H04 | Alternative, not a separate engineering lane |
 | **Studio soft** | Cooler lavender/navy palette with same interaction skeleton | Differentiate editorial brand feel | Less neutral for financial uncertainty/error semantics | Alternative aesthetic; needs PM preference |
 
-**Current review recommendation:** prefer **Calm** visual grammar and the **single-task first-screenful** pattern. This is a design-review recommendation; it is **not PM approval**. Select a direction or request a focused change before moving the design gate. Do not hand Codex three unresolved visual directions.
+**PM visual choice:** **Calm is approved**. Focus and Studio remain discarded comparison variants, **not production themes**. See [Level 4 financial visualization and revised section taxonomy](level4-financial-visualizations.md) for new chart requirements and screens, which still require a chart-specific render/review before Codex B–E.
 
 ## Main navigation and screen specification (production target)
 
@@ -59,6 +59,6 @@ The existing app's five primary areas and 62 authoritative financial fact writer
 
 ## Approval checkpoint and implementation handoff
 
-**PM decision needed:** select **Calm / Focus / Studio**, approve or revise the navigation first-screenful, contextual edit-sheet, compact diagnostics, visible defaults, and mobile More pattern. If these are approved, lock chosen visual reference and promote the narrowly scoped [Codex handoff drafts](level4-codex-handoff-drafts.md) into existing Issue #120 in incremental serial slices, preserving its acceptance and inherited U1/D1 semantics. #105 and #108 remain their own dependency gates.
+**Decision state:** PM has chosen **Calm**. The proposed **Overview / Cash Flow / Net Worth / Planning / Settings** labels and **Cash / Investing / Real Estate / Other Assets / Debt** sections, together with the new chart stack, are now authored in [the chart-aware Level 4 design contract](level4-financial-visualizations.md). The first implementation authorization remains phase-scoped in [Issue #120](https://github.com/bensmullen/personal-finance-app/issues/120). **No newly requested chart visual has been rendered or PM-approved yet**; review a focused chart-design amendment at 1440px and 390px before activating phases B–E. #105 and #108 remain independent dependency gates.
 
-**Nothing in this document approves a merge, implementation start, engine horizon extension, future tax-law simulation or UAT on the PM's behalf.**
+**Calm direction approval does not mean product-owner merge/UAT acceptance.** Chart design, full age-90 model execution, and future tax-law simulation remain separate gates. No Codex implementation turn was started here.
