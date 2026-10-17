@@ -304,8 +304,11 @@ export function proposeHeloc(r: HelocRequest): HelocResult {
       const observations = rate.observations.filter(o => o.indexId === rate.indexId && o.observedAt === observedAt);
       const o = observations[0];
       if (observations.length !== 1 || !o) { fail("INDEX_UNAVAILABLE", `Exactly one ${rate.indexId} observation at ${observedAt} required`); break; }
-      if (o.source.publishedAt < o.observedAt) { fail("INDEX_UNAVAILABLE", "Observation cannot be published before its observation date", o.source); break; }
+      // Admit the evidence before evaluating its index chronology. An explicitly
+      // projected/unverified observation is a source failure, not a verified
+      // observation with a malformed publication date.
       if (!sourceOK(o.source, { start: observedAt, endExclusive: shift(observedAt, 1) }, a.effectiveAt)) break;
+      if (o.source.publishedAt < o.observedAt) { fail("INDEX_UNAVAILABLE", "Observation cannot be published before its observation date", o.source); break; }
       const raw = o.ratePpm + rate.spreadPpm;
       if (raw < 0n) { fail("UNSUPPORTED_RATE_VARIANT", "Negative index-plus-spread requires separate admission", o.source); break; }
       const candidate = rounded(raw, rate.roundingIncrementPpm, rate.rounding) * rate.roundingIncrementPpm;
