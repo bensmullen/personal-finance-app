@@ -29,6 +29,13 @@
         105,
         108
       ]
+    },
+    "U1B_B": {
+      "stage": "U1B-B chart-data prerequisite",
+      "blocking_transition": "Start or accept U1B-B frontend financial chart integration without the audited source-only chart-data read model",
+      "required_issue_numbers": [
+        129
+      ]
     }
   },
   "issues": [
@@ -162,7 +169,7 @@
     {
       "issue_number": 129,
       "owner_stage": "U1B-chart-data-prep",
-      "blocking_gate": "D1_U1",
+      "blocking_gate": "U1B_B",
       "depends_on": [],
       "spec_requirement_ids": [
         "PFA-DET-014",
@@ -173,7 +180,7 @@
         "PFA-UX-020",
         "PFA-UX-021"
       ],
-      "scope": "Exclusive two-file U1B-B0 pure read-only forecast-chart data selector: exact source period and yearly stock/flow aggregation, net-worth and cash identities, per-metric incomplete coverage, and total modeled cash explicitly distinguished from bank-accessible cash. Separate from #120's UI, no source-of-truth edits. #120 retains the sole final U1/D1 owner-UAT acceptance."
+      "scope": "Exclusive two-file U1B-B0 pure read-only forecast-chart data selector: exact source period/yearly stock/flow aggregation, net-worth/cash identities, per-metric incomplete coverage, and total modeled cash distinguished from bank-accessible cash. Independent prerequisite to #120 U1B-B chart UI, not a second D1_U1 final user-acceptance owner. #120 alone retains U1/D1 UAT acceptance."
     }
   ],
   "legacy_open_task_reconciliation": {
