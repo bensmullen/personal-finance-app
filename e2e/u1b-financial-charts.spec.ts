@@ -13,6 +13,55 @@ const wealthTitle = "Household financial outlook chart";
 const statementTitle = "Modeled statement income versus expenses";
 const pageErrors = new WeakMap<Page, string[]>();
 
+// Sample paths and the matching zero line together, in screen coordinates.
+// CI 2baa16aa: statement path 230.75 + 131.25 = line y=362 (1440px),
+// 155.75 + 86.25 = line y=242 (390px); negative cash ends at line y=12.
+// The former cross-call boundingBox origin comparison reported 4.5px despite
+// those coincident SVG edges. getBBox excludes stroke; getScreenCTM accounts
+// for each element's transforms. Keep stroke extents separately in diagnostics.
+async function barGeometry(chart: Locator) {
+  return chart.evaluate(figure => {
+    const line = figure.querySelector<SVGLineElement>(".recharts-reference-line-line");
+    const axis = figure.querySelector<SVGLineElement>(".recharts-xAxis .recharts-cartesian-axis-line");
+    if (!line || !axis) throw new Error("Missing chart zero line or period axis");
+    const matrix = line.getScreenCTM();
+    const axisMatrix = axis.getScreenCTM();
+    if (!matrix || !axisMatrix) throw new Error("Missing chart screen transform");
+    const start = new DOMPoint(line.x1.baseVal.value, line.y1.baseVal.value).matrixTransform(matrix);
+    const end = new DOMPoint(line.x2.baseVal.value, line.y2.baseVal.value).matrixTransform(matrix);
+    const axisStart = new DOMPoint(axis.x1.baseVal.value, axis.y1.baseVal.value).matrixTransform(axisMatrix);
+    const axisEnd = new DOMPoint(axis.x2.baseVal.value, axis.y2.baseVal.value).matrixTransform(axisMatrix);
+    const lineBox = line.getBoundingClientRect();
+    return {
+      zero: { start: start.y, end: end.y, svgY1: line.y1.baseVal.value, svgY2: line.y2.baseVal.value,
+        boundingTop: lineBox.y, boundingHeight: lineBox.height,
+        strokeHalfWidth: Number.parseFloat(getComputedStyle(line).strokeWidth) * Math.hypot(matrix.c, matrix.d) / 2 },
+      plotWidth: Math.abs(axisEnd.x - axisStart.x),
+      bars: Array.from(figure.querySelectorAll<SVGGraphicsElement>(".recharts-bar-rectangle .recharts-rectangle")).map(path => {
+        const bounds = path.getBBox();
+        const transform = path.getScreenCTM();
+        if (!transform) throw new Error("Missing bar screen transform");
+        const top = new DOMPoint(bounds.x, bounds.y).matrixTransform(transform);
+        const bottom = new DOMPoint(bounds.x + bounds.width, bounds.y + bounds.height).matrixTransform(transform);
+        const screenBox = path.getBoundingClientRect();
+        return { series: path.closest(".recharts-bar")?.getAttribute("class") ?? "",
+          top: Math.min(top.y, bottom.y), bottom: Math.max(top.y, bottom.y), width: Math.abs(bottom.x - top.x),
+          svgTop: bounds.y, svgBottom: bounds.y + bounds.height,
+          boundingTop: screenBox.y, boundingHeight: screenBox.height,
+          strokeHalfWidth: Number.parseFloat(getComputedStyle(path).strokeWidth) * Math.hypot(transform.c, transform.d) / 2 };
+      }).filter(bar => bar.width > 0 && bar.bottom > bar.top),
+    };
+  });
+}
+
+function expectBarAtZero(bar: Awaited<ReturnType<typeof barGeometry>>["bars"][number], zero: number, positive: boolean) {
+  // Recharts serializes path coordinates to four decimals. 0.01 CSS px allows
+  // that rounding after transforms, while still rejecting a misplaced baseline.
+  expect(Math.abs((positive ? bar.bottom : bar.top) - zero)).toBeLessThanOrEqual(0.01);
+  if (positive) expect(bar.top).toBeLessThan(zero);
+  else expect(bar.bottom).toBeGreaterThan(zero);
+}
+
 test.beforeEach(async ({ page }) => {
   test.setTimeout(120_000);
   const errors: string[] = [];
@@ -22,6 +71,11 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }, testInfo) => {
   if (testInfo.status !== testInfo.expectedStatus) {
+    for (const [index, chart] of (await page.getByRole("figure").filter({ has: page.locator(".recharts-bar") }).all()).entries()) {
+      await testInfo.attach(`chart-bar-geometry-${index}`, {
+        body: JSON.stringify(await barGeometry(chart).catch(error => ({ error: String(error) })), null, 2), contentType: "application/json",
+      });
+    }
     // CI-only, bounded diagnostics separate missing DOM, closed ancestors,
     // label wiring and accessible names without dumping the household document.
     const dom = await page.locator(".financial-charts").evaluateAll(containers => containers.map(container => ({
@@ -226,6 +280,8 @@ for (const width of [1440, 390]) {
     await observeBaseline(page);
     const status = await boundedGolden(page, width, "20000.00");
     const source = await appliedSource(page, status);
+    const request = await status.getAttribute("data-request-id");
+    const fingerprint = await status.getAttribute("data-fingerprint");
     const monthly = selectForecastChartData(source);
     const annual = selectForecastChartData(source, { granularity: "annual" });
     expect(monthly.points).toHaveLength(3);
@@ -262,11 +318,9 @@ for (const width of [1440, 390]) {
       await expect(statements.getByRole("table").locator("tbody tr").nth(index).getByRole("cell")).toHaveText(values);
       await expect(statements.getByRole("status", { name: `${statementTitle} exact selected period`, exact: true }).locator("dd")).toHaveText(values);
     }
-    const plotBox = await statements.locator(".recharts-xAxis .recharts-cartesian-axis-line").boundingBox();
-    const zeroBox = await statements.locator(".recharts-reference-line-line").boundingBox();
-    expect(plotBox).not.toBeNull();
-    expect(plotBox!.width).toBeGreaterThan(0);
-    expect(zeroBox).not.toBeNull();
+    const statementGeometry = await barGeometry(statements);
+    expect(statementGeometry.plotWidth).toBeGreaterThan(0);
+    expect(statementGeometry.zero.start).toBe(statementGeometry.zero.end);
     let visibleBars = 0;
     let expectedBars = 0;
     for (const key of ["modeledStatementIncome", "modeledStatementExpenses"] as const) {
@@ -274,46 +328,49 @@ for (const width of [1440, 390]) {
         const values = monthly.points.map(point => point.metrics[key]).filter(value =>
           value.status === capability && value.amount !== null && Money.parse(value.amount, USD).compare(Money.zero(USD)) !== 0);
         expectedBars += values.length;
-        const boxes = [];
-        for (const rectangle of await statements.locator(`.chart-bar-${key}-${capability} .recharts-bar-rectangle .recharts-rectangle`).all()) {
-          const box = await rectangle.boundingBox();
-          if (box && box.width > 0 && box.height > 0) boxes.push(box);
-        }
+        const boxes = statementGeometry.bars.filter(bar => bar.series.split(" ").includes(`chart-bar-${key}-${capability}`));
         expect(boxes).toHaveLength(values.length);
         for (const [index, box] of boxes.entries()) {
           visibleBars++;
           // Two semantic stacks occupy the three monthly bands; complete and
           // incomplete Bar elements must not create four narrow series slots.
-          expect(box.width).toBeGreaterThan(plotBox!.width / 3 * 0.3);
+          expect(box.width).toBeGreaterThan(statementGeometry.plotWidth / 3 * 0.3);
           const positive = Money.parse(values[index]!.amount!, USD).compare(Money.zero(USD)) > 0;
-          expect(Math.abs((positive ? box.y + box.height : box.y) - zeroBox!.y)).toBeLessThanOrEqual(1);
-          if (positive) expect(box.y).toBeLessThan(zeroBox!.y);
-          else expect(box.y + box.height).toBeGreaterThan(zeroBox!.y);
+          expectBarAtZero(box, statementGeometry.zero.start, positive);
         }
       }
     }
     expect(expectedBars).toBeGreaterThan(0);
     expect(visibleBars).toBe(expectedBars);
+    expect(statementGeometry.bars).toHaveLength(expectedBars);
     await cash.locator(".chart-table > summary").click();
     await expect(cash.getByRole("table").locator("tbody tr")).toHaveCount(1);
     const closingCash = source.points.at(-1)!.cash.amount;
     const change = Money.parse(closingCash, USD).minus(Money.parse(source.openingSnapshot.cash.amount, USD)).amount.toString();
     expect(annual.points[0]!.metrics.totalModeledCash.amount).toBe(closingCash);
     expect(annual.points[0]!.metrics.totalModeledCashChange.amount).toBe(change);
+    for (const [index, point] of monthly.points.entries()) {
+      expect(point.metrics.totalModeledCash.status).toBe(source.points[index]!.outputCapabilities!.cash!.status);
+      const previous = index === 0 ? source.openingSnapshot : source.points[index - 1]!;
+      expect(point.metrics.totalModeledCashChange.status).toBe(
+        point.metrics.totalModeledCash.status === "complete" && previous.outputCapabilities!.cash!.status === "complete" ? "complete" : "incomplete",
+      );
+    }
+    // A three-month annual group is explicitly incomplete even if its closes
+    // are supported; readouts/tables must retain that qualification.
+    expect(annual.points[0]!.metrics.totalModeledCash.status).toBe("incomplete");
+    expect(annual.points[0]!.metrics.totalModeledCashChange.status).toBe("incomplete");
     const cashValues = [expectedValue(annual.points[0]!.metrics.totalModeledCash), expectedValue(annual.points[0]!.metrics.totalModeledCashChange, true)];
     await expect(cash.getByRole("status", { name: `${cashTitle} exact selected period`, exact: true }).locator("dd")).toHaveText(cashValues);
     await expect(cash.getByRole("table").locator("tbody td")).toHaveText(cashValues);
-    const cashZero = await cash.locator(".recharts-reference-line-line").boundingBox();
-    expect(cashZero).not.toBeNull();
+    const cashGeometry = await barGeometry(cash);
+    expect(cashGeometry.zero.start).toBe(cashGeometry.zero.end);
     const changeDirection = Money.parse(change, USD).compare(Money.zero(USD));
-    let cashBars = 0;
-    for (const rectangle of await cash.locator(".recharts-bar-rectangle .recharts-rectangle").all()) {
-      const box = await rectangle.boundingBox();
-      if (!box || box.width <= 0 || box.height <= 0) continue;
-      cashBars++;
-      expect(Math.abs((changeDirection > 0 ? box.y + box.height : box.y) - cashZero!.y)).toBeLessThanOrEqual(1);
+    for (const bar of cashGeometry.bars) {
+      expect(bar.series).toContain("chart-bar-totalModeledCashChange-incomplete");
+      expectBarAtZero(bar, cashGeometry.zero.start, changeDirection > 0);
     }
-    expect(cashBars).toBe(changeDirection === 0 ? 0 : 1);
+    expect(cashGeometry.bars).toHaveLength(changeDirection === 0 ? 0 : 1);
     const cashLegend = cash.getByRole("button", { name: "Signed cash balance change", exact: true });
     await cashLegend.focus(); await page.keyboard.press("Enter");
     await expect(cashLegend).toHaveAttribute("aria-pressed", "false");
@@ -333,6 +390,8 @@ for (const width of [1440, 390]) {
     await expect(statements.getByRole("table").locator("tbody td")).toHaveText(statementValues);
     await grouping(statements).selectOption("monthly");
     await expect(statements.getByRole("table").locator("tbody tr")).toHaveCount(3);
+    await expect(status).toHaveAttribute("data-request-id", request!);
+    await expect(status).toHaveAttribute("data-fingerprint", fingerprint!);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 
