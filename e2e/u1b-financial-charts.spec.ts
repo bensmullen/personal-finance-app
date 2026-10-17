@@ -20,40 +20,83 @@ for (const width of [1440, 390]) {
     await page.goto("/");
     await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
     const status = page.getByRole("status", { name: "Household forecast status" });
+    // Lifecycle alone does not promise any supported chart months. Use the
+    // selector integration's bounded Golden run, then inspect its real output.
+    await navigateOwner(page, "Plan", "Current Plan");
+    await page.getByLabel("Simulation start", { exact: true }).fill("2026-01-01");
+    await page.getByLabel("Simulation end", { exact: true }).fill("2026-04-01");
+    const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
+    const taxDetails = taxes.locator("xpath=ancestor::details[1]");
+    if (await taxDetails.getAttribute("open") === null) await taxDetails.locator(":scope > summary").click();
+    await taxes.getByLabel("Tax payment account", { exact: true }).selectOption({ label: "Everyday checking" });
+    await taxes.getByLabel("Tax refund account", { exact: true }).selectOption({ label: "Everyday checking" });
+    for (const name of ["Federal income tax", "New York"]) {
+      await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
+    }
+    for (const checkbox of await taxes.getByRole("checkbox").all()) await checkbox.check();
+    await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
+    const priorRequest = await status.getAttribute("data-request-id");
+    await page.getByRole("button", { name: "Update forecast", exact: true }).click();
+    await expect(status).not.toHaveAttribute("data-request-id", priorRequest ?? "");
     await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: 30_000 });
+    await expect(status).toHaveAttribute("data-pending", "false");
     const before = await exportedBytes(page);
     await clickFinancialDestination(page, "Overview");
     const wealth = page.getByRole("figure", { name: "Household financial outlook chart", exact: true });
+    const charts = page.locator(".financial-charts");
+    await expect(charts).toHaveAttribute("data-chart-status", /^(complete|incomplete)$/);
+    await expect(charts).toHaveAttribute("data-supported-months", "3");
+    await expect(charts).toContainText("Requested 2026-01-01 → 2026-04-01 (exclusive). Modeled through 2026-04-01");
     await expect(wealth.getByLabel("Period grouping", { exact: true })).toHaveValue("annual");
     await expect(wealth.getByRole("group", { name: "Assets, liabilities and net worth legend" }).getByRole("button")).toHaveCount(3);
-    await expect(wealth).toContainText("No observed history loaded");
+    await expect(page.getByText(/No observed history loaded/)).toHaveCount(1);
     await expect(wealth).toContainText("snapshot, separate from projected periods");
+    await wealth.locator('[role="application"]').focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(wealth.locator(".chart-readout")).toContainText("Annual modeled period [start, end)");
+    await expect(wealth.locator(".chart-readout")).toContainText("Projected 2026-01-01 → 2026-04-01 (exclusive) · partial year, 3 months");
     const request = await status.getAttribute("data-request-id");
     await wealth.getByLabel("Period grouping", { exact: true }).selectOption("monthly");
     await wealth.getByLabel("Monthly range starting", { exact: true }).selectOption({ index: 1 });
     const selected = wealth.getByLabel("Selected projected period", { exact: true });
+    await expect(selected.locator("option")).toHaveText([
+      "2026-02-01 → 2026-03-01 (exclusive)",
+      "2026-03-01 → 2026-04-01 (exclusive)",
+    ]);
     await selected.focus();
     await page.keyboard.press("Home");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
-    await expect(wealth.getByRole("status", { name: /exact selected period/ })).toContainText("2026-03-01");
+    await expect(selected).toHaveValue("2026-03-01T00:00:00.000Z");
+    const selectedLabel = await selected.locator("option:checked").innerText();
+    const readout = wealth.getByRole("status", { name: /exact selected period/ });
+    await expect(readout).toContainText(`Projected ${selectedLabel}`);
     const legend = wealth.getByRole("button", { name: "Total assets", exact: true });
     await legend.focus(); await page.keyboard.press("Enter");
     await expect(legend).toHaveAttribute("aria-pressed", "false");
     await page.keyboard.press("Enter");
     await expect(legend).toHaveAttribute("aria-pressed", "true");
+    const legendButtons = wealth.getByRole("group", { name: "Assets, liabilities and net worth legend" }).getByRole("button");
+    for (const button of await legendButtons.all()) await button.click();
+    await expect(wealth.getByText(/All series hidden/)).toBeVisible();
+    for (const button of await legendButtons.all()) await button.click();
+    await expect(wealth.getByText(/All series hidden/)).toHaveCount(0);
     await wealth.locator(".chart-table > summary").focus();
     await page.keyboard.press("Enter");
     const data = wealth.getByRole("region", { name: "Assets, liabilities and net worth exact data" });
     await expect(data).toBeVisible();
     await data.focus(); await expect(data).toBeFocused();
     expect(await data.locator("tbody tr").count()).toBeLessThanOrEqual(12);
+    const selectedRow = data.getByRole("row").filter({ has: page.getByRole("rowheader", { name: selectedLabel, exact: true }) });
+    const exactValues = await readout.locator("dd").allTextContents();
+    await expect(selectedRow.getByRole("cell")).toHaveText(exactValues);
     await expect(status).toHaveAttribute("data-request-id", request!);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
     await clickFinancialDestination(page, "Cash");
     const cash = page.getByRole("figure", { name: cashTitle, exact: true });
     const statements = page.getByRole("figure", { name: "Modeled statement income versus expenses", exact: true });
+    await expect(page.getByText(/No observed history loaded/)).toHaveCount(1);
     await expect(cash.getByLabel("Period grouping", { exact: true })).toHaveValue("annual");
     await expect(cash).toContainText("right axis: signed annual balance change");
     await expect(statements.getByLabel("Period grouping", { exact: true })).toHaveValue("monthly");
@@ -64,15 +107,46 @@ for (const width of [1440, 390]) {
     await expect(cash).toContainText("Incomplete");
     await statements.locator(".chart-table > summary").click();
     await expect(statements.getByRole("table")).toBeVisible();
+    await expect(statements.getByRole("table").locator("tbody tr")).toHaveCount(3);
+    await expect(statements.getByRole("table").locator("tbody td").filter({ hasText: /^-/ })).not.toHaveCount(0);
+    const plotBox = await statements.locator(".chart").boundingBox();
+    let visibleBars = 0;
+    for (const bars of await statements.locator(".recharts-bar").all()) {
+      for (const rectangle of await bars.locator(".recharts-bar-rectangle .recharts-rectangle").all()) {
+        const box = await rectangle.boundingBox();
+        if (box && box.height > 0) {
+          visibleBars++;
+          expect(box.width).toBeGreaterThan((plotBox!.width - 70) / 3 * 0.3);
+        }
+      }
+    }
+    expect(visibleBars).toBe(6);
+    await cash.locator(".chart-table > summary").click();
+    await expect(cash.getByRole("table").locator("tbody td").filter({ hasText: /^(Increase · \+|Decrease · -|No change · )/ })).toHaveCount(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(await exportedBytes(page)).toBe(before);
 
-    // A setup change retains old results but must visibly invalidate their currency.
+    // Block a replacement run with an invalid window, then commit a real income
+    // edit. This makes the retained result observably stale without a timing race.
+    await navigateOwner(page, "Plan", "Current Plan");
+    await page.getByLabel("Simulation end", { exact: true }).fill("2026-01-01");
     await navigateOwner(page, "Money", "Income");
-    await page.getByLabel("Income receiving account", { exact: true }).selectOption("");
+    const routing = page.getByRole("region", { name: "Income deposit routing", exact: true });
+    await expect(routing).toBeVisible();
+    await routing.getByLabel("Income receiving account", { exact: true }).selectOption("");
+    await expect(routing.getByLabel("Income receiving account", { exact: true })).toHaveValue("");
+    await page.getByRole("button", { name: /Example salary/ }).click();
+    const editor = page.getByRole("dialog", { name: "Edit Income", exact: true });
+    await editor.getByLabel("Amount", { exact: true }).fill("10000.00");
+    await editor.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    const changed = JSON.parse(await exportedBytes(page));
+    expect(changed.objects.Income.some((income: { amount: string }) => income.amount === "10000.00")).toBe(true);
     await clickFinancialDestination(page, "Overview");
+    await expect(status).toHaveAttribute("data-lifecycle", "stale");
     await expect(page.locator(".chart-freshness")).toContainText("Out of date");
     await expect(wealth).toContainText("out of date");
+    await expect(charts).toHaveAttribute("data-supported-months", "3");
     expect(errors).toEqual([]);
   });
 

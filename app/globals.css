@@ -57,7 +57,7 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .financial-chart { min-width: 0; padding: 8px 0 20px; }
 .financial-chart + .financial-chart { border-top: 1px solid var(--line); margin-top: 28px; padding-top: 28px; }
 .financial-chart h3 { font-family: Georgia,serif; font-size: 24px; font-weight: 500; overflow-wrap: anywhere; }
-.financial-chart .chart-coverage,.chart-axis-note,.chart-qualification { font-size: 12px; line-height: 1.5; color: #52605b; }
+.financial-charts > .chart-coverage,.chart-axis-note,.chart-qualification { font-size: 12px; line-height: 1.5; color: #52605b; }
 .chart-controls { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0 10px; }
 .chart-controls label { display: flex; flex: 1 1 170px; min-width: 0; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 650; }
 .chart-controls select { min-width: 0; width: 100%; min-height: 44px; padding: 8px; border: 1px solid #bbc5bf; border-radius: 8px; color: var(--ink); background: white; }

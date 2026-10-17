@@ -2,7 +2,8 @@ import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { HouseholdChart } from "../ui/forecast/HouseholdChart.js";
-import { chartCoordinate, exactChartValue } from "../ui/forecast/charts/FinancialChart.js";
+import { chartCoordinate, chartPeriodLabel, exactChartValue } from "../ui/forecast/charts/FinancialChart.js";
+import { selectForecastChartData } from "../src/application/forecastChartData.js";
 import type { ForecastChartValue } from "../src/application/forecastChartData.js";
 import type { HouseholdForecastPoint, PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import { taxDiagnostic, taxOutputCapabilities } from "../src/simulation/tax/contracts.js";
@@ -44,12 +45,15 @@ describe("U1B exact chart presentation", () => {
     expect(html).toContain("not bank receipts/disbursements or disposable wages");
     expect(html).toContain("snapshot, separate from projected periods");
     expect(html).toContain("Show exact chart data");
+    expect(html.match(/No observed history loaded/g)).toHaveLength(1);
+    expect(html.match(/Requested 2026-01-01/g)).toHaveLength(1);
   });
   it("keeps partial coverage and retained stale results explicit without extending history", () => {
     const html = render(source({ partial: true }), false, true);
     expect(html).toContain("Out of date · retained forecast");
     expect(html).toContain("Partial horizon");
-    expect(html).toContain("partial year, 1 months");
+    expect(html).toContain("partial year, 1 month");
+    expect(html).not.toContain("1 months");
     expect(html).toContain("Incomplete");
     expect(html).toContain("No observed history loaded");
     expect(html).not.toContain("2026-03-01");
@@ -83,5 +87,33 @@ describe("U1B exact chart presentation", () => {
     expect(chartCoordinate({ ...value, amount: null })).toBeNull();
     expect(chartCoordinate({ ...value, amount: "0", status: "unavailable" })).toBeNull();
     expect(chartCoordinate({ ...value, amount: "-12.202" })).toBe(-12.202);
+  });
+  it("presents annual stock closes and signed period totals with their actual covered bounds", () => {
+    const forecast = source();
+    const second = { ...forecast.points[0]!, periodStart: at(1), periodEnd: at(2),
+      cash: money("80"), totalAssets: money("110"), netWorth: money("-40"),
+      statementIncome: money("20.202"), statementExpenses: money("-24.404") };
+    const twoMonths = { ...forecast, requestedHorizon: { start: at(0), end: at(2) }, simulationEnd: at(2), reachedThrough: at(2), points: [...forecast.points, second] };
+    const annual = selectForecastChartData(twoMonths, { granularity: "annual" });
+    expect(chartPeriodLabel(annual.points[0]!)).toBe("2026-01-01 → 2026-03-01 (exclusive) · partial year, 2 months");
+    expect(exactChartValue(annual.points[0]!.metrics.modeledStatementIncome)).toBe("30.303 USD · Incomplete");
+    expect(exactChartValue(annual.points[0]!.metrics.modeledStatementExpenses)).toBe("-36.606 USD · Incomplete");
+    const cash = render(twoMonths);
+    expect(cash).toContain("80 USD · Incomplete · closing 2026-03-01");
+    expect(cash).toContain("Decrease · -20 USD · Incomplete");
+    const wealth = render(twoMonths, false);
+    expect(wealth).toContain("110 USD · Incomplete · closing 2026-03-01");
+    expect(wealth).toContain("150 USD · Incomplete · closing 2026-03-01");
+    expect(wealth).toContain("-40 USD · Incomplete · closing 2026-03-01");
+    expect(wealth).not.toContain("Month starting");
+  });
+  it("defaults statements to the most recent twelve supported months", () => {
+    const forecast = source();
+    const months = Array.from({ length: 14 }, (_, index) => ({ ...forecast.points[0]!, periodStart: at(index), periodEnd: at(index + 1) }));
+    const html = render({ ...forecast, requestedHorizon: { start: at(0), end: at(14) }, simulationEnd: at(14), reachedThrough: at(14), points: months });
+    const statement = html.slice(html.indexOf('<figure class="forecast-figure financial-chart" aria-label="Modeled statement'));
+    expect(statement).toContain('<option value="2026-03-01T00:00:00.000Z" selected="">2026-03</option>');
+    expect(statement).toContain("Show exact chart data · 12 months");
+    expect(statement).not.toContain("2026-01-01 → 2026-02-01");
   });
 });
