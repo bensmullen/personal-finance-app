@@ -5,7 +5,7 @@ import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
 import { createGoldenHouseholdForecastRequest, GOLDEN_HOUSEHOLD_IDS as golden } from "../src/application/goldenHousehold.js";
 import { createD1IntegratedHousehold, d1IntegratedCompilerRequest, integratedIds } from "./fixtures/d1IntegratedHousehold.js";
 import { money } from "../src/values/index.js";
-import { diagnosticSummary } from "../ui/authoring/diagnosticSummary.js";
+import { diagnosticSummary, primaryForecastDiagnostic } from "../ui/authoring/diagnosticSummary.js";
 
 describe("U1 monthly committed evidence", () => {
   it("excludes employer assets from employee pay and never attributes savings-funded purchases to income", () => {
@@ -61,5 +61,20 @@ describe("U1 monthly committed evidence", () => {
     expect(diagnosticSummary({ code: "PFA-TAX-009", entityType: "tax_capability", category: "local_residence_jurisdiction", jurisdiction: "US-NY" }).remedy).toContain("cannot be repaired");
     expect(diagnosticSummary({ code: "UNSUPPORTED_NEW_CAPABILITY" }).remedy).toContain("no supported editor repair");
     expect(diagnosticSummary({ code: "RULE_INPUT_INVALID", message: "HISTORICAL_SCOPE_ERROR" }).problem).not.toContain("HISTORICAL_SCOPE_ERROR");
+  });
+  it("surfaces the refinance boundary ahead of unrelated errors and scoped tax limitations", () => {
+    const tax = { code: "PFA-TAX-009", entityType: "tax_capability", category: "payment_funding", severity: "error" };
+    const generic = { code: "RULE_INPUT_INVALID", severity: "error" };
+    const refinance = { code: "MORTGAGE_REFINANCE_UNSUPPORTED", message: "Choose a scheduled monthly payment date for refinance. Off-cycle closings require unsupported daily/stub-period interest." };
+    expect(primaryForecastDiagnostic([tax, generic, refinance])).toBe(refinance);
+    expect(primaryForecastDiagnostic([refinance, tax, generic])).toBe(refinance);
+    expect(diagnosticSummary(refinance)).toMatchObject({
+      problem: "Choose a scheduled monthly payment date for refinance.",
+      remedy: expect.stringContaining("Under Debt → Extra mortgage payments & refinancing, disable the saved refinance"),
+    });
+    expect(diagnosticSummary(refinance).remedy).not.toContain("Investment and retirement operations");
+    expect(primaryForecastDiagnostic([tax, generic])).toBe(generic);
+    expect(primaryForecastDiagnostic([tax])).toBe(tax);
+    expect(primaryForecastDiagnostic([])).toBeUndefined();
   });
 });
