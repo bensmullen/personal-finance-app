@@ -32,6 +32,37 @@ export interface MortgageWindow {
   readonly status: "current" | "incomplete";
 }
 
+export interface LiabilityBalanceWindow {
+  readonly status: "current" | "incomplete";
+  readonly opening: { readonly at: string; readonly amount: string; readonly currency: string; readonly supported: boolean };
+  readonly rows: readonly { readonly start: string; readonly end: string; readonly amount: string; readonly currency: string; readonly supported: boolean }[];
+}
+
+/** Reconciled household liabilities, never a sum reconstructed from mortgage bars. */
+export function inspectLiabilityBalanceWindow(forecast: PersonalHouseholdForecastReadModel, startIndex: number): LiabilityBalanceWindow {
+  if (forecast.status === "unavailable") throw new Error(forecast.message);
+  if (!Number.isSafeInteger(startIndex) || startIndex < 0 || startIndex >= forecast.points.length) throw new Error("Select a supported liability window.");
+  const points = forecast.points.slice(startIndex, startIndex + 12);
+  const opening = startIndex === 0 ? forecast.openingSnapshot : forecast.points[startIndex - 1]!;
+  const currency = opening.totalLiabilities.currency;
+  const openingSupported = opening.outputCapabilities?.totalLiabilities?.status !== "incomplete" &&
+    (startIndex === 0 || forecast.points[startIndex - 1]!.periodEnd === points[0]!.periodStart);
+  const rows = points.map((point, index) => ({ start: point.periodStart, end: point.periodEnd,
+    amount: point.totalLiabilities.amount, currency: point.totalLiabilities.currency,
+    supported: openingSupported &&
+      point.outputCapabilities?.totalLiabilities?.status !== "incomplete" && point.totalLiabilities.currency === currency &&
+      (index === 0 || points[index - 1]!.periodEnd === point.periodStart) }));
+  return { opening: { at: points[0]!.periodStart, ...opening.totalLiabilities, supported: openingSupported }, rows,
+    status: forecast.status === "incomplete" || rows.some(row => !row.supported) ? "incomplete" : "current" };
+}
+
+/** Percent of this viewport's maximum; money stays exact outside SVG/CSS coordinates. */
+export function liabilityBalanceCoordinates(rows: LiabilityBalanceWindow["rows"]) {
+  const maximum = rows.reduce((max, row) => row.supported && decimal(row.amount).compare(max) > 0 ? decimal(row.amount) : max, decimal("0"));
+  return rows.map(row => row.supported && maximum.isPositive()
+    ? Number(decimal(row.amount).dividedBy(maximum, new RoundingPolicy(8, "half_even")).times(decimal("100")).toString()) : 0);
+}
+
 /** Reads one explicit viewport. All financial amounts come from committed replay. */
 export function inspectMortgageWindow(points: readonly HouseholdForecastPoint[], liabilityId: string): MortgageWindow {
   if (points.length < 1 || points.length > 12) throw new Error("Select between one and twelve modeled months.");
@@ -65,8 +96,12 @@ export function inspectMortgageWindow(points: readonly HouseholdForecastPoint[],
     const zero = () => Money.zero(currency);
     const occurrences = period.liability?.liabilities.filter(value => value.loanId === loan.id) ?? [];
     const principalMovement = period.transactions.some(tx => tx.legs.some(leg => leg.type === "liability" && leg.entityId === loan.principalLiabilityId));
-    const opening = occurrences[0]?.openingPrincipal ?? previous;
-    const ending = occurrences.at(-1)?.endingPrincipal ?? (!principalMovement ? previous : undefined);
+    // Occurrences can start after an extra-principal operation in this month.
+    // The period boundary, rather than the first scheduled occurrence, is the
+    // opening authority. The verified summary supplies the closing boundary.
+    const opening = previous;
+    const ending = basis.periods[firstIndex + index]?.debtBalances?.filter(value => value.loanId === loan.id).at(-1)?.endingPrincipal
+      ?? (!principalMovement ? previous : index === replay.periods.length - 1 ? replay.state.liabilities[loan.principalLiabilityId]?.balance : undefined);
     if (!opening || !ending) throw new Error("This loan has incomplete principal coverage in the selected window.");
     let interest = zero(), scheduled = zero(), extra = zero();
     const sourceIds: string[] = [], accounts = new Set<string>(), seen = new Set<string>();
@@ -110,15 +145,15 @@ export function inspectMortgageWindow(points: readonly HouseholdForecastPoint[],
 }
 
 /** Exact totals stop at the selected month and never bridge a gap or new loan. */
-export function mortgageWindowTotals(window: MortgageWindow, selectedStart: string) {
-  const index = window.rows.findIndex(row => row.start === selectedStart);
+export function mortgageWindowTotals(mortgageWindow: MortgageWindow, selectedStart: string) {
+  const index = mortgageWindow.rows.findIndex(row => row.start === selectedStart);
   if (index < 0) return undefined;
-  const rows = window.rows.slice(0, index + 1), currency = Currency.of(rows[0]!.currency);
+  const rows = mortgageWindow.rows.slice(0, index + 1), currency = Currency.of(rows[0]!.currency);
   if (rows.some((row, i) => !row.reconciled || row.currency !== currency.code || i > 0 &&
     (rows[i - 1]!.end !== row.start || rows[i - 1]!.endingPrincipal !== row.openingPrincipal))) return undefined;
   return { interest: rows.reduce((sum, row) => sum.plus(Money.parse(row.interestPaid, currency)), Money.zero(currency)).amount.toString(),
     principal: rows.reduce((sum, row) => sum.plus(Money.parse(row.scheduledPrincipalPaid, currency)).plus(Money.parse(row.extraPrincipalPaid, currency)), Money.zero(currency)).amount.toString(),
-    start: window.start, end: rows.at(-1)!.end, fromForecastStart: window.start === window.forecastStart };
+    start: mortgageWindow.start, end: rows.at(-1)!.end, fromForecastStart: mortgageWindow.start === mortgageWindow.forecastStart };
 }
 
 /** Disposable chart coordinates only. Exact strings remain the financial readout. */

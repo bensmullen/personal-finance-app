@@ -1,9 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { clickFinancialDestination, navigateOwner } from "./navigation.js";
-import { inspectMortgageWindow } from "../src/application/mortgageChartData.js";
+import { inspectLiabilityBalanceWindow, inspectMortgageWindow } from "../src/application/mortgageChartData.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";
-import { addPersonalObject, createEmptyPersonalDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
+import { addPersonalObject, createEmptyPersonalDraft, createGoldenHouseholdDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 import { formatExactMoney } from "../ui/entityPresentation.js";
 
@@ -42,11 +42,13 @@ async function setup(page: Page, width: number, denied = false) {
   await page.goto("/");
   await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
   if (denied) {
-    await navigateOwner(page, "Money", "Accounts");
-    await page.getByRole("button", { name: /Everyday checking/ }).click();
-    const editor = page.getByRole("dialog", { name: "Edit Account", exact: true });
-    await editor.getByLabel("Opening balance", { exact: true }).fill("0");
-    await editor.getByRole("button", { name: "Save changes", exact: true }).click();
+    const bankId = "d1610000-0000-4000-8000-000000000003";
+    const model = addPersonalObject(createGoldenHouseholdDraft(), "Account", bankId, { name: "Isolated mortgage bank", account_type: "checking", owner_id: ids.person, opening_date: "2026-01-01", opening_balance: "0" });
+    await navigateOwner(page, "Settings", "Import / Export");
+    await page.locator('input[type="file"]').setInputFiles({ name: "synthetic-unfunded-mortgage.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(model)) });
+    await page.getByRole("button", { name: "Import into session", exact: true }).click();
+    await clickFinancialDestination(page, "Debt");
+    await page.getByLabel("Mortgage payment account", { exact: true }).selectOption(bankId);
   }
   await navigateOwner(page, "Plan", "Current Plan");
   await page.getByLabel("Simulation start", { exact: true }).fill("2026-01-01");
@@ -72,7 +74,7 @@ async function appliedSource(page: Page) {
 }
 async function fits(page: Page, property = false) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  const figure = outlook(page, property).getByRole("figure");
+  const figure = outlook(page, property).getByRole("region", { name: "Mortgage amortization", exact: true }).getByRole("figure");
   const box = await figure.boundingBox();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
@@ -82,6 +84,24 @@ async function fits(page: Page, property = false) {
 }
 
 for (const width of [1440, 390]) {
+  test(`Debt primary household liability chart uses the reconciled source at ${width}px`, async ({ page }) => {
+    await observe(page); await setup(page, width);
+    const source = await appliedSource(page), expected = inspectLiabilityBalanceWindow(source, 0);
+    await clickFinancialDestination(page, "Debt");
+    const chart = page.getByRole("region", { name: "Household liability balance outlook", exact: true });
+    await expect(chart).toHaveAttribute("data-evidence-state", expected.status);
+    await expect(chart).toContainText(formatExactMoney(source.openingSnapshot.totalLiabilities.amount, source.openingSnapshot.totalLiabilities.currency));
+    const selected = chart.getByLabel("Selected liability month", { exact: true });
+    await selected.focus(); await page.keyboard.press("Home"); await page.keyboard.press("ArrowDown"); await page.keyboard.press("Enter");
+    await expect(selected).toHaveValue(expected.rows[1]!.start);
+    await chart.getByText("Exact household liability balances", { exact: true }).click();
+    const row = chart.getByRole("row").filter({ has: page.getByRole("rowheader", { name: "2026-02-01 → 2026-03-01", exact: true }) });
+    await expect(row.getByRole("cell")).toHaveText([formatExactMoney(expected.rows[1]!.amount, expected.rows[1]!.currency), "Committed household forecast"]);
+    const figure = await chart.getByRole("figure", { name: "Modeled household liability balances", exact: true }).boundingBox();
+    expect(figure!.x).toBeGreaterThanOrEqual(0);
+    expect(figure!.x + figure!.width).toBeLessThanOrEqual(width);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
   test(`Debt paid bars and keyboard/table match real committed source at ${width}px`, async ({ page }) => {
     await observe(page); await setup(page, width);
     const source = await appliedSource(page), expected = inspectMortgageWindow(source.points, ids.mortgage);
@@ -91,7 +111,7 @@ for (const width of [1440, 390]) {
     await month.focus(); await page.keyboard.press("Home"); await page.keyboard.press("ArrowDown"); await page.keyboard.press("Enter");
     await expect(month).toHaveValue(expected.rows[1]!.start);
     await outlook(page).getByText("Exact mortgage payments & sources", { exact: true }).click();
-    const row = outlook(page).getByRole("table").getByRole("row").filter({ has: page.getByRole("rowheader", { name: "2026-02-01 → 2026-03-01", exact: true }) });
+    const row = outlook(page).getByRole("region", { name: "Exact mortgage payment data", exact: true }).getByRole("row").filter({ has: page.getByRole("rowheader", { name: "2026-02-01 → 2026-03-01", exact: true }) });
     const values = expected.rows[1]!;
     await expect(row.getByRole("cell")).toHaveText([values.openingPrincipal, values.interestPaid, values.scheduledPrincipalPaid, values.extraPrincipalPaid, values.endingPrincipal, values.scheduledDue, values.interestAccrued]
       .map(value => formatExactMoney(value, values.currency)).concat(`${values.funding.replaceAll("_", " ")} / ${values.extraFunding.replaceAll("_", " ")}`));
@@ -129,7 +149,8 @@ for (const width of [1440, 390]) {
     await observe(page, true); await setup(page, width);
     await clickFinancialDestination(page, "Debt");
     await expect(outlook(page)).toHaveAttribute("data-evidence-state", "error");
-    await expect(outlook(page).getByRole("figure")).toHaveCount(0);
+    await expect(outlook(page).locator(".mortgage-amortization").getByRole("figure")).toHaveCount(0);
+    await expect(outlook(page).getByRole("figure", { name: "Modeled household liability balances", exact: true })).toBeVisible();
     await expect(outlook(page).getByRole("alert")).toContainText("missing or mismatched period");
     await outlook(page).getByRole("button", { name: "Retry mortgage evidence", exact: true }).click();
     await expect(outlook(page)).toHaveAttribute("data-evidence-state", "error");

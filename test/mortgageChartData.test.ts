@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { inspectMortgageWindow, mortgageWindowTotals, MortgageWindowCache } from "../src/application/mortgageChartData.js";
-import { createGoldenHouseholdDraft, patchPersonalObject, type PersonalDraft } from "../src/application/personalMvp.js";
+import { addPersonalObject, createGoldenHouseholdDraft, patchPersonalObject, type PersonalDraft } from "../src/application/personalMvp.js";
 import { createGoldenHouseholdForecastRequest, GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 import { runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
 import { authorMortgageExtra, authorMortgageRefinance } from "../src/application/compiler/mortgageLifecycle.js";
@@ -10,7 +10,8 @@ import { instant } from "../src/time/index.js";
 import { money } from "../src/values/index.js";
 
 const second = "d1610000-0000-4000-8000-000000000002";
-function source(model = createGoldenHouseholdDraft(), months = 3, separate = false) {
+const isolatedBank = "d1610000-0000-4000-8000-000000000003";
+function source(model = createGoldenHouseholdDraft(), months = 3, separate = false, newContract = false) {
   const full = createGoldenHouseholdForecastRequest();
   const end = new Date(Date.UTC(2026, months, 1)).toISOString().slice(0, 10);
   const profiles = full.compiler.liabilities!.executionProfiles;
@@ -18,12 +19,12 @@ function source(model = createGoldenHouseholdDraft(), months = 3, separate = fal
     cashFlow: { ...full.compiler.cashFlow!, simulationEnd: end, months },
     investments: { ...full.compiler.investments!, simulationEnd: end, months },
     liabilities: { ...full.compiler.liabilities!, simulationEnd: end, months,
-      executionProfiles: [...profiles, ...(separate ? [{ ...profiles[0]!, liabilityId: second, fundingAccountId: ids.savings, settlementPriority: 2 }] : [])] } } };
+      executionProfiles: [...profiles.map(profile => newContract ? { ...profile, paymentAnchor: "2026-02-01" } : profile), ...(separate ? [{ ...profiles[0]!, liabilityId: second, fundingAccountId: isolatedBank, settlementPriority: 2 }] : [])] } } };
   const result = runPersonalHouseholdForecast(model, request);
   if (result.status === "unavailable") throw new Error(JSON.stringify(result));
   return result;
 }
-function extra(model: PersonalDraft, amount: string, fundingAccountId = ids.checking) {
+function extra(model: PersonalDraft, amount: string, fundingAccountId: string = ids.checking) {
   return authorMortgageExtra(model, { eventId: "d1610000-0000-4000-8000-000000000010", effectId: "d1610000-0000-4000-8000-000000000011", primitiveId: "d1610000-0000-4000-8000-000000000012", liabilityId: ids.mortgage, date: "2026-01-01", amount, fundingAccountId });
 }
 describe("source-backed mortgage chart data", () => {
@@ -57,7 +58,8 @@ describe("source-backed mortgage chart data", () => {
     let model = createGoldenHouseholdDraft();
     const original = model.objects.Liability![0]!;
     model = { ...model, objects: { ...model.objects, Liability: [...model.objects.Liability!, { ...original as object, liability_id: second, name: "Second mortgage" }] } };
-    model = patchPersonalObject(model, "Account", ids.savings, { opening_balance: available });
+    // This bank has no income, transfer, investment or domain settlement route.
+    model = addPersonalObject(model, "Account", isolatedBank, { name: "Isolated mortgage bank", account_type: "checking", owner_id: ids.person, opening_date: "2026-01-01", opening_balance: available });
     const result = source(model, 2, true);
     const funded = inspectMortgageWindow(result.points, ids.mortgage), denied = inspectMortgageWindow(result.points, second);
     expect(funded.loanId).not.toBe(denied.loanId);
@@ -75,9 +77,17 @@ describe("source-backed mortgage chart data", () => {
     expect(row.funding).toBe("fully_satisfied");
   });
   it("keeps zero interest, early payoff, window boundaries and exact scoped totals", () => {
-    let model = patchPersonalObject(createGoldenHouseholdDraft(), "Liability", ids.mortgage, { interest_rate: "0" });
+    // A new zero-rate contract at the forecast opening needs no historical
+    // interest-bearing amortization to justify its observed principal.
+    const original = createGoldenHouseholdDraft();
+    // Origination is immutable in the editor. Construct a new synthetic
+    // opening contract rather than attempting to patch the historic one.
+    let model = addPersonalObject({ ...original, objects: { ...original.objects, Liability: [] } }, "Liability", ids.mortgage, {
+      name: "New zero-rate mortgage", liability_type: "mortgage", owner_id: ids.household,
+      principal: "240000", current_balance: "240000", interest_rate: "0", origination_date: "2026-01-01", maturity_date: "2056-01-01", collateral_id: ids.home,
+    });
     model = extra(model, "999999999"); // Denied extra still cannot become principal paid.
-    const result = source(model, 24), cache = new MortgageWindowCache(result);
+    const result = source(model, 24, false, true), cache = new MortgageWindowCache(result);
     const first = cache.get(ids.mortgage, 0), later = cache.get(ids.mortgage, 12);
     expect(first.rows[0]!.interestPaid).toBe("0");
     expect(first.rows).toHaveLength(12);
@@ -88,7 +98,11 @@ describe("source-backed mortgage chart data", () => {
     const changed = source(patchPersonalObject(createGoldenHouseholdDraft(), "Income", ids.income, { amount: "9100" }));
     expect(inspectMortgageWindow(changed.points, ids.mortgage).fingerprint).not.toBe(first.fingerprint);
     expect(() => inspectMortgageWindow(result.points.slice(0, 13), ids.mortgage)).toThrow(/twelve/);
-    const rich = patchPersonalObject(createGoldenHouseholdDraft(), "Account", ids.savings, { opening_balance: "1000000" });
+    // Opening bank balance is immutable too: this is an observed synthetic
+    // opening fixture, not a request to change an existing bank in the editor.
+    const richBase = createGoldenHouseholdDraft();
+    const rich = { ...richBase, objects: { ...richBase.objects, Account: richBase.objects.Account!.map(value =>
+      (value as { account_id: string }).account_id === ids.savings ? { ...value as object, opening_balance: "1000000" } : value) } };
     const paid = inspectMortgageWindow(source(extra(rich, "500000", ids.savings)).points, ids.mortgage);
     expect(paid.rows[0]!.endingPrincipal).toBe("0");
     expect(money(paid.rows[0]!.extraPrincipalPaid).isPositive()).toBe(true);

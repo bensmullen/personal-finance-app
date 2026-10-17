@@ -1,8 +1,8 @@
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { MortgageAmortization } from "../ui/forecast/MortgageAmortization.js";
-import { inspectMortgageWindow, mortgageWindowTotals } from "../src/application/mortgageChartData.js";
+import { LiabilityBalanceOutlook, MortgageAmortization } from "../ui/forecast/MortgageAmortization.js";
+import { inspectLiabilityBalanceWindow, inspectMortgageWindow, mortgageWindowTotals } from "../src/application/mortgageChartData.js";
 import { runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
 import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
 import { createGoldenHouseholdForecastRequest, GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
@@ -18,6 +18,25 @@ function window() {
   return result;
 }
 describe("U1B-D exact mortgage presentation", () => {
+  it("uses household total liabilities for the primary debt chart and gates incomplete coverage", () => {
+    const forecast = window(), data = inspectLiabilityBalanceWindow(forecast, 0);
+    expect(data.rows).toHaveLength(12);
+    expect(data.opening.amount).toBe(forecast.openingSnapshot.totalLiabilities.amount);
+    expect(data.rows[1]!.amount).toBe(forecast.points[1]!.totalLiabilities.amount);
+    const render = (value = data) => renderToStaticMarkup(<LiabilityBalanceOutlook data={value} selectedStart={value.rows[1]!.start} selectMonth={() => {}} />);
+    expect(render()).toContain('aria-label="Selected liability month"');
+    expect(render()).toContain('aria-label="Modeled household liability balances"');
+    expect(render()).toContain("Committed household forecast");
+    expect(render()).toContain(formatExactMoney(data.rows[1]!.amount, data.rows[1]!.currency));
+    const incomplete = { ...data, status: "incomplete" as const, rows: data.rows.map(row => ({ ...row, supported: false })) };
+    expect(render(incomplete)).toContain("liability forecast incomplete");
+    expect(render(incomplete)).toContain("Incomplete coverage");
+    expect(render(incomplete)).toContain("height:0%");
+    expect(render(incomplete)).not.toContain("ending household liabilities");
+    const late = inspectLiabilityBalanceWindow(forecast, 12);
+    expect(late.opening.amount).toBe(forecast.points[11]!.totalLiabilities.amount);
+    expect(late.rows).toHaveLength(1);
+  });
   it("provides discrete month controls, distinct paid categories and an exact accessible table", () => {
     const data = inspectMortgageWindow(window().points.slice(0, 12), ids.mortgage), selected = data.rows[1]!;
     const before = JSON.stringify(data);

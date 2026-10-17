@@ -114,8 +114,8 @@ import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, for
 import { calculationFingerprint } from "../src/application/interactiveForecast.js";
 import { HouseholdChart } from "./forecast/HouseholdChart.js";
 import { MonthlyMoneyPanel } from "./forecast/MonthlyMoneyPanel.js";
-import { MortgageAmortization } from "./forecast/MortgageAmortization.js";
-import { MortgageWindowCache, type MortgageWindow } from "../src/application/mortgageChartData.js";
+import { LiabilityBalanceOutlook, MortgageAmortization } from "./forecast/MortgageAmortization.js";
+import { inspectLiabilityBalanceWindow, MortgageWindowCache, type MortgageWindow } from "../src/application/mortgageChartData.js";
 import { ForecastDetails, LazyExplanation, ExplanationCache } from "./forecast/details.js";
 import { ResultExplanationCache } from "./forecast/explanations.js";
 import { FINANCIAL_DESTINATIONS, financialDestination } from "./navigation.js";
@@ -1317,7 +1317,7 @@ function ForecastStatus({ label, state }: { label: string; state: ForecastView }
   </section>;
 }
 
-function MortgageOutlook({ draft, forecast, property = false, currency, asOf, selectedMonth, selectMonth, selectedLoan, selectLoan }: {
+function MortgageOutlook({ draft, forecast, property = false, currency, selectedMonth, selectMonth, selectedLoan, selectLoan }: {
   draft: PersonalDraft; forecast: PersonalHouseholdForecastReadModel | undefined; property?: boolean;
   currency: string; asOf: string;
   selectedMonth: string; selectMonth: (month: string) => void; selectedLoan: string; selectLoan: (loan: string) => void;
@@ -1332,6 +1332,7 @@ function MortgageOutlook({ draft, forecast, property = false, currency, asOf, se
   const selectedIndex = Math.max(0, points.findIndex(point => point.periodStart === selectedMonth));
   const startIndex = Math.floor(selectedIndex / 12) * 12;
   const selectedStart = points[selectedIndex]?.periodStart ?? "";
+  const liabilityData = useMemo(() => current && forecast && points.length ? inspectLiabilityBalanceWindow(forecast, startIndex) : undefined, [current, forecast, points.length, startIndex]);
   const cache = useMemo(() => current && forecast ? new MortgageWindowCache(forecast) : undefined, [current, forecast, draft]);
   const [evidence, setEvidence] = useState<{ cache: MortgageWindowCache; id: string; index: number; window?: MortgageWindow; error?: string }>();
   const [retry, setRetry] = useState(0);
@@ -1346,10 +1347,19 @@ function MortgageOutlook({ draft, forecast, property = false, currency, asOf, se
   return <section className="panel section-outlook mortgage-outlook" aria-label={property ? "Property mortgage outlook" : "Debt outlook"}
     data-evidence-state={!loans.length ? "unavailable" : models.baseline?.pending ? "pending" : models.baseline?.lifecycle === "error" ? "error" : models.baseline?.lifecycle === "unsupported" ? "unsupported" : !forecast ? "unavailable" : !current ? "stale" : active?.error ? "error" : active?.window?.status ?? "loading"}>
     <p className="eyebrow">{property ? "Real Estate" : "Debt"}</p><h1>{property ? "Your property" : "Your borrowing"}</h1>
+    {!property && (liabilityData ? <>
+      <LiabilityBalanceOutlook data={liabilityData} selectedStart={selectedStart} selectMonth={selectMonth} />
+      <div className="mortgage-window-controls" aria-label="Household liability chart window">
+        <button disabled={startIndex === 0} onClick={() => selectMonth(points[Math.max(0, startIndex - 12)]!.periodStart)}>Previous liability months</button>
+        <button disabled={startIndex + 12 >= points.length} onClick={() => selectMonth(points[startIndex + 12]!.periodStart)}>Next liability months</button>
+      </div>
+    </> : <section aria-label="Household liability balance outlook" data-evidence-state={models.baseline?.pending ? "pending" : models.baseline?.lifecycle === "error" ? "error" : !forecast || forecast.status === "unavailable" ? "unavailable" : "stale"}>
+      <h2>Household liability balance outlook</h2><p role="status">{models.baseline?.pending ? "Updating forecast · liability balances pending." : models.baseline?.lifecycle === "error" ? "Forecast failed · liability balances unavailable." : !current ? "Update the forecast to view current modeled household liabilities." : "Liability forecast unavailable for the current source coverage."}</p><button onClick={setup}>Review liability forecast setup</button>
+    </section>)}
     <p>See how funded payments reduce one named mortgage. Recorded current balances and modeled future principal have different dates.</p>
     {!!loans.length && <label>Mortgage<select aria-label="Mortgage" value={liabilityId} onChange={event => selectLoan(event.target.value)}>{loans.map(loan => <option key={objectId("Liability", loan)} value={objectId("Liability", loan)}>{objectLabel("Liability", loan)}</option>)}</select></label>}
     {!loans.length ? <p>No mortgage recorded. Add a mortgage through Net Worth → Debt; other debt is listed separately.</p> : <>
-      <p>{objectLabel("Liability", selected!)} · recorded current principal: {typeof selected!.current_balance === "string" ? formatExactMoney(selected!.current_balance, currency) : "Not recorded"} · as of {asOf}. Source: Net Worth → Debt.</p>
+      <p>{objectLabel("Liability", selected!)} · recorded current principal: {typeof selected!.current_balance === "string" ? formatExactMoney(selected!.current_balance, currency) : "Not recorded"}. Balance observation date not supplied here. Source: Net Worth → Debt.</p>
       <button type="button" onClick={() => review(liabilityId)}>Review mortgage source</button>
       {!current || !points.length ? <><p role="status">{models.baseline?.pending ? "Updating forecast · mortgage evidence is pending." : models.baseline?.lifecycle === "error" ? "Forecast failed · update needed before mortgage evidence can be shown." : models.baseline?.lifecycle === "unsupported" ? "Mortgage forecast unsupported · review the forecast setup and source guidance." : !forecast ? "Mortgage evidence unavailable · apply a supported household forecast." : "Out of date · update needed before retained mortgage evidence can be shown."}</p><button onClick={setup}>Review forecast setup</button></>
         : <><div className="mortgage-window-controls" aria-label="Mortgage chart window">
@@ -1366,7 +1376,7 @@ function MortgageOutlook({ draft, forecast, property = false, currency, asOf, se
       {property && <p>{selected?.collateral_id && objectEntries(draft, "Asset").some(asset => asset.asset_id === selected.collateral_id && asset.asset_type === "real_estate")
         ? `Linked property: ${referenceLabel(draft, "Asset", String(selected.collateral_id))}.` : "No matching property collateral is recorded for this mortgage."} Current equity cannot be reconciled without a compatible current valuation and all linked liens at the same date and currency.</p>}
     </>}
-    {!property && <section aria-label="Other debt sources"><h2>Other borrowing</h2>{objectEntries(draft, "Liability").filter(value => value.liability_type !== "mortgage").map(value => <p key={objectId("Liability", value)}>{objectLabel("Liability", value)} · current recorded balance {typeof value.current_balance === "string" ? formatExactMoney(value.current_balance, currency) : "unavailable"} · as of {asOf} · {String(value.liability_type).replaceAll("_", " ")}. Mortgage amortization unavailable for this debt type. <button onClick={() => review(objectId("Liability", value))}>Review {objectLabel("Liability", value)}</button></p>)}</section>}
+    {!property && <section aria-label="Other debt sources"><h2>Other borrowing</h2>{objectEntries(draft, "Liability").filter(value => value.liability_type !== "mortgage").map(value => <p key={objectId("Liability", value)}>{objectLabel("Liability", value)} · current recorded balance {typeof value.current_balance === "string" ? formatExactMoney(value.current_balance, currency) : "unavailable"} · observation date not supplied here · {String(value.liability_type).replaceAll("_", " ")}. Mortgage amortization unavailable for this debt type. <button onClick={() => review(objectId("Liability", value))}>Review {objectLabel("Liability", value)}</button></p>)}</section>}
     {property ? <AssetOwnerLink /> : <a href="#debt-sources">Review loan sources &amp; payment setup</a>}
   </section>;
 }
