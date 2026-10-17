@@ -2,7 +2,7 @@
 
 **Status: PROPOSED / NOT NORMATIVE / NOT IMPLEMENTATION AUTHORIZATION.** Architecture-owned decision register for PM review. No U1, D1, D2, R5, tax-completeness, or user-acceptance gate is satisfied by this document. Until PM acceptance and separately governed controlled-spec changes, these are recommendations, not executable product policy.
 
-**Baseline verified:** merged D2-PREP PR #116 (55 synthetic cases; 24 conditional accounting cases, 31 explicitly unresolved; zero integrated D2 execution). The D2 family coverage in readiness.md and the non-normative follow-on-plan.md remains applicable. Issue #114 is prep-complete/closed. Issue #103 is *closed as completed on 2026-10-14*, despite having no verified ordinary-distribution implementation and still being required in the live milestone register; this is an administrative/semantic contradiction to reconcile, **not** evidence of D2-A completion. #120 is the active U1 acceptance owner. The previous #94 references in prep documents are historical and map to #120. Preserve the U1B-A, chart-data foundation and all shared-file boundaries.
+**Baseline verified:** merged D2-PREP PR #116 (55 synthetic cases; 24 conditional accounting cases, 31 explicitly unresolved; zero integrated D2 execution). This remains a **proposal**, not financial policy. The 2026-10-17 PM sequencing decision removes final U1 #120 UAT as a dependency for disjoint D2 backend implementation, **not** for D2-D closeout or shared UI editing. New consolidated owners: D2-A #146 includes **all** unimplemented retirement distributions/RMDs from closed #103; D2-B #147, D2-C #148; D2-D #149 owns S1–S8 integration and final U1 handshake. Merged D2-PREP #114/PR #116 is preparation only. Follow `follow-on-plan.md` for exact conflict/deferral rules.
 
 ## 1. Architecture-wide resolved invariants (existing authority, not new PM choices)
 
@@ -21,7 +21,7 @@ Status uses **R** = invariant already resolved by existing authority, **P** = ar
 | A1 | P+B | Social Security identity-linked **quoted estimate first, rule-calculated only with sufficient SSA facts**, coordinated own/spousal/survivor streams; pension quoted-payment or fully specified formula. Alternative generic income rejected. | High; benefit+tax contracts before implementation |
 | A2 | P+B | Named 403(b), **governmental** 457(b), TSP, SEP IRA, SIMPLE IRA with distinct buckets and plan capabilities; unsupported nongovernmental 457(b)/SARSEPs diagnosed. Alternative all-as-401(k) rejected. | High; canonical identity and limit registry |
 | A3 | P+B | Per-person aggregate Traditional/SEP/SIMPLE IRA basis and tax-year 8606 facts; conversion versus contribution versus rollover distinct; bounded after-tax mega flows only if plan admits operation. Alternative isolated-per-IRA pro-rata rejected. | Very high; A2 + shared tax/capacity |
-| A4 | P+B | Separate ordinary distribution from sale/conversion/rollover; RMD obligation calculated before chosen satisfaction, paid from eligible owned source. Reuse **#103**, no duplicate issue. | High; tax, liquidity, scheduler |
+| A4 | P+B | Separate ordinary distribution from sale/conversion/rollover; RMD obligation calculated before chosen satisfaction, paid from eligible owned source. Reallocated from **closed #103 into consolidated #146**; no duplicate implementation issue. | High; tax, liquidity, scheduler |
 | B1 | P+B | Fixed auto/student reuse P22; revolving card uses statement/accrual/payment profile; HELOC is explicit draw and adjustable-rate contract. No guessed minimum or reset. | Medium/high; liability profile seam |
 | B2 | P+B | TIPS inflation-indexed principal and coupon with taxable noncash OID; EE issue-vintage values, redemption and elective tax timing. | High; indexed dates + tax basis |
 | B3 | P+B | Funded 529 position plus owner/beneficiary, qualified expense evidence, allocable earnings/basis, statutory eligibility for transfers and 529→beneficiary Roth. | High; education + IRA capacity |
@@ -55,7 +55,7 @@ A backdoor flow is (1) funded nondeductible Traditional IRA **regular contributi
 
 A distribution request specifies owner/account/eligible holding, requested gross amount or units, calendar event/recurrence, actual liquid/cash availability or explicit sale, funding bank account, withholding instruction, source/tax-bucket character and rule snapshot. A security sale is a separate intra-wrapper liquidation; a gross withdrawal reduces owned retirement resources and increases external bank cash net of withholding, with withholding a tax credit (not a consumption event). Tax engine handles Traditional pre-tax/basis, Roth IRA ordering/5-year qualification, designated Roth plan rules, age/plan exemptions and possible early distribution penalties. Direct rollovers and conversions are different operation kinds; no ordinary RMD can be rolled over.
 
-Model RMD as an **annual requirement/obligation** based on owner DOB cohort, prior-year eligible account balance(s), correct IRS life-table denominator, beneficiary/spouse table and retirement/still-working exceptions when applicable. Track eligible withdrawals actually satisfied and shortfall as separate state, not an automatic invisible transfer. Default UI policy proposed: explicitly schedule compliant distribution into named bank account where fully supported; require a funding/sale policy; otherwise show a blocker and RMD shortfall, never spend ghost liquidity. First-year April-1 timing and possible two RMDs next year are material. SECURE 2.0 cohort age 73/75 rules are date-of-birth dependent; owner-lifetime Roth IRA and designated Roth accounts generally have no RMD. Inherited IRA, QCD and complex exceptions require separate admission. Acceptance: age cohort transition, prior-Dec-31 snapshot, two-RMD-year, no rollover, no early penalty misclassification, no tax/asset double-count, insufficient liquidity rollback. Existing #103 remains the single implementation tracking artifact after issue-state reconciliation and a new approved V3 contract.
+Model RMD as an **annual requirement/obligation** based on owner DOB cohort, prior-year eligible account balance(s), correct IRS life-table denominator, beneficiary/spouse table and retirement/still-working exceptions when applicable. Track eligible withdrawals actually satisfied and shortfall as separate state, not an automatic invisible transfer. Default UI policy proposed: explicitly schedule compliant distribution into named bank account where fully supported; require a funding/sale policy; otherwise show a blocker and RMD shortfall, never spend ghost liquidity. First-year April-1 timing and possible two RMDs next year are material. SECURE 2.0 cohort age 73/75 rules are date-of-birth dependent; owner-lifetime Roth IRA and designated Roth accounts generally have no RMD. Inherited IRA, QCD and complex exceptions require separate admission. Acceptance: age cohort transition, prior-Dec-31 snapshot, two-RMD-year, no rollover, no early penalty misclassification, no tax/asset double-count, insufficient liquidity rollback. Consolidated #146 now owns the **full unimplemented #103 scope** under approved phase-specific V3 authorizations; #103 remains a closed provenance link, not completed functionality.
 
 ### B1 — consumer debt [DET-019]
 
@@ -85,7 +85,7 @@ Model employer plan **plan-year** with per-member election, pre-tax wage reducti
 
 ## 4. Exact proposed interface seams and sequencing (none authorized for edits now)
 
-Freeze one versioned public contract owned by a **single shared integration owner** after #120 accepted on merged main:
+Freeze each consumed versioned public contract on merged main through **D2-D #149 as the single shared integration owner**, in parallel with U1 #120 after applicable PM-approved financial decisions. Final U1 UAT is **not** a prerequisite to D2 backend domain work; occupied U1 editor/application files remain locked until explicitly released:
 
 | Seam and owner | Proposed minimum typed fields / invariant | Consumers |
 | --- | --- | --- |
@@ -98,27 +98,22 @@ Freeze one versioned public contract owned by a **single shared integration owne
 | S7 diagnostics/read model — shared application owner | source path and user-facing actionable missing-fact/effect, partial versus complete, affected cash/tax/NW/forecast period, read-only provenance. **U1B-A owns UI/authoring**, charts consume only agreed outputs | all |
 | S8 fixture/oracle versioning — QA owner | scenario snapshot, rule version, output cent invariants, independent manually computed cases, CI labels for domain versus integrated versus owner-UAT evidence | all |
 
-Order: S1/S2 representation and effective-law decisions → S3/S4 event/funding semantics → S5 and S6 tax/capacity → S7 diagnostic/read-model handshake with U1B-A and chart-data owners → independently owned domain consumers → serialized shared compiler/tax integration → D2-D joint acceptance. Freeze semantic versions/commit references before parallel branches and prohibit same-file concurrency. **No parallel Codex issue or actual runtime writes until the interface gates are accepted and U1 #120 passes.**
+Order: PM approval of the **applicable** A1–C3 economics → S1/S2 identity/rule snapshot → S3/S4 scheduler/funding → S5/S6 tax/capacity → freeze consumed versioned S1–S8 contracts in #149 → **independent domain backend work may run alongside U1 #120** → serial D2-D shared integration → released-U1 editor/read-model handshake → D2-D joint acceptance after U1 UAT. No parallel Codex work before its own normative contracts and owner-specific V3 scope merge; no sibling may write actively U1-owned or shared state/financial files.
 
-## 5. Implementation slices, ownership, validation
+## 5. Consolidated implementation owners and validation
 
-After approved public contract and U1 gate only:
+Following the PM-approved **sequencing** change, D2 backend implementation may run in parallel with U1 from merged D1-C **after** relevant A1–C3 financial decisions become normative and each consumed S1–S8 contract is frozen on main. These four owners are planning issues; a bounded PFM_TASK_V3 authorization on the owning issue is required before Codex. Do not create nine single-family micro-issues.
 
-| Issue/slice | Exclusive proposed ALLOWED_PATHS | Dependency / proving evidence |
+| Owner | Proposed disjoint domain/test scope (not V3 authorization) | Dependencies and evidence |
 | --- | --- | --- |
-| A-benefits | src/simulation/d2/retirement/benefits/**; test/d2/retirement/benefits/** | S1–S4/S6; SSA coordination, cessation, quoted vs calculated, pension basis tests |
-| A-plans | src/simulation/d2/retirement/plans/**; test/d2/retirement/plans/** | S1/S2/S5/S6; separate plan limit buckets, employer/employee |
-| A-conversions | src/simulation/d2/retirement/conversions/**; test/d2/retirement/conversions/** | A-plans + S5/S6; aggregate 8606 tax-year and mega split-rollover |
-| A-distributions (reuse #103) | src/simulation/d2/retirement/distributions/**; test/d2/retirement/distributions/** | A2/S3/S5/S6; RMD timing/required vs satisfied and bank funding |
-| B-debt | src/simulation/d2/debt/**; test/d2/debt/** | S3/S4; fixed loan + revolving/reset models and funding failure |
-| B-bonds | src/simulation/d2/fixedIncome/**; test/d2/fixedIncome/** | S2/S4/S6; exact Treasury values plus phantom-tax reconciliation |
-| B-education | src/simulation/d2/education/**; test/d2/education/** | A2/A3 capacity and S5/S6; eligibility, lots, tax and rollovers |
-| C-health | src/simulation/d2/health/premiums/**; test/d2/health/premiums/** | A-benefits settlement S3/S6; payroll/IRMAA/deduction parity |
-| C-FSA | src/simulation/d2/health/fsa/**; test/d2/health/fsa/** | S3–S6; uniform reimbursement, tax, plan-year and forfeiture |
-| Shared integrations | **separately and narrowly authorized** canonical, src/application/compiler/**, src/simulation/household*, src/simulation/tax/**, shared state/authoring; **ONE owner only** | Merged public contracts; apply atomic effects, tax events and diagnostics; no simultaneous sibling edits |
-| D2-D | test/d2/integrated/**; test/fixtures/d2/integrated/**; docs/development/d2-prep/closeout/** | Full A/B/C integrated, independent truth table and uncoached normal-user UAT; maintain D1/U1/C1/tax gates |
+| **#146 D2-A (includes closed #103)** | `src/simulation/d2/retirement/**`, `test/d2/retirement/**` | A1–A4; benefits, pensions, plan families, Roth conversion/backdoor, ordinary distribution/RMD with real liquidity, tax/basis/limits; integration in #149 |
+| **#147 D2-B** | `src/simulation/d2/{debt,fixedIncome,education}/**`, corresponding `test/d2/**` | B1–B3; fixed/revolving loan semantics, TIPS/EE and 529; cross-seam IRA/529-to-Roth capacity waits for A/S5 version |
+| **#148 D2-C** | `src/simulation/d2/health/**`, `test/d2/health/**` | C1–C3; premiums, IRMAA/Medicare, FSA; SSA/benefit payroll and tax-base seams in #149 |
+| **#149 D2-D** | Early approved S1–S8 contracts; later *exclusive* compiler/household tax/state/read-model integration; then `test/d2/integrated/**`, closeout docs | Early interface owner may work during U1; serial shared integration; U1-specific editor files only after specific owner release; all-domain truth table and final UAT after #120 accepted |
 
-Parallel earliest after interface freeze: A-benefits, B-debt, B-bonds, C-health schedules. A-plans and C-FSA may overlap only with frozen payroll scope. A-conversions after A-plans; B-education after IRA headroom frozen. #103 distribution plumbing can run after A2/S3/S6, without overlapping shared files. Domain authors cannot amend common financial compiler, tax engine, canonical model, UI or chart contract. Suggested merge: public contracts → independent domains (any disjoint ordering) → serialized integrations by dependencies (benefits+premiums; plans+conversion+RMD+529; debt; bonds; FSA) → integrated D2-D. CI: bounded deterministic unit, schema/contract, exact expected effect, positive/negative law boundaries and rollback; engineering validation: realistic long-horizon and performance comparisons; UAT: normal owner tasks and comprehension. Green CI alone never closes D2.
+**Deferred integration evidence retained by #149:** A↔B IRA/529 annual basis/capacity; A↔C SSA/Medicare/premium payroll, IRMAA and FSA; B↔C competing cash and entitlement; D2↔#101/#138 tax withholding/settlement and one tax-rule authority; D2↔#120 account-first editor/read-only chart/diagnostics, save/reload and UAT. Shared schema, `src/application/compiler/**`, `src/simulation/household*`, `src/simulation/tax/**`, ledger/funding and active U1 UI are one-writer-only. Freeze interface version/commit and rebase dependent siblings after each merge. Independent domain unit CI and exact expected-effect/negative/rollback tests are necessary but not sufficient for D2 completion.
+
+Final merge order: approved authority and shared interfaces → concurrent disjoint A/B/C domain phases → staged #149 common compiler/settlement integration → delayed released-UI authoring/read-model integration → #149 D2-D integrated household and uncoached PM UAT **after #120 U1 acceptance**. R5 remains gated.
 
 ## 6. PM approval needed before normative promotion
 
@@ -132,10 +127,10 @@ Parallel earliest after interface freeze: A-benefits, B-debt, B-bonds, C-health 
 6. **Bonds and 529:** Approve official-data/index-vintage dependence and federal-first 529 federal tax calculations with state-specific taxes gated unless supported jurisdiction rules are loaded?
 7. **Healthcare:** Approve member-specific premiums and Medicare IRMAA using actual two-year tax facts and one premium settlement route, not assumed constant surcharge?
 8. **FSA:** Approve entitlement (not ordinary liquid NW asset), uniform coverage availability, validated reimbursement and plan-year carryover/grace/forfeiture?
-9. **Concurrency:** Approve one shared contract/integration owner after U1 #120 acceptance and coordinated chart interface handshake; absolutely no sibling common-file edits?
-10. **#103 governance:** Should closed #103 be reopened as the distribution/RMD backlog/implementation owner, or should a verified merged successor be referenced? Current evidence does **not** support marking distributions done.
+9. **Concurrency (PM sequencing approved 2026-10-17):** #149 is the one shared contract/integration owner while U1 is active; allow independent approved D2 backend work without U1 final UAT, but prohibit sibling common-file or active U1 editor writes. Authoring/read-model handshake and D2-D closeout still require the specific file release and final #120 acceptance.
+10. **#103 governance (PM approved consolidation):** closed #103 transfers all outstanding distribution/RMD scope to new consolidated D2-A **#146**; the milestone register records the successor. No feature-completion claim follows from the old closure.
 
-Recommended answers to 1–9: **yes**. Recommended #10: **reopen #103** and convert only after approved semantics into a fresh V3 implementation contract, preserving issue history; do not create a duplicate. In all cases, no code authorization until the explicit gate.
+Recommendations 1–8 above remain **proposed financial policies requiring explicit PM approval**, not silently accepted by the sequencing decision. Items 9–10 have PM-approved **scheduling/consolidation** decisions, with gate/traceability preserved. No Codex financial implementation authorization until relevant normative contracts and bounded V3 phase are merged; final D2-D UAT remains downstream.
 
 ## 7. Authoritative rule sources for eventual versioned snapshots
 
