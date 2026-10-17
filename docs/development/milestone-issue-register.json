@@ -27,7 +27,8 @@
         101,
         102,
         105,
-        108
+        108,
+        138
       ]
     },
     "U1B_B": {
@@ -202,6 +203,19 @@
         "PFA-UX-022"
       ],
       "scope": "Separate Codex V3 implementation for visual U1B Phase B (V1 net worth/assets/liabilities, V2 total modeled all-wrapper cash and signed changes, V3 recognized income/expenses) in shared Calm Overview/Cash UI using merged source selector #129. No new domain writers; #120 remains the sole D1/U1 final acceptance and PM UAT owner. Later C/D/E UI phases stay serialized and require fresh scoped authorization."
+    },
+    {
+      "issue_number": 138,
+      "owner_stage": "T1B-isolated-PFA-TAX-016-tax-rules",
+      "blocking_gate": "R11",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-TAX-011",
+        "PFA-TAX-016",
+        "PFA-TAX-017",
+        "PFA-TAX-018"
+      ],
+      "scope": "Gated-closed pending PM approved/merged tax-rule specification PR; reopen before Codex. Single task for federal pure wash sale/basis/holding treatment, character-preserving capital-loss netting/carryforward, authoritative-result TLH comparisons and bounded one-for-one nondepreciable US investment land 1031. Pure-rule completion only; final R11 PFA-TAX-016 household tax-year/lot/property/planning integration needs later distinct shared-authority task and acceptance."
     }
   ],
   "legacy_open_task_reconciliation": {
