@@ -24,8 +24,8 @@ function source(model = createGoldenHouseholdDraft(), months = 3, separate = fal
   if (result.status === "unavailable") throw new Error(JSON.stringify(result));
   return result;
 }
-function extra(model: PersonalDraft, amount: string, fundingAccountId: string = ids.checking) {
-  return authorMortgageExtra(model, { eventId: "d1610000-0000-4000-8000-000000000010", effectId: "d1610000-0000-4000-8000-000000000011", primitiveId: "d1610000-0000-4000-8000-000000000012", liabilityId: ids.mortgage, date: "2026-01-01", amount, fundingAccountId });
+function extra(model: PersonalDraft, amount: string, fundingAccountId: string = ids.checking, date = "2026-01-01") {
+  return authorMortgageExtra(model, { eventId: "d1610000-0000-4000-8000-000000000010", effectId: "d1610000-0000-4000-8000-000000000011", primitiveId: "d1610000-0000-4000-8000-000000000012", liabilityId: ids.mortgage, date, amount, fundingAccountId });
 }
 describe("source-backed mortgage chart data", () => {
   it("reconciles paid leg amounts and principal against the same real integrated replay", () => {
@@ -86,7 +86,7 @@ describe("source-backed mortgage chart data", () => {
       name: "New zero-rate mortgage", liability_type: "mortgage", owner_id: ids.household,
       principal: "240000", current_balance: "240000", interest_rate: "0", origination_date: "2026-01-01", maturity_date: "2056-01-01", collateral_id: ids.home,
     });
-    model = extra(model, "999999999"); // Denied extra still cannot become principal paid.
+    model = extra(model, "999999999", ids.checking, "2026-02-01"); // Use the first contractual payment occurrence; denied extra still cannot become principal paid.
     const result = source(model, 24, false, true), cache = new MortgageWindowCache(result);
     const first = cache.get(ids.mortgage, 0), later = cache.get(ids.mortgage, 12);
     expect(first.rows[0]!.interestPaid).toBe("0");

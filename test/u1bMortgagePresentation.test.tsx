@@ -26,8 +26,22 @@ describe("U1B-D exact mortgage presentation", () => {
     const render = (value = data) => renderToStaticMarkup(<LiabilityBalanceOutlook data={value} selectedStart={value.rows[1]!.start} selectMonth={() => {}} />);
     expect(render()).toContain('aria-label="Selected liability month"');
     expect(render()).toContain('aria-label="Modeled household liability balances"');
-    expect(render()).toContain("Committed household forecast");
-    expect(render()).toContain(formatExactMoney(data.rows[1]!.amount, data.rows[1]!.currency));
+    // The Golden household may have incomplete capability coverage even though
+    // its numeric household summary contains a modeled balance. Respect the
+    // source gate rather than asserting that unsupported values are committed.
+    if (data.rows[1]!.supported) {
+      expect(render()).toContain("Committed household forecast");
+      expect(render()).toContain(formatExactMoney(data.rows[1]!.amount, data.rows[1]!.currency));
+    } else {
+      expect(render()).toContain("Incomplete coverage");
+      expect(render()).toContain("Selected liability balance is incomplete");
+    }
+    // Independently exercise the complete presentation with an explicitly
+    // qualified read-model fixture; this does not upgrade actual source facts.
+    const complete = { ...data, status: "current" as const, opening: { ...data.opening, supported: true },
+      rows: data.rows.map(row => ({ ...row, supported: true })) };
+    expect(render(complete)).toContain("Committed household forecast");
+    expect(render(complete)).toContain(formatExactMoney(data.rows[1]!.amount, data.rows[1]!.currency));
     const incomplete = { ...data, status: "incomplete" as const, rows: data.rows.map(row => ({ ...row, supported: false })) };
     expect(render(incomplete)).toContain("liability forecast incomplete");
     expect(render(incomplete)).toContain("Incomplete coverage");

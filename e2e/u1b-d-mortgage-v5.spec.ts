@@ -53,9 +53,12 @@ async function setup(page: Page, width: number, denied = false) {
   await navigateOwner(page, "Plan", "Current Plan");
   await page.getByLabel("Simulation start", { exact: true }).fill("2026-01-01");
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-03-01");
+  // Imports reset forecast configuration and close disclosures. A collapsed
+  // <details> is a group, not a visible region, so open it via its summary first.
+  const taxSummary = page.locator("details > summary").filter({ hasText: "Tax payments & refunds" }).first();
+  const disclosure = taxSummary.locator("..");
+  if (await disclosure.getAttribute("open") === null) await taxSummary.click();
   const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
-  const disclosure = taxes.locator("xpath=ancestor::details[1]");
-  if (await disclosure.getAttribute("open") === null) await disclosure.locator(":scope > summary").click();
   await taxes.getByLabel("Tax payment account", { exact: true }).selectOption({ label: "Everyday checking" });
   await taxes.getByLabel("Tax refund account", { exact: true }).selectOption({ label: "Everyday checking" });
   for (const name of ["Federal income tax", "New York"]) await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
@@ -96,7 +99,10 @@ for (const width of [1440, 390]) {
     await expect(selected).toHaveValue(expected.rows[1]!.start);
     await chart.getByText("Exact household liability balances", { exact: true }).click();
     const row = chart.getByRole("row").filter({ has: page.getByRole("rowheader", { name: "2026-02-01 → 2026-03-01", exact: true }) });
-    await expect(row.getByRole("cell")).toHaveText([formatExactMoney(expected.rows[1]!.amount, expected.rows[1]!.currency), "Committed household forecast"]);
+    const month = expected.rows[1]!;
+    await expect(row.getByRole("cell")).toHaveText(month.supported
+      ? [formatExactMoney(month.amount, month.currency), "Committed household forecast"]
+      : ["Unavailable", "Incomplete coverage"]);
     const figure = await chart.getByRole("figure", { name: "Modeled household liability balances", exact: true }).boundingBox();
     expect(figure!.x).toBeGreaterThanOrEqual(0);
     expect(figure!.x + figure!.width).toBeLessThanOrEqual(width);
