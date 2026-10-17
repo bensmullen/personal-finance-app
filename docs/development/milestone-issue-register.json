@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "as_of": "2026-10-15",
+  "as_of": "2026-10-17",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
   "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120.",
   "stage_gates": {
@@ -28,6 +28,13 @@
         102,
         105,
         108
+      ]
+    },
+    "U1B_B": {
+      "stage": "U1B-B chart-data prerequisite",
+      "blocking_transition": "Start or accept U1B-B frontend financial chart integration without the audited source-only chart-data read model",
+      "required_issue_numbers": [
+        129
       ]
     }
   },
@@ -158,6 +165,22 @@
         "PFA-UX-023"
       ],
       "scope": "Final U1/D1 guided financial-authoring visual comprehension, source-of-truth UX/diagnostics and uncoached owner acceptance, inheriting original #94 UX criteria and consolidated #99 mortgage-account funding UAT. PR #98 is merged as CI-green technical foundation only; no D1 or U1 acceptance yet."
+    },
+    {
+      "issue_number": 129,
+      "owner_stage": "U1B-chart-data-prep",
+      "blocking_gate": "U1B_B",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-DET-014",
+        "PFA-UX-007",
+        "PFA-UX-009",
+        "PFA-UX-015",
+        "PFA-UX-019",
+        "PFA-UX-020",
+        "PFA-UX-021"
+      ],
+      "scope": "Exclusive two-file U1B-B0 pure read-only forecast-chart data selector: exact source period/yearly stock/flow aggregation, net-worth/cash identities, per-metric incomplete coverage, and total modeled cash distinguished from bank-accessible cash. Independent prerequisite to #120 U1B-B chart UI, not a second D1_U1 final user-acceptance owner. #120 alone retains U1/D1 UAT acceptance."
     }
   ],
   "legacy_open_task_reconciliation": {
