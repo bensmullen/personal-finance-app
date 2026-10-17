@@ -1,4 +1,5 @@
 "use client";
+import * as React from "react";
 import { Currency, decimal, RoundingPolicy } from "../../src/values/index.js";
 import type { inspectMonthlyMoney } from "../../src/application/monthlyMoney.js";
 import type { PersonalDraft } from "../../src/application/personalMvp.js";

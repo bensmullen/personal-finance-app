@@ -407,6 +407,8 @@ export function PersonalFinanceApp() {
   };
 
   const replaceCanonicalModel = (next: PersonalDraft, message: string) => {
+    setCashMonth("");
+    setCashReturn(false);
     setContributionTarget(undefined);
     setInsuranceTarget(undefined);
     setReplacementIdentity(value => value + 1);
@@ -768,7 +770,7 @@ export function PersonalFinanceApp() {
       reviewMortgageFunding: (id) => { navigate("Net Worth"); setSubnav("Debt"); requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>(`[data-repair="${CSS.escape(`mortgage:${id}:mortgageFunding`)}"]`))); },
       reviewMortgageOperations: () => { navigate("Net Worth", "Debt"); requestAnimationFrame(() => focusRepair(document.querySelector<HTMLElement>('[aria-label="Mortgage operations"]'))); },
       reviewTarget: (target) => {
-        if (primary === "Money" && subnav === "Cash Flow") setCashReturn(true);
+        if (primary === "Money" && subnav === "Cash Flow" && (!target.objectType || target.type === "Asset sources")) setCashReturn(true);
         if (target.type === "Asset sources") { navigate("Net Worth", "Property & other assets"); return; }
         if (!target.objectType) { openForecastSetup(target.field ? { target: target.field, message: target.label } : undefined); return; }
         setEntityRepair({ objectType: target.objectType, objectId: target.id, field: target.editable ? target.field ?? "" : "", token: randomId() });
@@ -1456,7 +1458,7 @@ function CashFlow({
         text="Follow monthly income, spending, and liquidity without losing the exact source values."
       />
       <nav className="cash-tasks" aria-label="Cash tasks">
-        {(["Income", "Spending", "Accounts", "Insurance & coverage"] as const).map(section => <button key={section} type="button" onClick={() => openOwner(section)}>{section}</button>)}
+        {(["Income", "Spending", "Accounts", "Insurance & coverage"] as const).map(section => <button key={section} type="button" aria-label={`Review ${section} sources`} onClick={() => openOwner(section)}>{section}</button>)}
       </nav>
       <section className="panel">
         <div className="panel-head">

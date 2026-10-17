@@ -5,7 +5,6 @@ import { CashAllocation, cashComparison, type MonthlyEvidenceDetail } from "../u
 import { MonthlyMoneyPanel } from "../ui/forecast/MonthlyMoneyPanel.js";
 import { createEmptyPersonalDraft } from "../src/application/personalMvp.js";
 import type { MonthlyUse } from "../src/application/monthlyMoney.js";
-import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import { runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
 import { inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
 import { createD1IntegratedHousehold, d1IntegratedCompilerRequest, integratedIds } from "./fixtures/d1IntegratedHousehold.js";
@@ -45,6 +44,12 @@ describe("U1B-C partial cash comparison", () => {
     expect(html).not.toContain("paycheck-tax");
     expect(html).toContain("Review tax coverage &amp; setup");
   });
+  it("orders distinct decimal amounts that map to the same floating point coordinate", () => {
+    const detail = evidence({ denominator: "18014398509481987", totalUses: "18014398509481986.003", unallocated: "0.997",
+      categories: [category("A", "9007199254740993.001"), category("B", "9007199254740993.002")] });
+    expect(cashComparison(detail)?.categories.map(item => item.id)).toEqual(["B", "A"]);
+    expect(cashComparison(detail)?.drawable).toBe(true);
+  });
   it("shows every excess category at its full relative size with separate unattributed excess", () => {
     const detail = evidence({ categories: [category("Mortgage", "100", "mortgage"), category("IRA", "50", "ira")], totalUses: "150", unallocated: "0", additionalFunding: "50" });
     const view = cashComparison(detail)!;
@@ -68,6 +73,8 @@ describe("U1B-C partial cash comparison", () => {
     { categories: [category("Nothing", "0")], totalUses: "0", unallocated: "100" },
     { totalUses: "41" },
     { categories: [{ ...category("Missing", "40"), sourceIds: [] }] },
+    { categories: [{ ...category("One", "20"), sourceIds: ["duplicate"] }, { ...category("Two", "20"), sourceIds: ["duplicate"] }] },
+    { currency: "unsupported" },
     { denominator: "corrupt" },
   ])("keeps exact text without a fictitious graphic for unsupported evidence %j", overrides => {
     const html = render(evidence(overrides));
@@ -90,12 +97,7 @@ describe("U1B-C partial cash comparison", () => {
     expect(html).toContain("posted:Coverage");
     expect(html).toContain('tabindex="0"');
   });
-  it("suppresses prior amounts when stale and offers setup for unavailable results", () => {
-    const forecast = { status: "incomplete", points: [{ periodStart: "2026-01-01T00:00:00.000Z", periodEnd: "2026-02-01T00:00:00.000Z", cash: { currency: "USD" } }] } as PersonalHouseholdForecastReadModel;
-    const stale = renderToStaticMarkup(React.createElement(MonthlyMoneyPanel, { draft, forecast, current: false, mode: "paycheck", review: noop, setup: noop }));
-    expect(stale).toContain('data-evidence-state="stale"');
-    expect(stale).toContain("Out of date · retained forecast");
-    expect(stale).not.toContain("paycheck-bar");
+  it("offers setup without a chart or phantom amounts for unavailable results", () => {
     const empty = renderToStaticMarkup(React.createElement(MonthlyMoneyPanel, { draft, current: false, mode: "paycheck", review: noop, setup: noop }));
     expect(empty).toContain("Monthly evidence unavailable");
     expect(empty).toContain("Review forecast setup");

@@ -1,4 +1,5 @@
 "use client";
+import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { inspectMonthlyMoney } from "../../src/application/monthlyMoney.js";
 import type { PersonalHouseholdForecastReadModel } from "../../src/application/householdProjection.js";
@@ -23,12 +24,16 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
   const cache = useMemo(() => new Map<string, Detail>(), [forecast, draft]);
   const [, setRevision] = useState(0);
   const point = points.find(value => value.periodStart.slice(0, 7) === (selectedMonth ?? selected)) ?? points[0];
+  useEffect(() => {
+    const month = point?.periodStart.slice(0, 7);
+    if (month && month !== (selectedMonth ?? selected)) (selectMonth ?? setSelected)(month);
+  }, [point, selectedMonth, selected, selectMonth]);
   const detail = current && point ? cache.get(point.periodStart) : undefined;
   const amount = (value: string) => formatExactMoney(value, detail?.currency ?? point?.cash.currency);
   const inspect = () => {
     if (!point || !current) return;
     try { cache.set(point.periodStart, inspectMonthlyMoney(point, draft)); setError(""); setRevision(value => value + 1); }
-    catch { setError("Monthly evidence could not be loaded. Update the forecast and retry this month."); }
+    catch { cache.delete(point.periodStart); setError("Monthly evidence could not be loaded. Update the forecast and retry this month."); }
   };
   useEffect(() => {
     setError("");
@@ -45,7 +50,7 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
       {mode !== "paycheck" && objectEntries(draft, "Liability").filter(value => value.liability_type === "mortgage").map(value => <p key={objectId("Liability", value)}>{referenceLabel(draft, "Liability", objectId("Liability", value))} · Payment not available. Review contractual terms and payment funding in Forecast setup.</p>)}
       <button type="button" onClick={setup}>Review forecast setup</button></> : <>
       <small>Household · modeled forecast · {point.periodStart.slice(0, 10)} to {point.periodEnd.slice(0, 10)} (exclusive)</small>
-      <small>Current forecast evidence · {forecast?.status === "incomplete" ? "partial forecast horizon" : "supported selected month"}. Monthly comparison only; annual funding coverage is unavailable.</small>
+      <small>Current forecast · {forecast?.status === "incomplete" ? "partial forecast horizon" : "selected modeled month"}. Monthly comparison only; annual funding coverage is unavailable.</small>
       <button type="button" onClick={inspect}>Refresh selected month</button>
       {!detail && !error && <p role="status">Loading this month's committed activity…</p>}
       {error && <><p role="alert">{error}</p><button type="button" onClick={inspect}>Retry selected month</button><button type="button" onClick={setup}>Review forecast setup</button></>}

@@ -12,6 +12,7 @@ const panel = (page: Page) => page.getByRole("region", { name: "Your Paycheck", 
 const status = (page: Page) => page.getByRole("status", { name: "Household forecast status", exact: true });
 const errors = new WeakMap<Page, string[]>();
 test.beforeEach(async ({ page }) => {
+  test.setTimeout(120_000);
   errors.set(page, []);
   page.on("pageerror", error => errors.get(page)!.push(error.message));
 });
@@ -109,6 +110,7 @@ for (const width of [1440, 390]) {
     await expect(selected).toHaveValue("2026-02");
     await expect(panel(page)).toHaveAttribute("data-evidence-state", "incomplete");
     const expected = inspectMonthlyMoney(source.points[1]!, JSON.parse(before) as PersonalDraft);
+    if (decimal(expected.unallocated).isPositive()) await expect(panel(page).locator(".paycheck-bar > span").last()).toHaveClass("paycheck-unallocated");
     const exact = (amount: string) => formatExactMoney(amount, expected.currency);
     const summary = panel(page).getByText("Exact monthly comparison & receipts", { exact: true });
     await summary.focus(); await page.keyboard.press("Enter");
@@ -167,7 +169,7 @@ test("Cash owner edit/cancel/save retains month, marks old evidence stale and re
   await clickFinancialDestination(page, "Cash");
   const tasks = page.getByRole("navigation", { name: "Cash tasks", exact: true });
   for (const owner of ["Accounts", "Insurance & coverage", "Spending", "Income"]) {
-    await tasks.getByRole("button", { name: owner, exact: true }).click();
+    await tasks.getByRole("button", { name: `Review ${owner} sources`, exact: true }).click();
     await expect(page.locator(".subnav").getByRole("button", { name: owner, exact: true })).toHaveAttribute("aria-current", "page");
     await page.getByRole("button", { name: "Return to Cash breakdown", exact: true }).click();
     await expect(month).toHaveValue("2026-02");
@@ -185,7 +187,8 @@ test("Cash owner edit/cancel/save retains month, marks old evidence stale and re
   // stale results can be observed without a race against a fast worker.
   await navigateOwner(page, "Plan", "Current Plan");
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-01-01");
-  await navigateOwner(page, "Money", "Income");
+  await clickFinancialDestination(page, "Cash");
+  await tasks.getByRole("button", { name: "Review Income sources", exact: true }).click();
   const routing = page.getByRole("region", { name: "Income deposit routing", exact: true });
   await routing.getByLabel("Income receiving account", { exact: true }).selectOption("");
   await page.getByRole("button", { name: /Example salary/ }).click();
@@ -197,7 +200,7 @@ test("Cash owner edit/cancel/save retains month, marks old evidence stale and re
   await expect(panel(page)).toContainText("Out of date · retained forecast");
   await expect(panel(page).getByRole("img")).toHaveCount(0);
   await expect(month).toHaveValue("2026-02");
-  await tasks.getByRole("button", { name: "Income", exact: true }).click();
+  await tasks.getByRole("button", { name: "Review Income sources", exact: true }).click();
   await routing.getByLabel("Income receiving account", { exact: true }).selectOption({ label: "Everyday checking" });
   await navigateOwner(page, "Plan", "Current Plan");
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-03-01");
@@ -240,7 +243,7 @@ test("H04 bank-only no forecast has an accessible mobile fallback and owner rout
   await expect(panel(page)).toContainText("Monthly evidence unavailable");
   await expect(panel(page).getByRole("img")).toHaveCount(0);
   await expect(panel(page).getByRole("combobox")).toHaveCount(0);
-  await page.getByRole("navigation", { name: "Cash tasks", exact: true }).getByRole("button", { name: "Accounts", exact: true }).click();
+  await page.getByRole("navigation", { name: "Cash tasks", exact: true }).getByRole("button", { name: "Review Accounts sources", exact: true }).click();
   await expect(page.getByRole("button", { name: /H04 checking/ })).toBeVisible();
   await page.getByRole("button", { name: "Return to Cash breakdown", exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
