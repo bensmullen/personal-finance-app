@@ -234,8 +234,10 @@ export function calculateQuotedBenefits(request: {
         need(Boolean(a.election.electionId.trim() && a.election.form.trim()) && a.election.beneficiaryId === a.beneficiaryId, "INCORRECT_BENEFICIARY");
         const c = a.election.continuation;
         if (c) {
-          need(Boolean(a.participantDeathDate) && Boolean(c.beneficiaryId.trim()) && c.beneficiaryId === a.beneficiaryId && c.beneficiaryId !== a.recipientPersonId, "INCORRECT_BENEFICIARY");
-          dated(c.effectiveAt); need(c.effectiveAt >= a.participantDeathDate!, "INVALID_DEATH_TRANSITION");
+          need(Boolean(c.beneficiaryId.trim()) && c.beneficiaryId === a.beneficiaryId && c.beneficiaryId !== a.recipientPersonId, "INCORRECT_BENEFICIARY");
+          dated(c.effectiveAt);
+          // A contracted survivor election exists even when the modeled participant remains alive.
+          if (a.participantDeathDate) need(c.effectiveAt >= a.participantDeathDate, "INVALID_DEATH_TRANSITION");
           if (c.endExclusive) { dated(c.endExclusive); need(c.endExclusive >= c.effectiveAt, "INVALID_CONTINUATION_END"); }
           factor(c, base); need(c.factor.value.compare(decimal("1")) <= 0, "INVALID_SURVIVOR_FRACTION");
         }
@@ -276,6 +278,9 @@ export function calculateQuotedBenefits(request: {
           if (a.participantDeathDate && at >= a.participantDeathDate) {
             need(Boolean(c), "MISSING_CONTINUATION_TERMS"); if (!c) continue;
             need(a.participantDeathDate >= a.commencement || c.coversDeathBeforeCommencement, "UNSUPPORTED_PRECOMMENCEMENT_DEATH");
+            // A dead participant cannot continue earning installments while the survivor award is not yet effective.
+            // The plan's death-month/gap payment rule is outside this quote contract: flag unknown, never post cash.
+            need(at >= c.effectiveAt, "UNVERIFIED_PENSION_DEATH_TRANSITION_GAP");
             if (at >= c.effectiveAt) {
               recipient = c.beneficiaryId;
               if (c.endExclusive && at >= c.endExclusive) continue;
