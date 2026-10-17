@@ -29,7 +29,7 @@ describe("D2-C source-quoted premium foundation (isolated proposals only)", () =
   it("uses the independent health_after_tax amount without promoting conditional evidence", () => {
     const fixture = catalog.cases.find(c => c.id === "health_after_tax")!;
     const c = coverage();
-    const amount = cents(fixture.input.amounts.authoredPremiumCents!);
+    const amount = cents(fixture.input.amounts.householdShareCents!);
     const r = proposePremiums(request([{ ...c, quote: { ...c.quote, gross: amount, member: amount } }]));
     expect(r.proposals).toHaveLength(1);
     expect(r.proposals[0]!.memberAmount.equals(cents(fixture.expected.effects!.facts.premiumCents!))).toBe(true);
