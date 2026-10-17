@@ -38,6 +38,13 @@
         129,
         136
       ]
+    },
+    "U1B_C": {
+      "stage": "U1B-C Cash task-first UX and capability-aware selected-month V4 allocation",
+      "blocking_transition": "Declare U1B-C completed or begin dependent shared-UI U1B-D/E integration",
+      "required_issue_numbers": [
+        142
+      ]
     }
   },
   "issues": [
@@ -202,7 +209,7 @@
         "PFA-UX-021",
         "PFA-UX-022"
       ],
-      "scope": "Separate Codex V3 implementation for visual U1B Phase B (V1 net worth/assets/liabilities, V2 total modeled all-wrapper cash and signed changes, V3 recognized income/expenses) in shared Calm Overview/Cash UI using merged source selector #129. No new domain writers; #120 remains the sole D1/U1 final acceptance and PM UAT owner. Later C/D/E UI phases stay serialized and require fresh scoped authorization."
+      "scope": "Completed U1B-B V1/V2/V3 production chart UI, merged PR #139 (`457fe473596e97366d6552f02e05d2d51e70f5a8`) and closed #136 with passing scoped CI/audit. No new domain writers; #120 retains final U1/D1 UAT. U1B-C is separately authorized by #142 and remains dependent on this merged stage; D/E shared UI follow serially."
     },
     {
       "issue_number": 138,
@@ -216,6 +223,24 @@
         "PFA-TAX-018"
       ],
       "scope": "Gated-closed pending PM approved/merged tax-rule specification PR; reopen before Codex. Single task for federal pure wash sale/basis/holding treatment, character-preserving capital-loss netting/carryforward, authoritative-result TLH comparisons and bounded one-for-one nondepreciable US investment land 1031. Pure-rule completion only; final R11 PFA-TAX-016 household tax-year/lot/property/planning integration needs later distinct shared-authority task and acceptance."
+    },
+    {
+      "issue_number": 142,
+      "owner_stage": "U1B-C-cash-task-allocation",
+      "blocking_gate": "U1B_C",
+      "depends_on": [
+        136
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-014",
+        "PFA-UX-015",
+        "PFA-UX-019",
+        "PFA-UX-020",
+        "PFA-UX-021",
+        "PFA-UX-022",
+        "PFA-UX-023"
+      ],
+      "scope": "Codex V3 U1B-C after merged U1B-B: Cash Income/Spending/Accounts/Insurance task navigation and selected-month partial source-backed V4 categorized-use comparison using existing replay evidence. Unknown withholding is not zero/disposable cash; no new financial writer. #120 remains U1/D1 owner UAT; dependent shared-UI D/E serialized."
     }
   ],
   "legacy_open_task_reconciliation": {
