@@ -209,7 +209,7 @@
         "PFA-UX-021",
         "PFA-UX-022"
       ],
-      "scope": "Separate Codex V3 implementation for visual U1B Phase B (V1 net worth/assets/liabilities, V2 total modeled all-wrapper cash and signed changes, V3 recognized income/expenses) in shared Calm Overview/Cash UI using merged source selector #129. No new domain writers; #120 remains the sole D1/U1 final acceptance and PM UAT owner. Later C/D/E UI phases stay serialized and require fresh scoped authorization."
+      "scope": "Completed U1B-B V1/V2/V3 production chart UI, merged PR #139 (`457fe473596e97366d6552f02e05d2d51e70f5a8`) and closed #136 with passing scoped CI/audit. No new domain writers; #120 retains final U1/D1 UAT. U1B-C is separately authorized by #142 and remains dependent on this merged stage; D/E shared UI follow serially."
     },
     {
       "issue_number": 138,
