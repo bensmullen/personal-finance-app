@@ -1155,7 +1155,7 @@ export interface HouseholdReplayCheckpoint {
 const forecastCheckpoints = new WeakMap<object, readonly HouseholdReplayCheckpoint[]>();
 
 /** Materialized data only; private persistent indexes never cross transport. */
-export const exportHouseholdReplayCheckpoints = (forecast: HouseholdForecastSummaryResult): readonly HouseholdReplayCheckpoint[] =>
+export const exportHouseholdReplayCheckpoints = (forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">): readonly HouseholdReplayCheckpoint[] =>
   Object.freeze((forecastCheckpoints.get(forecast) ?? []).map(checkpoint => Object.freeze({ ...checkpoint,
     state: createAuthoritativeState(checkpoint.state),
     primitiveState: materializePrimitiveRuntimeStateStore(checkpoint.primitiveState),
@@ -1187,12 +1187,17 @@ export const registerHouseholdReplayCheckpoints = (
       canonicalSerialize(checkpoint.outputCapabilities ?? null) !== canonicalSerialize(period.outputCapabilities ?? null) ||
       checkpoint.runtime === null || typeof checkpoint.runtime !== "object" || Array.isArray(checkpoint.runtime)) mismatch();
     const state = createAuthoritativeState(checkpoint.state);
+    // Constructors validate materialized values, but may normalize malformed
+    // identity/claim history. A portable checkpoint must already be exact;
+    // silently repairing it would change the committed continuation basis.
+    if (canonicalSerialize(state) !== canonicalSerialize(checkpoint.state)) mismatch();
     assertAuthoritativeStateCurrency(state, runContext.baseCurrency);
     const metrics = householdExecutionMetrics(state, runContext.baseCurrency, kernel.executable);
     for (const [metric, key] of [["cash", "cash"], ["investmentValue", "investmentValue"], ["totalAssets", "assets"], ["totalLiabilities", "liabilities"], ["netWorth", "netWorth"]] as const)
       if (!metrics[metric].equals(period[key])) mismatch();
-    return Object.freeze({ ...checkpoint, state: createIndexedExecutionState(state),
-      primitiveState: createPrimitiveRuntimeStateStore(checkpoint.primitiveState) });
+    const primitiveState = createPrimitiveRuntimeStateStore(checkpoint.primitiveState);
+    assertPrimitiveRuntimeStateConsistent(primitiveState, state);
+    return Object.freeze({ ...checkpoint, state: createIndexedExecutionState(state), primitiveState });
   });
   forecastCheckpoints.set(forecast, Object.freeze(restored));
 };

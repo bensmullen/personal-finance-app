@@ -78,13 +78,24 @@ describe("portable sparse household replay checkpoints", () => {
     };
     // Isolate execution-input transport, checkpoint transport, and continuation.
     sameCanonical(restored.replay.kernel.canonicalInputs, source.replay.kernel.canonicalInputs, "execution inputs");
-    sameCanonical(exportHouseholdReplayCheckpoints(restored as typeof source), exportHouseholdReplayCheckpoints(source), "checkpoint state/primitive/tax runtime");
+    sameCanonical(restored.replay.kernel.executable.reconciledOpeningState, source.replay.kernel.executable.reconciledOpeningState, "opening state");
+    sameCanonical(restored.replay.kernel.executable.reconciledPrimitiveState, source.replay.kernel.executable.reconciledPrimitiveState, "opening primitive runtime");
+    sameCanonical(restored.replay.runContext, source.replay.runContext, "run context");
+    sameCanonical(restored.replay.kernel.executable.participants?.map(participant => participant.economicInputs),
+      source.replay.kernel.executable.participants?.map(participant => participant.economicInputs), "participant inputs");
+    const sourceCheckpoints = exportHouseholdReplayCheckpoints(source), restoredCheckpoints = exportHouseholdReplayCheckpoints(restored);
+    sameCanonical(restoredCheckpoints, sourceCheckpoints, "checkpoint state/primitive/tax runtime");
+    for (const [index, checkpoint] of sourceCheckpoints.entries()) {
+      for (const key of ["contributions", "contingentPositions"] as const) {
+        expect(Object.hasOwn(restoredCheckpoints[index]!.state, key)).toBe(Object.hasOwn(checkpoint.state, key));
+      }
+    }
     const rerun = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
     sameCanonical(rerun.state, source.state, "full rerun state (no checkpoint resume)");
     expect(rerun.diagnostics).toEqual(source.diagnostics);
     expect(rerun.outputCapabilities).toEqual(source.outputCapabilities);
     const detail = runHouseholdKernel({ kernel: tax.kernel, runContext: tax.context, resultTier: "detail" });
-    for (const length of [1, Math.min(12, months - 12)]) {
+    for (const length of new Set([1, Math.min(12, months - 12)])) {
       const start = months - length, selected = { start: source.periods[start]!.period.start, end: source.periods.at(-1)!.period.end };
       const metrics = meter(), actual = replayHouseholdForecastWindow(restored, selected, metrics.observer);
       const local = replayHouseholdForecastWindow(source, selected);
@@ -109,6 +120,10 @@ describe("portable sparse household replay checkpoints", () => {
       checkpoints.map((value, index) => index ? value : { ...value, at: source.periods[0]!.period.end }),
       checkpoints.map(value => ({ ...value, runId: "d1610000-0000-4000-8000-000000000099" as typeof value.runId })),
       checkpoints.map(value => ({ ...value, outputCapabilities: {} })),
+      checkpoints.map((value, index) => index ? value : { ...value, state: { ...value.state,
+        identities: { ...value.state.identities, generatedOccurrenceKeys: [...value.state.identities.generatedOccurrenceKeys].reverse() } } }),
+      checkpoints.map((value, index) => index ? value : { ...value, state: { ...value.state,
+        identities: { ...value.state.identities, postedTransactionIds: [...value.state.identities.postedTransactionIds, value.state.identities.postedTransactionIds[0]!] } } }),
       checkpoints.map(value => ({ ...value, fingerprint: "wrong" as typeof value.fingerprint }))])
       expect(() => registerHouseholdReplayCheckpoints(target, bad)).toThrow(/BASIS_MISMATCH/);
     const other = fixture(24).source;
@@ -123,12 +138,25 @@ describe("portable sparse household replay checkpoints", () => {
       expect(replayHouseholdForecastWindow(restored, source.periods[0]!.period).periods).toEqual(replayHouseholdForecastWindow(source, source.periods[0]!.period).periods);
     }
   });
-  it("records sparse count and linear encoded-byte growth on bounded synthetic horizons", () => {
+  it("bounds sparse checkpoints and distinguishes shared artifact bytes from repeated per-period JSON transport", () => {
     const short = fixture(24).source, longer = fixture(48).source;
-    const bytes = (source: typeof short) => new TextEncoder().encode(createPortableHouseholdReplayArtifact(source).encoded).byteLength;
+    const bytes = (source: typeof short) => {
+      const artifact = createPortableHouseholdReplayArtifact(source), encoder = new TextEncoder();
+      return { periods: source.periods.length, checkpoints: exportHouseholdReplayCheckpoints(source).length,
+        sharedArtifact: encoder.encode(JSON.stringify(artifact)).byteLength,
+        repeatedPeriodTransport: encoder.encode(JSON.stringify(source.periods.map(period => ({
+          start: period.period.start, end: period.period.end, basis: artifact,
+        })))).byteLength };
+    };
+    const shortBytes = bytes(short), longBytes = bytes(longer);
     expect(exportHouseholdReplayCheckpoints(short)).toHaveLength(1);
     expect(exportHouseholdReplayCheckpoints(longer)).toHaveLength(3);
-    expect(bytes(longer)).toBeLessThan(bytes(short) * 3);
-    expect(bytes(longer)).toBeLessThan(8_000_000);
+    expect(longBytes.sharedArtifact).toBeLessThan(shortBytes.sharedArtifact * 3);
+    expect(longBytes.sharedArtifact).toBeLessThan(8_000_000);
+    expect(longBytes.repeatedPeriodTransport).toBeLessThan(shortBytes.repeatedPeriodTransport * 6);
+    expect(longBytes.repeatedPeriodTransport).toBeGreaterThan(longBytes.sharedArtifact * 47);
+    // Bounded synthetic evidence only: repeated JSON is deliberately measured
+    // separately and is not a claim of linear or 40-year transport scalability.
+    console.info("U1B-D synthetic portable checkpoint transport bytes", { short: shortBytes, longer: longBytes });
   });
 });

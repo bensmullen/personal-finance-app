@@ -83,7 +83,7 @@ const decode = (wire: Wire, references = new Map<number, unknown>()): unknown =>
 
 type StateRecords = Omit<AuthoritativeState, "identities">;
 interface CheckpointDelta extends Omit<HouseholdReplayCheckpoint, "state"> {
-  readonly records: Readonly<Record<string, { readonly set: Readonly<Record<string, unknown>>; readonly remove: readonly string[] }>>;
+  readonly records: Readonly<Record<string, { readonly present?: boolean; readonly set: Readonly<Record<string, unknown>>; readonly remove: readonly string[] }>>;
   readonly identities: Readonly<Record<string, { readonly add: readonly string[]; readonly remove: readonly string[] }>>;
 }
 const recordKeys = ["accounts", "positions", "liabilities", "obligations", "contributions", "contingentPositions"] as const;
@@ -93,7 +93,7 @@ const checkpointDeltas = (checkpoints: readonly HouseholdReplayCheckpoint[]): re
   return checkpoints.map(({ state, ...checkpoint }) => {
     const records = Object.fromEntries(recordKeys.map(key => {
       const prior: Record<string, unknown> = before[key] ?? {}, next: Record<string, unknown> = state[key] ?? {};
-      return [key, { set: Object.fromEntries(Object.entries(next).filter(([id, value]) =>
+      return [key, { present: state[key] !== undefined, set: Object.fromEntries(Object.entries(next).filter(([id, value]) =>
         JSON.stringify(encode(value)) !== JSON.stringify(encode(prior[id] ?? null)))),
       remove: Object.keys(prior).filter(id => !(id in next)) }];
     }));
@@ -112,12 +112,25 @@ const restoreCheckpointDeltas = (deltas: readonly CheckpointDelta[]): readonly H
   let before = createAuthoritativeState();
   return deltas.map(({ records, identities, ...checkpoint }) => {
     if (!records || !identities) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: malformed checkpoint");
-    const stateRecords = Object.fromEntries(recordKeys.map(key => {
+    const stateRecords = Object.fromEntries(recordKeys.flatMap(key => {
       const change = records[key];
-      if (!change || !Array.isArray(change.remove) || !change.set || typeof change.set !== "object") throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: malformed state delta");
+      if (!change || !Array.isArray(change.remove) || change.remove.some(id => typeof id !== "string") ||
+        new Set(change.remove).size !== change.remove.length || !change.set || typeof change.set !== "object" || Array.isArray(change.set) ||
+        change.present !== undefined && typeof change.present !== "boolean") throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: malformed state delta");
       const next = { ...before[key], ...change.set };
-      for (const id of change.remove) delete next[id];
-      return [key, next];
+      for (const id of change.remove) {
+        if (!(id in (before[key] ?? {})) || id in change.set) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: invalid state removal");
+        delete next[id];
+      }
+      // Absent optional state is distinct from an explicitly empty record in
+      // canonical replay. Older v3 deltas lacked this bit and retain their
+      // previous representation; v1/v2 continue to use opening replay.
+      if (change.present === false) {
+        if (key !== "contributions" && key !== "contingentPositions" || Object.keys(next).length !== 0)
+          throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: invalid absent state record");
+        return [];
+      }
+      return [[key, next]];
     })) as StateRecords;
     const nextIds = Object.fromEntries(Object.entries(before.identities).map(([key, prior]) => {
       const change = identities[key];
