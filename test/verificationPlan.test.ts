@@ -98,9 +98,9 @@ describe("selective verification and main deployment", () => {
     changed.specifications[1]!.version = "2.0";
     expect(planForManifestChange(roadmapManifest, changed).e2e).toBe(true);
   });
-  it("runs two independent Playwright CI shards and preserves aggregate gating", () => {
-    expect(workflow).toContain("shard: [1, 2]");
-    expect(workflow).toContain("npm run codex:e2e -- --shard=${{ matrix.shard }}/2");
+  it("runs four independent Playwright CI shards and preserves aggregate gating", () => {
+    expect(workflow).toContain("shard: [1, 2, 3, 4]");
+    expect(workflow).toContain("npm run codex:e2e -- --shard=${{ matrix.shard }}/4");
     expect(workflow).toContain("name: e2e-diagnostics-${{ matrix.shard }}");
     expect(workflow).toContain("require_gate e2e");
   });
