@@ -99,6 +99,15 @@ test.afterEach(async ({ page }, testInfo) => {
       })),
     })));
     await testInfo.attach("chart-control-dom", { body: JSON.stringify(dom, null, 2), contentType: "application/json" });
+    await testInfo.attach("chart-tooltip-containment", {
+      body: JSON.stringify(await page.locator(".financial-chart .chart-readout").evaluateAll(readouts => readouts.map(readout => {
+        const bounds = (element: Element | null) => element?.getBoundingClientRect().toJSON();
+        return { readout: bounds(readout), wrapper: bounds(readout.parentElement),
+          chart: bounds(readout.closest(".chart")), viewport: innerWidth,
+          documentWidth: document.documentElement.scrollWidth,
+          visibility: getComputedStyle(readout.parentElement!).visibility };
+      })), null, 2), contentType: "application/json",
+    });
     const charts = page.locator(".financial-charts");
     if (await charts.count() === 1) await testInfo.attach("chart-accessibility", {
       body: (await charts.ariaSnapshot()).slice(0, 12_000), contentType: "text/plain",
@@ -209,6 +218,57 @@ async function exportedBytes(page: Page) {
 }
 
 for (const width of [1440, 390]) {
+  test(`Cash exact tooltips stay inside the chart on hover and keyboard at ${width}px`, async ({ page }) => {
+    await observeBaseline(page);
+    const status = await boundedGolden(page, width);
+    const source = await appliedSource(page, status);
+    await clickFinancialDestination(page, "Cash");
+    const cash = page.getByRole("figure", { name: cashTitle, exact: true });
+    const graph = cash.getByRole("application");
+    const readout = cash.locator(".chart-readout");
+    for (const granularity of ["annual", "monthly"] as const) {
+      await grouping(cash).selectOption(granularity);
+      const points = selectForecastChartData(source, { granularity }).points;
+      const assertReadout = async () => {
+        await expect(readout).toBeVisible();
+        await expect(readout).toContainText(`${granularity === "annual" ? "Annual" : "Monthly"} modeled period [start, end)`);
+        const label = await readout.locator("strong").textContent();
+        const point = points.find(point => label === `Projected ${point.periodStart.slice(0, 10)} → ${point.periodEnd.slice(0, 10)} (exclusive)${point.coverage === "partial_year" ? ` · partial year, ${point.coveredMonthCount} ${point.coveredMonthCount === 1 ? "month" : "months"}` : ""}`);
+        expect(point, "Tooltip must identify a real period with its coverage qualification").toBeDefined();
+        if (!point) throw new Error("Tooltip period missing from the applied source");
+        await expect(readout.locator("dd")).toHaveText([
+          expectedValue(point.metrics.totalModeledCash), expectedValue(point.metrics.totalModeledCashChange, true),
+        ]);
+        await expect(readout).toContainText(`${point.coveredMonthCount} covered ${point.coveredMonthCount === 1 ? "source month" : "source months"}.`);
+        // Exact containment is the product requirement. Keep page overflow
+        // strict and also detect clipped text inside an otherwise fitting box.
+        expect(await readout.evaluate(element => {
+          const box = element.getBoundingClientRect();
+          const chart = element.closest(".chart")!.getBoundingClientRect();
+          return { insideChart: box.left >= chart.left && box.right <= chart.right,
+            insideViewport: box.left >= 0 && box.right <= innerWidth,
+            contentFits: element.scrollWidth <= element.clientWidth,
+            pageFits: document.documentElement.scrollWidth <= innerWidth };
+        })).toEqual({ insideChart: true, insideViewport: true, contentFits: true, pageFits: true });
+      };
+      await graph.scrollIntoViewIfNeeded();
+      const graphBox = await graph.boundingBox();
+      const axisBox = await cash.locator(".recharts-xAxis .recharts-cartesian-axis-line").boundingBox();
+      if (!graphBox || !axisBox) throw new Error("Missing chart hover target");
+      // First/last category centers exercise both edges of the plotted range.
+      for (const fraction of [1 / (2 * points.length), 1 - 1 / (2 * points.length)]) {
+        await graph.hover({ position: { x: axisBox.x - graphBox.x + axisBox.width * fraction, y: graphBox.height / 2 } });
+        await assertReadout();
+      }
+      await grouping(cash).focus();
+      await page.mouse.move(0, 0);
+      await graph.focus();
+      await expect(graph).toBeFocused();
+      await page.keyboard.press("ArrowRight");
+      await assertReadout();
+    }
+  });
+
   // Each journey owns a fresh three-month run; a V1 control failure cannot
   // prevent Cash, export/stale recovery or H04 coverage from executing in CI.
   test(`Overview V1 visible controls, keyboard and exact periods at ${width}px`, async ({ page }) => {

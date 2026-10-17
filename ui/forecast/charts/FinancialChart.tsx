@@ -93,7 +93,9 @@ export function FinancialChart({ annual, monthly, kind, stale }: { annual: Forec
             <YAxis yAxisId="balance" width={54} tickFormatter={axisAmount} />
             {kind === "cash" && <YAxis yAxisId="change" orientation="right" width={54} tickFormatter={axisAmount} />}
             <ReferenceLine yAxisId={kind === "cash" ? "change" : "balance"} y={0} stroke="#66726d" />
-            <Tooltip content={({ active: hovering, payload }) => {
+            {/* Bound x and wrapper width together so cursor offsets cannot
+                push exact readouts beyond a narrow chart. */}
+            <Tooltip position={{ x: 0 }} content={({ active: hovering, payload }) => {
               const point = payload?.[0]?.payload?.source as ForecastChartPeriod | undefined;
               return hovering && point ? <div className="chart-readout"><p>{point.granularity === "annual" ? "Annual" : "Monthly"} modeled period [start, end)</p><ExactPeriod point={point} series={series} /><p>{point.coveredMonthCount} covered {point.coveredMonthCount === 1 ? "source month" : "source months"}.</p></div> : null;
             }} />
