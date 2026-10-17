@@ -87,7 +87,7 @@ export function FinancialChart({ annual, monthly, kind, stale }: { annual: Forec
       {precisionOmitted && <p role="note">Some amounts exceed chart display precision and are omitted from the graph. Exact values remain available below.</p>}
       <div className="chart">
         <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-          <ComposedChart data={rows} accessibilityLayer barCategoryGap="10%" barGap={2} margin={{ top: 12, right: kind === "cash" ? 8 : 16, bottom: 8, left: 0 }}>
+          <ComposedChart data={rows} accessibilityLayer stackOffset="sign" barCategoryGap="10%" barGap={2} margin={{ top: 12, right: kind === "cash" ? 8 : 16, bottom: 8, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="label" minTickGap={28} tickMargin={10} />
             <YAxis yAxisId="balance" width={54} tickFormatter={axisAmount} />
@@ -98,7 +98,7 @@ export function FinancialChart({ annual, monthly, kind, stale }: { annual: Forec
               return hovering && point ? <div className="chart-readout"><p>{point.granularity === "annual" ? "Annual" : "Monthly"} modeled period [start, end)</p><ExactPeriod point={point} series={series} /><p>{point.coveredMonthCount} covered {point.coveredMonthCount === 1 ? "source month" : "source months"}.</p></div> : null;
             }} />
             {plotted.flatMap(item => ["complete", "incomplete"].map(status => item.bar
-              ? <Bar key={`${item.key}_${status}`} dataKey={`${item.key}_${status}`} stackId={item.key} yAxisId={kind === "cash" ? "change" : "balance"} fill={status === "incomplete" ? "#fff" : item.color} stroke={item.color} strokeWidth={2} strokeDasharray={status === "incomplete" ? "3 2" : undefined} isAnimationActive={false} />
+              ? <Bar key={`${item.key}_${status}`} className={`chart-bar-${item.key}-${status}`} dataKey={`${item.key}_${status}`} stackId={item.key} yAxisId={kind === "cash" ? "change" : "balance"} fill={status === "incomplete" ? "#fff" : item.color} stroke={item.color} strokeWidth={2} strokeDasharray={status === "incomplete" ? "3 2" : undefined} isAnimationActive={false} />
               : <Line key={`${item.key}_${status}`} dataKey={`${item.key}_${status}`} yAxisId="balance" type="linear" stroke={item.color} strokeWidth={2} strokeDasharray={status === "incomplete" ? `${item.dash ?? "6 2"} 1 3` : item.dash} dot={{ r: status === "incomplete" ? 3 : 2 }} connectNulls={false} isAnimationActive={false} />))}
           </ComposedChart>
         </ResponsiveContainer>

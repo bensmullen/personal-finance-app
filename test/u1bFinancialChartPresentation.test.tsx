@@ -60,6 +60,27 @@ describe("U1B exact chart presentation", () => {
     expect(html.match(/No observed history loaded/g)).toHaveLength(1);
     expect(html.match(/Requested 2026-01-01/g)).toHaveLength(1);
   });
+  it.each([
+    { expense: "-12.202", cash: "90.001", change: "-9.999", label: "Decrease · -9.999 USD" },
+    { expense: "12.202", cash: "110.001", change: "10.001", label: "Increase · +10.001 USD" },
+    { expense: "0", cash: "100", change: "0", label: "No change · 0 USD" },
+  ])("preserves source expense $expense and cash change $change independently", ({ expense, cash, change, label }) => {
+    const forecast = source();
+    const fixture = { ...forecast, points: forecast.points.map(point => ({ ...point, cash: money(cash), statementExpenses: money(expense) })) };
+    const monthly = selectForecastChartData(fixture);
+    const annual = selectForecastChartData(fixture, { granularity: "annual" });
+    const expenses = monthly.points[0]!.metrics.modeledStatementExpenses;
+    expect(expenses).toMatchObject({ amount: expense, status: "complete" });
+    expect(chartCoordinate(expenses)).toBe(Number(expense)); // Disposable axis coordinate only.
+    expect(exactChartValue(expenses)).toBe(`${expense} USD`);
+    expect(annual.points[0]!.metrics.totalModeledCashChange).toMatchObject({ amount: change, status: "incomplete" });
+    expect(chartCoordinate(annual.points[0]!.metrics.totalModeledCashChange)).toBe(Number(change));
+    const html = render(fixture);
+    expect(html).toContain(`<dd>${expense} USD</dd>`);
+    expect(html).toContain(`<td>${expense} USD</td>`);
+    expect(html).toContain(`<dd>${label} · Incomplete</dd>`);
+    expect(html).toContain(`<td>${label} · Incomplete</td>`);
+  });
   it("keeps partial coverage and retained stale results explicit without extending history", () => {
     const html = render(source({ partial: true }), false, true);
     expect(html).toContain("Out of date · retained forecast");
