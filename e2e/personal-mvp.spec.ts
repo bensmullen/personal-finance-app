@@ -1307,7 +1307,7 @@ test("R4 narrow and wide layouts retain readable status, chart and keyboard edit
     await repair.click();
     await expect(editor.getByLabel("Frequency", { exact: true })).toBeFocused();
     await expect(editor.getByLabel("Frequency", { exact: true })).toBeVisible();
-    await expect(editor.locator("details").filter({ has: editor.getByText("Additional financial details", { exact: true }) })).not.toHaveAttribute("open");
+    await expect(editor.locator("details").filter({ hasText: "Additional financial details" })).not.toHaveAttribute("open");
     await expect(editor.getByLabel("Source / name", { exact: true })).not.toBeFocused();
     await page.keyboard.press("Escape");
     await expect(repair).toBeFocused();
