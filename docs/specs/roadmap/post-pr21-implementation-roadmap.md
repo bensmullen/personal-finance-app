@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.6.15-draft
+**Version:** 0.6.16-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -41,7 +41,7 @@ R2  Interactive deterministic execution foundation
                        |   + D1-C combined truth-table + semantic audit (#80)
                        |                  |
                        |                  v
-                       |              U1 Guided financial UX (#94)
+                       |              U1 Guided financial UX (#120)
                        |                  |
                        |                  v
                        |            D1 gate: uncoached UAT accepted
@@ -52,9 +52,11 @@ R2  Interactive deterministic execution foundation
                        |
                        +--> A1 concentration safeguard implementation
                        |
-                       +--> D2 Common-household deterministic breadth
+                       +--> D2-A/B/C backend in parallel with U1
+                              |  (from merged D1-C + approved contracts;
+                              |   D2-D owns shared seams and final U1 handshake)
                               |
-                              +--> R5 Stochastic runtime foundation <---- C1
+                              +--> D2-D + accepted D1/U1 --> R5 <---- C1
                                    |
                                    v
                                 R6 Monte Carlo orchestration
@@ -107,9 +109,10 @@ For the currently planned lanes, ownership is:
 | --- | --- | --- |
 | T1A Phase B | Household tax integration after R3 + Phase A | Owns tax household execution until merged; D1 does not start against an unmerged T1A-B branch |
 | D1-C | Original PFA-DET-001–014 financial/combined-household semantics and verification | Owns integrated D1 financial semantics until PR #89 merges; merging the code does not constitute UAT acceptance |
-| U1 | After D1-C semantic merge: guided authoring/field-help/validation/diagnostic UX for the original D1 scope | Sole owner of shared normal-user editor/forecast UX until #94 closes; no new accounting/tax/contribution formulas |
-| D2-PREP (#114) | While U1 remains active, map D2-A/B/C normative contracts; add isolated synthetic expected-effect fixtures, fixture verification, and only contract-complete pure standalone D2 helpers | Dedicated `docs/development/d2-prep/**`, `test/fixtures/d2/**`, `test/d2/**`, and `src/simulation/d2/**` ownership; no shared U1 application/UI, D1 financial semantics, compiler, authoritative execution, tax settlement, canonical model, or runtime integration |
-| D2-A/B/C/D | After U1 acceptance on merged main, implement Social Security/pensions, expanded retirement plans/conversions, debt, healthcare/FSA, TIPS/EE, 529 and integrated closeout | D2-A/B/C may run in parallel behind stable contracts, with one active owner per shared compiler/accounting/execution/tax/normal-editor hotspot; D2-D is an audited integrated gate |
+| U1 (#120) | After merged D1-C: visual authoring, charts and diagnostics for existing D1 facts | Sole writer of active `ui/**`, `app/**`, shared editor surfaces and tests; release/freeze a specific UI/read-model seam before D2-D integrates it, without requiring full U1 UAT for other D2 work |
+| D2-PREP (#114, merged PR #116) | Complete: 55 synthetic mapping/fixture cases and bounded verification, **not** executable D2 breadth | Historical preparation baseline; do not rerun its V3 implementation or infer integrated D2 completion |
+| D2-A #146 / B #147 / C #148 | After merged D1-C and approved *consumed* domain contracts, build disjoint D2 backend/domain implementations **concurrently with U1**, using frozen public interfaces and dedicated test paths | No sibling writes to U1-owned UI/application files, shared compiler/ledger/tax/settlement or to each other's public contracts; a domain change must synchronize through D2-D |
+| D2-D #149 | Early shared-contract synchronization may overlap U1 and D2 domain work; later serial integration, combined truth table, UI handshake and final D2 signoff | One shared integration writer for canonical/execution/payroll/settlement/read models; defer only occupied U1 editor paths, then require accepted U1 #120 for final integrated UAT/R5 gate |
 | C1 | Normalized calibration contract, immutable fingerprints, synthetic calibration | Must not change household financial semantics or stochastic runtime behavior; safe alongside T1A-B/D1 |
 | O1 | During D1: candidate/import schemas, parsers, provenance, idempotency, telemetry, synthetic fixtures | Authoritative model mutation and shared editor/compiler integration wait for D1 merge |
 | P1 | Planning-owned orchestration and decision/strategy configuration | Starts after D1; consumes the merged decision-overlay/execution boundary and does not change financial formulas |
@@ -127,9 +130,12 @@ This coordination contract controls implementation sequencing only. It does not 
 
 | First mandatory gate | Stage owner | Registered GitHub issue / disposition |
 | --- | --- | --- |
-| `D1_U1` — D1 completion | U1 UX and funding reconciliation | **#94** owner UAT and full mortgage funding investigation merged from closed #99 |
-| `D2` — before stochastic R5 | D2 preparation | **#114** isolated D2-A/B/C domain mapping, fixtures, and safe foundations, parallel with U1 |
-| `D2` — before stochastic R5 | D2-A retirement breadth | **#103** ordinary retirement distributions and tax/liquidity effects |
+| `D1_U1` — D1 completion | U1 UX and funding reconciliation | **#120** final U1/D1 owner-UAT gate, inheriting completed #94 and closed #99 |
+| `D2` — before stochastic R5 | D2 preparation | **#114** complete in merged PR #116; preparation only |
+| `D2` — before stochastic R5 | D2-A retirement/benefits | **#146**, consolidating closed **#103** ordinary distributions and RMDs with all retirement and benefit breadth |
+| `D2` — before stochastic R5 | D2-B debt/bonds/education | **#147** debt, TIPS/EE and 529; inter-domain Roth capacity handshake at #149 |
+| `D2` — before stochastic R5 | D2-C healthcare | **#148** health coverage/Medicare/FSA; payroll/benefit handshake at #149 |
+| `D2` — before stochastic R5 | D2-D shared integration/closeout | **#149** versioned S1–S8 interfaces, shared one-writer integration, deferred U1/D2 seams, combined truth table and final PM UAT |
 | `R11` — before private alpha | Post-U1 investment activity | **#100** dividend reinvestment AND flexible IRA/brokerage contribution schedules (merged from closed #104) |
 | `R11` — before private alpha | T1A/T1B tax closeout | **#101** routine payroll withholding and net tax settlement |
 | `R11` — before private alpha | T1B pure federal rule foundation (not final integration) | **#138** four PFA-TAX-016 tax-rule families, closed and Codex-inaccessible pending PM contract approval/merge; downstream shared-authority integration remains mandatory |
@@ -137,7 +143,7 @@ This coordination contract controls implementation sequencing only. It does not 
 | `R11` — before private alpha | P1 planning/plan management | **#105** independent plan duplication and comparison after safe scenario/identity semantics are confirmed |
 | `R11` — before private alpha | O1 guided exploration | **#108** eight rich linked-family synthetic households, 4+ independently saved plans/persona, resettable demos, reconciled finances and capability-gated outputs |
 
-**State reconciliation:** D1-C code was merged in PR #89 (Issue #80 closed administratively); **D1 itself remains unaccepted** until #94 UAT and the mortgage funding checks consolidated from #99 resolve. None of #100–#105 is permission to edit the currently U1-owned shared UI or to introduce a new financial formula under #94. Safe plan duplication may reuse the U1 visual pattern, but full independent cloning requires authoritative plan/scenario identity, copying, and persistence behavior; #105 owns that boundary. D2-A #103 must be ready for D2 closeout, not postponed to R11.
+**State reconciliation:** D1-C code was merged in PR #89; D1/U1 owner acceptance **#120** is still pending (including inherited #99 mortgage funding). U1B-B PR #139 and #136 completed; U1B-C #142 now owns the shared UI task. Existing #103 was closed without verified distribution/RMD implementation, so **all its uncompleted requirements transfer to D2-A #146** and must be audited there; do not reopen #103 or claim it completed. D2-PREP #114/PR #116 is prep complete only. D2 backend may progress from approved contracts before #120 accepts UAT. Neither #100–#105 nor D2 issues authorize editing an actively U1-owned UI file; #105 independently owns plan cloning. D2-D #149 closes interface and U1 handshake gaps before R5.
 
 The full R11 prerequisites in section 18 still apply: the register **adds tracking**, not exceptions to O1, P1, R5–R10, A1, tax-law, performance or user-validation requirements. A lightweight GitHub Action checks newly opened/reopened/edited issues (plus weekly and registry PR changes) against the stage register and fails on omissions. Before every milestone handoff, also fetch live open GitHub issues and reconcile the register; at closeout verify all required issue IDs and financial/UAT evidence. The action detects unregistered issues, not completed UAT or financial correctness. The nine historical implementation issues in the administrative queue require closure/reclassification after merged-PR review; they are not presumed unfinished product features. Agent-learning candidate issues use their separate candidate registry and do not belong to these product gates.
 
@@ -260,7 +266,7 @@ Completion of Issue #70 alone SHALL NOT satisfy the D1 gate unless a merged-main
 
 If a named subfeature cannot be supported safely for the initial alpha contract, its exact unsupported boundary must be explicit and the private-alpha scope cannot claim that use case complete.
 
-**D2 handoff:** D1 completion means audited D1-C semantics **and** accepted U1 normal-user UAT; it does not mean the D2 breadth exists. D2-PREP (#114) may run during U1 against already merged D1-C contracts in separate prep-only paths, including bounded pure standalone helpers **only** where existing authoritative requirements fully specify their financial behavior. After U1 acceptance, integrated D2-A/B/C implementation expands ordinary household mechanics before stochastic runtime begins. Shared editor/read-model/financial compilation/execution/tax-settlement integration must not race U1, and preparation is not D2 acceptance. C1 and other explicitly isolated foundations may continue in parallel.
+**D2 handoff (approved sequencing change):** D1 financial **computational** foundation is the merged and semantically audited D1-C; accepted U1 #120 is a *D1 closeout and D2-D final UAT gate*, **not** a prerequisite for disjoint D2-A/B/C backend implementation. Approved, versioned domain contracts and stable merged main remain prerequisites to economic code. D2-D #149 exclusively coordinates changes to shared canonical, compiler, scheduler, accounting/funding, payroll, tax and read-model contracts, one owner at a time. During active U1 #120/#142, D2 implementation MUST NOT write the same UI/application/editor/CSS/test paths; record the blocked seam in #149 and integrate after that specific file/API is released, not necessarily after full U1 UAT. Reject unknown law/plan terms as capability-incomplete rather than permitting domain authors to improvise. Merged D2-PREP #114/PR #116 remains a fixture baseline, not an implementation authorization.
 
 **User validation:** required at U1 acceptance. D1 closeout SHALL use an **uncoached, goal-based** walkthrough proving that users can discover, configure, correct, and understand supported financial inputs/results. A script describing every field and click is not evidence of intuitive UX.
 
@@ -286,16 +292,18 @@ D2 SHALL implement and verify PFA-DET-016 through PFA-DET-023 and the correspond
 
 D2 is not permission to make every rare statutory or plan-specific exception a universal pre-stochastic requirement. The ordinary household contract for each named family must be complete and testable; uncommon variants may be capability-gated only when the boundary is explicit and cannot silently change a supported result.
 
-D2 should be implemented as seam-safe slices with a deliberately limited **D2-PREP (#114) parallel lane** before the complete D1 + U1 acceptance gate. After the D2-preparation policy PR merges, #114 may start from merged `main` while U1 #94 / PR #98 is unfinished, but only to inspect existing authority, establish domain ownership/coverage, author synthetic expected-effect fixtures and verification, and optionally implement directly tested pure standalone D2 domain helpers when existing contracts resolve all financial decisions. Do not introduce authoritative financial semantics, guessed law, public contract mutations, runtime wiring, or new supported-capability claims in the prep lane. Contract gaps are recorded for an architecture/product decision before implementation; D2-PREP passing CI does not close any D2 financial requirement.
+**D2 implementation now runs in parallel with U1, not behind U1 UAT.** D1-C code (PR #89) is the merged financial base. D2-PREP #114/PR #116 supplied only 55 synthetic cases and contract gaps. The consolidated issues are single domain owners, NOT nine micro-issue branches. Their current planning briefs are **not** V3 Codex authorizations; the PM must first approve affected A1–C3 economics, and D2-D must publish the consumed S1–S8 interface versions on merged main. Authorize bounded coherent phases within each parent issue with exact ALLOWED_PATHS and negative tests.
 
-The D2 implementation slices below begin their shared runtime/accounting/tax/UI integration only after U1 passes audit and owner UAT and merges to `main`:
+1. **D2-A #146 — benefits, retirement plans, conversions and distributions.** Own all A1–A4 benefits/pensions, five plan families, Roth/backdoor/mega flows and the **entire original closed #103 distribution/RMD scope**, including liquidity, tax, basis, withholdings and future account-first authoring.
+2. **D2-B #147 — consumer debt, indexed/savings bonds and education.** Own B1–B3 fixed/revolving/HELOC, TIPS/EE and 529 including bounded 529-to-Roth.
+3. **D2-C #148 — health insurance, Medicare and health FSA.** Own C1–C3 effective coverage, elected premium routing, IRMAA and restricted reimbursement.
+4. **D2-D #149 — shared interface owner and final integration.** Early S1–S8 synchronization on main; serialized owner-only shared compiler/ledger/funding/tax/execution/read-model edits; final normal-user authoring and D2-D combined truth-table/UAT on an audited merged branch.
 
-1. **D2-A — retirement/public-benefit breadth.** Social Security, pensions, 403(b)/457(b)/TSP, SEP/SIMPLE, IRA→Roth, backdoor Roth, mega-backdoor Roth, and their common tax/limit semantics.
-2. **D2-B — debt, special fixed income, and education savings.** Auto/student/credit-card/HELOC mechanics, TIPS, Series EE bonds, and 529 plans/rollovers.
-3. **D2-C — healthcare cash-flow breadth.** Health-insurance premium mechanics, Medicare premium/cost mechanics, and health FSA behavior.
-4. **D2-D — integrated closeout.** Combined deterministic truth table, realistic household reconciliation, normal-user authoring/UAT, and semantic audit across all D2 slices.
+**Explicit deferred overlap ledger (owned by #149):** (A↔B) aggregate IRA/basis and 529-to-Roth capacity; (A↔C) SSA/Medicare benefit deductions, IRMAA lookback, employee/employer payroll and FSA tax base; (B↔C) competing cash funding, ordering and noncash entitlements; (D2↔#101/#138) gross vs net withholding credit, tax cash settlement, loss/basis state, unique tax-law authority; (D2↔U1 #120) account-first editor paths, navigation, D2 read-only series/diagnostics and in-context repair, save/reload and keyboard/mobile acceptance. D2-D maintains exact interface version, released file owner, dependent domain and test evidence for each seam. Do **not** silently declare a seam complete because a pure domain test passes.
 
-Disjoint pure domain modules and fixtures may proceed during U1 only within #114's explicit, separate preparation paths and stable merged contracts. After U1 acceptance, D2-A/B/C may be worked in parallel where interfaces and write scopes do not overlap. Shared compiler/editor/execution/accounting/tax-settlement integration remains a single-owner lane; sibling branches SHALL NOT invent competing representations to avoid synchronization. Integrate audited D2-A/B/C results on merged main before D2-D joint truth-table and owner UAT.
+**Concurrency/integration rule:** D2-A/B/C can implement independent economic modules and targeted tests during U1, behind the corresponding approved normative contracts; none may independently mutate `ui/**`, `app/**`, U1-owned `src/application/**`, existing shared editor/E2E tests, common compiler/ledger/execution/funding/payroll/tax paths or competing plan/limit representations. Only #149 coordinates shared patches after contract freeze and audits merged-main integration. A2→A3 and 529 Roth legal-capacity dependencies still serialize within their respective submodules. U1 chart C/D/E remains serial only on its own occupied UI hotspots; D2 economic work does not need completion of those charts.
+
+**Closeout:** User-authoring of D2 features must be complete and usable, and the D2-D combined household must reconcile asset/liability/cash/basis/retirement/benefits/withholding/insurance/FSA/529 and normal U1 source ownership. D2-D final closeout waits for D2-A/B/C integrated verification **and accepted U1 #120 uncoached UAT**, applicable PFA-TAX-015, and all material cross-seams, even though D2 backend work started earlier. No R5 unlock, D1/U1 or private-alpha completion from isolated domain merges.
 
 **R5 gate:** do not begin stochastic household runtime implementation until D1 and D2 are complete on merged main, D2-D integrated verification/UAT is green, the applicable PFA-TAX-015 tax characterization is complete, and C1 is merged.
 
@@ -391,7 +399,7 @@ Deterministic source-qualified derivations (age from DOB, eligible preceding-yea
 **Level 4 Calm + chart-aware U1B execution plan (2026-10-16):** PM selected Calm visual direction; [Level 4 chart/navigation contract](../../alpha/level4-financial-visualizations.md) now establishes **Overview / Cash / Investing / Real Estate / Other Assets / Debt / Planning** as seven top-level user financial sections, **each with its relevant chart as the main feature** (no separate charts destination), without changing the 62-family single financial writer mapping. **Verified merges 2026-10-17:** [PR #128](https://github.com/bensmullen/personal-finance-app/pull/128) completed Phase A code and [PR #133](https://github.com/bensmullen/personal-finance-app/pull/133) implemented [Issue #129](https://github.com/bensmullen/personal-finance-app/issues/129) exact chart-data selector, with successful latest-head CI; full U1/D1 semantic/owner UAT is not accepted. **U1B Phase B** production V1/V2/V3 chart integration is now assigned its **separate** bounded V3 [Issue #136](https://github.com/bensmullen/personal-finance-app/issues/136) and starts from merged main after its task registration PR merges. This small, independently auditable task specializes chart presentation and keeps [Issue #120](https://github.com/bensmullen/personal-finance-app/issues/120) the sole final U1/D1 PM-UAT owner; it does **not** reimplement the domain read-model. **C** cash-flow source/partial V4 allocation, **D** evidence-based paid mortgage charts, and **E** age/horizon/retirement source visualizations remain **serial shared-UI follow-ons requiring fresh, bounded authorization after B merges**, without double task ownership. **V7 asset-class attribution** is a separately data-contract-gated later P1/R11 candidate, *not* silently added to D1_U1 blocking work or delegated to UI Codex without provenance. Implementation permissions are governed by the currently assigned Phase B V3 Issue #136; #120's historical Phase A V3 contract is superseded for NEW work, but #120 retains the U1/D1 acceptance gate. [Design PR #127](https://github.com/bensmullen/personal-finance-app/pull/127) is merged and contains the corrected embedded-chart reference and focused H04/H08 desktop/mobile prototype checks; **its amounts are fictional design samples, not financial data**. Production Phase B uses the audited source-read-model semantics, not those example values. Preserve #105 independent saved plans and #108 synthetic fixtures as downstream owned dependencies. U1/D1 gate still requires inherited mortgage/source UAT and PM signoff.
 
 
-**Acceptance:** green CI + ChatGPT UX/semantic audit + uncoached product-owner goal-based UAT, then accept the final U1 milestone. Until then, D1 is not accepted and D1-gated financial/stochastic integration remains blocked. D2-PREP #114 is the limited exception for independent fixtures, mapping and contract-complete pure helpers; it cannot edit or integrate into U1-owned paths, financial authority, or the live application. Shared normal-user UI stays U1-owned.
+**Acceptance:** green CI + independent ChatGPT UX/financial-semantic audit + uncoached product-owner goal-based UAT on #120 still gate D1 acceptance and R5. Independently authorized D2 backend financial work under #146/#147/#148 and shared interface synchronization under #149 **may run before this U1 acceptance**, but no D2 branch may write occupied U1 UI/application/editor paths. #149 retains all deferred authoring/chart/diagnostic overlaps for integration and final acceptance.
 
 ## 9. O1 — Assisted onboarding and import foundation
 
