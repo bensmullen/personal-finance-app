@@ -48,6 +48,7 @@ export const exchangeInput = (overrides: Partial<ExchangeInput> = {}): ExchangeI
   adjustedBasis: money("100000"), basisSources: ["synthetic:verified-basis"], cashPaid: money("0"), cashReceived: money("0"),
   nonLikeBootReceived: money("0"), liabilitiesRelieved: money("0"), liabilitiesAssumed: money("0"), qualifyingCosts: money("0"),
   predicates: { likeKind: yes, sameTaxpayerOwnership: yes, qualifiedIntermediary: yes, noActualOrConstructiveReceipt: yes,
+    replacementReceiptVerified: yes,
     signedIdentificationDelivered: yes, dueDateAndExtensionsVerified: yes, ordinaryDebtPrincipalOnly: yes,
     costsQualify: yes, bootValuationAndTreatmentVerified: yes, unrelatedParties: yes, deferredOneForOneOnly: yes,
     noOtherPropertyGiven: yes, noSellerFinancingOrSpecialStructures: yes, noRecaptureOrSpecialGainCategories: yes }, ...overrides,

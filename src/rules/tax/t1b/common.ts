@@ -1,4 +1,5 @@
 import { DecimalAmount, Money, RoundingPolicy, money } from "../../../values/index.js";
+import { sha256 } from "./contentIdentity.js";
 
 export type Identity<K extends string> = string & { readonly __domain: K };
 export type OwnerId = Identity<"owner">;
@@ -47,8 +48,10 @@ export const canonical = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   return `{${Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => compareText(a, b)).map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
 };
+/** Fixed-size, domain-separated reference; original facts stay in receipts. */
+export const contentIdentity = (domain: string, value: unknown): string => `${domain}:sha256:${sha256(canonical(value))}`;
 export const law = freeze({
-  id: "federal:t1b:2025", version: "1", jurisdiction: "US",
+  id: "federal:t1b:2025", version: "2", jurisdiction: "US",
   effectiveFrom: "2025-01-01", effectiveUntil: "2026-01-01",
   annualLossCap: money("3000"), separateLossCap: money("1500"),
   washDays: 30, identificationDays: 45, exchangeDays: 180,
@@ -79,7 +82,7 @@ export const trace = (context: Context, input: unknown, domain: string): Trace =
   ruleId: `${law.id}:${domain}`, version: law.version, fingerprint: ruleFingerprint,
   context: { ...context, sources: [...context.sources] }, sources: [...law.sources],
   assumptions: context.taxYear === 2025 ? [] : ["Explicit 2025 nominal-current-law scenario; not verified future law."],
-  inputIdentity: canonical(input),
+  inputIdentity: contentIdentity(`t1b:${domain}:input`, input),
 });
 export const contextIssues = (c: Context): Diagnostic[] => {
   const issues: Diagnostic[] = [];

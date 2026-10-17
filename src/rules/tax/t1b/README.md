@@ -33,6 +33,9 @@ loss. Algorithm changes require a rule version change.
   a basis-adjusted replacement lot are explicitly unsupported until the
   authoritative lot realization owner supplies the re-recognition seam; this
   matcher does not silently use unadjusted losses for such sales.
+  Sale character must agree with supplied tax holding days under the ordinary
+  calendar-year rule (including leap years); contradictory special-character
+  facts require a separately supported capability, not a completed loss.
 - Capital netting requires explicit opening short/long loss state and a signed
   authoritative taxable-income figure **after** the Schedule D deduction and
   **before** Form 1040's zero floor. A displayed taxable zero cannot substitute
@@ -42,6 +45,16 @@ loss. Algorithm changes require a rule version change.
   for the next year, preserving owner, filing status, rule identity and lineage.
   Missing prior state, filing allocation changes, NOL/debt attribute interactions,
   unsupported gain categories and final returns gate carryover.
+  Version 2 uses standard SHA-256 canonical content references for trace inputs,
+  capital results and state integrity. State keeps a fixed four-reference lineage
+  (root source, opening result, authoritative return, current result), plus the
+  immediately preceding trace and opening-state reference. It never embeds an
+  earlier result or trace recursively. Retain annual receipts separately, keyed
+  by result identity, to resolve the full provenance chain. The predecessor
+  records exact year, rule/version, sources, assumptions and input identity;
+  replay checks state integrity and year/owner/rule links before consuming losses.
+  Content identities detect inconsistent receipts, not forged caller assertions.
+  Prior version state must be re-evaluated under version 2, not silently relabeled.
 - Harvesting consumes paired authoritative engine receipts. The adapter must
   bind the liability to the supplied capital result identity, original proposal,
   selected lots, scenario, unchanged household facts, coverage, rules, periods
@@ -53,7 +66,12 @@ loss. Algorithm changes require a rule version change.
   boundary, not cryptographic attestation or independent liability verification.
 - The 1031 evaluator admits only two evidenced domestic non-depreciable land
   parcels under the same taxpayer, with qualifying use, QI/no-receipt facts,
-  signed/delivered identification and documented return due date/extensions.
+  verified actual replacement receipt and documented return due date/extensions.
+  Receipt within 45 calendar days is legally deemed identification (Form 8824
+  line 5); later receipt requires timely signed/delivered written identification.
+  Unknown receipt/QI facts remain incomplete. Any supplied identification date
+  must still be well formed and chronologically consistent. A transfer-year
+  calendar return due date before year end is invalid, even if asserted verified.
   The deadline uses the statutory due date, not the actual filing date, and
   applies no inferred weekend or disaster extension. Consideration must
   independently reconcile before Form 8824 lines 15–25 are applied. Cash boot

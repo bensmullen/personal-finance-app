@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { sha256 } from "../src/rules/tax/t1b/contentIdentity.js";
 import { Currency, money } from "../src/values/index.js";
 import {
-  canonical, decimal, evaluateCapitalLoss, evaluateHarvest, evaluateLandExchange, evaluateWashSales,
+  canonical, contentIdentity, decimal, evaluateCapitalLoss, evaluateHarvest, evaluateLandExchange, evaluateWashSales,
   harvestActivityFingerprint, law, openingCapitalState, ruleFingerprint,
   type AccountId, type LotId, type Outcome, type OwnerId,
 } from "../src/rules/tax/t1b/index.js";
@@ -19,7 +21,40 @@ const eligibleExchange = (input = exchangeInput()) => {
   return result;
 };
 
+describe("T1B compact content identities", () => {
+  it.each(["", "abc", "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+    ...[55, 56, 63, 64, 65, 1000].map(length => "a".repeat(length)), "é税🙂"])("uses standard SHA-256 for %j", text => {
+    expect(sha256(text)).toBe(createHash("sha256").update(text, "utf8").digest("hex"));
+  });
+  it("binds canonical values and domain without depending on object key order", () => {
+    expect(contentIdentity("a", { b: 2, a: 1 })).toBe(contentIdentity("a", { a: 1, b: 2 }));
+    expect(contentIdentity("a", { a: 1 })).not.toBe(contentIdentity("b", { a: 1 }));
+    expect(contentIdentity("a", { a: 1 })).not.toBe(contentIdentity("a", { a: 2 }));
+  });
+});
+
 describe("PFA-TAX-016 isolated federal wash-sale rules", () => {
+  it.each([
+    ["2025-06-15", 100, "long", false], ["2025-06-15", 400, "short", false],
+    ["2025-06-15", 100, "short", true], ["2025-06-15", 400, "long", true],
+    ["2025-02-28", 366, "short", true], ["2025-02-28", 366, "long", false],
+    ["2025-02-28", 367, "long", true], ["2025-03-01", 365, "short", true],
+    ["2025-03-01", 366, "long", true], ["2028-02-29", 365, "short", true],
+    ["2028-02-29", 366, "long", true],
+  ] as const)("checks calendar holding character: %s / %s / %s", (date, holdingPeriodDays, character, supported) => {
+    const result = evaluateWashSales({ ...washInput([sale({ date, holdingPeriodDays, character })], []),
+      context: context(Number(date.slice(0, 4))), observedThrough: `${date.slice(0, 4)}-12-31` });
+    expect(result.status).toBe(supported ? "complete" : "incomplete");
+    if (!supported) expect(codes(result)).toContain("HOLDING_PERIOD_CHARACTER_CONTRADICTION");
+    else expect(value(result).sales[0]!.character).toBe(character);
+  });
+  it("preserves supported long-term wash matching and holding-period tacking", () => {
+    const r = value(evaluateWashSales(washInput([sale({ holdingPeriodDays: 400, character: "long" })])));
+    expect(r.sales[0]!.character).toBe("long");
+    expect(amount(r.sales[0]!.disallowedLoss)).toBe("1000");
+    expect(r.state.adjustments[0]!.tackedHoldingDays).toBe(400);
+    expect(amount(r.replacements[0]!.adjustedBasis)).toBe("2200");
+  });
   it.each([
     ["2025-05-15", "0"], ["2025-05-16", "1000"], ["2025-05-17", "1000"],
     ["2025-07-14", "1000"], ["2025-07-15", "1000"], ["2025-07-16", "0"],
@@ -122,8 +157,60 @@ describe("PFA-TAX-016 Schedule D worksheet and durable character", () => {
     const third = value(evaluateCapitalLoss(capitalInput({ context: context(2027), opening: second.closing, shortRealized: money("0"), longRealized: money("0") })));
     expect(amount(third.closing.longLoss)).toBe("0");
     expect(canonical(evaluateCapitalLoss(secondInput))).toBe(canonical(evaluateCapitalLoss(secondInput)));
-    expect(third.closing.lineage).toContain(first.resultIdentity);
+    expect(third.closing.predecessor!.openingResultIdentity).toBe(second.resultIdentity);
+    expect(second.closing.predecessor!.openingResultIdentity).toBe(first.resultIdentity);
     expect(second.closing.ruleFingerprint).toBe(ruleFingerprint);
+  });
+  it("replays 40 years with constant-size state and resolvable nonrecursive provenance", () => {
+    const replay = () => {
+      let opening = openingCapitalState(context(), "single", "synthetic:initial-return");
+      const results = new Map<string, ReturnType<typeof evaluateCapitalLoss>>();
+      for (let year = 2025; year < 2065; year++) {
+        // Fail before the next evaluation if a regression starts embedding history.
+        // This bounds even a run against the original exponentially growing code.
+        expect(canonical(opening).length).toBeLessThan(12000);
+        expect(opening.priorResultIdentity.length).toBeLessThan(200);
+        const base = capitalInput();
+        const input = capitalInput({ context: context(year), opening, shortRealized: money("-5000.01"), longRealized: money("-4000.02"),
+          returnContext: { ...base.returnContext!, authoritativeResultId: `synthetic:return:${year}` } });
+        const result = evaluateCapitalLoss(input), r = value(result);
+        expect(canonical(result).length).toBeLessThan(35000);
+        expect(r.resultIdentity.length).toBeLessThan(200);
+        expect(result.trace.inputIdentity.length).toBeLessThan(200);
+        expect(canonical(evaluateCapitalLoss(input))).toBe(canonical(result));
+        expect(r.closing.lineage).toHaveLength(4);
+        const p = r.closing.predecessor!;
+        expect(p.openingStateIdentity).toBe(opening.stateIdentity);
+        expect(p.openingResultIdentity).toBe(opening.priorResultIdentity);
+        expect(p.trace).toEqual(result.trace);
+        expect(p.trace.context.taxYear).toBe(year);
+        expect(p.trace.fingerprint).toBe(ruleFingerprint);
+        expect(p.trace.sources).toEqual(law.sources);
+        expect(p.trace.context.sources).toEqual(context(year).sources);
+        expect(p.trace.assumptions.length).toBe(year === 2025 ? 0 : 1);
+        if (year > 2025) expect(value(results.get(p.openingResultIdentity)!).closing).toEqual(opening);
+        expect(amount(r.closing.shortLoss)).toBe(amount(money("2000.01").times(decimal(String(year - 2024)))));
+        expect(amount(r.closing.longLoss)).toBe(amount(money("4000.02").times(decimal(String(year - 2024)))));
+        results.set(r.resultIdentity, result);
+        opening = r.closing;
+      }
+      return [...results.keys()];
+    };
+    expect(replay()).toEqual(replay());
+  });
+  it("rejects altered carryover values, lineage, result/rule/source/year links", () => {
+    const first = value(evaluateCapitalLoss(capitalInput()));
+    const closing = first.closing, predecessor = closing.predecessor!;
+    for (const changed of [
+      { ...closing, shortLoss: money("1") }, { ...closing, priorResultIdentity: "other-result" },
+      { ...closing, lineage: ["other-source"] }, { ...closing, ruleFingerprint: "old-rule" },
+      { ...closing, predecessor: { ...predecessor, returnResultIdentity: "other-return" } },
+      { ...closing, predecessor: { ...predecessor, trace: { ...predecessor.trace, sources: [] } } },
+      { ...closing, predecessor: { ...predecessor, trace: { ...predecessor.trace, context: context(2024) } } },
+    ]) expect(evaluateCapitalLoss(capitalInput({ context: context(2026), opening: changed })).status).toBe("incomplete");
+    const changedInput = capitalInput({ returnContext: { ...capitalInput().returnContext!, authoritativeResultId: "new-return" } });
+    expect(value(evaluateCapitalLoss(changedInput)).resultIdentity).not.toBe(first.resultIdentity);
+    expect(Object.isFrozen(closing.predecessor!.trace.context.sources)).toBe(true);
   });
   it("gates absent return/opening facts, filing changes, subclasses, NOL and final returns", () => {
     const i = capitalInput();
@@ -151,13 +238,54 @@ describe("PFA-TAX-016 bounded one-for-one domestic investment land exchange", ()
   it.each([
     [{ signedIdentificationDate: "2025-02-16" }, "identification_after_45_days"],
     [{ receiptDate: "2025-07-01" }, "receipt_after_exchange_deadline"],
-    [{ federalReturnDueDate: "2025-04-15", receiptDate: "2025-04-16" }, "receipt_after_exchange_deadline"],
   ] as const)("rejects a missed statutory deadline", (changes, reason) => {
     const r = value(evaluateLandExchange(exchangeInput(changes)));
     expect(r.eligibility === "ineligible" && r.reasons.includes(reason)).toBe(true);
   });
-  it("accepts documented early due-date cutoff exactly, without weekend guessing", () => {
-    expect(eligibleExchange(exchangeInput({ federalReturnDueDate: "2025-04-15", receiptDate: "2025-04-15" })).eligibility).toBe("eligible");
+  it("uses a realistic transfer-year return deadline and only evidenced extensions", () => {
+    const input = exchangeInput({ transferDate: "2025-12-01", signedIdentificationDate: "2026-01-15", receiptDate: "2026-04-15" });
+    expect(eligibleExchange(input).identification).toBe("written_notice");
+    const late = value(evaluateLandExchange({ ...input, receiptDate: "2026-04-16" }));
+    expect(late.eligibility === "ineligible" && late.reasons).toContain("receipt_after_exchange_deadline");
+    const extended = { ...input, federalReturnDueDate: "2026-10-15", receiptDate: "2026-05-30" };
+    expect(eligibleExchange(extended).eligibility).toBe("eligible");
+    const after180 = value(evaluateLandExchange({ ...extended, receiptDate: "2026-05-31" }));
+    expect(after180.eligibility === "ineligible" && after180.reasons).toContain("receipt_after_exchange_deadline");
+    for (const fact of [no, unknown]) expect(evaluateLandExchange({ ...extended,
+      predicates: { ...extended.predicates, dueDateAndExtensionsVerified: fact } }).status).toBe("incomplete");
+  });
+  it.each(["2025-04-15", "2025-12-31"])("fails closed on impossible calendar-year return due date %s", federalReturnDueDate => {
+    expect(codes(evaluateLandExchange(exchangeInput({ federalReturnDueDate, receiptDate: "2025-04-15" })))).toContain("EXCHANGE_DATE_CONTEXT_INVALID");
+  });
+  it("deems verified receipt on day 45 identified without written notice", () => {
+    const input = exchangeInput({ receiptDate: "2025-02-15", signedIdentificationDate: undefined });
+    for (const notice of [no, unknown]) {
+      const r = eligibleExchange({ ...input, predicates: { ...input.predicates, signedIdentificationDelivered: notice } });
+      expect(r.identification).toBe("deemed_on_receipt");
+      expect(r.identificationDate).toBe("2025-02-15");
+      expect(amount(r.deferredGainOrLoss)).toBe("100000");
+    }
+    for (const key of ["replacementReceiptVerified", "qualifiedIntermediary", "noActualOrConstructiveReceipt"] as const) {
+      expect(evaluateLandExchange({ ...input, predicates: { ...input.predicates, [key]: unknown } }).status).toBe("incomplete");
+    }
+    expect(evaluateLandExchange({ ...input, predicates: { ...input.predicates, replacementReceiptVerified: no } }).status).toBe("incomplete");
+  });
+  it("requires documented timely identification for day 46 receipt", () => {
+    const input = exchangeInput({ receiptDate: "2025-02-16" });
+    const r = eligibleExchange(input);
+    expect(r.identification).toBe("written_notice");
+    expect(r.identificationDate).toBe("2025-02-15");
+    const absent = value(evaluateLandExchange({ ...input, signedIdentificationDate: undefined,
+      predicates: { ...input.predicates, signedIdentificationDelivered: no } }));
+    expect(absent.eligibility === "ineligible" && absent.reasons).toContain("signedIdentificationDelivered");
+    expect(codes(evaluateLandExchange({ ...input, signedIdentificationDate: undefined }))).toContain("WRITTEN_IDENTIFICATION_DATE_REQUIRED");
+    expect(evaluateLandExchange({ ...input, predicates: { ...input.predicates, signedIdentificationDelivered: unknown } }).status).toBe("incomplete");
+  });
+  it.each([
+    { receiptDate: "" }, { receiptDate: "2025-02-30" }, { signedIdentificationDate: "not-a-date" },
+    { federalReturnDueDate: "unknown" }, { transferDate: "2025-02-30" },
+  ])("keeps malformed identification/receipt/deadline dates incomplete", changes => {
+    expect(codes(evaluateLandExchange(exchangeInput(changes)))).toContain("DATE_INVALID");
   });
   it("recognizes partial cash/non-like boot with a gain cap", () => {
     const r = eligibleExchange(exchangeInput({ replacement: parcel("new", "170000"), cashReceived: money("20000"), nonLikeBootReceived: money("10000") }));

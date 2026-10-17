@@ -19,6 +19,9 @@ export interface SecurityActivity {
 export interface LossSale extends SecurityActivity {
   readonly basis: Money;
   readonly netProceeds: Money;
+  /** Authoritative tax holding days (acquisition excluded, disposition included).
+   * Special character rules inconsistent with ordinary duration are unsupported.
+   */
   readonly holdingPeriodDays: number;
   readonly character: "short" | "long";
 }
@@ -102,6 +105,15 @@ export const evaluateWashSales = (input: WashInput): Outcome<WashResult> => {
       const priorSale = input.opening?.sales.some(prior => canonical(prior) === canonical(s));
       if ((Number(s.date.slice(0, 4)) !== input.context.taxYear && !priorSale) || Number(s.date.slice(0, 4)) > input.context.taxYear || s.economicOwner !== input.context.owner) issues.push(diagnostic("SALE_CONTEXT_MISMATCH", s.id, "invalid"));
       if (!validMoney([s.basis, s.netProceeds], true) || !Number.isSafeInteger(s.holdingPeriodDays) || s.holdingPeriodDays < 0 || !["short", "long"].includes(s.character)) issues.push(diagnostic("SALE_VALUE_INVALID", s.id, "invalid"));
+      // Pub. 550: long term means more than one calendar year, not >365 days.
+      // The prior anniversary respects leap years; Feb 29 normalizes to Mar 1.
+      const priorAnniversary = new Date(day(s.date) * 86400000);
+      priorAnniversary.setUTCFullYear(priorAnniversary.getUTCFullYear() - 1);
+      const calendarYearDays = day(s.date) - priorAnniversary.getTime() / 86400000;
+      if (Number.isSafeInteger(s.holdingPeriodDays) && s.holdingPeriodDays >= 0
+        && s.character !== (s.holdingPeriodDays > calendarYearDays ? "long" : "short")) {
+        issues.push(diagnostic("HOLDING_PERIOD_CHARACTER_CONTRADICTION", s.id, "invalid"));
+      }
     }
     for (const a of acquisitions) {
       if (!validMoney([a.originalCost], true)) issues.push(diagnostic("ACQUISITION_VALUE_INVALID", a.id, "invalid"));

@@ -1,6 +1,6 @@
 import type { Money } from "../../../values/index.js";
 import type { FilingStatus } from "../contracts.js";
-import { canonical, complete, contextIssues, diagnostic, incomplete, law, min, positive, ruleFingerprint, trace, validMoney, zero, type Context, type Outcome, type Predicate } from "./common.js";
+import { complete, contentIdentity, contextIssues, diagnostic, freeze, incomplete, law, min, positive, ruleFingerprint, trace, validMoney, zero, type Context, type Outcome, type Predicate, type Trace } from "./common.js";
 
 export interface CarryoverState {
   readonly forTaxYear: number;
@@ -10,7 +10,15 @@ export interface CarryoverState {
   readonly longLoss: Money;
   readonly ruleFingerprint: string;
   readonly priorResultIdentity: string;
+  /** Root source and immediate predecessor/return/result references, never history. */
   readonly lineage: readonly string[];
+  readonly predecessor?: {
+    readonly trace: Trace;
+    readonly openingStateIdentity: string;
+    readonly openingResultIdentity: string;
+    readonly returnResultIdentity: string;
+  };
+  readonly stateIdentity: string;
 }
 export interface CapitalInput {
   readonly context: Context;
@@ -45,7 +53,11 @@ export interface CapitalResult {
   readonly closing: CarryoverState;
   readonly resultIdentity: string;
 }
-export const openingCapitalState = (context: Context, filingStatus: FilingStatus, source: string): CarryoverState => ({
+const sealState = (state: Omit<CarryoverState, "stateIdentity">): CarryoverState => freeze({
+  ...state, stateIdentity: contentIdentity("t1b:capital:state", state),
+});
+const resultReference = (inputIdentity: string): string => contentIdentity("t1b:capital:result", { inputIdentity, ruleFingerprint });
+export const openingCapitalState = (context: Context, filingStatus: FilingStatus, source: string): CarryoverState => sealState({
   forTaxYear: context.taxYear, owner: context.owner, filingStatus, shortLoss: zero, longLoss: zero,
   ruleFingerprint, priorResultIdentity: source, lineage: [source],
 });
@@ -59,6 +71,21 @@ export const evaluateCapitalLoss = (input: CapitalInput): Outcome<CapitalResult>
   if (!r) issues.push(diagnostic("SIGNED_TAXABLE_INCOME_REQUIRED", "carryover"));
   if (!["single", "married_joint", "married_separate", "head_of_household", "qualifying_surviving_spouse"].includes(input.filingStatus)) issues.push(diagnostic("FILING_STATUS_INVALID", "carryover", "invalid"));
   if (o && (o.forTaxYear !== input.context.taxYear || o.owner !== input.context.owner || o.filingStatus !== input.filingStatus || o.ruleFingerprint !== ruleFingerprint || !o.priorResultIdentity || o.lineage.length === 0)) issues.push(diagnostic("OPENING_STATE_BOUNDARY_MISMATCH", "carryover"));
+  if (o) {
+    const { stateIdentity, ...facts } = o;
+    const p = o.predecessor;
+    if (stateIdentity !== contentIdentity("t1b:capital:state", facts)
+      || (p ? (p.trace.context.taxYear !== o.forTaxYear - 1 || p.trace.context.owner !== o.owner
+        || p.trace.context.jurisdiction !== input.context.jurisdiction || p.trace.fingerprint !== ruleFingerprint
+        || p.trace.ruleId !== `${law.id}:capital` || p.trace.version !== law.version
+        || !p.trace.context.sources.length || !p.trace.sources.length || !p.openingStateIdentity || !p.openingResultIdentity || !p.returnResultIdentity
+        || o.priorResultIdentity !== resultReference(p.trace.inputIdentity)
+        || o.lineage.length !== 4 || o.lineage[1] !== p.openingResultIdentity
+        || o.lineage[2] !== p.returnResultIdentity || o.lineage[3] !== o.priorResultIdentity)
+        : (o.lineage.length !== 1 || o.lineage[0] !== o.priorResultIdentity))) {
+      issues.push(diagnostic("OPENING_STATE_PROVENANCE_MISMATCH", "carryover", "invalid"));
+    }
+  }
   if (!validMoney([input.shortRealized, input.longRealized, ...(o ? [o.shortLoss, o.longLoss] : []), ...(r ? [r.signedTaxableIncomeAfterDeduction] : [])]) || (o && (o.shortLoss.isNegative() || o.longLoss.isNegative()))) issues.push(diagnostic("MONEY_INVALID", "capital", "invalid"));
   if (r) {
     for (const [key, fact] of Object.entries({ ordinaryCategoriesOnly: r.ordinaryCategoriesOnly, noNolOrDebtAttributeReduction: r.noNolOrDebtAttributeReduction, ownershipAndFilingAllocationUnchanged: r.ownershipAndFilingAllocationUnchanged })) {
@@ -77,15 +104,17 @@ export const evaluateCapitalLoss = (input: CapitalInput): Outcome<CapitalResult>
   const shortCarry = positive(shortLoss.minus(consumed).minus(positive(nl)));
   const longConsumed = positive(consumed.minus(shortLoss));
   const longCarry = positive(longLoss.minus(positive(ns)).minus(longConsumed));
-  const resultIdentity = `t1b:capital:${canonical({ input, ruleFingerprint })}`;
+  const resultIdentity = resultReference(t.inputIdentity);
   return complete(t, {
     taxYear: input.context.taxYear, shortRealized: input.shortRealized, longRealized: input.longRealized,
     opening: { ...o, lineage: [...o.lineage] }, netShort: ns, netLong: nl, totalNet: total,
     taxableShortGain: positive(ns.minus(longLoss)), taxableLongGain: positive(nl.minus(shortLoss)),
     scheduledDeduction: scheduled, lossConsumed: consumed,
     shortDeductionConsumed: min(consumed, positive(shortLoss.minus(positive(nl)))), longDeductionConsumed: longConsumed,
-    closing: { forTaxYear: input.context.taxYear + 1, owner: o.owner, filingStatus: input.filingStatus,
+    closing: sealState({ forTaxYear: input.context.taxYear + 1, owner: o.owner, filingStatus: input.filingStatus,
       shortLoss: shortCarry, longLoss: longCarry, ruleFingerprint, priorResultIdentity: resultIdentity,
-      lineage: [...o.lineage, r.authoritativeResultId, resultIdentity] }, resultIdentity,
+      lineage: [o.lineage[0]!, o.priorResultIdentity, r.authoritativeResultId, resultIdentity],
+      predecessor: { trace: t, openingStateIdentity: o.stateIdentity, openingResultIdentity: o.priorResultIdentity,
+        returnResultIdentity: r.authoritativeResultId } }), resultIdentity,
   });
 };

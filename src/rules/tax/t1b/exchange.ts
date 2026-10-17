@@ -19,7 +19,8 @@ export interface ExchangeInput {
   readonly relinquished: LandParcel;
   readonly replacement: LandParcel;
   readonly transferDate: string;
-  readonly signedIdentificationDate: string;
+  /** Absent when no written identification was made (deemed receipt may suffice). */
+  readonly signedIdentificationDate: string | undefined;
   readonly receiptDate: string;
   /** Documented legal due date, including supported extensions; not actual filing date. */
   readonly federalReturnDueDate: string;
@@ -36,6 +37,7 @@ export interface ExchangeInput {
     readonly sameTaxpayerOwnership: Predicate;
     readonly qualifiedIntermediary: Predicate;
     readonly noActualOrConstructiveReceipt: Predicate;
+    readonly replacementReceiptVerified: Predicate;
     readonly signedIdentificationDelivered: Predicate;
     readonly dueDateAndExtensionsVerified: Predicate;
     readonly ordinaryDebtPrincipalOnly: Predicate;
@@ -53,11 +55,12 @@ export type ExchangeResult =
   | { readonly eligibility: "eligible"; readonly exchangeId: string; readonly relinquished: PropertyId; readonly replacement: PropertyId;
       readonly realizedGainOrLoss: Money; readonly recognizedGain: Money; readonly recognizedLoss: Money;
       readonly deferredGainOrLoss: Money; readonly replacementBasis: Money; readonly nonLikeBootBasis: Money;
-      readonly netDebtBoot: Money; readonly taxableBoot: Money; readonly costsAgainstBoot: Money; readonly costsToBasis: Money };
+      readonly netDebtBoot: Money; readonly taxableBoot: Money; readonly costsAgainstBoot: Money; readonly costsToBasis: Money;
+      readonly identification: "deemed_on_receipt" | "written_notice"; readonly identificationDate: string };
 
 const requiredPredicates = [
   "likeKind", "sameTaxpayerOwnership", "qualifiedIntermediary", "noActualOrConstructiveReceipt",
-  "signedIdentificationDelivered", "dueDateAndExtensionsVerified", "ordinaryDebtPrincipalOnly", "costsQualify",
+  "replacementReceiptVerified", "dueDateAndExtensionsVerified", "ordinaryDebtPrincipalOnly", "costsQualify",
   "bootValuationAndTreatmentVerified", "unrelatedParties", "deferredOneForOneOnly", "noOtherPropertyGiven",
   "noSellerFinancingOrSpecialStructures", "noRecaptureOrSpecialGainCategories",
 ] as const;
@@ -83,6 +86,7 @@ export const evaluateLandExchange = (input: ExchangeInput): Outcome<ExchangeResu
     if (!fact || fact.value === "unknown" || !fact.evidence.length) issues.push(diagnostic(`EXCHANGE_${key}_UNKNOWN`, "1031", "legal_unknown"));
     else if (fact.value === false) {
       if (["unrelatedParties", "deferredOneForOneOnly", "noOtherPropertyGiven", "noSellerFinancingOrSpecialStructures", "noRecaptureOrSpecialGainCategories", "ordinaryDebtPrincipalOnly", "costsQualify", "bootValuationAndTreatmentVerified", "dueDateAndExtensionsVerified"].includes(key)) issues.push(diagnostic(`EXCHANGE_${key}_UNSUPPORTED`, "1031", "unsupported"));
+      else if (key === "replacementReceiptVerified") issues.push(diagnostic("REPLACEMENT_RECEIPT_NOT_VERIFIED", "1031", "incomplete"));
       else negatives.push(key);
     }
   }
@@ -90,11 +94,25 @@ export const evaluateLandExchange = (input: ExchangeInput): Outcome<ExchangeResu
   if (r.owner !== input.context.owner || p.owner !== input.context.owner) negatives.push("taxpayer_ownership_mismatch");
   const amounts = [r.fairValue, p.fairValue, input.adjustedBasis, input.cashPaid, input.cashReceived, input.nonLikeBootReceived, input.liabilitiesRelieved, input.liabilitiesAssumed, input.qualifyingCosts];
   if (!validMoney(amounts, true)) issues.push(diagnostic("EXCHANGE_MONEY_INVALID", "1031", "invalid"));
+  let identification: "deemed_on_receipt" | "written_notice" = "written_notice";
+  let identificationDate = input.signedIdentificationDate ?? "";
   try {
-    const start = day(input.transferDate), identified = day(input.signedIdentificationDate), received = day(input.receiptDate), due = day(input.federalReturnDueDate);
-    if (Number(input.transferDate.slice(0, 4)) !== input.context.taxYear || due < start || identified < start || received < start || identified > received) issues.push(diagnostic("EXCHANGE_DATE_CONTEXT_INVALID", "1031", "invalid"));
+    const start = day(input.transferDate), received = day(input.receiptDate), due = day(input.federalReturnDueDate);
+    const identified = input.signedIdentificationDate === undefined ? undefined : day(input.signedIdentificationDate);
+    if (Number(input.transferDate.slice(0, 4)) !== input.context.taxYear || due < day(`${input.context.taxYear + 1}-01-01`)
+      || received < start || (identified !== undefined && (identified < start || identified > received))) issues.push(diagnostic("EXCHANGE_DATE_CONTEXT_INVALID", "1031", "invalid"));
     // Inclusive civil endpoints correspond to half-open [start, deadline + 1 day).
-    if (identified >= start + law.identificationDays + 1) negatives.push("identification_after_45_days");
+    if (received >= start && received < start + law.identificationDays + 1) {
+      // Form 8824 line 5: verified actual receipt satisfies identification by law.
+      identification = "deemed_on_receipt";
+      identificationDate = input.receiptDate;
+    } else {
+      const fact = input.predicates.signedIdentificationDelivered;
+      if (!fact || fact.value === "unknown" || !fact.evidence.length) issues.push(diagnostic("EXCHANGE_signedIdentificationDelivered_UNKNOWN", "1031", "legal_unknown"));
+      else if (fact.value === false) negatives.push("signedIdentificationDelivered");
+      else if (identified === undefined) issues.push(diagnostic("WRITTEN_IDENTIFICATION_DATE_REQUIRED", "1031", "incomplete"));
+      if (identified !== undefined && identified >= start + law.identificationDays + 1) negatives.push("identification_after_45_days");
+    }
     if (received >= Math.min(start + law.exchangeDays, due) + 1) negatives.push("receipt_after_exchange_deadline");
   } catch { issues.push(diagnostic("DATE_INVALID", "1031", "invalid")); }
   if (issues.length) return incomplete(t, issues);
@@ -116,5 +134,5 @@ export const evaluateLandExchange = (input: ExchangeInput): Outcome<ExchangeResu
   return complete(t, { eligibility: "eligible", exchangeId: input.exchangeId, relinquished: r.id, replacement: p.id,
     realizedGainOrLoss: realized, recognizedGain: recognized, recognizedLoss: zero, deferredGainOrLoss: deferred,
     replacementBasis: p.fairValue.minus(deferred), nonLikeBootBasis: input.nonLikeBootReceived,
-    netDebtBoot, taxableBoot, costsAgainstBoot, costsToBasis });
+    netDebtBoot, taxableBoot, costsAgainstBoot, costsToBasis, identification, identificationDate });
 };
