@@ -119,7 +119,9 @@ describe("D2-B isolated TIPS issue/lot proposals (PFA-DET §5.6, PFA-INV-027, PF
     const p = { ...point("2025-11-01", "105"), source: { ...source("late-release"), publishedAt: date("2026-02-02"), asOf: date("2026-02-02") } };
     const input = request({ observations: [point("2025-10-01", "100"), p], knownAt: date("2026-02-01") });
     blocked(input, "SOURCE_NOT_ADMITTED");
-    expect(proposeTips({ ...input, knownAt: date("2026-02-02") }).proposals[0]!.adjustedPrincipal!.equals(money("1050"))).toBe(true);
+    // Hindsight publication remains inadmissible for a coupon dated the prior day,
+    // even when the later replay now knows that observation.
+    blocked({ ...input, knownAt: date("2026-02-02") }, "SOURCE_NOT_ADMITTED");
     blocked(request({ observations: [point("2025-10-01", "100"), { ...point("2025-11-01", "105"),
       source: { ...source("premature-release"), publishedAt: date("2025-11-15"), asOf: date("2025-11-15") } }] }), "SOURCE_NOT_ADMITTED");
     blocked(request({ observations: [point("2025-10-01", "100")] }), "CPI_REQUIRED");
