@@ -41,6 +41,36 @@ export interface HelocDrawDiagnostic {
 const participantId = "d2_heloc_draws";
 const at = (date: string) => instant(`${date}T00:00:00.000Z`);
 const same = (a: unknown, b: unknown) => canonicalSerialize(a) === canonicalSerialize(b);
+// The household portable replay wire format admits exact Money and rule values,
+// but not primitive bigint. Preserve all B1 rate millionths losslessly as
+// tagged decimal strings in PARTICIPANT CONFIGURATION ONLY. Execution still
+// uses the original bigint-based B1 contract and its sole rate evaluator.
+const bigintTag = "__d2HelocBigint";
+const plain = (value: object): boolean => {
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+};
+const portableRates = (value: unknown): unknown => {
+  if (typeof value === "bigint") return { [bigintTag]: value.toString() };
+  if (Array.isArray(value)) return value.map(portableRates);
+  if (value !== null && typeof value === "object" && plain(value))
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, portableRates(child)]));
+  return value;
+};
+const restoreRates = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(restoreRates);
+  if (value !== null && typeof value === "object" && plain(value)) {
+    const entries = Object.entries(value);
+    if (entries.length === 1 && entries[0]![0] === bigintTag) {
+      const raw = entries[0]![1];
+      if (typeof raw !== "string" || !/^-?\\d+$/.test(raw))
+        return fail("HELOC_PORTABLE_RATE_INVALID", "Invalid portable HELOC rate representation");
+      return BigInt(raw);
+    }
+    return Object.fromEntries(entries.map(([key, child]) => [key, restoreRates(child)]));
+  }
+  return value;
+};
 const exact = (value: Money) => value instanceof Money && value.currency.equals(USD) && value.amount.fitsScale(2);
 const outputCapabilities = immutableConfiguration({
   helocPrincipalTransfer: { dependency: "tax_independent" as const, status: "complete" as const, diagnostics: [] },
@@ -66,7 +96,7 @@ const unposted = (input: HelocDrawInput): readonly HelocDrawDiagnostic[] => Obje
 export function createHelocDrawParticipant(configuration: HelocDrawInput): HouseholdKernelParticipant {
   const input = immutableConfiguration({ ...configuration, quotes: [...configuration.quotes].sort((a, b) =>
     canonicalSerialize([a.request.period.start, a.request.lineId]).localeCompare(canonicalSerialize([b.request.period.start, b.request.lineId]))) });
-  return Object.freeze({ id: participantId, version: "d2-draw-only/v1", portableCodec: "d2-heloc-draws/v1", economicInputs: input,
+  return Object.freeze({ id: participantId, version: "d2-draw-only/v1", portableCodec: "d2-heloc-draws/v1", economicInputs: immutableConfiguration(portableRates(input)),
     prepare: (context, period, opening, work = [], tier = "detail") => {
       const active = input.quotes.filter(q => at(q.request.period.start) < period.end && at(q.request.period.endExclusive) > period.start);
       const operationIds = new Set<string>(); const authorizations = new Set<string>(); const lines = new Set<string>();
@@ -185,7 +215,7 @@ export function createHelocDrawParticipant(configuration: HelocDrawInput): House
     },
   } satisfies HouseholdKernelParticipant);
 }
-registerHouseholdParticipantCodec({ codec: "d2-heloc-draws/v1", restore: value => createHelocDrawParticipant(value as HelocDrawInput) });
+registerHouseholdParticipantCodec({ codec: "d2-heloc-draws/v1", restore: value => createHelocDrawParticipant(restoreRates(value) as HelocDrawInput) });
 
 export function attachHelocDraws(kernel: CompiledHouseholdKernel, input: HelocDrawInput) {
   const participant = createHelocDrawParticipant(input);
@@ -195,7 +225,7 @@ export function attachHelocDraws(kernel: CompiledHouseholdKernel, input: HelocDr
     fail("HELOC_STALE_PARTICIPANT", "A different source version cannot replace an attached draw participant");
   const next = prior ? kernel : applyHouseholdExecutionOverlay(kernel, { participants: [...existing, participant] });
   return Object.freeze({ kernel: next, diagnosticSeam: "S7" as const, coverage: "incomplete" as const,
-    diagnostics: unposted(participant.economicInputs as HelocDrawInput) });
+    diagnostics: unposted(input) });
 }
 export function runHelocDraws(request: { readonly kernel: CompiledHouseholdKernel; readonly input: HelocDrawInput; readonly runContext: RunContext }) {
   const attached = attachHelocDraws(request.kernel, request.input);
