@@ -136,6 +136,12 @@ describe("A4-2 ordinary cash authorization candidates (PFA-DET §5.4/S1–S8, PF
     }
     denied(input([{ ...r, authorization: { ...r.authorization!, source: { ...r.authorization!.source, endExclusive: at } } }]), "unknown");
     denied(input([{ ...r, authorization: { ...r.authorization!, source: { ...r.authorization!.source, publishedAt: date("2027-03-02") } } }]), "unknown");
+    // A later replay knowing the eventually published authorization does not
+    // make that evidence legally available at the earlier payment date.
+    denied({ ...input([r]), knownAt: date("2027-04-01"), requests: [{
+      ...r, bank: { ...r.bank, source: { ...r.bank.source,
+        publishedAt: date("2027-03-02"), asOf: at } },
+    }] }, "unknown");
     denied(input([{ ...r, bank: { ...r.bank, source: { ...r.bank.source, resourceId: "other" } } }]), "identity");
     denied(input([{ ...r, withholding: { ...r.withholding!, instructions: r.withholding!.instructions.map(i => ({ ...i,
       authorizationSource: { ...i.authorizationSource, projectionStatus: "unavailable" } })) } }]), "unknown");
