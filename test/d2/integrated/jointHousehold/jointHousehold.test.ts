@@ -142,7 +142,7 @@ describe("#149 S8-1 real joint household execution", () => {
 
   it("leaves scarce same-period funding unresolved without inventing debt/premium precedence", () => {
     // Payday is later than service: a future $1000 cannot fund the 15th.
-    const s = scenario({ cash: "400", wageDay: "20" });
+    const s = scenario({ cash: "400", wageDay: "20", priority: "unresolved" });
     const result = s.run();
     expect(result.status).toBe("incomplete");
     expect(result.diagnostics.some(d => d.code === "HOUSEHOLD_CONTENTION_UNRESOLVED")).toBe(true);
@@ -159,7 +159,7 @@ describe("#149 S8-1 real joint household execution", () => {
   });
 
   it("preserves both unpaid claims when neither payment can be funded before payday", () => {
-    const s = scenario({ cash: "100", wageDay: "20" });
+    const s = scenario({ cash: "100", wageDay: "20", priority: "unresolved" });
     const result = s.run();
     expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
     const p = result.periods[0]!;
