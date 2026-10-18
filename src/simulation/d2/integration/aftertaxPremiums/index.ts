@@ -163,6 +163,12 @@ export function attachAftertaxPremiums(input: AftertaxPremiumInput) {
         const equivalent = new Set<string>();
         for (const other of [...cash.incomes, ...candidate]) {
           if (other.start >= at(end) || (other.end ?? kernel.horizon.periods.at(-1)!.end) <= at(start)) continue;
+          // A regular salary/income stream cannot itself be the member premium
+          // expense. Demand representation proof only when an income is explicitly
+          // linked to this quote/source; ordinary independent income remains valid.
+          if (!("paymentAccountId" in other) && !(other.sourceTraceRefs ?? []).some(ref =>
+            ref.traceId === p.quoteId || ref.traceId === p.source.ruleSnapshotId ||
+            ref.traceId.startsWith("d2:aftertax-premium:"))) continue;
           for (const priorTrace of other.sourceTraceRefs ?? []) {
             if (!priorTrace.traceId.startsWith("d2:aftertax-premium:")) continue;
             const identity: unknown = JSON.parse(priorTrace.traceId.slice("d2:aftertax-premium:".length));
