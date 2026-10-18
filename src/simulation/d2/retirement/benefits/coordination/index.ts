@@ -135,7 +135,8 @@ export function coordinateSocialSecurity(request: {
           e.source.sourcePublication, e.source.jurisdiction, e.source.ruleFamily), "INVALID_IDENTITY");
         need(e.coverageSetId === setId, "SOURCE_MIX");
         need(e.source.projectionStatus === "verified" && e.publishedAt <= e.knownAt &&
-          e.source.asOf <= e.knownAt && e.knownAt <= request.knownAt && inside(at, e.effective), "UNAVAILABLE_EVIDENCE");
+          e.source.asOf <= e.knownAt && e.knownAt <= request.knownAt &&
+          e.publishedAt <= at && e.source.asOf <= at && e.knownAt <= at && inside(at, e.effective), "UNAVAILABLE_EVIDENCE");
       };
       try {
         need(ids(r.recipientPersonId), "INVALID_IDENTITY");
