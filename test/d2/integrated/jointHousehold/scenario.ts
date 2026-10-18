@@ -27,7 +27,7 @@ export const source = (label: string): PremiumSource => ({
 });
 
 /** Authored synthetic terms; all postings are made by the production executor. */
-export function scenario({ cash = "2000", months = 1, namespace = 1, wageDay = "05" } = {}) {
+export function scenario({ cash = "2000", months = 1, namespace = 1, wageDay = "05", priority = "sourced" as "sourced" | "unresolved" } = {}) {
   const uuid = (n: number) => `14910000-0000-4000-8000-${String(namespace * 10000 + n).padStart(12, "0")}`;
   const ids = {
     household: domainId("household", uuid(1)), member: domainId("person", uuid(2)),
@@ -72,7 +72,7 @@ export function scenario({ cash = "2000", months = 1, namespace = 1, wageDay = "
   });
   const base = compileHouseholdKernel({
     cashFlowInput: { householdId: ids.household, ownerId: ids.member, cashAccountId: ids.bank,
-      expensePayableLiabilityId: ids.payable, baseCurrency: USD, expenses: [], events: [],
+      expensePayableLiabilityId: ids.payable, baseCurrency: USD, sameInstantCashFlowOrder: "income_before_expense", expenses: [], events: [],
       incomes: [{ id: ids.wage, ownerId: ids.member, baseMonthlyAmount: money("1000"), start: payday,
         recurrence: { kind: "utc_monthly", anchor: payday, invalidDayPolicy: "skip" }, depositAccountId: ids.bank,
         growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()), growthBaseAt: payday,
@@ -80,7 +80,14 @@ export function scenario({ cash = "2000", months = 1, namespace = 1, wageDay = "
     liabilityInput: { householdId: ids.household, ownerId: ids.member, baseCurrency: USD, loans: [loan] },
     reconciledOpeningState: opening, reconciledPrimitiveState: createPrimitiveRuntimeStateStore(),
     scenarioIdentity: ids.scenario, executionMonths: months, scenarioBindings: { source: "#149 S8-1" },
-    contentionPolicy: { id: "synthetic:#149:no-cross-domain-priority", version: "1", rules: [] },
+    contentionPolicy: priority === "unresolved"
+      ? { id: "synthetic:#149:no-cross-domain-priority", version: "1", rules: [] }
+      : { id: "synthetic:#149:sourced-obligation-priority", version: "1", rules: [
+        { before: "cash_income_settlement", after: "liability_required_service" },
+        { before: "cash_income_settlement", after: "liability_extra_principal" },
+        { before: "liability_required_service", after: "cash_expense_settlement" },
+        { before: "cash_expense_settlement", after: "liability_extra_principal" },
+      ] },
   }, start);
   const memberAmount = fromCents(health.input.amounts.householdShareCents!);
   const coverage: PremiumCoverage = {
