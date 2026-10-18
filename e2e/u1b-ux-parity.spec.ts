@@ -77,7 +77,12 @@ for (const width of [1440, 390]) {
     await correction.getByRole("button", { name: "Review forecast dates", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Your current plan", exact: true })).toBeVisible();
     await clickFinancialDestination(page, "Overview");
-    await expect(page.locator("#main-content")).toBeFocused();
+    // Direct desktop nav retains focus on the activated destination. On the
+    // narrow More menu, closing the menu returns focus to the main content.
+    const overviewNav = page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true });
+    await expect(overviewNav).toHaveAttribute("aria-current", "page");
+    if (width === 390) await expect(page.locator("#main-content")).toBeFocused();
+    else await expect(overviewNav).toBeFocused();
     await expect(current.getByRole("article", { name: "Cash and savings", exact: true }).locator(".calm-metric-value")).toHaveText("$3750.00");
   });
 }
