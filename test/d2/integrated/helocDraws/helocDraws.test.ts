@@ -140,7 +140,14 @@ describe("#149 actual draw-only household execution", () => {
     // This participant carries bigint index/spread/rate evidence. Portable
     // replay must preserve the exact value rather than losing its precision.
     const artifact = createPortableHouseholdReplayArtifact(forecast);
-    const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(artifact)));
+    let restored: ReturnType<typeof restorePortableHouseholdReplayArtifact>;
+    try { restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(artifact))); }
+    catch (error) {
+      // Preserve the domain-specific root cause concealed by the public
+      // replay-basis protection, for the narrowly-scoped integration test.
+      const cause = error instanceof Error ? error.cause : undefined;
+      throw new Error(`HELOC_PORTABLE_ROOT_CAUSE: ${cause instanceof Error ? cause.message : String(cause ?? error)}`, { cause: error });
+    }
     for (const selected of [detail.periods[0]!, detail.periods[12]!]) {
       const resumed = replayHouseholdForecastWindow(restored, selected.period);
       expect(resumed.periods).toEqual([selected]);
