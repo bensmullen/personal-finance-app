@@ -63,7 +63,7 @@ const restoreRates = (value: unknown): unknown => {
     const entries = Object.entries(value);
     if (entries.length === 1 && entries[0]![0] === bigintTag) {
       const raw = entries[0]![1];
-      if (typeof raw !== "string" || !/^-?\\d+$/.test(raw))
+      if (typeof raw !== "string" || !/^-?\d+$/.test(raw))
         return fail("HELOC_PORTABLE_RATE_INVALID", "Invalid portable HELOC rate representation");
       return BigInt(raw);
     }
