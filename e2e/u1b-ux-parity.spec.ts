@@ -20,7 +20,7 @@ for (const width of [1440, 390]) {
     await page.evaluate(() => window.scrollTo(0, 0));
     const plot = await chart.locator(".recharts-responsive-container svg.recharts-surface").boundingBox();
     expect(plot!.height).toBeGreaterThanOrEqual(width === 1440 ? 230 : 250);
-    await expect(chart.locator(".recharts-line path.recharts-line-curve").first()).toBeVisible();
+    // The Golden result is partially modeled: the first Recharts "complete"\n    // series has no SVG geometry. Assert a real rendered path with commands.\n    await expect(chart.locator('.recharts-line path.recharts-line-curve[d^="M"]').first()).toBeVisible();
     await expect(chart.getByRole("group", { name: "Assets, liabilities and net worth legend" }).getByRole("button")).toHaveCount(3);
     if (width === 1440) {
       expect(plot!.y).toBeGreaterThan(0);
@@ -149,6 +149,9 @@ for (const width of [1440, 390]) test(`Overview mortgage setup distinguishes ret
   await correction.getByRole("button", { name: "Review setup", exact: true }).click();
   await expect(page.getByRole("group", { name: "Example mortgage", exact: true }).getByLabel("First monthly payment", { exact: true })).toBeFocused();
   expect(await exportSource(page)).toBe(original);
+  // exportSource ends on non-Calm Settings. Verify narrow-page geometry on
+  // Overview, the route owned by this issue, after completing the recovery.
+  await clickFinancialDestination(page, "Overview");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
