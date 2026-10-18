@@ -22,7 +22,12 @@ export const HouseholdChart = memo(function HouseholdChart({ forecast, cashFlowO
       <p className="chart-coverage">{annual.boundaries.reachedThrough && annual.points.length > 0
         ? `Forecast starts ${coverageDate(annual.boundaries.requestedHorizon.start)}; available results end before ${coverageDate(annual.boundaries.reachedThrough)}.`
         : "No supported forecast periods are available yet."} {annual.horizonCoverage === "partial" && <strong>Partial horizon · results stop before the requested end. No projection beyond the available boundary. </strong>}No past account history is included.</p>
-      <details className="calm-disclosure chart-range"><summary>Forecast range / Data coverage</summary><div>
+    </> : <p className="chart-coverage">Requested {annual.boundaries.requestedHorizon.start.slice(0, 10)} → {annual.boundaries.requestedHorizon.end.slice(0, 10)} (exclusive). Modeled through {(annual.boundaries.reachedThrough ?? annual.boundaries.requestedHorizon.start).slice(0, 10)} (exclusive). {annual.horizonCoverage === "partial" && <strong>Partial horizon · no projection beyond this boundary. </strong>}No observed history loaded.</p>)}
+    {annual.status === "unavailable" ? <p role="status">Chart data unavailable. Review forecast diagnostics and source setup; no values have been substituted.</p> : <>
+      <FinancialChart key={cashFlowOnly ? "cash" : "wealth"} annual={annual} monthly={monthly} kind={cashFlowOnly ? "cash" : "wealth"} stale={stale} calm={calm && !cashFlowOnly} />
+      {cashFlowOnly && <FinancialChart annual={annual} monthly={monthly} kind="statement" stale={stale} />}
+    </>}
+    {calm && annual.boundaries && <details className="calm-disclosure chart-range"><summary>Forecast range / Data coverage</summary><div>
         <p>Each period includes its start and excludes its end: [start, end). Requested dates describe the chosen horizon; available results may stop earlier.</p>
         <dl>
           <dt>Requested start (inclusive)</dt><dd>{annual.boundaries.requestedHorizon.start}</dd>
@@ -32,12 +37,7 @@ export const HouseholdChart = memo(function HouseholdChart({ forecast, cashFlowO
         {stale && <p>Out of date: these boundaries belong to the retained forecast, not the changed inputs.</p>}
         {annual.horizonCoverage === "partial" && <p>Partial horizon: no results beyond the available boundary have been filled in.</p>}
         <p>All plotted periods are forecasts. No observed history or past bank transactions are loaded.</p>
-      </div></details>
-    </> : <p className="chart-coverage">Requested {annual.boundaries.requestedHorizon.start.slice(0, 10)} → {annual.boundaries.requestedHorizon.end.slice(0, 10)} (exclusive). Modeled through {(annual.boundaries.reachedThrough ?? annual.boundaries.requestedHorizon.start).slice(0, 10)} (exclusive). {annual.horizonCoverage === "partial" && <strong>Partial horizon · no projection beyond this boundary. </strong>}No observed history loaded.</p>)}
-    {annual.status === "unavailable" ? <p role="status">Chart data unavailable. Review forecast diagnostics and source setup; no values have been substituted.</p> : <>
-      <FinancialChart key={cashFlowOnly ? "cash" : "wealth"} annual={annual} monthly={monthly} kind={cashFlowOnly ? "cash" : "wealth"} stale={stale} />
-      {cashFlowOnly && <FinancialChart annual={annual} monthly={monthly} kind="statement" stale={stale} />}
-    </>}
+      </div></details>}
   </div>;
 });
 

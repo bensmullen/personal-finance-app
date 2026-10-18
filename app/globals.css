@@ -261,7 +261,13 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-overview { display: grid; gap: 20px; min-width: 0; }
 .calm-panel, .calm-metric { background: var(--calm-surface); border: 1px solid var(--calm-line); border-radius: 14px; padding: 23px; box-shadow: 0 3px 15px #203b3e06; min-width: 0; }
 .calm-panel h2, .calm-current h2 { font-size: 19px; letter-spacing: -.025em; margin: 0 0 8px; }
-.calm-outlook .financial-chart h3 { font-family: inherit; font-size: 20px; font-weight: 650; }
+.calm-outlook .financial-chart h3 { font-family: inherit; font-size: 20px; font-weight: 650; margin: 8px 0; }
+.calm-outlook .financial-chart { margin-top: 8px; padding-top: 0; }
+.calm-outlook .financial-chart figcaption p { margin: 6px 0; font-size: 13px; line-height: 1.5; }
+.calm-forecast-context .calm-status { margin-bottom: 0; font-size: 13px; }
+.calm-forecast-context .calm-blocker { margin-bottom: 0; }
+.calm-shell .task-readiness { margin-top: 24px; }
+.calm-shell .notice { margin-top: 16px; }
 .calm-outlook .chart { height: 300px; }
 .calm-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
 .calm-metric h3 { margin: 0 0 16px; font-size: 13px; color: var(--calm-muted); }

@@ -1,6 +1,7 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 import { clickFinancialDestination, navigateOwner } from "./navigation.js";
+import { addPersonalObject, createEmptyPersonalDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
 
 /**
  * Manual, external-to-Codex UX evidence. Intentionally skipped in ordinary CI.
@@ -10,6 +11,47 @@ import { clickFinancialDestination, navigateOwner } from "./navigation.js";
 const navigate = async (page: Page, area: string, section: string) => {
   await navigateOwner(page, area, section);
 };
+
+test("synthetic H04 opening-only Overview first-screen evidence", async ({ page }, testInfo: TestInfo) => {
+  test.skip(process.env.PFM_UX_EVIDENCE !== "1", "Only run via the manually triggered UX evidence workflow.");
+  test.setTimeout(120_000);
+  const id = (suffix: string) => `b0400000-0000-4000-8000-${suffix.padStart(12, "0")}`;
+  let draft = createEmptyPersonalDraft(id("1"));
+  draft = addPersonalObject(draft, "Household", id("2"), { name: "Rick Barlow · H04 opening only", members: [id("3")] });
+  draft = addPersonalObject(draft, "Person", id("3"), { household_id: id("2"), first_name: "Rick", last_name: "Barlow", date_of_birth: "1981-01-01" });
+  draft = addPersonalObject(draft, "Account", id("4"), { name: "H04 checking", account_type: "checking", owner_id: id("3"), currency: "USD", opening_date: "2026-01-01", opening_balance: "1350" });
+  draft = addPersonalObject(draft, "Account", id("5"), { name: "H04 savings", account_type: "savings", owner_id: id("3"), currency: "USD", opening_date: "2026-01-01", opening_balance: "2400" });
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Use synthetic example", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
+  await navigateOwner(page, "Settings", "Import / Export");
+  await page.locator('input[type="file"]').setInputFiles({ name: "h04-opening-only.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(draft)) });
+  await page.getByRole("button", { name: "Import into session", exact: true }).click();
+  await clickFinancialDestination(page, "Overview");
+  await expect(page.getByRole("status", { name: "Household forecast status", exact: true })).toHaveAttribute("data-lifecycle", "idle");
+  const revision = process.env.GITHUB_SHA?.slice(0, 12).replace(/[^a-f0-9]/gi, "") || "revision-unrecorded";
+  for (const width of [1440, 390]) {
+    const height = width === 390 ? 844 : 900;
+    await page.setViewportSize({ width, height });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const productionName = `overview-h04-opening-only-first-screen-${width}-${revision}.png`;
+    const referenceName = `overview-h04-calm-reference-fictional-${width}-${revision}.png`;
+    await page.screenshot({ path: testInfo.outputPath(productionName), animations: "disabled" });
+    await testInfo.attach(productionName, { path: testInfo.outputPath(productionName), contentType: "image/png" });
+    const reference = await page.context().newPage();
+    try {
+      await reference.setViewportSize({ width, height });
+      await reference.setContent(await readFile("docs/alpha/prototypes/level4-h04-h08-pilot.html", "utf8"));
+      await expect(reference.locator("body")).toHaveAttribute("data-theme", "calm");
+      await expect(reference.getByRole("heading", { name: "Know where you stand.", exact: true })).toBeVisible();
+      await reference.screenshot({ path: testInfo.outputPath(referenceName), animations: "disabled" });
+      await testInfo.attach(referenceName, { path: testInfo.outputPath(referenceName), contentType: "image/png" });
+    } finally { await reference.close(); }
+    const report = testInfo.outputPath(`overview-h04-comparison-${width}-${revision}.html`);
+    await writeFile(report, `<!doctype html><html lang="en"><meta charset="utf-8"><title>H04 Overview comparison</title><style>body{font:16px system-ui;margin:24px}main{display:flex;gap:24px;align-items:start}figure{margin:0;flex:1;min-width:0}img{width:100%;border:1px solid #aaa}figcaption{margin:12px 0}</style><h1>H04 opening only · ${width} × ${height} · ${revision}</h1><p>Visual review pending. Production has only synthetic opening checking/savings balances and no Current Plan or forecast. The approved reference has fictional values and a trajectory; compare hierarchy and disclosure, not amounts or forecast coverage.</p><main><figure><figcaption>Current application: synthetic H04 opening-only subset, idle forecast.</figcaption><img alt="Production H04 Overview first screen" src="${productionName}"></figure><figure><figcaption>Approved Calm reference: fictional Barlow household.</figcaption><img alt="Approved Calm Overview first screen" src="${referenceName}"></figure></main></html>`);
+    await testInfo.attach(`overview-h04-comparison-${width}-${revision}`, { path: report, contentType: "text/html" });
+  }
+});
 
 test("synthetic account, income and forecast UX at desktop and narrow viewport", async ({ page }, testInfo: TestInfo) => {
   test.skip(process.env.PFM_UX_EVIDENCE !== "1", "Only run via the manually triggered UX evidence workflow.");
@@ -37,10 +79,12 @@ test("synthetic account, income and forecast UX at desktop and narrow viewport",
     await page.setViewportSize({ width, height });
 
     await navigate(page, "Overview", "How am I doing?");
+    await page.evaluate(() => window.scrollTo(0, 0));
     await capture("01-overview-synthetic-current-app", width);
     const revision = process.env.GITHUB_SHA?.slice(0, 12).replace(/[^a-f0-9]/gi, "") || "revision-unrecorded";
     const productionName = `overview-production-first-screen-${width}-${revision}.png`;
     const referenceName = `overview-calm-reference-barlow-fictional-${width}-${revision}.png`;
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: testInfo.outputPath(productionName), animations: "disabled" });
     await testInfo.attach(productionName, { path: testInfo.outputPath(productionName), contentType: "image/png" });
     // Same approved document and viewport; its fictional Barlow values are NOT

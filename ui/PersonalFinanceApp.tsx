@@ -12,6 +12,7 @@ import {
   useState,
   type Dispatch,
   type SetStateAction,
+  type ReactNode,
 } from "react";
 import { PERFORMANCE_PHASES, applicationPerformanceRegistry, type PerformanceContext, type PerformancePhase } from "../src/application/performance.js";
 import { useForm, type UseFormReturn } from "react-hook-form";
@@ -872,9 +873,18 @@ export function PersonalFinanceApp() {
               <button onClick={() => navigate("Money", "Accounts")}>Review accounts</button> <button onClick={() => navigate("Net Worth", "Debt")}>Review debt</button> <button onClick={() => navigate("Net Worth", "Property & other assets")}>Review asset sources</button></details>
             </>}
           </section>
-          <ForecastStatus label="Household forecast" state={interactive.baseline} compact={primary === "Overview"} setupChanged={primary === "Overview" && setupChangesPending}
-            update={primary === "Overview" && interactive.available && !setupChangesPending ? runHouseholdForecast : undefined} />
-          {primary === "Overview" && (settingsProblem || issues.length > 0 || !interactive.available || setupChangesPending) && <div className="calm-blocker" role="alert" aria-label="Priority correction">
+          {primary !== "Overview" && <ForecastStatus label="Household forecast" state={interactive.baseline} />}
+          {primary === "Overview" && <Overview
+            position={position!} forecast={householdForecast} draft={draft} run={runHouseholdForecast}
+            asOf={sessionSettings.asOf} dataCutoff={sessionSettings.dataCutoff}
+            onPlan={() => navigateFromOverview("Plan", "Current Plan")}
+            onCash={() => navigateFromOverview("Money", "Cash Flow")}
+            onDebt={() => navigateFromOverview("Net Worth", "Debt")}
+            onAccounts={() => navigateFromOverview("Money", "Accounts")}
+            onAssets={() => navigateFromOverview("Net Worth", "Property & other assets")}
+            status={<ForecastStatus label="Household forecast" state={interactive.baseline} compact setupChanged={setupChangesPending}
+              update={interactive.available && !setupChangesPending ? runHouseholdForecast : undefined} />}
+            correction={(settingsProblem || issues.length > 0 || !interactive.available || setupChangesPending) && <div className="calm-blocker" role="alert" aria-label="Priority correction">
             <p>{settingsProblem || (issues.length > 0 ? "Recorded facts need attention before you rely on the forecast." : setupMissing[0]?.message ?? "Confirm your forecast setup to see the path ahead.")}</p>
             <CalmAction onClick={() => {
               if (settingsProblem) openForecastDates();
@@ -882,6 +892,7 @@ export function PersonalFinanceApp() {
               else openForecastSetup(setupMissing[0]);
             }}>{settingsProblem ? "Review forecast dates" : issues.length > 0 ? "Review recorded facts" : "Review setup"}</CalmAction>
           </div>}
+          />}
           {primary !== "Overview" && <>
           {interactive.available && !setupChangesPending && <button className="secondary forecast-update" onClick={runHouseholdForecast}>Update forecast</button>}
           {settingsProblem && <p className="compact-blocker" role="alert">{settingsProblem} <button onClick={openForecastDates}>Review forecast dates</button></p>}
@@ -929,23 +940,6 @@ export function PersonalFinanceApp() {
                 ×
               </button>
             </div>
-          )}
-          {primary === "Overview" && (
-            <Overview
-              position={position!}
-              forecast={householdForecast}
-              draft={draft}
-              run={runHouseholdForecast}
-              onPlan={() => {
-                navigateFromOverview("Plan", "Current Plan");
-              }}
-              asOf={sessionSettings.asOf}
-              dataCutoff={sessionSettings.dataCutoff}
-              onCash={() => navigateFromOverview("Money", "Cash Flow")}
-              onDebt={() => navigateFromOverview("Net Worth", "Debt")}
-              onAccounts={() => navigateFromOverview("Money", "Accounts")}
-              onAssets={() => navigateFromOverview("Net Worth", "Property & other assets")}
-            />
           )}
           {primary === "Net Worth" && subnav === "Real Estate" && <MortgageOutlook draft={draft} forecast={householdForecast} property currency={sessionSettings.baseCurrency} asOf={sessionSettings.asOf} selectedMonth={mortgageMonth} selectMonth={setMortgageMonth} selectedLoan={mortgageLoan} selectLoan={setMortgageLoan} />}
           {primary === "Net Worth" && (subnav === "Real Estate" || subnav === "Other Assets") && <AssetSection draft={draft} property={subnav === "Real Estate"} edit={(type, id) => setEntityRepair({ objectType: type, objectId: id, field: "", token: randomId() })} />}
@@ -1319,12 +1313,12 @@ function ForecastStatus({ label, state, compact = false, setupChanged = false, u
     <strong>{label} · {state.pending ? "Running" : state.lifecycle === "error" ? "Failed" : state.stale || setupChanged ? "Update needed" : state.lifecycle === "completed" ? "Ready" : state.lifecycle === "incomplete" ? "Partially modeled" : state.lifecycle === "unsupported" ? "Unsupported" : state.lifecycle === "idle" ? "Needs setup" : "Update needed"}</strong>
     {state.pending && <span>{state.lastGoodResult ? "Recalculating" : "Running"} {compact ? "your forecast" : "deterministic forecast"}…</span>}
     {(state.stale || setupChanged) && <span>Old result — inputs changed; these numbers are not current.</span>}
-    {!state.pending && !state.stale && !setupChanged && state.lifecycle === "completed" && <span>Current result</span>}
+    {!compact && !state.pending && !state.stale && !setupChanged && state.lifecycle === "completed" && <span>Current result</span>}
     {!state.pending && !state.stale && !setupChanged && state.lifecycle === "incomplete" && <><span>Some outputs are incomplete; after-tax totals may be unavailable.</span>
       </>}
     {blocked && !summary && <span>Review the guidance below, correct the supported setup or import a supported model, then Update forecast.</span>}
-    {state.message && !(blocked && summary) && (compact && state.lifecycle !== "error" ? <details><summary>Forecast message</summary><p>{friendlyText(state.message)}</p></details> : <span>{friendlyText(state.message)}</span>)}
-    {firstDiagnostic && summary && !state.pending && <div className="forecast-primary-guidance">
+    {state.message && !(blocked && summary) && (!compact || state.lifecycle === "error") && <span>{friendlyText(state.message)}</span>}
+    {firstDiagnostic && summary && !state.pending && (!compact || blocked) && <div className="forecast-primary-guidance">
       <p>{summary.problem}</p>
       {blocked && <>
         <p>{summary.remedy}</p>
@@ -1336,6 +1330,7 @@ function ForecastStatus({ label, state, compact = false, setupChanged = false, u
     </div>}
     {diagnostics.length > 0 && <details className="forecast-guidance"><summary>Review forecast limitations</summary><DiagnosticList diagnostics={diagnostics} model={diagnosticModel} /></details>}
     <details><summary>Technical forecast details</summary>
+      {compact && state.message && <p>{friendlyText(state.message)}</p>}
       <dl><dt>Lifecycle</dt><dd>{state.lifecycle}</dd><dt>Request</dt><dd>{state.requestId ?? "Not submitted"}</dd>
         <dt>Cache</dt><dd>{state.cacheState ?? "Not applicable"}</dd>
         {state.message && !state.latestResult?.diagnostics?.length && <><dt>Original diagnostic</dt><dd>{state.message}</dd></>}
@@ -1441,6 +1436,8 @@ function Overview({
   onDebt,
   onAccounts,
   onAssets,
+  status,
+  correction,
 }: {
   position: NonNullable<ReturnType<typeof getCurrentPosition>>;
   forecast: PersonalHouseholdForecastReadModel | undefined;
@@ -1453,6 +1450,8 @@ function Overview({
   onDebt: () => void;
   onAccounts: () => void;
   onAssets: () => void;
+  status: ReactNode;
+  correction: ReactNode;
 }) {
   const additional = [
     ["Cash inside investment accounts", position.wrapperCash],
@@ -1461,25 +1460,8 @@ function Overview({
     ["Monthly spending from recorded sources", position.monthlySpending],
     ["Monthly cash flow from recorded sources", position.monthlyCashFlow],
   ] as const;
-  return (
-    <div className="calm-overview">
-      <CalmPanel title="Your money over time" className="calm-outlook">
-        <p className="calm-caption">A forecast of assets, liabilities and net worth, separate from your recorded position today.</p>
-        {forecast?.status === "completed" ||
-        forecast?.status === "incomplete" ? (
-          <HouseholdForecastVisual forecast={forecast} draft={draft} calm />
-        ) : (
-          <div className="calm-empty">
-            <strong>{forecast?.status === "unavailable" ? "Your forecast is unavailable" : "Your forecast is not ready yet"}</strong>
-            <p>Your known recorded values are below. Review the forecast guidance above to see what needs attention.</p>
-            <CalmDisclosure title="Forecast coverage and details">
-              {forecast?.status === "unavailable" && <DiagnosticList diagnostics={forecast.diagnostics} fallback={forecast.message} />}
-              <CalmAction onClick={run}>Run household forecast</CalmAction>
-            </CalmDisclosure>
-          </div>
-        )}
-      </CalmPanel>
-      <section aria-label="Your finances today" className="calm-current">
+  const supported = forecast?.status === "completed" || forecast?.status === "incomplete";
+  const current = <section aria-label="Your finances today" className="calm-current">
         <h2>Your finances today</h2>
         {position.status !== "complete" && <p className="calm-caption">Some recorded information is missing or unsupported. Unavailable values have not been estimated; see data coverage below.</p>}
         <div className="calm-metrics">
@@ -1487,7 +1469,24 @@ function Overview({
           <CalmMetric label="Outstanding debt" value={position.liabilities?.display} source={`Recorded liabilities · as of ${asOf}`} explanation="Recorded borrowing balances, separate from future payments." />
           <CalmMetric label="Net worth" value={position.netWorth?.display} source={`Recorded assets less liabilities · as of ${asOf}`} explanation="Includes supported recorded holdings and assets; not all available to spend." />
         </div>
-      </section>
+      </section>;
+  return (
+    <div className="calm-overview">
+      {!supported && current}
+      <div className="calm-forecast-context">{status}{correction}</div>
+      <CalmPanel title="Your money over time" className="calm-outlook">
+        {supported ? <HouseholdForecastVisual forecast={forecast} draft={draft} calm /> : (
+          <div className="calm-empty">
+            <strong>{forecast?.status === "unavailable" ? "Your forecast is unavailable" : "Your forecast is not ready yet"}</strong>
+            <p>Your recorded values above are separate from a forecast. Use the guidance above to set up the path ahead.</p>
+            <CalmDisclosure title="Forecast coverage and details">
+              {forecast?.status === "unavailable" && <DiagnosticList diagnostics={forecast.diagnostics} fallback={forecast.message} />}
+              <CalmAction onClick={run}>Run household forecast</CalmAction>
+            </CalmDisclosure>
+          </div>
+        )}
+      </CalmPanel>
+      {supported && current}
       <div className="calm-lower-grid">
         <CalmPanel title="Where should we start?">
           <p className="calm-caption">Choose a question to explore.</p>

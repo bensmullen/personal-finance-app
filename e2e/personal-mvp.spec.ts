@@ -1285,7 +1285,7 @@ for (const width of [390, 1440]) {
     const chart = page.getByRole("figure", { name: "Household financial outlook chart" });
     await expect(chart).toBeVisible();
     await expect(chart).toContainText("USD");
-    await expect(chart).toContainText("Deterministic projection");
+    await expect(chart).toContainText("Forecast, not account history");
     expect(await page.locator("#main-content").innerText()).not.toMatch(rawUuid);
     const request = await status.getAttribute("data-request-id");
     const plot = chart.locator('[role="application"]');

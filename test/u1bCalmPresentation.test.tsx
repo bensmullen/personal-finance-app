@@ -44,7 +44,7 @@ describe("Calm sourced read-only presentation", () => {
     const overview = renderToStaticMarkup(<HouseholdChart forecast={partial} cashFlowOnly={false} stale calm sourceFingerprint="synthetic-coverage" />);
     const disclosureStart = overview.indexOf('<details class="calm-disclosure chart-range"');
     expect(disclosureStart).toBeGreaterThan(0);
-    const visibleCoverage = overview.slice(0, disclosureStart);
+    const visibleCoverage = overview.slice(0, overview.indexOf('<figure class="forecast-figure financial-chart"'));
     expect(visibleCoverage).toContain("Out of date");
     expect(visibleCoverage).toContain("Partial horizon");
     expect(visibleCoverage).toContain("available results end before February 1, 2026");
