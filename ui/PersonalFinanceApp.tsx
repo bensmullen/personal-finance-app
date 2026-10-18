@@ -797,7 +797,13 @@ export function PersonalFinanceApp() {
           <span className="brand-mark">P</span>
           <span>Personal Finance</span>
         </button>
+        {primary === "Overview" && <section className="household-summary calm-identity" aria-label="Household current summary"><p>{objectEntries(draft, "Household").map(item => objectLabel("Household", item)).join(" · ") || "Household"} · as of {sessionSettings.asOf}</p></section>}
         <div className="session-banner" role="status">
+          {primary === "Overview" ? <>
+            <span><strong>Manual save</strong> — edits stay in memory until saved.</span>
+            <button onClick={() => persistenceMode === "enabled" ? void saveToBrowser() : exportModel()}>{persistenceMode === "enabled" ? "Save" : "Export your model"}</button>
+            <details className="calm-storage"><summary>Storage &amp; privacy</summary><p>{persistenceMode === "enabled" ? "Save stores this model locally in this browser/origin. Export is the recommended backup." : "This public/demo origin does not store personal models. Export to keep your changes."}</p></details>
+          </> : <>
           <strong>Manual save</strong> — edits stay in memory until saved.{" "}
           {persistenceMode === "enabled" ? (
             <>
@@ -810,6 +816,7 @@ export function PersonalFinanceApp() {
               <button onClick={exportModel}>Export your model</button>.
             </>
           )}
+          </>}
         </div>
         <button className="secondary settings-button" onClick={() => navigate("Settings")}>
           Settings
@@ -860,22 +867,21 @@ export function PersonalFinanceApp() {
           </div>
         </nav>
         <main id="main-content" tabIndex={-1} style={{ minWidth: 0 }}>
-          {primary === "Overview" && <CalmPageHeader title="How am I doing?" description="Know where you stand today, then explore the path ahead.">
+          {primary === "Overview" && <CalmPageHeader title="Know where you stand." description="Focus on what matters today, then build a plan at your pace.">
             <CalmAction primary onClick={() => navigateFromOverview("Plan", "Current Plan")}>Explore your plan</CalmAction>
             <CalmAction onClick={() => navigateFromOverview("Money", "Cash Flow")}>See monthly cash</CalmAction>
           </CalmPageHeader>}
           {cashReturn && !(primary === "Money" && subnav === "Cash Flow") && <div className="cash-return"><button type="button" onClick={() => { setCashReturn(false); navigate("Money", "Cash Flow"); requestAnimationFrame(() => document.querySelector<HTMLSelectElement>('.monthly-money select')?.focus()); }}>Return to Cash breakdown</button><small>Your selected modeled month is retained.</small></div>}
-          <section className="household-summary" aria-label="Household current summary">
+          {primary !== "Overview" && <section className="household-summary" aria-label="Household current summary">
             <div><p className="eyebrow">{objectEntries(draft, "Household").map(item => objectLabel("Household", item)).join(" · ") || "Household"} · as of {sessionSettings.asOf}</p>
-              <p>Recorded current position · {primary === "Overview" ? position!.status === "complete" ? "Known recorded values" : position!.status === "partial" ? "Some current values are unavailable" : "Current values need review" : position!.status} · {sessionSettings.baseCurrency}</p></div>
-            {primary !== "Overview" && <><dl><div><dt>Cash</dt><dd>{position!.cash?.display ?? "Unavailable"}</dd></div><div><dt>Debt</dt><dd>{position!.liabilities?.display ?? "Unavailable"}</dd></div><div><dt>Net worth</dt><dd>{position!.netWorth?.display ?? "Unavailable"}</dd></div></dl>
+              <p>Recorded current position · {position!.status} · {sessionSettings.baseCurrency}</p></div>
+            <dl><div><dt>Cash</dt><dd>{position!.cash?.display ?? "Unavailable"}</dd></div><div><dt>Debt</dt><dd>{position!.liabilities?.display ?? "Unavailable"}</dd></div><div><dt>Net worth</dt><dd>{position!.netWorth?.display ?? "Unavailable"}</dd></div></dl>
             <details><summary>Sources &amp; basis</summary><p>Current-position read model from this household’s recorded accounts, holdings, assets and liabilities at {sessionSettings.asOf}; data cutoff {sessionSettings.dataCutoff}. These are current inputs, separate from forecast results.</p>
               <button onClick={() => navigate("Money", "Accounts")}>Review accounts</button> <button onClick={() => navigate("Net Worth", "Debt")}>Review debt</button> <button onClick={() => navigate("Net Worth", "Property & other assets")}>Review asset sources</button></details>
-            </>}
-          </section>
+          </section>}
           {primary !== "Overview" && <ForecastStatus label="Household forecast" state={interactive.baseline} />}
           {primary === "Overview" && <Overview
-            position={position!} forecast={householdForecast} draft={draft} run={runHouseholdForecast}
+            position={position!} forecast={householdForecast} draft={draft} forecastState={interactive.baseline}
             asOf={sessionSettings.asOf} dataCutoff={sessionSettings.dataCutoff}
             onPlan={() => navigateFromOverview("Plan", "Current Plan")}
             onCash={() => navigateFromOverview("Money", "Cash Flow")}
@@ -1427,8 +1433,8 @@ function AssetOwnerLink() {
 function Overview({
   position,
   forecast,
+  forecastState,
   draft,
-  run,
   onPlan,
   asOf,
   dataCutoff,
@@ -1441,8 +1447,8 @@ function Overview({
 }: {
   position: NonNullable<ReturnType<typeof getCurrentPosition>>;
   forecast: PersonalHouseholdForecastReadModel | undefined;
+  forecastState: ForecastView;
   draft: PersonalDraft;
-  run: () => void;
   onPlan: () => void;
   asOf: string;
   dataCutoff: string;
@@ -1472,21 +1478,17 @@ function Overview({
       </section>;
   return (
     <div className="calm-overview">
-      {!supported && current}
-      <div className="calm-forecast-context">{status}{correction}</div>
       <CalmPanel title="Your money over time" className="calm-outlook">
         {supported ? <HouseholdForecastVisual forecast={forecast} draft={draft} calm /> : (
           <div className="calm-empty">
-            <strong>{forecast?.status === "unavailable" ? "Your forecast is unavailable" : "Your forecast is not ready yet"}</strong>
-            <p>Your recorded values above are separate from a forecast. Use the guidance above to set up the path ahead.</p>
-            <CalmDisclosure title="Forecast coverage and details">
-              {forecast?.status === "unavailable" && <DiagnosticList diagnostics={forecast.diagnostics} fallback={forecast.message} />}
-              <CalmAction onClick={run}>Run household forecast</CalmAction>
-            </CalmDisclosure>
+            <strong>{forecastState.pending ? "Calculating your forecast…" : forecastState.lifecycle === "error" ? "Your forecast could not be calculated" : forecast?.status === "unavailable" ? "Your forecast is unavailable" : "Your forecast is not ready yet"}</strong>
+            <p>No future path has been calculated. Your recorded finances are still available below.</p>
+            {correction || status}
           </div>
         )}
+        {supported && correction}
       </CalmPanel>
-      {supported && current}
+      {current}
       <div className="calm-lower-grid">
         <CalmPanel title="Where should we start?">
           <p className="calm-caption">Choose a question to explore.</p>
@@ -1498,6 +1500,7 @@ function Overview({
         </CalmPanel>
         <CalmPanel title="What these numbers include">
           <p className="calm-caption">Recorded facts and future assumptions have different scopes.</p>
+          {(supported || correction) && <div className="calm-forecast-context">{status}</div>}
           <CalmDisclosure title="How this is calculated / data coverage">
             <p>Current-position values use this household’s recorded accounts, holdings, assets and liabilities. Data cutoff: {dataCutoff}. The graph uses the separately applied forecast, not observed history.</p>
             <p>Investment-account cash is separate from household cash. Account containers and their holdings are not counted twice. Acquisition cost is not a current property valuation. Unvested employer value is contingent.</p>
@@ -3474,14 +3477,8 @@ function HouseholdForecastVisual({
   const scope = context && models.baseline?.lastGoodResult === forecast
     ? { active: true, context: { ...context, executionLocation: "browser_main" as const }, model: financialModel, forecast } : request;
   const projectedLawCoverage = <ul>{[...new Map((forecast.projectedLaw ?? []).map(item => [`${item.jurisdiction}:${item.baseYear}:${item.from}:${item.until}`, item])).values()].map(item => <li key={`${item.jurisdiction}:${item.from}`}>{item.jurisdiction}: {item.baseYear} source rules projected from {item.from.slice(0, 10)} through {item.until.slice(0, 10)} (exclusive).</li>)}</ul>;
-  return (
-    <>
-      {forecast.stoppedAt && <ForecastCutoff forecast={forecast} draft={financialModel} />}
-      <Profiler id="forecast-chart" onRender={(_id, _phase, duration) => {
-        if (scope?.active) recordBrowserDuration("ui.chart_render", duration, scope.context);
-      }}><HouseholdChart forecast={forecast} cashFlowOnly={cashFlowOnly} calm={calm}
-        stale={!models.baseline || models.baseline.lastGoodResult !== forecast || models.baseline.resultModel !== draft || models.baseline.pending || models.baseline.stale || !!models.setupChangesPending}
-        sourceFingerprint={models.baseline?.lastGoodResult === forecast ? models.baseline.resultFingerprint : undefined} /></Profiler>
+  const supporting = <>
+      {calm && forecast.stoppedAt && <ForecastCutoff forecast={forecast} draft={financialModel} />}
       <p className="muted">{forecast.stoppedAt
         ? `Incomplete; stopped at ${forecast.stoppedAt.slice(0, 10)}`
         : `Completed through ${forecast.reachedThrough?.slice(0, 10)}${forecast.status === "incomplete" ? " · Some outputs are partially modeled" : ""}`}</p>
@@ -3557,8 +3554,18 @@ function HouseholdForecastVisual({
       {forecast.diagnostics.length > 0 && (
         <p role="note">Forecast limitations are grouped beside the global forecast status above. Review them before relying on tax-dependent totals.</p>
       )}
-    </>
-  );
+    </>;
+  return <>
+    {!calm && forecast.stoppedAt && <ForecastCutoff forecast={forecast} draft={financialModel} />}
+    <Profiler id="forecast-chart" onRender={(_id, _phase, duration) => {
+      if (scope?.active) recordBrowserDuration("ui.chart_render", duration, scope.context);
+    }}><HouseholdChart forecast={forecast} cashFlowOnly={cashFlowOnly} calm={calm}
+      stale={!models.baseline || models.baseline.lastGoodResult !== forecast || models.baseline.resultModel !== draft || models.baseline.pending || models.baseline.stale || !!models.setupChangesPending}
+      sourceFingerprint={models.baseline?.lastGoodResult === forecast ? models.baseline.resultFingerprint : undefined}
+      supporting={calm ? <CalmDisclosure title="Forecast assumptions and supporting details">{supporting}</CalmDisclosure> : undefined} /></Profiler>
+    {calm && forecast.liquidityShortfalls.length > 0 && <p className="stress" role="alert">The forecast includes {forecast.liquidityShortfalls.length} cash shortfall(s). Some payments could not be fully funded. Review the payment accounts in forecast details before relying on this plan.</p>}
+    {!calm && supporting}
+  </>;
 }
 
 function MortgageShortfall({ draft, funding, date, required, available, isolated = false }: { draft: PersonalDraft; funding?: import("../src/application/compiler/mortgageFundingPresentation.js").MortgageFundingContext; date: string; required: string; available: string; isolated?: boolean }) {

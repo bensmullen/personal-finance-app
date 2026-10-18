@@ -161,9 +161,11 @@ const expectedValue = (value: ForecastChartValue, signed = false) => {
 
 async function openOverview(page: Page) {
   await clickFinancialDestination(page, "Overview");
-  await expect(page.getByRole("heading", { name: "How am I doing?", exact: true, level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Know where you stand.", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(wealthChart(page)).toBeVisible();
+  const controls = wealthChart(page).locator(".chart-control-details");
+  if (await controls.getAttribute("open") === null) await controls.locator(":scope > summary").click();
 }
 
 async function runAppliedBaseline(page: Page) {
@@ -288,7 +290,7 @@ for (const width of [1440, 390]) {
     await expect(grouping(wealth)).toBeFocused();
     await expect(wealth.getByRole("group", { name: "Assets, liabilities and net worth legend" }).getByRole("button")).toHaveCount(3);
     await expect(page.locator(".financial-charts > .chart-coverage")).toContainText("No past account history is included.");
-    await expect(page.locator(".financial-charts > .chart-range")).not.toHaveAttribute("open");
+    await expect(page.locator(".financial-charts .chart-range")).not.toHaveAttribute("open");
     await expect(wealth).toContainText("snapshot, separate from projected periods");
     const graph = wealth.getByRole("application");
     await expect(graph).toHaveAttribute("tabindex", "0");

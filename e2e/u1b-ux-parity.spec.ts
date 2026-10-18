@@ -19,21 +19,29 @@ for (const width of [1440, 390]) {
     await expect(chart.locator(".recharts-responsive-container svg.recharts-surface")).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, 0));
     const plot = await chart.locator(".recharts-responsive-container svg.recharts-surface").boundingBox();
-    expect(plot!.height).toBeGreaterThan(0);
+    expect(plot!.height).toBeGreaterThanOrEqual(width === 1440 ? 230 : 250);
+    await expect(chart.locator(".recharts-line path.recharts-line-curve").first()).toBeVisible();
+    await expect(chart.getByRole("group", { name: "Assets, liabilities and net worth legend" }).getByRole("button")).toHaveCount(3);
     if (width === 1440) {
       expect(plot!.y).toBeGreaterThan(0);
-      expect(plot!.y).toBeLessThan(900);
+      expect(plot!.y + plot!.height).toBeLessThanOrEqual(900);
       const setup = await page.locator(".task-readiness").boundingBox();
       expect(setup!.y).toBeGreaterThan(plot!.y + plot!.height);
+      for (const value of await page.locator(".calm-metric-value").all()) {
+        const box = await value.boundingBox();
+        expect(box!.y + box!.height).toBeLessThanOrEqual(900);
+      }
     }
     await expect(chart).toContainText("Forecast, not account history");
     await expect(chart).not.toContainText("Deterministic projection");
     await expect(page.locator(".chart-range")).not.toHaveAttribute("open");
+    await expect(chart.locator(".chart-control-details")).not.toHaveAttribute("open");
+    await expect(page.getByText("Forecast assumptions and supporting details", { exact: true }).locator("..")).not.toHaveAttribute("open");
     await expect(page.locator(".task-readiness")).not.toHaveAttribute("open");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 
-  test(`Overview H04 recorded-only cards precede recovery and empty forecast at ${width}px`, async ({ page }) => {
+  test(`Overview H04 honest graph state, one repair and sourced cards at ${width}px`, async ({ page }) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     const id = (suffix: string) => `b0400000-0000-4000-8000-${suffix.padStart(12, "0")}`;
@@ -64,14 +72,16 @@ for (const width of [1440, 390]) {
     const cards = await current.boundingBox();
     const blocker = await correction.boundingBox();
     const empty = await page.locator(".calm-empty").boundingBox();
-    expect(cards!.y + cards!.height).toBeLessThanOrEqual(blocker!.y);
-    expect(blocker!.y + blocker!.height).toBeLessThan(empty!.y);
+    expect(blocker!.y).toBeGreaterThan(empty!.y);
+    expect(blocker!.y + blocker!.height).toBeLessThanOrEqual(empty!.y + empty!.height);
+    expect(empty!.height).toBeGreaterThanOrEqual(300);
+    expect(cards!.y).toBeGreaterThan(empty!.y + empty!.height);
     if (width === 1440) {
       expect(cards!.y).toBeGreaterThan(0);
       expect(cards!.y + cards!.height).toBeLessThan(900);
       expect(blocker!.y + blocker!.height).toBeLessThan(900);
     }
-    expect(await current.evaluate(element => !!(element.compareDocumentPosition(document.querySelector(".calm-empty")!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+    expect(await current.evaluate(element => !!(element.compareDocumentPosition(document.querySelector(".calm-empty")!) & Node.DOCUMENT_POSITION_PRECEDING))).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await expect(page.locator(".task-readiness")).not.toHaveAttribute("open");
     await correction.getByRole("button", { name: "Review forecast dates", exact: true }).click();
@@ -94,6 +104,54 @@ async function exportSource(page: Page) {
   return readFile((await download.path())!, "utf8");
 }
 
+for (const width of [1440, 390]) test(`Overview mortgage setup distinguishes retained stale graph from missing graph at ${width}px`, async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
+  await expect(forecastStatus(page)).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  const original = await exportSource(page);
+  await clickFinancialDestination(page, "Debt");
+  const payments = page.getByRole("group", { name: "Example mortgage", exact: true }).getByLabel("Number of monthly payments", { exact: true });
+  const mortgageDetails = payments.locator("xpath=ancestor::details[1]");
+  if (await mortgageDetails.count() && await mortgageDetails.getAttribute("open") === null) await mortgageDetails.locator(":scope > summary").click();
+  await payments.fill("");
+  await clickFinancialDestination(page, "Overview");
+  const correction = page.getByRole("alert", { name: "Priority correction", exact: true });
+  await expect(correction).toContainText("number of monthly payments");
+  await expect(correction.getByRole("button")).toHaveCount(1);
+  await expect(page.locator(".chart-freshness")).toContainText("Out of date");
+  await expect(page.locator(".calm-outlook svg.recharts-surface")).toBeVisible();
+  await correction.getByRole("button", { name: "Review setup", exact: true }).click();
+  await expect(payments).toBeFocused();
+  // Import deliberately clears the retained result and session-only setup.
+  await navigateOwner(page, "Settings", "Import / Export");
+  await page.locator('input[type="file"]').setInputFiles({ name: "synthetic-mortgage-recovery.json", mimeType: "application/json", buffer: Buffer.from(original) });
+  await page.getByRole("button", { name: "Import into session", exact: true }).click();
+  for (const [problem, field, choice] of [
+    ["Income receiving account", "Income receiving account", "Everyday checking"],
+    ["Investment owner", "Investment owner", "Taylor Example"],
+    ["Debt owner", "Debt owner", "Taylor Example"],
+  ]) {
+    await clickFinancialDestination(page, "Overview");
+    await expect(correction).toContainText(problem);
+    await correction.getByRole("button", { name: "Review setup", exact: true }).click();
+    const control = page.getByRole("combobox", { name: field, exact: true });
+    await expect(control).toBeFocused();
+    await control.selectOption({ label: choice });
+  }
+  await clickFinancialDestination(page, "Overview");
+  await expect(forecastStatus(page)).toHaveAttribute("data-lifecycle", "idle");
+  await expect(page.locator(".calm-outlook svg")).toHaveCount(0);
+  await expect(correction).toContainText("Example mortgage: Enter the first monthly payment date.");
+  await expect(correction.getByRole("button")).toHaveCount(1);
+  await expect(page.getByRole("region", { name: "Your finances today", exact: true }).getByRole("article")).toHaveCount(3);
+  await correction.getByRole("button", { name: "Review setup", exact: true }).click();
+  await expect(page.getByRole("group", { name: "Example mortgage", exact: true }).getByLabel("First monthly payment", { exact: true })).toBeFocused();
+  expect(await exportSource(page)).toBe(original);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
 for (const width of [1440, 390]) test(`Overview hierarchy, exact current sources and recorded-only recovery at ${width}px`, async ({ page }) => {
   test.setTimeout(120_000);
   const height = width === 390 ? 844 : 900;
@@ -106,7 +164,7 @@ for (const width of [1440, 390]) test(`Overview hierarchy, exact current sources
   const position = getCurrentPosition(draft, { asOf: "2026-01-01", baseCurrency: "USD" });
   await clickFinancialDestination(page, "Overview");
   const main = page.locator("#main-content");
-  await expect(main.locator("h1")).toHaveText("How am I doing?");
+  await expect(main.locator("h1")).toHaveText("Know where you stand.");
   await expect(main.locator(".calm-action-primary")).toHaveCount(1);
   await expect(main.getByRole("button", { name: "Explore your plan", exact: true })).toBeVisible();
   await expect(main.getByRole("button", { name: "See monthly cash", exact: true })).toBeVisible();
@@ -166,6 +224,7 @@ for (const width of [1440, 390]) test(`Overview hierarchy, exact current sources
   await expect(forecastStatus(page)).toContainText("Old result");
   await expect(outlook.locator(".chart-freshness")).toContainText("Out of date");
   await expect(forecastRange).not.toHaveAttribute("open");
+  await outlook.locator(".chart-control-details > summary").click();
   await forecastRange.locator(":scope > summary").focus();
   await page.keyboard.press("Enter");
   await expect(forecastRange).toHaveAttribute("open", "");

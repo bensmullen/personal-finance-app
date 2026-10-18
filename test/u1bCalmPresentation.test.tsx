@@ -61,4 +61,20 @@ describe("Calm sourced read-only presentation", () => {
     expect(cash).toContain("No observed history loaded.");
     expect(JSON.stringify(partial)).toBe(before);
   });
+
+  it("does not turn an opening snapshot into a forecast path when execution has no supported periods", () => {
+    const result = runPersonalHouseholdForecast(createGoldenHouseholdDraft(), createHouseholdForecastRequest({
+      ...createGoldenHouseholdSessionConfiguration(), simulationEnd: "2026-04-01",
+    }, "94000000-0000-4000-8000-000000000171"));
+    if (result.status === "unavailable") throw new Error("Expected the synthetic source forecast");
+    const empty = { ...result, status: "incomplete" as const, points: [], reachedThrough: result.simulationStart, stoppedAt: result.simulationStart };
+    const before = JSON.stringify(empty);
+    const html = renderToStaticMarkup(<HouseholdChart forecast={empty} cashFlowOnly={false} calm />);
+    expect(html).toContain('class="calm-empty"');
+    expect(html).not.toContain("recharts-responsive-container");
+    expect(html).not.toContain("Show exact chart data · 0");
+    expect(html).toContain("snapshot, separate from projected periods");
+    expect(html).toContain("No past account history is included.");
+    expect(JSON.stringify(empty)).toBe(before);
+  });
 });

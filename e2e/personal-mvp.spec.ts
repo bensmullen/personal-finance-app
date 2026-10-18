@@ -32,12 +32,15 @@ const loadExample = async (page: import("@playwright/test").Page) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Use synthetic example" }).click();
   await expect(
-    page.getByRole("heading", { name: "How am I doing?" }),
+    page.getByRole("heading", { name: "Know where you stand." }),
   ).toBeVisible();
 };
 
 // Overview keeps exact requested boundaries available through deliberate disclosure.
 const expectOverviewRange = async (page: import("@playwright/test").Page, end: string) => {
+  const controls = page.locator(".chart-control-details");
+  const controlsWereOpen = await controls.getAttribute("open") !== null;
+  if (!controlsWereOpen) await controls.locator(":scope > summary").click();
   const range = page.locator(".chart-range");
   const wasOpen = await range.getAttribute("open") !== null;
   if (!wasOpen) await range.locator(":scope > summary").click();
@@ -45,6 +48,7 @@ const expectOverviewRange = async (page: import("@playwright/test").Page, end: s
   await expect(range.getByText("Requested end (exclusive)", { exact: true }).locator("xpath=following-sibling::dd[1]")).toHaveText(new RegExp(`^${end}(?:T.*)?$`));
   await expect(range).toContainText("[start, end)");
   if (!wasOpen) await range.locator(":scope > summary").click();
+  if (!controlsWereOpen) await controls.locator(":scope > summary").click();
 };
 
 test("U1 annual household filing facts have one accessible owner and survive reload", async ({ page }, testInfo) => {
@@ -207,6 +211,10 @@ test("D1-B normal investment controls persist a bank-funded operation without co
 const showHouseholdDetails = async (page: import("@playwright/test").Page, channel: "baseline" | "comparison" = "baseline", forecastBudget = 15_000) => {
   const status = page.getByRole("status", { name: channel === "baseline" ? "Household forecast status" : "Household comparison status" });
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: forecastBudget });
+  const controls = page.locator(".chart-control-details");
+  if (await controls.count() && await controls.getAttribute("open") === null) await controls.locator(":scope > summary").click();
+  const supporting = page.getByText("Forecast assumptions and supporting details", { exact: true });
+  if (await supporting.count() && await supporting.locator("..").getAttribute("open") === null) await supporting.click();
   const details = page.getByRole("button", { name: channel === "baseline" ? "Show forecast details" : /Show .* comparison details/ });
   if (await details.count()) await details.first().click();
   if (channel === "comparison") await page.getByText("Expert comparison details", { exact: true }).first().click();
@@ -1288,6 +1296,7 @@ for (const width of [390, 1440]) {
     await expect(chart).toContainText("Forecast, not account history");
     expect(await page.locator("#main-content").innerText()).not.toMatch(rawUuid);
     const request = await status.getAttribute("data-request-id");
+    await chart.locator(".chart-control-details > summary").click();
     const plot = chart.locator('[role="application"]');
     await plot.focus();
     await page.keyboard.press("ArrowRight");
@@ -1298,6 +1307,7 @@ for (const width of [390, 1440]) {
       await chart.getByRole("status", { name: "Assets, liabilities and net worth exact selected period", exact: true }).locator("dd").allTextContents(),
     );
     await expect(status).toHaveAttribute("data-request-id", request!);
+    await page.getByText("Forecast assumptions and supporting details", { exact: true }).click();
     const reveal = page.getByRole("button", { name: "Show forecast details", exact: true });
     await reveal.focus(); await page.keyboard.press("Enter");
     const table = page.getByRole("table", { name: "Reconciled household forecast" });
@@ -1402,7 +1412,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await releaseCurrent();
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
   await expect(status).toContainText("Partially modeled");
-  await expect(page.getByRole("button", { name: "Show forecast details" })).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", { name: "Show forecast details", includeHidden: true })).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toHaveCount(0);
   await showHouseholdDetails(page);
   const table = page.getByRole("table", { name: "Reconciled household forecast" });
