@@ -189,6 +189,41 @@ main#main-content { padding: 24px 32px 64px; }
 .capability { text-align: left; padding: 16px; margin-top: 12px; }
 .capability p { margin: 8px 0; }
 .mobile-more { display: none; }
+.mortgage-outlook, .mortgage-amortization { min-width: 0; overflow-wrap: anywhere; }
+.mortgage-outlook label { display: grid; gap: 6px; max-width: 30rem; }
+.mortgage-outlook select { width: 100%; max-width: 100%; min-height: 44px; }
+.mortgage-outlook button, .mortgage-amortization summary { min-height: 44px; }
+.mortgage-window-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-block: 16px; }
+.mortgage-amortization figure { margin: 20px 0; max-width: 100%; }
+.mortgage-legend { display: flex; flex-wrap: wrap; gap: 12px; list-style: none; padding: 0; font-size: 12px; }
+.mortgage-legend li { display: flex; align-items: center; gap: 6px; }
+.mortgage-legend li > span { width: 16px; height: 16px; display: inline-block; }
+.mortgage-series-0 { background: #a36c49; }
+.mortgage-series-1 { background: var(--green); }
+.mortgage-series-2 { background: repeating-linear-gradient(135deg, #d8e8dc, #d8e8dc 3px, #315b48 3px, #315b48 5px); outline: 1px solid #315b48; outline-offset: -1px; }
+.mortgage-columns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); align-items: end; gap: 3px; height: 210px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.mortgage-month { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; height: 100%; width: 100%; min-width: 0; padding: 4px 1px; border: 1px solid transparent; border-radius: 5px; color: var(--ink); background: transparent; font-size: 11px; }
+.mortgage-month[aria-pressed="true"] { border-color: var(--green); background: var(--mint); }
+.mortgage-column { display: flex; flex-direction: column-reverse; justify-content: flex-start; width: 72%; height: 155px; }
+.mortgage-column > span { display: block; width: 100%; flex-shrink: 0; }
+.mortgage-readout { padding: 12px; background: #f0f3ee; border-radius: 8px; font-size: 13px; line-height: 1.6; }
+.mortgage-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 16px; }
+.mortgage-summary dd { margin: 0; font-variant-numeric: tabular-nums; }
+.mortgage-table-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
+.mortgage-table-scroll table { font-size: 12px; }
+.mortgage-amortization details { max-width: 100%; }
+.mortgage-amortization summary { display: flex; align-items: center; cursor: pointer; }
+.liability-balance-outlook { min-width: 0; padding-bottom: 20px; margin-bottom: 24px; border-bottom: 1px solid var(--line); }
+.liability-balance-outlook figure { margin: 20px 0; }
+.liability-balance-outlook summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; }
+@media (max-width: 560px) {
+  .mortgage-outlook { padding: 16px; }
+  .mortgage-columns { gap: 6px 1px; height: auto; grid-auto-flow: row; grid-template-columns: repeat(6, minmax(44px, 1fr)); }
+  .mortgage-month { min-height: 120px; }
+  .mortgage-column { height: 85px; }
+  .mortgage-summary { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .mortgage-summary dd { margin-bottom: 8px; }
+}
 .forecast-update { margin-bottom: 10px; padding: 6px 12px; font-size: 12px; }
 .more-destinations { position: fixed; z-index: 8; bottom: 72px; left: 12px; right: 12px; max-height: 65vh; overflow: auto; background: white; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 12px; }
 .more-destinations button { display: block; width: 100%; padding: 12px; text-align: left; border: 0; border-radius: 6px; background: white; color: var(--green-dark); }
