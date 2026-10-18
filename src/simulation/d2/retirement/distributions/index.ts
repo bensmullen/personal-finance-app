@@ -184,7 +184,7 @@ export function evaluateRmdObligations(input: RmdInput): RmdEvaluation {
         need(text(a.id) && a.ownerId === r.personId && a.bucket === rule.bucket, "invalid", "account_identity_bucket");
         need(a.beneficiaryId === null, "beneficiary", "inherited_account_method");
         stamp(a.source, r.personId, a.id, start, "invalid");
-        need(a.family === rule.family || (r.aggregation !== null && ira(a.family) && ira(rule.family)), "unsupported", "account_family");
+        need(a.family === rule.family || (r.accounts.length > 1 && ira(a.family) && ira(rule.family)), "unsupported", "account_family");
         if (a.family === "workplace_plan") {
           need(a.planTerms?.rmdMethod === "owner_balance_divisor" && a.planTerms.ruleSnapshotId === rule.snapshotId, "law", "separately_sourced_plan_terms");
           stamp(a.planTerms!.source, r.personId, a.id, start, "law");
