@@ -102,6 +102,12 @@ describe("isolated SSA coordination (prep cases remain conditional, no integrate
     const r = recipient(), d = r.determinations[0]!;
     expect(run([r], undefined, date("2025-10-01")).diagnostics[0]!.diagnosticCode).toBe("UNAVAILABLE_EVIDENCE");
     expect(codes(change(r, { evidence: { ...d.evidence, publishedAt: date("2026-02-01") } }))).toContain("UNAVAILABLE_EVIDENCE");
+    const laterEvidence = { ...d.evidence, publishedAt: date("2026-01-20"),
+      knownAt: date("2026-01-20"), source: { ...d.evidence.source, asOf: date("2026-01-20") } };
+    // Even when a later replay knows the determination, it was not available
+    // for the January 15 installment and cannot backfill the payment.
+    expect(run([change(r, { evidence: laterEvidence })], period("2026-01-01", "2026-02-01"),
+      date("2026-02-01")).diagnostics[0]!.diagnosticCode).toBe("UNAVAILABLE_EVIDENCE");
     expect(codes(change(r, { evidence: { ...d.evidence, source: { ...d.evidence.source, projectionStatus: "explicit_projected" } } }))).toContain("UNAVAILABLE_EVIDENCE");
     expect(codes({ ...r, quotes: r.quotes.map(q => ({ ...q, evidence: { ...q.evidence, coverageSetId: "unrelated" } })) })).toContain("SOURCE_MIX");
     const q = r.quotes[0]!;
