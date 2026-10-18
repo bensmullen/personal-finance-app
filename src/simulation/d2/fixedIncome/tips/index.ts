@@ -148,7 +148,7 @@ export const proposeTips = (request: TipsRequest): TipsResult => {
         requireFact(points.length > 0, "CPI_REQUIRED", `Observed ${rule.seriesId} CPI for ${month} required; never infer inflation`);
         requireFact(points.length === 1, "CPI_CONFLICT", `Ambiguous CPI observation for ${month}; source revision selection required`);
         const point = points[0]!;
-        civilDate(point.month); admitSource(point.source, month, knownAt);
+        civilDate(point.month); admitSource(point.source, month, at); // CPI used for dated cash/carrying must have been available at that event, not merely at later replay.
         requireFact(point.source.publishedAt >= monthStart(month, 1), "SOURCE_NOT_ADMITTED", "An observed monthly CPI publication cannot precede completion of its observation month");
         requireFact(!point.value.isNegative(), "NEGATIVE_PRINCIPAL", "Negative CPI cannot create an indexed principal");
         requireFact(point.month.endsWith("-01") && point.value.isPositive(), "CPI_REQUIRED", "Positive observed monthly CPI required");
