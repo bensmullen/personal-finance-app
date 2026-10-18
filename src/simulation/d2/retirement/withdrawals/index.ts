@@ -199,7 +199,8 @@ export function evaluateWithdrawals(input: WithdrawalInput): WithdrawalEvaluatio
       need(s.projectionStatus !== "explicit_projected", "future_law", "verified_effective_rule");
       need(s.projectionStatus === "verified", "unknown", "verified_source");
       need(s.householdId === input.householdId && s.personId === person && s.resourceId === resource, "identity", "source_scope");
-      need(s.publishedAt <= input.knownAt && s.asOf <= input.knownAt && s.asOf <= r.effectiveAt &&
+      need(s.publishedAt <= s.asOf && s.publishedAt <= r.effectiveAt &&
+        s.publishedAt <= input.knownAt && s.asOf <= input.knownAt && s.asOf <= r.effectiveAt &&
         s.effectiveFrom <= r.effectiveAt && r.effectiveAt < s.endExclusive, "unknown", "source_period");
     };
     try {
