@@ -239,7 +239,7 @@ main#main-content { padding: 24px 32px 64px; }
 @media (min-width: 901px) {
   .app-shell.calm-shell > .topbar { grid-column: 2; padding-inline: clamp(22px, 4.25vw, 60px); }
   .app-shell.calm-shell > .primary-nav { grid-row: 1 / span 2; position: sticky; top: 0; align-self: start; height: 100vh; padding: 100px 15px 27px; gap: 4px; }
-  .calm-shell .topbar .brand { position: fixed; z-index: 1; left: 22px; top: 27px; color: white; font-size: 18px; letter-spacing: -.03em; }
+  .calm-shell .topbar .brand { position: fixed; z-index: 1; left: 22px; top: 27px; color: white; font-size: 16px; letter-spacing: -.035em; white-space: nowrap; }
   .calm-shell .brand-mark { background: #bfeadb; color: #113b36; }
   .calm-shell .session-banner { margin-left: 0; }
 }
