@@ -1,4 +1,5 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { readFile, writeFile } from "node:fs/promises";
 import { clickFinancialDestination, navigateOwner } from "./navigation.js";
 
 /**
@@ -24,17 +25,38 @@ test("synthetic account, income and forecast UX at desktop and narrow viewport",
   await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
 
   const capture = async (label: string, width: number) => {
-    const path = testInfo.outputPath(`${label}-${width}.png`);
+    const revision = process.env.GITHUB_SHA?.slice(0, 12).replace(/[^a-f0-9]/gi, "") || "revision-unrecorded";
+    const path = testInfo.outputPath(`${label}-${width}-${revision}.png`);
     await page.screenshot({ path, fullPage: true, animations: "disabled" });
     await testInfo.attach(`${label}-${width}`, { path, contentType: "image/png" });
   };
 
-  // One bounded, read-only capture per supported viewport and view; no data mutation or broad test replay.
+  // Bounded read-only captures, including paired Overview first screens; no source mutation.
   for (const width of [1440, 390]) {
-    await page.setViewportSize({ width, height: 900 });
+    const height = width === 390 ? 844 : 900;
+    await page.setViewportSize({ width, height });
 
     await navigate(page, "Overview", "How am I doing?");
-    await capture("01-overview", width);
+    await capture("01-overview-synthetic-current-app", width);
+    const revision = process.env.GITHUB_SHA?.slice(0, 12).replace(/[^a-f0-9]/gi, "") || "revision-unrecorded";
+    const productionName = `overview-production-first-screen-${width}-${revision}.png`;
+    const referenceName = `overview-calm-reference-barlow-fictional-${width}-${revision}.png`;
+    await page.screenshot({ path: testInfo.outputPath(productionName), animations: "disabled" });
+    await testInfo.attach(productionName, { path: testInfo.outputPath(productionName), contentType: "image/png" });
+    // Same approved document and viewport; its fictional Barlow values are NOT
+    // a production fixture. No production source data enters the reference page.
+    const reference = await page.context().newPage();
+    try {
+      await reference.setViewportSize({ width, height });
+      await reference.setContent(await readFile("docs/alpha/prototypes/level4-h04-h08-pilot.html", "utf8"));
+      await expect(reference.locator("body")).toHaveAttribute("data-theme", "calm");
+      await expect(reference.getByRole("heading", { name: "Know where you stand.", exact: true })).toBeVisible();
+      await reference.screenshot({ path: testInfo.outputPath(referenceName), animations: "disabled" });
+      await testInfo.attach(referenceName, { path: testInfo.outputPath(referenceName), contentType: "image/png" });
+    } finally { await reference.close(); }
+    const comparisonPath = testInfo.outputPath(`overview-comparison-${width}-${revision}.html`);
+    await writeFile(comparisonPath, `<!doctype html><html lang="en"><meta charset="utf-8"><title>Overview Calm review ${width}</title><style>body{font:16px system-ui;margin:24px}main{display:flex;align-items:start;gap:24px}figure{margin:0;min-width:0;flex:1}img{width:100%;border:1px solid #aaa}figcaption{margin:12px 0;line-height:1.5}</style><h1>Overview · ${width} × ${height} · ${revision}</h1><p>Visual review pending. Different synthetic examples: compare hierarchy, disclosures and presentation, not monetary values. Production status: ${await page.getByRole("status", { name: "Household forecast status", exact: true }).getAttribute("data-lifecycle")}.</p><main><figure><figcaption>Production: current application synthetic example at this checkout revision.</figcaption><img alt="Production Overview first screen" src="${productionName}"></figure><figure><figcaption>Approved Calm reference: fictional Barlow household from the checked-in prototype at the same revision. H04/H08 production fixture parity is not established.</figcaption><img alt="Approved Calm Overview first screen" src="${referenceName}"></figure></main></html>`);
+    await testInfo.attach(`overview-comparison-${width}-${revision}`, { path: comparisonPath, contentType: "text/html" });
 
     await navigate(page, "Money", "Income");
     await capture("02-income", width);
