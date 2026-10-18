@@ -4,7 +4,7 @@ import { domainId } from "../../../../src/identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../src/lineage/index.js";
 import { createAuthoritativeState } from "../../../../src/state/index.js";
 import { civilDate, instant } from "../../../../src/time/index.js";
-import { Currency, Money, USD, decimal, money } from "../../../../src/values/index.js";
+import { Currency, Money, Rate, USD, decimal, money, rateConvention } from "../../../../src/values/index.js";
 import { compileHouseholdKernel, applyHouseholdExecutionOverlay, runHouseholdKernel, replayHouseholdForecastWindow } from "../../../../src/simulation/householdExecution.js";
 import { createPrimitiveRuntimeStateStore } from "../../../../src/simulation/period.js";
 import { canonicalSerialize, createRunContext, runId, scenarioId } from "../../../../src/simulation/run.js";
@@ -112,6 +112,32 @@ describe("#149 bounded physical C1 after-tax premium integration", () => {
     expect(result.periods[0]!.cash.equals(money("700"))).toBe(true);
     expect(result.periods[0]!.cashFlow!.recurringExpenseRecognized.equals(money("300"))).toBe(true);
     expect(result.periods[0]!.statements.income.isZero()).toBe(true);
+  });
+
+  it("admits a separate ordinary wage stream without requiring a premium duplication proof", () => {
+    const k = kernel();
+    const payday = instant("2026-01-05T00:00:00.000Z");
+    const wage = {
+      id: domainId("income", uuid(9700)), ownerId: payer, baseMonthlyAmount: money("1500"),
+      start: payday, recurrence: { kind: "utc_monthly" as const, anchor: payday, invalidDayPolicy: "skip" as const },
+      depositAccountId: bank, growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
+      growthBaseAt: payday, primitiveIds: {
+        growth: domainId("primitive-instance", uuid(9701)),
+        recurrence: domainId("primitive-instance", uuid(9702)),
+      },
+      sourceTraceRefs: [ref("source:salary-unrelated-to-health-plan")],
+    };
+    const withWages = applyHouseholdExecutionOverlay(k, {
+      cashFlowInput: { ...k.cash!.input, incomes: [wage] },
+    });
+    const attached = attachAftertaxPremiums(input(request(), withWages));
+    expect(attached.diagnostics).toEqual([]);
+    expect(attached.kernel.cash!.input.incomes).toHaveLength(1);
+    const result = run(attached.kernel);
+    expect(result.status).toBe("completed");
+    expect(result.periods[0]!.cash.equals(money("2200"))).toBe(true);
+    expect(result.periods[0]!.cashFlow!.recurringIncomeRecognized.equals(money("1500"))).toBe(true);
+    expect(result.periods[0]!.cashFlow!.recurringExpenseRecognized.equals(money("300"))).toBe(true);
   });
 
   it("insufficient bank cash preserves the full actual claim and posts no settlement or overdraft", () => {
