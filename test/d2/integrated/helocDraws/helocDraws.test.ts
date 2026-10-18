@@ -111,7 +111,13 @@ describe("#149 actual draw-only household execution", () => {
     expect(result.outputCapabilities?.netWorth?.status).toBe("incomplete");
     expect(i.quotes[0]!.proposal.interestExpenseProposal.amount.isPositive()).toBe(true);
     expect(canonicalSerialize({ f, i })).toBe(before);
-    expect(execute(i, f)).toEqual(out);
+    // Re-created participants own a new prepare callback; callback identity is
+    // not an economic outcome. Compare the actual replayed state and evidence.
+    const repeated = execute(i, f);
+    expect(repeated.result.state).toEqual(result.state);
+    expect(repeated.result.periods).toEqual(result.periods);
+    expect(repeated.result.outputCapabilities).toEqual(result.outputCapabilities);
+    expect(repeated.diagnostics).toEqual(out.diagnostics);
     const participant = createHelocDrawParticipant(i);
     const prepared = participant.prepare(f.context, p.period, { state: f.opening, primitiveState: {} });
     const operation = prepared.operations.find(o => o.descriptor.operationClass === "liabilities:heloc_draw")!;
@@ -131,7 +137,10 @@ describe("#149 actual draw-only household execution", () => {
     expect(forecast.periods.map(p => p.cash.amount.toString())).toEqual(Array(13).fill("2500"));
     expect(exportHouseholdReplayCheckpoints(forecast)).toHaveLength(1);
     expect(exportHouseholdReplayCheckpoints(forecast)[0]!.state.identities.externalIdempotencyKeys).toHaveLength(3);
-    const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(forecast))));
+    // This participant carries bigint index/spread/rate evidence. Portable
+    // replay must preserve the exact value rather than losing its precision.
+    const artifact = createPortableHouseholdReplayArtifact(forecast);
+    const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(artifact)));
     for (const selected of [detail.periods[0]!, detail.periods[12]!]) {
       const resumed = replayHouseholdForecastWindow(restored, selected.period);
       expect(resumed.periods).toEqual([selected]);
