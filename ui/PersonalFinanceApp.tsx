@@ -3480,7 +3480,7 @@ function HouseholdForecastVisual({
       {forecast.stoppedAt && <ForecastCutoff forecast={forecast} draft={financialModel} />}
       <Profiler id="forecast-chart" onRender={(_id, _phase, duration) => {
         if (scope?.active) recordBrowserDuration("ui.chart_render", duration, scope.context);
-      }}><HouseholdChart forecast={forecast} cashFlowOnly={cashFlowOnly}
+      }}><HouseholdChart forecast={forecast} cashFlowOnly={cashFlowOnly} calm={calm}
         stale={!models.baseline || models.baseline.lastGoodResult !== forecast || models.baseline.resultModel !== draft || models.baseline.pending || models.baseline.stale || !!models.setupChangesPending}
         sourceFingerprint={models.baseline?.lastGoodResult === forecast ? models.baseline.resultFingerprint : undefined} /></Profiler>
       <p className="muted">{forecast.stoppedAt

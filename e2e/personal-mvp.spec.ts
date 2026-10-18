@@ -36,6 +36,17 @@ const loadExample = async (page: import("@playwright/test").Page) => {
   ).toBeVisible();
 };
 
+// Overview keeps exact requested boundaries available through deliberate disclosure.
+const expectOverviewRange = async (page: import("@playwright/test").Page, end: string) => {
+  const range = page.locator(".chart-range");
+  const wasOpen = await range.getAttribute("open") !== null;
+  if (!wasOpen) await range.locator(":scope > summary").click();
+  await expect(range.getByText("Requested start (inclusive)", { exact: true }).locator("xpath=following-sibling::dd[1]")).toHaveText(/^2026-01-01(?:T.*)?$/);
+  await expect(range.getByText("Requested end (exclusive)", { exact: true }).locator("xpath=following-sibling::dd[1]")).toHaveText(new RegExp(`^${end}(?:T.*)?$`));
+  await expect(range).toContainText("[start, end)");
+  if (!wasOpen) await range.locator(":scope > summary").click();
+};
+
 test("U1 annual household filing facts have one accessible owner and survive reload", async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -991,10 +1002,15 @@ test("R4 UAT diagnostics explain monthly-event limits and retirement remediation
 
 test("D1-A Golden Household has no spurious retirement-event warning", async ({ page }) => {
   await loadExample(page);
-  const check = page.locator("article").filter({ has: page.getByRole("heading", { name: "Model check", exact: true }) });
-  await expect(check).toContainText("Your current-position inputs are ready.");
+  const check = page.getByRole("region", { name: "What these numbers include", exact: true });
+  const coverage = check.getByText("How this is calculated / data coverage", { exact: true });
+  await expect(coverage.locator("..")).not.toHaveAttribute("open");
+  await coverage.click();
+  await expect(check.getByText("Current-position sources are supported.", { exact: true })).toBeVisible();
   await expect(check).not.toContainText("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
+  await expect(check.locator("[data-diagnostic-root]")).toHaveCount(0);
   await expect(check.getByText("Technical diagnostic details", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Your finances today", exact: true }).getByRole("article", { name: "Net worth", exact: true }).locator(".calm-metric-value")).toContainText("309330.29");
 });
 
 test("R4 UAT retirement comparison refreshes a stale session date from its recorded event", async ({ page }) => {
@@ -1409,7 +1425,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await expect(status).toHaveAttribute("data-lifecycle", "stale");
   await expect(status).toContainText("Old result");
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
-  await expect(page.getByText(/Requested 2026-01-01 → 2026-02-01/)).toBeVisible();
+  await expectOverviewRange(page, "2026-02-01");
   await waitQueued();
   const superseded = await status.getAttribute("data-request-id");
   await page.getByRole("button", { name: "Update forecast", exact: true }).click();
@@ -1422,7 +1438,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await expect(status).toHaveAttribute("data-pending", "true");
   await waitQueued(); await releaseCurrent();
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
-  await expect(page.getByText(/Requested 2026-01-01 → 2026-03-01/)).toBeVisible();
+  await expectOverviewRange(page, "2026-03-01");
   await showHouseholdDetails(page);
   await expect(table.locator("tbody tr")).toHaveCount(2);
 
@@ -1433,7 +1449,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await expect(status).toHaveAttribute("data-lifecycle", "error");
   await expect(status).toContainText("Old result");
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
-  await expect(page.getByText(/Requested 2026-01-01 → 2026-03-01/)).toBeVisible();
+  await expectOverviewRange(page, "2026-03-01");
   await page.getByRole("button", { name: "Cash", exact: true }).click();
   await page.getByRole("button", { name: "Income", exact: true }).click();
   await page.getByRole("button", { name: /Example salary/ }).click();
@@ -1444,11 +1460,11 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await expect(status).toHaveAttribute("data-lifecycle", "stale");
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   // A future income amount changes the forecast, not opening net worth.
-  await expect(page.getByRole("region", { name: "Household current summary" }).locator("dl > div").filter({ has: page.getByText("Net worth", { exact: true }) })).toContainText("309330.29");
-  await expect(page.getByText(/Requested 2026-01-01 → 2026-03-01/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Your finances today", exact: true }).getByRole("article", { name: "Net worth", exact: true }).locator(".calm-metric-value")).toContainText("309330.29");
+  await expectOverviewRange(page, "2026-03-01");
   await waitQueued(); await releaseCurrent();
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
-  await expect(page.getByText(/Requested 2026-01-01 → 2026-04-01/)).toBeVisible();
+  await expectOverviewRange(page, "2026-04-01");
 });
 
 test("guided setup reaches the Personal-MVP overview", async ({ page }) => {
@@ -1513,7 +1529,7 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   await expect(forecast).toBeVisible({ timeout: 60_000 });
   // The Golden model lacks authoritative tax facts; its complete economic horizon remains inspectable.
   await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-lifecycle", "incomplete");
-  await expect(page.getByText(/Requested 2026-01-01 → 2036-01-01/)).toBeVisible();
+  await expectOverviewRange(page, "2036-01-01");
   await expect(forecast.locator("tbody tr")).toHaveCount(24);
   const requestBeforePaging = await page.getByRole("status", { name: "Household forecast status" }).getAttribute("data-request-id");
   await page.getByRole("button", { name: "Next page", exact: true }).click();

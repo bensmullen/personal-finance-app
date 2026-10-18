@@ -33,6 +33,10 @@ for (const width of [1440, 390]) test(`Overview hierarchy, exact current sources
   await expect(main.locator(".compact-blocker")).toHaveCount(0);
   const outlook = page.getByRole("region", { name: "Your money over time", exact: true });
   await expect(outlook.getByRole("figure", { name: "Household financial outlook chart", exact: true })).toBeVisible();
+  await expect(outlook.locator(".chart-coverage")).toContainText("No past account history is included.");
+  await expect(outlook.locator(".chart-coverage")).not.toContainText("exclusive");
+  const forecastRange = outlook.locator(".chart-range");
+  await expect(forecastRange).not.toHaveAttribute("open");
   const graphBox = await outlook.boundingBox();
   const headBox = await main.locator(".calm-page-header").boundingBox();
   expect(graphBox!.y).toBeGreaterThan(headBox!.y + headBox!.height);
@@ -80,6 +84,13 @@ for (const width of [1440, 390]) test(`Overview hierarchy, exact current sources
   await expect(forecastStatus(page)).toContainText("Update needed");
   await expect(forecastStatus(page)).toContainText("Old result");
   await expect(outlook.locator(".chart-freshness")).toContainText("Out of date");
+  await expect(forecastRange).not.toHaveAttribute("open");
+  await forecastRange.locator(":scope > summary").focus();
+  await page.keyboard.press("Enter");
+  await expect(forecastRange).toHaveAttribute("open", "");
+  await expect(forecastRange).toContainText("these boundaries belong to the retained forecast");
+  await expect(forecastRange).toContainText("[start, end)");
+  await forecastRange.locator(":scope > summary").click();
   await expect(current.getByRole("article", { name: "Cash and savings", exact: true }).locator(".calm-metric-value")).toHaveText(position.cash?.display ?? "Unavailable");
   await expect(page.getByRole("alert", { name: "Priority correction", exact: true })).toHaveCount(1);
   await navigateOwner(page, "Settings", "Import / Export");
@@ -93,7 +104,12 @@ for (const width of [1440, 390]) test(`Overview hierarchy, exact current sources
   await expect(page.getByRole("alert", { name: "Priority correction", exact: true }).getByRole("button")).toHaveCount(1);
   await expect(outlook.getByRole("figure")).toHaveCount(0);
   await expect(current.getByRole("article", { name: "Cash and savings", exact: true }).locator(".calm-metric-value")).toHaveText(position.cash?.display ?? "Unavailable");
+  // This fixture loses its session-only income receiving account on import.
+  // The recovery belongs to Income, where the missing source route is authored.
+  await expect(page.getByRole("alert", { name: "Priority correction", exact: true })).toContainText("Income receiving account");
   await page.getByRole("alert", { name: "Priority correction", exact: true }).getByRole("button", { name: "Review setup", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Your current plan", exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Cash sections", exact: true }).getByRole("button", { name: "Income", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("region", { name: "Income deposit routing", exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Income receiving account", exact: true })).toBeFocused();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

@@ -207,7 +207,14 @@ async function boundedGolden(page: Page, width: number, monthlySpending?: string
   await expect(charts).toBeVisible();
   await expect(charts).toHaveAttribute("data-chart-status", /^(complete|incomplete)$/);
   await expect(charts).toHaveAttribute("data-supported-months", "3");
-  await expect(charts).toContainText("Requested 2026-01-01 → 2026-04-01 (exclusive). Modeled through 2026-04-01");
+  await expect(charts.locator(".chart-coverage")).toContainText("Forecast starts January 1, 2026; available results end before April 1, 2026.");
+  const range = charts.locator(".chart-range");
+  await expect(range).not.toHaveAttribute("open");
+  await range.locator(":scope > summary").click();
+  await expect(range.getByText("Requested start (inclusive)", { exact: true }).locator("xpath=following-sibling::dd[1]")).toHaveText(/^2026-01-01(?:T.*)?$/);
+  await expect(range.getByText("Requested end (exclusive)", { exact: true }).locator("xpath=following-sibling::dd[1]")).toHaveText(/^2026-04-01(?:T.*)?$/);
+  await expect(range.getByText("Available results end (exclusive)", { exact: true }).locator("xpath=following-sibling::dd[1]")).toHaveText(/^2026-04-01(?:T.*)?$/);
+  await range.locator(":scope > summary").click();
   return status;
 }
 async function exportedBytes(page: Page) {
@@ -526,7 +533,12 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("region", { name: "Investing outlook" })).toContainText("No investment holdings recorded");
     await clickFinancialDestination(page, "Overview");
     await expect(page.getByRole("figure", { name: "Household financial outlook chart" })).toHaveCount(0);
-    await expect(page.getByText("Run the reconciled household forecast", { exact: true })).toBeVisible();
+    await expect(page.getByRole("status", { name: "Household forecast status", exact: true })).toHaveAttribute("data-lifecycle", "idle");
+    await expect(page.getByRole("region", { name: "Your money over time", exact: true }).getByText("Your forecast is not ready yet", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Your finances today", exact: true }).getByRole("article", { name: "Cash and savings", exact: true }).locator(".calm-metric-value")).toHaveText("$3750.00");
+    const correction = page.getByRole("alert", { name: "Priority correction", exact: true });
+    await expect(correction).toContainText("Income receiving account");
+    await expect(correction.getByRole("button", { name: "Review setup", exact: true })).toBeVisible();
     await clickFinancialDestination(page, "Cash");
     await expect(page.getByText(/No supported cash forecast yet/)).toBeVisible();
     await expect(page.locator(".financial-chart")).toHaveCount(0);
