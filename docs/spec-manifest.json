@@ -686,7 +686,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.6.17-draft",
+      "version": "0.6.18-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -766,7 +766,11 @@
         "capability-aware V4 Cash allocation",
         "U1B-D",
         "Issue 161",
-        "V5 source-backed mortgage amortization"
+        "V5 source-backed mortgage amortization",
+        "U1B UX parity",
+        "Issue 170",
+        "Issue 171",
+        "Overview Cash Calm visual acceptance"
       ],
       "applies_to": [
         "personal-mvp",
