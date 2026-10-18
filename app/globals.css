@@ -285,6 +285,13 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-outlook .financial-chart > details > summary { min-height: 44px; font-size: 12px; color: var(--calm-accent); }
 .calm-outlook .chart { margin: 12px 0; border: 1px solid #edf1ee; border-radius: 12px; background: linear-gradient(#fff, #fbfdfb); }
 .calm-outlook .chart-legend { gap: 6px 12px; }
+/* Keep the existing exact-value hover readout legible and bounded instead of
+   allowing long decimal strings to collapse labels into a one-letter column
+   or extend the tooltip over the financial cards below the graph. */
+.calm-outlook .chart-readout { box-sizing: border-box; width: min(320px, calc(100vw - 64px)); max-height: 170px; overflow-y: auto; }
+.calm-outlook .chart-readout dl.chart-exact-values { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.calm-outlook .chart-readout .chart-exact-values > div { display: grid; grid-template-columns: minmax(90px, .75fr) minmax(0, 1.25fr); column-gap: 8px; }
+.calm-outlook .chart-readout .chart-exact-values :is(dt, dd) { min-width: 0; margin: 0; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 .calm-outlook .chart-legend button { border: 0; padding: 4px; background: transparent; }
 .calm-outlook .chart-axis-note, .calm-outlook .chart-qualification, .calm-outlook .chart-coverage { font-size: 11px; margin: 6px 0; }
 .calm-outlook .forecast-figure { margin: 8px 0 0; padding-bottom: 0; }
