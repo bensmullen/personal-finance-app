@@ -287,7 +287,8 @@ for (const width of [1440, 390]) {
     await grouping(wealth).focus();
     await expect(grouping(wealth)).toBeFocused();
     await expect(wealth.getByRole("group", { name: "Assets, liabilities and net worth legend" }).getByRole("button")).toHaveCount(3);
-    await expect(page.getByText(/No observed history loaded/)).toHaveCount(1);
+    await expect(page.locator(".financial-charts > .chart-coverage")).toContainText("No past account history is included.");
+    await expect(page.locator(".financial-charts > .chart-range")).not.toHaveAttribute("open");
     await expect(wealth).toContainText("snapshot, separate from projected periods");
     const graph = wealth.getByRole("application");
     await expect(graph).toHaveAttribute("tabindex", "0");
@@ -537,8 +538,12 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("region", { name: "Your money over time", exact: true }).getByText("Your forecast is not ready yet", { exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: "Your finances today", exact: true }).getByRole("article", { name: "Cash and savings", exact: true }).locator(".calm-metric-value")).toHaveText("$3750.00");
     const correction = page.getByRole("alert", { name: "Priority correction", exact: true });
-    await expect(correction).toContainText("Income receiving account");
-    await expect(correction.getByRole("button", { name: "Review setup", exact: true })).toBeVisible();
+    // This intentionally plan-less, opening-cash-only H04 fixture is blocked first by
+    // the missing Current Plan—not by the later income-account setup dependency.
+    await expect(correction).toContainText("Choose one enabled Current Plan");
+    await expect(correction.getByRole("button", { name: "Review forecast dates", exact: true })).toBeVisible();
+    await correction.getByRole("button", { name: "Review forecast dates", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Your current plan", exact: true })).toBeVisible();
     await clickFinancialDestination(page, "Cash");
     await expect(page.getByText(/No supported cash forecast yet/)).toBeVisible();
     await expect(page.locator(".financial-chart")).toHaveCount(0);
