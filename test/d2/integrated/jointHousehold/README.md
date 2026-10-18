@@ -52,14 +52,25 @@ by the production loan/premium helpers. Transactions balance by currency.
 | Replay / reattachment | Regenerate detail from immutable opening, exact reattachment, then 13-month bounded summary for first real month-12 sparse checkpoint | Repeated results identical; checkpoint and opening replay of month 13 match final detail state/runtime without duplicate claims or interest |
 | Distinct owners / equivalent generic Expense | Reject another household's bank proof; replace source-proven equivalent generic expense with C1 stream | No cross-household account or claim leakage; exactly one premium recognition/settlement and unchanged full joint result |
 
-P22 authorizes required debt service before its optional extra principal. It does
-**not** authorize debt before a health premium. The empty cross-domain policy is
-intentional: unresolved contention is reported atomically, not resolved using
-stream priority numbers, array order or a new rule. At $100 both payments fail
-in every legal order, so the actual unpaid claims and shortfalls can be asserted
-without choosing a new cross-domain priority. $2,000 plus the early wage is ample;
-the smaller-bank stress explicitly places payday later so future wages cannot
-silently fund earlier service.
+P22 independently requires contractual debt service before optional extra
+principal. For **funded** baseline and replay runs, this synthetic household
+**explicitly authors** the additional same-instant priority: wage settlement
+before debt service, debt service before insurance expense settlement, and
+insurance expense settlement before extra principal. The source-qualified
+synthetic policy makes replay and summary/detail comparisons deterministic
+without inventing a global finance-engine priority; it is NOT implied by P22
+or a universal rule for other households. The same-day wage case separately
+authors VS2 `income_before_expense`. Amounts in the January and February
+oracle are unchanged by the admitted order.
+
+For the $400 and $100 **scarcity** cases the scenario explicitly selects the
+original **empty** cross-domain policy instead: no implicit priority is allowed.
+At $400 competing payment orders are economically material and execution must
+stop atomically with `HOUSEHOLD_CONTENTION_UNRESOLVED`; at $100 both payments
+fail in every legal order, so actual unpaid claims/shortfalls can be asserted.
+The later wage cannot fund an earlier obligation. This split preserves both
+important product contracts: deterministic replay with an authored policy
+and conservative incompleteness when policy is absent and order matters.
 
 The $100 case reports potential funds of $100 and deficits of $200 / $344.24
 in the existing shortfall objects. Both accepted funding amounts are zero:
