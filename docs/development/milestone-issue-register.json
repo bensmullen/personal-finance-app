@@ -55,6 +55,14 @@
       "required_issue_numbers": [
         161
       ]
+    },
+    "U1B_UX": {
+      "stage": "U1B UX prototype-to-production Calm parity — Overview then Cash",
+      "blocking_transition": "Start U1B-E shared UI or mark U1/D1 owner-UAT visually accepted",
+      "required_issue_numbers": [
+        170,
+        171
+      ]
     }
   },
   "issues": [
@@ -323,6 +331,46 @@
         "PFA-DET-022"
       ],
       "scope": "Early S1-S8 shared finance contract freeze, one-writer compiler/ledger/scheduler/payroll/tax/read-model integration, explicit A-B-C and U1 #120/withholding #101/tax #138 seam ledger, later U1-authoring handshake, all-domain truth table and final accepted PM UAT. #120 dependency is for D2-D closeout, not early D2 module work."
+    },
+    {
+      "issue_number": 170,
+      "owner_stage": "U1B-UX-A-Calm-Overview",
+      "blocking_gate": "U1B_UX",
+      "depends_on": [
+        142
+      ],
+      "spec_requirement_ids": [
+        "PFA-UX-001",
+        "PFA-UX-015",
+        "PFA-UX-016",
+        "PFA-UX-018",
+        "PFA-UX-019",
+        "PFA-UX-020",
+        "PFA-UX-021",
+        "PFA-UX-022",
+        "PFA-UX-023"
+      ],
+      "scope": "Post-merged D/PR #166 Calm production parity part A: reusable presentational Calm primitives and Overview-first design, concise summary/next action, honest source/status and progressive disclosures. Independent 1440/390 real screenshot comparison and PM visual checkpoint, no financial or source change; UAT owner #120."
+    },
+    {
+      "issue_number": 171,
+      "owner_stage": "U1B-UX-B-Calm-Cash",
+      "blocking_gate": "U1B_UX",
+      "depends_on": [
+        170
+      ],
+      "spec_requirement_ids": [
+        "PFA-UX-001",
+        "PFA-UX-015",
+        "PFA-UX-016",
+        "PFA-UX-018",
+        "PFA-UX-019",
+        "PFA-UX-020",
+        "PFA-UX-021",
+        "PFA-UX-022",
+        "PFA-UX-023"
+      ],
+      "scope": "After merged #170 UX primitives, Cash V2/V3/V4 prototype-to-production layout/disclosure/plain-language remediation. Preserve source-backed partial gross income, bank-versus-model-cash, funding and no-payroll tax completeness; independent real production 1440/390 screenshot/PM checkpoint and UAT owner #120. U1B-E shared UI deferred until this phase."
     }
   ],
   "legacy_open_task_reconciliation": {
