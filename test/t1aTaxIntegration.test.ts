@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { assertBalanced } from "../src/accounting/index.js";
 import { compileHouseholdTax, validateResidenceTaxPeriods, validateWorkTaxAllocations, resolveTaxEligibility } from "../src/application/compiler/tax.js";
-import { runHouseholdKernel, runCompiledHouseholdProjection, replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
+import { runHouseholdKernel, runCompiledHouseholdProjection, replayHouseholdForecastWindow, type HouseholdForecastSummaryResult, type CompiledHouseholdProjectionRunResult } from "../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
 import { applyHouseholdExecutionOverlay, compileHouseholdKernel } from "../src/simulation/r3/compiledHousehold.js";
 import { canonicalSerialize } from "../src/simulation/run.js";
@@ -14,6 +14,10 @@ import { ValidationError } from "../src/diagnostics/index.js";
 import { domainId } from "../src/identity/index.js";
 import { taxHouseholdFixture } from "./fixtures/t1aTaxHouseholds.js";
 import { taxRule, syntheticPayroll } from "./fixtures/t1aTaxRules.js";
+import { federal2026TaxCatalog } from "../src/rules/tax/lawCatalog.js";
+import { taxCatalogFingerprint } from "../src/rules/tax/catalog.js";
+import { taxDiagnostic, taxOutputCapabilities } from "../src/simulation/tax/contracts.js";
+import { mergeOutputCapabilities } from "../src/simulation/r3/capabilities.js";
 
 const differenceContext = (actual: unknown, expected: unknown): string => {
   const left = canonicalSerialize(actual), right = canonicalSerialize(expected);
@@ -35,6 +39,230 @@ const localFixture = (year: string, months: number, state: string, source: Parti
 };
 
 describe("T1A household tax integration", () => {
+  // A bounded, source-qualified interest-only case: no wage withholding or benefits are invented.
+  const lawScenario = (year = "2027", months = 12) => {
+    const seed = taxHouseholdFixture();
+    const householdId = String(seed.input.ownerId), personId = seed.input.incomes[0]!.ownerId;
+    const model = { modelId: domainId("model", "88000000-0000-4000-8000-000000000099"),
+      modelFormatVersion: CURRENT_RUN_VERSIONS.modelFormatVersion, financialSpecificationVersion: CURRENT_RUN_VERSIONS.financialSpecificationVersion,
+      objects: { Household: [{ household_id: householdId, members: [personId], filing_status: "single" }], Person: [{ person_id: personId, household_id: householdId }] } };
+    const compiled = compileHouseholdTax(model, { asOf: `${year}-01-01`, simulationStart: `${year}-01-01`, simulationEnd: `${Number(year) + 1}-01-01`,
+      projectedCurrentLawThrough: "2029-01-01", catalog: [...federal2026TaxCatalog, ...alphaStateTaxCatalog.filter(rule => rule.jurisdiction === "US:GA" && rule.effectiveFrom.startsWith("2026"))] });
+    if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled.diagnostics));
+    const fixture = localFixture(year, months, "US:GA", { incomeType: "interest", work: [],
+      residence: [{ state_jurisdiction: "US:GA", effective_date: `${year}-01-01` }],
+      eligibility: ["federal_base_deduction_only", fullYearResidentEligibilityKey("US:GA"), recognizedGrossTaxableBaseEligibilityKey("US:GA")].map(key => ({ key, value: true, effective_date: `${year}-01-01` })) },
+      { catalog: compiled.value.catalog, projectedCurrentLawAssumption: compiled.value.projectedCurrentLawAssumption!, filingStatuses: compiled.value.filingStatuses! });
+    const { filingStatus: _legacy, ...input } = fixture.input;
+    return { ...fixture, input };
+  };
+  type TaxChanges = { readonly [K in keyof HouseholdTaxInput]?: HouseholdTaxInput[K] | undefined };
+  function scenarioRun(fixture: ReturnType<typeof lawScenario>, changes: TaxChanges, resultTier: "detail"): CompiledHouseholdProjectionRunResult;
+  function scenarioRun(fixture: ReturnType<typeof lawScenario>, changes?: TaxChanges): HouseholdForecastSummaryResult;
+  function scenarioRun(fixture: ReturnType<typeof lawScenario>, changes: TaxChanges = {}, resultTier?: "detail"): CompiledHouseholdProjectionRunResult | HouseholdForecastSummaryResult {
+    // Preserve the typed required fixture while omitting explicitly cleared optional facts.
+    const input: HouseholdTaxInput = { ...fixture.input };
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === undefined) Reflect.deleteProperty(input, key);
+      else Object.assign(input, { [key]: value });
+    }
+    const request = { kernel: applyHouseholdExecutionOverlay(fixture.kernel, { participants: [createHouseholdTaxParticipant(input)] }), runContext: fixture.context };
+    return resultTier === "detail" ? runHouseholdKernel({ ...request, resultTier: "detail" }) : runHouseholdKernel(request);
+  }
+
+  it("keeps verified 2026 computation complete without projected-law qualifications", () => {
+    const verified = scenarioRun(lawScenario("2026"));
+    expect(verified.status).toBe("completed");
+    expect(verified.diagnostics).toEqual([]);
+  });
+
+  it("separates explicitly selected projected 2027 computation from law confidence without changing annual postings", () => {
+    const fixture = lawScenario(), summary = scenarioRun(fixture), detail = scenarioRun(fixture, {}, "detail");
+    expect(summary.status).toBe("completed");
+    expect(summary.reachedThrough).toBe(fixture.context.simulationEnd);
+    expect(summary.outputCapabilities?.netWorth?.status).toBe("complete");
+    expect(summary.periods.at(-1)!.cash.equals(money("11401.20"))).toBe(true);
+    expect(summary.periods.at(-1)!.liabilities.isZero()).toBe(true);
+    const qualifications = summary.outputCapabilities!.netWorth!.diagnostics;
+    expect(qualifications.length).toBeGreaterThan(0);
+    expect(qualifications.every(item => item.category === "projected_current_law")).toBe(true);
+    expect(qualifications).toEqual(expect.arrayContaining([expect.objectContaining({ jurisdiction: "US:FEDERAL", projectedLaw: expect.objectContaining({
+      baseYear: 2026, baseRuleVersion: "US:FEDERAL:2026:v1", catalogFingerprint: taxCatalogFingerprint(fixture.input.catalog),
+      effectiveFrom: "2027-01-01T00:00:00.000Z", effectiveUntil: "2029-01-01T00:00:00.000Z", assumption: fixture.input.projectedCurrentLawAssumption,
+    }) })]));
+    expect(detail.status).toBe(summary.status);
+    expect(detail.outputCapabilities).toEqual(summary.outputCapabilities);
+    expect(detail.diagnostics).toEqual(summary.diagnostics);
+    expect(canonicalSerialize(detail.state)).toBe(canonicalSerialize(summary.state));
+    for (const [index, period] of detail.periods.entries()) {
+      expect(period.outputCapabilities).toEqual(summary.periods[index]!.outputCapabilities);
+      expect(canonicalSerialize(period.statements)).toBe(canonicalSerialize(summary.periods[index]!.statements));
+    }
+    const unselected = scenarioRun(fixture, { projectedCurrentLawAssumption: undefined }, "detail");
+    expect(unselected.status).toBe("incomplete");
+    expect(unselected.runMetadata.inputFingerprint).not.toBe(detail.runMetadata.inputFingerprint);
+    expect(canonicalSerialize(unselected.state)).toBe(canonicalSerialize(detail.state));
+    expect(unselected.periods.map(period => canonicalSerialize(period.transactions))).toEqual(detail.periods.map(period => canonicalSerialize(period.transactions)));
+    expect(unselected.outputCapabilities?.statementIncome?.status).toBe("complete");
+    expect(unselected.outputCapabilities!.cash!.diagnostics.every(item => item.projectedLaw === undefined)).toBe(true);
+    // Prior CI spent 4.7s on the combined baseline before replay failed. Keep
+    // all three annual executions with a bounded budget for posting equivalence.
+  }, 15_000);
+
+  it("roundtrips legacy unselected projected-law artifacts through the summary replay contract", () => {
+    const unselected = scenarioRun(lawScenario("2027", 2), { projectedCurrentLawAssumption: undefined });
+    const restored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(unselected)));
+    const rerun = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
+    expect(rerun.runMetadata).toEqual(unselected.runMetadata);
+    expect(rerun.diagnostics).toEqual(unselected.diagnostics);
+    expect(rerun.outputCapabilities).toEqual(unselected.outputCapabilities);
+    expect(canonicalSerialize(rerun.state)).toBe(canonicalSerialize(unselected.state));
+  });
+
+  it("detects the real projected salary gross-to-net gap without changing modeled postings", () => {
+    const interest = lawScenario();
+    const source = interest.input.incomes[0]!;
+    const fixture = { ...interest, input: { ...interest.input, incomes: [{ ...source, incomeType: "salary",
+      work: [{ state_jurisdiction: "US:GA", allocation: "1", effective_date: "2027-01-01" }] }] } };
+    expect(fixture.input.diagnostics).toEqual([]);
+    expect(fixture.input.payments).toEqual([]);
+    const summary = scenarioRun(fixture), detail = scenarioRun(fixture, {}, "detail");
+    const gap = expect.objectContaining({ category: "wage_gross_to_net_withholding", entityId: source.id, taxYear: "2027" });
+    expect(summary.status).toBe("incomplete");
+    expect(summary.reachedThrough).toBe(fixture.context.simulationEnd);
+    expect(summary.periods).toHaveLength(12);
+    expect(summary.periods[0]!.cash.equals(money("1000"))).toBe(true);
+    expect(summary.periods[0]!.statements.income.equals(money("1000"))).toBe(true);
+    expect(summary.periods.at(-1)!.liabilities.isZero()).toBe(true);
+    expect(summary.outputCapabilities?.cash?.status).toBe("incomplete");
+    expect(summary.outputCapabilities?.netWorth?.status).toBe("incomplete");
+    expect(summary.outputCapabilities?.statementIncome?.status).toBe("complete");
+    expect(summary.outputCapabilities?.cash?.diagnostics).toEqual(expect.arrayContaining([
+      gap, expect.objectContaining({ category: "projected_current_law", projectedLaw: expect.any(Object) }),
+    ]));
+    expect(summary.diagnostics).toContainEqual(gap);
+    expect(detail.status).toBe(summary.status);
+    expect(detail.outputCapabilities).toEqual(summary.outputCapabilities);
+    expect(detail.diagnostics).toEqual(summary.diagnostics);
+    expect(canonicalSerialize(detail.state)).toBe(canonicalSerialize(summary.state));
+    for (const [index, period] of detail.periods.entries()) {
+      expect(period.outputCapabilities).toEqual(summary.periods[index]!.outputCapabilities);
+      expect(period.outputCapabilities?.cash?.status).toBe("incomplete");
+      expect(period.outputCapabilities?.cash?.diagnostics).toContainEqual(gap);
+    }
+    // The legacy unselected path keeps its original diagnostics and all postings,
+    // including funded final settlements, even though both runs are incomplete.
+    const legacy = scenarioRun(fixture, { projectedCurrentLawAssumption: undefined }, "detail");
+    expect(legacy.status).toBe("incomplete");
+    expect(legacy.outputCapabilities?.cash?.diagnostics.some(item => item.category === "wage_gross_to_net_withholding")).toBe(false);
+    expect(canonicalSerialize(legacy.state)).toBe(canonicalSerialize(detail.state));
+    expect(legacy.periods.map(period => canonicalSerialize(period.transactions))).toEqual(detail.periods.map(period => canonicalSerialize(period.transactions)));
+    // Prior CI spent 11.9s on the combined case. Keep annual posting equivalence
+    // here and exercise replay/payment/verified-law paths in a bounded fixture.
+  }, 15_000);
+
+  it("roundtrips the projected wage limitation and rejects standalone withholding as a payroll binding", () => {
+    const interest = lawScenario("2027", 2);
+    const source = interest.input.incomes[0]!;
+    const fixture = { ...interest, input: { ...interest.input, incomes: [{ ...source, incomeType: "salary",
+      work: [{ state_jurisdiction: "US:GA", allocation: "1", effective_date: "2027-01-01" }] }] } };
+    const summary = scenarioRun(fixture);
+    const gap = expect.objectContaining({ category: "wage_gross_to_net_withholding", entityId: source.id, taxYear: "2027" });
+    const restored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(summary)));
+    const replay = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
+    expect(replay.status).toBe("incomplete");
+    expect(replay.outputCapabilities).toEqual(summary.outputCapabilities);
+    expect(replay.diagnostics).toEqual(summary.diagnostics);
+    expect(canonicalSerialize(replay.state)).toBe(canonicalSerialize(summary.state));
+    const payment = scenarioRun(fixture, { payments: [{ id: "standalone-withholding", jurisdiction: "US:FEDERAL",
+      at: instant("2027-01-20T00:00:00.000Z"), amount: money("10"), kind: "withholding" }] });
+    expect(payment.status).toBe("incomplete");
+    expect(payment.outputCapabilities?.cash?.diagnostics).toContainEqual(gap);
+    expect(scenarioRun(interest).status).toBe("completed");
+    const verified = lawScenario("2026", 1);
+    const verifiedWages = scenarioRun(verified, { incomes: [{ ...verified.input.incomes[0]!, incomeType: "salary",
+      work: [{ state_jurisdiction: "US:GA", allocation: "1", effective_date: "2026-01-01" }] }] });
+    expect(verifiedWages.outputCapabilities?.cash?.diagnostics.some(item => item.category === "wage_gross_to_net_withholding")).toBe(false);
+  });
+
+  it("retains every substantive limitation alongside projected-law qualifications", () => {
+    // Each limitation is observable on the first recognized income; annual
+    // settlement and year-transition coverage remain in the dedicated cases.
+    const fixture = lawScenario("2027", 1);
+    for (const category of ["withholding", "payroll", "benefits", "unknown_future_capability"]) {
+      const result = scenarioRun(fixture, { diagnostics: [taxDiagnostic(category, "Material capability unavailable")] });
+      expect(result.status).toBe("incomplete");
+      expect(result.outputCapabilities?.cash?.diagnostics.some(item => item.category === category)).toBe(true);
+      expect(result.outputCapabilities?.cash?.diagnostics.some(item => item.projectedLaw)).toBe(true);
+    }
+    for (const changes of [
+      { settlements: [] }, { fundingPolicy: undefined }, { filingStatuses: {} },
+      { filingStatuses: { "2027": { householdId: String(fixture.input.ownerId), taxYear: "2027", status: "true_conflict", sources: [] } } },
+      { incomes: [{ ...fixture.input.incomes[0]!, incomeType: "business" }] },
+      { incomes: [{ ...fixture.input.incomes[0]!, eligibility: fixture.input.incomes[0]!.eligibility.filter(item => item.key !== recognizedGrossTaxableBaseEligibilityKey("US:GA")) }] },
+      { incomes: [{ ...fixture.input.incomes[0]!, residence: [{ state_jurisdiction: "US:ZZ", effective_date: "2027-01-01" }] }] },
+    ] satisfies readonly TaxChanges[]) {
+      const result = scenarioRun(fixture, changes);
+      expect(result.status).toBe("incomplete");
+      expect(result.outputCapabilities?.netWorth?.status).toBe("incomplete");
+      expect(result.outputCapabilities?.statementIncome?.status).toBe("complete");
+    }
+    const { projectedCurrentLawAssumption: _selected, ...unselected } = fixture.input;
+    const absent = scenarioRun(fixture, { ...unselected, catalog: [], projectedCurrentLawAssumption: undefined });
+    expect(absent.status).toBe("incomplete");
+    expect(absent.outputCapabilities?.cash?.diagnostics.some(item => item.category === "rule_selection")).toBe(true);
+  });
+
+  it("preserves law basis across portable replay and keeps failed execution incomplete", () => {
+    const fixture = lawScenario("2027", 2), forecast = scenarioRun(fixture);
+    const restored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(forecast)));
+    const rerun = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
+    expect(rerun.runMetadata).toEqual(forecast.runMetadata);
+    expect(rerun.outputCapabilities).toEqual(forecast.outputCapabilities);
+    expect(rerun.diagnostics).toEqual(forecast.diagnostics);
+    expect(canonicalSerialize(rerun.state)).toBe(canonicalSerialize(forecast.state));
+    const window = forecast.periods.at(-1)!.period;
+    expect(replayHouseholdForecastWindow(restored, window)).toEqual(replayHouseholdForecastWindow(forecast, window));
+    const failed = scenarioRun(fixture, { refundAccountId: "86000000-0000-4000-8000-000000000099" as never });
+    expect(failed.status).toBe("incomplete");
+    expect(failed.stoppedAt).toBe(fixture.context.simulationStart);
+    expect(failed.reachedThrough).toBeUndefined();
+    expect(failed.periods).toHaveLength(0);
+  });
+
+  it("merges a complete projected year with missing next-year facts without losing its reached boundary", () => {
+    const nextYearUnknown = lawScenario("2027", 13), fullPeriodRun = scenarioRun(nextYearUnknown);
+    expect(fullPeriodRun.periods[11]!.outputCapabilities?.cash?.status).toBe("complete");
+    expect(fullPeriodRun.periods[12]!.outputCapabilities?.cash?.status).toBe("incomplete");
+    expect(fullPeriodRun.status).toBe("incomplete");
+    expect(fullPeriodRun.reachedThrough).toBe(nextYearUnknown.context.simulationEnd);
+    expect(fullPeriodRun.outputCapabilities?.cash?.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: "projected_current_law", projectedLaw: expect.any(Object) }),
+      expect.objectContaining({ category: "filing_status_year_unknown", taxYear: "2028" }),
+    ]));
+  });
+
+  it("fails closed on stale law selections and merges qualifications without losing missing capability", () => {
+    const fixture = lawScenario("2027", 1), selection = fixture.input.projectedCurrentLawAssumption!;
+    expect(Object.isFrozen(selection)).toBe(true);
+    for (const change of [{ catalogFingerprint: "stale" }, { householdId: "another-household" }, { through: "2029-02-30" }]) {
+      expect(() => createHouseholdTaxParticipant({ ...fixture.input, projectedCurrentLawAssumption: { ...selection, ...change } })).toThrow("Projected law requires");
+    }
+    const complete = scenarioRun(fixture).outputCapabilities!;
+    const warning = complete.cash!.diagnostics[0]!;
+    expect(taxOutputCapabilities([warning]).cash!.status).toBe("incomplete");
+    expect(taxOutputCapabilities([taxDiagnostic("projected_current_law", "Unbound warning")], selection).cash!.status).toBe("incomplete");
+    expect(taxOutputCapabilities([warning], { ...selection, through: "2028-01-01" }).cash!.status).toBe("incomplete");
+    expect(mergeOutputCapabilities([complete, complete])).toEqual(complete);
+    const incomplete = taxOutputCapabilities([taxDiagnostic("legal_base_or_component", "Missing base")]);
+    for (const inputs of [[complete, incomplete], [incomplete, complete]]) {
+      const merged = mergeOutputCapabilities(inputs)!;
+      expect(merged.cash!.status).toBe("incomplete");
+      expect(merged.cash!.diagnostics).toContainEqual(warning);
+      expect(merged.statementIncome!.status).toBe("complete");
+    }
+  });
+
   it("restores portable tax participants and reproduces sparse replay, diagnostics and basis", () => {
     const fixture = taxHouseholdFixture({ months: 13 });
     const forecast = runHouseholdKernel({ kernel: fixture.kernel, runContext: fixture.context });

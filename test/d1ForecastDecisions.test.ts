@@ -126,11 +126,14 @@ describe("Issue 80 resolved forecast decisions", () => {
     expect(() => compileForecastTaxSettlements({ ...settlementSetup, conventions: [{ ...settlementSetup.conventions[0]!, monthDay: "02-30" }] }, "2026-01-01", "2027-01-01")).toThrow();
   });
 
-  it("preserves 2026 economics and continues ten years of recurring contributions under explicit projected law", () => {
+  it("preserves verified 2026 economics under explicit projected law", () => {
     const firstYear = requestThrough("2027-01-01", 12);
     const verified = runHouseholdKernel({ kernel: kernel(firstYear), runContext: context("2027-01-01") });
     const projected = runHouseholdKernel({ kernel: kernel({ ...firstYear, forecastLawPolicy: "projected_current_law" }), runContext: context("2027-01-01") });
     expect(projected.state).toEqual(verified.state);
+  });
+
+  it("continues ten years of recurring contributions under explicit projected law with portable replay", () => {
     const long = requestThrough("2036-01-01", 120);
     // The audited fixture's IRA purchase is one-time. Author a recurring IRA
     // through the normal contract to prove future personal contributions too.
@@ -149,7 +152,10 @@ describe("Issue 80 resolved forecast decisions", () => {
     const restored = restorePortableHouseholdReplayArtifact(artifact);
     const window = { start: instant("2027-04-01T00:00:00.000Z"), end: instant("2027-05-01T00:00:00.000Z") };
     expect(canonicalSerialize(replayHouseholdForecastWindow(restored, window))).toBe(canonicalSerialize(replayHouseholdForecastWindow(result, window)));
-  }, 60_000);
+    // CI measured 68.6s for the former combined case. The baseline comparison
+    // now runs independently; retain all 120 months and portable replay with a
+    // bounded budget rather than increasing the suite's global timeout.
+  }, 75_000);
 
   it("does not reuse near-threshold Roth MAGI or workplace/HSA annual facts as modeled salary grows", () => {
     let model = createD1IntegratedHousehold();

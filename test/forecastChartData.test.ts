@@ -7,8 +7,9 @@ import {
 } from "../src/application/householdProjection.js";
 import { createGoldenHouseholdDraft } from "../src/application/index.js";
 import { createGoldenHouseholdSessionConfiguration, GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
-import { taxOutputCapabilities } from "../src/simulation/tax/contracts.js";
+import { taxDiagnostic, taxOutputCapabilities, type ProjectedCurrentLawAssumption } from "../src/simulation/tax/contracts.js";
 import { Money, USD } from "../src/values/index.js";
+import { instant } from "../src/time/index.js";
 
 type AvailableForecast = Extract<PersonalHouseholdForecastReadModel, { status: "completed" | "incomplete" }>;
 const money = (amount: string, currency = "USD"): HouseholdMoneyReadModel => ({ amount, currency });
@@ -164,6 +165,25 @@ describe("exact household forecast chart selection", () => {
       expect(metrics.totalModeledCashChange.status).toBe("incomplete");
       expect(result.opening?.metrics.netWorth.status).toBe("complete");
     }
+  });
+
+  it("uses qualified projected-law source capabilities without promoting unrelated missing outputs", () => {
+    const selection: ProjectedCurrentLawAssumption = { version: "projected-current-law/v1", selection: "projectedCurrentLawThrough",
+      modelId: "chart-model", householdId: "chart-household", through: "2029-01-01", catalogFingerprint: "chart-catalog" };
+    const projected = { ...taxDiagnostic("projected_current_law", "Future law is assumed", "US:FEDERAL"), projectedLaw: {
+      assumption: selection, catalogFingerprint: selection.catalogFingerprint, ruleId: "projected-rule", ruleVersion: "projected-v1",
+      baseRuleId: "base-rule", baseRuleVersion: "base-v1", baseYear: 2026,
+      effectiveFrom: instant("2027-01-01T00:00:00.000Z"), effectiveUntil: instant("2029-01-01T00:00:00.000Z"),
+    } };
+    const qualified = taxOutputCapabilities([projected], selection);
+    const missing = taxOutputCapabilities([projected, taxDiagnostic("settlement_timing", "Missing settlement")], selection);
+    const source = forecast([point(0, { outputCapabilities: qualified }), point(1, { outputCapabilities: missing })], { status: "incomplete" });
+    const result = selectForecastChartData(source);
+    expect(result.points[0]!.metrics.netWorth.status).toBe("complete");
+    expect(result.points[1]!.metrics.netWorth.status).toBe("incomplete");
+    expect(result.points[1]!.metrics.modeledStatementIncome.status).toBe("complete");
+    expect(source.points[0]!.outputCapabilities!.netWorth!.diagnostics).toContainEqual(projected);
+    expect(result.sourceStatus).toBe("incomplete");
   });
 
   it("never treats missing capabilities as zero or complete and keeps unrelated metrics", () => {

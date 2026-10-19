@@ -650,7 +650,10 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await showForecastLimitations(page);
   await status.getByText("Technical diagnostic details", { exact: true }).click();
   const roots = await status.locator("details details > summary").allTextContents();
-  expect(roots.filter(root => root.includes("PFA-TAX-009")).every(root => /rule_selection|local_residence_jurisdiction|canonical_rule_reference|payment_funding|settlement_timing|legal_base_or_component|projected_current_law|contribution_jurisdiction_base|contribution_annual_facts|filing_status|term_life/.test(root))).toBe(true);
+  expect(roots.filter(root => root.includes("PFA-TAX-009")).every(root => /rule_selection|local_residence_jurisdiction|canonical_rule_reference|payment_funding|settlement_timing|legal_base_or_component|projected_current_law|wage_gross_to_net_withholding|contribution_jurisdiction_base|contribution_annual_facts|filing_status|term_life/.test(root))).toBe(true);
+  expect(roots.some(root => root.includes("PFA-TAX-009") && root.includes("wage_gross_to_net_withholding"))).toBe(true);
+  await status.locator("details details > summary").filter({ hasText: "wage_gross_to_net_withholding" }).click();
+  await expect(status.locator("pre").filter({ hasText: "Recognized wages lack authoritative integrated gross-to-net payroll deposits and withholding execution" })).toBeVisible();
   expect(roots.some(root => root.includes("contribution_annual_facts"))).toBe(true);
   expect(errors).toEqual([]);
 });

@@ -11,7 +11,7 @@ import { compileHouseholdKernel } from "../src/simulation/r3/compiledHousehold.j
 import { portableHouseholdParticipant, restoreHouseholdParticipant } from "../src/simulation/r3/participantCodec.js";
 import type { HouseholdTaxInput } from "../src/simulation/tax/contracts.js";
 import { canonicalSerialize } from "../src/simulation/run.js";
-import { resolveTaxCoreRule } from "../src/rules/tax/catalog.js";
+import { resolveTaxCoreRule, taxCatalogFingerprint } from "../src/rules/tax/catalog.js";
 import { instant } from "../src/time/index.js";
 import { getPersonalPurchasePlans, exportPersonalModelJson, importPersonalModelJson } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS as golden } from "../src/application/goldenHousehold.js";
@@ -25,6 +25,25 @@ const compile = (model = createD1IntegratedHousehold(), options = {}) => {
   return result.value;
 };
 describe("U1 one annual household filing authority", () => {
+  it("binds only explicit future-law selection to an immutable reproducible model/catalog basis", () => {
+    const model = createD1IntegratedHousehold();
+    const selected = compile(model);
+    expect(selected.projectedCurrentLawAssumption).toEqual({ version: "projected-current-law/v1", selection: "projectedCurrentLawThrough",
+      modelId: String(model.modelId), householdId: String(selected.ownerId), through: "2029-01-01", catalogFingerprint: taxCatalogFingerprint(selected.catalog) });
+    expect(Object.isFrozen(selected.projectedCurrentLawAssumption)).toBe(true);
+    expect(compile(importPersonalModelJson(exportPersonalModelJson(model))).projectedCurrentLawAssumption).toEqual(selected.projectedCurrentLawAssumption);
+    const withoutSelection = compileHouseholdTax(model, { asOf: "2026-01-01", simulationStart: "2026-01-01", simulationEnd: "2029-01-01", catalog: selected.catalog });
+    if (withoutSelection.status !== "compiled") throw new Error(JSON.stringify(withoutSelection.diagnostics));
+    expect(withoutSelection.value).not.toHaveProperty("projectedCurrentLawAssumption");
+    expect(taxCatalogFingerprint(withoutSelection.value.catalog)).toBe(taxCatalogFingerprint(selected.catalog));
+    const selectedParticipant = createHouseholdTaxParticipant(selected);
+    const portable = portableHouseholdParticipant(selectedParticipant);
+    expect(restoreHouseholdParticipant(portable).economicInputs).toEqual(selectedParticipant.economicInputs);
+    expect(JSON.parse(JSON.stringify(selected.projectedCurrentLawAssumption))).toEqual(selected.projectedCurrentLawAssumption);
+    expect(() => restoreHouseholdParticipant({ ...portable, economicInputs: { ...(portable.economicInputs as HouseholdTaxInput),
+      projectedCurrentLawAssumption: { ...selected.projectedCurrentLawAssumption!, catalogFingerprint: "stale" } } })).toThrow("Projected law requires");
+    expect(compileHouseholdTax(model, { projectedCurrentLawThrough: "2029-02-30" }).status).toBe("invalid_model");
+  });
   it("rejects replay facts for another filing unit and cannot reinterpret an annual artifact as v1", () => {
     const transport = portableHouseholdParticipant(createHouseholdTaxParticipant(compile()));
     const inputs = transport.economicInputs as HouseholdTaxInput;

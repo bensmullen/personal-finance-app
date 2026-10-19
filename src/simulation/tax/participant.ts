@@ -10,7 +10,7 @@ import { recognizeTaxLegalBases } from "../../rules/tax/recognition.js";
 import type { TaxIncomeFacts, TaxJurisdictionFacts } from "../../rules/tax/contracts.js";
 import { applySettlement, claimId, createObligation, createRecognitionFact, createSettlement, createSettlementProposal, recognitionId, settlementId, settlementProposalId } from "../../semantics/index.js";
 import { applyAccountingTransactionAtomically, authoritativeClaimHistory, registerAuthoritativeIdentity } from "../../state/index.js";
-import { subtractMilliseconds, type Instant } from "../../time/index.js";
+import { subtractMilliseconds, utcDateOnlyInstant, type Instant } from "../../time/index.js";
 import { decimal, money, Money, Quantity, Unit, USD } from "../../values/index.js";
 import type { HouseholdKernelParticipant } from "../householdExecution.js";
 import { canonicalSerialize } from "../run.js";
@@ -19,7 +19,7 @@ import { SummaryOperationSink } from "../r3/summarySink.js";
 import { activeTaxFact, resolveTaxEligibility } from "./facts.js";
 import { TaxEconomicLedger } from "./economics.js";
 import { TaxDiagnosticLedger } from "./diagnostics.js";
-import { taxDiagnostic, taxOutputCapabilities, type CompiledTaxIncome, type HouseholdTaxInput, type RecognizedTaxEconomics, type TaxCapabilityDiagnostic } from "./contracts.js";
+import { isNonblockingProjectedTaxLaw, taxDiagnostic, taxOutputCapabilities, type CompiledTaxIncome, type HouseholdTaxInput, type RecognizedTaxEconomics, type TaxCapabilityDiagnostic } from "./contracts.js";
 
 const creditUnit = Unit.of("usd_tax_credit");
 const zero = () => Money.zero(USD);
@@ -72,6 +72,13 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
   const input = immutableConfiguration(configuration);
   const sources = new Map(input.incomes.map(income => [income.id, income]));
   const fingerprint = taxCatalogFingerprint(input.catalog);
+  const selection = input.projectedCurrentLawAssumption;
+  if (selection !== undefined && (selection === null || selection.version !== "projected-current-law/v1" ||
+    selection.selection !== "projectedCurrentLawThrough" || typeof selection.modelId !== "string" || !selection.modelId.trim() ||
+    selection.householdId !== String(input.ownerId) || selection.catalogFingerprint !== fingerprint ||
+    typeof selection.through !== "string" || utcDateOnlyInstant(selection.through) === undefined)) {
+    throw new ValidationError({ severity: "error", code: "TAX_PROJECTED_LAW_BASIS_INVALID", message: "Projected law requires an explicit versioned household/model selection bound to this catalog and exclusive date boundary.", entityType: "tax_capability" });
+  }
   const bindings = new Map<string, ReturnType<typeof resolveTaxCoreRule> | ValidationError>();
   const annualStatus = (year: string) => {
     if (input.filingStatuses === undefined) return input.filingStatus;
@@ -214,7 +221,15 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
               try {
                 const resolved = binding(jurisdiction, economic.at, economic.facts);
                 const rule = resolved.rule;
-                if (rule.provenance.type === "projected_current_law") diagnostics.push(taxDiagnostic("projected_current_law", `Projected current law: nominal carry-forward of ${rule.provenance.baseYear} rule ${rule.provenance.baseRuleId}; tax outputs are projected, not verified.`, jurisdiction));
+                if (rule.provenance.type === "projected_current_law") {
+                  const provenance = rule.provenance;
+                  const base = input.catalog.find(candidate => candidate.id === provenance.baseRuleId);
+                  diagnostics.push(Object.freeze({ ...taxDiagnostic("projected_current_law", `Projected current law: nominal carry-forward of ${provenance.baseYear} rule ${provenance.baseRuleId}; tax outputs are projected, not verified.`, jurisdiction),
+                    ...(selection === undefined ? {} : { projectedLaw: Object.freeze({ ...(base?.provenance.type !== "verified_law" ? {} : { assumption: selection }),
+                      catalogFingerprint: fingerprint, ruleId: String(rule.id), ruleVersion: rule.version,
+                      baseRuleId: String(provenance.baseRuleId), baseRuleVersion: base?.version ?? "unavailable", baseYear: provenance.baseYear,
+                      effectiveFrom: rule.effectiveFrom, effectiveUntil: rule.effectiveUntil }) }) }));
+                }
                 const local = jurisdiction.split(":").length > 2 && jurisdiction !== "US:NY:NYC";
                 // Annual income deductions are applied once; employment-local rules keep their actual legal slices.
                 const key = canonicalSerialize({ jurisdiction, ruleId: rule.id, ...(local ? { facts: economic.facts, month: rule.periodicEmployeeTax ? economic.at.slice(0, 7) : undefined, employee: rule.periodicEmployeeTax ? sources.get(economic.sourceId)?.ownerId : undefined } : {}) });
@@ -278,9 +293,21 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           if (!account || !input.fundingPolicy) diagnostics.push(taxDiagnostic("payment_funding", "Explicit tax funding and refund account are required."));
           const uniqueDiagnostics = [...new Map(diagnostics.map(value => [canonicalSerialize(value), value])).values()];
           for (const jurisdiction of totals.keys()) if (!(input.settlements ?? []).some(item => item.taxYear === year && item.jurisdiction === jurisdiction)) uniqueDiagnostics.push(taxDiagnostic("settlement_timing", "An explicit tax-year final settlement/refund date is required; no filing/payment date is inferred.", jurisdiction));
+          // Only the newly qualified projected-law path changes completeness here.
+          // Recognized wages have no supported gross-to-net payroll binding in this
+          // participant. Standalone tax payments (even named withholding) do not
+          // establish one. Keep #101's gap explicit without changing legacy tax
+          // accruals, payments or final settlements for identical economic inputs.
+          const projectedLaws = uniqueDiagnostics.filter(diagnostic => isNonblockingProjectedTaxLaw(diagnostic, selection));
+          const wageSources = projectedLaws.length === 0 ? [] : [...new Set([...prior.economics].filter(economic => economic.income.wages.isPositive() &&
+            projectedLaws.some(diagnostic => diagnostic.projectedLaw!.effectiveFrom <= economic.at && economic.at < diagnostic.projectedLaw!.effectiveUntil))
+            .map(economic => economic.sourceId))].sort();
+          const capabilityDiagnostics = [...uniqueDiagnostics, ...wageSources.map(sourceId => Object.freeze({
+            ...taxDiagnostic("wage_gross_to_net_withholding", "Recognized wages lack authoritative integrated gross-to-net payroll deposits and withholding execution (#101); modeled gross cash and tax postings are unchanged.", undefined, sourceId), taxYear: year,
+          }))];
           // Partial supported liabilities are never presented as the full tax amount.
           // Missing law/input semantics leave economic state intact, while complete sources remain observable.
-          if (!account || !input.fundingPolicy || context.baseCurrency.code !== "USD") return { ...opening, runtime: withYear(runtime, year, { ...prior, diagnostics: uniqueDiagnostics }), facts: { diagnostics: uniqueDiagnostics, outputCapabilities: taxOutputCapabilities(uniqueDiagnostics) } };
+          if (!account || !input.fundingPolicy || context.baseCurrency.code !== "USD") return { ...opening, runtime: withYear(runtime, year, { ...prior, diagnostics: uniqueDiagnostics }), facts: { diagnostics: capabilityDiagnostics, outputCapabilities: taxOutputCapabilities(capabilityDiagnostics, selection) } };
           if (!state.accounts[account!]) throw new ValidationError({ severity: "error", code: "TAX_ACCOUNT_MISSING", message: "Tax account does not resolve in the current realization.", entityType: "tax_execution" });
           const nextLiabilities = { ...prior.liabilities };
           const nextPaymentRefs = { ...prior.paymentTraceRefs };
@@ -343,7 +370,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           nextLiabilities[jurisdiction] = total;
           }
           sink.traces(ruleTraces);
-          return { state, primitiveState: opening.primitiveState, runtime: withYear(runtime, year, { ...prior, liabilities: nextLiabilities, paymentTraceRefs: nextPaymentRefs, diagnostics: uniqueDiagnostics }), facts: { ...(tier === "summary" ? { summary: { evidence: sink.snapshot() } } : { transactions, traceRefs: mergeTraceRefs(ruleTraces, ...transactions.map(transaction => transaction.traceRefs)) ?? [] }), instrumentation: { taxRecognizedEconomicsVisited: prior.economics.size, taxRuleGroupsEvaluated: groups.size, taxJurisdictionsCalculated: totals.size }, diagnostics: uniqueDiagnostics, constraintOutcomes: outcomes, liquidityShortfalls: shortfalls, outputCapabilities: taxOutputCapabilities(uniqueDiagnostics) } };
+          return { state, primitiveState: opening.primitiveState, runtime: withYear(runtime, year, { ...prior, liabilities: nextLiabilities, paymentTraceRefs: nextPaymentRefs, diagnostics: uniqueDiagnostics }), facts: { ...(tier === "summary" ? { summary: { evidence: sink.snapshot() } } : { transactions, traceRefs: mergeTraceRefs(ruleTraces, ...transactions.map(transaction => transaction.traceRefs)) ?? [] }), instrumentation: { taxRecognizedEconomicsVisited: prior.economics.size, taxRuleGroupsEvaluated: groups.size, taxJurisdictionsCalculated: totals.size }, diagnostics: capabilityDiagnostics, constraintOutcomes: outcomes, liquidityShortfalls: shortfalls, outputCapabilities: taxOutputCapabilities(capabilityDiagnostics, selection) } };
         } }; }) };
     },
   } satisfies HouseholdKernelParticipant);
