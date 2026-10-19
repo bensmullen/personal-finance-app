@@ -49,7 +49,7 @@ describe("source-bound atomic paycheck", () => {
     const statements = deriveStatements(result.state, result.transactions, USD);
     expect(statements.income.equals(money("1000"))).toBe(true);
     expect(statements.netWorth.equals(money("1000"))).toBe(true);
-    expect(result.transactions[0]!.legs.filter(leg => leg.type === "cash")).toEqual(cash === "0" ? [] : [expect.objectContaining({ posting: "debit", accountId: ids.cash, amount: money(cash) })]);
+    expect(result.transactions[0]!.legs.filter(leg => leg.type === "cash")).toEqual([expect.objectContaining({ posting: "debit", accountId: ids.cash, amount: money(cash) })]);
     expect(result.withholdingEvidence).toMatchObject({ incomeId: ids.income, ownerId: ids.person, employerId: "synthetic-job-A", occurrenceId: "occurrence-A", transactionId: "paycheck", credits: [{ taxYear: "2026", jurisdiction: "US:FEDERAL" }] });
     expect(original.accounts[ids.cash]!.cash.isZero()).toBe(true);
     expect(Object.keys(original.positions)).toEqual([]);
