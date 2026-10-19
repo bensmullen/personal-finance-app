@@ -81,7 +81,7 @@ export interface ContinuityDiagnostic {
 export interface VerifiedCycle {
   readonly statementId: string;
   readonly cycle: StatementCycle;
-  readonly opening: { readonly effectiveAt: CivilDate; readonly components: PaymentSplit };
+  readonly opening: CycleRegister["opening"];
   readonly closing: { readonly effectiveAt: CivilDate; readonly components: PaymentSplit };
   readonly afterBoundary: PaymentSplit;
   readonly observedActivity: readonly ObservedPosting[];
@@ -89,7 +89,9 @@ export interface VerifiedCycle {
   readonly proposedPayment: CardProposal;
   readonly unpaidRequiredService: Money;
   readonly serviceStatus: "paid_by_due_date" | "unpaid";
+  readonly timeliness: "paid_on_time" | "not_yet_due" | "overdue";
   readonly traceRefs: readonly string[];
+  readonly registerEvidence: CycleRegister;
 }
 export interface CardContinuityRecord {
   readonly contractVersion: "d2-shared/v1";
@@ -114,6 +116,14 @@ export interface CardContinuityRecord {
   readonly futureCycleCoverage: "incomplete";
   readonly integrationPrerequisite: string;
 }
+export interface CreditCardContinuityResult {
+  readonly contractVersion: "d2-shared/v1";
+  readonly records: readonly CardContinuityRecord[];
+  readonly diagnostics: readonly ContinuityDiagnostic[];
+  readonly coverage: "incomplete";
+  readonly futureCycleCoverage: "incomplete";
+  readonly physicalBankSettlement: "not_applied";
+}
 const keys = ["principal", "interest", "fees"] as const;
 const cmp = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
 const text = (s: string): boolean => typeof s === "string" && s.trim().length > 0;
@@ -137,7 +147,7 @@ const eventOrder = (a: ObservedPosting, b: ObservedPosting): number => cmp(a.eve
   || a.event.sequence - b.event.sequence || cmp(a.event.postingId, b.event.postingId);
 
 /** Pure documentary reconciliation. Canonical BANK/account authority remains #149's. */
-export function reconcileCreditCardCycles(input: CreditCardContinuityRequest) {
+export function reconcileCreditCardCycles(input: CreditCardContinuityRequest): CreditCardContinuityResult {
   if (!dateOK(input.knownAt)) throw new Error("Continuity requires a valid knowledge cutoff");
   const diagnostics: ContinuityDiagnostic[] = [];
   const records: CardContinuityRecord[] = [];
@@ -145,18 +155,37 @@ export function reconcileCreditCardCycles(input: CreditCardContinuityRequest) {
     const result = proposeCreditCardStatements(cycle.request);
     return cycle.request.cards.map(card => ({ card, registers: cycle.registers, result }));
   }).sort((a, b) => cmp(a.card.cardAccountId, b.card.cardAccountId)
-    || cmp(a.card.cycle.start, b.card.cycle.start) || cmp(a.card.statementId, b.card.statementId));
+    || cmp(a.card.cycle.start, b.card.cycle.start) || cmp(a.card.statementId, b.card.statementId)
+    || cmp(canonical(a.card), canonical(b.card)) || cmp(canonical(a.registers), canonical(b.registers)));
   const counts = new Map<string, number>();
+  const sourceVersions = new Map<string, Set<string>>();
+  const rememberSource = (s: IssuerSource | undefined) => {
+    if (!s) return;
+    const versions = sourceVersions.get(s.ruleSnapshotId) ?? new Set<string>();
+    versions.add(canonical(s)); sourceVersions.set(s.ruleSnapshotId, versions);
+  };
   const count = (ns: string, id: string) => {
     const key = canonical([ns, id]); counts.set(key, (counts.get(key) ?? 0) + 1);
   };
-  for (const { card: c, registers } of entries) {
+  for (const { card: c, registers, result } of entries) {
     count("statement", c.statementId); count("operation", c.payment?.operationId ?? "");
+    for (const p of result.proposals.filter(p => p.cardAccountId === c.cardAccountId && p.statementId === c.statementId))
+      for (const recognition of p.recognitionProposals) count("operation", recognition.operationId);
     count("allocation", c.allocationPolicy?.source?.ruleSnapshotId ?? "");
-    for (const e of [...c.transactions, ...c.charges]) count("posting", e.postingId);
+    for (const s of [c.statementSource, c.minimum?.source, c.allocationPolicy?.source, c.postingPolicy?.source, c.payment?.source]) rememberSource(s);
+    for (const e of [...c.transactions, ...c.charges]) {
+      count("posting", e.postingId); count("slot", canonical([c.cardAccountId, e.effectiveAt, e.sequence])); rememberSource(e.source);
+    }
     for (const r of registers.filter(r => r.cardAccountId === c.cardAccountId && r.statementId === c.statementId)) {
-      for (const p of r.boundary.payments) count("posting", p.event.postingId);
+      for (const s of [r.source, r.opening.source, r.boundary.source]) rememberSource(s);
+      for (const p of r.boundary.payments) {
+        count("posting", p.event.postingId); count("slot", canonical([c.cardAccountId, p.event.effectiveAt, p.event.sequence]));
+      }
+      for (const p of [...r.activity, ...r.boundary.payments]) {
+        rememberSource(p.event.source); rememberSource(p.issuerPayment?.allocationSource);
+      }
       for (const p of [...r.activity, ...r.boundary.payments]) if (p.bankConfirmation) {
+        count("observedOperation", p.bankConfirmation.operationId);
         count("settlement", p.bankConfirmation.settlementId);
         count("confirmation", p.bankConfirmation.confirmationId);
         count("authorization", p.bankConfirmation.authorization.authorizationId);
@@ -171,7 +200,7 @@ export function reconcileCreditCardCycles(input: CreditCardContinuityRequest) {
     const verified: VerifiedCycle[] = [];
     const links: { fromStatementId: string; toStatementId: string; effectiveAt: CivilDate; components: PaymentSplit }[] = [];
     let invalid = false;
-    let previous: { card: CreditCardStatement; closing: PaymentSplit } | undefined;
+    let previous: { card: CreditCardStatement; closing: PaymentSplit; knownAt: CivilDate } | undefined;
     for (const { card: c, registers, result } of history) {
       let bad = false;
       const fail = (diagnosticCode: ContinuityDiagnostic["diagnosticCode"], fact: string) => {
@@ -190,7 +219,8 @@ export function reconcileCreditCardCycles(input: CreditCardContinuityRequest) {
         previous = undefined; continue;
       }
       if (!unique("statement", c.statementId) || !unique("operation", c.payment.operationId)
-        || !unique("allocation", c.allocationPolicy.source.ruleSnapshotId))
+        || !unique("allocation", c.allocationPolicy.source.ruleSnapshotId)
+        || proposal.recognitionProposals.some(p => !unique("operation", p.operationId)))
         fail("DUPLICATE_IDENTITY", "Unique statement/payment identities and cycle-specific allocation authority");
       const matches = registers.filter(r => r.cardAccountId === accountId && r.statementId === c.statementId);
       if (matches.length !== 1) { fail("HISTORY_REQUIRED", "Exactly one source-qualified complete activity register"); previous = undefined; continue; }
@@ -199,6 +229,7 @@ export function reconcileCreditCardCycles(input: CreditCardContinuityRequest) {
       const sourceOK = (s: IssuerSource, at: CivilDate): boolean => !!s && dateOK(s.start) && dateOK(s.endExclusive)
         && s.start <= at && at < s.endExclusive && dateOK(s.asOf) && s.asOf <= r.knownAt && r.knownAt <= input.knownAt
         && [s.ruleSnapshotId, s.jurisdiction, s.ruleFamily, s.sourcePublication, s.version].every(text)
+        && sourceVersions.get(s.ruleSnapshotId)?.size === 1
         && s.projectionStatus === "verified" && s.issuerId === c.issuerId && s.personId === c.personId && s.cardAccountId === accountId;
       const moneyOK = (m: Money): boolean => m instanceof Money && m.currency.equals(c.currency)
         && !m.isNegative() && m.amount.fitsScale(c.currency.minorUnitScale);
@@ -237,7 +268,10 @@ export function reconcileCreditCardCycles(input: CreditCardContinuityRequest) {
           fail("PAYMENT_MISMATCH", "Exact nonnegative currency minor units in issuer, bank and authorization evidence"); return false;
         }
         if (!unique("settlement", b.settlementId) || !unique("confirmation", b.confirmationId)
-          || !unique("authorization", b.authorization.authorizationId)) fail("DUPLICATE_IDENTITY", "Unused settlement, confirmation and authorization identities");
+          || !unique("authorization", b.authorization.authorizationId) || !unique("observedOperation", b.operationId)
+          || (activity.includes(p) && !unique("operation", b.operationId))) {
+          fail("DUPLICATE_IDENTITY", "Unused operation, settlement, confirmation and authorization identities"); return false;
+        }
         if (![b.operationId, b.sourceAccountId, b.sourcePublication, b.version, b.authorization.sourcePublication].every(text)
           || b.householdId !== c.householdId || b.personId !== c.personId || b.issuerId !== c.issuerId
           || b.cardAccountId !== accountId || b.sourceAccountId === accountId || b.effectiveAt !== e.effectiveAt
@@ -250,7 +284,9 @@ export function reconcileCreditCardCycles(input: CreditCardContinuityRequest) {
       };
       for (const p of [...activity, ...boundary]) {
         const e = p.event; const slot = canonical([e.effectiveAt, e.sequence]);
-        if (!unique("posting", e.postingId) || slots.has(slot) || !Number.isSafeInteger(e.sequence) || e.sequence < 0)
+        if (!unique("posting", e.postingId) || !unique("slot", canonical([accountId, e.effectiveAt, e.sequence]))
+          || counts.has(canonical(["operation", e.postingId]))
+          || slots.has(slot) || !Number.isSafeInteger(e.sequence) || e.sequence < 0)
           fail("DUPLICATE_IDENTITY", "Unused issuer posting identity and unique sourced same-day sequence");
         slots.add(slot);
         if (!known(p.knownAt, e.effectiveAt) || p.knownAt > r.knownAt || !sourceOK(e.source, e.effectiveAt) || e.source.asOf > p.knownAt)
@@ -260,6 +296,7 @@ export function reconcileCreditCardCycles(input: CreditCardContinuityRequest) {
       if (bad) { previous = undefined; continue; }
       if (previous) {
         if (previous.card.cycle.endExclusive !== c.cycle.start) fail("CYCLE_NOT_ADJACENT", "Successive half-open cycles without gaps, overlaps or duplicate dates");
+        if (previous.knownAt > r.knownAt) fail("SOURCE_INVALID", "Successor snapshot cannot precede knowledge of its predecessor evidence");
         if (!sameSplit(previous.closing, opening.components)) fail("OPENING_DRIFT", "Successor opening equals reconciled prior principal, interest and fees");
         if (!bad) links.push({ fromStatementId: previous.card.statementId, toStatementId: c.statementId,
           effectiveAt: c.cycle.start, components: opening.components });
@@ -272,7 +309,8 @@ export function reconcileCreditCardCycles(input: CreditCardContinuityRequest) {
         if (e.effectiveAt !== c.cycle.endExclusive || e.effectiveAt < c.statementDate || e.effectiveAt > c.dueDate
           || b.operationId !== c.payment.operationId || b.sourceAccountId !== c.payment.sourceAccountId
           || e.effectiveAt !== c.payment.effectiveAt || !e.amount.equals(proposal.potentialPayment)
-          || !sameSplit(e.allocation, proposal.potentialAllocation) || canonical(e.source) !== canonical(c.payment.source)) {
+          || !sameSplit(e.allocation, proposal.potentialAllocation) || canonical(e.source) !== canonical(c.payment.source)
+          || canonical(p.issuerPayment?.allocationSource) !== canonical(c.allocationPolicy.source)) {
           fail("PAYMENT_MISMATCH", "Cutoff payment must match original operation/date/account/source, potential amount and allocation; later payments cannot reduce an earlier opening"); continue;
         }
         paid = paid.plus(e.amount);
@@ -283,14 +321,17 @@ export function reconcileCreditCardCycles(input: CreditCardContinuityRequest) {
       const unpaid = proposal.requiredService.minus(paid.compare(proposal.requiredService) < 0 ? paid : proposal.requiredService);
       if (unpaid.isPositive()) fail("MINIMUM_UNPAID", "Required service unpaid; no invented late fee or future interest");
       if (!balances.interest.isZero() || !balances.fees.isZero()) fail("UNPAID_NONPRINCIPAL", "Unpaid interest/fees cannot disappear or become principal");
-      verified.push({ statementId: c.statementId, cycle: c.cycle, opening: { effectiveAt: c.cycle.start, components: opening.components },
+      verified.push({ statementId: c.statementId, cycle: c.cycle, opening,
         closing: { effectiveAt: c.statementDate, components: proposal.statementComponents }, afterBoundary: balances,
         observedActivity: activity, observedBoundaryPayments: boundary, proposedPayment: proposal,
         unpaidRequiredService: unpaid, serviceStatus: unpaid.isZero() ? "paid_by_due_date" : "unpaid",
+        timeliness: unpaid.isZero() ? "paid_on_time" : c.dueDate < input.knownAt ? "overdue" : "not_yet_due",
+        registerEvidence: { ...r, activity, boundary: { ...r.boundary, payments: boundary } },
         traceRefs: [...new Set([...proposal.traceRefs, r.source.ruleSnapshotId, r.boundary.source.ruleSnapshotId, opening.source.ruleSnapshotId,
           ...[...activity, ...boundary].flatMap(p => [p.event.postingId, p.event.source.ruleSnapshotId,
+            ...(p.issuerPayment ? [p.issuerPayment.allocationSource.ruleSnapshotId] : []),
             ...(p.bankConfirmation ? [p.bankConfirmation.confirmationId, p.bankConfirmation.settlementId, p.bankConfirmation.authorization.authorizationId] : [])])])].sort(cmp) });
-      previous = bad ? undefined : { card: c, closing: balances };
+      previous = bad ? undefined : { card: c, closing: balances, knownAt: r.knownAt };
     }
     const integrationPrerequisite = "#149 must validate canonical account ownership, payment authorization, atomic BANK settlement and global idempotency";
     diagnostics.push({ sourceEntityPath: `cards/${encodeURIComponent(accountId)}`, period: first.cycle,
