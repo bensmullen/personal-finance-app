@@ -372,10 +372,13 @@ export const createSsaBenefitDeductionSettlement = (
     const proposal = createSettlementProposal({ id: settlementProposalId(JSON.stringify(["ssa_payable_deduction", draft.id])),
       claimId: claim.id, requestedAmount: t.amount, requestedAt: draft.settledAt }, claim);
     const traceRefs = freezeTraceRefs(draft.traceRefs);
-    const settlement = Object.freeze({ id: draft.id, proposalId: proposal.id, claimId: claim.id,
+    const settlementData: Readonly<SettlementData> = Object.freeze({ id: draft.id, proposalId: proposal.id, claimId: claim.id,
       amount: t.amount, settledAt: draft.settledAt, fundingAllocations: Object.freeze([]),
       ...(draft.provenance === undefined ? {} : { provenance: createFactProvenance(draft.provenance) }),
-      ...(traceRefs === undefined ? {} : { traceRefs }) }) as Settlement;
+      ...(traceRefs === undefined ? {} : { traceRefs }) });
+    // The validated data gains only the opaque compile-time brand here. Runtime
+    // authority still requires registration in authoritativeSettlements below.
+    const settlement = settlementData as Settlement;
     const receipt = Object.freeze({ kind: "ssa_payable_deduction" as const, committed: false as const,
       settlement, payable: immutableDeduction(payable), terms: immutableDeduction(t),
       sourceState: immutableDeduction({ stateId: consumption.stateId, asOf: consumption.asOf,
