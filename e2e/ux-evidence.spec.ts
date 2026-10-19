@@ -141,7 +141,9 @@ test("synthetic account, income and forecast UX at desktop and narrow viewport",
     await clickFinancialDestination(page, "Overview");
     const outlook = page.getByRole("figure", { name: "Household financial outlook chart", exact: true });
     await expect(outlook.locator("svg.recharts-surface")).toBeVisible();
-    await expect(outlook.locator(".recharts-line path.recharts-line-curve").first()).toBeVisible();
+    // The first complete-status SVG line can be empty in a partially modeled
+    // forecast. Verify a real drawn line (complete or incomplete), not a shell.
+    await expect(outlook.locator('.recharts-line path.recharts-line-curve[d^="M"]').first()).toBeVisible();
     await recordState(page, testInfo, `golden-supported-${width}`);
     await page.evaluate(() => window.scrollTo(0, 0));
     await capture("01-overview-synthetic-current-app", width);
