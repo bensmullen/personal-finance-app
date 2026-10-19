@@ -1,7 +1,7 @@
 import { ValidationError } from "../../diagnostics/index.js";
 import { domainId } from "../../identity/index.js";
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
-import { createTaxCatalog } from "../../rules/tax/catalog.js";
+import { createTaxCatalog, taxCatalogFingerprint } from "../../rules/tax/catalog.js";
 import { projectedCurrentLawCatalog } from "../../rules/tax/projection.js";
 import { alphaStateTaxCatalog, alphaLocalTaxCatalog, federal2024TaxCatalog, federal2026TaxCatalog } from "../../rules/tax/lawCatalog.js";
 import type { TaxCoreRule, FilingStatus } from "../../rules/tax/contracts.js";
@@ -25,6 +25,7 @@ export interface HouseholdTaxCompilerRequest {
   readonly asOf?: string;
   readonly simulationStart?: string;
   readonly simulationEnd?: string;
+  /** Explicit scenario law-basis selection; never inferred from the horizon. */
   readonly projectedCurrentLawThrough?: string;
   readonly catalog?: readonly TaxCoreRule[];
   readonly fundingPolicy?: FundingPolicy;
@@ -125,6 +126,7 @@ export const compileHouseholdTax = (model: PortableModelEnvelope, request: House
     for (const entries of personEligibility.values()) for (const at of [...sharedEligibility, ...entries].map(item => item.effective_date)) resolveTaxEligibility([...sharedEligibility, ...entries], at);
     for (const income of incomes) for (const at of allEligibility.map(item => item.effective_date)) resolveTaxEligibility([...sharedEligibility, ...income.eligibility], at);
     const verified = request.catalog ?? [...federal2024TaxCatalog, ...federal2026TaxCatalog, ...alphaStateTaxCatalog, ...alphaLocalTaxCatalog];
+    if (request.projectedCurrentLawThrough !== undefined && !utcDate(request.projectedCurrentLawThrough)) fail("Projected law selection requires a valid exclusive date boundary.");
     const catalog = request.projectedCurrentLawThrough === undefined ? createTaxCatalog(verified) : projectedCurrentLawCatalog(verified, request.projectedCurrentLawThrough);
     const filingStatuses: Record<string, AnnualHouseholdFilingStatus> = {};
     const firstYear = Number((request.simulationStart ?? anchor ?? catalog[0]?.effectiveFrom)?.slice(0, 4));
@@ -174,6 +176,11 @@ export const compileHouseholdTax = (model: PortableModelEnvelope, request: House
     }
     const canonicalOrder = <T>(values: readonly T[]): readonly T[] => [...values].sort((a, b) => canonicalSerialize(a).localeCompare(canonicalSerialize(b)));
     return { status: "compiled", diagnostics: Object.freeze([]), value: immutableConfiguration({ catalog, accountTaxTreatments, taxRuleReferences: canonicalOrder(taxRuleReferences),
+      ...(request.projectedCurrentLawThrough === undefined ? {} : { projectedCurrentLawAssumption: {
+        version: "projected-current-law/v1" as const, selection: "projectedCurrentLawThrough" as const,
+        modelId: String(model.modelId), householdId: scope.value.householdId,
+        through: request.projectedCurrentLawThrough, catalogFingerprint: taxCatalogFingerprint(catalog),
+      } }),
       filingStatuses, ownerId: domainId("household", scope.value.householdId), incomes: canonicalOrder(incomes.map(income => ({ ...income, residence: canonicalOrder(income.residence), work: canonicalOrder(income.work), eligibility: canonicalOrder(income.eligibility) }))), eligibility: canonicalOrder(sharedEligibility),
       ...(request.fundingPolicy === undefined ? {} : { fundingPolicy: request.fundingPolicy }), ...(request.refundAccountId === undefined ? {} : { refundAccountId: request.refundAccountId }), payments: request.payments ?? [],
       settlements: request.settlements ?? [], diagnostics }) };
