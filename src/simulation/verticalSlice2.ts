@@ -543,7 +543,9 @@ export const prepareVerticalSlice2Period = (
   const eventResult = executePeriodWorkCandidate({ period, runContext, openingState: currentState, primitiveState: currentPrimitiveState, work: eventWork(request, period) });
   const eventOutputs = new Map(eventResult.primitiveOutputs.map((output) => [output.workId, output.output]));
   const occurrences: PreparedVerticalSlice2Occurrence[] = [];
-  const streams: readonly (RecurringIncomeStream | RecurringExpenseStream)[] = [...input.incomes, ...input.expenses];
+  // Prepared descriptor order is part of the run fingerprint: canonicalize it
+  // before household scheduling, not only the eventual economic execution.
+  const streams: readonly (RecurringIncomeStream | RecurringExpenseStream)[] = [...input.incomes, ...input.expenses].sort((a, b) => a.id.localeCompare(b.id));
   for (const stream of streams) {
     const scheduleTraces = mergeTraceRefs(traces(`${"depositAccountId" in stream ? "income" : "expense"}:${stream.id}:schedule`), stream.sourceTraceRefs)!;
     const scheduled = evaluatePrimitive({ primitiveId: "P03", input: { amount: stream.baseMonthlyAmount }, parameters: { schedule: stream.recurrence }, priorState: null, context: { ...primitiveContext(request, stream.id, stream.primitiveIds.recurrence, subtractMilliseconds(period.end, 1), "occurrence-preparation", scheduleTraces), period } });
