@@ -1,6 +1,6 @@
 # Tax Engine Capability
 
-**Version:** 0.4.2-draft
+**Version:** 0.4.3-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-TAX
 
@@ -34,6 +34,8 @@ Tax execution SHALL participate in PFA-PERF phase timing and benchmark fixtures 
 
 Future tax-law uncertainty SHALL be modeled only through explicit scenarios/stochastic policy processes with provenance. The deterministic tax engine SHALL NOT silently guess future law changes.
 
+**Approved projected-law scenario distinction (2026-10-19):** A calculation that has executed all materially applicable supported financial/tax rules for the entire requested period MAY be `completed` *under an explicitly selected, persisted, reproducible projected-current-law scenario*. A projected rule is not enacted law: every affected output SHALL retain machine-readable projected-law qualification including jurisdiction, base rule/version/year, effective period, scenario assumption and catalog fingerprint. Forecast computation completeness and future-law certainty are different dimensions. A scenario lacking explicit future-law assumption consent, a resolvable rule, or required tax mechanics SHALL remain `incomplete` for affected outputs; do not silently treat missing tax as zero or default all real households into a projected-law completion claim.
+
 ### PFA-TAX-007 — Equity compensation integration
 
 Supported RSU/options/ESPP mechanics SHALL integrate vesting/exercise/sale recognition and withholding with the tax engine according to PFA-EQ and SHALL NOT use an unrelated shortcut calculation.
@@ -44,9 +46,13 @@ Missing tax capability SHALL gate outputs at the smallest materially affected bo
 
 Outputs whose dependency/lineage is demonstrably unaffected by the missing tax capability MAY remain available. The application SHALL NOT globally suppress tax-independent outputs merely because another household output is tax-affected.
 
+**Output completeness under hypothetical law (2026-10-19):** Merely warning that an *explicitly selected and executable* projected-current-law rule is hypothetical SHALL NOT, by itself, mark an otherwise fully calculated output incomplete. Preserve the warning as a separate, machine-readable law-confidence qualification. Any other materially missing/unsupported jurisdiction, filing status, tax base, recognition, withholding/settlement, payroll, or execution mechanic SHALL independently keep affected outputs incomplete. When both types occur, incompleteness wins; verified tax-independent outputs may remain complete. This rule applies per period/output and to the aggregated run, not via a UI-only status override.
+
 ### PFA-TAX-009 — Target-cohort tax floor
 
 Before a probabilistic result is exposed as a complete user-facing household forecast, the implemented tax subset SHALL cover the tax semantics materially relevant to that target household and output. The application MAY develop/test stochastic infrastructure against a narrower synthetic tax subset, but production/alpha results SHALL remain capability-gated until the applicable tax floor is satisfied.
+
+**Result meaning:** `completed` means the *selected scenario* actually finished the requested modeling period with no missing materially applicable capability; it never means future tax legislation is verified, returns are guaranteed, or every possible household tax type is implemented. Explicit scenario selection and exact reproducible law basis are prerequisites to any projected-law-qualified `completed` status. Unsupported salary withholding, payroll, benefit or retirement distribution behavior still obeys the target household/output tax floor and SHALL NOT be laundered into completeness through this change.
 
 ### PFA-TAX-010 — Private-alpha core tax coverage
 
