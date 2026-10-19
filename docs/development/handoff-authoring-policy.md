@@ -132,6 +132,8 @@ from the previous V2 framework, but as prose rather than parser requirements:
 
 These sections are planning aids. Hooks do not require their names or syntax.
 
+**Type-contract preflight (read-only, without running local commands):** When the change creates or alters typed test fixtures, compiler adapters, overloaded function calls or optional-field overrides, read the target signatures and the repository's strict TypeScript configuration before specifying/issuing the implementation handoff. Explicitly check literal overload dispatch, exact optional-property semantics, required-field preservation, replay input/result tier and test-assertion provenance. Record expected typecheck risks in the task issue. Codex performs this as static code inspection while editing, not a typecheck command. GitHub-hosted typecheck remains the first automated authority. Do not reroute all CI behind typecheck: independent gates remain parallel.
+
 ## 5. Edit-scope design
 
 `ALLOWED_PATHS` remains the strongest task-specific guardrail.
