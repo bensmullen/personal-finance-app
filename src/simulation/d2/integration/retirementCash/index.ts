@@ -41,6 +41,21 @@ export interface RetirementCashDiagnostic {
 }
 const participantId = "d2_retirement_cash";
 const same = (a: unknown, b: unknown): boolean => canonicalSerialize(a) === canonicalSerialize(b);
+const ordered = <T>(values: readonly T[]): readonly T[] => [...values].sort((a, b) => {
+  const left = canonicalSerialize(a), right = canonicalSerialize(b);
+  return left < right ? -1 : left > right ? 1 : 0;
+});
+/** Unordered evidence is canonicalized for identity, never used as priority. */
+function snapshot(configuration: RetirementCashInput): RetirementCashInput {
+  const raw = configuration.withdrawals;
+  return immutableConfiguration({ ...configuration, withdrawals: { ...raw, cash: ordered(raw.cash),
+    usage: { ...raw.usage, operationIds: ordered(raw.usage.operationIds), withdrawalIds: ordered(raw.usage.withdrawalIds),
+      authorizationIds: ordered(raw.usage.authorizationIds) },
+    requests: ordered(raw.requests.map(r => ({ ...r, targetObligationIds: ordered(r.targetObligationIds),
+      ...(r.withholding ? { withholding: { ...r.withholding, instructions: ordered(r.withholding.instructions) } } : {}) }))) },
+    members: ordered(configuration.members), confirmations: ordered(configuration.confirmations.map(q => ({ ...q,
+      reservations: ordered(q.reservations), ordering: { ...q.ordering, after: ordered(q.ordering.after) } }))) });
+}
 const at = (date: string) => instant(`${date}T00:00:00.000Z`);
 const exact = (m: Money): boolean => m instanceof Money && m.currency.equals(USD) && m.amount.fitsScale(2) && !m.isNegative();
 const unique = (ids: readonly string[]): boolean => ids.every(id => id.trim().length > 0) && new Set(ids).size === ids.length;
@@ -54,7 +69,9 @@ const outputCapabilities = immutableConfiguration({
 });
 const coverageFacts = () => ({ outputCapabilities, diagnostics: [{ severity: "warning" as const,
   code: "RETIREMENT_TAX_INCOMPLETE", entityType: "retirement_cash",
-  message: "Pretax cash transfer only; distribution tax characterization and authenticated annual RMD satisfaction remain incomplete." }] });
+  message: "Pretax cash transfer only; distribution tax characterization remains incomplete." },
+  { severity: "warning" as const, code: "RETIREMENT_RMD_HISTORY_UNAVAILABLE", entityType: "retirement_cash",
+    message: "S7: Conditional allocations and unsupported history cannot authenticate funded RMD satisfaction; no allocation is applied." }] });
 
 function stamp(s: WithdrawalSource, householdId: string, personId: string, resourceId: string, date: string, context: RunContext): void {
   try { [s.publishedAt, s.asOf, s.effectiveFrom, s.endExclusive].forEach(civilDate); }
@@ -68,7 +85,7 @@ function stamp(s: WithdrawalSource, householdId: string, personId: string, resou
 
 /** Opt-in physical CASH only. A4 remains the sole withdrawal admission evaluator. */
 export function createRetirementCashParticipant(configuration: RetirementCashInput): HouseholdKernelParticipant {
-  const input = immutableConfiguration(configuration);
+  const input = snapshot(configuration);
   return Object.freeze({ id: participantId, version: "cash-zero-withholding/v1", portableCodec: "d2-retirement-cash/v1", economicInputs: input,
     prepare: (context, period, opening, work = [], tier = "detail") => {
       const raw = input.withdrawals;
@@ -77,12 +94,8 @@ export function createRetirementCashParticipant(configuration: RetirementCashInp
         fail("RETIREMENT_AUTHORIZATION_INCOMPLETE", `S7: ${evaluation.diagnostics.map(d => `${d.diagnosticCode}:${d.missingFacts.join(",")}`).join(";")}`);
       if (raw.knownAt > context.dataCutoff.slice(0, 10) || !context.baseCurrency.equals(USD))
         fail("RETIREMENT_SOURCE_UNAVAILABLE", "Raw authorization must be known by the run cutoff in USD");
-      if (input.rmd) {
-        const binding = evaluateWithdrawalRmd(input.rmd.input);
-        if (!same(input.rmd.input.withdrawals, raw) || !binding.bundle || !same(binding.bundle, input.rmd.bundle))
-          fail("RETIREMENT_RMD_AUTHORIZATION_INVALID", "Exact re-evaluated raw withdrawal/RMD binding required");
-        fail("RETIREMENT_RMD_HISTORY_UNAVAILABLE", "Canonical portable state lacks an authenticated retirement transaction/allocation journal; conditional allocations cannot become satisfaction");
-      }
+      // RMD evidence never authorizes cash or invalidates independently sourced
+      // cash settlement. The attachment reports its conditional status.
       if (!unique(input.members.map(m => m.personId)) || !unique(input.confirmations.map(c => c.operationId))
         || input.confirmations.length !== raw.requests.length
         || input.confirmations.some(c => !raw.requests.some(r => r.operationId === c.operationId))
@@ -99,7 +112,7 @@ export function createRetirementCashParticipant(configuration: RetirementCashInp
         }
         Object.values(value).forEach(visit);
       };
-      visit(input);
+      visit({ withdrawals: raw, members: input.members, confirmations: input.confirmations });
       const operations: ReturnType<HouseholdKernelParticipant["prepare"]>["operations"][number][] = [];
       if (raw.requests.some(r => at(r.effectiveAt) < period.end)) operations.push({
         descriptor: { id: `d2:retirement-coverage:${period.start}`, domain: "retirement", operationClass: "retirement:coverage",
@@ -230,6 +243,13 @@ export function attachRetirementCash(kernel: CompiledHouseholdKernel, input: Ret
     { seam: "S7", sourceEntityPath: "retirementCash", affectedOutput: "rmd_satisfaction", coverage: "incomplete",
       diagnosticCode: "RETIREMENT_RMD_HISTORY_UNAVAILABLE", missingFacts: ["Canonical portable retirement transaction/allocation journal and source-authenticated annual reconciliation"] },
   ]);
+  // Raw re-evaluation, never caller flags. Purported posted history is declined
+  // by the binder; no conditional proposal becomes persisted satisfaction.
+  const binding = input.rmd ? evaluateWithdrawalRmd(input.rmd.input) : undefined;
+  const conditionalRmd = input.rmd && binding?.bundle
+    && same(input.rmd.input.withdrawals, input.withdrawals) && same(binding.bundle, input.rmd.bundle)
+    ? binding : null;
   return Object.freeze({ kernel: prior ? kernel : applyHouseholdExecutionOverlay(kernel, { participants: [...existing, participant] }),
-    diagnosticSeam: "S7" as const, coverage: "incomplete" as const, rmdSatisfaction: "not_applied" as const, diagnostics });
+    diagnosticSeam: "S7" as const, coverage: "incomplete" as const, rmdSatisfaction: "not_applied" as const,
+    conditionalRmd, diagnostics });
 }
