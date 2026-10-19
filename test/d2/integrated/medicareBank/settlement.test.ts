@@ -40,13 +40,27 @@ describe("#149 opt-in physical Medicare B/D BANK execution", () => {
       .toEqual(["1800", "200", "-200", "0"]);
     expect(p.cashFlow!.recurringExpenseRecognized.equals(money("200"))).toBe(true);
     expect(p.cashFlow!.expenseCashSettlement.equals(money("200"))).toBe(true);
-    expect(p.transactions.map(t => t.type)).toEqual(["expense_recognition", "expense_settlement", "expense_recognition", "expense_settlement"]);
-    expect(p.transactions.map(t => t.legs.map(l => [l.posting, l.type, l.amount.amount.toString()]))).toEqual([
-      [["debit", "expense", "80"], ["credit", "liability", "80"]],
-      [["debit", "liability", "80"], ["credit", "cash", "80"]],
-      [["debit", "expense", "120"], ["credit", "liability", "120"]],
-      [["debit", "liability", "120"], ["credit", "cash", "120"]],
-    ]);
+    // The engine may interleave distinct premiums, but for EACH liability
+    // recognition must precede its one settlement and the legs must balance.
+    const required = [
+      { amount: "80", liability: payable("part_b") },
+      { amount: "120", liability: payable("part_d") },
+    ];
+    expect(p.transactions).toHaveLength(4);
+    for (const item of required) {
+      const recognition = p.transactions.findIndex(t => t.type === "expense_recognition"
+        && t.legs.some(l => l.type === "liability" && l.accountId === item.liability));
+      const settlement = p.transactions.findIndex(t => t.type === "expense_settlement"
+        && t.legs.some(l => l.type === "liability" && l.accountId === item.liability));
+      expect(recognition).toBeGreaterThanOrEqual(0);
+      expect(settlement).toBeGreaterThan(recognition);
+      expect(p.transactions[recognition]!.legs.map(l => [l.posting, l.type, l.amount.amount.toString()])).toEqual([
+        ["debit", "expense", item.amount], ["credit", "liability", item.amount],
+      ]);
+      expect(p.transactions[settlement]!.legs.map(l => [l.posting, l.type, l.amount.amount.toString()])).toEqual([
+        ["debit", "liability", item.amount], ["credit", "cash", item.amount],
+      ]);
+    }
     const claims = Object.values(result.state.obligations);
     expect(claims).toHaveLength(2);
     expect(claims.every(c => c.kind === "obligation" && c.outstandingAmount.isZero() && c.settlementIds.length === 1)).toBe(true);
