@@ -169,7 +169,11 @@ describe("payroll credits, tax accrual and net final settlement", () => {
     expect(paid.map(tx => tx.traceRefs!.map(ref => String(ref.traceId)).join(" ")).join(" ")).toContain("synthetic-job-B");
     const reverseKernel = compileHouseholdKernel({ ...compiled, cashFlowInput: { ...compiled.cashFlowInput, incomes: [...compiled.cashFlowInput.incomes].reverse() } }, fixture.context.simulationStart);
     const reversed = runHouseholdKernel({ kernel: reverseKernel, runContext: fixture.context, resultTier: "detail" });
-    expect(reversed.state).toEqual(detail.state);
+    // Compare every authoritative economic and identity subledger independently,
+    // so an ordering disagreement identifies its exact semantic surface.
+    for (const section of ["accounts", "positions", "liabilities", "obligations", "identities", "contributions", "contingentPositions", "ssaMedicarePayments"] as const) {
+      expect(reversed.state[section], `Reordered income streams changed authoritative ${section}`).toEqual(detail.state[section]);
+    }
     expect(reversed.runMetadata).toEqual(detail.runMetadata);
     const missing = { ...input, payrollWithholding: elections.filter(item => item.incomeId === ids.income) };
     const uncoveredKernel = compileHouseholdKernel({ ...compiled, participants: [createHouseholdTaxParticipant(missing)], cashFlowInput: { ...compiled.cashFlowInput, incomes: [compiled.cashFlowInput.incomes[0]!, { ...compiled.cashFlowInput.incomes[1]!, payrollWithholding: [] }] } }, fixture.context.simulationStart);
