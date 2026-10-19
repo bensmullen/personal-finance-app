@@ -81,7 +81,11 @@ describe("#149 opt-in physical Medicare B/D BANK execution", () => {
     expect(result.status).toBe("incomplete");
     expect(result.outputCapabilities?.recurringExpenseRecognized?.status).toBe("complete");
     expect(result.outputCapabilities?.netWorth?.status).toBe("incomplete");
-    expect(result.diagnostics.some(d => d.entityType === "tax_capability")).toBe(true);
+    // Source-qualified Medicare cash is posted, but medical tax characterization
+    // remains incomplete on affected financial outputs. Run-level execution
+    // diagnostics are a separate channel and need not repeat capability warnings.
+    expect(result.outputCapabilities?.netWorth?.diagnostics.some(d =>
+      d.entityType === "tax_capability" && d.category === "medicare_bank_tax_characterization")).toBe(true);
     expect(canonicalSerialize(i.kernel.executable.reconciledOpeningState)).toBe(before);
     expect(runHouseholdKernel({ kernel: i.kernel, runContext: fixture().context, resultTier: "detail" }).periods[0]!.transactions).toEqual([]);
   });
