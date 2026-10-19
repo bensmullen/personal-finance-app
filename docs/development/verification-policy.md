@@ -41,6 +41,10 @@ their normal unit/typecheck gates. Any other manifest change, unreadable base,
 missing metadata, or changed runtime version conservatively selects the full
 runtime matrix. No change to a tax/model/financial specification is exempt.
 
+**Static type-contract prevention:** Before handing off new typed fixture helpers or changes to overloaded simulation interfaces, review the called signatures and TypeScript `exactOptionalPropertyTypes` behavior. Include compiler/runner API shape expectations in the affected task contract. In the current no-local-verification policy, CI typecheck is the earliest automated feedback; it remains parallel with other independent jobs to preserve critical-path efficiency. A future optional local typecheck allowance requires an explicit policy/hook/self-test decision, not a silent exception.
+
+**Quiet runner failure truth:** Unit runs must fail if either Vitest's process exits nonzero or its JSON report reports failure. When those disagree, preserve the nonzero failure and emit the process exit code, signal, spawn error and human reporter output in CI artifacts. Never convert `0 failed tests` into a green status without confirming clean process exit.
+
 **Parallel E2E:** real runtime/UI/E2E changes run the full Playwright suite in
 four independent GitHub-hosted shards. A failed or cancelled shard fails the
 aggregate `test` job; each shard uploads distinct failure artifacts. This
