@@ -10,8 +10,6 @@ import { civilDate, instant, type CivilDate, type Instant } from "../time/index.
 import { Money, money } from "../values/index.js";
 import type { ObligationOrRight } from "./claim.js";
 import { appendSettlementIdentity, assertClaimInvariant } from "./claim.js";
-import { settlementProposalId } from "./identity.js";
-import { createSettlementProposal } from "./settlementProposal.js";
 import type { ClaimId, SettlementId, SettlementProposalId } from "./identity.js";
 
 interface SettlementData {
@@ -27,7 +25,6 @@ interface SettlementData {
 
 declare const settlementAuthority: unique symbol;
 const authoritativeSettlements = new WeakSet<object>();
-const deductionClaims = new WeakMap<object, ObligationOrRight>();
 
 export interface SettlementDraft {
   readonly id: SettlementId;
@@ -93,10 +90,6 @@ export const createSettlement = (
 export const applySettlement = (claim: ObligationOrRight, settlement: Settlement): ObligationOrRight => {
   if (!authoritativeSettlements.has(settlement)) {
     failValidation({ severity: "error", code: issueCodes.settlementNotAuthoritative, message: "Only the exact settlement created by createSettlement may be applied", entityType: "settlement" });
-  }
-  const deductionClaim = deductionClaims.get(settlement);
-  if (deductionClaim !== undefined && deductionClaim !== claim) {
-    failValidation({ severity: "error", code: issueCodes.settlementClaimNotFound, message: "SSA deduction requires the exact authorized Medicare obligation", entityType: "settlement", entityId: settlement.id });
   }
   if (settlement.claimId !== claim.id) {
     failValidation({ severity: "error", code: issueCodes.settlementClaimNotFound, message: `Settlement ${settlement.id} does not apply to claim ${claim.id}`, entityType: "settlement", entityId: settlement.id });
@@ -192,30 +185,24 @@ export interface SsaDeductionRequest {
   readonly terms: SsaMedicareDeductionTerms;
 }
 
-export interface SsaDeductionReceipt {
-  readonly kind: "ssa_payable_deduction";
+export interface SsaMedicareDeductionProposal {
+  readonly kind: "conditional_ssa_medicare_deduction";
   readonly committed: false;
-  readonly settlement: Settlement;
-  readonly payable: SsaPayableEvidence;
+  readonly settlementIntentId: SettlementId;
+  readonly proposedAt: Instant;
+  readonly claim: ObligationOrRight;
   readonly terms: SsaMedicareDeductionTerms;
-  readonly sourceState: Readonly<Pick<SsaCommittedConsumption, "stateId" | "asOf" | "committedReceiptIds" | "source">>;
+  readonly provenance?: FactProvenance;
+  readonly traceRefs?: readonly CalculationTraceRef[];
 }
-const deductionReceipts = new WeakSet<object>();
 
-/** A state adapter must attest the COMPLETE committed receipt inventory at the
- * event, including an explicitly empty inventory. No remaining-balance input.
- * Receipts retain in-process factory identity; deserialization is outside this
- * interface-only phase. The source attests stateId, paymentId, asOf and the full
- * committedReceiptIds inventory. This factory never commits those receipts.
- */
-export interface SsaCommittedConsumption {
-  readonly stateId: string;
-  readonly complete: true;
-  readonly paymentId: string;
-  readonly asOf: Instant;
-  readonly committedReceiptIds: readonly string[];
-  readonly receipts: readonly SsaDeductionReceipt[];
-  readonly source: SsaDeductionSource;
+export interface SsaMedicareDeductionProposals {
+  readonly kind: "conditional_ssa_medicare_deduction";
+  readonly committed: false;
+  readonly payable: SsaPayableEvidence;
+  readonly proposals: readonly SsaMedicareDeductionProposal[];
+  readonly deductionAmount: Money;
+  readonly conditionalNetPayable: Money;
 }
 
 const deductionInvalid = (message: string): never => failValidation({ severity: "error",
@@ -230,9 +217,6 @@ const identityFields = ["householdId", "recipientId", "workerRecordId", "awardId
   "paymentId", "rightClaimId", "rightRecognitionId", "paymentAt"] as const;
 const samePayable = (a: SsaPayableIdentity, b: SsaPayableIdentity): boolean =>
   identityFields.every(key => a[key] === b[key]);
-const sameDeductionSource = (a: SsaDeductionSource, b: SsaDeductionSource): boolean =>
-  (["scopeId", "ruleSnapshotId", "ruleFamily", "version", "sourcePublication", "jurisdiction", "status",
-    "effectiveStart", "effectiveEndExclusive", "asOf", "publishedAt", "knownAt"] as const).every(key => a[key] === b[key]);
 const partPeriodKey = (p: MedicarePremiumEvidence): string => JSON.stringify([
   p.householdId, p.beneficiaryId, p.part, p.periodStart, p.periodEndExclusive,
 ]);
@@ -279,17 +263,20 @@ export const createZeroMedicareCoverageEvidence = (premium: MedicarePremiumEvide
   }
 };
 
-/** Pure all-or-nothing authorization for one actual gross SSA installment.
- * No source debit, reservation, posting, net deposit or tax credit is committed.
- * The next participant must atomically recheck/commit the receipts against state.
+/** Pure conditional proposals for one gross-unpaid SSA installment.
+ * Repeated calls do not reserve or verify remaining source capacity. Only a
+ * later household participant can atomically settle the independent right and
+ * claims, consume the source and post gross income / premium expense / net cash.
+ * Previously posted premium accruals and partially paid SSA rights require a
+ * separately approved clearing contract and are unsupported here. Recognition
+ * identities below are evidence references, never instructions to post again.
  */
-export const createSsaBenefitDeductionSettlement = (
+export const prepareSsaMedicareDeductionProposals = (
   payable: SsaPayableEvidence,
   right: ObligationOrRight,
   requests: readonly SsaDeductionRequest[],
-  consumption: SsaCommittedConsumption,
-  existingSettlementIds: Iterable<string>,
-) => {
+  existingSettlementIds: Iterable<string> = [],
+): SsaMedicareDeductionProposals => {
   assertClaimInvariant(right);
   const paymentDate = civilDate(payable.paymentAt.slice(0, 10));
   const nextDate = new Date(`${paymentDate}T00:00:00.000Z`);
@@ -305,45 +292,27 @@ export const createSsaBenefitDeductionSettlement = (
     && right.id === JSON.stringify(["d2-quoted-benefit/v1", payable.householdId, payable.entitlementId,
       payable.recipientId, paymentDate]) && payable.paymentId === right.id
     && right.economicOwnerId === payable.recipientId && right.originalAmount.equals(payable.grossPayable)
+    && right.outstandingAmount.equals(payable.grossPayable) && right.settlementIds.length === 0
     && right.recognizedAt <= payable.paymentAt && right.dueAt === payable.paymentAt,
   "Payable must bind the actual coordinated positive SSA right");
-  requireDeduction(consumption !== undefined && consumption.complete === true
-    && consumption.paymentId === payable.paymentId && consumption.asOf === payable.paymentAt,
-    "Complete committed source-consumption view at the payment event required");
-  qualifyDeductionSource(consumption.source, consumption.stateId, "ssa_committed_consumption", payable.paymentAt,
-    paymentDate, paymentEnd);
   const settlements = new Set(existingSettlementIds);
   const receiptIds = new Set<string>(), authorizations = new Set<string>(), claims = new Set<string>(), parts = new Set<string>();
-  let consumed = money("0");
-  const reserve = (id: string, t: SsaMedicareDeductionTerms, committed: boolean) => {
-    requireDeduction((committed || !settlements.has(id)) && !receiptIds.has(t.receiptId)
-      && !authorizations.has(t.authorizationId) && !claims.has(t.obligationId) && !parts.has(partPeriodKey(t.premium)),
+  const recognitions = new Set<string>([right.originatingRecognitionId]);
+  claims.add(right.id);
+  let deductionTotal = money("0");
+  const reserve = (id: string, t: SsaMedicareDeductionTerms) => {
+    requireDeduction(!settlements.has(id) && !receiptIds.has(t.receiptId)
+      && !authorizations.has(t.authorizationId) && !claims.has(t.obligationId)
+      && !recognitions.has(t.obligationRecognitionId) && !parts.has(partPeriodKey(t.premium)),
     "Duplicate settlement, receipt, authorization, Medicare claim or Part/period");
     settlements.add(id); receiptIds.add(t.receiptId); authorizations.add(t.authorizationId);
     claims.add(t.obligationId); parts.add(partPeriodKey(t.premium));
-    consumed = consumed.plus(t.amount);
-    requireDeduction(consumed.compare(payable.grossPayable) <= 0, "Deduction exceeds unconsumed gross SSA payable");
+    recognitions.add(t.obligationRecognitionId);
+    deductionTotal = deductionTotal.plus(t.amount);
+    requireDeduction(deductionTotal.compare(payable.grossPayable) <= 0, "Conditional batch deduction exceeds gross SSA payable");
   };
-  const committedSettlements = new Set<string>();
-  for (const receipt of consumption.receipts) {
-    requireDeduction(deductionReceipts.has(receipt) && samePayable(receipt.payable, payable)
-      && receipt.payable.grossPayable.equals(payable.grossPayable)
-      && receipt.payable.benefitKind === payable.benefitKind && sameDeductionSource(receipt.payable.source, payable.source)
-      && !committedSettlements.has(receipt.settlement.id), "Authentic unique committed source receipt required");
-    committedSettlements.add(receipt.settlement.id);
-    reserve(receipt.settlement.id, receipt.terms, true);
-  }
-  requireDeduction(new Set(consumption.committedReceiptIds).size === consumption.committedReceiptIds.length
-    && receiptIds.size === consumption.committedReceiptIds.length
-    && consumption.committedReceiptIds.every(id => receiptIds.has(id)), "Committed receipt inventory is incomplete or ambiguous");
-  const priorConsumed = consumed;
-  requireDeduction(right.outstandingAmount.equals(payable.grossPayable.minus(priorConsumed)),
-    "Right outstanding must reconcile to complete committed source consumption");
-  requireDeduction(right.settlementIds.length === committedSettlements.size
-    && [...right.settlementIds].every(id => committedSettlements.has(id)),
-  "Right history must reconcile to complete committed source receipts");
-  const ordered = [...requests].sort((a, b) => a.terms.obligationId < b.terms.obligationId ? -1
-    : a.terms.obligationId > b.terms.obligationId ? 1 : 0);
+  const key = (r: SsaDeductionRequest): string => JSON.stringify([r.terms.premium.part, r.terms.obligationId]);
+  const ordered = [...requests].sort((a, b) => key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
   requireDeduction(ordered.length > 0, "Positive Medicare deduction requests required");
   const prepared = ordered.map(({ draft, claim, terms: t }) => {
     assertClaimInvariant(claim);
@@ -365,34 +334,19 @@ export const createSsaBenefitDeductionSettlement = (
       && cents(t.amount) && t.amount.isPositive() && t.amount.equals(t.premium.base.plus(t.premium.irmaa))
       && t.amount.equals(claim.originalAmount) && t.amount.equals(claim.outstandingAmount)
       && draft.settledAt === payable.paymentAt && claim.dueAt === payable.paymentAt
+      && claim.recognizedAt <= payable.paymentAt
+      && paymentDate >= t.premium.periodStart && paymentDate < t.premium.periodEndExclusive
       && claim.recognizedAt.slice(0, 10) >= t.premium.periodStart
       && claim.recognizedAt.slice(0, 10) < t.premium.periodEndExclusive,
     "Deduction must match one full Medicare obligation, beneficiary, installment and premium month");
-    reserve(draft.id, t, false);
-    const proposal = createSettlementProposal({ id: settlementProposalId(JSON.stringify(["ssa_payable_deduction", draft.id])),
-      claimId: claim.id, requestedAmount: t.amount, requestedAt: draft.settledAt }, claim);
+    reserve(draft.id, t);
     const traceRefs = freezeTraceRefs(draft.traceRefs);
-    const settlementData: Readonly<SettlementData> = Object.freeze({ id: draft.id, proposalId: proposal.id, claimId: claim.id,
-      amount: t.amount, settledAt: draft.settledAt, fundingAllocations: Object.freeze([]),
+    return immutableDeduction({ kind: "conditional_ssa_medicare_deduction" as const, committed: false as const,
+      settlementIntentId: draft.id, proposedAt: draft.settledAt, claim, terms: t,
       ...(draft.provenance === undefined ? {} : { provenance: createFactProvenance(draft.provenance) }),
       ...(traceRefs === undefined ? {} : { traceRefs }) });
-    // The validated data gains only the opaque compile-time brand here. Runtime
-    // authority still requires registration in authoritativeSettlements below.
-    const settlement = settlementData as Settlement;
-    const receipt = Object.freeze({ kind: "ssa_payable_deduction" as const, committed: false as const,
-      settlement, payable: immutableDeduction(payable), terms: immutableDeduction(t),
-      sourceState: immutableDeduction({ stateId: consumption.stateId, asOf: consumption.asOf,
-        committedReceiptIds: [...consumption.committedReceiptIds].sort(), source: consumption.source }) });
-    return { receipt, claim };
   });
-  // Publish authority only once the entire batch has passed all checks.
-  for (const { receipt, claim } of prepared) {
-    authoritativeSettlements.add(receipt.settlement);
-    deductionClaims.set(receipt.settlement, claim);
-    deductionReceipts.add(receipt);
-  }
-  return Object.freeze({ kind: "conditional_ssa_deduction_group" as const, committed: false as const,
-    receipts: Object.freeze(prepared.map(p => p.receipt)),
-    deductionAmount: consumed.minus(priorConsumed),
-    conditionalNetPayable: payable.grossPayable.minus(consumed) });
+  return Object.freeze({ kind: "conditional_ssa_medicare_deduction" as const, committed: false as const,
+    payable: immutableDeduction(payable), proposals: Object.freeze(prepared), deductionAmount: deductionTotal,
+    conditionalNetPayable: payable.grossPayable.minus(deductionTotal) });
 };

@@ -6,8 +6,8 @@ import { createObligation, createRight } from "../src/semantics/claim.js";
 import { claimId, recognitionId, settlementId, settlementProposalId } from "../src/semantics/identity.js";
 import { createSettlementProposal } from "../src/semantics/settlementProposal.js";
 import {
-  applySettlement, createSettlement, createSsaBenefitDeductionSettlement, createZeroMedicareCoverageEvidence,
-  type MedicarePremiumEvidence, type SsaCommittedConsumption, type SsaDeductionReceipt,
+  applySettlement, createSettlement, prepareSsaMedicareDeductionProposals, createZeroMedicareCoverageEvidence,
+  type MedicarePremiumEvidence,
   type SsaDeductionRequest, type SsaDeductionSource, type SsaPayableEvidence,
 } from "../src/semantics/settlement.js";
 import { civilDate, instant } from "../src/time/index.js";
@@ -32,12 +32,12 @@ const payable = (): SsaPayableEvidence => {
     entitlementId: "entitlement", paymentId: id, rightClaimId: id, rightRecognitionId: "gross-recognition",
     paymentAt: at, grossPayable: money("1500"), source: source(id, "ssa_coordinated_payable") };
 };
-const makeRight = (p = payable(), outstanding = p.grossPayable, settlements: readonly SsaDeductionReceipt[] = []) => {
+const makeRight = (p = payable(), outstanding = p.grossPayable, settlements: readonly ReturnType<typeof settlementId>[] = []) => {
   const fact = createRecognitionFact({ id: recognitionId(p.rightRecognitionId), category: "ssa_gross_income",
     amount: p.grossPayable, recognizedAt });
   return createRight({ id: p.rightClaimId, originatingRecognitionId: fact.id, category: "ssa_benefit_payable",
     economicOwnerId: owner, originalAmount: fact.amount, outstandingAmount: outstanding,
-    recognizedAt, dueAt: at, settlementIds: settlements.map(r => r.settlement.id) });
+    recognizedAt, dueAt: at, settlementIds: settlements });
 };
 const premium = (part: MedicarePremiumEvidence["part"], amount: string): MedicarePremiumEvidence => ({
   evidenceId: `premium:${part}`, householdId: "household", beneficiaryId: owner, part,
@@ -59,33 +59,35 @@ const request = (part: MedicarePremiumEvidence["part"], amount: string, p = paya
       obligationRecognitionId: claim.originatingRecognitionId, amount: money(amount), partialDeduction: "forbidden",
       source: source(`authorization:${part}`, "ssa_medicare_deduction") } };
 };
-const committed = (p = payable(), receipts: readonly SsaDeductionReceipt[] = []): SsaCommittedConsumption => ({
-  stateId: "verified-state-version", complete: true, paymentId: p.paymentId, asOf: at,
-  committedReceiptIds: receipts.map(r => r.terms.receiptId), receipts,
-  source: source("verified-state-version", "ssa_committed_consumption"),
-});
-const group = (requests: readonly SsaDeductionRequest[], p = payable(), state = committed(p), right = makeRight(p), ids: readonly string[] = []) =>
-  createSsaBenefitDeductionSettlement(p, right, requests, state, ids);
+const group = (requests: readonly SsaDeductionRequest[], p = payable(), right = makeRight(p), ids: readonly string[] = []) =>
+  prepareSsaMedicareDeductionProposals(p, right, requests, ids);
 
-describe("conditional SSA payable deduction authority", () => {
-  it("authorizes 8000 + 12000 cents from 150000 cents with no cash or postings", () => {
+describe("conditional SSA Medicare deduction proposals", () => {
+  it("proposes 8000 + 12000 cents from 150000 cents with no settlement authority", () => {
     const b = request("part_b", "80"), d = request("part_d", "120"), right = makeRight();
-    const result = group([d, b], payable(), committed(), right);
+    const result = group([d, b], payable(), right);
     expect(result.deductionAmount.equals(money("200"))).toBe(true);
     expect(result.conditionalNetPayable.equals(money("1300"))).toBe(true);
     expect(result.committed).toBe(false);
-    expect(result.receipts.map(r => r.terms.premium.part)).toEqual(["part_b", "part_d"]);
+    expect(result.kind).toBe("conditional_ssa_medicare_deduction");
+    expect(result.proposals.map(r => r.terms.premium.part)).toEqual(["part_b", "part_d"]);
     for (const [index, candidate] of [b, d].entries()) {
-      const receipt = result.receipts[index]!;
-      expect(receipt.kind).toBe("ssa_payable_deduction");
-      expect(receipt.settlement.fundingAllocations).toEqual([]);
-      expect(receipt.terms.amount.equals(candidate.claim.originalAmount)).toBe(true);
-      expect(applySettlement(candidate.claim, receipt.settlement).outstandingAmount.isZero()).toBe(true);
+      const proposal = result.proposals[index]!;
+      expect(proposal.kind).toBe("conditional_ssa_medicare_deduction");
+      expect(proposal.committed).toBe(false);
+      expect(proposal.terms.amount.equals(candidate.claim.originalAmount)).toBe(true);
       expect(candidate.claim.outstandingAmount.equals(candidate.claim.originalAmount)).toBe(true);
-      expect(receipt.sourceState.committedReceiptIds).toEqual([]);
-      expect(receipt).not.toHaveProperty("transaction");
+      expect(candidate.claim.settlementIds).toEqual([]);
+      for (const key of ["settlement", "sourceState", "transaction", "fundingAllocations", "recognition"])
+        expect(proposal).not.toHaveProperty(key);
+      // Deliberate runtime misuse must fail without casting an opaque brand.
+      expect(() => Reflect.apply(applySettlement, undefined, [candidate.claim, proposal])).toThrow();
+      expect(() => Reflect.apply(applySettlement, undefined, [right, proposal])).toThrow();
     }
     expect(right.outstandingAmount.equals(money("1500"))).toBe(true);
+    expect(right.settlementIds).toEqual([]);
+    expect(Reflect.apply(isAcceptedFundingResolution, undefined, [result])).toBe(false);
+    expect(() => Reflect.apply(createSettlement, undefined, [b.draft, result.proposals[0], b.claim])).toThrow();
   });
 
   it("is immutable and deterministic under input reversal and pure replay", () => {
@@ -93,81 +95,90 @@ describe("conditional SSA payable deduction authority", () => {
     const forward = group([b, d]);
     expect(group([d, b])).toEqual(forward);
     expect(group([b, d])).toEqual(forward);
-    const receipt = forward.receipts[0]!;
-    for (const value of [forward, forward.receipts, receipt, receipt.settlement, receipt.settlement.fundingAllocations,
-      receipt.payable, receipt.payable.source, receipt.terms, receipt.terms.premium, receipt.sourceState,
-      receipt.sourceState.committedReceiptIds]) expect(Object.isFrozen(value)).toBe(true);
+    const proposal = forward.proposals[0]!;
+    for (const value of [forward, forward.proposals, proposal, proposal.claim, proposal.claim.settlementIds,
+      forward.payable, forward.payable.source, proposal.terms, proposal.terms.premium,
+      proposal.terms.premiumScope, proposal.terms.premium.source]) expect(Object.isFrozen(value)).toBe(true);
     expect(Reflect.set(b.terms.premium.source, "version", "changed-input")).toBe(true);
-    expect(receipt.terms.premium.source.version).toBe("synthetic-v1");
-    expect(() => applySettlement(b.claim, { ...receipt.settlement })).toThrow();
-    const settled = applySettlement(b.claim, receipt.settlement);
-    expect(() => applySettlement(settled, receipt.settlement)).toThrow();
-    expect(() => applySettlement({ ...b.claim, category: "unrelated_expense" }, receipt.settlement)).toThrow();
+    expect(proposal.terms.premium.source.version).toBe("synthetic-v1");
+    expect(() => Reflect.apply(applySettlement, undefined, [b.claim, { ...proposal }])).toThrow();
   });
 
-  it("matches full base plus IRMAA and canonicalizes committed inventory order", () => {
+  it("matches full base plus IRMAA without consuming source capacity", () => {
     const b = request("part_b", "80"), d = request("part_d", "120");
     const withIrmaa = { ...b, terms: { ...b.terms, premium: { ...b.terms.premium,
       base: money("50"), irmaa: money("30") } } };
-    const first = group([withIrmaa, d]), p = payable();
-    const right = makeRight(p, money("1300"), first.receipts), a = request("part_a", "10");
-    const forward = group([a], p, committed(p, first.receipts), right);
-    expect(group([a], p, committed(p, [...first.receipts].reverse()), right)).toEqual(forward);
-    expect(forward.conditionalNetPayable.equals(money("1290"))).toBe(true);
-    const revised = { ...p, source: { ...p.source, version: "competing-version" } };
-    expect(() => group([a], revised, committed(revised, first.receipts), right)).toThrow();
+    const first = group([withIrmaa, d]);
+    expect(first.deductionAmount.equals(money("200"))).toBe(true);
+    expect(group([d, withIrmaa])).toEqual(first);
+    const separate = group([request("part_a", "10")]);
+    expect(separate.conditionalNetPayable.equals(money("1490"))).toBe(true);
+    expect(separate.committed).toBe(false);
   });
 
-  it("uses actual committed receipt identities and rejects repeated $200, competing versions and missing inventory", () => {
+  it("rejects partial or settled source rights and caller-supplied historical consumption", () => {
     const p = payable(), b = request("part_b", "200", p);
-    const first = group([b], p);
-    // Synthetic authoritative-state import, not an assertion of an actual commit.
-    const state = committed(p, first.receipts), right = makeRight(p, money("1300"), first.receipts);
-    const d = request("part_d", "120", p);
-    const next = group([d], p, state, right, first.receipts.map(r => r.settlement.id));
-    expect(next.deductionAmount.equals(money("120"))).toBe(true);
-    expect(next.conditionalNetPayable.equals(money("1180"))).toBe(true);
-    expect(() => group([b], p, state, right)).toThrow();
-    const competing = { ...b, draft: { ...b.draft, id: settlementId("competing") }, terms: {
-      ...b.terms, authorizationId: "revision", source: source("revision", "ssa_medicare_deduction") } };
-    expect(() => group([competing], p, state, right)).toThrow();
-    expect(() => group([d], p, { ...state, receipts: [] }, right)).toThrow();
-    expect(() => group([d], p, { ...state, committedReceiptIds: [] }, right)).toThrow();
-    expect(() => group([d], p, { ...state, receipts: [{ ...first.receipts[0]! }] }, right)).toThrow();
-    expect(() => group([d], p, { ...state, receipts: [...first.receipts, ...first.receipts] }, right)).toThrow();
-    expect(() => group([d], p, committed(p), right)).toThrow();
-    expect(() => createSsaBenefitDeductionSettlement(p, right, [d], undefined as unknown as SsaCommittedConsumption, [])).toThrow();
-    expect(() => group([d], p, { ...state, complete: false } as unknown as SsaCommittedConsumption, right)).toThrow();
+    for (const amount of ["1300", "0"]) {
+      expect(() => group([b], p, makeRight(p, money(amount)))).toThrow();
+      expect(() => group([b], p, makeRight(p, money(amount), [settlementId("prior")]))).toThrow();
+    }
+    expect(() => group([b], p, makeRight(p, p.grossPayable, [settlementId("prior")]))).toThrow();
+    const first = group([b]);
+    expect(group([b])).toEqual(first);
+    const fakeHistory = { complete: true, receipts: first.proposals, committedReceiptIds: [b.terms.receiptId] };
+    expect(() => Reflect.apply(prepareSsaMedicareDeductionProposals, undefined,
+      [p, makeRight(p), [b], fakeHistory])).toThrow();
   });
 
-  it("enforces the exact unconsumed source cap and exposes no invalid batch output", () => {
+  it("enforces the single batch gross cap and exposes no invalid batch output", () => {
     expect(group([request("part_b", "1500")]).conditionalNetPayable.isZero()).toBe(true);
     expect(() => group([request("part_b", "1501")])).toThrow();
     expect(() => group([request("part_b", "800"), request("part_d", "701")])).toThrow();
-    const p = payable(), first = group([request("part_b", "200")]);
-    const state = committed(p, first.receipts), right = makeRight(p, money("1300"), first.receipts);
-    expect(group([request("part_d", "1300")], p, state, right).conditionalNetPayable.isZero()).toBe(true);
-    expect(() => group([request("part_d", "1300.01")], p, state, right)).toThrow();
-    const exhausted = group([request("part_b", "1500")]);
-    expect(() => group([request("part_d", "1")], p, committed(p, exhausted.receipts),
-      makeRight(p, money("0"), exhausted.receipts))).toThrow();
+    expect(() => group([])).toThrow();
     let output: ReturnType<typeof group> | undefined;
-    expect(() => { output = group([request("part_b", "80"), request("part_d", "1500")]); }).toThrow();
+    const b = request("part_b", "80"), d = request("part_d", "1500"), right = makeRight();
+    expect(() => { output = group([b, d], payable(), right); }).toThrow();
     expect(output).toBeUndefined();
+    for (const claim of [b.claim, d.claim, right]) {
+      expect(claim.outstandingAmount.equals(claim.originalAmount)).toBe(true);
+      expect(claim.settlementIds).toEqual([]);
+    }
     expect(group([request("part_b", "80"), request("part_d", "120")]).deductionAmount.equals(money("200"))).toBe(true);
   });
 
   it("rejects duplicate settlement/authorization/receipt IDs and duplicate Part allocations", () => {
     const b = request("part_b", "80"), d = request("part_d", "120");
     expect(() => group([b, b])).toThrow();
-    expect(() => group([b], payable(), committed(), makeRight(), [b.draft.id])).toThrow();
+    expect(() => group([b], payable(), makeRight(), [b.draft.id])).toThrow();
     expect(() => group([b, { ...d, draft: b.draft }])).toThrow();
     expect(() => group([b, { ...d, terms: { ...d.terms, receiptId: b.terms.receiptId } }])).toThrow();
     expect(() => group([b, { ...d, terms: { ...d.terms, authorizationId: b.terms.authorizationId,
       source: b.terms.source } }])).toThrow();
+    const sharedRecognition = { ...d, claim: Object.freeze({ ...d.claim,
+      originatingRecognitionId: b.claim.originatingRecognitionId }), terms: { ...d.terms,
+      obligationRecognitionId: b.terms.obligationRecognitionId } };
+    expect(() => group([b, sharedRecognition])).toThrow();
     expect(() => group([b, { ...b, draft: { ...b.draft, id: settlementId("second") },
       terms: { ...b.terms, receiptId: "second-receipt", authorizationId: "second-authorization",
         source: source("second-authorization", "ssa_medicare_deduction") } }])).toThrow();
+  });
+
+  it("rejects mixed bank routes, partial obligations and incomplete premiums atomically", () => {
+    const b = request("part_b", "80"), d = request("part_d", "120");
+    const bank = { ...d, terms: { ...d.terms, route: "aftertax_bank" } };
+    expect(() => Reflect.apply(prepareSsaMedicareDeductionProposals, undefined,
+      [payable(), makeRight(), [b, bank]])).toThrow();
+    for (const amount of ["119", "0"]) {
+      const claim = Object.freeze({ ...d.claim, outstandingAmount: money(amount) });
+      expect(() => group([b, { ...d, claim }])).toThrow();
+    }
+    for (const premium of [undefined, { ...d.terms.premium, irmaa: undefined },
+      { ...d.terms.premium, base: money("120.001") }]) {
+      expect(() => Reflect.apply(prepareSsaMedicareDeductionProposals, undefined,
+        [payable(), makeRight(), [b, { ...d, terms: { ...d.terms, premium } }]])).toThrow();
+    }
+    expect(b.claim.settlementIds).toEqual([]);
+    expect(group([b, d]).deductionAmount.equals(money("200"))).toBe(true);
   });
 
   const mismatches: readonly [string, (r: SsaDeductionRequest) => SsaDeductionRequest][] = [
@@ -192,6 +203,9 @@ describe("conditional SSA payable deduction authority", () => {
     ["payment event", r => ({ ...r, draft: { ...r.draft, settledAt: instant("2026-06-16T12:00:00.000Z") } })],
     ["unknown premium", r => ({ ...r, terms: { ...r.terms, premium: { ...r.terms.premium, status: "unknown" } } })],
     ["unknown terms", r => ({ ...r, terms: { ...r.terms, source: { ...r.terms.source, status: "unknown" } } })],
+    ["unsupported rules", r => ({ ...r, terms: { ...r.terms, source: { ...r.terms.source, status: "unsupported" } } })],
+    ["wrong rule family", r => ({ ...r, terms: { ...r.terms, source: { ...r.terms.source, ruleFamily: "generic_income" } } })],
+    ["zero deduction", r => ({ ...r, terms: { ...r.terms, amount: money("0") } })],
     ["fractional cent", r => ({ ...r, terms: { ...r.terms, amount: money("80.001") } })],
     ["currency", r => ({ ...r, terms: { ...r.terms, amount: money("80", Currency.of("EUR")) } })],
     ["partial premium", r => ({ ...r, terms: { ...r.terms, amount: money("79") } })],
@@ -208,11 +222,12 @@ describe("conditional SSA payable deduction authority", () => {
     expect(() => group([b], { ...p, benefitKind: "pension" } as unknown as SsaPayableEvidence)).toThrow();
     expect(() => group([b], { ...p, eligibility: "unknown" })).toThrow();
     expect(() => group([b], { ...p, source: { ...p.source, status: "unknown" } })).toThrow();
+    expect(() => group([b], { ...p, kind: "generic_income" } as unknown as SsaPayableEvidence)).toThrow();
+    expect(() => group([b], { ...p, grossPayable: money("0") })).toThrow();
     expect(() => group([b], { ...p, grossPayable: money("1500.001") })).toThrow();
-    expect(() => group([b], p, committed(), { ...makeRight(), category: "generic_income" })).toThrow();
-    expect(() => group([b], p, committed(), { ...makeRight(), id: claimId("arbitrary") })).toThrow();
-    expect(() => group([b], p, committed(), { ...makeRight(), economicOwnerId: otherOwner })).toThrow();
-    expect(() => group([b], p, { ...committed(), source: { ...committed().source, status: "unknown" } })).toThrow();
+    expect(() => group([b], p, { ...makeRight(), category: "generic_income" })).toThrow();
+    expect(() => group([b], p, { ...makeRight(), id: claimId("arbitrary") })).toThrow();
+    expect(() => group([b], p, { ...makeRight(), economicOwnerId: otherOwner })).toThrow();
   });
 
   it("rejects future publication, knowledge, as-of, wrong source scope and uncovered dates", () => {
@@ -260,7 +275,11 @@ describe("zero Medicare coverage and ordinary bank compatibility", () => {
     if (!isAcceptedFundingResolution(funded)) throw new Error("Expected real bank funding");
     const settlement = createSettlement({ id: settlementId("ordinary-bank"), settledAt: at }, funded, candidate.claim);
     expect(settlement.fundingAllocations).toHaveLength(1);
-    expect(applySettlement(candidate.claim, settlement).outstandingAmount.isZero()).toBe(true);
+    const settled = applySettlement(candidate.claim, settlement);
+    expect(settled.outstandingAmount.isZero()).toBe(true);
+    expect(() => applySettlement(candidate.claim, { ...settlement })).toThrow();
+    expect(() => applySettlement(settled, settlement)).toThrow();
+    expect(() => applySettlement(request("part_d", "80").claim, settlement)).toThrow();
     expect(() => createSettlementProposal({ id: settlementProposalId("zero"), claimId: candidate.claim.id,
       requestedAmount: money("0"), requestedAt: at }, candidate.claim)).toThrow();
     expect(() => createSettlement({ id: settlementId("fake"), settledAt: at },
