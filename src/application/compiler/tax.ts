@@ -117,6 +117,11 @@ export const compileHouseholdTax = (model: PortableModelEnvelope, request: House
       if (work.length && !employment) fail("Work allocations belong only on employment Income.");
       validateWorkTaxAllocations(work, start, end);
       const ownerId = String(income.owner_id).toLowerCase();
+      if (income.income_type === "salary" && (income.frequency !== "monthly" || income.gross_or_net === "net") &&
+        (request.simulationEnd === undefined || start < request.simulationEnd) && (request.simulationStart === undefined || end === undefined || end >= request.simulationStart)) {
+        const limitation = taxDiagnostic("payroll_source_unsupported", `Salary source frequency=${String(income.frequency)}, gross_or_net=${String(income.gross_or_net)} requires unsupported pay frequency or net-to-gross mechanics; its income, deductions and paycheck are not executed.`, undefined, id);
+        diagnostics.push(Object.freeze({ ...limitation, affectedOutputs: [...limitation.affectedOutputs, "statementIncome", "recurringIncomeRecognized"] }));
+      }
       const personId = residences.has(ownerId) ? ownerId : people.length === 1 ? canonicalId(people[0]!, "person_id") : undefined;
       incomes.push({ id, ownerId, ...(typeof income.source === "string" ? { employerId: income.source } : {}), incomeType: String(income.income_type), taxCharacter: String(income.tax_character ?? "ordinary"), grossOrNet: String(income.gross_or_net ?? "gross"), start, ...(end === undefined ? {} : { end }), work,
         residence: personId === undefined ? [] : residences.get(personId)!, eligibility: [...(personId === undefined ? [] : personEligibility.get(personId)!), ...eligibility(income)] });

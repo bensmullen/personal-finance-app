@@ -11,7 +11,7 @@ import { compileHouseholdKernel, type CompiledHouseholdKernel } from "../../simu
 import { instant } from "../../time/index.js";
 import { reconcileHouseholdOpeningState, reconcileHouseholdPrimitiveState } from "../../simulation/householdProjection.js";
 import { buildHouseholdScheduledPlan, type HouseholdContentionPolicy } from "../../simulation/intraperiodScheduler.js";
-import { compileCashFlow, type CashFlowCompilerRequest, type CashFlowScenarioBindings, type CompiledCashFlow } from "./cashFlow.js";
+import { compileHouseholdCashFlow, type CashFlowCompilerRequest, type CashFlowScenarioBindings, type CompiledCashFlow } from "./cashFlow.js";
 import { compileInvestments, type InvestmentCompilerRequest, type CompiledInvestments } from "./investments.js";
 import { compileLiabilities, type LiabilityCompilerRequest, type CompiledLiabilities } from "./liabilities.js";
 import type { CapabilityDiagnostic, CompileResult } from "./types.js";
@@ -176,7 +176,7 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   const missing = required.filter(([key, , applicable]) => applicable && request[key] === undefined).map(([, domain]) => domainDiagnostic(domain));
   if (missing.length) return unsupported(missing);
   const results = [
-    request.cashFlow === undefined ? undefined : compileCashFlow(model, request.cashFlow),
+    request.cashFlow === undefined ? undefined : compileHouseholdCashFlow(model, request.cashFlow),
     request.investments === undefined ? undefined : compileInvestments(model, request.investments),
     request.liabilities === undefined ? undefined : compileLiabilities(model, request.liabilities),
   ] as const;
@@ -230,7 +230,7 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
   });
   const value: CompiledHouseholdProjection = Object.freeze({
     ...(request.forecastLawPolicy === undefined ? {} : { projectedLaw: tax.value.catalog.flatMap(rule => rule.provenance.type === "projected_current_law" && (Object.values(tax.value.filingStatuses ?? {}).some(fact => fact.status === "known" && fact.value === rule.filingStatus && `${fact.taxYear}-01-01` < rule.effectiveUntil && `${Number(fact.taxYear) + 1}-01-01` > rule.effectiveFrom) || rule.filingStatus === "all") && (rule.jurisdiction === "US:FEDERAL" || taxJurisdictions.has(rule.jurisdiction) || taxJurisdictions.has(rule.jurisdiction.replace(/:(WAGE|OPT)$/, ""))) ? [{ jurisdiction: rule.jurisdiction, baseYear: rule.provenance.baseYear, baseRuleId: String(rule.provenance.baseRuleId), from: rule.effectiveFrom, until: rule.effectiveUntil }] : []) }),
-    nonInvestmentPositionIds: taxCreditPositionIds(tax.value),
+    nonInvestmentPositionIds: taxCreditPositionIds(tax.value, firstBoundary.simulationEnd),
     participants: Object.freeze([createHouseholdTaxParticipant({ ...tax.value, simulationStart: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`),
       domainOperations: domains?.status === "compiled" ? domains.value.input.operations.map(item => ({ id: item.id, at: instant(item.at) })).sort((a, b) => a.id.localeCompare(b.id)) : [] }),
       ...(domains?.status === "compiled" ? [domains.value.participant] : []),

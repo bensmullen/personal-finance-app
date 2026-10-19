@@ -6,6 +6,7 @@ import { money, Quantity, SHARE, USD } from "../src/values/index.js";
 import { instant } from "../src/time/index.js";
 import { authorPayrollWithholding, durablePayrollWithholding, type PayrollWithholdingPlan } from "../src/application/compiler/payrollWithholding.js";
 import { compileCashFlow } from "../src/application/compiler/cashFlow.js";
+import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { createGoldenHouseholdDraft, patchPersonalObject } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS as golden } from "../src/application/goldenHousehold.js";
 import { exportPersonalModelJson, importPersonalModelJson } from "../src/application/modelPortability.js";
@@ -120,9 +121,45 @@ describe("durable Income authoring and compilation", () => {
   ])("rejects malformed or unconfirmed authorizations %j", changes => {
     expect(() => authorPayrollWithholding(authoredSource(), { ...plan(), ...changes } as PayrollWithholdingPlan)).toThrow();
   });
+  it.each([{ frequency: "fortnightly" }, { gross_or_net: "unknown" }, { income_type: "interest" }])("still rejects malformed or contradictory election sources %j", changes => {
+    expect(() => authorPayrollWithholding(patchPersonalObject(authoredSource(), "Income", golden.income, changes), plan())).toThrow("canonical salary source");
+  });
   it.each([{ frequency: "biweekly" }, { gross_or_net: "net" }])("does not turn unsupported Income %j into a payroll forecast", changes => {
     const model = patchPersonalObject(authoredSource(), "Income", golden.income, changes);
-    expect(() => authorPayrollWithholding(model, plan())).toThrow("explicitly gross monthly salary");
+    const authored = authorPayrollWithholding(model, plan());
+    expect(durablePayrollWithholding(importPersonalModelJson(exportPersonalModelJson(authored)))).toHaveLength(1);
+    expect(compileCashFlow(authored, { baseCurrency: "USD", simulationStart: "2026-01-01", simulationEnd: "2026-02-01", months: 1, sameInstantCashFlowOrder: "income_before_expense", executionAccountId: golden.checking }).status).toBe("unsupported");
+  });
+  it.each([{ frequency: "biweekly" }, { gross_or_net: "net" }])("executes independent income while reporting unsupported salary %j per output", changes => {
+    const authored = authorPayrollWithholding(patchPersonalObject(authoredSource(), "Income", golden.income, changes), plan());
+    const salary = authored.objects.Income![0]!;
+    if (typeof salary !== "object" || salary === null || Array.isArray(salary)) throw new Error("Expected canonical salary object");
+    const model = { ...authored, objects: { ...authored.objects, Asset: [], Investment: [], Liability: [], Expense: [],
+      Income: [salary, { ...salary, income_id: uuid(90), income_type: "interest", source: "synthetic bank interest", amount: "100", frequency: "monthly", gross_or_net: "gross", growth_model_id: null, related_event_id: null }] } };
+    const before = canonicalSerialize(model);
+    const compiled = compileHouseholdProjection(model, { cashFlow: { baseCurrency: "USD", simulationStart: "2026-01-01", simulationEnd: "2026-02-01", months: 1, sameInstantCashFlowOrder: "income_before_expense", executionAccountId: golden.checking } });
+    expect(compiled.status, JSON.stringify(compiled.diagnostics)).toBe("compiled");
+    if (compiled.status !== "compiled") throw new Error("Expected partial household compilation");
+    expect(compiled.value.cashFlowInput!.incomes.map(item => item.id)).toEqual([uuid(90)]);
+    const context = { ...taxHouseholdFixture().context, scenarioId: domainId("scenario", golden.rootScenario), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z") };
+    const request = { kernel: compiled.value.executionKernel!, runContext: context };
+    const summary = runHouseholdKernel(request), detail = runHouseholdKernel({ ...request, resultTier: "detail" });
+    const gap = expect.objectContaining({ category: "payroll_source_unsupported", entityId: golden.income });
+    expect(summary.status).toBe("incomplete");
+    expect(summary.outputCapabilities?.cash?.diagnostics).toContainEqual(gap);
+    expect(summary.outputCapabilities?.statementIncome).toMatchObject({ status: "incomplete", diagnostics: expect.arrayContaining([gap]) });
+    expect(summary.outputCapabilities?.currentPosition?.status).toBe("complete");
+    expect(summary.outputCapabilities?.recurringExpenseRecognized?.status).toBe("complete");
+    expect(summary.periods[0]!.statements.income.equals(money("100"))).toBe(true);
+    expect(detail.periods.flatMap(period => period.transactions).some(tx => tx.type === "payroll_income")).toBe(false);
+    expect(summary.state).toEqual(detail.state);
+    expect(summary.outputCapabilities).toEqual(detail.outputCapabilities);
+    const restored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(summary)));
+    const replay = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
+    expect(replay.state).toEqual(summary.state);
+    expect(replay.outputCapabilities).toEqual(summary.outputCapabilities);
+    expect(replay.runMetadata).toEqual(summary.runMetadata);
+    expect(canonicalSerialize(model)).toBe(before);
   });
   it("rejects overlap, accepts adjacent dates, and distinguishes absent from user zero", () => {
     const first = authorPayrollWithholding(authoredSource(), plan({ expirationDate: "2026-07-01" }));
@@ -145,6 +182,31 @@ const integrated = (amount: string, options: { readonly months?: number; readonl
 };
 
 describe("payroll credits, tax accrual and net final settlement", () => {
+  it.each([false, true])("keeps open-ended payroll credits out of investable value beyond catalog years (supported law: %s)", supported => {
+    const fixture = integrated("100", { months: 13 });
+    const input = { ...fixture.input, catalog: supported ? [...fixture.input.catalog, { ...fixture.input.catalog[0]!, id: domainId("tax-rule", uuid(301)), version: "synthetic-2025", effectiveFrom: instant("2025-01-01T00:00:00.000Z"), effectiveUntil: instant("2026-01-01T00:00:00.000Z") }] : fixture.input.catalog,
+      settlements: [...fixture.input.settlements!, { id: "final-2025", jurisdiction: "US:FEDERAL", taxYear: "2025", at: instant("2025-12-31T23:59:59.999Z") }] };
+    // No payment, catalog rule or settlement enumerates this year in the
+    // unsupported case: the actual execution boundary must reserve its credit.
+    const creditInput = { ...input, settlements: fixture.input.settlements! };
+    const excluded = taxCreditPositionIds(creditInput, fixture.context.simulationEnd);
+    const credit = taxBalanceIds("US:FEDERAL", "2025").creditPositionId;
+    expect(excluded).toContain(credit);
+    const kernel = compileHouseholdKernel({ ...fixture.kernel.executable, participants: [createHouseholdTaxParticipant(input)], nonInvestmentPositionIds: excluded }, fixture.context.simulationStart);
+    const summary = runHouseholdKernel({ kernel, runContext: fixture.context });
+    const detail = runHouseholdKernel({ kernel, runContext: fixture.context, resultTier: "detail" });
+    expect(summary.status).toBe(supported ? "completed" : "incomplete");
+    expect(summary.state.positions[credit]!.carryingValue.equals(money("100"))).toBe(true);
+    expect(summary.periods.at(-1)!.investmentValue.isZero()).toBe(true);
+    expect(summary.periods.at(-1)!.cash.equals(money("11700"))).toBe(true);
+    expect(summary.state).toEqual(detail.state);
+    expect(summary.outputCapabilities).toEqual(detail.outputCapabilities);
+    if (!supported) expect(summary.outputCapabilities?.cash?.diagnostics).toContainEqual(expect.objectContaining({ category: "rule_selection", jurisdiction: "US:FEDERAL" }));
+    const restored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(summary)));
+    const replay = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
+    expect(replay.periods).toEqual(summary.periods);
+    expect(replay.state).toEqual(summary.state);
+  });
   it("keeps two owners' jobs, receiving banks and federal/state/local credits separate", () => {
     const fixture = integrated("100", { months: 1 });
     const ownerB = domainId("person", uuid(101)), incomeB = domainId("income", uuid(102)), bankB = domainId("account", uuid(103));

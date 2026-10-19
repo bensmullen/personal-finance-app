@@ -170,7 +170,10 @@ export const isNonblockingProjectedTaxLaw = (diagnostic: TaxCapabilityDiagnostic
 };
 export const taxOutputCapabilities = (diagnostics: readonly TaxCapabilityDiagnostic[], selection?: ProjectedCurrentLawAssumption): TaxOutputCapabilities => Object.freeze(Object.fromEntries([
   ...taxAffectedOutputs.map(field => [field, Object.freeze({ dependency: "tax_affected", status: diagnostics.some(diagnostic => !isNonblockingProjectedTaxLaw(diagnostic, selection)) ? "incomplete" : "complete", diagnostics: Object.freeze([...diagnostics]) })]),
-  ...["statementIncome", "recurringIncomeRecognized", "recurringExpenseRecognized", "currentPosition"].map(field => [field, Object.freeze({ dependency: "tax_independent", status: "complete", diagnostics: Object.freeze([]) })]),
+  ...["statementIncome", "recurringIncomeRecognized", "recurringExpenseRecognized", "currentPosition"].map(field => {
+    const applicable = diagnostics.filter(diagnostic => diagnostic.affectedOutputs.includes(field));
+    return [field, Object.freeze({ dependency: "tax_independent", status: applicable.length ? "incomplete" : "complete", diagnostics: Object.freeze(applicable) })];
+  }),
 ]));
 export interface RecognizedTaxEconomics {
   /** Bounded ordinary lump-sum term-life proceeds excluded from federal gross income. */

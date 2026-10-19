@@ -3,7 +3,7 @@ import { domainId } from "../../identity/index.js";
 import type { JsonValue, PortableModelEnvelope } from "../../model/modelVersion.js";
 import { decimal, money } from "../../values/index.js";
 import type { PayrollWithholdingElection } from "../../simulation/tax/contracts.js";
-import { canonicalId, EXACT_DECIMAL, objects, resolveHouseholdScope, utcDate, UUID, type CanonicalObject } from "./shared.js";
+import { canonicalId, EXACT_DECIMAL, objects, PAYMENT_FREQUENCIES, resolveHouseholdScope, utcDate, UUID, type CanonicalObject } from "./shared.js";
 
 export const WITHHOLDING_ADAPTER = "payroll-withholding/v1";
 const record = (value: JsonValue | undefined): value is CanonicalObject => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -39,7 +39,7 @@ export const durablePayrollWithholding = (model: PortableModelEnvelope): readonl
     if (typeof incomeId !== "string" || !UUID.test(incomeId) || typeof accountId !== "string" || !UUID.test(accountId)) fail("Withholding requires Income and receiving bank identities.");
     const income = objects(model, "Income").find(item => canonicalId(item, "income_id") === incomeId.toLowerCase());
     const account = objects(model, "Account").find(item => canonicalId(item, "account_id") === accountId.toLowerCase());
-    if (!income || income.income_type !== "salary" || income.gross_or_net !== "gross" || income.frequency !== "monthly") fail("Withholding supports explicitly gross monthly salary only.");
+    if (!income || income.income_type !== "salary" || !["gross", "net"].includes(String(income.gross_or_net)) || !PAYMENT_FREQUENCIES.includes(income.frequency as never)) fail("Withholding requires a canonical salary source with explicit gross/net and frequency facts.");
     if (income.scenario_id != null && income.scenario_id !== primitive.scenario_id) fail("Income and withholding scenarios disagree.");
     if (typeof parameters.ownerId !== "string" || parameters.ownerId !== income.owner_id || !objects(model, "Person").some(person => person.person_id === parameters.ownerId)) fail("Withholding requires the salary's person owner.");
     const scope = resolveHouseholdScope(model);

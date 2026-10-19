@@ -633,6 +633,18 @@ const validateEventReference = (
 export const compileCashFlow = (
   model: PortableModelEnvelope,
   request: CashFlowCompilerRequest,
+): CompileResult<CompiledCashFlow> => compileCashFlowSources(model, request, false);
+
+/** Household-only partial seam: the tax participant reports omitted source economics. */
+export const compileHouseholdCashFlow = (
+  model: PortableModelEnvelope,
+  request: CashFlowCompilerRequest,
+): CompileResult<CompiledCashFlow> => compileCashFlowSources(model, request, true);
+
+const compileCashFlowSources = (
+  model: PortableModelEnvelope,
+  request: CashFlowCompilerRequest,
+  partialPayroll: boolean,
 ): CompileResult<CompiledCashFlow> => {
   const preflight = preflightCanonicalCollections(model, [
     "Household",
@@ -1543,6 +1555,12 @@ export const compileCashFlow = (
   const expenseStructural = validateInScopeStreams("Expense", expenses);
   if (expenseStructural) return expenseStructural;
 
+  const unsupportedSalary = (stream: CanonicalObject): boolean => stream.income_type === "salary" &&
+    (stream.frequency !== "monthly" || stream.gross_or_net === "net");
+  let withholding: ReturnType<typeof durablePayrollWithholding>;
+  try { withholding = durablePayrollWithholding(model); }
+  catch (error) { if (error instanceof ValidationError) return { status: "invalid_model", diagnostics: error.issues }; throw error; }
+
   const slots: string[] = ["payable"];
   for (const [type, collection, all] of [
     ["Income", incomes, allIncomes],
@@ -1589,6 +1607,12 @@ export const compileCashFlow = (
         request.retirementBindings ?? [],
       );
       if (event) return event;
+      // Structural validation above still covers omitted sources. Do not invent
+      // a gross monthly schedule for legitimate unsupported salary facts.
+      if (type === "Income" && unsupportedSalary(stream)) {
+        if (partialPayroll) continue;
+        return unsupportedResult("PAYROLL_SOURCE_UNSUPPORTED", `Income ${id} requires unsupported pay frequency or net-to-gross mechanics.`, "Income", id);
+      }
       if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never))
         return invalidResult(
           "RECURRENCE_INVALID",
@@ -1707,14 +1731,12 @@ export const compileCashFlow = (
   let payroll: ReturnType<typeof durablePayrollAllocations>;
   let payrollBalances: ReturnType<typeof payrollOpeningBalances>;
   let openingUsage: ReturnType<typeof compileOpeningContributionUsage>;
-  let withholding: ReturnType<typeof durablePayrollWithholding>;
-  try { withholding = durablePayrollWithholding(model); }
-  catch (error) { if (error instanceof ValidationError) return { status: "invalid_model", diagnostics: error.issues }; throw error; }
   try { payroll = durablePayrollAllocations(model); payrollBalances = payrollOpeningBalances(model, payroll); openingUsage = compileOpeningContributionUsage(model, request.simulationStart); }
   catch (error) { return unsupportedResult("PAYROLL_CONTRIBUTION_UNSUPPORTED", error instanceof Error ? error.message : "Unsupported payroll policy", "Investment"); }
   for (const stream of [...incomes].sort((a, b) =>
     String(a.income_id).localeCompare(String(b.income_id)),
   )) {
+    if (partialPayroll && unsupportedSalary(stream)) continue;
     const id = canonicalId(stream, "income_id")!;
     const growth = resolveGrowth(model, stream, "Income", selected);
     if (growth.status !== "compiled") return growth;
@@ -1899,7 +1921,7 @@ export const compileCashFlow = (
   try {
     const ownerId = domainId("person", scope.memberIds[0]!);
     const cashAccountId = domainId("account", accountId);
-    const retirementEvents = [...retirementByIncome.values()].map((binding) =>
+    const retirementEvents = [...retirementByIncome.values()].filter(binding => compiledIncomes.some(income => income.id === binding.incomeId)).map((binding) =>
       Object.freeze({
         id: domainId("event", binding.terminationEventId),
         targetId: domainId("income", binding.incomeId),

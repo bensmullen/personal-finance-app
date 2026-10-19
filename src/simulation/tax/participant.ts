@@ -19,7 +19,7 @@ import { SummaryOperationSink } from "../r3/summarySink.js";
 import { activeTaxFact, resolveTaxEligibility } from "./facts.js";
 import { TaxEconomicLedger } from "./economics.js";
 import { TaxDiagnosticLedger } from "./diagnostics.js";
-import { taxBalanceIds, isNonblockingProjectedTaxLaw, taxDiagnostic, taxOutputCapabilities, type CompiledTaxIncome, type HouseholdTaxInput, type RecognizedTaxEconomics, type TaxCapabilityDiagnostic, type PayrollWithholdingEvidence } from "./contracts.js";
+import { taxBalanceIds, taxDiagnostic, taxOutputCapabilities, type CompiledTaxIncome, type HouseholdTaxInput, type RecognizedTaxEconomics, type TaxCapabilityDiagnostic, type PayrollWithholdingEvidence } from "./contracts.js";
 export { taxBalanceIds } from "./contracts.js";
 
 const creditUnit = Unit.of("usd_tax_credit");
@@ -89,12 +89,19 @@ const payrollCovered = (input: HouseholdTaxInput, source: CompiledTaxIncome | un
 };
 /** Stable per-regime balance identities, independent of rule version/catalog ordering. */
 const balanceIds = taxBalanceIds;
-export const taxCreditPositionIds = (input: HouseholdTaxInput) => {
+export const taxCreditPositionIds = (input: HouseholdTaxInput, simulationEnd?: string) => {
   const jurisdictions = [...new Set([...input.catalog.map(rule => rule.jurisdiction), ...input.payments.map(payment => payment.jurisdiction), ...(input.settlements ?? []).map(item => item.jurisdiction), ...(input.payrollWithholding ?? []).map(item => item.jurisdiction)])].sort();
   const years = [...new Set([...input.catalog.flatMap(rule => {
     const first = Number(rule.effectiveFrom.slice(0, 4)), last = Number(subtractMilliseconds(rule.effectiveUntil, 1).slice(0, 4));
     return Array.from({ length: last - first + 1 }, (_, offset) => String(first + offset));
-  }), ...input.payments.map(payment => payment.at.slice(0, 4)), ...(input.settlements ?? []).map(item => item.taxYear)])].sort();
+  }), ...input.payments.map(payment => payment.at.slice(0, 4)), ...(input.settlements ?? []).map(item => item.taxYear),
+    ...Object.keys(input.filingStatuses ?? {}),
+    ...(input.payrollWithholding ?? []).flatMap(election => {
+      const first = Number(election.start.slice(0, 4));
+      const end = simulationEnd === undefined ? election.end : election.end === undefined || simulationEnd < election.end ? simulationEnd : election.end;
+      const last = end === undefined ? first : Number(subtractMilliseconds(utcDateOnlyInstant(end) ?? end as Instant, 1).slice(0, 4));
+      return Array.from({ length: Math.max(0, last - first + 1) }, (_, offset) => String(first + offset));
+    })])].sort();
   return Object.freeze(jurisdictions.flatMap(jurisdiction => years.map(year => balanceIds(jurisdiction, year).creditPositionId)));
 };
 
@@ -201,7 +208,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           const runtime = opening.runtime ?? {};
           const year = finalSettlement?.taxYear ?? at.slice(0, 4), prior = yearRuntime(taxRuntime(runtime), year);
           const contributions = Object.values(state.contributions ?? {}).filter(entry => entry.source !== "opening" && entry.at.slice(0, 4) === year && entry.at <= at);
-          const material = contributions.length > 0 || prior.economics.some(economic => Object.values(economic.income).some(amount => !amount.isZero())) || prior.diagnostics.size > 0 || instruction !== undefined || finalSettlement !== undefined;
+          const material = input.diagnostics.length > 0 || contributions.length > 0 || prior.economics.some(economic => Object.values(economic.income).some(amount => !amount.isZero())) || prior.diagnostics.size > 0 || instruction !== undefined || finalSettlement !== undefined;
           if (!material) return { ...opening, facts: { outputCapabilities: taxOutputCapabilities([]) } };
           const diagnostics: TaxCapabilityDiagnostic[] = [...input.diagnostics, ...prior.diagnostics];
           const filing = input.filingStatuses?.[year];
@@ -328,10 +335,9 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           const uniqueDiagnostics = [...new Map(diagnostics.map(value => [canonicalSerialize(value), value])).values()];
           for (const jurisdiction of totals.keys()) if (!(input.settlements ?? []).some(item => item.taxYear === year && item.jurisdiction === jurisdiction)) uniqueDiagnostics.push(taxDiagnostic("settlement_timing", "An explicit tax-year final settlement/refund date is required; no filing/payment date is inferred.", jurisdiction));
           // Standalone tax payments never prove a gross-to-net paycheck. Each
-          // projected wage occurrence needs its own executed, source-bound receipt.
-          const projectedLaws = uniqueDiagnostics.filter(diagnostic => isNonblockingProjectedTaxLaw(diagnostic, selection));
+          // wage occurrence needs its own executed, source-bound receipt under
+          // both verified and explicitly projected law.
           const wageSources = [...new Set([...prior.economics].filter(economic => economic.income.wages.isPositive() &&
-            ((input.payrollWithholding?.length ?? 0) > 0 || projectedLaws.some(diagnostic => diagnostic.projectedLaw!.effectiveFrom <= economic.at && economic.at < diagnostic.projectedLaw!.effectiveUntil)) &&
             !payrollCovered(input, sources.get(economic.sourceId), economic, prior.payrollEvidence ?? []))
             .map(economic => economic.sourceId))].sort();
           const capabilityDiagnostics = [...uniqueDiagnostics, ...wageSources.map(sourceId => Object.freeze({
