@@ -78,7 +78,8 @@ describe("conditional source-bound FSA year chain", () => {
   it.each(["not_adjudicated", "pending"] as const)("prevents close for %s receipts, including unpaid medical expenses", status => {
     const input = fixture(), r = input.prior.receipts[0]!;
     const reimbursement: FsaReceipt["reimbursement"] = status === "not_adjudicated" ? { status }
-      : { ...r.reimbursement as Extract<FsaReceipt["reimbursement"], { status: "pending" | "settled" }>, status, settlementId: null, settledAt: null };
+      : { status, approvedAmount: money("1000"), allocations: [{ planYearId: "2026", amount: money("1000") }],
+        adjudicatedAt: r.submittedAt, evidence: source("health_fsa_reimbursement", r.proofId), settlementId: null, settledAt: null };
     const result = bindFsaYearChain(rebind({ ...input, prior: { ...input.prior,
       receipts: [{ ...r, reimbursement, payment: { status: "unpaid" } }] } }));
     expect(result.proposalCoverage).toBe("incomplete");
@@ -95,6 +96,32 @@ describe("conditional source-bound FSA year chain", () => {
       receipts: [r, { ...r, receiptId: "alias" }, denied] } }));
     expect(result.closingEntitlement!.equals(money("1100"))).toBe(true);
     expect(result.evaluations.prior.claims).toHaveLength(1);
+  });
+
+  it("does not close an unadjudicated claim omitted by the owner for lack of remaining coverage", () => {
+    const input = fixture(), r = input.prior.receipts[0]!;
+    const exhausted: FsaReceipt = { ...r, incurredAmount: money("2100"), payment: { status: "unpaid" },
+      decision: { ...r.decision!, eligibleAmount: money("2100") },
+      reimbursement: { status: "settled", approvedAmount: money("2100"), allocations: [{ planYearId: "2026", amount: money("2100") }],
+        adjudicatedAt: r.submittedAt, settledAt: r.submittedAt, settlementId: "settled/proof",
+        evidence: source("health_fsa_reimbursement", r.proofId) } };
+    const pending: FsaReceipt = { ...receipt(input.prior.plan, "unresolved"), reimbursement: { status: "not_adjudicated" } };
+    const changed = rebind({ ...input, prior: { ...input.prior, receipts: [exhausted, pending] } });
+    expect(codes(changed)).toContain("PRIOR_CLOSE_PENDING");
+    expect(bindFsaYearChain(changed).proposalCoverage).toBe("incomplete");
+  });
+
+  it("pending payroll never becomes wages reduced or reimbursement cash", () => {
+    const input = fixture();
+    const changed = rebind({ ...input, prior: { ...input.prior, payroll: [{ ...ids("2026"),
+      contributionId: "pending-payroll", effectiveAt: civilDate("2026-01-15"), sourceAccountId: "salary",
+      contributionSource: "employee_salary_reduction", amount: money("100"), status: "pending", postingRef: null,
+      evidence: source("health_fsa_payroll", "pending-payroll") }] } });
+    const result = bindFsaYearChain(changed);
+    expect(result.proposedCarryover.equals(money("500"))).toBe(true);
+    expect(result.evaluations.prior.entitlement!.employeePayrollToDate.isZero()).toBe(true);
+    expect(result.payrollEffectCoverage).toBe("incomplete");
+    expect(result.postable).toBe(false);
   });
 
   it("keeps grace service and runout submissions in prior-year coverage", () => {
@@ -166,12 +193,39 @@ describe("conditional source-bound FSA year chain", () => {
     const input = fixture();
     for (const start of ["2027-02-01", "2028-01-01"]) {
       expect(codes(rebind({ ...input, successor: { ...input.successor, plan: { ...input.successor.plan,
-        period: { ...input.successor.plan.period, start: civilDate(start) } } } }))).toContain("ADJACENT_ANNUAL_YEARS_REQUIRED");
+        period: { start: civilDate(start), endExclusive: civilDate(start === "2028-01-01" ? "2029-01-01" : "2028-01-01") }
+      } } }))).toContain("ADJACENT_ANNUAL_YEARS_REQUIRED");
     }
     const changed = { ...input, prior: { ...input.prior, plan: { ...input.prior.plan, annualElection: money("1900") } } };
     expect(codes(changed)).toContain("STALE_SOURCE");
     const hsa = { ...input.successor.plan, instrumentFamily: "hsa" } as unknown as FsaPlan;
     expect(bindFsaYearChain(rebind({ ...input, successor: { ...input.successor, plan: hsa } })).proposalCoverage).toBe("incomplete");
+  });
+
+  it("admits sourced consecutive noncalendar years and isolates dependent member coverage", () => {
+    const input = fixture();
+    const shift = (p: FsaPlan, start: string, end: string, submit: string): FsaPlan => {
+      const period = { start: civilDate(start), endExclusive: civilDate(end) };
+      return { ...p, period, coverage: period, submitEndExclusive: civilDate(submit),
+        members: p.members.map(m => ({ ...m, coverage: period })) };
+    };
+    const next = shift(input.successor.plan, "2027-07-01", "2028-07-01", "2028-10-01");
+    const old = shift(input.prior.plan, "2026-07-01", "2027-07-01", "2027-10-01");
+    if (old.yearEnd?.kind !== "carryover") throw new Error("fixture");
+    const p: FsaPlan = { ...old, yearEnd: { ...old.yearEnd, nextEnrollment: { ...old.yearEnd.nextEnrollment!, period: next.period } },
+      members: [...old.members, { memberId: "child", coverage: old.coverage,
+        evidence: source("health_fsa_member", [fsaScopeId(old), "child"].map(encodeURIComponent).join("/")) }] };
+    const at = civilDate("2027-10-01");
+    const changed = rebind({ ...input, prior: { ...request(p, [{ ...receipt(p, "child-proof", "2026-08-01", "2026-08-02"),
+      memberId: "child" }]), evaluatedAt: at, historyThrough: at },
+      successor: { ...request(next), evaluatedAt: at, historyThrough: at } });
+    const result = bindFsaYearChain(changed);
+    expect(result.proposalCoverage).toBe("complete");
+    expect(result.provenance[0]!.memberId).toBe("child");
+    expect(result.proposedCarryover.equals(money("500"))).toBe(true);
+    const wrong = rebind({ ...changed, prior: { ...changed.prior,
+      receipts: [{ ...changed.prior.receipts[0]!, memberId: "uncovered-child" }] } });
+    expect(bindFsaYearChain(wrong).proposalCoverage).toBe("incomplete");
   });
 
   it("vetoes transfer replay, competing successors and receipt/proof/settlement reuse across years", () => {

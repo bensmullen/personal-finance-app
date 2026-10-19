@@ -155,7 +155,10 @@ export function bindFsaYearChain(input: FsaYearChainRequest): FsaYearChainBundle
     }
   }
   const close = prior.disposition;
-  if (!close || close.status !== "proposed" || prior.claims.some(c => c.settlementRequired)) {
+  const unresolvedReceipts = input.prior.receipts.some(r => r.reimbursement?.status === "pending"
+    || (r.reimbursement?.status === "not_adjudicated" && r.decision?.kind !== "denied"
+      && r.decision?.eligibleAmount.isPositive()));
+  if (!close || close.status !== "proposed" || prior.claims.some(c => c.settlementRequired) || unresolvedReceipts) {
     diagnose("PRIOR_CLOSE_PENDING", "Runout/grace/termination must expire and every approved reimbursement must settle");
   }
   const external = input.externalCloseout;
@@ -169,10 +172,11 @@ export function bindFsaYearChain(input: FsaYearChainRequest): FsaYearChainBundle
   }
   const proposalComplete = diagnostics.length === 0;
   const grace = prior.entitlementCoverage === "complete" && !input.prior.priorCarryover
+    && diagnostics.every(d => d.diagnosticCode === "PRIOR_CLOSE_PENDING")
     && rule?.kind === "grace_period" ? close?.graceAvailable ?? zero() : zero();
   diagnose("requires_149_authoritative_closeout",
     "#149 shared one-writer must authenticate complete claim/payment/payroll history, prove unique closeout/transfer receipt and atomically settle; no domain trust port exists");
-  return snapshot({ contractVersion: "d2-shared/v1", kind: "uncommitted_fsa_year_chain_authorization",
+  return snapshot<FsaYearChainBundle>({ contractVersion: "d2-shared/v1", kind: "uncommitted_fsa_year_chain_authorization",
     committed: false, postable: false, coverage: "incomplete", proposalCoverage: proposalComplete ? "complete" : "incomplete",
     successorCoverage: "incomplete", netWorthTreatment: "excluded_restricted_entitlement",
     payrollEffectCoverage: "incomplete", reimbursementSettlementCoverage: "incomplete", taxCoverage: "incomplete",
