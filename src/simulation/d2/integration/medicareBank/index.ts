@@ -203,10 +203,19 @@ export function attachMedicareBank(input: MedicareBankInput) {
     const prior = participants.find(p => p.id === guard.id);
     if (prior && !same(prior.economicInputs, guard.economicInputs))
       fail("MEDICARE_CHANGED_BINDING", "Attached raw sources, identities and route cannot change");
-    for (const existing of participants.filter(p => p.id.startsWith(participantPrefix) && p.id !== guard.id)) {
+    const admittedMedicareKeys = new Set<string>();
+    for (const existing of participants.filter(p => p.id.startsWith(participantPrefix))) {
       const old = existing.economicInputs as SourceBinding;
-      if (old.confirmed.some(b => composed.obligations.some(o => o.claimId === b.obligation.claimId)))
-        fail("MEDICARE_CHANGED_BINDING", "Overlapping source-bound Medicare requests must reattach their original exact binding");
+      const verified = qualify(old);
+      if (existing.id !== `${participantPrefix}${canonicalSerialize(verified.obligations.map(o => o.claimId).sort())}`
+        || old.confirmed.some(b => !verified.obligations.some(o =>
+          o.claimId === b.obligation.claimId && same(ordered(o), ordered(b.obligation)))))
+        fail("MEDICARE_CHANGED_BINDING", "Previously attached Medicare proof must requalify to its original source-bound identity");
+      for (const premium of old.confirmed) {
+        if (existing !== prior && composed.obligations.some(o => o.claimId === premium.obligation.claimId))
+          fail("MEDICARE_CHANGED_BINDING", "Overlapping source-bound Medicare requests must reattach their original exact binding");
+        admittedMedicareKeys.add(`${prefix}${premium.obligation.claimId}`);
+      }
     }
     for (const participant of participants.filter(p => p.id === "d2_ssa_medicare")) {
       const ssa = participant.economicInputs as SsaMedicareInput;
@@ -240,8 +249,9 @@ export function attachMedicareBank(input: MedicareBankInput) {
         // be the same premium, including a different member at the same date.
         // A different or renamed plan for the SAME key was rejected above.
         const distinctMedicareKeys = refs.filter(ref => ref.startsWith(prefix));
-        if (distinctMedicareKeys.length === 1) continue;
-        if (distinctMedicareKeys.length > 1) fail("MEDICARE_DUPLICATE_PART", "Conflicting Medicare source identities on an existing stream");
+        if (distinctMedicareKeys.length === 1 && admittedMedicareKeys.has(distinctMedicareKeys[0]!)) continue;
+        if (distinctMedicareKeys.length > 0)
+          fail("MEDICARE_DUPLICATE_PART", "Unknown or conflicting Medicare source marker cannot bypass duplicate recognition checks");
         if (!("paymentAccountId" in other) && !refs.some(r => [o.coverageId, o.quoteId, o.base.source.ruleSnapshotId].includes(r))) continue;
         const proofs = input.representations.filter(r => r.operationId === o.operationId && r.streamId === other.id), proof = proofs[0];
         if (proofs.length !== 1 || !proof || proof.quoteId !== o.quoteId || !refs.includes(calculationTraceId(proof.streamSourceTraceId))
