@@ -203,7 +203,7 @@ export function attachMedicareBank(input: MedicareBankInput) {
     const prior = participants.find(p => p.id === guard.id);
     if (prior && !same(prior.economicInputs, guard.economicInputs))
       fail("MEDICARE_CHANGED_BINDING", "Attached raw sources, identities and route cannot change");
-    const admittedMedicareKeys = new Set<string>();
+    const admittedMedicareStreams = new Map<string, RecurringExpenseStream>();
     for (const existing of participants.filter(p => p.id.startsWith(participantPrefix))) {
       const old = existing.economicInputs as SourceBinding;
       const verified = qualify(old);
@@ -214,7 +214,7 @@ export function attachMedicareBank(input: MedicareBankInput) {
       for (const premium of old.confirmed) {
         if (existing !== prior && composed.obligations.some(o => o.claimId === premium.obligation.claimId))
           fail("MEDICARE_CHANGED_BINDING", "Overlapping source-bound Medicare requests must reattach their original exact binding");
-        admittedMedicareKeys.add(`${prefix}${premium.obligation.claimId}`);
+        admittedMedicareStreams.set(`${prefix}${premium.obligation.claimId}`, streamFor(premium));
       }
     }
     for (const participant of participants.filter(p => p.id === "d2_ssa_medicare")) {
@@ -249,9 +249,11 @@ export function attachMedicareBank(input: MedicareBankInput) {
         // be the same premium, including a different member at the same date.
         // A different or renamed plan for the SAME key was rejected above.
         const distinctMedicareKeys = refs.filter(ref => ref.startsWith(prefix));
-        if (distinctMedicareKeys.length === 1 && admittedMedicareKeys.has(distinctMedicareKeys[0]!)) continue;
+        const verifiedPriorStream = distinctMedicareKeys.length === 1
+          ? admittedMedicareStreams.get(distinctMedicareKeys[0]!) : undefined;
+        if (verifiedPriorStream && same(other, verifiedPriorStream)) continue;
         if (distinctMedicareKeys.length > 0)
-          fail("MEDICARE_DUPLICATE_PART", "Unknown or conflicting Medicare source marker cannot bypass duplicate recognition checks");
+          fail("MEDICARE_DUPLICATE_PART", "Medicare source marker must also match its original verified stream and economic amount");
         if (!("paymentAccountId" in other) && !refs.some(r => [o.coverageId, o.quoteId, o.base.source.ruleSnapshotId].includes(r))) continue;
         const proofs = input.representations.filter(r => r.operationId === o.operationId && r.streamId === other.id), proof = proofs[0];
         if (proofs.length !== 1 || !proof || proof.quoteId !== o.quoteId || !refs.includes(calculationTraceId(proof.streamSourceTraceId))
