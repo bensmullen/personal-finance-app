@@ -234,10 +234,17 @@ export function attachMedicareBank(input: MedicareBankInput) {
         if (other.start >= at(o.period.endExclusive) || (other.end ?? kernel.horizon.periods.at(-1)!.end) <= at(o.period.start)) continue;
         if (streams.some(s => same(s, other))) continue;
         const refs = other.sourceTraceRefs?.map(r => r.traceId) ?? [];
-        if (refs.includes(`${prefix}${o.claimId}`)) fail("MEDICARE_DUPLICATE_PART", "Renamed plan/provider/quote cannot duplicate member/Part/month");
+        if (refs.includes(calculationTraceId(`${prefix}${o.claimId}`))) fail("MEDICARE_DUPLICATE_PART", "Renamed plan/provider/quote cannot duplicate member/Part/month");
+        // A previously admitted C2 stream has a source-owned, stable
+        // household/member/Part/month claim marker. Distinct markers cannot
+        // be the same premium, including a different member at the same date.
+        // A different or renamed plan for the SAME key was rejected above.
+        const distinctMedicareKeys = refs.filter(ref => ref.startsWith(prefix));
+        if (distinctMedicareKeys.length === 1) continue;
+        if (distinctMedicareKeys.length > 1) fail("MEDICARE_DUPLICATE_PART", "Conflicting Medicare source identities on an existing stream");
         if (!("paymentAccountId" in other) && !refs.some(r => [o.coverageId, o.quoteId, o.base.source.ruleSnapshotId].includes(r))) continue;
         const proofs = input.representations.filter(r => r.operationId === o.operationId && r.streamId === other.id), proof = proofs[0];
-        if (proofs.length !== 1 || !proof || proof.quoteId !== o.quoteId || !refs.includes(proof.streamSourceTraceId)
+        if (proofs.length !== 1 || !proof || proof.quoteId !== o.quoteId || !refs.includes(calculationTraceId(proof.streamSourceTraceId))
           || !qualified(proof.evidence, o.effectiveAt < input.asOf ? o.effectiveAt : input.asOf, o.period))
           fail("MEDICARE_REPRESENTATION_REQUIRED", "Every overlapping generic expense needs source-linked equivalence or distinct-obligation proof");
         if (proof.relationship === "distinct_obligation") {
