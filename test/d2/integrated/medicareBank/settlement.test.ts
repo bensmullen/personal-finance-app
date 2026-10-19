@@ -241,6 +241,25 @@ describe("#149 opt-in physical Medicare B/D BANK execution", () => {
     rejected({ ...i, kernel: withClaims });
   });
 
+  it("rejects a borrowed Medicare trace marker on a different generic expense", () => {
+    const first = attachMedicareBank(input(request("2026-06", ["part_b"])));
+    expect(first.diagnostics).toEqual([]);
+    const original = first.kernel.cash!.input.expenses[0]!;
+    const copiedMarker = { ...original, id: domainId("expense", uuid(980)),
+      baseMonthlyAmount: money("77"),
+      primitiveIds: { indexGrowth: domainId("primitive-instance", uuid(981)),
+        inflationLink: domainId("primitive-instance", uuid(982)),
+        recurrence: domainId("primitive-instance", uuid(983)) } };
+    // Copied source refs do not make a financially different stream another
+    // authorized Part B payment or a proven independent Part D obligation.
+    const kernel = applyHouseholdExecutionOverlay(first.kernel, {
+      cashFlowInput: { ...first.kernel.cash!.input,
+        expenses: [...first.kernel.cash!.input.expenses, copiedMarker] },
+    });
+    const next = input(request("2026-06", ["part_d"]), kernel);
+    expect(rejected(next).diagnostics.some(d => d.diagnosticCode === "MEDICARE_DUPLICATE_PART")).toBe(true);
+  });
+
   it("does not admit BANK over an already attached SSA-deducted member/Part/month", () => {
     const i = input(), q = ssaPayment();
     const r = { ...q.c2, awards: [], deductionTerms: [], premiums: { ...q.c2.premiums,
