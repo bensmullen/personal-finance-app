@@ -161,9 +161,11 @@ const expectedValue = (value: ForecastChartValue, signed = false) => {
 
 async function openOverview(page: Page) {
   await clickFinancialDestination(page, "Overview");
-  await expect(page.getByRole("heading", { name: "How am I doing?", exact: true, level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Know where you stand.", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(wealthChart(page)).toBeVisible();
+  const controls = wealthChart(page).locator(".chart-control-details");
+  if (await controls.getAttribute("open") === null) await controls.locator(":scope > summary").click();
 }
 
 async function runAppliedBaseline(page: Page) {
@@ -207,7 +209,14 @@ async function boundedGolden(page: Page, width: number, monthlySpending?: string
   await expect(charts).toBeVisible();
   await expect(charts).toHaveAttribute("data-chart-status", /^(complete|incomplete)$/);
   await expect(charts).toHaveAttribute("data-supported-months", "3");
-  await expect(charts).toContainText("Requested 2026-01-01 → 2026-04-01 (exclusive). Modeled through 2026-04-01");
+  await expect(charts.locator(".chart-coverage")).toContainText("Forecast starts January 1, 2026; available results end before April 1, 2026.");
+  const range = charts.locator(".chart-range");
+  await expect(range).not.toHaveAttribute("open");
+  await range.locator(":scope > summary").click();
+  await expect(range.getByText("Requested start (inclusive)", { exact: true }).locator("xpath=following-sibling::dd[1]")).toHaveText(/^2026-01-01(?:T.*)?$/);
+  await expect(range.getByText("Requested end (exclusive)", { exact: true }).locator("xpath=following-sibling::dd[1]")).toHaveText(/^2026-04-01(?:T.*)?$/);
+  await expect(range.getByText("Available results end (exclusive)", { exact: true }).locator("xpath=following-sibling::dd[1]")).toHaveText(/^2026-04-01(?:T.*)?$/);
+  await range.locator(":scope > summary").click();
   return status;
 }
 async function exportedBytes(page: Page) {
@@ -280,7 +289,8 @@ for (const width of [1440, 390]) {
     await grouping(wealth).focus();
     await expect(grouping(wealth)).toBeFocused();
     await expect(wealth.getByRole("group", { name: "Assets, liabilities and net worth legend" }).getByRole("button")).toHaveCount(3);
-    await expect(page.getByText(/No observed history loaded/)).toHaveCount(1);
+    await expect(page.locator(".financial-charts > .chart-coverage")).toContainText("No past account history is included.");
+    await expect(page.locator(".financial-charts .chart-range")).not.toHaveAttribute("open");
     await expect(wealth).toContainText("snapshot, separate from projected periods");
     const graph = wealth.getByRole("application");
     await expect(graph).toHaveAttribute("tabindex", "0");
@@ -526,7 +536,16 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("region", { name: "Investing outlook" })).toContainText("No investment holdings recorded");
     await clickFinancialDestination(page, "Overview");
     await expect(page.getByRole("figure", { name: "Household financial outlook chart" })).toHaveCount(0);
-    await expect(page.getByText("Run the reconciled household forecast", { exact: true })).toBeVisible();
+    await expect(page.getByRole("status", { name: "Household forecast status", exact: true })).toHaveAttribute("data-lifecycle", "idle");
+    await expect(page.getByRole("region", { name: "Your money over time", exact: true }).getByText("Your forecast is not ready yet", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Your finances today", exact: true }).getByRole("article", { name: "Cash and savings", exact: true }).locator(".calm-metric-value")).toHaveText("$3750.00");
+    const correction = page.getByRole("alert", { name: "Priority correction", exact: true });
+    // This intentionally plan-less, opening-cash-only H04 fixture is blocked first by
+    // the missing Current Plan—not by the later income-account setup dependency.
+    await expect(correction).toContainText("Choose one enabled Current Plan");
+    await expect(correction.getByRole("button", { name: "Review forecast dates", exact: true })).toBeVisible();
+    await correction.getByRole("button", { name: "Review forecast dates", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Your current plan", exact: true })).toBeVisible();
     await clickFinancialDestination(page, "Cash");
     await expect(page.getByText(/No supported cash forecast yet/)).toBeVisible();
     await expect(page.locator(".financial-chart")).toHaveCount(0);
