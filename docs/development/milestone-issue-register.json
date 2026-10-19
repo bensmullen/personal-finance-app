@@ -57,10 +57,11 @@
       ]
     },
     "U1B_UX": {
-      "stage": "U1B UX technical Overview → flagship age-90/65 and low-input first run → Cash",
+      "stage": "U1B UX technical Overview → projected-tax scenario prerequisite → flagship age-90/65 and low-input first run → Cash",
       "blocking_transition": "Begin U1B-E Planning/V6 phase on fresh main; final integrated product UAT remains separately gated by D1_U1/#120",
       "required_issue_numbers": [
         170,
+        189,
         181,
         171
       ]
@@ -387,7 +388,8 @@
       "owner_stage": "U1B-UX-C-Zero-Entry-Forecast",
       "blocking_gate": "U1B_UX",
       "depends_on": [
-        170
+        170,
+        189
       ],
       "spec_requirement_ids": [
         "PFA-UX-003",
@@ -424,6 +426,21 @@
         "PFA-UX-024"
       ],
       "scope": "U1B-E Planning: source-backed by-period retirement income composition V6 when identifiable (no imagined streams), readable age90/65 selected-adult timeline, honest partial/tax/benefit bounds and meaningful Investing/Debt first-screen value/outlook or explicit source gap. After #171 Cash merge; exact high-stakes facts remain in existing writers and engine. 1440/390 functional+visual evidence and final integrated PM UAT under #120."
+    },
+    {
+      "issue_number": 189,
+      "owner_stage": "U1B-tax-projected-scenario-completeness",
+      "blocking_gate": "U1B_UX",
+      "depends_on": [
+        170
+      ],
+      "spec_requirement_ids": [
+        "PFA-TAX-006",
+        "PFA-TAX-008",
+        "PFA-TAX-009",
+        "PFA-UX-024"
+      ],
+      "scope": "PM-approved financial-completeness distinction: expressly selected projected-current-law rules may yield computed/completed scenario values with distinct law confidence, but any missing applicable tax/payroll/settlement support still blocks affected outputs. Version/fingerprint and summary/replay consistency; engine/compiler only. Independent prerequisite to #181, then #171/#187 and #120 final UAT."
     }
   ],
   "legacy_open_task_reconciliation": {
