@@ -875,6 +875,8 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): void => {
         || !claim || paymentValue(claim) !== paymentValue({ ...original, outstandingAmount: Money.zero(original.originalAmount.currency), settlementIds: [sid] })
         || !state.identities.recognitionIds.includes(original.originatingRecognitionId) || !state.identities.settlementIds.includes(sid))
         paymentInvalid("Independent same-event claims and complete separate settlement histories required");
+      // Explicit narrowing: imported claim maps can omit an identity.
+      if (claim === undefined) paymentInvalid("Missing committed claim after settlement-history validation");
       assertClaimInvariant(claim);
       if (index > 0 && !["part_b", "part_d"].includes(record.requests[index - 1]!.terms.premium.part))
         paymentInvalid("Only positive Part B/D same-event obligations are supported");
