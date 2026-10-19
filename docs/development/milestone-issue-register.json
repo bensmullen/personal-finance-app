@@ -99,7 +99,7 @@
         "PFA-TAX-010",
         "PFA-TAX-014"
       ],
-      "scope": "Proposed PM sequencing: before #181, source-backed per-job gross-to-net payroll engine, withholding credits, contribution interaction and net tax settlement; non-UI durable authoring/compiler contract with explicit coverage diagnostics. #181 owns minimal existing Income/forecast UI; full Taxes workspace remains #102. Also mandatory for private alpha."
+      "scope": "Prerequisite before #181: source-backed per-job gross-to-net payroll engine, withholding credits, contribution interaction and net tax settlement; non-UI durable authoring/compiler contract with explicit coverage diagnostics. #181 owns minimal existing Income/forecast UI; full Taxes workspace remains #102. Also mandatory for private alpha."
     },
     {
       "issue_number": 102,
