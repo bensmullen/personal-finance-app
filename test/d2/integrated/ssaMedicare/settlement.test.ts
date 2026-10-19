@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { accountingTransactionId, createAccountingLeg, createAccountingTransaction } from "../../../../src/accounting/index.js";
@@ -120,12 +123,13 @@ describe("#149 opt-in atomic same-event SSA/Medicare household settlement", () =
   it("preserves receipts through cold/indexed clones and suppresses exact completed payments", () => {
     const q = payment(), first = execute(q), restored = createAuthoritativeState(first.state);
     for (const state of [restored, cloneAuthoritativeState(restored), cloneAuthoritativeState(createIndexedExecutionState(restored))]) {
-      expect(state).toEqual(first.state);
+      // Indexed record proxies are representations; compare canonical economic state.
+      expect(canonicalSerialize(state)).toBe(canonicalSerialize(first.state));
       validateAuthoritativeState(state);
       const result = execute(q, fixture(1, state));
       expect(result.periods).toHaveLength(1);
       expect(result.periods[0]!.transactions).toEqual([]);
-      expect(result.state).toEqual(first.state);
+      expect(canonicalSerialize(result.state)).toBe(canonicalSerialize(first.state));
     }
     const opening = createIndexedExecutionState(fixture().state), next = cloneAuthoritativeState(opening);
     applySsaMedicarePaymentAtomically(next, bound(q));
@@ -176,12 +180,23 @@ describe("#149 opt-in atomic same-event SSA/Medicare household settlement", () =
     const replay = replayHouseholdForecastWindow(transported, selected);
     expect(replay.periods).toEqual(detail.periods.slice(-1));
     expect(replay.state).toEqual(detail.state);
-    const worker = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
-      fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], {
-      input: JSON.stringify({ artifact, selected }), encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
-    });
-    expect(worker.status, worker.stderr).toBe(0);
-    expect(JSON.parse(worker.stdout)).toEqual({ state: canonicalSerialize(replay.state), periods: canonicalSerialize(replay.periods) });
+    // Large JSON over synchronous stdin may produce EAGAIN in the child on CI.
+    // Keep fresh-process isolation but transport the immutable input through a
+    // bounded temporary file, removed even if the worker fails.
+    const directory = mkdtempSync(join(tmpdir(), "pfm-ssa-medicare-"));
+    try {
+      const payload = join(directory, "replay.json");
+      writeFileSync(payload, JSON.stringify({ artifact, selected }), "utf8");
+      const worker = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
+        fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], {
+        env: { ...process.env, PFM_SSA_MEDICARE_TEST_PAYLOAD: payload },
+        encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
+      });
+      expect(worker.status, worker.stderr).toBe(0);
+      expect(JSON.parse(worker.stdout)).toEqual({ state: canonicalSerialize(replay.state), periods: canonicalSerialize(replay.periods) });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   }, 60_000);
 
   it("omits the BANK leg when verified full deductions exhaust gross", () => {
