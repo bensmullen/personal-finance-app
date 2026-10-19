@@ -152,10 +152,10 @@ describe("Issue 80 resolved forecast decisions", () => {
     const restored = restorePortableHouseholdReplayArtifact(artifact);
     const window = { start: instant("2027-04-01T00:00:00.000Z"), end: instant("2027-05-01T00:00:00.000Z") };
     expect(canonicalSerialize(replayHouseholdForecastWindow(restored, window))).toBe(canonicalSerialize(replayHouseholdForecastWindow(result, window)));
-    // CI measured 68.6s for the former combined case. The baseline comparison
-    // now runs independently; retain all 120 months and portable replay with a
-    // bounded budget rather than increasing the suite's global timeout.
-  }, 75_000);
+    // CI measured 68.6s and later 77.36s for this full 120-month replay
+    // correctness case. Allow bounded runner variance without trimming the
+    // horizon or changing assertions; do not raise the suite-wide timeout.
+  }, 105_000);
 
   it("does not reuse near-threshold Roth MAGI or workplace/HSA annual facts as modeled salary grows", () => {
     let model = createD1IntegratedHousehold();
