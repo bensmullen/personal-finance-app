@@ -212,15 +212,23 @@ export function composeMedicareObligations(request: MedicareCoordinationRequest)
             const months = gross.recipientMonths.filter(m => m.awardId === route.benefitId && m.month === period.start.slice(0, 7)), payment = months[0];
             const sources = award ? [award.calendarSource, award.quote?.source, award.verifiedAward?.source,
               award.cola?.source, ...((award.cola?.changes ?? []).map(c => c.source)), award.claimingAdjustment?.source] : [];
+            // A1 covers the installment from payment through month end, while
+            // the premium's legal coverage still includes the whole month.
+            const installment = payment && { start: payment.effectiveAt, endExclusive: period.endExclusive };
             if (route.payerId !== person || awards.length !== 1 || !award || award.recipientPersonId !== person
               || award.householdId !== p.householdId || award.benefitKind === "pension" || award.frequency !== "monthly"
-              || !award.quote || !contains(award.quote.coveredHorizon, period)
-              || sources.some(s => s && (s.projectionStatus !== "verified" || s.jurisdiction !== "US" || s.asOf > b.effectiveAt))
+              || !award.quote || !installment || !contains(award.quote.coveredHorizon, installment)
+              || !award.verifiedAward || !contains(award.verifiedAward.coveredHorizon, installment)
+              || !award.cola || !contains(award.cola.coveredHorizon, installment)
+              || (award.endExclusive !== undefined && award.endExclusive < period.endExclusive)
+              || sources.some(s => s && (s.projectionStatus !== "verified" || s.jurisdiction !== "US" || s.asOf > installment.start))
               || months.length !== 1 || !payment || payment.recipientPersonId !== person || payment.coverage !== "complete"
-              || !payment.grossAmount || !exact(payment.grossAmount) || payment.grossAmount.amount.compare(amount.amount) < 0
-              || payment.effectiveAt > b.effectiveAt || terms.length !== 1 || !term || term.benefitId !== route.benefitId
+              || payment.effectiveAt < period.start || payment.effectiveAt >= period.endExclusive
+              || !payment.grossAmount || !exact(payment.grossAmount) || !payment.grossAmount.isPositive()
+              || payment.grossAmount.amount.compare(amount.amount) < 0
+              || payment.effectiveAt < b.effectiveAt || terms.length !== 1 || !term || term.benefitId !== route.benefitId
               || term.householdId !== p.householdId || term.coverageId !== b.coverageId || term.recipientId !== b.recipientId
-              || !contains(term, period) || !qualified(term.source, b.effectiveAt, period)
+              || !contains(term, period) || !qualified(term.source, payment.effectiveAt, period)
               || term.source.ruleFamily !== "ssa_medicare_deduction" || !exact(term.permittedAmount) || !term.permittedAmount.equals(amount))
               fail(person, period, "SSA_TERMS_REQUIRED", "matching verified gross SSA award and legally supported exact deduction terms", part);
             else routeRefs.push(term.source.ruleSnapshotId, ...sources.flatMap(s => s ? [s.ruleSnapshotId] : []));

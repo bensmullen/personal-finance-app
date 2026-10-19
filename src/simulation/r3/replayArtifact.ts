@@ -14,6 +14,7 @@ import "../tax/replayCodec.js";
 import "../workplaceEvents.js";
 import "../domainMechanics.js";
 import "../mortgageLifecycle.js";
+import { validateSsaMedicareSourceHistory } from "../d2/integration/ssaMedicare/index.js";
 
 type Wire = null | boolean | number | string | { readonly kind: string; readonly value: unknown };
 interface EncodingGraph { readonly identities: Map<object, Wire>; readonly content: Map<string, Wire>; readonly active: Set<object> }
@@ -86,7 +87,7 @@ interface CheckpointDelta extends Omit<HouseholdReplayCheckpoint, "state"> {
   readonly records: Readonly<Record<string, { readonly present?: boolean; readonly set: Readonly<Record<string, unknown>>; readonly remove: readonly string[] }>>;
   readonly identities: Readonly<Record<string, { readonly add: readonly string[]; readonly remove: readonly string[] }>>;
 }
-const recordKeys = ["accounts", "positions", "liabilities", "obligations", "contributions", "contingentPositions"] as const;
+const recordKeys = ["accounts", "positions", "liabilities", "obligations", "contributions", "contingentPositions", "ssaMedicarePayments"] as const;
 /** Sparse state changes, never transaction history or repeated identity prefixes. */
 const checkpointDeltas = (checkpoints: readonly HouseholdReplayCheckpoint[]): readonly CheckpointDelta[] => {
   let before = createAuthoritativeState();
@@ -107,26 +108,30 @@ const checkpointDeltas = (checkpoints: readonly HouseholdReplayCheckpoint[]): re
     return { ...checkpoint, records, identities };
   });
 };
-const restoreCheckpointDeltas = (deltas: readonly CheckpointDelta[]): readonly HouseholdReplayCheckpoint[] => {
+const restoreCheckpointDeltas = (deltas: readonly CheckpointDelta[], cutoff: string): readonly HouseholdReplayCheckpoint[] => {
   if (!Array.isArray(deltas)) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: checkpoint data missing");
   let before = createAuthoritativeState();
   return deltas.map(({ records, identities, ...checkpoint }) => {
     if (!records || !identities) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: malformed checkpoint");
     const stateRecords = Object.fromEntries(recordKeys.flatMap(key => {
       const change = records[key];
+      // Pre-SSA v3 artifacts did not serialize this optional record. Preserve
+      // absence exactly, while refusing to drop an existing receipt implicitly.
+      if (key === "ssaMedicarePayments" && change === undefined && before[key] === undefined) return [];
       if (!change || !Array.isArray(change.remove) || change.remove.some((id: unknown) => typeof id !== "string") ||
         new Set(change.remove).size !== change.remove.length || !change.set || typeof change.set !== "object" || Array.isArray(change.set) ||
         change.present !== undefined && typeof change.present !== "boolean") throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: malformed state delta");
       const next = { ...before[key], ...change.set };
       for (const id of change.remove) {
         if (!(id in (before[key] ?? {})) || id in change.set) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: invalid state removal");
+        if (key === "ssaMedicarePayments") throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: committed SSA receipt cannot be removed");
         delete next[id];
       }
       // Absent optional state is distinct from an explicitly empty record in
       // canonical replay. Older v3 deltas lacked this bit and retain their
       // previous representation; v1/v2 continue to use opening replay.
       if (change.present === false) {
-        if (key !== "contributions" && key !== "contingentPositions" || Object.keys(next).length !== 0)
+        if (key !== "contributions" && key !== "contingentPositions" && key !== "ssaMedicarePayments" || Object.keys(next).length !== 0)
           throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: invalid absent state record");
         return [];
       }
@@ -145,6 +150,7 @@ const restoreCheckpointDeltas = (deltas: readonly CheckpointDelta[]): readonly H
       return [key, [...next].sort()];
     })) as unknown as AuthoritativeState["identities"];
     before = createAuthoritativeState({ ...stateRecords, identities: nextIds });
+    validateSsaMedicareSourceHistory(before, cutoff);
     return { ...checkpoint, state: before };
   });
 };
@@ -173,10 +179,11 @@ const restorePortableArtifact = (artifact: unknown): Pick<HouseholdForecastSumma
     throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: portable artifact changed");
   const { participants, ...base } = restored.executable;
   const executable = { ...base, ...(participants === undefined ? {} : { participants: participants.map(restoreHouseholdParticipant) }) };
+  validateSsaMedicareSourceHistory(executable.reconciledOpeningState, restored.runContext.dataCutoff);
   const kernel = compileHouseholdKernel(executable, restored.runContext.simulationStart);
   const forecast = Object.freeze({ runMetadata: restored.runMetadata, periods: restored.periods,
     replay: Object.freeze({ kernel, runContext: restored.runContext }) });
-  if (supplied.version === "household-replay/v3") registerHouseholdReplayCheckpoints(forecast, restoreCheckpointDeltas(restored.checkpoints!));
+  if (supplied.version === "household-replay/v3") registerHouseholdReplayCheckpoints(forecast, restoreCheckpointDeltas(restored.checkpoints!, restored.runContext.dataCutoff));
   return forecast;
 };
 
