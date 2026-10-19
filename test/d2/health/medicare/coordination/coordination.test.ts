@@ -6,6 +6,7 @@ import { composeMedicareObligations, type MedicareCoordinationRequest, type Medi
   type SsaDeductionTerms } from "../../../../../src/simulation/d2/health/medicare/coordination/index.js";
 import type { EffectivePeriod, MedicareElection, PremiumCoverage, PremiumSource } from "../../../../../src/simulation/d2/health/premiums/index.js";
 import type { QuotedBenefit } from "../../../../../src/simulation/d2/retirement/benefits/index.js";
+import { coordinateSocialSecurity } from "../../../../../src/simulation/d2/retirement/benefits/coordination/index.js";
 import { catalogSchema } from "../../../../fixtures/d2/schema.js";
 
 const span = (start = "2026-01-01", end = "2027-01-01"): EffectivePeriod => ({ start: civilDate(start), endExclusive: civilDate(end) });
@@ -83,6 +84,82 @@ const blocked = (r: MedicareCoordinationRequest, code?: string) => {
   if (code) expect(result.diagnostics.map(d => d.diagnosticCode)).toContain(code);
   return result;
 };
+
+// The positive fixture uses A1's real installment output, not expanded coverage.
+const installmentRequest = (payment = "2026-06-15", end = "2026-07-01"): MedicareCoordinationRequest => {
+  const period = span(`${payment.slice(0, 7)}-01`, end), r = request(["part_b", "part_d"]);
+  const s = source("ssa_coordinated_quote");
+  const a = award();
+  const input: QuotedBenefit = { ...a, commencement: civilDate(payment), calendarSource: s,
+    quote: { ...a.quote!, source: s, asOf: s.asOf },
+    cola: { ...a.cola!, source: s }, verifiedAward: { ...a.verifiedAward!, source: s } };
+  const evidence = { evidenceId: "synthetic-evidence", coverageSetId: "synthetic-set", source: s,
+    knownAt: s.asOf, publishedAt: s.asOf, effective: span() };
+  const coordinated = coordinateSocialSecurity({ householdId: "hh", knownAt: civilDate(payment), horizon: period,
+    recipients: [{ recipientPersonId: "alice", enabled: true,
+      quotes: [{ quoteId: "own", role: "own", evidence, award: input }],
+      determinations: [{ determinationId: "determination", electionId: "election", versionId: "v1", evidence,
+        inventoryComplete: true, inventoryQuoteIds: ["own"], strategy: "own", benefitKind: "ss_retirement",
+        ownQuoteId: "own", paymentAwardId: "payment", paymentEntitlementId: "entitlement-alice",
+        paymentWorkerRecordPersonId: "alice", claimingMonth: input.claimingMonth, installmentDay: payment.slice(8),
+        eligibility: "eligible", relationship: "self", unsupportedRules: [] }] }] });
+  expect(coordinated.diagnostics).toEqual([]);
+  const quoted = coordinated.proposals[0]!.quotedAward;
+  expect(quoted.quote!.coveredHorizon).toEqual(span(payment, end));
+  return { ...r, premiums: { ...r.premiums, period, coverages: r.premiums.coverages.map(c => ({ ...c,
+    route: { kind: "ssa_benefit_deduction_pending", payerId: "alice", benefitId: quoted.awardId, evidence: source("route") } })) },
+    irmaa: { ...r.irmaa, period }, inventories: [inventory("alice", ["part_b", "part_d"], period)],
+    awards: [quoted], deductionTerms: (["part_b", "part_d"] as const).map(part => ({ ...terms(), ...period,
+      benefitId: quoted.awardId, part, coverageId: id("alice", part), recipientId: `recipient-${part}`,
+      permittedAmount: money(part === "part_b" ? "340" : "307") })) };
+};
+
+describe("C2 source-owner SSA installment admission", () => {
+  it.each([["2026-06-01", "2026-07-01"], ["2026-06-15", "2026-07-01"],
+    ["2026-06-30", "2026-07-01"], ["2026-01-15", "2026-02-01"], ["2026-12-15", "2027-01-01"]])(
+    "admits A1 installment %s through %s with one B and one D", (payment, end) => {
+      const r = composeMedicareObligations(installmentRequest(payment, end));
+      expect(r.medicareTotalCoverage).toBe("complete");
+      expect(r.obligations).toHaveLength(2);
+      expect(r.householdTotal!.equals(money("647"))).toBe(true);
+    });
+
+  it("admits SSA and legal knowledge between premium and payment, never after payment", () => {
+    const r = installmentRequest();
+    const dated = (date: string): MedicareCoordinationRequest => ({ ...r,
+      awards: r.awards.map(a => ({ ...a, calendarSource: { ...a.calendarSource, asOf: civilDate(date) },
+        quote: { ...a.quote!, asOf: civilDate(date), source: { ...a.quote!.source, asOf: civilDate(date) } } })),
+      deductionTerms: r.deductionTerms.map(t => ({ ...t, source: { ...t.source, asOf: civilDate(date) } })) });
+    expect(composeMedicareObligations(dated("2026-06-10")).medicareTotalCoverage).toBe("complete");
+    const future = dated("2026-06-16");
+    blocked({ ...r, awards: future.awards }, "SSA_TERMS_REQUIRED");
+    blocked({ ...r, deductionTerms: future.deductionTerms }, "SSA_TERMS_REQUIRED");
+  });
+
+  it("rejects truncated, shifted, wrong-person and wrong-worker quotes and advance premiums", () => {
+    const r = installmentRequest(), a = r.awards[0]!;
+    for (const coveredHorizon of [span("2026-06-16", "2026-07-01"), span("2026-06-15", "2026-06-30"),
+      span("2026-05-15", "2026-06-01"), span("2026-07-15", "2026-08-01")])
+      blocked({ ...r, awards: [{ ...a, quote: { ...a.quote!, coveredHorizon } }] }, "SSA_TERMS_REQUIRED");
+    for (const patch of [{ recipientPersonId: "bob" }, { workerRecordPersonId: "bob" }, { awardId: "wrong" },
+      { householdId: "other" }]) blocked({ ...r, awards: [{ ...a, ...patch }] }, "SSA_TERMS_REQUIRED");
+    blocked({ ...r, awards: [{ ...a, endExclusive: civilDate("2026-06-16") }] }, "SSA_TERMS_REQUIRED");
+    blocked({ ...r, awards: [{ ...a, verifiedAward: { ...a.verifiedAward!, coveredHorizon: span("2026-06-15", "2026-06-16") } }] }, "SSA_TERMS_REQUIRED");
+    blocked({ ...r, premiums: { ...r.premiums, coverages: r.premiums.coverages.map(c => ({ ...c,
+      quote: { ...c.quote, schedule: { ...c.quote.schedule, anchor: civilDate("2026-06-20") } } })) } }, "SSA_TERMS_REQUIRED");
+    const bank = request(["part_b", "part_d"]).premiums.coverages[0]!.route;
+    blocked({ ...r, premiums: { ...r.premiums, coverages: r.premiums.coverages.map((c, n) => n ? c : { ...c, route: bank }) } }, "DOUBLE_ROUTE");
+  });
+
+  it("retains premium and IRMAA event knowledge gates", () => {
+    const r = installmentRequest();
+    blocked({ ...r, premiums: { ...r.premiums, coverages: r.premiums.coverages.map(c => ({ ...c,
+      quote: { ...c.quote, source: { ...c.quote.source, asOf: civilDate("2026-06-10") } } })) } });
+    blocked({ ...r, irmaa: { ...r.irmaa, histories: [] } }, "SURCHARGE_REQUIRED");
+    blocked({ ...r, irmaa: { ...r.irmaa, rules: r.irmaa.rules.map(rule => ({ ...rule,
+      source: { ...rule.source, asOf: civilDate("2026-06-10") } })) } }, "SURCHARGE_REQUIRED");
+  });
+});
 
 describe("D2-C Medicare total and uncommitted intended route composition", () => {
   it("composes 30000 base + independently sourced 4000 IRMAA exactly once", () => {
