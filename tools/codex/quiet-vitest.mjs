@@ -21,6 +21,9 @@ const result = spawnSync(
     "run",
     ...process.argv.slice(2),
     "--reporter=json",
+    // Preserve Vitest's human reporter for global teardown, unhandled-error and
+    // worker-exit evidence that the JSON assertion report may not include.
+    "--reporter=default",
     `--outputFile=${reportPath}`,
   ],
   {
@@ -69,6 +72,10 @@ if (result.status === 0 && report?.success === true) {
 const total = report?.numTotalTests ?? 0;
 const failed = report?.numFailedTests ?? "unknown";
 console.error(`FAIL vitest — ${failed} failed / ${total || "unknown"}`);
+console.error(`Vitest child outcome: exit=${result.status ?? "null"} signal=${result.signal ?? "none"} error=${result.error?.message ?? "none"} reportSuccess=${report?.success ?? "unavailable"}`);
+if (report?.success === true && result.status !== 0) {
+  console.error("All reported assertions passed, but the Vitest process did not exit cleanly; see full captured default reporter for unhandled errors, teardown or worker termination. Nonzero process status remains a hard failure.");
+}
 
 const failureBlocks = [];
 for (const testResult of report?.testResults ?? []) {
