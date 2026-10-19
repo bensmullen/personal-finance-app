@@ -60,7 +60,9 @@ describe("T1A household tax integration", () => {
   function scenarioRun(fixture: ReturnType<typeof lawScenario>, changes: TaxChanges, resultTier: "detail"): CompiledHouseholdProjectionRunResult;
   function scenarioRun(fixture: ReturnType<typeof lawScenario>, changes?: TaxChanges): HouseholdForecastSummaryResult;
   function scenarioRun(fixture: ReturnType<typeof lawScenario>, changes: TaxChanges = {}, resultTier?: "detail"): CompiledHouseholdProjectionRunResult | HouseholdForecastSummaryResult {
-    const input = Object.fromEntries(Object.entries({ ...fixture.input, ...changes }).filter(([, value]) => value !== undefined)) as HouseholdTaxInput;
+    // Preserve the typed required input while omitting explicitly cleared optional facts.
+    const input: HouseholdTaxInput = Object.assign({}, fixture.input, changes);
+    for (const [key, value] of Object.entries(input)) if (value === undefined) Reflect.deleteProperty(input, key);
     const request = { kernel: applyHouseholdExecutionOverlay(fixture.kernel, { participants: [createHouseholdTaxParticipant(input)] }), runContext: fixture.context };
     return resultTier === "detail" ? runHouseholdKernel({ ...request, resultTier: "detail" }) : runHouseholdKernel(request);
   }
