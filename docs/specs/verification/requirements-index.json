@@ -5325,6 +5325,41 @@
         "engineering-review",
         "user-uat"
       ]
+    },
+    {
+      "id": "PFA-UX-024",
+      "spec_id": "application-ux",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "verification_state": "planned",
+      "verification_refs": [],
+      "implementation_scope": [
+        "ui/",
+        "src/application/",
+        "app/",
+        "test/",
+        "e2e/"
+      ],
+      "depends_on_requirement_ids": [
+        "PFA-UX-003",
+        "PFA-UX-004",
+        "PFA-UX-016",
+        "PFA-UX-017",
+        "PFA-UX-018",
+        "PFA-UX-019",
+        "PFA-UX-020",
+        "PFA-UX-021"
+      ],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-uat"
+      ]
     }
   ]
 }

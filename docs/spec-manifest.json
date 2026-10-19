@@ -458,7 +458,7 @@
     {
       "id": "application-ux",
       "path": "docs/specs/capabilities/application-ux.md",
-      "version": "0.1.10-draft",
+      "version": "0.1.12-draft",
       "authority": "level-3",
       "version_source": "markdown-version-header",
       "status": "post-pr21-outline",
@@ -497,7 +497,17 @@
         "term-life policy owner",
         "insurance coverage & beneficiary",
         "investment transaction authoring",
-        "retirement rollover editor"
+        "retirement rollover editor",
+        "PFA-UX-024",
+        "time to first useful forecast",
+        "Tesler law",
+        "Postel law",
+        "editable suggested mortgage defaults",
+        "one-click synthetic completed forecast",
+        "U1B flagship retirement household",
+        "age 90 source-backed requested horizon",
+        "integrated PM UAT",
+        "chart insight acceptance"
       ],
       "applies_to": [
         "personal-mvp"
@@ -686,7 +696,7 @@
     {
       "id": "post-pr21-implementation-roadmap",
       "path": "docs/specs/roadmap/post-pr21-implementation-roadmap.md",
-      "version": "0.6.18-draft",
+      "version": "0.6.20-draft",
       "authority": "planning",
       "version_source": "markdown-version-header",
       "status": "controlled-plan",
@@ -770,7 +780,11 @@
         "U1B UX parity",
         "Issue 170",
         "Issue 171",
-        "Overview Cash Calm visual acceptance"
+        "Overview Cash Calm visual acceptance",
+        "U1B zero-friction",
+        "Issue 181",
+        "one-click supported forecast",
+        "U1B-UX-C"
       ],
       "applies_to": [
         "personal-mvp",
