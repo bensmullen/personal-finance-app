@@ -49,9 +49,9 @@ describe("#149 opt-in physical Medicare B/D BANK execution", () => {
     expect(p.transactions).toHaveLength(4);
     for (const item of required) {
       const recognition = p.transactions.findIndex(t => t.type === "expense_recognition"
-        && t.legs.some(l => l.type === "liability" && l.accountId === item.liability));
+        && t.legs.some(l => l.type === "liability" && l.entityId === item.liability));
       const settlement = p.transactions.findIndex(t => t.type === "expense_settlement"
-        && t.legs.some(l => l.type === "liability" && l.accountId === item.liability));
+        && t.legs.some(l => l.type === "liability" && l.entityId === item.liability));
       expect(recognition).toBeGreaterThanOrEqual(0);
       expect(settlement).toBeGreaterThan(recognition);
       expect(p.transactions[recognition]!.legs.map(l => [l.posting, l.type, l.amount.amount.toString()])).toEqual([
