@@ -144,6 +144,13 @@ export interface SsaPayableEvidence extends SsaPayableIdentity {
   readonly eligibility: "eligible" | "unknown";
   readonly grossPayable: Money;
   readonly source: SsaDeductionSource;
+  /** Explicit instruction for this installment; absence never implies zero. */
+  readonly taxWithholding: {
+    readonly status: "verified_zero";
+    readonly payable: SsaPayableIdentity;
+    readonly amount: Money;
+    readonly source: SsaDeductionSource;
+  };
 }
 
 export interface MedicarePremiumEvidence {
@@ -233,7 +240,7 @@ const qualifyDeductionSource = (s: SsaDeductionSource, scopeId: string, family: 
     && s.ruleFamily === family && [scopeId, s.ruleSnapshotId, s.version, s.sourcePublication].every(nonempty)
     && start < endExclusive && s.effectiveStart <= start && s.effectiveEndExclusive >= endExclusive
     && s.effectiveStart < s.effectiveEndExclusive && s.asOf <= at && s.publishedAt <= s.knownAt
-    && s.knownAt <= at, "Complete effective event-known verified source required");
+    && s.asOf <= s.knownAt && s.knownAt <= at, "Complete effective event-known verified source required");
 };
 const validatePremium = (p: MedicarePremiumEvidence, at: Instant): void => {
   requireDeduction(p.status === "complete" && [p.evidenceId, p.householdId, p.beneficiaryId,
@@ -295,6 +302,14 @@ export const prepareSsaMedicareDeductionProposals = (
     && right.outstandingAmount.equals(payable.grossPayable) && right.settlementIds.length === 0
     && right.recognizedAt <= payable.paymentAt && right.dueAt === payable.paymentAt,
   "Payable must bind the actual coordinated positive SSA right");
+  const withholding = payable.taxWithholding;
+  requireDeduction(withholding !== undefined && withholding !== null
+    && withholding.status === "verified_zero" && cents(withholding.amount) && withholding.amount.isZero()
+    && withholding.payable !== undefined && withholding.payable !== null
+    && samePayable(withholding.payable, payable),
+  "Explicit verified-zero tax withholding instruction for this SSA installment required");
+  qualifyDeductionSource(withholding.source, payable.paymentId, "ssa_withholding", payable.paymentAt,
+    paymentDate, paymentEnd);
   const settlements = new Set(existingSettlementIds);
   const receiptIds = new Set<string>(), authorizations = new Set<string>(), claims = new Set<string>(), parts = new Set<string>();
   const recognitions = new Set<string>([right.originatingRecognitionId]);

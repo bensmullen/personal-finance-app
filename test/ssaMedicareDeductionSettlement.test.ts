@@ -27,10 +27,15 @@ const source = (scopeId: string, ruleFamily: string): SsaDeductionSource => ({
 });
 const payable = (): SsaPayableEvidence => {
   const id = claimId(JSON.stringify(["d2-quoted-benefit/v1", "household", "entitlement", owner, "2026-06-15"]));
-  return { kind: "coordinated_ssa_payable", benefitKind: "ss_retirement", eligibility: "eligible",
+  const identity = {
     householdId: "household", recipientId: owner, workerRecordId: "worker", awardId: "coordinated-award",
     entitlementId: "entitlement", paymentId: id, rightClaimId: id, rightRecognitionId: "gross-recognition",
-    paymentAt: at, grossPayable: money("1500"), source: source(id, "ssa_coordinated_payable") };
+    paymentAt: at,
+  };
+  return { ...identity, kind: "coordinated_ssa_payable", benefitKind: "ss_retirement", eligibility: "eligible",
+    grossPayable: money("1500"), source: source(id, "ssa_coordinated_payable"),
+    taxWithholding: { status: "verified_zero", payable: identity, amount: money("0"),
+      source: source(id, "ssa_withholding") } };
 };
 const makeRight = (p = payable(), outstanding = p.grossPayable, settlements: readonly ReturnType<typeof settlementId>[] = []) => {
   const fact = createRecognitionFact({ id: recognitionId(p.rightRecognitionId), category: "ssa_gross_income",
@@ -97,7 +102,8 @@ describe("conditional SSA Medicare deduction proposals", () => {
     expect(group([b, d])).toEqual(forward);
     const proposal = forward.proposals[0]!;
     for (const value of [forward, forward.proposals, proposal, proposal.claim, proposal.claim.settlementIds,
-      forward.payable, forward.payable.source, proposal.terms, proposal.terms.premium,
+      forward.payable, forward.payable.source, forward.payable.taxWithholding,
+      forward.payable.taxWithholding.payable, forward.payable.taxWithholding.source, proposal.terms, proposal.terms.premium,
       proposal.terms.premiumScope, proposal.terms.premium.source]) expect(Object.isFrozen(value)).toBe(true);
     expect(Reflect.set(b.terms.premium.source, "version", "changed-input")).toBe(true);
     expect(proposal.terms.premium.source.version).toBe("synthetic-v1");
@@ -239,6 +245,75 @@ describe("conditional SSA Medicare deduction proposals", () => {
     ]) expect(() => group([{ ...b, terms: { ...b.terms, source: s } }])).toThrow();
     const p = payable();
     expect(() => group([b], { ...p, source: { ...p.source, publishedAt: future, knownAt: future } })).toThrow();
+  });
+
+  it.each(["payable", "premium", "authorization"] as const)(
+    "rejects %s source as-of after knowledge but before the payment event", target => {
+      const p = payable(), b = request("part_b", "80", p);
+      const asOf = instant("2026-06-10T00:00:00.000Z");
+      expect(group([b], p).conditionalNetPayable.equals(money("1420"))).toBe(true);
+      if (target === "payable") {
+        expect(() => group([b], { ...p, source: { ...p.source, asOf } })).toThrow();
+      } else if (target === "premium") {
+        expect(() => group([{ ...b, terms: { ...b.terms, premium: { ...b.terms.premium,
+          source: { ...b.terms.premium.source, asOf } } } }], p)).toThrow();
+      } else {
+        expect(() => group([{ ...b, terms: { ...b.terms, source: { ...b.terms.source, asOf } } }], p)).toThrow();
+      }
+    });
+
+  it("conditions the $1300 net on an explicit sourced zero tax instruction for the installment", () => {
+    const p = payable(), result = group([request("part_b", "80", p), request("part_d", "120", p)], p);
+    expect(result.payable.taxWithholding).toEqual(p.taxWithholding);
+    expect(result.payable.taxWithholding.amount.isZero()).toBe(true);
+    expect(result.conditionalNetPayable.equals(money("1300"))).toBe(true);
+    expect(result.committed).toBe(false);
+    expect(result).not.toHaveProperty("taxCredit");
+    expect(result).not.toHaveProperty("transaction");
+  });
+
+  const invalidWithholding: readonly [string, (w: SsaPayableEvidence["taxWithholding"]) => unknown][] = [
+    ["missing instruction", () => undefined],
+    ["unknown instruction", w => ({ ...w, status: "unknown" })],
+    ["positive amount", w => ({ ...w, amount: money("1") })],
+    ["negative amount", w => ({ ...w, amount: money("-1") })],
+    ["fractional cents", w => ({ ...w, amount: money("0.001") })],
+    ["non-USD zero", w => ({ ...w, amount: money("0", Currency.of("EUR")) })],
+    ["missing amount", w => ({ ...w, amount: undefined })],
+    ["missing source", w => ({ ...w, source: undefined })],
+    ["unknown source", w => ({ ...w, source: { ...w.source, status: "unknown" } })],
+    ["unsupported source", w => ({ ...w, source: { ...w.source, status: "unsupported" } })],
+    ["wrong source scope", w => ({ ...w, source: { ...w.source, scopeId: "other-payment" } })],
+    ["wrong rule family", w => ({ ...w, source: { ...w.source, ruleFamily: "ssa_coordinated_payable" } })],
+    ["stale effective period", w => ({ ...w, source: { ...w.source, effectiveEndExclusive: civilDate("2026-06-15") } })],
+    ["future effective period", w => ({ ...w, source: { ...w.source, effectiveStart: civilDate("2026-06-16") } })],
+    ["future publication", w => ({ ...w, source: { ...w.source, publishedAt: instant("2026-06-16T00:00:00.000Z") } })],
+    ["future knowledge", w => ({ ...w, source: { ...w.source, knownAt: instant("2026-06-16T00:00:00.000Z") } })],
+    ["future as-of", w => ({ ...w, source: { ...w.source, asOf: instant("2026-06-16T00:00:00.000Z") } })],
+    ["as-of after knowledge before payment", w => ({ ...w, source: { ...w.source, asOf: instant("2026-06-10T00:00:00.000Z") } })],
+    ["missing installment", w => ({ ...w, payable: undefined })],
+    ["wrong household", w => ({ ...w, payable: { ...w.payable, householdId: "other" } })],
+    ["wrong recipient", w => ({ ...w, payable: { ...w.payable, recipientId: otherOwner } })],
+    ["wrong worker", w => ({ ...w, payable: { ...w.payable, workerRecordId: "other" } })],
+    ["wrong award", w => ({ ...w, payable: { ...w.payable, awardId: "other" } })],
+    ["wrong entitlement", w => ({ ...w, payable: { ...w.payable, entitlementId: "other" } })],
+    ["wrong payment", w => ({ ...w, payable: { ...w.payable, paymentId: "other" } })],
+    ["wrong right", w => ({ ...w, payable: { ...w.payable, rightClaimId: claimId("other") } })],
+    ["wrong recognition", w => ({ ...w, payable: { ...w.payable, rightRecognitionId: "other" } })],
+    ["wrong payment date", w => ({ ...w, payable: { ...w.payable, paymentAt: instant("2026-06-16T12:00:00.000Z") } })],
+  ];
+  it.each(invalidWithholding)("rejects withholding with %s without producing or mutating financial state", (_name, change) => {
+    const p = payable(), b = request("part_b", "80", p), right = makeRight(p);
+    let output: unknown;
+    expect(() => {
+      output = Reflect.apply(prepareSsaMedicareDeductionProposals, undefined,
+        [{ ...p, taxWithholding: change(p.taxWithholding) }, right, [b]]);
+    }).toThrow();
+    expect(output).toBeUndefined();
+    for (const claim of [right, b.claim]) {
+      expect(claim.outstandingAmount.equals(claim.originalAmount)).toBe(true);
+      expect(claim.settlementIds).toEqual([]);
+    }
   });
 });
 
