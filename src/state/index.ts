@@ -1,5 +1,6 @@
 import {
   assertBalanced,
+  accountingTransactionId, createAccountingLeg, createAccountingTransaction,
   type AccountingTransaction,
   type AccountingTransactionId,
   type AccountId,
@@ -7,12 +8,78 @@ import {
   type PositionId,
 } from "../accounting/index.js";
 import { failValidation, issueCodes } from "../diagnostics/index.js";
-import type { DomainId, GeneratedOccurrenceKey, IdempotencyKey } from "../identity/index.js";
-import { normalizeExecutionClaim, materializeClaimLifecycle, settlementIdentityAppendsSince, type SettlementHistoryMeter, type ObligationOrRight } from "../semantics/claim.js";
+import { idempotencyKey, type DomainId, type GeneratedOccurrenceKey, type IdempotencyKey } from "../identity/index.js";
+import { assertClaimInvariant, normalizeExecutionClaim, materializeClaimLifecycle, settlementIdentityAppendsSince, type SettlementHistoryMeter, type ObligationOrRight } from "../semantics/claim.js";
+import { prepareSsaMedicareDeductionProposals, type SsaPayableEvidence, type SsaDeductionRequest } from "../semantics/settlement.js";
 import type { RecognitionId, SettlementId } from "../semantics/identity.js";
 import { createRecognitionFact as createRecognitionFactWithHistory, type RecognitionFactDraft, type RecognitionFact } from "../semantics/recognition.js";
 import { Money, Quantity, decimal, type Currency, type Rate } from "../values/index.js";
 import type { Instant } from "../time/index.js";
+
+/** Source-specific same-event journal evidence, not a second cash ledger.
+ * Domain admission re-evaluates sourceInputs through A1/C2. Portable integrity
+ * detects changes; neither this record nor an artifact authenticates publishers.
+ */
+export interface SsaMedicarePaymentInput {
+  readonly payable: SsaPayableEvidence;
+  readonly right: ObligationOrRight;
+  readonly requests: readonly SsaDeductionRequest[];
+  readonly bankAccountId: AccountId;
+  readonly bankCashBefore: Money;
+  readonly rightSettlementId: SettlementId;
+  readonly sourceInputs: unknown;
+}
+export interface SsaMedicarePaymentRecord extends SsaMedicarePaymentInput {
+  readonly version: "ssa-medicare-payment/v1";
+  readonly id: string;
+  readonly netBank: Money;
+  readonly transaction: AccountingTransaction;
+  readonly recognitions: readonly RecognitionFact[];
+}
+// Inward-facing source port: state owns atomic accounting, while the sole
+// opt-in adapter owns A1/C2 re-evaluation. Imported receipts fail closed until
+// the source owner is available. No caller-provided receipt or callback is
+// accepted by the transition itself, and registration cannot be replaced.
+let ssaMedicareSourceAuthority: ((inputs: unknown) => SsaMedicarePaymentInput) | undefined;
+export const registerSsaMedicareSourceAuthority = (qualify: (inputs: unknown) => SsaMedicarePaymentInput): void => {
+  if (ssaMedicareSourceAuthority !== undefined) throw new Error("SSA_MEDICARE_SOURCE_AUTHORITY_DUPLICATE");
+  ssaMedicareSourceAuthority = qualify;
+};
+const paymentKey = (p: SsaPayableEvidence): string => JSON.stringify([p.householdId, p.recipientId, p.paymentId]);
+// Exact structural equality also survives independent portable restoration.
+const paymentValue = (value: unknown): string => {
+  const plain = (v: unknown): unknown => typeof v === "bigint" ? ["bigint", v.toString()]
+    : v instanceof Money ? ["USD-money", v.currency.code, v.amount.toString()]
+    : Array.isArray(v) ? v.map(plain) : v !== null && typeof v === "object"
+      ? "toJSON" in v && typeof v.toJSON === "function" ? plain(v.toJSON())
+        : Object.fromEntries(Object.entries(v).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, x]) => [k, plain(x)])) : v;
+  return JSON.stringify(plain(value));
+};
+const freezePayment = <T>(v: T): T => {
+  if (v === null || typeof v !== "object" || v instanceof Money) return v;
+  if (Array.isArray(v)) return Object.freeze(v.map(freezePayment)) as T;
+  if (Object.getPrototypeOf(v) !== Object.prototype && Object.getPrototypeOf(v) !== null) return v;
+  return Object.freeze(Object.fromEntries(Object.entries(v).map(([k, x]) => [k, freezePayment(x)]))) as T;
+};
+const paymentInvalid = (message: string): never => failValidation({ severity: "error", code: "SSA_MEDICARE_PAYMENT_INVALID",
+  entityType: "ssa_medicare_payment", message });
+const validatePaymentSources = (input: SsaMedicarePaymentInput): void => {
+  if (ssaMedicareSourceAuthority === undefined) paymentInvalid("A1/C2 source owner unavailable for this receipt");
+  const qualified = ssaMedicareSourceAuthority!(input.sourceInputs);
+  const values = (v: SsaMedicarePaymentInput) => ({ payable: v.payable, right: v.right, requests: v.requests,
+    bankAccountId: v.bankAccountId, bankCashBefore: v.bankCashBefore, rightSettlementId: v.rightSettlementId, sourceInputs: v.sourceInputs });
+  if (paymentValue(values(input)) !== paymentValue(values(qualified))) paymentInvalid("Payment differs from requalified A1/C2 source authority");
+};
+const paymentJournal = (input: SsaMedicarePaymentInput): AccountingTransaction => {
+  const batch = prepareSsaMedicareDeductionProposals(input.payable, input.right, input.requests);
+  return createAccountingTransaction({ id: accountingTransactionId(`ssa-medicare:${input.payable.paymentId}`),
+    date: input.payable.paymentAt, type: "ssa_medicare_same_event", legs: [
+      ...(batch.conditionalNetPayable.isZero() ? [] : [createAccountingLeg({ type: "cash", posting: "debit",
+        accountId: input.bankAccountId, amount: batch.conditionalNetPayable, cashFlowClass: "operating" })]),
+      createAccountingLeg({ type: "expense", posting: "debit", amount: batch.deductionAmount }),
+      createAccountingLeg({ type: "income", posting: "credit", amount: input.payable.grossPayable }),
+    ] });
+};
 
 interface IndexNode<T> {
   readonly key: string;
@@ -270,6 +337,7 @@ export interface AuthoritativeState {
   identities: AuthoritativeIdentityRegistry;
   contributions?: Record<string, ContributionState>;
   contingentPositions?: Record<string, ContingentPositionState>;
+  ssaMedicarePayments?: Record<string, SsaMedicarePaymentRecord>;
 }
 
 export interface AuthoritativeStateDraft {
@@ -280,6 +348,7 @@ export interface AuthoritativeStateDraft {
   readonly identities?: Partial<AuthoritativeIdentityRegistry>;
   readonly contributions?: Record<string, ContributionState>;
   readonly contingentPositions?: Record<string, ContingentPositionState>;
+  readonly ssaMedicarePayments?: Record<string, SsaMedicarePaymentRecord>;
 }
 
 const identityIndexes = new WeakMap<AuthoritativeIdentityRegistry, Record<keyof AuthoritativeIdentityRegistry, PersistentStringIndex<string>>>();
@@ -383,6 +452,12 @@ export const authoritativeStateChangesSince = (
     ...Object.fromEntries(fields.map(field => [field, changes(indexedRecords.get(state[field])!.index, indexedRecords.get(before[field])!.index,
       field === "obligations" ? claimValue : value => value)])),
     identities: Object.fromEntries(identityKinds.map(kind => [kind, changes(identities[kind], priorIdentities[kind])])),
+    ...(state.ssaMedicarePayments === undefined && before.ssaMedicarePayments === undefined ? {} : {
+      ssaMedicarePayments: { present: state.ssaMedicarePayments !== undefined,
+        changes: changes(indexedRecords.get(state.ssaMedicarePayments ?? {})?.index
+          ?? new PersistentStringIndex(Object.entries(state.ssaMedicarePayments ?? {})),
+        indexedRecords.get(before.ssaMedicarePayments ?? {})?.index
+          ?? new PersistentStringIndex(Object.entries(before.ssaMedicarePayments ?? {}))) } }),
   };
 };
 const claimGroup = (category: string, balanceEntityId?: string): string => `${category}\u0000${balanceEntityId ?? ""}`;
@@ -447,6 +522,7 @@ export const createIndexedExecutionState = (opening: AuthoritativeState, supplie
     identities: indexedIdentityRegistry(opening.identities),
     ...(opening.contributions === undefined ? {} : { contributions: { ...opening.contributions } }),
     ...(opening.contingentPositions === undefined ? {} : { contingentPositions: Object.fromEntries(Object.entries(opening.contingentPositions).map(([key, value]) => [key, { ...value }])) }),
+    ...(opening.ssaMedicarePayments === undefined ? {} : { ssaMedicarePayments: makeRecord(opening.ssaMedicarePayments, false, undefined, freezePayment) }),
   };
   if (existing === undefined) for (const [key, claim] of Object.entries(state.obligations)) updateClaim(key, undefined, claim);
   if (existing === undefined) { pendingClaimIds.clear(); pendingSettlementIds.clear(); }
@@ -497,7 +573,11 @@ export const createAuthoritativeState = (draft: AuthoritativeStateDraft = {}): A
     identities: createAuthoritativeIdentityRegistry(draft.identities),
     ...(draft.contributions === undefined ? {} : { contributions: { ...draft.contributions } }),
     ...(draft.contingentPositions === undefined ? {} : { contingentPositions: Object.fromEntries(Object.entries(draft.contingentPositions).map(([key, value]) => [key, { ...value }])) }),
+    ...(draft.ssaMedicarePayments === undefined ? {} : { ssaMedicarePayments: Object.fromEntries(Object.entries(draft.ssaMedicarePayments).map(([key, value]) => [key, freezePayment(value)])) }),
   };
+  // Receipt identities must already exist on import; reconciliation must not
+  // manufacture missing posting authority for caller-supplied history.
+  validateSsaMedicarePayments(state);
   reconcileClaimIdentityHistory(state);
   validateAuthoritativeState(state);
   return state;
@@ -586,6 +666,7 @@ const stateTargetMissing = (transaction: AccountingTransaction, targetType: stri
   });
 
 export const validateAuthoritativeState = (state: AuthoritativeState, transactionId?: string): void => {
+  validateSsaMedicarePayments(state);
   for (const [id, entry] of Object.entries(state.contributions ?? {})) {
     const account = state.accounts[entry.accountId];
     if (id !== entry.id || entry.amount.isNegative() || account === undefined || !entry.amount.currency.equals(account.cash.currency) || entry.buckets.some(bucket => bucket.amount.isNegative() || !bucket.amount.currency.equals(entry.amount.currency) || !bucket.annualLimit.currency.equals(entry.amount.currency) || bucket.annualLimit.isNegative() || bucket.amount.compare(entry.amount) > 0) || entry.eligibleDeduction !== undefined && (entry.eligibleDeduction.isNegative() || entry.eligibleDeduction.compare(entry.amount) > 0))
@@ -723,6 +804,10 @@ export const assertAuthoritativeStateCurrency = (state: AuthoritativeState, curr
     for (const bucket of entry.buckets) { assertCurrency(bucket.amount, `contributions.${key}.bucket.amount`, "contribution", key); assertCurrency(bucket.annualLimit, `contributions.${key}.bucket.annualLimit`, "contribution", key); }
   }
   for (const [key, entry] of Object.entries(state.contingentPositions ?? {})) assertCurrency(entry.carryingValue, `contingentPositions.${key}.carryingValue`, "position", key);
+  for (const [key, entry] of Object.entries(state.ssaMedicarePayments ?? {})) {
+    assertCurrency(entry.payable.grossPayable, `ssaMedicarePayments.${key}.gross`, "ssa_medicare_payment", key);
+    assertCurrency(entry.netBank, `ssaMedicarePayments.${key}.netBank`, "ssa_medicare_payment", key);
+  }
   for (const [key, liability] of Object.entries(state.liabilities)) assertCurrency(liability.balance, `liabilities.${key}.balance`, "liability", liability.id);
   for (const [key, position] of Object.entries(state.positions)) {
     assertCurrency(position.price, `positions.${key}.price`, "position", position.id);
@@ -738,9 +823,104 @@ const commitCandidate = (target: AuthoritativeState, candidate: AuthoritativeSta
   target.identities = candidate.identities;
   if (candidate.contributions !== undefined) target.contributions = candidate.contributions;
   if (candidate.contingentPositions !== undefined) target.contingentPositions = candidate.contingentPositions;
+  if (candidate.ssaMedicarePayments !== undefined) target.ssaMedicarePayments = candidate.ssaMedicarePayments;
+  else delete target.ssaMedicarePayments;
   const indexed = executionStateIndexes.get(candidate);
   if (indexed === undefined) executionStateIndexes.delete(target);
   else executionStateIndexes.set(target, indexed);
+};
+
+const paymentConsumptionKeys = (input: SsaMedicarePaymentInput): readonly IdempotencyKey[] => [
+  idempotencyKey("ssa-medicare:payment", input.payable.paymentId),
+  idempotencyKey("ssa-medicare:source-binding", paymentValue({ payable: input.payable, right: input.right,
+    requests: input.requests, bankAccountId: input.bankAccountId, bankCashBefore: input.bankCashBefore,
+    rightSettlementId: input.rightSettlementId, sourceInputs: input.sourceInputs })),
+  ...input.requests.flatMap(r => [
+    idempotencyKey("ssa-medicare:receipt", r.terms.receiptId),
+    idempotencyKey("ssa-medicare:authorization", r.terms.authorizationId),
+    idempotencyKey("ssa-medicare:premium", r.terms.premium.evidenceId),
+    idempotencyKey("ssa-medicare:part-month", JSON.stringify([r.terms.premium.householdId,
+      r.terms.premium.beneficiaryId, r.terms.premium.part, r.terms.premium.periodStart])),
+  ]),
+];
+const paymentClaims = (input: SsaMedicarePaymentInput): readonly ObligationOrRight[] => [input.right, ...input.requests.map(r => r.claim)];
+const paymentRecognitions = (input: SsaMedicarePaymentInput): readonly RecognitionFact[] => paymentClaims(input).map(c =>
+  createRecognitionFactWithHistory({ id: c.originatingRecognitionId, category: c.kind === "right" ? "ssa_gross_income" : "medicare_expense",
+    amount: c.originalAmount, recognizedAt: input.payable.paymentAt }));
+
+const validateSsaMedicarePayments = (state: AuthoritativeState): void => {
+  const consumed = new Set<string>(), transactions = new Set<string>(), claimIds = new Set<string>(), settlementIds = new Set<string>();
+  for (const [key, record] of Object.entries(state.ssaMedicarePayments ?? {})) {
+    if (!record || record.version !== "ssa-medicare-payment/v1" || key !== record.id || key !== paymentKey(record.payable)
+      || record.sourceInputs === undefined || !(record.bankCashBefore instanceof Money)
+      || record.bankCashBefore.currency.code !== "USD" || !record.bankCashBefore.amount.fitsScale(2) || record.bankCashBefore.isNegative())
+      paymentInvalid("Malformed versioned payment receipt");
+    validatePaymentSources(record);
+    const batch = prepareSsaMedicareDeductionProposals(record.payable, record.right, record.requests);
+    const bank = state.accounts[record.bankAccountId];
+    const expected = paymentJournal(record);
+    if (!bank || !["checking", "savings"].includes(bank.kind) || bank.ownerId !== record.payable.recipientId
+      || bank.cash.currency.code !== "USD" || !record.netBank.equals(batch.conditionalNetPayable)
+      || paymentValue(record.transaction) !== paymentValue(expected)
+      || !state.identities.postedTransactionIds.includes(expected.id) || transactions.has(expected.id)
+      || paymentValue(record.recognitions) !== paymentValue(paymentRecognitions(record)))
+      paymentInvalid("Receipt must match owned BANK and the actually posted gross/expense/net journal");
+    transactions.add(expected.id);
+    const claims = paymentClaims(record), ids = [record.rightSettlementId, ...record.requests.map(r => r.draft.id)];
+    for (const [index, original] of claims.entries()) {
+      const sid = ids[index]!, claim = state.obligations[original.id];
+      if (!sid || settlementIds.has(sid) || claimIds.has(original.id)
+        || original.recognizedAt !== record.payable.paymentAt || original.settlementIds.length !== 0
+        || !original.outstandingAmount.equals(original.originalAmount)
+        || !claim || paymentValue(claim) !== paymentValue({ ...original, outstandingAmount: Money.zero(original.originalAmount.currency), settlementIds: [sid] })
+        || !state.identities.recognitionIds.includes(original.originatingRecognitionId) || !state.identities.settlementIds.includes(sid))
+        paymentInvalid("Independent same-event claims and complete separate settlement histories required");
+      assertClaimInvariant(claim);
+      if (index > 0 && !["part_b", "part_d"].includes(record.requests[index - 1]!.terms.premium.part))
+        paymentInvalid("Only positive Part B/D same-event obligations are supported");
+      settlementIds.add(sid); claimIds.add(original.id);
+    }
+    for (const id of paymentConsumptionKeys(record)) {
+      if (consumed.has(id) || !state.identities.externalIdempotencyKeys.includes(id)) paymentInvalid("Incomplete or duplicate source consumption inventory");
+      consumed.add(id);
+    }
+  }
+};
+
+/** Narrowly privileged same-event SSA/Medicare candidate transition. The domain
+ * participant must first requalify immutable A1/C2 inputs. This API accepts no
+ * purported committed receipt or generic non-bank settlement authority. Every
+ * receipt here is generated only after actual canonical journal application.
+ */
+export const applySsaMedicarePaymentAtomically = (state: AuthoritativeState, input: SsaMedicarePaymentInput): SsaMedicarePaymentRecord => {
+  validatePaymentSources(input);
+  const candidate = cloneAuthoritativeState(state);
+  const key = paymentKey(input.payable);
+  if (candidate.ssaMedicarePayments?.[key]) paymentInvalid("Payment already committed; duplicate execution rejected");
+  const transaction = paymentJournal(input);
+  const claims = paymentClaims(input), ids = [input.rightSettlementId, ...input.requests.map(r => r.draft.id)];
+  const bank = candidate.accounts[input.bankAccountId];
+  if (!bank || !bank.cash.equals(input.bankCashBefore)) paymentInvalid("BANK balance does not match source-bound event opening");
+  for (const [index, original] of claims.entries()) {
+    if (candidate.obligations[original.id] || candidate.identities.recognitionIds.includes(original.originatingRecognitionId))
+      paymentInvalid("Previously recognized or partially settled claims are unsupported");
+    const sid = ids[index]!;
+    registerAuthoritativeIdentity(candidate.identities, "recognitionIds", original.originatingRecognitionId);
+    registerAuthoritativeIdentity(candidate.identities, "settlementIds", sid);
+    const claim = materializeClaimLifecycle({ ...original, outstandingAmount: Money.zero(original.originalAmount.currency), settlementIds: [sid] });
+    assertClaimInvariant(claim);
+    candidate.obligations[claim.id] = claim;
+  }
+  for (const id of paymentConsumptionKeys(input)) registerAuthoritativeIdentity(candidate.identities, "externalIdempotencyKeys", id);
+  applyAccountingTransactionAtomically(candidate, transaction);
+  const record = freezePayment({ ...input, version: "ssa-medicare-payment/v1" as const, id: key,
+    netBank: input.payable.grossPayable.minus(input.requests.reduce((sum, r) => sum.plus(r.terms.amount), Money.zero(input.payable.grossPayable.currency))),
+    transaction, recognitions: paymentRecognitions(input) });
+  candidate.ssaMedicarePayments = { ...candidate.ssaMedicarePayments, [key]: record };
+  reconcileClaimIdentityHistory(candidate);
+  validateAuthoritativeState(candidate);
+  commitCandidate(state, candidate);
+  return record;
 };
 
 export interface PositionValuationInput {
