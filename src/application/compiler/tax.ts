@@ -19,6 +19,7 @@ import type { CompileResult } from "./types.js";
 import { activeTaxFact as active, resolveTaxEligibility } from "../../simulation/tax/facts.js";
 import { resolveAnnualFinancialFact } from "../financialFacts.js";
 import type { AnnualHouseholdFilingStatus } from "../../simulation/tax/contracts.js";
+import { durablePayrollWithholding } from "./payrollWithholding.js";
 export { activeTaxFact, resolveTaxEligibility } from "../../simulation/tax/facts.js";
 
 export interface HouseholdTaxCompilerRequest {
@@ -117,7 +118,7 @@ export const compileHouseholdTax = (model: PortableModelEnvelope, request: House
       validateWorkTaxAllocations(work, start, end);
       const ownerId = String(income.owner_id).toLowerCase();
       const personId = residences.has(ownerId) ? ownerId : people.length === 1 ? canonicalId(people[0]!, "person_id") : undefined;
-      incomes.push({ id, ownerId, incomeType: String(income.income_type), taxCharacter: String(income.tax_character ?? "ordinary"), grossOrNet: String(income.gross_or_net ?? "gross"), start, ...(end === undefined ? {} : { end }), work,
+      incomes.push({ id, ownerId, ...(typeof income.source === "string" ? { employerId: income.source } : {}), incomeType: String(income.income_type), taxCharacter: String(income.tax_character ?? "ordinary"), grossOrNet: String(income.gross_or_net ?? "gross"), start, ...(end === undefined ? {} : { end }), work,
         residence: personId === undefined ? [] : residences.get(personId)!, eligibility: [...(personId === undefined ? [] : personEligibility.get(personId)!), ...eligibility(income)] });
     }
     // Contradictions within an owner's applicable facts never resolve by object order.
@@ -175,7 +176,9 @@ export const compileHouseholdTax = (model: PortableModelEnvelope, request: House
       if (sameInstant.length > 1 && (sameInstant.some(other => other.priority === undefined) || new Set(sameInstant.map(other => other.priority)).size !== sameInstant.length)) fail("Competing same-instant tax instructions require explicit distinct priorities.");
     }
     const canonicalOrder = <T>(values: readonly T[]): readonly T[] => [...values].sort((a, b) => canonicalSerialize(a).localeCompare(canonicalSerialize(b)));
+    const payrollWithholding = durablePayrollWithholding(model);
     return { status: "compiled", diagnostics: Object.freeze([]), value: immutableConfiguration({ catalog, accountTaxTreatments, taxRuleReferences: canonicalOrder(taxRuleReferences),
+      ...(payrollWithholding.length ? { payrollWithholding } : {}),
       ...(request.projectedCurrentLawThrough === undefined ? {} : { projectedCurrentLawAssumption: {
         version: "projected-current-law/v1" as const, selection: "projectedCurrentLawThrough" as const,
         modelId: String(model.modelId), householdId: scope.value.householdId,

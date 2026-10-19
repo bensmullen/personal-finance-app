@@ -11,7 +11,7 @@ import type { TaxIncomeFacts, TaxJurisdictionFacts } from "../../rules/tax/contr
 import { applySettlement, claimId, createObligation, createRecognitionFact, createSettlement, createSettlementProposal, recognitionId, settlementId, settlementProposalId } from "../../semantics/index.js";
 import { applyAccountingTransactionAtomically, authoritativeClaimHistory, registerAuthoritativeIdentity } from "../../state/index.js";
 import { subtractMilliseconds, utcDateOnlyInstant, type Instant } from "../../time/index.js";
-import { decimal, money, Money, Quantity, Unit, USD } from "../../values/index.js";
+import { decimal, money, Money, Quantity, RoundingPolicy, Unit, USD } from "../../values/index.js";
 import type { HouseholdKernelParticipant } from "../householdExecution.js";
 import { canonicalSerialize } from "../run.js";
 import { immutableConfiguration } from "../r3/compiledHousehold.js";
@@ -19,13 +19,15 @@ import { SummaryOperationSink } from "../r3/summarySink.js";
 import { activeTaxFact, resolveTaxEligibility } from "./facts.js";
 import { TaxEconomicLedger } from "./economics.js";
 import { TaxDiagnosticLedger } from "./diagnostics.js";
-import { isNonblockingProjectedTaxLaw, taxDiagnostic, taxOutputCapabilities, type CompiledTaxIncome, type HouseholdTaxInput, type RecognizedTaxEconomics, type TaxCapabilityDiagnostic } from "./contracts.js";
+import { taxBalanceIds, isNonblockingProjectedTaxLaw, taxDiagnostic, taxOutputCapabilities, type CompiledTaxIncome, type HouseholdTaxInput, type RecognizedTaxEconomics, type TaxCapabilityDiagnostic, type PayrollWithholdingEvidence } from "./contracts.js";
+export { taxBalanceIds } from "./contracts.js";
 
 const creditUnit = Unit.of("usd_tax_credit");
 const zero = () => Money.zero(USD);
 export const emptyTaxIncome = (): TaxIncomeFacts => Object.freeze({ wages: zero(), taxableInterest: zero(), ordinaryDividends: zero(), qualifiedDividends: zero(), shortTermGains: zero(), longTermGains: zero(), traditionalContributions: zero(), eligibleTraditionalDeduction: zero(), traditionalDistributions: zero(), traditionalDistributionBasisRecovered: zero(), rothContributions: zero(), rothDistributions: zero(), taxableRothDistributions: zero() });
 const sumIncome = (inputs: readonly TaxIncomeFacts[]): TaxIncomeFacts => Object.freeze(Object.fromEntries(Object.keys(emptyTaxIncome()).map(key => [key, inputs.reduce((sum, input) => sum.plus(input[key as keyof TaxIncomeFacts]), zero())])) as unknown as TaxIncomeFacts);
 interface TaxYearRuntime {
+  readonly payrollEvidence?: readonly PayrollWithholdingEvidence[];
   readonly paymentTraceRefs?: Readonly<Record<string, RecognizedTaxEconomics["traceRefs"]>>;
   readonly economics: TaxEconomicLedger;
   readonly liabilities: Readonly<Record<string, Money>>;
@@ -51,16 +53,44 @@ const incomeFacts = (source: CompiledTaxIncome, amount: Money): TaxIncomeFacts |
   return Object.freeze(facts);
 };
 const jurisdictionKey = (value: string): string => /^US-[A-Z]{2}$/.test(value) ? value.replace("-", ":") : value;
-/** Stable per-regime balance identities, independent of rule version/catalog ordering. */
-export const taxBalanceIds = (jurisdiction: string, year: string) => {
-  let hash = 14695981039346656037n;
-  for (const character of `${jurisdiction}:${year}`) hash = BigInt.asUintN(64, (hash ^ BigInt(character.codePointAt(0)!)) * 1099511628211n);
-  const suffix = (hash & 0xffffffffffffn).toString(16).padStart(12, "0");
-  return { liabilityId: domainId("liability", `f15c0000-0000-4000-8a01-${suffix}`), creditPositionId: domainId("position", `f15c0000-0000-4000-8a02-${suffix}`) };
+/** Required jurisdictions follow effective authored residence/service facts. */
+const payrollCovered = (input: HouseholdTaxInput, source: CompiledTaxIncome | undefined, economic: RecognizedTaxEconomics, receipts: readonly PayrollWithholdingEvidence[]): boolean => {
+  if (!source || source.incomeType !== "salary" || source.grossOrNet !== "gross" || !source.employerId) return false;
+  const date = economic.at.slice(0, 10), year = economic.at.slice(0, 4);
+  const residence = source.residence.find(item => activeTaxFact(item, date));
+  const work = source.work.filter(item => activeTaxFact(item, date));
+  if (!residence || !work.length) return false;
+  const locations = [residence, ...work];
+  const required = new Set(["US:FEDERAL", ...locations.map(item => jurisdictionKey(item.state_jurisdiction)).filter(value => /^US:[A-Z]{2}$/.test(value))]);
+  const local = locations.flatMap(item => item.local_jurisdiction === undefined ? [] : [item.local_jurisdiction]);
+  if (local.some(jurisdiction => !["US:NY:NYC", "US:PA:PHILADELPHIA", "US:CO:DENVER"].includes(jurisdiction))) return false;
+  if (residence.local_jurisdiction === "US:NY:NYC") required.add("US:NY:NYC");
+  if (local.includes("US:PA:PHILADELPHIA")) required.add("US:PA:PHILADELPHIA:WAGE");
+  if (work.some(item => item.local_jurisdiction === "US:CO:DENVER")) required.add("US:CO:DENVER:OPT");
+  const eligibility = resolveTaxEligibility([...input.eligibility, ...source.eligibility], date);
+  if (locations.some(item => jurisdictionKey(item.state_jurisdiction) === "US:PA")) {
+    if (eligibility.pa_local_eit_applicable !== false) required.add("US:PA:LOCAL:EIT");
+    if (eligibility.pa_local_lst_applicable !== false) required.add("US:PA:LOCAL:LST");
+  }
+  const matching = receipts.filter(receipt => receipt.incomeId === source.id && receipt.at === economic.at);
+  if (matching.length !== 1) return false;
+  const receipt = matching[0]!;
+  if (receipt.ownerId !== source.ownerId || receipt.employerId !== source.employerId || receipt.transactionId !== `tx:recognition:income:${source.id}:${economic.at}` || !receipt.occurrenceId || !receipt.gross.equals(economic.income.wages) || receipt.takeHomeCash.isNegative() || receipt.employeeContributions.isNegative()) return false;
+  const elections = (input.payrollWithholding ?? []).filter(item => item.incomeId === source.id && item.start <= economic.at && (item.end === undefined || economic.at < item.end));
+  if (receipt.credits.length !== elections.length || new Set(receipt.credits.map(item => item.jurisdiction)).size !== receipt.credits.length) return false;
+  for (const jurisdiction of required) if (!receipt.credits.some(credit => credit.jurisdiction === jurisdiction)) return false;
+  for (const credit of receipt.credits) {
+    const election = elections.find(item => item.id === credit.electionId);
+    if (!election || election.ownerId !== source.ownerId || election.employerId !== source.employerId || election.depositAccountId !== receipt.depositAccountId || election.userConfirmed !== true || !election.provenance || credit.taxYear !== year || credit.jurisdiction !== election.jurisdiction || !credit.traceRefs.length) return false;
+    const expected = election.calculation.kind === "fixed" ? election.calculation.amount : receipt.gross.times(decimal(election.calculation.rate)).round(RoundingPolicy.currency(2, "half_even"));
+    if (!credit.amount.equals(expected)) return false;
+  }
+  return receipt.takeHomeCash.plus(receipt.employeeContributions).plus(receipt.credits.reduce((sum, credit) => sum.plus(credit.amount), zero())).equals(receipt.gross);
 };
+/** Stable per-regime balance identities, independent of rule version/catalog ordering. */
 const balanceIds = taxBalanceIds;
 export const taxCreditPositionIds = (input: HouseholdTaxInput) => {
-  const jurisdictions = [...new Set([...input.catalog.map(rule => rule.jurisdiction), ...input.payments.map(payment => payment.jurisdiction), ...(input.settlements ?? []).map(item => item.jurisdiction)])].sort();
+  const jurisdictions = [...new Set([...input.catalog.map(rule => rule.jurisdiction), ...input.payments.map(payment => payment.jurisdiction), ...(input.settlements ?? []).map(item => item.jurisdiction), ...(input.payrollWithholding ?? []).map(item => item.jurisdiction)])].sort();
   const years = [...new Set([...input.catalog.flatMap(rule => {
     const first = Number(rule.effectiveFrom.slice(0, 4)), last = Number(subtractMilliseconds(rule.effectiveUntil, 1).slice(0, 4));
     return Array.from({ length: last - first + 1 }, (_, offset) => String(first + offset));
@@ -143,7 +173,8 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
         const key = canonicalSerialize(entry.facts), existing = slices.get(key);
         slices.set(key, existing === undefined ? entry : { ...entry, allocation: decimal(existing.allocation).plus(decimal(entry.allocation)).toString() });
       }
-      return withYear(runtime, year, { ...prior, economics: prior.economics.with([...slices.values()]), diagnostics: prior.diagnostics.with(diagnostics) });
+      const payroll = facts.cash?.payrollWithholding ?? facts.summary?.cash?.payrollWithholding ?? [];
+      return withYear(runtime, year, { ...prior, ...(payroll.length ? { payrollEvidence: [...prior.payrollEvidence ?? [], ...payroll].sort((a, b) => a.at.localeCompare(b.at) || a.incomeId.localeCompare(b.incomeId) || a.occurrenceId.localeCompare(b.occurrenceId)) } : {}), economics: prior.economics.with([...slices.values()]), diagnostics: prior.diagnostics.with(diagnostics) });
     },
     prepare: (context, period, _opening, work = [], tier = "detail") => {
       const instructions = input.payments.filter(item => period.start <= item.at && item.at < period.end);
@@ -289,21 +320,22 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
               diagnostics.push(taxDiagnostic("legal_base_or_component", error.message, group.jurisdiction));
             }
           }
+          for (const receipt of prior.payrollEvidence ?? []) for (const credit of receipt.credits) {
+            if (!totals.has(credit.jurisdiction)) diagnostics.push(taxDiagnostic("withholding_jurisdiction", "Paid payroll credit has no applicable computed jurisdiction liability; its legal coverage cannot be inferred from an election.", credit.jurisdiction, receipt.incomeId));
+          }
           const account = input.refundAccountId ?? input.fundingPolicy?.orderedSources[0]?.accountId;
           if (!account || !input.fundingPolicy) diagnostics.push(taxDiagnostic("payment_funding", "Explicit tax funding and refund account are required."));
           const uniqueDiagnostics = [...new Map(diagnostics.map(value => [canonicalSerialize(value), value])).values()];
           for (const jurisdiction of totals.keys()) if (!(input.settlements ?? []).some(item => item.taxYear === year && item.jurisdiction === jurisdiction)) uniqueDiagnostics.push(taxDiagnostic("settlement_timing", "An explicit tax-year final settlement/refund date is required; no filing/payment date is inferred.", jurisdiction));
-          // Only the newly qualified projected-law path changes completeness here.
-          // Recognized wages have no supported gross-to-net payroll binding in this
-          // participant. Standalone tax payments (even named withholding) do not
-          // establish one. Keep #101's gap explicit without changing legacy tax
-          // accruals, payments or final settlements for identical economic inputs.
+          // Standalone tax payments never prove a gross-to-net paycheck. Each
+          // projected wage occurrence needs its own executed, source-bound receipt.
           const projectedLaws = uniqueDiagnostics.filter(diagnostic => isNonblockingProjectedTaxLaw(diagnostic, selection));
-          const wageSources = projectedLaws.length === 0 ? [] : [...new Set([...prior.economics].filter(economic => economic.income.wages.isPositive() &&
-            projectedLaws.some(diagnostic => diagnostic.projectedLaw!.effectiveFrom <= economic.at && economic.at < diagnostic.projectedLaw!.effectiveUntil))
+          const wageSources = [...new Set([...prior.economics].filter(economic => economic.income.wages.isPositive() &&
+            ((input.payrollWithholding?.length ?? 0) > 0 || projectedLaws.some(diagnostic => diagnostic.projectedLaw!.effectiveFrom <= economic.at && economic.at < diagnostic.projectedLaw!.effectiveUntil)) &&
+            !payrollCovered(input, sources.get(economic.sourceId), economic, prior.payrollEvidence ?? []))
             .map(economic => economic.sourceId))].sort();
           const capabilityDiagnostics = [...uniqueDiagnostics, ...wageSources.map(sourceId => Object.freeze({
-            ...taxDiagnostic("wage_gross_to_net_withholding", "Recognized wages lack authoritative integrated gross-to-net payroll deposits and withholding execution (#101); modeled gross cash and tax postings are unchanged.", undefined, sourceId), taxYear: year,
+            ...taxDiagnostic("wage_gross_to_net_withholding", "Recognized wages lack complete source-bound employer withholding and executed net-pay coverage for every pay occurrence and required jurisdiction.", undefined, sourceId), taxYear: year,
           }))];
           // Partial supported liabilities are never presented as the full tax amount.
           // Missing law/input semantics leave economic state intact, while complete sources remain observable.
@@ -311,10 +343,10 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           if (!state.accounts[account!]) throw new ValidationError({ severity: "error", code: "TAX_ACCOUNT_MISSING", message: "Tax account does not resolve in the current realization.", entityType: "tax_execution" });
           const nextLiabilities = { ...prior.liabilities };
           const nextPaymentRefs = { ...prior.paymentTraceRefs };
-          const jurisdictions = [...new Set([...totals.keys(), ...Object.keys(prior.liabilities), ...(instruction === undefined ? [] : [instruction.jurisdiction]), ...(finalSettlement === undefined ? [] : [finalSettlement.jurisdiction])])].sort();
+          const jurisdictions = [...new Set([...totals.keys(), ...Object.keys(prior.liabilities), ...(prior.payrollEvidence ?? []).flatMap(item => item.credits.map(credit => credit.jurisdiction)), ...(instruction === undefined ? [] : [instruction.jurisdiction]), ...(finalSettlement === undefined ? [] : [finalSettlement.jurisdiction])])].sort();
           for (const jurisdiction of jurisdictions) {
           const { liabilityId, creditPositionId } = balanceIds(jurisdiction, year);
-          const refs = appliedTraces.get(jurisdiction) ?? [];
+          const refs = mergeTraceRefs(appliedTraces.get(jurisdiction), ...(prior.payrollEvidence ?? []).flatMap(receipt => receipt.credits.filter(credit => credit.jurisdiction === jurisdiction && credit.taxYear === year).map(credit => credit.traceRefs))) ?? [];
           const total = totals.get(jurisdiction) ?? prior.liabilities[jurisdiction] ?? zero();
           const priorLiability = prior.liabilities[jurisdiction] ?? zero();
           state.liabilities[liabilityId] ??= { id: liabilityId, balance: zero() };

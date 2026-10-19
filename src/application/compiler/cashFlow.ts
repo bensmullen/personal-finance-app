@@ -1,4 +1,5 @@
 import { createFundingPolicy, fundingPolicyId } from "../../funding/index.js";
+import { ValidationError } from "../../diagnostics/index.js";
 import { domainId } from "../../identity/index.js";
 import {
   calculationTraceId,
@@ -7,6 +8,7 @@ import {
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { deriveCanonicalRetirementBindings } from "./retirementAuthoring.js";
 import { durablePayrollAllocations, payrollOpeningBalances, supportsD1SpouseHsaScope } from "./payrollAuthoring.js";
+import { durablePayrollWithholding } from "./payrollWithholding.js";
 import { compileOpeningContributionUsage } from "./contributionOpening.js";
 import {
   createAuthoritativeState,
@@ -1705,6 +1707,9 @@ export const compileCashFlow = (
   let payroll: ReturnType<typeof durablePayrollAllocations>;
   let payrollBalances: ReturnType<typeof payrollOpeningBalances>;
   let openingUsage: ReturnType<typeof compileOpeningContributionUsage>;
+  let withholding: ReturnType<typeof durablePayrollWithholding>;
+  try { withholding = durablePayrollWithholding(model); }
+  catch (error) { if (error instanceof ValidationError) return { status: "invalid_model", diagnostics: error.issues }; throw error; }
   try { payroll = durablePayrollAllocations(model); payrollBalances = payrollOpeningBalances(model, payroll); openingUsage = compileOpeningContributionUsage(model, request.simulationStart); }
   catch (error) { return unsupportedResult("PAYROLL_CONTRIBUTION_UNSUPPORTED", error instanceof Error ? error.message : "Unsupported payroll policy", "Investment"); }
   for (const stream of [...incomes].sort((a, b) =>
@@ -1728,7 +1733,8 @@ export const compileCashFlow = (
           stream.owner_id === scope.householdId ? "household" : "person",
           String(stream.owner_id),
         ),
-        depositAccountId: domainId("account", accountId),
+        depositAccountId: withholding.find(item => item.incomeId === id)?.depositAccountId ?? domainId("account", accountId),
+        ...(withholding.some(item => item.incomeId === id) ? { payrollWithholding: withholding.filter(item => item.incomeId === id), payrollTaxCreditAccountId: domainId("account", accountId) } : {}),
         payrollContributions: payroll.filter(item => item.incomeId === id).map(item => item.allocation),
         baseMonthlyAmount: money(String(stream.amount), currency),
         start,

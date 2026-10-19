@@ -1,10 +1,50 @@
 import type { AccountId } from "../../accounting/index.js";
+import { domainId } from "../../identity/index.js";
 import type { FundingPolicy } from "../../funding/index.js";
 import type { DomainId } from "../../identity/index.js";
 import type { CalculationTraceRef } from "../../lineage/index.js";
 import type { FilingStatus, TaxCoreRule, TaxIncomeFacts, TaxJurisdictionFacts } from "../../rules/tax/contracts.js";
 import type { Instant } from "../../time/index.js";
 import type { Money } from "../../values/index.js";
+
+/** Shared payroll/accrual identity; never open a second withholding position. */
+export const taxBalanceIds = (jurisdiction: string, year: string) => {
+  let hash = 14695981039346656037n;
+  for (const character of `${jurisdiction}:${year}`) hash = BigInt.asUintN(64, (hash ^ BigInt(character.codePointAt(0)!)) * 1099511628211n);
+  const suffix = (hash & 0xffffffffffffn).toString(16).padStart(12, "0");
+  return { liabilityId: domainId("liability", `f15c0000-0000-4000-8a01-${suffix}`), creditPositionId: domainId("position", `f15c0000-0000-4000-8a02-${suffix}`) };
+};
+
+/** Explicit projected election, not evidence of an actual future remittance. */
+export interface PayrollWithholdingElection {
+  readonly id: string;
+  readonly version: "payroll-withholding/v1";
+  readonly incomeId: string;
+  readonly ownerId: string;
+  readonly employerId: string;
+  readonly depositAccountId: AccountId;
+  readonly jurisdiction: string;
+  readonly start: Instant;
+  readonly end?: Instant;
+  readonly provenance: string;
+  readonly userConfirmed: true;
+  readonly calculation: { readonly kind: "fixed"; readonly amount: Money } | { readonly kind: "percent_gross"; readonly rate: string };
+}
+
+/** Produced only by a committed balanced paycheck candidate, including explicit zero. */
+export interface PayrollWithholdingEvidence {
+  readonly incomeId: string;
+  readonly ownerId: string;
+  readonly employerId: string;
+  readonly at: Instant;
+  readonly occurrenceId: string;
+  readonly transactionId: string;
+  readonly gross: Money;
+  readonly employeeContributions: Money;
+  readonly takeHomeCash: Money;
+  readonly depositAccountId: AccountId;
+  readonly credits: readonly { readonly electionId: string; readonly jurisdiction: string; readonly taxYear: string; readonly amount: Money; readonly traceRefs: readonly CalculationTraceRef[] }[];
+}
 
 export interface TaxFactInterval { readonly effective_date: string; readonly expiration_date?: string }
 export interface ResidenceTaxPeriod extends TaxFactInterval {
@@ -16,6 +56,7 @@ export interface ResidenceTaxPeriod extends TaxFactInterval {
 export interface WorkTaxAllocation extends ResidenceTaxPeriod { readonly allocation: string }
 export interface TaxEligibilityPeriod extends TaxFactInterval { readonly key: string; readonly value: boolean }
 export interface CompiledTaxIncome {
+  readonly employerId?: string;
   readonly id: string;
   readonly ownerId: string;
   readonly incomeType: string;
@@ -73,6 +114,7 @@ export interface ProjectedTaxLawQualification {
   readonly effectiveUntil: Instant;
 }
 export interface HouseholdTaxInput {
+  readonly payrollWithholding?: readonly PayrollWithholdingElection[];
   readonly projectedCurrentLawAssumption?: ProjectedCurrentLawAssumption;
   readonly domainOperations?: readonly { readonly id: string; readonly at: Instant }[];
   readonly accountTaxTreatments?: Readonly<Record<string, string>>;
