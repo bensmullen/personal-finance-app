@@ -19,7 +19,7 @@ import { SummaryOperationSink } from "../r3/summarySink.js";
 import { activeTaxFact, resolveTaxEligibility } from "./facts.js";
 import { TaxEconomicLedger } from "./economics.js";
 import { TaxDiagnosticLedger } from "./diagnostics.js";
-import { taxDiagnostic, taxOutputCapabilities, type CompiledTaxIncome, type HouseholdTaxInput, type RecognizedTaxEconomics, type TaxCapabilityDiagnostic } from "./contracts.js";
+import { isNonblockingProjectedTaxLaw, taxDiagnostic, taxOutputCapabilities, type CompiledTaxIncome, type HouseholdTaxInput, type RecognizedTaxEconomics, type TaxCapabilityDiagnostic } from "./contracts.js";
 
 const creditUnit = Unit.of("usd_tax_credit");
 const zero = () => Money.zero(USD);
@@ -293,9 +293,21 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           if (!account || !input.fundingPolicy) diagnostics.push(taxDiagnostic("payment_funding", "Explicit tax funding and refund account are required."));
           const uniqueDiagnostics = [...new Map(diagnostics.map(value => [canonicalSerialize(value), value])).values()];
           for (const jurisdiction of totals.keys()) if (!(input.settlements ?? []).some(item => item.taxYear === year && item.jurisdiction === jurisdiction)) uniqueDiagnostics.push(taxDiagnostic("settlement_timing", "An explicit tax-year final settlement/refund date is required; no filing/payment date is inferred.", jurisdiction));
+          // Only the newly qualified projected-law path changes completeness here.
+          // Recognized wages have no supported gross-to-net payroll binding in this
+          // participant. Standalone tax payments (even named withholding) do not
+          // establish one. Keep #101's gap explicit without changing legacy tax
+          // accruals, payments or final settlements for identical economic inputs.
+          const projectedLaws = uniqueDiagnostics.filter(diagnostic => isNonblockingProjectedTaxLaw(diagnostic, selection));
+          const wageSources = projectedLaws.length === 0 ? [] : [...new Set([...prior.economics].filter(economic => economic.income.wages.isPositive() &&
+            projectedLaws.some(diagnostic => diagnostic.projectedLaw!.effectiveFrom <= economic.at && economic.at < diagnostic.projectedLaw!.effectiveUntil))
+            .map(economic => economic.sourceId))].sort();
+          const capabilityDiagnostics = [...uniqueDiagnostics, ...wageSources.map(sourceId => Object.freeze({
+            ...taxDiagnostic("wage_gross_to_net_withholding", "Recognized wages lack authoritative integrated gross-to-net payroll deposits and withholding execution (#101); modeled gross cash and tax postings are unchanged.", undefined, sourceId), taxYear: year,
+          }))];
           // Partial supported liabilities are never presented as the full tax amount.
           // Missing law/input semantics leave economic state intact, while complete sources remain observable.
-          if (!account || !input.fundingPolicy || context.baseCurrency.code !== "USD") return { ...opening, runtime: withYear(runtime, year, { ...prior, diagnostics: uniqueDiagnostics }), facts: { diagnostics: uniqueDiagnostics, outputCapabilities: taxOutputCapabilities(uniqueDiagnostics, selection) } };
+          if (!account || !input.fundingPolicy || context.baseCurrency.code !== "USD") return { ...opening, runtime: withYear(runtime, year, { ...prior, diagnostics: uniqueDiagnostics }), facts: { diagnostics: capabilityDiagnostics, outputCapabilities: taxOutputCapabilities(capabilityDiagnostics, selection) } };
           if (!state.accounts[account!]) throw new ValidationError({ severity: "error", code: "TAX_ACCOUNT_MISSING", message: "Tax account does not resolve in the current realization.", entityType: "tax_execution" });
           const nextLiabilities = { ...prior.liabilities };
           const nextPaymentRefs = { ...prior.paymentTraceRefs };
@@ -358,7 +370,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           nextLiabilities[jurisdiction] = total;
           }
           sink.traces(ruleTraces);
-          return { state, primitiveState: opening.primitiveState, runtime: withYear(runtime, year, { ...prior, liabilities: nextLiabilities, paymentTraceRefs: nextPaymentRefs, diagnostics: uniqueDiagnostics }), facts: { ...(tier === "summary" ? { summary: { evidence: sink.snapshot() } } : { transactions, traceRefs: mergeTraceRefs(ruleTraces, ...transactions.map(transaction => transaction.traceRefs)) ?? [] }), instrumentation: { taxRecognizedEconomicsVisited: prior.economics.size, taxRuleGroupsEvaluated: groups.size, taxJurisdictionsCalculated: totals.size }, diagnostics: uniqueDiagnostics, constraintOutcomes: outcomes, liquidityShortfalls: shortfalls, outputCapabilities: taxOutputCapabilities(uniqueDiagnostics, selection) } };
+          return { state, primitiveState: opening.primitiveState, runtime: withYear(runtime, year, { ...prior, liabilities: nextLiabilities, paymentTraceRefs: nextPaymentRefs, diagnostics: uniqueDiagnostics }), facts: { ...(tier === "summary" ? { summary: { evidence: sink.snapshot() } } : { transactions, traceRefs: mergeTraceRefs(ruleTraces, ...transactions.map(transaction => transaction.traceRefs)) ?? [] }), instrumentation: { taxRecognizedEconomicsVisited: prior.economics.size, taxRuleGroupsEvaluated: groups.size, taxJurisdictionsCalculated: totals.size }, diagnostics: capabilityDiagnostics, constraintOutcomes: outcomes, liquidityShortfalls: shortfalls, outputCapabilities: taxOutputCapabilities(capabilityDiagnostics, selection) } };
         } }; }) };
     },
   } satisfies HouseholdKernelParticipant);

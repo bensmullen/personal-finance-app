@@ -101,6 +101,60 @@ describe("T1A household tax integration", () => {
     expect(unselected.outputCapabilities!.cash!.diagnostics.every(item => item.projectedLaw === undefined)).toBe(true);
   });
 
+  it("detects the real projected salary gross-to-net gap without changing modeled postings", () => {
+    const interest = lawScenario();
+    const source = interest.input.incomes[0]!;
+    const fixture = { ...interest, input: { ...interest.input, incomes: [{ ...source, incomeType: "salary",
+      work: [{ state_jurisdiction: "US:GA", allocation: "1", effective_date: "2027-01-01" }] }] } };
+    expect(fixture.input.diagnostics).toEqual([]);
+    expect(fixture.input.payments).toEqual([]);
+    const summary = scenarioRun(fixture), detail = scenarioRun(fixture, {}, "detail");
+    const gap = expect.objectContaining({ category: "wage_gross_to_net_withholding", entityId: source.id, taxYear: "2027" });
+    expect(summary.status).toBe("incomplete");
+    expect(summary.reachedThrough).toBe(fixture.context.simulationEnd);
+    expect(summary.periods).toHaveLength(12);
+    expect(summary.periods[0]!.cash.equals(money("1000"))).toBe(true);
+    expect(summary.periods[0]!.statements.income.equals(money("1000"))).toBe(true);
+    expect(summary.periods.at(-1)!.liabilities.isZero()).toBe(true);
+    expect(summary.outputCapabilities?.cash?.status).toBe("incomplete");
+    expect(summary.outputCapabilities?.netWorth?.status).toBe("incomplete");
+    expect(summary.outputCapabilities?.statementIncome?.status).toBe("complete");
+    expect(summary.outputCapabilities?.cash?.diagnostics).toEqual(expect.arrayContaining([
+      gap, expect.objectContaining({ category: "projected_current_law", projectedLaw: expect.any(Object) }),
+    ]));
+    expect(detail.status).toBe(summary.status);
+    expect(detail.outputCapabilities).toEqual(summary.outputCapabilities);
+    expect(detail.diagnostics).toEqual(summary.diagnostics);
+    expect(canonicalSerialize(detail.state)).toBe(canonicalSerialize(summary.state));
+    for (const [index, period] of detail.periods.entries()) {
+      expect(period.outputCapabilities).toEqual(summary.periods[index]!.outputCapabilities);
+      expect(period.outputCapabilities?.cash?.status).toBe("incomplete");
+      expect(period.outputCapabilities?.cash?.diagnostics).toContainEqual(gap);
+    }
+    // The legacy unselected path keeps its original diagnostics and all postings,
+    // including funded final settlements, even though both runs are incomplete.
+    const legacy = scenarioRun(fixture, { projectedCurrentLawAssumption: undefined }, "detail");
+    expect(legacy.status).toBe("incomplete");
+    expect(legacy.outputCapabilities?.cash?.diagnostics.some(item => item.category === "wage_gross_to_net_withholding")).toBe(false);
+    expect(canonicalSerialize(legacy.state)).toBe(canonicalSerialize(detail.state));
+    expect(legacy.periods.map(period => canonicalSerialize(period.transactions))).toEqual(detail.periods.map(period => canonicalSerialize(period.transactions)));
+    const restored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(summary)));
+    const replay = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
+    expect(replay.status).toBe("incomplete");
+    expect(replay.outputCapabilities).toEqual(summary.outputCapabilities);
+    expect(replay.diagnostics).toEqual(summary.diagnostics);
+    expect(canonicalSerialize(replay.state)).toBe(canonicalSerialize(summary.state));
+    const payment = scenarioRun(fixture, { payments: [{ id: "standalone-withholding", jurisdiction: "US:FEDERAL",
+      at: instant("2027-01-20T00:00:00.000Z"), amount: money("10"), kind: "withholding" }] });
+    expect(payment.status).toBe("incomplete");
+    expect(payment.outputCapabilities?.cash?.diagnostics).toContainEqual(gap);
+    expect(scenarioRun(interest).status).toBe("completed");
+    const verified = lawScenario("2026");
+    const verifiedWages = scenarioRun(verified, { incomes: [{ ...verified.input.incomes[0]!, incomeType: "salary",
+      work: [{ state_jurisdiction: "US:GA", allocation: "1", effective_date: "2026-01-01" }] }] });
+    expect(verifiedWages.outputCapabilities?.cash?.diagnostics.some(item => item.category === "wage_gross_to_net_withholding")).toBe(false);
+  });
+
   it("retains every substantive limitation alongside projected-law qualifications", () => {
     const fixture = lawScenario();
     for (const category of ["withholding", "payroll", "benefits", "unknown_future_capability"]) {
