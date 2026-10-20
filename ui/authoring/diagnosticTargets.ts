@@ -29,7 +29,12 @@ export function exactDiagnosticTargets(draft: PersonalDraft, id: string, fieldPa
 export function diagnosticTargets(draft: PersonalDraft, diagnostic: DisplayDiagnostic): readonly DiagnosticTarget[] {
   const ids = [...new Set([diagnostic.entityId, ...(diagnostic.relatedIds ?? [])].filter((id): id is string => !!id))];
   return ids.flatMap(id => {
-    const targets = exactDiagnosticTargets(draft, id, id === diagnostic.entityId ? diagnostic.fieldPath : undefined);
+    // Preserve the exact Income field repair route when an otherwise viable
+    // forecast omits one unsupported salary source. Never guess a source ID.
+    const salary = diagnostic.category === "payroll_source_unsupported" && id === diagnostic.entityId
+      ? objectEntries(draft, "Income").find(item => objectId("Income", item) === id) : undefined;
+    const sourceField = salary === undefined ? undefined : salary.frequency !== "monthly" ? "frequency" : "gross_or_net";
+    const targets = exactDiagnosticTargets(draft, id, id === diagnostic.entityId ? sourceField ?? diagnostic.fieldPath : undefined);
     if (targets.length === 1) return targets;
     return [{ id, type: "Unresolved reference", label: targets.length ? "Ambiguous recorded reference" : "Reference unavailable in this model", editable: false }];
   });

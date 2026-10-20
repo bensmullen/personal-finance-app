@@ -15,6 +15,7 @@ import { domainId } from "../src/identity/index.js";
 import { taxHouseholdFixture } from "./fixtures/t1aTaxHouseholds.js";
 import { taxRule, syntheticPayroll } from "./fixtures/t1aTaxRules.js";
 import { federal2026TaxCatalog } from "../src/rules/tax/lawCatalog.js";
+import type { PayrollWithholdingElection } from "../src/simulation/tax/contracts.js";
 import { taxCatalogFingerprint } from "../src/rules/tax/catalog.js";
 import { taxDiagnostic, taxOutputCapabilities } from "../src/simulation/tax/contracts.js";
 import { mergeOutputCapabilities } from "../src/simulation/r3/capabilities.js";
@@ -154,7 +155,7 @@ describe("T1A household tax integration", () => {
     // including funded final settlements, even though both runs are incomplete.
     const legacy = scenarioRun(fixture, { projectedCurrentLawAssumption: undefined }, "detail");
     expect(legacy.status).toBe("incomplete");
-    expect(legacy.outputCapabilities?.cash?.diagnostics.some(item => item.category === "wage_gross_to_net_withholding")).toBe(false);
+    expect(legacy.outputCapabilities?.cash?.diagnostics.some(item => item.category === "wage_gross_to_net_withholding")).toBe(true);
     expect(canonicalSerialize(legacy.state)).toBe(canonicalSerialize(detail.state));
     expect(legacy.periods.map(period => canonicalSerialize(period.transactions))).toEqual(detail.periods.map(period => canonicalSerialize(period.transactions)));
     // Prior CI spent 11.9s on the combined case. Keep annual posting equivalence
@@ -182,7 +183,66 @@ describe("T1A household tax integration", () => {
     const verified = lawScenario("2026", 1);
     const verifiedWages = scenarioRun(verified, { incomes: [{ ...verified.input.incomes[0]!, incomeType: "salary",
       work: [{ state_jurisdiction: "US:GA", allocation: "1", effective_date: "2026-01-01" }] }] });
-    expect(verifiedWages.outputCapabilities?.cash?.diagnostics.some(item => item.category === "wage_gross_to_net_withholding")).toBe(false);
+    expect(verifiedWages.status).toBe("incomplete");
+    expect(verifiedWages.outputCapabilities?.cash?.diagnostics).toContainEqual(expect.objectContaining({ category: "wage_gross_to_net_withholding", entityId: source.id, taxYear: "2026" }));
+  });
+
+  it.each(["salary", "bonus", "commission", "overtime", "severance"])("keeps verified-law %s incomplete without an employer election", incomeType => {
+    const fixture = lawScenario("2026", 1), source = fixture.input.incomes[0]!;
+    const result = scenarioRun(fixture, { incomes: [{ ...source, incomeType, grossOrNet: "gross", employerId: "synthetic-uncovered-job",
+      work: [{ state_jurisdiction: "US:GA", allocation: "1", effective_date: "2026-01-01" }] }] });
+    expect(result.status).toBe("incomplete");
+    expect(result.outputCapabilities?.netWorth?.diagnostics).toContainEqual(expect.objectContaining({ category: "wage_gross_to_net_withholding", entityId: source.id, taxYear: "2026" }));
+    expect(result.outputCapabilities?.netWorth?.diagnostics.some(item => item.category === "projected_current_law")).toBe(false);
+    expect(result.outputCapabilities?.statementIncome?.status).toBe("complete");
+    expect(result.periods[0]!.statements.income.equals(money("1000"))).toBe(true);
+  });
+
+  it.each(["2026", "2027"])("completes bounded %s wages only with executed federal/state payroll receipts and preserves law provenance on replay", year => {
+    const interest = lawScenario(year, 2), source = interest.input.incomes[0]!;
+    const elections: PayrollWithholdingElection[] = ["US:FEDERAL", "US:GA"].map((jurisdiction, index) => ({
+      id: `10100000-0000-4000-8000-00000000000${index + 1}`, version: "payroll-withholding/v1", incomeId: source.id, ownerId: source.ownerId,
+      employerId: "synthetic-future-job", depositAccountId: interest.kernel.executable.cashFlowInput!.cashAccountId, jurisdiction,
+      start: instant(`${year}-01-01T00:00:00.000Z`), provenance: "explicit scenario zero election, not an actual remittance", userConfirmed: true,
+      calculation: { kind: "fixed", amount: money("0") },
+    }));
+    const wage = { ...source, employerId: "synthetic-future-job", incomeType: "salary", grossOrNet: "gross", work: [{ state_jurisdiction: "US:GA", allocation: "1", effective_date: `${year}-01-01` }] };
+    const input = { ...interest.input, incomes: [wage], payrollWithholding: elections };
+    const cash = interest.kernel.executable.cashFlowInput!;
+    const executable = { ...interest.kernel.executable, participants: [createHouseholdTaxParticipant(input)], cashFlowInput: { ...cash, incomes: cash.incomes.map(item => ({ ...item, payrollWithholding: elections })) } };
+    const kernel = compileHouseholdKernel(executable, interest.context.simulationStart);
+    const summary = runHouseholdKernel({ kernel, runContext: interest.context });
+    const detail = runHouseholdKernel({ kernel, runContext: interest.context, resultTier: "detail" });
+    expect(summary.status).toBe("completed");
+    expect(summary.reachedThrough).toBe(`${year}-03-01T00:00:00.000Z`);
+    if (year === "2027") expect(summary.outputCapabilities?.netWorth?.diagnostics.length).toBeGreaterThan(0);
+    else expect(summary.outputCapabilities?.netWorth?.diagnostics).toEqual([]);
+    expect(summary.outputCapabilities?.netWorth?.diagnostics.every(item => item.category === "projected_current_law" && item.projectedLaw?.assumption !== undefined)).toBe(true);
+    expect(summary.outputCapabilities).toEqual(detail.outputCapabilities);
+    expect(summary.runMetadata).toEqual(detail.runMetadata);
+    expect(summary.state).toEqual(detail.state);
+    expect(summary.periods.map(period => period.cash)).toEqual(detail.periods.map(period => period.cash));
+    const restored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(summary)));
+    const replay = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
+    expect(replay.runMetadata).toEqual(summary.runMetadata);
+    expect(replay.state).toEqual(summary.state);
+    expect(replay.periods).toEqual(summary.periods);
+    expect(replay.outputCapabilities).toEqual(summary.outputCapabilities);
+
+    for (const withheld of [[], elections.slice(0, 1), elections.map(item => ({ ...item, end: instant(`${year}-02-01T00:00:00.000Z`) }))]) {
+      const limitedInput = { ...input, payrollWithholding: withheld };
+      const limitedKernel = compileHouseholdKernel({ ...executable, participants: [createHouseholdTaxParticipant(limitedInput)], cashFlowInput: { ...cash, incomes: cash.incomes.map(item => ({ ...item, payrollWithholding: withheld })) } }, interest.context.simulationStart);
+      const limited = runHouseholdKernel({ kernel: limitedKernel, runContext: interest.context });
+      expect(limited.status).toBe("incomplete");
+      expect(limited.outputCapabilities?.netWorth?.diagnostics).toContainEqual(expect.objectContaining({ category: "wage_gross_to_net_withholding", entityId: source.id, taxYear: year }));
+    }
+    // An authored amount without a posted paycheck is not execution evidence.
+    const bare = runHouseholdKernel({ kernel: compileHouseholdKernel({ ...executable, cashFlowInput: cash }, interest.context.simulationStart), runContext: interest.context });
+    expect(bare.status).toBe("incomplete");
+    expect(bare.outputCapabilities?.netWorth?.diagnostics).toContainEqual(expect.objectContaining({ category: "wage_gross_to_net_withholding", entityId: source.id }));
+    const unsupported = runHouseholdKernel({ kernel: compileHouseholdKernel({ ...executable, participants: [createHouseholdTaxParticipant({ ...input, diagnostics: [taxDiagnostic("benefits", "Unresolved material benefit facts")] })] }, interest.context.simulationStart), runContext: interest.context });
+    expect(unsupported.status).toBe("incomplete");
+    expect(unsupported.outputCapabilities?.netWorth?.diagnostics).toContainEqual(expect.objectContaining({ category: "benefits" }));
   });
 
   it("retains every substantive limitation alongside projected-law qualifications", () => {
@@ -300,7 +360,8 @@ describe("T1A household tax integration", () => {
   it("accrues liability from actual salary without consuming cash before payment", () => {
     const fixture = taxHouseholdFixture();
     const result = runHouseholdKernel({ kernel: fixture.kernel, runContext: fixture.context, resultTier: "detail" });
-    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("incomplete");
+    expect(result.outputCapabilities?.cash?.diagnostics).toContainEqual(expect.objectContaining({ category: "wage_gross_to_net_withholding" }));
     expect(result.periods[0]!.cash.equals(money("1000"))).toBe(true);
     expect(result.periods[0]!.liabilities.equals(money("100"))).toBe(true);
     expect(result.periods[0]!.netWorth.equals(money("900"))).toBe(true);
@@ -314,8 +375,9 @@ describe("T1A household tax integration", () => {
     const fixture = taxHouseholdFixture({ months: 12, withholding: "150" });
     const detail = runHouseholdKernel({ kernel: fixture.kernel, runContext: fixture.context, resultTier: "detail" });
     const summary = runHouseholdKernel({ kernel: fixture.kernel, runContext: fixture.context });
-    expect(detail.status).toBe("completed");
-    expect(summary.status).toBe("completed");
+    expect(detail.status).toBe("incomplete");
+    expect(summary.status).toBe("incomplete");
+    expect(summary.outputCapabilities?.cash?.diagnostics).toContainEqual(expect.objectContaining({ category: "wage_gross_to_net_withholding" }));
     expect(detail.periods[0]!.cash.equals(money("850"))).toBe(true);
     expect(detail.periods[0]!.assets.equals(money("900"))).toBe(true);
     expect(detail.periods[0]!.investmentValue.isZero()).toBe(true);
@@ -379,7 +441,7 @@ describe("T1A household tax integration", () => {
     }
   });
   it("does not extrapolate a tax rule across its exclusive effective-date boundary", () => {
-    const fixture = taxHouseholdFixture({ months: 13 });
+    const fixture = taxHouseholdFixture({ months: 13, incomeType: "interest" });
     const result = runHouseholdKernel({ kernel: fixture.kernel, runContext: fixture.context });
     expect(result.periods[11]!.outputCapabilities?.cash?.status).toBe("complete");
     expect(result.periods[12]!.outputCapabilities?.cash?.status).toBe("incomplete");

@@ -19,6 +19,9 @@ function taxInputs(value: unknown): value is HouseholdTaxInput & { readonly cata
     eligibility(value.eligibility) && Array.isArray(value.payments) && value.payments.every(payment => record(payment) && typeof payment.id === "string" && typeof payment.jurisdiction === "string" && typeof payment.at === "string" && payment.amount instanceof Money && ["withholding", "estimated"].includes(String(payment.kind))) &&
     (value.settlements === undefined || Array.isArray(value.settlements) && value.settlements.every(item => record(item) && ["id", "jurisdiction", "at", "taxYear"].every(key => typeof item[key] === "string"))) &&
     Array.isArray(value.diagnostics) && value.diagnostics.every(item => record(item) && item.entityType === "tax_capability" && Array.isArray(item.affectedOutputs)) &&
+    (value.payrollWithholding === undefined || Array.isArray(value.payrollWithholding) && value.payrollWithholding.every(item => record(item) && item.version === "payroll-withholding/v1" && item.userConfirmed === true &&
+      ["id", "incomeId", "ownerId", "employerId", "depositAccountId", "jurisdiction", "start", "provenance"].every(key => typeof item[key] === "string") &&
+      (item.end === undefined || typeof item.end === "string") && record(item.calculation) && (item.calculation.kind === "fixed" ? item.calculation.amount instanceof Money : item.calculation.kind === "percent_gross" && typeof item.calculation.rate === "string"))) &&
     (value.fundingPolicy === undefined || record(value.fundingPolicy) && typeof value.fundingPolicy.id === "string" && Array.isArray(value.fundingPolicy.orderedSources)) &&
     (value.refundAccountId === undefined || typeof value.refundAccountId === "string");
 }
