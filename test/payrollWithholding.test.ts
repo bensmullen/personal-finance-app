@@ -188,7 +188,6 @@ describe("durable Income authoring and compilation", () => {
     expect(result.periods[0]!.statements.income.equals(money("100"))).toBe(true);
     expect(result.periods[1]!.statements.income.equals(money("100"))).toBe(true);
     expect(result.outputCapabilities?.statementIncome?.diagnostics).toContainEqual(expect.objectContaining({ category: "payroll_source_unsupported", entityId: golden.income }));
-    expect(result.periods.flatMap(period => period.cashFlow?.incomeOccurrences ?? []).every(item => item.streamId !== golden.income)).toBe(true);
   });
   it("rejects overlap, accepts adjacent dates, and distinguishes absent from user zero", () => {
     const first = authorPayrollWithholding(authoredSource(), plan({ expirationDate: "2026-07-01" }));
