@@ -195,7 +195,7 @@ export function bindFsaYearChain(input: FsaYearChainRequest): FsaYearChainBundle
     proposedCarryover: proposalComplete ? close!.carryover : zero(), appliedCarryover: zero(),
     proposedForfeiture: proposalComplete ? close!.forfeiture : zero(), priorGraceAvailable: grace,
     closingEntitlement: proposalComplete ? prior.entitlement!.remaining : null,
-    provenance: [input.prior, input.successor].flatMap(r => r.receipts.map(receipt => ({
+    provenance: [sourceInputs.prior, sourceInputs.successor].flatMap(r => r.receipts.map(receipt => ({
       planYearId: r.plan.planYearId, proofId: receipt.proofId, receiptId: receipt.receiptId, memberId: receipt.memberId,
       incurredAt: receipt.incurredAt, submittedAt: receipt.submittedAt,
       settlementId: receipt.reimbursement?.status === "settled" ? receipt.reimbursement.settlementId : null }))), diagnostics }, false);
