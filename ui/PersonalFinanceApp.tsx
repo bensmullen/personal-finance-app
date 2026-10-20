@@ -1313,6 +1313,9 @@ function ForecastStatus({ label, state, compact = false, setupChanged = false, u
   const diagnostics = (state.latestResult ?? state.lastGoodResult)?.diagnostics ?? [];
   const firstDiagnostic = primaryForecastDiagnostic(diagnostics);
   const blocked = state.lifecycle === "unsupported";
+  // Partial execution can omit only one unsupported payroll source; retain the
+  // established Income-field repair action without calling the whole run unsupported.
+  const repairablePayroll = state.lifecycle === "incomplete" && firstDiagnostic?.entityType === "tax_capability" && firstDiagnostic.category === "payroll_source_unsupported";
   const summary = firstDiagnostic && diagnosticSummary(firstDiagnostic, diagnosticModel);
   return <section className={`forecast-status ${state.stale || setupChanged ? "stale" : ""} ${compact ? "calm-status" : ""}`} role="status" aria-label={`${label} status`}
     data-lifecycle={state.lifecycle} data-pending={state.pending} data-fingerprint={state.fingerprint} data-request-id={state.requestId}>
@@ -1326,7 +1329,7 @@ function ForecastStatus({ label, state, compact = false, setupChanged = false, u
     {state.message && !(blocked && summary) && (!compact || state.lifecycle === "error") && <span>{friendlyText(state.message)}</span>}
     {firstDiagnostic && summary && !state.pending && (!compact || blocked) && <div className="forecast-primary-guidance">
       <p>{summary.problem}</p>
-      {blocked && <>
+      {(blocked || repairablePayroll) && <>
         <p>{summary.remedy}</p>
         {firstDiagnostic.code === "MORTGAGE_REFINANCE_UNSUPPORTED"
           ? <button type="button" onClick={reviewMortgageOperations}>Review saved refinance</button>
