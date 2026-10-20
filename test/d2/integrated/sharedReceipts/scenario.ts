@@ -44,19 +44,19 @@ export const card = (key = "card"): D2CardSettlementReceipt => {
       createAccountingLeg({ type: "cash", posting: "credit", accountId: ids.bank, amount: money("200"), cashFlowClass: "operating" }),
     ], base.effectiveAt) };
 };
-export const fsa = (key = "fsa"): D2FsaSettlementReceipt => {
+export const fsa = (key = "fsa", reimbursement = "1000"): D2FsaSettlementReceipt => {
   const base = common(key), binding = { ...source(key), kind: "fsa_paid_reimbursement" as const,
     planId: "synthetic-plan", planYearId: "synthetic-2026", memberId: "synthetic-member", payeeId: "synthetic-provider",
     medicalReceiptId: `medical:${key}`, expensePaymentId: `expense-payment:${key}`,
     incurredAt: instant("2026-01-05T00:00:00.000Z"), entitlementConsumptionId: `entitlement:${key}` };
   return { ...base, kind: "fsa_paid_reimbursement", source: binding, sourceEvidenceFingerprint: d2SettlementSourceFingerprint(binding),
-    bankCashBefore: money("1500"), amount: money("1000"), eligibleExpense: money("1000"), entitlementConsumed: money("1000"),
+    bankCashBefore: money("1500"), amount: money(reimbursement), eligibleExpense: money("1000"), entitlementConsumed: money(reimbursement),
     originalTransaction: journal(`expense:${key}`, [
       createAccountingLeg({ type: "expense", posting: "debit", amount: money("1000") }),
       createAccountingLeg({ type: "cash", posting: "credit", accountId: ids.bank, amount: money("1000"), cashFlowClass: "operating" }),
     ]), paymentTransaction: journal(`deposit:${key}`, [
-      createAccountingLeg({ type: "cash", posting: "debit", accountId: ids.bank, amount: money("1000"), cashFlowClass: "operating" }),
-      createAccountingLeg({ type: "expense", posting: "credit", amount: money("1000") }),
+      createAccountingLeg({ type: "cash", posting: "debit", accountId: ids.bank, amount: money(reimbursement), cashFlowClass: "operating" }),
+      createAccountingLeg({ type: "expense", posting: "credit", amount: money(reimbursement) }),
     ], base.effectiveAt) };
 };
 

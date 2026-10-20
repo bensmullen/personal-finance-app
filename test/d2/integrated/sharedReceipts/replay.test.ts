@@ -7,10 +7,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { exportHouseholdReplayCheckpoints, replayHouseholdForecastWindow, runHouseholdKernel } from "../../../../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../../../../src/simulation/r3/replayArtifact.js";
 import { canonicalSerialize, createInputFingerprint } from "../../../../src/simulation/run.js";
-import { actualJournals, availability, independentSources, registerMockAuthorities } from "./scenario.js";
+import { actualJournals, admit, availability, ids, independentSources, registerMockAuthorities } from "./scenario.js";
 import { replayFixture } from "./replayScenario.js";
+import { laterReceipt, registerLaterParticipantCodec } from "./laterParticipant.js";
+import { money } from "../../../../src/values/index.js";
 
 registerMockAuthorities();
+registerLaterParticipantCodec();
 beforeEach(() => { independentSources.clear(); actualJournals.clear(); availability.source = true; availability.calls = 0; availability.failAt = 0; });
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -43,6 +46,51 @@ const expanded = (encoded: string): Json => {
 };
 
 describe("#149 portable shared-receipt foundation", () => {
+  it("commits a partial allocation in month two and restores exact in-horizon history in an independent process", () => {
+    const receipt = admit(laterReceipt()), f = replayFixture(false, 13, false, true);
+    const summary = runHouseholdKernel({ kernel: f.kernel, runContext: f.runContext });
+    const detail = runHouseholdKernel({ kernel: f.kernel, runContext: f.runContext, resultTier: "detail" });
+    expect(f.opening.d2SettlementReceipts).toBeUndefined();
+    expect(summary.periods[0]!.cash.equals(money("1500"))).toBe(true);
+    expect(summary.periods[1]!.cash.equals(money("1000"))).toBe(true);
+    expect(canonicalSerialize(summary.state)).toBe(canonicalSerialize(detail.state));
+    expect(summary.periods.map(p => p.statements)).toEqual(detail.periods.map(p => p.statements));
+    expect(summary.state.identities.postedTransactionIds).toHaveLength(2);
+    expect(canonicalSerialize(summary.state.d2SettlementReceipts)).toBe(canonicalSerialize({ [receipt.id]: receipt }));
+    // Archive ONLY actual committed detailed output. Source qualification alone
+    // cannot regenerate proof that forecast operations were physically posted.
+    for (const period of detail.periods) for (const tx of period.transactions) actualJournals.set(tx.id, tx);
+    expect(actualJournals.size).toBe(2);
+    const artifact = createPortableHouseholdReplayArtifact(summary);
+    const checkpoints = exportHouseholdReplayCheckpoints(summary);
+    expect(checkpoints.some(c => c.state.d2SettlementReceipts?.[receipt.id] !== undefined)).toBe(true);
+    const directory = mkdtempSync(join(tmpdir(), "pfm-shared-in-horizon-"));
+    try {
+      // Month two re-executes the operation; month thirteen resumes a checkpoint
+      // containing it. Neither may double-post or invent a settled whole claim.
+      for (const selected of [summary.periods[1]!.period, summary.periods.at(-1)!.period]) {
+        const expected = replayHouseholdForecastWindow(summary, selected);
+        expect(expected.state.identities.postedTransactionIds).toHaveLength(2);
+        expect(expected.state.accounts[ids.bank]!.cash.equals(money("1000"))).toBe(true);
+        for (let repeat = 0; repeat < 2; repeat++) {
+          const restored = restorePortableHouseholdReplayArtifact(artifact);
+          expect(canonicalSerialize(replayHouseholdForecastWindow(restored, selected).state)).toBe(canonicalSerialize(expected.state));
+        }
+        for (const journals of [true, false]) {
+          const path = join(directory, "payload.json");
+          writeFileSync(path, JSON.stringify({ artifact, selected, sources: true, journals }), "utf8");
+          const worker = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
+            fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], {
+            env: { ...process.env, PFM_SHARED_RECEIPTS_PAYLOAD: path }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
+          });
+          expect(worker.status, worker.stderr).toBe(0);
+          expect(JSON.parse(worker.stdout)).toEqual(journals
+            ? { state: canonicalSerialize(expected.state), periods: canonicalSerialize(expected.periods) } : { rejected: true });
+        }
+      }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  }, 60_000);
+
   it.each([13, 25])("preserves exact opening receipt bytes across %s-month detail/summary and independent repeated replay", months => {
     // This exercises foundation persistence. Domain scheduling/source evaluation
     // and in-horizon FSA/card activity remain the #202/#203 adapter gates.

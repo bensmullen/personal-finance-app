@@ -65,6 +65,37 @@ describe("#149 typed shared settlement foundation (independent mock sources only
     expect(s.identities.postedTransactionIds).toHaveLength(2);
   });
 
+  it.each(["500", "500.01"])("records only the authenticated $%s partial reimbursement and consumes the claim once", amount => {
+    const r = admit(fsa("partial", amount)), s = state("1500");
+    applyAccountingTransactionAtomically(s, r.originalTransaction);
+    actualJournals.set(r.originalTransaction.id, r.originalTransaction);
+    expect(s.accounts[ids.bank]!.cash.equals(money("500"))).toBe(true);
+    const result = applyD2SettlementAtomically(s, r, context);
+    expect(result.status).toBe("committed");
+    if (result.status === "incomplete") throw new Error("Expected authenticated allocation");
+    expect(result.remainingReimbursement).toEqual({ status: "incomplete", reason: "entitlement_installment_port_required",
+      unreimbursedExpense: money("1000").minus(money(amount)) });
+    expect(s.accounts[ids.bank]!.cash.equals(money("500").plus(r.amount))).toBe(true);
+    expect(r.eligibleExpense.minus(r.amount).equals(money("1000").minus(money(amount)))).toBe(true);
+    expect(s.obligations).toEqual({}); // No claim-wide settled assertion.
+    expect(s.positions).toEqual({});
+    expect(s.identities.postedTransactionIds).toHaveLength(2);
+    capturePostedJournals(r);
+    const before = canonicalSerialize(s);
+    const repeat = applyD2SettlementAtomically(s, r, context);
+    expect(repeat).toMatchObject({ status: "already_committed", remainingReimbursement: result.remainingReimbursement });
+    expect(() => applyD2SettlementAtomically(s, admit(fsa("partial", "600")), context)).toThrow();
+    expect(canonicalSerialize(s)).toBe(before);
+  });
+
+  it.each(["0", "1000.01"])("rejects independently approved reimbursement outside the paid expense: %s", amount => {
+    unchanged(admit(fsa("out-of-range", amount)));
+  });
+
+  it.each(["499.99", "500.01"])("rejects entitlement consumption %s unequal to partial deposit", consumed => {
+    unchanged(admit({ ...fsa("partial-consumption", "500"), entitlementConsumed: money(consumed) }));
+  });
+
   it("accepts independently verified prior card recognition without recognizing interest twice", () => {
     const r = admit(card()), s = state();
     applyAccountingTransactionAtomically(s, r.originalTransaction);
@@ -122,7 +153,7 @@ describe("#149 typed shared settlement foundation (independent mock sources only
   });
 
   const fsaChanges: readonly [string, (r: D2FsaSettlementReceipt) => D2FsaSettlementReceipt][] = [
-    ["partial reimbursement", r => ({ ...r, amount: money("999") })],
+    ["changed amount without corresponding source or journal", r => ({ ...r, amount: money("999") })],
     ["unconsumed entitlement", r => ({ ...r, entitlementConsumed: money("0") })],
     ["cross-plan", r => { const source = { ...r.source, planId: "different-plan" };
       return { ...r, source, sourceEvidenceFingerprint: d2SettlementSourceFingerprint(source) }; }],
@@ -190,6 +221,61 @@ describe("#149 typed shared settlement foundation (independent mock sources only
     const s = createIndexedExecutionState(state()), a = admit(card("a")), b = admit(card("b"));
     applyD2SettlementAtomically(s, a, context); const before = canonicalSerialize(s);
     expect(() => applyD2SettlementAtomically(s, b, context)).toThrow();
+    expect(canonicalSerialize(s)).toBe(before);
+  });
+
+  it("rejects two valid same-instant receipts even when the second has correct updated openings", () => {
+    const s = createIndexedExecutionState(state()), a = admit(card("unordered-a"));
+    const b = admit({ ...card("unordered-b"), bankCashBefore: money("300"), liabilityBefore: money("820") });
+    expect(applyD2SettlementAtomically(s, a, context).status).toBe("committed");
+    const before = canonicalSerialize(s);
+    expect(() => applyD2SettlementAtomically(s, b, context)).toThrow("source-authenticated execution order");
+    expect(canonicalSerialize(s)).toBe(before);
+  });
+
+  it("accepts source-authenticated resource order and preserves it across cold import", () => {
+    const orderedCard = (key: string, position: number, cash: string, liability: string) => {
+      const base = card(key), source = { ...base.source, executionOrder: { sequenceId: "issuer-bank-approved", position } };
+      return { ...base, source, sourceEvidenceFingerprint: d2SettlementSourceFingerprint(source),
+        bankCashBefore: money(cash), liabilityBefore: money(liability) };
+    };
+    const s = state("900"), a = admit(orderedCard("z-first", 1, "900", "1000"));
+    const b = admit(orderedCard("a-second", 2, "700", "820"));
+    expect(applyD2SettlementAtomically(s, a, context).status).toBe("committed");
+    expect(applyD2SettlementAtomically(s, b, context).status).toBe("committed");
+    const imported = createAuthoritativeState({ ...s, d2SettlementReceipts: { [b.id]: b, [a.id]: a } });
+    expect(imported.accounts[ids.bank]!.cash.equals(money("500"))).toBe(true);
+    expect(imported.liabilities[ids.liability]!.balance.equals(money("640"))).toBe(true);
+    const before = canonicalSerialize(imported);
+    const c = admit(orderedCard("out-of-order", 1, "500", "640"));
+    expect(() => applyD2SettlementAtomically(imported, c, context)).toThrow("source-authenticated execution order");
+    expect(canonicalSerialize(imported)).toBe(before);
+  });
+
+  it("accepts independently sourced events at distinct economic instants without an artificial sequence", () => {
+    const s = state("1500"), first = admit(fsa("earlier"));
+    expect(applyD2SettlementAtomically(s, first, context).status).toBe("committed");
+    const base = fsa("later"), later = admit({ ...base, effectiveAt: instant("2026-01-17T00:00:00.000Z"),
+      originalTransaction: createAccountingTransaction({ ...base.originalTransaction, date: instant("2026-01-16T00:00:00.000Z") }),
+      paymentTransaction: createAccountingTransaction({ ...base.paymentTransaction, date: instant("2026-01-17T00:00:00.000Z") }) });
+    expect(applyD2SettlementAtomically(s, later, context).status).toBe("committed");
+    expect(s.identities.postedTransactionIds).toHaveLength(4);
+  });
+
+  it.each(["different-sequence", "reused-position", "forged-witness"] as const)("rejects %s with otherwise valid updated funding", mode => {
+    const base = card("ordered-first"), source = { ...base.source,
+      executionOrder: { sequenceId: "approved-sequence", position: 1 } };
+    const first = admit({ ...base, source, sourceEvidenceFingerprint: d2SettlementSourceFingerprint(source) }), s = state();
+    expect(applyD2SettlementAtomically(s, first, context).status).toBe("committed");
+    const next = card("ordered-second"), nextSource = { ...next.source,
+      executionOrder: { sequenceId: mode === "different-sequence" ? "unrelated" : "approved-sequence",
+        position: mode === "reused-position" ? 1 : 2 } };
+    const second = { ...next, bankCashBefore: money("300"), liabilityBefore: money("820"), source: nextSource,
+      sourceEvidenceFingerprint: d2SettlementSourceFingerprint(nextSource) };
+    if (mode === "forged-witness") admit({ ...next, bankCashBefore: money("300"), liabilityBefore: money("820") });
+    else admit(second);
+    const before = canonicalSerialize(s);
+    expect(() => applyD2SettlementAtomically(s, second, context)).toThrow();
     expect(canonicalSerialize(s)).toBe(before);
   });
 
