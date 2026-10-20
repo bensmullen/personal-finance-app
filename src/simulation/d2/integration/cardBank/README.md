@@ -1,105 +1,67 @@
-# Issuer statement interest / BANK payment — blocked preflight
+# Issuer-quoted card interest and funded BANK repayment
 
-Issue [#203](https://github.com/bensmullen/personal-finance-app/issues/203), under
-shared execution owner [#149](https://github.com/bensmullen/personal-finance-app/issues/149).
-This is a static source assessment. Physical settlement and historical paid-state
-characterization remain unimplemented.
+Opt-in runtime adapter for [#203](https://github.com/bensmullen/personal-finance-app/issues/203),
+using the canonical posting archive and atomic receipts owned by #149. It does
+not register itself in the application compiler or replace the B1/C2 evaluators.
 
-## Entry gate
+At process composition, call `registerCardBankSourcePort` once with a read-only
+publisher service returning independently authenticated, immutable raw
+`CardBankDocument` records. The service must authenticate issuer identity, account
+ownership, signed payer authorization, quote version and validity, the exact
+approved allocation, complete activity, and instant-valued publication/knowledge
+provenance. A receipt store, supplied hash, copied portable configuration, or
+observed BANK `posted` flag is not that service. There is no bundled provider
+or authentication bypass. Tests reconstruct synthetic raw issuer documents
+independently rather than using a map of purported receipts.
 
-PR #200 merged as `013d3c3888b470c2c3b19bf5f4f185358bac90e7` and registration
-PR #205 merged as `de0a56b106ca65de9741476a5c26be547e488a6f`. Both are present
-in fetched `origin/main` at the latter commit. Single latest-head check snapshots
-for `e5e91042c5f8d6f00448233a75bc12be118eea13` and
-`2180790c8d26034e8768908882e09c16a3f58228` respectively showed applicable checks
-successful, with other checks skipped. No local verification was run.
+Call `attachCardBank(kernel, { sourceIds })` to include the participant. Only
+lookup IDs enter portable configuration. Every preparation, event, and historical
+receipt requalification reads the publisher again and runs the complete raw
+request through B1 `proposeCreditCardStatements`. Optional C2
+`reconcileCreditCardCycles` proof must reproduce the original raw statement and
+qualify matching owner/card/issuer/payment history; documentary confirmations
+never move engine cash.
 
-## Exact blocker
+This first adapter admits a principal-only opening with no intervening purchase,
+refund or payment activity, and a source-approved interest/ordinary-fee charge
+event with explicit posting IDs and one actual economic instant. Different charge
+dates and general revolving activity remain S7 incomplete. No APR, grace-period,
+minimum-payment or fee formula is introduced. Missing independent timestamp
+provenance remains typed S7 incomplete; civil `asOf` and publication text are
+never converted into invented midnight instants.
 
-The shared state has atomic balanced posting and identity uniqueness, but no
-card-specific durable proof binding actual interest recognition and funded
-repayment to the original issuer statement, owner, authorization, BANK account,
-event time and principal/interest/fee allocation. Current balances and operation
-IDs cannot authenticate that history after other activity or independent restore.
+The charge posts expense debit / issuer-liability credit through
+`applyAccountingTransactionAtomically`, with the D2 original registration on
+that first posting. The separate on-time authorized payment requires that exact
+immutable archived journal and uses `applyD2SettlementAtomically` to post
+liability debit / owned checking-or-savings BANK credit. It creates no income,
+tax characterization, additional expense or funding. Legacy transaction IDs,
+balances and `already_recognized` flags do not replace the journal. Fixed-loan
+VS4 dual registration is rejected by attachment.
 
-Source evidence at the task-start commit:
+For the synthetic oracle, BANK $500 / liability $1000 becomes BANK $500 /
+liability $1020 after $20 issuer interest. A separately approved $200 payment
+($20 interest, $180 principal, $0 fees) leaves BANK $300 / liability $820. Net
+worth falls $20 across both events. Insufficient actual BANK cash leaves the
+prior charge and unpaid minimum intact, without a fabricated penalty or partial
+payment. Funding contention and stale opening balances fail atomically.
 
-- `src/state/index.ts`: `LiabilityState` stores typed liability ID, balance and
-  optional rate. `AuthoritativeIdentityRegistry` retains transaction, recognition,
-  settlement, occurrence and external-idempotency IDs, not their economic payloads.
-  `applyAccountingTransactionAtomically` applies balanced legs and registers the
-  transaction ID; it does not retain the transaction or issuer source receipt.
-- `src/semantics/claim.ts`: `ClaimBase` retains owner, amount, balance target,
-  originating recognition ID and settlement IDs. It does not authenticate the
-  issuer source, BANK debit or exact allocation behind those identities.
-- The optional `ssaMedicarePayments` state record and
-  `applySsaMedicarePaymentAtomically` provide a source-requalified receipt for
-  SSA/Medicare only. That authority is not a card payment port.
-- `src/simulation/r3/replayArtifact.ts`: the explicit `recordKeys` list includes
-  that SSA receipt but no card receipt. Arbitrary participant-owned state fields
-  are not a supported persistence extension.
-- B1 `proposeCreditCardStatements` returns uncommitted expense/payment proposals.
-  C2 `reconcileCreditCardCycles` explicitly returns `committed: false`,
-  `postable: false` and `physicalBankSettlement: "not_applied"`. Its
-  `BankConfirmation.status: "posted"` is documentary evidence, not proof of engine
-  execution.
+Participant descriptors declare BANK consumption. Shared-instant internal BANK
+payments need distinct independently authenticated sequence positions, translated
+into dependency edges; array order is never payment priority. Unresolved external
+BANK work and concurrent writes to one card fail closed. Canonical period
+rollback preserves the prior committed journal, receipts, balances and identities.
 
-The merged [journal design](../../../../../docs/development/d2-prep/rmd-transaction-allocation-journal-design.md)
-explicitly directs #203 to stop when a new durable shared receipt port is needed.
-It rejects transaction-ID-only proof, JSON idempotency payloads and a shadow ledger.
-Encoding a statement in trace references or participant configuration would also
-preserve an assertion without authenticating actual posted history.
+Independent portable replay processes must import this module for its codec and
+register their own source port before restoring. Receipt history is requalified
+by the shared APIs; the participant also compares archived card journals against
+the independently regenerated originals/payments. Include the complete historical
+card source set in `sourceIds`. Summary and detail consume the same transactions,
+with no participant-owned balance ledger or hidden state record.
 
-## Static type and accounting preflight
-
-The later adapter must use existing typed `AccountId`, `LiabilityId`, recognition
-and settlement IDs. Source strings must bind existing resources. Checking/savings
-needs an explicit matching `ownerId` (optional on `AccountState`). `LiabilityState`
-has no owner/issuer field, so source-qualified identity binding is also required.
-No simultaneous VS4 representation of this card is admissible.
-
-`Money` arithmetic must preserve exact currency minor units. The state writer adds
-cash debits and subtracts liability debits. The oracle therefore requires expense
-debit / liability credit $20, then liability debit / BANK cash credit $200:
-liability $1000 becomes $1020 then $820; BANK $500 becomes $300. Net worth moves
-from -$500 to -$520. Payment recognizes no expense. With an issuer interest-first
-allocation for this quote, repayment is $20 interest, $180 principal and $0 fees;
-that order must be sourced, never treated as universal policy.
-
-`RunContext` supplies instant-valued `asOf` and `dataCutoff`. Raw B1 `IssuerSource`
-supplies civil-date `asOf` and textual `sourcePublication`, with no typed publication
-timestamp. Admission must prove event-known publication/source availability rather
-than treating publication text as a timestamp. Re-evaluate the complete raw B1
-request; accept a C2 bundle only from matching requalification. A conditional
-remaining balance or `already_recognized` cannot authenticate prior recognition.
-Undefined optional state/evidence must remain unavailable.
-
-`HouseholdKernelParticipant.prepare` receives `RunContext`, `Period`, opening
-`OperationState`, optional existing work and optional detail/summary tier.
-`registerHouseholdParticipantCodec` restores configuration, not historical posting
-authority. The eventual shared receipt must survive state construction,
-clone/index, candidate commit and portable restore, reject changed sources/reused
-authorization, and roll back with transactions when a later operation fails.
-
-## Required follow-up
-
-DECISION_NEEDED: Authorize a separately scoped #149 shared card receipt foundation
-before resuming physical card settlement in #203.
-
-PRODUCT_IMPACT: Proposals remain conditional; authenticated card repayment,
-recognized-interest history and satisfied minimums remain unavailable.
-
-OPTIONS: Build the approved shared receipt foundation, or defer this adapter.
-
-RECOMMENDATION: Design and authorize the foundation under #149, then resume #203.
-
-TECHNICAL_REASON: Existing identities and balances do not preserve source-bound
-posting/allocation proof through independent restore. Minimum newly needed source
-scope is `src/state/**` and `src/simulation/r3/replayArtifact.ts`, with dedicated
-shared receipt tests in a separate authorization. These paths are excluded here.
-
-The resumed task still needs actual funded/unfunded oracle tests, exact-cent and
-large-money cases, multi-owner isolation, changed/repeated evidence, same-date
-BANK contention, second-transaction rollback, no-op reattachment, and 13+ month
-independent portable detail/summary evidence. This assessment supplies none of
-that runtime acceptance evidence and does not close #203 or D2.
+Tests under `test/d2/integrated/cardBank/` cover the economic oracle, prior-month
+recognition, insufficient BANK, legacy/mismatched evidence, raw source/time and
+allocation conflicts, owner isolation, explicit ordering, idempotency, rollback,
+and 13/25-month independent-process replay. They are authored for GitHub CI;
+no local installs, tests, builds or validators are run in the Codex turn.
+Independent exact-head CI and semantic review remain required before merge.
