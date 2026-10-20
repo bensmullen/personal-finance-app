@@ -129,7 +129,7 @@ describe("durable Income authoring and compilation", () => {
     // canonical contradiction rather than asking patchPersonalObject to ignore it.
     const source = authoredSource();
     const altered = { ...source, objects: { ...source.objects, Income: source.objects.Income!.map(item =>
-      typeof item === "object" && item !== null && !Array.isArray(item) && item.income_id === golden.income
+      typeof item === "object" && item !== null && !Array.isArray(item) && "income_id" in item && item.income_id === golden.income
         ? { ...item, income_type: "interest" } : item) } };
     expect(() => authorPayrollWithholding(altered, plan())).toThrow("canonical salary source");
   });
