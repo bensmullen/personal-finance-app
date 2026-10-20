@@ -36,6 +36,51 @@ if (!/^[a-f0-9]{40}$/.test(capturedHead)) throw new Error("Captured Git head is 
  * ordinary R1/R3 capture rather than changing its baseline evidence. It is
  * intentionally not part of the regular multi-run performance profile or CI.
  */
+// Each probe runs in a separate child process. This permits a diagnostic
+// cutoff without terminating the GitHub job or losing completed horizons.
+// The 240-second cutoff is damage containment, NEVER a product SLA.
+const childMonth = process.env.PFM_U1B_DIAGNOSTIC_PROBE;
+if (childMonth !== undefined) {
+  const probe = createFlagshipHorizonProbes().find(item => String(item.months) === childMonth);
+  if (!probe) throw new Error("Unknown flagship probe month selection.");
+  const registry = new PerformanceRegistry();
+  const context: PerformanceContext = {
+    runId: probe.id, fixtureId: probe.id, dataClassification: "synthetic",
+    modelCounts: countObjects(probe.model),
+    horizon: { start: probe.request.compiler.cashFlow!.simulationStart, end: probe.request.compiler.cashFlow!.simulationEnd },
+    modelVersion: probe.model.modelFormatVersion, specificationVersion: probe.model.financialSpecificationVersion,
+    executionLocation: "local_node", runtime: process.version, cacheState: "not_applicable",
+  };
+  const cpuStart = process.cpuUsage();
+  const heapStart = process.memoryUsage().heapUsed;
+  const cloneStart = performance.now();
+  structuredClone({ model: probe.model, request: probe.request });
+  const inputCloneMs = performance.now() - cloneStart;
+  const start = performance.now();
+  const result = runPersonalHouseholdForecast(probe.model, probe.request,
+    createApplicationPerformanceObserver({ now: () => performance.now() }, context, registry));
+  const wallMs = performance.now() - start;
+  const outputCloneStart = performance.now();
+  structuredClone(result);
+  const outputCloneMs = performance.now() - outputCloneStart;
+  const cpu = process.cpuUsage(cpuStart);
+  const sample = {
+    fixtureId: probe.id, months: probe.months, status: result.status,
+    requestedEnd: result.requestedHorizon?.end ?? null, reachedThrough: result.reachedThrough ?? null,
+    pointCount: result.status === "unavailable" ? 0 : result.points.length,
+    wallMs, inputCloneMs, outputCloneMs, cpuMs: (cpu.user + cpu.system) / 1000,
+    heapAfterBytes: process.memoryUsage().heapUsed, heapDeltaBytes: process.memoryUsage().heapUsed - heapStart,
+    phasesMs: Object.fromEntries(PERFORMANCE_PHASES.map(phase => {
+      const record = registry.latest(phase);
+      return [phase, record?.availability === "measured" ? record.durationMs ?? null : null];
+    })),
+    phaseAvailability: Object.fromEntries(PERFORMANCE_PHASES.map(phase =>
+      [phase, registry.latest(phase)?.availability ?? "not_measured"])),
+  };
+  console.log(`U1B_FLAGSHIP_PROBE_RESULT ${JSON.stringify(sample)}`);
+  process.exit(0);
+}
+
 if (warmups === 0 && measuredRuns === 1) {
   const probeOutput = resolve("benchmarks/u1b-flagship-diagnostics.json");
   const probes = createFlagshipHorizonProbes();
@@ -45,60 +90,37 @@ if (warmups === 0 && measuredRuns === 1) {
     await writeFile(probeOutput, JSON.stringify({
       schemaVersion: "u1b-flagship-horizons-v1", classification: "synthetic-engineering-diagnostic",
       capturedHead, environment: { runtime: process.version, platform: process.platform, architecture: process.arch },
-      measurement: "One synchronous Node 22 execution per horizon; not a browser Worker or product latency budget",
-      state, current, samples,
+      measurement: "One synchronous Node 22 execution per horizon, isolated process; not a browser Worker or product latency budget",
+      diagnosticCutoffMs: 240000, state, current, samples,
     }, null, 2) + "\n", "utf8");
   };
+  let stopped = false;
   for (const probe of probes) {
     await persist("running", probe.id);
     console.log(`U1B_FLAGSHIP_PROBE_START ${probe.id} ${probe.request.compiler.cashFlow!.simulationStart} ${probe.request.compiler.cashFlow!.simulationEnd}`);
-    const registry = new PerformanceRegistry();
-    const context: PerformanceContext = {
-      runId: `u1b-flagship:${probe.months}`, fixtureId: probe.id, dataClassification: "synthetic",
-      modelCounts: countObjects(probe.model),
-      horizon: { start: probe.request.compiler.cashFlow!.simulationStart, end: probe.request.compiler.cashFlow!.simulationEnd },
-      modelVersion: probe.model.modelFormatVersion, specificationVersion: probe.model.financialSpecificationVersion,
-      executionLocation: "local_node", runtime: process.version, cacheState: "not_applicable",
-    };
-    const cpuStart = process.cpuUsage();
-    const heapStart = process.memoryUsage().heapUsed;
     try {
-      const cloneStart = performance.now();
-      structuredClone({ model: probe.model, request: probe.request });
-      const inputCloneMs = performance.now() - cloneStart;
-      const start = performance.now();
-      const result = runPersonalHouseholdForecast(probe.model, probe.request,
-        createApplicationPerformanceObserver({ now: () => performance.now() }, context, registry));
-      const elapsedMs = performance.now() - start;
-      const outputCloneStart = performance.now();
-      structuredClone(result);
-      const outputCloneMs = performance.now() - outputCloneStart;
-      const cpu = process.cpuUsage(cpuStart);
-      const sample = {
-        fixtureId: probe.id, months: probe.months, status: result.status,
-        requestedEnd: result.requestedHorizon?.end ?? null, reachedThrough: result.reachedThrough ?? null,
-        pointCount: result.status === "unavailable" ? 0 : result.points.length,
-        wallMs: elapsedMs, inputCloneMs, outputCloneMs, cpuMs: (cpu.user + cpu.system) / 1000,
-        heapAfterBytes: process.memoryUsage().heapUsed, heapDeltaBytes: process.memoryUsage().heapUsed - heapStart,
-        phasesMs: Object.fromEntries(PERFORMANCE_PHASES.map(phase => {
-          const rec = registry.latest(phase);
-          return [phase, rec?.availability === "measured" ? rec.durationMs ?? null : null];
-        })),
-        phaseAvailability: Object.fromEntries(PERFORMANCE_PHASES.map(phase => [phase, registry.latest(phase)?.availability ?? "not_measured"])),
-      };
+      const output = execFileSync(resolve("node_modules/.bin/vite-node"), ["benchmarks/capture.ts"], {
+        encoding: "utf8", timeout: 240000, maxBuffer: 2 * 1024 * 1024,
+        env: { ...process.env, PFM_U1B_DIAGNOSTIC_PROBE: String(probe.months) },
+      });
+      const line = output.split("\n").find(item => item.startsWith("U1B_FLAGSHIP_PROBE_RESULT "));
+      if (!line) throw new Error("Probe did not emit diagnostic evidence.");
+      const sample = JSON.parse(line.slice("U1B_FLAGSHIP_PROBE_RESULT ".length)) as Record<string, unknown>;
       samples.push(sample);
       await persist("running");
-      // Logs survive even if a later 649-month run exceeds the heavy job cap.
-      console.log(`U1B_FLAGSHIP_PROBE_RESULT ${JSON.stringify(sample)}`);
+      console.log(line);
     } catch (error) {
-      const failure = { fixtureId: probe.id, months: probe.months, error: error instanceof Error ? error.name : "unknown" };
-      samples.push(failure);
-      await persist("failed", probe.id);
-      console.error(`U1B_FLAGSHIP_PROBE_ERROR ${JSON.stringify(failure)}`);
-      throw error;
+      const sample = { fixtureId: probe.id, months: probe.months, status: "not_measured",
+        failure: error instanceof Error ? error.message.slice(0, 150) : "probe_process_failed",
+        diagnosticCutoffMs: 240000 };
+      samples.push(sample);
+      await persist("stopped", probe.id);
+      console.error(`U1B_FLAGSHIP_PROBE_STOP ${JSON.stringify(sample)}`);
+      stopped = true;
+      break; // Do not waste time on longer horizons after a shorter failure.
     }
   }
-  await persist("completed");
+  await persist(stopped ? "stopped" : "completed");
 }
 
 const captured = [];
