@@ -1,4 +1,6 @@
 import { domainId } from "../identity/index.js";
+import { authorPayrollWithholding } from "./compiler/payrollWithholding.js";
+import { recordAnnualFinancialFact } from "./financialFacts.js";
 import { ValidationError, type ValidationIssue } from "../diagnostics/index.js";
 import { classifyAccountEconomics, isHouseholdCashAccount } from "../model/economicClassification.js";
 export { classifyAccountEconomics, isHouseholdCashAccount };
@@ -1826,6 +1828,61 @@ export const createGoldenHouseholdExampleDraft = (): PersonalDraft => {
       work_service_jurisdiction_allocations: [{ effective_date: "2026-01-01", state_jurisdiction: "US-NY", allocation: "1" }],
     })),
   });
+};
+
+/** Explicitly synthetic, fully funded flagship. Legacy golden fixtures stay fixed. */
+export const createFlagshipHouseholdDraft = (): PersonalDraft => {
+  const draft = createGoldenHouseholdDraft();
+  let example = withObjects(draft, {
+    ...draft.objects,
+    Person: (draft.objects.Person ?? []).map(value => ({ ...(value as JsonObject), filing_status: "single",
+      residence_jurisdiction: "US-PA",
+      residence_jurisdiction_periods: [{ effective_date: "2026-01-01", state_jurisdiction: "US-PA", local_jurisdiction: "US:PA:PHILADELPHIA" }],
+      tax_eligibility_periods: [
+        ...["federal_base_deduction_only", "full_year_resident:US:PA", "recognized_gross_equals_legal_taxable_base:US:PA", "recognized_gross_equals_legal_taxable_base:US:PA:PHILADELPHIA:WAGE"].map(key => ({ effective_date: "2026-01-01", key, value: true })),
+        ...["pa_local_eit_applicable", "pa_local_lst_applicable"].map(key => ({ effective_date: "2026-01-01", key, value: false })),
+      ],
+    })),
+    Income: (draft.objects.Income ?? []).map(value => ({ ...(value as JsonObject),
+      // No pay is modeled before the verified city Wage/Earnings regime begins.
+      start_date: "2026-07-02",
+      work_service_jurisdiction_allocations: [{ effective_date: "2026-07-01", state_jurisdiction: "US-PA", local_jurisdiction: "US:PA:PHILADELPHIA", allocation: "1" }],
+    })),
+    Household: (draft.objects.Household ?? []).map(value => ({ ...(value as JsonObject), name: "Taylor · synthetic Philadelphia retirement plan", primary_jurisdiction: "US-PA" })),
+    // Explicit synthetic opening wealth funds spending without assumed sales,
+    // benefits, borrowing or retirement distributions. Never a new-user default.
+    Account: (draft.objects.Account ?? []).map(value => {
+      const account = value as JsonObject;
+      // This supported hold-only scenario has a Roth workplace account, not a
+      // pre-tax account whose future RMD/distribution mechanics are unavailable.
+      if (account.account_id === "90000000-0000-4000-8000-000000000014") return { ...account, name: "Workplace Roth retirement", account_type: "roth_401k", tax_treatment: "tax_free" };
+      return account.account_id === "90000000-0000-4000-8000-000000000004" ? { ...account, name: "Everyday checking", opening_balance: "4000000.00" } : account;
+    }),
+    Investment: (draft.objects.Investment ?? []).map(value => {
+      const investment = value as JsonObject;
+      return investment.account_id === "90000000-0000-4000-8000-000000000014" ? { ...investment, tax_treatment: "tax_free" } : investment;
+    }),
+    Scenario: (draft.objects.Scenario ?? []).map(value => ({ ...(value as JsonObject), end_date: "2080-02-01" })),
+    Event: (draft.objects.Event ?? []).map(value => ({ ...(value as JsonObject), start_date: "2055-01-01", name: "Taylor retires at 65 · synthetic accepted plan" })),
+    Expense: ["Living costs", "Transport", "Travel & leisure"].map((category, index) => ({
+      ...(draft.objects.Expense![0] as JsonObject), expense_id: index === 0 ? "90000000-0000-4000-8000-000000000006" : `90000000-0000-4000-8000-00000000010${index}`,
+      category, essentiality: index < 2 ? "essential" : "discretionary", amount: ["3000.00", "800.00", "1000.00"][index]!,
+    })),
+  });
+  for (const [index, jurisdiction] of ["US:FEDERAL", "US:PA", "US:PA:PHILADELPHIA:WAGE"].entries()) example = authorPayrollWithholding(example, {
+    id: `90000000-0000-4000-8000-00000000011${index}`, incomeId: "90000000-0000-4000-8000-000000000005",
+    ownerId: "90000000-0000-4000-8000-000000000003", employerId: "Example salary",
+    depositAccountId: "90000000-0000-4000-8000-000000000004", jurisdiction, effectiveDate: "2026-01-01", expirationDate: "2055-01-01",
+    provenance: "Explicit synthetic monthly paycheck election; illustrative withholding reconciled against calculated tax liability", userConfirmed: true,
+    calculation: { kind: "percent_gross", rate: ["0.28", "0.0307", "0.03735"][index]! },
+  });
+  for (let year = 2026; year <= 2080; year++) example = recordAnnualFinancialFact(example, {
+    id: `90000000-0000-4000-8000-00000000${year}`, field: "filingStatus",
+    scope: { personId: "90000000-0000-4000-8000-000000000003", householdId: "90000000-0000-4000-8000-000000000002", taxYear: year },
+    value: "single", provenance: "assumption", openingReference: "2026-01-01",
+    reconciledSources: year === 2026 ? ["90000000-0000-4000-8000-000000000003"] : [],
+  });
+  return example;
 };
 
 /** Compatibility fixture retained for scope-specific compiler callers. */

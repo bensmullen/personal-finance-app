@@ -1,7 +1,61 @@
-import type { PersonalDraft, JsonObject } from "./personalMvp.js";
+import { addPersonalObject, type PersonalDraft, type JsonObject } from "./personalMvp.js";
 import { utcDate, UUID } from "./compiler/shared.js";
+import { decimal } from "../values/index.js";
 
 const isObject = (value: unknown): value is JsonObject => value !== null && typeof value === "object" && !Array.isArray(value);
+
+/** Explicit acceptance in Life Events, one event and binding per salary. */
+export function acceptRetirementProposal(model: PersonalDraft, personId: string, date: string, eventIds: readonly string[]): PersonalDraft {
+  const plan = currentPlan(model);
+  if (!plan || !utcDate(date) || date < String(plan.start_date) || date >= String(plan.end_date)) throw new Error("Choose a retirement date within Current Plan dates.");
+  const incomes = (model.objects.Income ?? []).filter(isObject).filter(income => income.owner_id === personId && income.income_type === "salary");
+  if (!incomes.length || incomes.some(income => income.related_event_id != null || income.end_date != null || date <= String(income.start_date)) || eventIds.length !== incomes.length || new Set(eventIds).size !== eventIds.length || eventIds.some(id => !UUID.test(id) || (model.objects.Event ?? []).filter(isObject).some(event => event.event_id === id))) throw new Error("Review existing income end dates and retirement decisions first.");
+  let next = model;
+  next = { ...next, objects: { ...next.objects, Event: [...(next.objects.Event ?? []), ...incomes.map((income, index) => ({
+    event_id: eventIds[index]!, name: `Accepted retirement · ${String(income.source)}`, event_type: "retirement", start_date: date, trigger_type: "scheduled", enabled: true,
+    effect_ids: [], dependencies: [], precedence: 0, scenario_id: plan.scenario_id!,
+  }))] } };
+  return { ...next, objects: { ...next.objects,
+    Income: (next.objects.Income ?? []).map(value => {
+      if (!isObject(value)) return value;
+      const index = incomes.findIndex(income => income.income_id === value.income_id);
+      return index < 0 ? value : { ...value, related_event_id: eventIds[index]! };
+    }),
+    Scenario: (next.objects.Scenario ?? []).map(value => isObject(value) && value.scenario_id === plan.scenario_id ? { ...value, event_ids: [...(Array.isArray(value.event_ids) ? value.event_ids : []), ...eventIds] } : value),
+  } };
+}
+
+export interface PlanningStarters { inflation?: string; wages?: string; portfolio?: string; reserveMonths?: string }
+/** Called only after acceptance for a new plan. Existing links/categories win. */
+export function acceptPlanningStarters(model: PersonalDraft, values: PlanningStarters, id: () => string): PersonalDraft {
+  const plan = currentPlan(model);
+  if (!plan) throw new Error("Create Current Plan dates before accepting starting points.");
+  let next = model;
+  for (const [key, category, collection, link, primitive] of [
+    ["inflation", "inflation", "Expense", "growth_model_id", "P08"],
+    ["wages", "salary_growth", "Income", "growth_model_id", "P08"],
+    ["portfolio", "market_return", "Investment", "return_model_id", "P23"],
+    ["reserveMonths", "other", "", "", ""],
+  ] as const) {
+    const value = values[key];
+    if (value === undefined) continue;
+    if (!/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) || (key === "reserveMonths" ? !/^\d+$/.test(value) : decimal(value).compare(decimal("-1")) <= 0)) throw new Error("Use an exact annual rate greater than -100%, or a whole nonnegative number of reserve months.");
+    if ((next.objects.Assumption ?? []).filter(isObject).some(item => item.scenario_id === plan.scenario_id && (key === "reserveMonths" ? item.name === "Essential-expense reserve goal" : item.category === category))) continue;
+    const assumptionId = id(), primitiveId = id();
+    next = addPersonalObject(next, "Assumption", assumptionId, { name: key === "reserveMonths" ? "Essential-expense reserve goal" : `Accepted starting point · ${category}`, category, value,
+      unit: key === "reserveMonths" ? "months of essential expenses (goal only; no transfers)" : "effective annual rate", scenario_id: plan.scenario_id!, start_date: plan.start_date! });
+    next = { ...next, objects: { ...next.objects,
+      Scenario: (next.objects.Scenario ?? []).map(item => isObject(item) && item.scenario_id === plan.scenario_id ? { ...item, assumption_ids: [...(Array.isArray(item.assumption_ids) ? item.assumption_ids : []), assumptionId] } : item),
+    } };
+    if (!collection) continue;
+    if (!UUID.test(primitiveId) || (next.objects.PrimitiveInstance ?? []).filter(isObject).some(item => item.primitive_instance_id === primitiveId)) throw new Error("Starting point requires a unique primitive identity.");
+    next = { ...next, objects: { ...next.objects, PrimitiveInstance: [...(next.objects.PrimitiveInstance ?? []), { primitive_instance_id: primitiveId, primitive_id: primitive, input_bindings: { rate: assumptionId }, parameters: {}, scenario_id: plan.scenario_id!, enabled: true }] } };
+    next = { ...next, objects: { ...next.objects,
+      [collection]: (next.objects[collection] ?? []).map(item => isObject(item) && item[link] == null && (collection !== "Income" || item.income_type === "salary") && (collection !== "Investment" || item.investment_type === "fund") ? { ...item, [link]: primitiveId } : item),
+    } };
+  }
+  return next;
+}
 
 export function currentPlan(model: PersonalDraft): JsonObject | undefined {
   const roots = (model.objects.Scenario ?? []).filter(isObject).filter(item => item.enabled === true && item.base_scenario_id == null);

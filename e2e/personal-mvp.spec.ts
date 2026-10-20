@@ -5,6 +5,7 @@ import {
   addPersonalObject,
   createEmptyPersonalDraft,
   createGoldenHouseholdDraft,
+  createGoldenHouseholdExampleDraft,
   createSyntheticPersonalDraft,
   patchPersonalObject,
   exportPersonalModelJson,
@@ -29,8 +30,15 @@ import { compileHouseholdTax } from "../src/application/compiler/tax.js";
 import { resolveAnnualFinancialFact } from "../src/application/financialFacts.js";
 
 const loadExample = async (page: import("@playwright/test").Page) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Use synthetic example" }).click();
+  // Preserve the historical bounded D1 fixture. The flagship has independent
+  // one-click U1B coverage rather than changed historical financial assertions.
+  await importDraft(page, createGoldenHouseholdExampleDraft());
+  await configureOwnedFunding(page);
+  await page.getByLabel("Simulation end", { exact: true }).fill("2036-01-01");
+  await configureTaxSettlement(page);
+  await page.locator('[data-repair="lawScenario"]').check();
+  await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
+  await clickFinancialDestination(page, "Overview");
   await expect(
     page.getByRole("heading", { name: "Know where you stand." }),
   ).toBeVisible();
@@ -259,7 +267,7 @@ const configureOwnedFunding = async (page: import("@playwright/test").Page, opti
   const mortgage = await openDebtOwner(page);
   await page.getByLabel("Debt owner", { exact: true }).selectOption({ label: "Taylor Example" });
   await mortgage.getByLabel("First monthly payment", { exact: true }).fill("2022-02-01");
-  if (options.calculateSchedule) await mortgage.getByRole("button", { name: "Calculate schedule: use 360 payments from first payment through recorded maturity", exact: true }).click();
+  if (options.calculateSchedule) await mortgage.getByRole("button", { name: "Confirm derived original count · 360", exact: true }).click();
   else await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("360");
   await expect(mortgage.getByLabel("Number of monthly payments", { exact: true })).toHaveValue("360");
   await mortgage.getByLabel("Mortgage payment account", { exact: true }).selectOption({ label: "Everyday checking" });
@@ -1487,8 +1495,11 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
 test("guided setup reaches the Personal-MVP overview", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Guided setup · 1 of 7")).toBeVisible();
-  for (let step = 0; step < 6; step += 1)
+  for (const [label, value] of [["Household name", "My household"], ["Monthly income", "6000.00"], ["Opening cash balance", "5000.00"], ["Asset cost basis", "350000.00"], ["Current debt", "235000.00"], ["Monthly spending", "4200.00"]]) {
+    await page.getByLabel(label!, { exact: true }).fill(value!);
     await page.getByRole("button", { name: "Continue" }).click();
+  }
+  await page.getByLabel("Projection horizon (years)", { exact: true }).fill("10");
   await page.getByRole("button", { name: "Finish setup" }).click();
   await expect(
     page.getByText("Your starting financial picture is ready"),

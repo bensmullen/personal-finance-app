@@ -364,3 +364,28 @@ main#main-content { padding: 24px 32px 64px; }
   .workspace > .subnav button { padding: 8px; }
   .panel.outlook { padding: 16px; }
 }
+/* Source-bound setup guidance remains readable in the existing Calm surfaces. */
+.starting-points, .forecast-coverage, .normalization-preview {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border, #d8e2dc);
+  border-radius: 12px;
+  padding: 1rem;
+  margin-block: 1rem;
+  background: var(--surface, #fff);
+}
+.starting-points fieldset, .starting-points label, .starting-points input {
+  min-width: 0;
+  max-width: 100%;
+}
+.starting-points button, .normalization-preview button, .forecast-coverage button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-height: 44px;
+  margin: .25rem;
+}
+.starting-points small, .forecast-coverage p { line-height: 1.6; }
+@media (max-width: 600px) {
+  .starting-points, .forecast-coverage { padding: .75rem; }
+  .starting-points button, .normalization-preview button { max-width: 100%; }
+}

@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { addPersonalObject, createEmptyPersonalDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
+import { addPersonalObject, createEmptyPersonalDraft, createGoldenHouseholdExampleDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
 import { clickFinancialDestination, navigateOwner } from "./navigation.js";
 import { selectForecastChartData, type ForecastChartValue } from "../src/application/forecastChartData.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
@@ -183,6 +183,20 @@ async function boundedGolden(page: Page, width: number, monthlySpending?: string
   await page.setViewportSize({ width, height: 900 });
   await page.goto("/");
   await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
+  // Geometry and signed-cash regressions retain the original short NY fixture.
+  // The independently runnable U1B suite covers the new full-horizon flagship.
+  await navigateOwner(page, "Settings", "Import / Export");
+  await page.locator('input[type="file"]').setInputFiles({ name: "bounded-golden.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(createGoldenHouseholdExampleDraft())) });
+  await page.getByRole("button", { name: "Import into session", exact: true }).click();
+  await navigateOwner(page, "Money", "Income");
+  await page.getByLabel("Income receiving account", { exact: true }).selectOption("90000000-0000-4000-8000-000000000004");
+  await clickFinancialDestination(page, "Debt");
+  await page.getByLabel("Debt owner", { exact: true }).selectOption("90000000-0000-4000-8000-000000000003");
+  const loan = page.getByRole("group", { name: "Example mortgage", exact: true });
+  await loan.getByLabel("First monthly payment", { exact: true }).fill("2022-02-01");
+  await loan.getByLabel("Number of monthly payments", { exact: true }).fill("360");
+  await loan.getByLabel("Mortgage payment account", { exact: true }).selectOption("90000000-0000-4000-8000-000000000004");
+  await loan.getByLabel("Same-day mortgage order", { exact: true }).fill("1");
   if (monthlySpending) {
     await navigateOwner(page, "Money", "Spending");
     await page.getByRole("button", { name: /Living costs/ }).click();
@@ -192,6 +206,7 @@ async function boundedGolden(page: Page, width: number, monthlySpending?: string
     await expect(editor).toHaveCount(0);
   }
   await navigateOwner(page, "Plan", "Current Plan");
+  await page.getByLabel("Investment owner", { exact: true }).selectOption("90000000-0000-4000-8000-000000000003");
   await page.getByLabel("Simulation start", { exact: true }).fill("2026-01-01");
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-04-01");
   const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
@@ -203,6 +218,7 @@ async function boundedGolden(page: Page, width: number, monthlySpending?: string
     await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
   }
   for (const checkbox of await taxes.getByRole("checkbox").all()) await checkbox.check();
+  await page.locator('[data-repair="lawScenario"]').check();
   const status = await runAppliedBaseline(page);
   await openOverview(page);
   const charts = page.locator(".financial-charts");
