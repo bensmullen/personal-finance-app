@@ -235,7 +235,13 @@ describe("#149 source-qualified cash-only retirement execution", () => {
   });
 
   it("rejects built-in same-day BANK deposits before cash can post", () => {
-    const f = fixture(), i = input(f), attached = attachRetirementCash(f.kernel, i);
+    // VS2 requires a real, existing expense-payable liability even with no
+    // expenses; omitting it fails VS2 input validation before contention runs.
+    const payable = domainId("liability", uuid(40));
+    const opening = createAuthoritativeState({ ...fixture().state, liabilities: {
+      [payable]: { id: payable, balance: money("0") },
+    } });
+    const f = fixture(1, opening), i = input(f), attached = attachRetirementCash(f.kernel, i);
     // A real VS2 income stream exposes its CASH resource to prepare(), rather
     // than relying on participant observer order to establish contention.
     const payday = instant("2026-06-15T00:00:00.000Z");
