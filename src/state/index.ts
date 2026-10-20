@@ -11,10 +11,100 @@ import { failValidation, issueCodes } from "../diagnostics/index.js";
 import { idempotencyKey, type DomainId, type GeneratedOccurrenceKey, type IdempotencyKey } from "../identity/index.js";
 import { assertClaimInvariant, normalizeExecutionClaim, materializeClaimLifecycle, settlementIdentityAppendsSince, type SettlementHistoryMeter, type ObligationOrRight } from "../semantics/claim.js";
 import { prepareSsaMedicareDeductionProposals, type SsaPayableEvidence, type SsaDeductionRequest } from "../semantics/settlement.js";
-import type { RecognitionId, SettlementId } from "../semantics/identity.js";
+import type { ClaimId, RecognitionId, SettlementId } from "../semantics/identity.js";
+import type { CalculationTraceId } from "../lineage/index.js";
 import { createRecognitionFact as createRecognitionFactWithHistory, type RecognitionFactDraft, type RecognitionFact } from "../semantics/recognition.js";
 import { Money, Quantity, decimal, type Currency, type Rate } from "../values/index.js";
-import type { Instant } from "../time/index.js";
+import { instant, type Instant } from "../time/index.js";
+
+/** Source-owner lookup addresses; neither these values nor their fingerprint
+ * authenticate the external source. Domain owners must independently qualify. */
+interface D2SourceBinding {
+  readonly sourceId: string;
+  readonly sourceVersion: string;
+  readonly ruleVersion: string;
+  readonly publishedAt: Instant;
+  readonly knownAt: Instant;
+  readonly householdId: DomainId<"household">;
+  readonly personId: DomainId<"person">;
+  readonly sourceApprovalId: string;
+  readonly paymentApprovalId: string;
+}
+export interface D2FsaSourceBinding extends D2SourceBinding {
+  readonly kind: "fsa_paid_reimbursement";
+  readonly planId: string;
+  readonly planYearId: string;
+  readonly memberId: string;
+  readonly payeeId: string;
+  readonly medicalReceiptId: string;
+  readonly expensePaymentId: string;
+  readonly incurredAt: Instant;
+  readonly entitlementConsumptionId: string;
+}
+export interface D2CardSourceBinding extends D2SourceBinding {
+  readonly kind: "card_interest_payment";
+  readonly issuerId: string;
+  readonly statementId: string;
+  readonly chargeId: string;
+  readonly quoteId: string;
+  readonly minimum: Money;
+}
+interface D2ReceiptBase {
+  readonly schemaVersion: "d2-shared/settlement-receipt/v1";
+  readonly id: string;
+  readonly operationId: string;
+  readonly authorizationId: string;
+  readonly claimId: ClaimId;
+  readonly paymentId: string;
+  readonly recognitionId: RecognitionId;
+  readonly settlementId: SettlementId;
+  readonly effectiveAt: Instant;
+  readonly bankAccountId: AccountId;
+  readonly bankCashBefore: Money;
+  readonly amount: Money;
+  readonly traceIds: readonly CalculationTraceId[];
+  /** Canonical evidence content, never a cryptographic authentication claim. */
+  readonly sourceEvidenceFingerprint: string;
+  /** Original immutable itemized magnitudes AND posting signs. */
+  readonly originalTransaction: AccountingTransaction;
+  readonly paymentTransaction: AccountingTransaction;
+}
+export interface D2FsaSettlementReceipt extends D2ReceiptBase {
+  readonly kind: "fsa_paid_reimbursement";
+  readonly source: D2FsaSourceBinding;
+  readonly eligibleExpense: Money;
+  readonly entitlementConsumed: Money;
+}
+export interface D2CardSettlementReceipt extends D2ReceiptBase {
+  readonly kind: "card_interest_payment";
+  readonly source: D2CardSourceBinding;
+  readonly liabilityId: LiabilityId;
+  readonly liabilityBefore: Money;
+  readonly postedInterest: Money;
+  readonly postedFee: Money;
+  readonly interestAllocation: Money;
+  readonly principalAllocation: Money;
+  readonly feeAllocation: Money;
+}
+export type D2SettlementReceipt = D2FsaSettlementReceipt | D2CardSettlementReceipt;
+/** Structural subset of RunContext; state cannot depend on simulation. */
+export interface D2SettlementSourceContext { readonly asOf: Instant; readonly dataCutoff: Instant; }
+export type D2SourceQualification = { readonly status: "qualified"; readonly receipt: D2SettlementReceipt }
+  | { readonly status: "incomplete"; readonly reason: "source_unavailable" | "source_not_qualified" | "original_journal_unavailable" | "posted_journal_unavailable" };
+export interface D2SettlementSourceAuthority {
+  /** Re-evaluate independent plan/issuer, ownership, approvals and paid evidence.
+   * Returning the caller's record or hash does not implement this contract. */
+  readonly qualify: (binding: D2FsaSourceBinding | D2CardSourceBinding, context: D2SettlementSourceContext) => D2SourceQualification;
+  /** Independently look up ACTUAL canonical journals for prior originals and
+   * restored history. An identity inventory or receipt copy is insufficient. */
+  readonly postedTransaction: (id: AccountingTransactionId, context: D2SettlementSourceContext) => AccountingTransaction | undefined;
+}
+const d2SourceAuthorities = new Map<D2SettlementReceipt["kind"], D2SettlementSourceAuthority>();
+/** Composition-root port, not a replaceable per-transition validator. */
+export const registerD2SettlementSourceAuthority = (kind: D2SettlementReceipt["kind"], authority: D2SettlementSourceAuthority): void => {
+  if (d2SourceAuthorities.has(kind)) throw new Error("D2_SETTLEMENT_SOURCE_AUTHORITY_DUPLICATE");
+  d2SourceAuthorities.set(kind, Object.freeze({ ...authority }));
+};
 
 /** Source-specific same-event journal evidence, not a second cash ledger.
  * Domain admission re-evaluates sourceInputs through A1/C2. Portable integrity
@@ -338,6 +428,7 @@ export interface AuthoritativeState {
   contributions?: Record<string, ContributionState>;
   contingentPositions?: Record<string, ContingentPositionState>;
   ssaMedicarePayments?: Record<string, SsaMedicarePaymentRecord>;
+  d2SettlementReceipts?: Record<string, D2SettlementReceipt>;
 }
 
 export interface AuthoritativeStateDraft {
@@ -349,6 +440,7 @@ export interface AuthoritativeStateDraft {
   readonly contributions?: Record<string, ContributionState>;
   readonly contingentPositions?: Record<string, ContingentPositionState>;
   readonly ssaMedicarePayments?: Record<string, SsaMedicarePaymentRecord>;
+  readonly d2SettlementReceipts?: Record<string, D2SettlementReceipt>;
 }
 
 const identityIndexes = new WeakMap<AuthoritativeIdentityRegistry, Record<keyof AuthoritativeIdentityRegistry, PersistentStringIndex<string>>>();
@@ -452,6 +544,9 @@ export const authoritativeStateChangesSince = (
     ...Object.fromEntries(fields.map(field => [field, changes(indexedRecords.get(state[field])!.index, indexedRecords.get(before[field])!.index,
       field === "obligations" ? claimValue : value => value)])),
     identities: Object.fromEntries(identityKinds.map(kind => [kind, changes(identities[kind], priorIdentities[kind])])),
+    ...(state.d2SettlementReceipts === undefined && before.d2SettlementReceipts === undefined ? {} : {
+      d2SettlementReceipts: { present: state.d2SettlementReceipts !== undefined,
+        changes: changes(d2ReceiptIndex(state.d2SettlementReceipts), d2ReceiptIndex(before.d2SettlementReceipts)) } }),
     ...(state.ssaMedicarePayments === undefined && before.ssaMedicarePayments === undefined ? {} : {
       ssaMedicarePayments: { present: state.ssaMedicarePayments !== undefined,
         changes: changes(indexedRecords.get(state.ssaMedicarePayments ?? {})?.index
@@ -523,7 +618,10 @@ export const createIndexedExecutionState = (opening: AuthoritativeState, supplie
     ...(opening.contributions === undefined ? {} : { contributions: { ...opening.contributions } }),
     ...(opening.contingentPositions === undefined ? {} : { contingentPositions: Object.fromEntries(Object.entries(opening.contingentPositions).map(([key, value]) => [key, { ...value }])) }),
     ...(opening.ssaMedicarePayments === undefined ? {} : { ssaMedicarePayments: makeRecord(opening.ssaMedicarePayments, false, undefined, freezePayment) }),
+    ...(opening.d2SettlementReceipts === undefined ? {} : { d2SettlementReceipts: makeRecord(opening.d2SettlementReceipts, false, d2ReceiptWrite, freezePayment) }),
   };
+  const receiptHistory = d2ReceiptHistories.get(opening);
+  if (receiptHistory !== undefined) d2ReceiptHistories.set(state, receiptHistory);
   if (existing === undefined) for (const [key, claim] of Object.entries(state.obligations)) updateClaim(key, undefined, claim);
   if (existing === undefined) { pendingClaimIds.clear(); pendingSettlementIds.clear(); }
   executionStateIndexes.set(state, { recognitionClaims, settlementClaims, activeClaims, pendingClaimIds, pendingSettlementIds,
@@ -574,16 +672,20 @@ export const createAuthoritativeState = (draft: AuthoritativeStateDraft = {}): A
     ...(draft.contributions === undefined ? {} : { contributions: { ...draft.contributions } }),
     ...(draft.contingentPositions === undefined ? {} : { contingentPositions: Object.fromEntries(Object.entries(draft.contingentPositions).map(([key, value]) => [key, { ...value }])) }),
     ...(draft.ssaMedicarePayments === undefined ? {} : { ssaMedicarePayments: Object.fromEntries(Object.entries(draft.ssaMedicarePayments).map(([key, value]) => [key, freezePayment(value)])) }),
+    ...(draft.d2SettlementReceipts === undefined ? {} : { d2SettlementReceipts: indexedRecord(new PersistentStringIndex(
+      Object.entries(draft.d2SettlementReceipts).map(([key, value]) => [key, freezePayment(value)] as const)), false, d2ReceiptWrite, freezePayment).record }),
   };
   // Receipt identities must already exist on import; reconciliation must not
   // manufacture missing posting authority for caller-supplied history.
   validateSsaMedicarePayments(state);
+  validateD2SettlementReceipts(state);
   reconcileClaimIdentityHistory(state);
   validateAuthoritativeState(state);
   return state;
 };
 
 export const cloneAuthoritativeState = (state: AuthoritativeState): AuthoritativeState => {
+  validateD2SettlementReceipts(state);
   if (!executionStateIndexes.has(state)) return createAuthoritativeState(state);
   if (![state.accounts, state.positions, state.liabilities, state.obligations].every(record => indexedRecords.has(record))
     || !identityIndexes.has(state.identities)) return createIndexedExecutionState(createAuthoritativeState(state));
@@ -666,6 +768,7 @@ const stateTargetMissing = (transaction: AccountingTransaction, targetType: stri
   });
 
 export const validateAuthoritativeState = (state: AuthoritativeState, transactionId?: string): void => {
+  validateD2SettlementReceipts(state);
   validateSsaMedicarePayments(state);
   for (const [id, entry] of Object.entries(state.contributions ?? {})) {
     const account = state.accounts[entry.accountId];
@@ -808,6 +911,8 @@ export const assertAuthoritativeStateCurrency = (state: AuthoritativeState, curr
     assertCurrency(entry.payable.grossPayable, `ssaMedicarePayments.${key}.gross`, "ssa_medicare_payment", key);
     assertCurrency(entry.netBank, `ssaMedicarePayments.${key}.netBank`, "ssa_medicare_payment", key);
   }
+  for (const [key, receipt] of Object.entries(state.d2SettlementReceipts ?? {}))
+    for (const amount of d2ReceiptAmounts(receipt)) assertCurrency(amount, `d2SettlementReceipts.${key}`, "d2_settlement_receipt", key);
   for (const [key, liability] of Object.entries(state.liabilities)) assertCurrency(liability.balance, `liabilities.${key}.balance`, "liability", liability.id);
   for (const [key, position] of Object.entries(state.positions)) {
     assertCurrency(position.price, `positions.${key}.price`, "position", position.id);
@@ -816,6 +921,7 @@ export const assertAuthoritativeStateCurrency = (state: AuthoritativeState, curr
 };
 
 const commitCandidate = (target: AuthoritativeState, candidate: AuthoritativeState): void => {
+  assertD2SettlementReceiptHistoryPreserved(target, candidate);
   target.accounts = candidate.accounts;
   target.positions = candidate.positions;
   target.liabilities = candidate.liabilities;
@@ -825,9 +931,264 @@ const commitCandidate = (target: AuthoritativeState, candidate: AuthoritativeSta
   if (candidate.contingentPositions !== undefined) target.contingentPositions = candidate.contingentPositions;
   if (candidate.ssaMedicarePayments !== undefined) target.ssaMedicarePayments = candidate.ssaMedicarePayments;
   else delete target.ssaMedicarePayments;
+  if (candidate.d2SettlementReceipts !== undefined) target.d2SettlementReceipts = candidate.d2SettlementReceipts;
+  else delete target.d2SettlementReceipts;
+  const receiptHistory = d2ReceiptHistories.get(candidate);
+  if (receiptHistory !== undefined) d2ReceiptHistories.set(target, receiptHistory);
   const indexed = executionStateIndexes.get(candidate);
   if (indexed === undefined) executionStateIndexes.delete(target);
   else executionStateIndexes.set(target, indexed);
+};
+
+const d2Invalid = (message: string): never => failValidation({ severity: "error", code: "D2_SETTLEMENT_RECEIPT_INVALID",
+  entityType: "d2_settlement_receipt", message });
+const d2ReceiptWrite = (_key: string, previous: D2SettlementReceipt | undefined, next: D2SettlementReceipt | undefined): void => {
+  if (previous !== undefined && (next === undefined || paymentValue(previous) !== paymentValue(next)))
+    d2Invalid("Committed receipt cannot be removed or rewritten");
+};
+const d2ReceiptIndex = (record: Record<string, D2SettlementReceipt> | undefined): PersistentStringIndex<object> =>
+  (record === undefined ? undefined : indexedRecords.get(record)?.index)?.fork()
+    ?? new PersistentStringIndex<object>(Object.entries(record ?? {}).map(([key, value]) => [key, freezePayment(value)] as const));
+interface D2ReceiptHistory {
+  readonly index: PersistentStringIndex<object>;
+  readonly consumed: PersistentStringIndex<string>;
+  readonly banks: PersistentStringIndex<{ readonly personId: string; readonly currency: Currency }>;
+  readonly liabilities: PersistentStringIndex<{ readonly currency: Currency; readonly issuerId: string; readonly personId: string; readonly householdId: string }>;
+  readonly identities: AuthoritativeIdentityRegistry;
+}
+const d2ReceiptHistories = new WeakMap<AuthoritativeState, D2ReceiptHistory>();
+export const assertD2SettlementReceiptHistoryPreserved = (before: AuthoritativeState, after: AuthoritativeState): void => {
+  const prior = d2ReceiptHistories.get(before)?.index ?? d2ReceiptIndex(before.d2SettlementReceipts);
+  for (const change of d2ReceiptIndex(after.d2SettlementReceipts).changesSince(prior).changes)
+    if (change.before !== undefined && (change.after === undefined || paymentValue(change.before) !== paymentValue(change.after)))
+      d2Invalid("Committed receipt history is append-only");
+};
+const d2ReceiptAmounts = (r: D2SettlementReceipt): readonly Money[] => [r.amount, r.bankCashBefore,
+  ...r.originalTransaction.legs.map(l => l.amount), ...r.paymentTransaction.legs.map(l => l.amount),
+  ...(r.kind === "fsa_paid_reimbursement" ? [r.eligibleExpense, r.entitlementConsumed]
+    : [r.liabilityBefore, r.postedInterest, r.postedFee, r.interestAllocation, r.principalAllocation, r.feeAllocation, r.source.minimum])];
+/** The exact canonical source evidence value is deliberately transparent. This
+ * fingerprint detects binding changes, but confers no publisher authority. */
+export const d2SettlementSourceFingerprint = (source: D2FsaSourceBinding | D2CardSourceBinding): string => paymentValue(source);
+const d2ConsumptionKeys = (r: D2SettlementReceipt): readonly IdempotencyKey[] => {
+  const pairs: readonly (readonly [string, string])[] = [
+    ["receipt", r.id], ["operation", r.operationId], ["authorization", r.authorizationId], ["claim", r.claimId],
+    ["payment", r.paymentId], ["source-approval", r.source.sourceApprovalId], ["payment-approval", r.source.paymentApprovalId],
+    ["transaction", r.originalTransaction.id], ["transaction", r.paymentTransaction.id],
+    ["recognition", r.recognitionId], ["settlement", r.settlementId],
+    ...(r.kind === "fsa_paid_reimbursement" ? [
+      ["medical-receipt", r.source.medicalReceiptId], ["expense-payment", r.source.expensePaymentId],
+      ["entitlement-consumption", r.source.entitlementConsumptionId],
+    ] as const : [["issuer-charge", JSON.stringify([r.source.issuerId, r.source.chargeId])]] as const),
+  ];
+  return pairs.map(([kind, value]) => idempotencyKey(`d2-shared:${kind}`, value));
+};
+const validateD2Receipt = (state: AuthoritativeState, key: string, r: D2SettlementReceipt): void => {
+  if (!r || r.schemaVersion !== "d2-shared/settlement-receipt/v1" || key !== r.id ||
+      !["fsa_paid_reimbursement", "card_interest_payment"].includes(r.kind) || r.kind !== r.source.kind)
+    d2Invalid("Unknown or malformed receipt schema/family");
+  const strings = [r.id, r.operationId, r.authorizationId, r.claimId, r.paymentId, r.recognitionId, r.settlementId,
+    r.bankAccountId, r.source.sourceId, r.source.sourceVersion, r.source.ruleVersion, r.source.householdId, r.source.personId,
+    r.source.sourceApprovalId, r.source.paymentApprovalId, ...r.traceIds,
+    ...(r.kind === "fsa_paid_reimbursement" ? [r.source.planId, r.source.planYearId, r.source.memberId, r.source.payeeId,
+      r.source.medicalReceiptId, r.source.expensePaymentId, r.source.entitlementConsumptionId]
+      : [r.liabilityId, r.source.issuerId, r.source.statementId, r.source.chargeId, r.source.quoteId])];
+  if (strings.some(s => typeof s !== "string" || !s.trim()) || r.traceIds.length === 0 ||
+      new Set(r.traceIds).size !== r.traceIds.length || r.sourceEvidenceFingerprint !== d2SettlementSourceFingerprint(r.source))
+    d2Invalid("Missing identity, approval, trace or exact source fingerprint");
+  for (const at of [r.effectiveAt, r.source.publishedAt, r.source.knownAt, r.originalTransaction.date, r.paymentTransaction.date]) instant(at);
+  if (r.originalTransaction.date > r.effectiveAt || r.paymentTransaction.date !== r.effectiveAt ||
+      r.source.publishedAt > r.source.knownAt || r.source.knownAt > r.effectiveAt || r.originalTransaction.id === r.paymentTransaction.id)
+    d2Invalid("Source and economic event ordering mismatch");
+  const bank = state.accounts[r.bankAccountId];
+  if (!bank || !["checking", "savings"].includes(bank.kind) || bank.ownerId !== r.source.personId)
+    d2Invalid("Receipt requires an independently source-bound owned BANK");
+  for (const amount of d2ReceiptAmounts(r))
+    if (!(amount instanceof Money) || amount.isNegative() || !amount.currency.equals(bank!.cash.currency) ||
+        !amount.amount.fitsScale(amount.currency.minorUnitScale)) d2Invalid("Nonnegative exact same-currency money required");
+  if (!r.amount.isPositive()) d2Invalid("Zero payment cannot prove paid settlement");
+  assertBalanced(r.originalTransaction); assertBalanced(r.paymentTransaction);
+  const cash = (posting: "debit" | "credit", amount: Money) => createAccountingLeg({ type: "cash", posting,
+    accountId: r.bankAccountId, amount, cashFlowClass: "operating" });
+  // Compare economic effects only here; full transaction values (including
+  // IDs, dates, order and traces) are compared to independent source authority.
+  const effects = (tx: AccountingTransaction) => tx.legs.map(({ traceRefs: _trace, ...leg }) => leg);
+  let original: AccountingTransaction["legs"], payment: AccountingTransaction["legs"];
+  if (r.kind === "fsa_paid_reimbursement") {
+    instant(r.source.incurredAt);
+    if (r.source.incurredAt > r.originalTransaction.date || !r.eligibleExpense.equals(r.amount) || !r.entitlementConsumed.equals(r.amount))
+      d2Invalid("Only full, paid eligible expense and one-time equal entitlement consumption are supported");
+    original = [createAccountingLeg({ type: "expense", posting: "debit", amount: r.eligibleExpense }), cash("credit", r.eligibleExpense)];
+    // Reimbursement offsets the original expense; it is never fresh wage income.
+    payment = [cash("debit", r.amount), createAccountingLeg({ type: "expense", posting: "credit", amount: r.amount })];
+  } else {
+    const liability = state.liabilities[r.liabilityId];
+    if (!liability || !liability.balance.currency.equals(r.amount.currency) ||
+        !r.interestAllocation.plus(r.principalAllocation).plus(r.feeAllocation).equals(r.amount) ||
+        r.interestAllocation.compare(r.postedInterest) > 0 || r.feeAllocation.compare(r.postedFee) > 0 ||
+        r.principalAllocation.compare(r.liabilityBefore) > 0 || r.amount.compare(r.source.minimum) < 0)
+      d2Invalid("Missing liability or inconsistent source-approved allocation/minimum");
+    const charges = r.postedInterest.plus(r.postedFee);
+    if (!charges.isPositive()) d2Invalid("Missing posted issuer charge");
+    original = [createAccountingLeg({ type: "expense", posting: "debit", amount: charges }),
+      createAccountingLeg({ type: "liability", posting: "credit", entityId: r.liabilityId, amount: charges })];
+    payment = [createAccountingLeg({ type: "liability", posting: "debit", entityId: r.liabilityId, amount: r.amount }), cash("credit", r.amount)];
+  }
+  if (paymentValue(effects(r.originalTransaction)) !== paymentValue(original) || paymentValue(effects(r.paymentTransaction)) !== paymentValue(payment))
+    d2Invalid("Original/payment signed economic effects differ from receipt");
+};
+/** Structural history validation never labels imported external evidence trusted.
+ * Persistent snapshots compare only appended receipt/index paths during execution. */
+export const validateD2SettlementReceipts = (state: AuthoritativeState): void => {
+  const previous = d2ReceiptHistories.get(state), index = d2ReceiptIndex(state.d2SettlementReceipts);
+  const delta = index.changesSince(previous?.index ?? new PersistentStringIndex<object>()).changes;
+  const consumed = previous?.consumed.fork() ?? new PersistentStringIndex<string>();
+  const banks = previous?.banks.fork() ?? new PersistentStringIndex<{ readonly personId: string; readonly currency: Currency }>();
+  const liabilities = previous?.liabilities.fork() ?? new PersistentStringIndex<{
+    readonly currency: Currency; readonly issuerId: string; readonly personId: string; readonly householdId: string }>();
+  const priorIds = previous === undefined ? undefined : identityIndexes.get(previous.identities);
+  const nextIds = identityIndexes.get(state.identities);
+  const full = previous !== undefined && previous.identities !== state.identities && (priorIds === undefined || nextIds === undefined);
+  if ((index.size > 0 || (previous?.index.size ?? 0) > 0) && priorIds !== undefined && nextIds !== undefined)
+    for (const kind of identityKinds) for (const change of nextIds[kind].changesSince(priorIds[kind]).changes)
+      if (change.before !== undefined && change.after === undefined) d2Invalid("Historical identities cannot be removed");
+  for (const change of delta) {
+    if (change.before !== undefined && (change.after === undefined || paymentValue(change.before) !== paymentValue(change.after)))
+      d2Invalid("Committed receipt cannot be removed or rewritten");
+    if (change.before !== undefined) continue;
+    const r = state.d2SettlementReceipts?.[change.key] ?? d2Invalid("Missing receipt");
+    validateD2Receipt(state, change.key, r);
+    for (const id of d2ConsumptionKeys(r)) {
+      if (consumed.has(id)) d2Invalid("Historical receipt/source/authorization/claim/transaction reused");
+      consumed.set(id, r.id);
+    }
+    const boundBank = banks.get(r.bankAccountId);
+    if (boundBank !== undefined && boundBank.personId !== r.source.personId) d2Invalid("BANK ownership binding changed");
+    banks.set(r.bankAccountId, { personId: r.source.personId, currency: r.amount.currency });
+    if (r.kind === "card_interest_payment") {
+      const prior = liabilities.get(r.liabilityId);
+      if (prior !== undefined && (prior.issuerId !== r.source.issuerId || prior.personId !== r.source.personId || prior.householdId !== r.source.householdId))
+        d2Invalid("Source-bound liability issuer/household/person changed");
+      liabilities.set(r.liabilityId, { currency: r.amount.currency, issuerId: r.source.issuerId,
+        personId: r.source.personId, householdId: r.source.householdId });
+    }
+  }
+  const checkIds = (r: D2SettlementReceipt): void => {
+    if (![r.originalTransaction.id, r.paymentTransaction.id].every(id => state.identities.postedTransactionIds.includes(id)) ||
+        !state.identities.recognitionIds.includes(r.recognitionId) || !state.identities.settlementIds.includes(r.settlementId) ||
+        d2ConsumptionKeys(r).some(id => !state.identities.externalIdempotencyKeys.includes(id))) d2Invalid("Missing committed receipt identities");
+  };
+  if (full) for (const r of Object.values(state.d2SettlementReceipts ?? {})) checkIds(r);
+  else for (const change of delta) { const r = state.d2SettlementReceipts?.[change.key]; if (r !== undefined) checkIds(r); }
+  const changedKeys = (record: object): Iterable<string> => indexedRecords.get(record)?.dirty ?? Object.keys(record);
+  for (const key of changedKeys(state.accounts)) {
+    const binding = banks.get(key), bank = state.accounts[key];
+    if (binding !== undefined && (!bank || bank.ownerId !== binding.personId || !["checking", "savings"].includes(bank.kind) ||
+        !bank.cash.currency.equals(binding.currency))) d2Invalid("Historical BANK reference changed");
+  }
+  for (const key of changedKeys(state.liabilities)) {
+    const binding = liabilities.get(key), liability = state.liabilities[key];
+    if (binding !== undefined && (!liability || !liability.balance.currency.equals(binding.currency))) d2Invalid("Historical liability reference changed");
+  }
+  // Cold record replacement can omit referenced resources without a dirty key.
+  if (!indexedRecords.has(state.accounts)) {
+    for (const [key] of banks.entries()) if (!state.accounts[key]) d2Invalid("Historical BANK removed");
+  }
+  if (!indexedRecords.has(state.liabilities)) {
+    for (const [key] of liabilities.entries()) if (!state.liabilities[key]) d2Invalid("Historical liability removed");
+  }
+  // A removed optional record must not make historical consumption disappear.
+  // Cold imports scan once; indexed execution checks only identity additions.
+  const receiptKeyPrefix = idempotencyKey("d2-shared:receipt", "sentinel").slice(0, -"8:sentinel".length);
+  const inventory = priorIds !== undefined && nextIds !== undefined
+    ? nextIds.externalIdempotencyKeys.changesSince(priorIds.externalIdempotencyKeys).changes.flatMap(c => c.after === undefined ? [] : [c.after])
+    : state.identities.externalIdempotencyKeys;
+  for (const id of inventory) if (id.startsWith(receiptKeyPrefix) && !consumed.has(id))
+    d2Invalid("Receipt inventory exists without its immutable receipt");
+  d2ReceiptHistories.set(state, { index, consumed, banks, liabilities, identities: indexedIdentityRegistry(state.identities) });
+};
+const qualifyD2Receipt = (receipt: D2SettlementReceipt, context: D2SettlementSourceContext): D2SourceQualification => {
+  instant(context.asOf); instant(context.dataCutoff);
+  if (receipt.source.knownAt > context.dataCutoff || receipt.source.publishedAt > context.asOf)
+    return { status: "incomplete", reason: "source_not_qualified" };
+  const authority = d2SourceAuthorities.get(receipt.kind);
+  if (authority === undefined) return { status: "incomplete", reason: "source_unavailable" };
+  const result = authority.qualify(freezePayment(receipt.source), Object.freeze({ ...context }));
+  if (result.status === "qualified" && paymentValue(result.receipt) !== paymentValue(receipt))
+    d2Invalid("Receipt differs from independently requalified source, approvals or actual signed journals");
+  return result;
+};
+const requalifyD2PostedJournals = (receipt: D2SettlementReceipt, context: D2SettlementSourceContext): boolean => {
+  const authority = d2SourceAuthorities.get(receipt.kind);
+  if (authority === undefined) return false;
+  for (const expected of [receipt.originalTransaction, receipt.paymentTransaction]) {
+    const actual = authority.postedTransaction(expected.id, context);
+    if (actual === undefined) return false;
+    if (paymentValue(actual) !== paymentValue(expected)) d2Invalid("Actual historical journal differs from receipt signed effects");
+  }
+  return true;
+};
+/** Portable restore must call this separately from structural state validation.
+ * The artifact's integrity fingerprint cannot replace source-owner admission. */
+export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void => {
+  validateD2SettlementReceipts(state);
+  for (const receipt of Object.values(state.d2SettlementReceipts ?? {})) {
+    const result = qualifyD2Receipt(receipt, context);
+    if (result.status === "incomplete") throw new Error(`D2_SETTLEMENT_SOURCE_INCOMPLETE: ${result.reason}`);
+    if (!requalifyD2PostedJournals(receipt, context)) throw new Error("D2_SETTLEMENT_SOURCE_INCOMPLETE: posted_journal_unavailable");
+  }
+};
+export type D2SettlementCommitResult = { readonly status: "committed" | "already_committed"; readonly receipt: D2SettlementReceipt }
+  | Extract<D2SourceQualification, { readonly status: "incomplete" }>;
+/** Only the canonical accounting writer changes economic state. A failed source,
+ * journal, funding or late validation leaves all balances and identities intact. */
+export const applyD2SettlementAtomically = (state: AuthoritativeState, input: D2SettlementReceipt,
+  context: D2SettlementSourceContext): D2SettlementCommitResult => {
+  const receipt = freezePayment(input);
+  validateD2Receipt(state, receipt.id, receipt);
+  const qualification = qualifyD2Receipt(receipt, context);
+  if (qualification.status === "incomplete") return qualification;
+  validateD2SettlementReceipts(state);
+  const existing = state.d2SettlementReceipts?.[receipt.id];
+  if (existing !== undefined) {
+    if (paymentValue(existing) !== paymentValue(receipt)) d2Invalid("Repeated receipt payload changed");
+    if (!requalifyD2PostedJournals(existing, context)) return { status: "incomplete", reason: "posted_journal_unavailable" };
+    return { status: "already_committed", receipt: existing };
+  }
+  const candidate = cloneAuthoritativeState(state);
+  const priorPosted = candidate.identities.postedTransactionIds.includes(receipt.originalTransaction.id);
+  if (priorPosted) {
+    const actual = d2SourceAuthorities.get(receipt.kind)!.postedTransaction(receipt.originalTransaction.id, context);
+    if (actual === undefined) return { status: "incomplete", reason: "original_journal_unavailable" };
+    if (paymentValue(actual) !== paymentValue(receipt.originalTransaction)) d2Invalid("Prior actual journal differs from signed source proof");
+  }
+  const bank = candidate.accounts[receipt.bankAccountId]!;
+  const expectedCash = priorPosted && receipt.kind === "fsa_paid_reimbursement"
+    ? receipt.bankCashBefore.minus(receipt.eligibleExpense) : receipt.bankCashBefore;
+  if (!bank.cash.equals(expectedCash)) d2Invalid("Source-bound BANK opening changed or funding contended");
+  if (receipt.kind === "card_interest_payment") {
+    const expected = priorPosted ? receipt.liabilityBefore.plus(receipt.postedInterest).plus(receipt.postedFee) : receipt.liabilityBefore;
+    if (!candidate.liabilities[receipt.liabilityId]!.balance.equals(expected)) d2Invalid("Source-bound liability opening changed");
+  }
+  // Do not reinterpret independently managed/partial claims as fully settled.
+  if (candidate.obligations[receipt.claimId]) d2Invalid("Existing claim lifecycle requires its owning domain adapter");
+  if (d2ConsumptionKeys(receipt).some(id => candidate.identities.externalIdempotencyKeys.includes(id)))
+    d2Invalid("Receipt operation/source/authorization/claim/transaction already consumed");
+  if (!priorPosted) applyAccountingTransactionAtomically(candidate, receipt.originalTransaction);
+  if (candidate.identities.recognitionIds.includes(receipt.recognitionId)) {
+    if (!priorPosted) d2Invalid("Recognition identity already used");
+  } else registerAuthoritativeIdentity(candidate.identities, "recognitionIds", receipt.recognitionId);
+  applyAccountingTransactionAtomically(candidate, receipt.paymentTransaction);
+  registerAuthoritativeIdentity(candidate.identities, "settlementIds", receipt.settlementId);
+  for (const id of d2ConsumptionKeys(receipt)) registerAuthoritativeIdentity(candidate.identities, "externalIdempotencyKeys", id);
+  const record = candidate.d2SettlementReceipts ?? indexedRecord(new PersistentStringIndex<D2SettlementReceipt>(), false, d2ReceiptWrite, freezePayment).record;
+  record[receipt.id] = receipt;
+  candidate.d2SettlementReceipts = record;
+  validateAuthoritativeState(candidate);
+  const late = qualifyD2Receipt(receipt, context);
+  if (late.status === "incomplete") return late;
+  commitCandidate(state, candidate);
+  return { status: "committed", receipt };
 };
 
 const paymentConsumptionKeys = (input: SsaMedicarePaymentInput): readonly IdempotencyKey[] => [
