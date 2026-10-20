@@ -171,7 +171,12 @@ describe("durable Income authoring and compilation", () => {
     expect(canonicalSerialize(model)).toBe(before);
   });
   it("keeps pre-employment months independent of a later unsupported salary", () => {
-    const source = patchPersonalObject(authoredSource(), "Income", golden.income, { frequency: "biweekly", start_date: "2026-02-01" });
+    const original = patchPersonalObject(authoredSource(), "Income", golden.income, { frequency: "biweekly" });
+    // Income.start_date is immutable in the editor. Construct a deliberate
+    // canonical future-start fixture rather than silently discarding a patch.
+    const source = { ...original, objects: { ...original.objects, Income: original.objects.Income!.map(item =>
+      typeof item === "object" && item !== null && !Array.isArray(item) && "income_id" in item && item.income_id === golden.income
+        ? { ...item, start_date: "2026-02-01" } : item) } };
     const authored = authorPayrollWithholding(source, plan({ effectiveDate: "2026-02-01" }));
     const salary = authored.objects.Income![0]!;
     if (typeof salary !== "object" || salary === null || Array.isArray(salary)) throw new Error("Expected Income");
