@@ -78,7 +78,7 @@ if (childMonth !== undefined) {
       [phase, registry.latest(phase)?.availability ?? "not_measured"])),
   };
   // Flush IPC evidence before ending the isolated Vite-Node process.
-  await new Promise<void>(resolve => { process.stdout.write(`U1B_FLAGSHIP_PROBE_RESULT ${JSON.stringify(sample)}\n`, resolve); });
+  await new Promise<void>(resolve => { process.stdout.write(`U1B_FLAGSHIP_PROBE_RESULT ${JSON.stringify(sample)}\n`, () => resolve()); });
   process.exit(0);
 }
 
