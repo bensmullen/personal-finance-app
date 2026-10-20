@@ -1315,7 +1315,7 @@ function ForecastStatus({ label, state, compact = false, setupChanged = false, u
   const blocked = state.lifecycle === "unsupported";
   // Partial execution can omit only one unsupported payroll source; retain the
   // established Income-field repair action without calling the whole run unsupported.
-  const repairablePayroll = state.lifecycle === "incomplete" && firstDiagnostic?.entityType === "tax_capability" && firstDiagnostic.category === "payroll_source_unsupported";
+  const repairablePayroll = state.lifecycle === "incomplete" && firstDiagnostic?.entityType === "tax_capability" && "category" in firstDiagnostic && firstDiagnostic.category === "payroll_source_unsupported";
   const summary = firstDiagnostic && diagnosticSummary(firstDiagnostic, diagnosticModel);
   return <section className={`forecast-status ${state.stale || setupChanged ? "stale" : ""} ${compact ? "calm-status" : ""}`} role="status" aria-label={`${label} status`}
     data-lifecycle={state.lifecycle} data-pending={state.pending} data-fingerprint={state.fingerprint} data-request-id={state.requestId}>
