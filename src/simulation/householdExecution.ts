@@ -542,7 +542,11 @@ const runCompiledHouseholdProjectionInternal = (
     try {
       performance.counters({ householdPeriodsExecuted: 1 });
       // Domain operations return candidates; keep the previous committed authority for rollback.
-      let candidateState = state;
+      // Extension participants may call canonical atomic writers directly.
+      // Isolate their entire period so a later failure cannot publish staged
+      // posting proofs, receipts, identities or economic effects to `state`.
+      let candidateState = participants.length === 0 ? state : cloneAuthoritativeState(state);
+      if (participants.length !== 0) restoreOperationRuntime(candidateState, operationRuntime(state));
       let candidatePrimitiveState = primitiveState;
       let liability: VerticalSlice4PeriodResult | undefined;
       const cashPeriods: VerticalSlice2PeriodResult[] = [];
