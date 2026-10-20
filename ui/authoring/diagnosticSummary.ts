@@ -5,6 +5,9 @@ import { forecastDiagnosticMessage, type DisplayDiagnostic } from "../entityPres
 export function primaryForecastDiagnostic<T extends DisplayDiagnostic & { readonly severity?: string }>(diagnostics: readonly T[]): T | undefined {
   return diagnostics.find(item => item.code === "MORTGAGE_REFINANCE_UNSUPPORTED")
     ?? diagnostics.find(item => item.entityType !== "tax_capability" && item.severity === "error")
+    // A partly executable forecast still needs a first-class, repairable source
+    // warning ahead of non-actionable, generic tax capability qualifications.
+    ?? diagnostics.find(item => item.entityType === "tax_capability" && item.category === "payroll_source_unsupported")
     ?? diagnostics.find(item => item.severity === "error")
     ?? diagnostics[0];
 }
@@ -26,6 +29,7 @@ export function diagnosticSummary(diagnostic: DisplayDiagnostic, model?: Persona
   if (diagnostic.entityType === "tax_capability") {
     const category = diagnostic.category ?? "";
     if (category === "payment_funding" || category === "settlement_timing") return { problem: "Tax payments and refunds need forecast setup.", remedy: "Choose their cash accounts and confirm settlement dates in Forecast setup.", explanation };
+    if (category === "payroll_source_unsupported") return { problem: "This salary schedule or net-only source is not modeled in the monthly forecast.", remedy: "Review the recorded Frequency or Gross or net in Money → Income. Preserve actual source facts; unsupported salary and withholding were not executed.", explanation };
     if (category === "contribution_annual_facts") return { problem: `Future contribution eligibility is not established for ${diagnostic.taxYear ?? "this year"}.`, remedy: "Review this year's income, employer plan, tax or health-coverage facts in their named source editor.", explanation };
     if (category.startsWith("filing_status")) return { problem: category === "filing_status_conflict" ? `Recorded filing statuses disagree for ${diagnostic.taxYear ?? "this year"}.` : `Household filing status is missing for ${diagnostic.taxYear ?? "this year"}.`, remedy: "Confirm the annual household status in Household & People; earlier years do not establish later years.", explanation };
     if (category === "projected_current_law") return { problem: sentences[0]!, remedy: "Review the projected current-law basis before relying on future tax totals.", explanation };
