@@ -90,6 +90,36 @@ export interface D2CardSettlementReceipt extends D2ReceiptBase {
   readonly feeAllocation: Money;
 }
 export type D2SettlementReceipt = D2FsaSettlementReceipt | D2CardSettlementReceipt;
+/** Requested only at first canonical posting. Original evidence registration
+ * does not require a future payment approval or assert reimbursement eligibility. */
+interface D2PostingRegistrationBase {
+  readonly role: "original" | "settlement";
+  readonly operationId: string;
+  readonly householdId: DomainId<"household">;
+  readonly personId: DomainId<"person">;
+  readonly bankAccountId: AccountId;
+}
+export type D2PostingRegistration = D2PostingRegistrationBase & (
+  { readonly kind: "fsa_paid_reimbursement"; readonly planId: string; readonly planYearId: string;
+    readonly memberId: string; readonly payeeId: string; readonly medicalReceiptId: string; readonly expensePaymentId: string }
+  | { readonly kind: "card_interest_payment"; readonly issuerId: string; readonly statementId: string;
+    readonly chargeId: string; readonly liabilityId: LiabilityId });
+export interface D2PostedTransactionProof {
+  readonly schemaVersion: "d2-shared/posted-transaction/v1";
+  readonly writer: "applyAccountingTransactionAtomically/v1";
+  readonly registration: D2PostingRegistration;
+  readonly transaction: AccountingTransaction;
+}
+/** Convenience binding for operations already source-qualified by their owner.
+ * Earlier originals can construct D2PostingRegistration directly at posting. */
+export const d2SettlementPostingRegistration = (r: D2SettlementReceipt, role: D2PostingRegistration["role"]): D2PostingRegistration => {
+  const base = { role, operationId: r.operationId, householdId: r.source.householdId,
+    personId: r.source.personId, bankAccountId: r.bankAccountId };
+  return r.kind === "fsa_paid_reimbursement"
+    ? { ...base, kind: r.kind, planId: r.source.planId, planYearId: r.source.planYearId, memberId: r.source.memberId,
+      payeeId: r.source.payeeId, medicalReceiptId: r.source.medicalReceiptId, expensePaymentId: r.source.expensePaymentId }
+    : { ...base, kind: r.kind, issuerId: r.source.issuerId, statementId: r.source.statementId, chargeId: r.source.chargeId, liabilityId: r.liabilityId };
+};
 /** Structural subset of RunContext; state cannot depend on simulation. */
 export interface D2SettlementSourceContext { readonly asOf: Instant; readonly dataCutoff: Instant; }
 export type D2SourceQualification = { readonly status: "qualified"; readonly receipt: D2SettlementReceipt }
@@ -98,13 +128,6 @@ export interface D2SettlementSourceAuthority {
   /** Re-evaluate independent plan/issuer, ownership, approvals and paid evidence.
    * Returning the caller's record or hash does not implement this contract. */
   readonly qualify: (binding: D2FsaSourceBinding | D2CardSourceBinding, context: D2SettlementSourceContext) => D2SourceQualification;
-  /** Independently look up ACTUAL canonical journals for prior originals and
-   * restored history. An identity inventory or receipt copy is insufficient.
-   * Registration does not archive successful postings. A production owner must
-   * recover committed journal output from an independent durable source; the
-   * summary sink and portable receipt are not such a source. Until that seam
-   * exists, restored funded history remains explicitly incomplete. */
-  readonly postedTransaction: (id: AccountingTransactionId, context: D2SettlementSourceContext) => AccountingTransaction | undefined;
 }
 const d2SourceAuthorities = new Map<D2SettlementReceipt["kind"], D2SettlementSourceAuthority>();
 /** Composition-root port, not a replaceable per-transition validator. */
@@ -436,6 +459,7 @@ export interface AuthoritativeState {
   contingentPositions?: Record<string, ContingentPositionState>;
   ssaMedicarePayments?: Record<string, SsaMedicarePaymentRecord>;
   d2SettlementReceipts?: Record<string, D2SettlementReceipt>;
+  d2PostedTransactions?: Record<AccountingTransactionId, D2PostedTransactionProof>;
 }
 
 export interface AuthoritativeStateDraft {
@@ -448,6 +472,7 @@ export interface AuthoritativeStateDraft {
   readonly contingentPositions?: Record<string, ContingentPositionState>;
   readonly ssaMedicarePayments?: Record<string, SsaMedicarePaymentRecord>;
   readonly d2SettlementReceipts?: Record<string, D2SettlementReceipt>;
+  readonly d2PostedTransactions?: Record<AccountingTransactionId, D2PostedTransactionProof>;
 }
 
 const identityIndexes = new WeakMap<AuthoritativeIdentityRegistry, Record<keyof AuthoritativeIdentityRegistry, PersistentStringIndex<string>>>();
@@ -554,6 +579,9 @@ export const authoritativeStateChangesSince = (
     ...(state.d2SettlementReceipts === undefined && before.d2SettlementReceipts === undefined ? {} : {
       d2SettlementReceipts: { present: state.d2SettlementReceipts !== undefined,
         changes: changes(d2ReceiptIndex(state.d2SettlementReceipts), d2ReceiptIndex(before.d2SettlementReceipts)) } }),
+    ...(state.d2PostedTransactions === undefined && before.d2PostedTransactions === undefined ? {} : {
+      d2PostedTransactions: { present: state.d2PostedTransactions !== undefined,
+        changes: changes(d2PostingIndex(state.d2PostedTransactions), d2PostingIndex(before.d2PostedTransactions)) } }),
     ...(state.ssaMedicarePayments === undefined && before.ssaMedicarePayments === undefined ? {} : {
       ssaMedicarePayments: { present: state.ssaMedicarePayments !== undefined,
         changes: changes(indexedRecords.get(state.ssaMedicarePayments ?? {})?.index
@@ -626,9 +654,12 @@ export const createIndexedExecutionState = (opening: AuthoritativeState, supplie
     ...(opening.contingentPositions === undefined ? {} : { contingentPositions: Object.fromEntries(Object.entries(opening.contingentPositions).map(([key, value]) => [key, { ...value }])) }),
     ...(opening.ssaMedicarePayments === undefined ? {} : { ssaMedicarePayments: makeRecord(opening.ssaMedicarePayments, false, undefined, freezePayment) }),
     ...(opening.d2SettlementReceipts === undefined ? {} : { d2SettlementReceipts: makeRecord(opening.d2SettlementReceipts, false, d2ReceiptWrite, freezePayment) }),
+    ...(opening.d2PostedTransactions === undefined ? {} : { d2PostedTransactions: cloneD2PostingRecord(opening.d2PostedTransactions) }),
   };
   const receiptHistory = d2ReceiptHistories.get(opening);
   if (receiptHistory !== undefined) d2ReceiptHistories.set(state, receiptHistory);
+  const postingHistory = d2PostingHistories.get(opening);
+  if (postingHistory !== undefined) d2PostingHistories.set(state, postingHistory);
   if (existing === undefined) for (const [key, claim] of Object.entries(state.obligations)) updateClaim(key, undefined, claim);
   if (existing === undefined) { pendingClaimIds.clear(); pendingSettlementIds.clear(); }
   executionStateIndexes.set(state, { recognitionClaims, settlementClaims, activeClaims, pendingClaimIds, pendingSettlementIds,
@@ -681,10 +712,12 @@ export const createAuthoritativeState = (draft: AuthoritativeStateDraft = {}): A
     ...(draft.ssaMedicarePayments === undefined ? {} : { ssaMedicarePayments: Object.fromEntries(Object.entries(draft.ssaMedicarePayments).map(([key, value]) => [key, freezePayment(value)])) }),
     ...(draft.d2SettlementReceipts === undefined ? {} : { d2SettlementReceipts: indexedRecord(new PersistentStringIndex(
       Object.entries(draft.d2SettlementReceipts).map(([key, value]) => [key, freezePayment(value)] as const)), false, d2ReceiptWrite, freezePayment).record }),
+    ...(draft.d2PostedTransactions === undefined ? {} : { d2PostedTransactions: cloneD2PostingRecord(draft.d2PostedTransactions) }),
   };
   // Receipt identities must already exist on import; reconciliation must not
   // manufacture missing posting authority for caller-supplied history.
   validateSsaMedicarePayments(state);
+  validateD2PostedTransactions(state);
   validateD2SettlementReceipts(state);
   reconcileClaimIdentityHistory(state);
   validateAuthoritativeState(state);
@@ -692,6 +725,7 @@ export const createAuthoritativeState = (draft: AuthoritativeStateDraft = {}): A
 };
 
 export const cloneAuthoritativeState = (state: AuthoritativeState): AuthoritativeState => {
+  validateD2PostedTransactions(state);
   validateD2SettlementReceipts(state);
   if (!executionStateIndexes.has(state)) return createAuthoritativeState(state);
   if (![state.accounts, state.positions, state.liabilities, state.obligations].every(record => indexedRecords.has(record))
@@ -775,6 +809,7 @@ const stateTargetMissing = (transaction: AccountingTransaction, targetType: stri
   });
 
 export const validateAuthoritativeState = (state: AuthoritativeState, transactionId?: string): void => {
+  validateD2PostedTransactions(state);
   validateD2SettlementReceipts(state);
   validateSsaMedicarePayments(state);
   for (const [id, entry] of Object.entries(state.contributions ?? {})) {
@@ -920,6 +955,13 @@ export const assertAuthoritativeStateCurrency = (state: AuthoritativeState, curr
   }
   for (const [key, receipt] of Object.entries(state.d2SettlementReceipts ?? {}))
     for (const amount of d2ReceiptAmounts(receipt)) assertCurrency(amount, `d2SettlementReceipts.${key}`, "d2_settlement_receipt", key);
+  const postingIndex = d2PostingIndex(state.d2PostedTransactions);
+  for (const change of postingIndex.changesSince(d2PostingCurrencyChecks.get(currency) ?? new PersistentStringIndex<object>()).changes) {
+    if (change.after === undefined) continue;
+    const proof = state.d2PostedTransactions![accountingTransactionId(change.key)]!;
+    for (const leg of proof.transaction.legs) assertCurrency(leg.amount, `d2PostedTransactions.${change.key}`, "d2_posted_transaction", change.key);
+  }
+  d2PostingCurrencyChecks.set(currency, postingIndex);
   for (const [key, liability] of Object.entries(state.liabilities)) assertCurrency(liability.balance, `liabilities.${key}.balance`, "liability", liability.id);
   for (const [key, position] of Object.entries(state.positions)) {
     assertCurrency(position.price, `positions.${key}.price`, "position", position.id);
@@ -928,6 +970,7 @@ export const assertAuthoritativeStateCurrency = (state: AuthoritativeState, curr
 };
 
 const commitCandidate = (target: AuthoritativeState, candidate: AuthoritativeState): void => {
+  assertD2PostedTransactionHistoryPreserved(target, candidate);
   assertD2SettlementReceiptHistoryPreserved(target, candidate);
   target.accounts = candidate.accounts;
   target.positions = candidate.positions;
@@ -940,6 +983,10 @@ const commitCandidate = (target: AuthoritativeState, candidate: AuthoritativeSta
   else delete target.ssaMedicarePayments;
   if (candidate.d2SettlementReceipts !== undefined) target.d2SettlementReceipts = candidate.d2SettlementReceipts;
   else delete target.d2SettlementReceipts;
+  if (candidate.d2PostedTransactions !== undefined) target.d2PostedTransactions = candidate.d2PostedTransactions;
+  else delete target.d2PostedTransactions;
+  const postingHistory = d2PostingHistories.get(candidate);
+  if (postingHistory !== undefined) d2PostingHistories.set(target, postingHistory);
   const receiptHistory = d2ReceiptHistories.get(candidate);
   if (receiptHistory !== undefined) d2ReceiptHistories.set(target, receiptHistory);
   const indexed = executionStateIndexes.get(candidate);
@@ -949,6 +996,154 @@ const commitCandidate = (target: AuthoritativeState, candidate: AuthoritativeSta
 
 const d2Invalid = (message: string): never => failValidation({ severity: "error", code: "D2_SETTLEMENT_RECEIPT_INVALID",
   entityType: "d2_settlement_receipt", message });
+// A separate commitment inventory binds posting identity to its original
+// operation/source registration. It is consistency evidence, not provider auth.
+const d2PostingKey = (proof: D2PostedTransactionProof): IdempotencyKey => idempotencyKey("d2-shared:posted-proof",
+  paymentValue({ transactionId: proof.transaction.id, writer: proof.writer, registration: proof.registration }));
+const generatedD2PostingProofs = new WeakSet<D2PostedTransactionProof>();
+const d2PostingWrite = (_key: string, previous: D2PostedTransactionProof | undefined, next: D2PostedTransactionProof | undefined): void => {
+  if (previous !== undefined && (next === undefined || paymentValue(previous) !== paymentValue(next)))
+    d2Invalid("Committed posting proof cannot be removed or rewritten");
+  if (previous === undefined && (next === undefined || !generatedD2PostingProofs.has(next)))
+    d2Invalid("Only the canonical accounting writer can append a posting proof");
+};
+const d2PostingRecords = new WeakMap<object, PersistentStringIndex<D2PostedTransactionProof>>();
+const createD2PostingRecord = (index: PersistentStringIndex<D2PostedTransactionProof>): Record<AccountingTransactionId, D2PostedTransactionProof> => {
+  const { record } = indexedRecord(index, false, d2PostingWrite);
+  d2PostingRecords.set(record, index);
+  return record;
+};
+const cloneD2PostingRecord = (record: Record<AccountingTransactionId, D2PostedTransactionProof>) =>
+  createD2PostingRecord(d2PostingRecords.get(record)?.fork() ?? new PersistentStringIndex(
+    Object.entries(record).map(([key, value]) => [key, freezePayment(value)] as const)));
+const d2PostingIndex = (record: AuthoritativeState["d2PostedTransactions"]): PersistentStringIndex<object> =>
+  (record === undefined ? undefined : indexedRecords.get(record)?.index)?.fork()
+    ?? new PersistentStringIndex<object>(Object.entries(record ?? {}));
+interface D2PostingHistory {
+  readonly index: PersistentStringIndex<object>;
+  readonly inventory: PersistentStringIndex<string>;
+  readonly bindings: PersistentStringIndex<D2PostingRegistration & { readonly currency: Currency }>;
+  readonly sources: PersistentStringIndex<D2PostingRegistration>;
+  readonly identities: AuthoritativeIdentityRegistry;
+}
+const d2PostingHistories = new WeakMap<AuthoritativeState, D2PostingHistory>();
+const d2PostingCurrencyChecks = new WeakMap<Currency, PersistentStringIndex<object>>();
+export const assertD2PostedTransactionHistoryPreserved = (before: AuthoritativeState, after: AuthoritativeState): void => {
+  const prior = d2PostingHistories.get(before)?.index ?? d2PostingIndex(before.d2PostedTransactions);
+  for (const change of d2PostingIndex(after.d2PostedTransactions).changesSince(prior).changes)
+    if (change.before !== undefined && (change.after === undefined || paymentValue(change.before) !== paymentValue(change.after)))
+      d2Invalid("Committed posting archive is append-only");
+};
+/** Explicit sparse portable representation, sharing the execution index. */
+export const d2PostedTransactionArchiveDelta = (state: AuthoritativeState, before: AuthoritativeState) => {
+  const changes = d2PostingIndex(state.d2PostedTransactions).changesSince(d2PostingIndex(before.d2PostedTransactions)).changes
+    .filter(c => c.before === undefined || c.after === undefined || paymentValue(c.before) !== paymentValue(c.after));
+  return { present: state.d2PostedTransactions !== undefined,
+    set: Object.fromEntries(changes.flatMap(c => c.after === undefined ? [] : [[c.key, c.after]])),
+    remove: changes.flatMap(c => c.after === undefined ? [c.key] : []) };
+};
+const validateD2Posting = (state: AuthoritativeState, key: string, proof: D2PostedTransactionProof): void => {
+  const { registration: r, transaction: tx } = proof;
+  if (proof.schemaVersion !== "d2-shared/posted-transaction/v1" || proof.writer !== "applyAccountingTransactionAtomically/v1" ||
+      key !== tx.id || !["original", "settlement"].includes(r.role) ||
+      !["fsa_paid_reimbursement", "card_interest_payment"].includes(r.kind)) d2Invalid("Invalid posting proof schema, writer or identity");
+  const strings = [r.operationId, r.householdId, r.personId, r.bankAccountId, tx.id, tx.type,
+    ...(r.kind === "fsa_paid_reimbursement" ? [r.planId, r.planYearId, r.memberId, r.payeeId, r.medicalReceiptId, r.expensePaymentId]
+      : [r.issuerId, r.statementId, r.chargeId, r.liabilityId])];
+  if (strings.some(s => typeof s !== "string" || !s.trim())) d2Invalid("Missing posting proof source/operation identity");
+  instant(tx.date); assertBalanced(tx);
+  const bank = state.accounts[r.bankAccountId];
+  if (!bank || bank.ownerId !== r.personId || !["checking", "savings"].includes(bank.kind)) d2Invalid("Posting proof BANK/owner missing");
+  if (tx.legs.some(leg => !leg.amount.currency.equals(bank!.cash.currency))) d2Invalid("Posting proof currency mismatch");
+  const amount = tx.legs[0]!.amount;
+  const cash = (posting: "debit" | "credit") => createAccountingLeg({ type: "cash", posting, amount, accountId: r.bankAccountId, cashFlowClass: "operating" });
+  let expected: AccountingTransaction["legs"];
+  if (r.kind === "fsa_paid_reimbursement") expected = r.role === "original"
+    ? [createAccountingLeg({ type: "expense", posting: "debit", amount }), cash("credit")]
+    : [cash("debit"), createAccountingLeg({ type: "expense", posting: "credit", amount })];
+  else {
+    const liability = state.liabilities[r.liabilityId];
+    if (!liability || !liability.balance.currency.equals(amount.currency)) d2Invalid("Posting proof liability missing");
+    expected = r.role === "original"
+      ? [createAccountingLeg({ type: "expense", posting: "debit", amount }), createAccountingLeg({ type: "liability", posting: "credit", entityId: r.liabilityId, amount })]
+      : [createAccountingLeg({ type: "liability", posting: "debit", entityId: r.liabilityId, amount }), cash("credit")];
+  }
+  if (paymentValue(tx.legs.map(({ traceRefs: _trace, ...leg }) => leg)) !== paymentValue(expected))
+    d2Invalid("Posting proof is outside the registered D2 signed economic shape");
+};
+/** Cold imports validate the whole proof once; candidates check only appended
+ * AVL paths and changed identity/resource paths. No forecast-month ledger scan. */
+export const validateD2PostedTransactions = (state: AuthoritativeState): void => {
+  const previous = d2PostingHistories.get(state), index = d2PostingIndex(state.d2PostedTransactions);
+  const inventory = previous?.inventory.fork() ?? new PersistentStringIndex<string>();
+  const bindings = previous?.bindings.fork() ?? new PersistentStringIndex<D2PostingRegistration & { readonly currency: Currency }>();
+  const sources = previous?.sources.fork() ?? new PersistentStringIndex<D2PostingRegistration>();
+  const priorIds = previous === undefined ? undefined : identityIndexes.get(previous.identities), nextIds = identityIndexes.get(state.identities);
+  const checkIds = (proof: D2PostedTransactionProof): void => {
+    if (!state.identities.postedTransactionIds.includes(proof.transaction.id) ||
+        !state.identities.externalIdempotencyKeys.includes(d2PostingKey(proof))) d2Invalid("Orphan posting proof lacks canonical commit identities");
+  };
+  for (const change of index.changesSince(previous?.index ?? new PersistentStringIndex<object>()).changes) {
+    if (change.before !== undefined) {
+      if (change.after === undefined || paymentValue(change.before) !== paymentValue(change.after)) d2Invalid("Posting proof history changed");
+      continue;
+    }
+    const proof = state.d2PostedTransactions?.[accountingTransactionId(change.key)] ?? d2Invalid("Missing posting proof");
+    validateD2Posting(state, change.key, proof); checkIds(proof);
+    inventory.set(d2PostingKey(proof), proof.transaction.id);
+    const r = proof.registration, bankKey = `bank:${r.bankAccountId}`, priorBank = bindings.get(bankKey);
+    const sourceKeys = r.kind === "fsa_paid_reimbursement"
+      ? [JSON.stringify([r.kind, "medical", r.medicalReceiptId]), JSON.stringify([r.kind, "expense", r.expensePaymentId])]
+      : [JSON.stringify([r.kind, r.issuerId, r.chargeId])];
+    for (const sourceKey of sourceKeys) {
+      const prior = sources.get(sourceKey);
+      const { role: _role, operationId: _operation, ...binding } = r;
+      if (prior !== undefined) {
+        const { role: _priorRole, operationId: _priorOperation, ...priorBinding } = prior;
+        if (paymentValue(binding) !== paymentValue(priorBinding)) d2Invalid("Archived original/settlement source rebound");
+      }
+      if (sources.has(`${sourceKey}:${r.role}`)) d2Invalid("Original source or settlement posting reused");
+      sources.set(sourceKey, r); sources.set(`${sourceKey}:${r.role}`, r);
+    }
+    if (priorBank !== undefined && (priorBank.personId !== r.personId || priorBank.householdId !== r.householdId ||
+        !priorBank.currency.equals(proof.transaction.legs[0]!.amount.currency)))
+      d2Invalid("Archived BANK owner/household rebound");
+    bindings.set(bankKey, { ...r, currency: proof.transaction.legs[0]!.amount.currency });
+    if (r.kind === "card_interest_payment") {
+      const liabilityKey = `liability:${r.liabilityId}`, prior = bindings.get(liabilityKey);
+      if (prior !== undefined && (prior.kind !== r.kind || prior.issuerId !== r.issuerId || prior.personId !== r.personId || prior.householdId !== r.householdId ||
+          !prior.currency.equals(proof.transaction.legs[0]!.amount.currency)))
+        d2Invalid("Archived liability issuer/owner rebound");
+      bindings.set(liabilityKey, { ...r, currency: proof.transaction.legs[0]!.amount.currency });
+    }
+  }
+  if (priorIds !== undefined && nextIds !== undefined) {
+    for (const change of nextIds.postedTransactionIds.changesSince(priorIds.postedTransactionIds).changes)
+      if (change.before !== undefined && change.after === undefined && index.has(change.key)) d2Invalid("Archived posting identity removed");
+    for (const change of nextIds.externalIdempotencyKeys.changesSince(priorIds.externalIdempotencyKeys).changes)
+      if (change.before !== undefined && change.after === undefined && inventory.has(change.key)) d2Invalid("Posting commitment identity removed");
+  } else if (previous !== undefined && previous.identities !== state.identities)
+    for (const proof of Object.values(state.d2PostedTransactions ?? {})) checkIds(proof);
+  const prefix = idempotencyKey("d2-shared:posted-proof", "sentinel").slice(0, -"8:sentinel".length);
+  const added = priorIds !== undefined && nextIds !== undefined
+    ? nextIds.externalIdempotencyKeys.changesSince(priorIds.externalIdempotencyKeys).changes.flatMap(c => c.after === undefined ? [] : [c.after])
+    : state.identities.externalIdempotencyKeys;
+  for (const id of added) if (id.startsWith(prefix) && !inventory.has(id)) d2Invalid("Posting commitment exists without its archive");
+  const changedKeys = (record: object): Iterable<string> => indexedRecords.get(record)?.dirty ?? Object.keys(record);
+  for (const key of changedKeys(state.accounts)) {
+    const r = bindings.get(`bank:${key}`), bank = state.accounts[key];
+    if (r !== undefined && (!bank || bank.ownerId !== r.personId || !["checking", "savings"].includes(bank.kind) || !bank.cash.currency.equals(r.currency))) d2Invalid("Archived BANK reference changed");
+  }
+  for (const key of changedKeys(state.liabilities)) {
+    const r = bindings.get(`liability:${key}`);
+    if (r !== undefined && (!state.liabilities[key] || !state.liabilities[key]!.balance.currency.equals(r.currency))) d2Invalid("Archived liability removed or currency changed");
+  }
+  if (!indexedRecords.has(state.accounts) || !indexedRecords.has(state.liabilities)) for (const [key, r] of bindings.entries()) {
+    if (key.startsWith("bank:") && !state.accounts[r.bankAccountId] || key.startsWith("liability:") && r.kind === "card_interest_payment" && !state.liabilities[r.liabilityId])
+      d2Invalid("Archived resource removed");
+  }
+  d2PostingHistories.set(state, { index, inventory, bindings, sources, identities: indexedIdentityRegistry(state.identities) });
+};
 const d2ReceiptWrite = (_key: string, previous: D2SettlementReceipt | undefined, next: D2SettlementReceipt | undefined): void => {
   if (previous !== undefined && (next === undefined || paymentValue(previous) !== paymentValue(next)))
     d2Invalid("Committed receipt cannot be removed or rewritten");
@@ -1087,6 +1282,8 @@ export const validateD2SettlementReceipts = (state: AuthoritativeState): void =>
     if (change.before !== undefined) continue;
     const r = state.d2SettlementReceipts?.[change.key] ?? d2Invalid("Missing receipt");
     validateD2Receipt(state, change.key, r);
+    if (!matchD2PostedTransaction(state, r, "original") || !matchD2PostedTransaction(state, r, "settlement"))
+      d2Invalid("Committed receipt lacks actual archived canonical postings");
     admitD2EventOrder(eventOrder, r);
     for (const id of d2ConsumptionKeys(r)) {
       if (consumed.has(id)) d2Invalid("Historical receipt/source/authorization/claim/transaction reused");
@@ -1148,24 +1345,30 @@ const qualifyD2Receipt = (receipt: D2SettlementReceipt, context: D2SettlementSou
     d2Invalid("Receipt differs from independently requalified source, approvals or actual signed journals");
   return result;
 };
-const requalifyD2PostedJournals = (receipt: D2SettlementReceipt, context: D2SettlementSourceContext): boolean => {
-  const authority = d2SourceAuthorities.get(receipt.kind);
-  if (authority === undefined) return false;
-  for (const expected of [receipt.originalTransaction, receipt.paymentTransaction]) {
-    const actual = authority.postedTransaction(expected.id, context);
-    if (actual === undefined) return false;
-    if (paymentValue(actual) !== paymentValue(expected)) d2Invalid("Actual historical journal differs from receipt signed effects");
-  }
+const matchD2PostedTransaction = (state: AuthoritativeState, receipt: D2SettlementReceipt, role: D2PostingRegistration["role"]): boolean => {
+  const expected = role === "original" ? receipt.originalTransaction : receipt.paymentTransaction;
+  const proof = state.d2PostedTransactions?.[expected.id];
+  if (proof === undefined) return false;
+  const registration = d2SettlementPostingRegistration(receipt, role);
+  // Earlier original postings have their own immutable commit operation ID.
+  // Their exact transaction and underlying source identity still must match.
+  const { operationId: _actualOperation, ...actualOriginal } = proof.registration;
+  const { operationId: _expectedOperation, ...expectedOriginal } = registration;
+  if (paymentValue(proof.transaction) !== paymentValue(expected) ||
+      paymentValue(role === "original" ? actualOriginal : proof.registration) !== paymentValue(role === "original" ? expectedOriginal : registration))
+    d2Invalid("Actual archived canonical posting/source binding differs from receipt");
   return true;
 };
 /** Portable restore must call this separately from structural state validation.
  * The artifact's integrity fingerprint cannot replace source-owner admission. */
 export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void => {
+  validateD2PostedTransactions(state);
   validateD2SettlementReceipts(state);
   for (const receipt of Object.values(state.d2SettlementReceipts ?? {})) {
     const result = qualifyD2Receipt(receipt, context);
     if (result.status === "incomplete") throw new Error(`D2_SETTLEMENT_SOURCE_INCOMPLETE: ${result.reason}`);
-    if (!requalifyD2PostedJournals(receipt, context)) throw new Error("D2_SETTLEMENT_SOURCE_INCOMPLETE: posted_journal_unavailable");
+    if (!matchD2PostedTransaction(state, receipt, "original") || !matchD2PostedTransaction(state, receipt, "settlement"))
+      throw new Error("D2_SETTLEMENT_SOURCE_INCOMPLETE: posted_journal_unavailable");
   }
 };
 interface D2RemainingReimbursement {
@@ -1182,6 +1385,7 @@ export type D2SettlementCommitResult = ({ readonly status: "committed" | "alread
  * journal, funding or late validation leaves all balances and identities intact. */
 export const applyD2SettlementAtomically = (state: AuthoritativeState, input: D2SettlementReceipt,
   context: D2SettlementSourceContext): D2SettlementCommitResult => {
+  validateD2PostedTransactions(state);
   const receipt = freezePayment(input);
   validateD2Receipt(state, receipt.id, receipt);
   const qualification = qualifyD2Receipt(receipt, context);
@@ -1190,15 +1394,14 @@ export const applyD2SettlementAtomically = (state: AuthoritativeState, input: D2
   const existing = state.d2SettlementReceipts?.[receipt.id];
   if (existing !== undefined) {
     if (paymentValue(existing) !== paymentValue(receipt)) d2Invalid("Repeated receipt payload changed");
-    if (!requalifyD2PostedJournals(existing, context)) return { status: "incomplete", reason: "posted_journal_unavailable" };
+    if (!matchD2PostedTransaction(state, existing, "original") || !matchD2PostedTransaction(state, existing, "settlement"))
+      return { status: "incomplete", reason: "posted_journal_unavailable" };
     return { status: "already_committed", receipt: existing, ...d2RemainingReimbursement(existing) };
   }
   const candidate = cloneAuthoritativeState(state);
   const priorPosted = candidate.identities.postedTransactionIds.includes(receipt.originalTransaction.id);
   if (priorPosted) {
-    const actual = d2SourceAuthorities.get(receipt.kind)!.postedTransaction(receipt.originalTransaction.id, context);
-    if (actual === undefined) return { status: "incomplete", reason: "original_journal_unavailable" };
-    if (paymentValue(actual) !== paymentValue(receipt.originalTransaction)) d2Invalid("Prior actual journal differs from signed source proof");
+    if (!matchD2PostedTransaction(candidate, receipt, "original")) return { status: "incomplete", reason: "original_journal_unavailable" };
   }
   const bank = candidate.accounts[receipt.bankAccountId]!;
   const expectedCash = priorPosted && receipt.kind === "fsa_paid_reimbursement"
@@ -1214,11 +1417,11 @@ export const applyD2SettlementAtomically = (state: AuthoritativeState, input: D2
   if (candidate.obligations[receipt.claimId]) d2Invalid("Existing claim lifecycle requires its owning domain adapter");
   if (d2ConsumptionKeys(receipt).some(id => candidate.identities.externalIdempotencyKeys.includes(id)))
     d2Invalid("Receipt operation/source/authorization/claim/transaction already consumed");
-  if (!priorPosted) applyAccountingTransactionAtomically(candidate, receipt.originalTransaction);
+  if (!priorPosted) applyAccountingTransactionAtomically(candidate, receipt.originalTransaction, d2SettlementPostingRegistration(receipt, "original"));
   if (candidate.identities.recognitionIds.includes(receipt.recognitionId)) {
     if (!priorPosted) d2Invalid("Recognition identity already used");
   } else registerAuthoritativeIdentity(candidate.identities, "recognitionIds", receipt.recognitionId);
-  applyAccountingTransactionAtomically(candidate, receipt.paymentTransaction);
+  applyAccountingTransactionAtomically(candidate, receipt.paymentTransaction, d2SettlementPostingRegistration(receipt, "settlement"));
   registerAuthoritativeIdentity(candidate.identities, "settlementIds", receipt.settlementId);
   for (const id of d2ConsumptionKeys(receipt)) registerAuthoritativeIdentity(candidate.identities, "externalIdempotencyKeys", id);
   const record = candidate.d2SettlementReceipts ?? indexedRecord(new PersistentStringIndex<D2SettlementReceipt>(), false, d2ReceiptWrite, freezePayment).record;
@@ -1358,10 +1561,14 @@ export const applyPositionValuationAtomically = (state: AuthoritativeState, inpu
   commitCandidate(state, positionValuationCandidate(state, input));
 };
 
-/** Applies a complete accounting transaction to isolated candidate state and commits only after all invariants pass. */
+/** Applies a complete accounting transaction to isolated candidate state and
+ * commits only after all invariants pass. Optional D2 proof registration is
+ * first-posting-only; it cannot backfill an existing transaction ID. In a
+ * household candidate it remains staged until that period is committed. */
 export const applyAccountingTransactionAtomically = (
   state: AuthoritativeState,
   transaction: AccountingTransaction,
+  proofRegistration?: D2PostingRegistration,
 ): void => {
   assertBalanced(transaction);
   const candidate = cloneAuthoritativeState(state);
@@ -1397,6 +1604,16 @@ export const applyAccountingTransactionAtomically = (
     }
   }
 
+  if (proofRegistration !== undefined) {
+    const proof = freezePayment<D2PostedTransactionProof>({ schemaVersion: "d2-shared/posted-transaction/v1",
+      writer: "applyAccountingTransactionAtomically/v1", registration: proofRegistration, transaction });
+    validateD2Posting(candidate, transaction.id, proof);
+    generatedD2PostingProofs.add(proof);
+    const archive = candidate.d2PostedTransactions ?? createD2PostingRecord(new PersistentStringIndex<D2PostedTransactionProof>());
+    archive[transaction.id] = proof;
+    candidate.d2PostedTransactions = archive;
+    registerAuthoritativeIdentity(candidate.identities, "externalIdempotencyKeys", d2PostingKey(proof));
+  }
   validateAuthoritativeState(candidate, transaction.id);
   commitCandidate(state, candidate);
 };

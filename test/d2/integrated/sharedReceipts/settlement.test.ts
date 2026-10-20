@@ -3,16 +3,16 @@ import { accountingTransactionId, createAccountingLeg, createAccountingTransacti
 import { domainId } from "../../../../src/identity/index.js";
 import { applyAccountingTransactionAtomically, applyD2SettlementAtomically, assertAuthoritativeStateCurrency,
   authoritativeStateChangesSince, cloneAuthoritativeState, createAuthoritativeState, createIndexedExecutionState,
-  d2SettlementSourceFingerprint, requalifyD2SettlementReceiptHistory, validateAuthoritativeState,
+  d2SettlementPostingRegistration, d2SettlementSourceFingerprint, requalifyD2SettlementReceiptHistory, validateAuthoritativeState,
   type D2CardSettlementReceipt, type D2FsaSettlementReceipt, type D2SettlementReceipt } from "../../../../src/state/index.js";
 import { canonicalSerialize } from "../../../../src/simulation/run.js";
 import { instant } from "../../../../src/time/index.js";
 import { Currency, money } from "../../../../src/values/index.js";
-import { actualJournals, admit, availability, capturePostedJournals, card, context, fsa, ids, independentSources, registerMockAuthorities, state } from "./scenario.js";
+import { admit, availability, card, context, fsa, ids, independentSources, registerMockAuthorities, state } from "./scenario.js";
 
 registerMockAuthorities();
 beforeEach(() => {
-  actualJournals.clear(); independentSources.clear();
+  independentSources.clear();
   availability.source = true; availability.calls = 0; availability.failAt = 0;
 });
 const same = (a: unknown, b: unknown) => canonicalSerialize(a) === canonicalSerialize(b);
@@ -34,7 +34,6 @@ describe("#149 typed shared settlement foundation (independent mock sources only
     expect(r.interestAllocation.plus(r.principalAllocation).equals(money("200"))).toBe(true);
     expect(r.paymentTransaction.legs.some(l => l.type === "expense")).toBe(false);
     expect(s.identities.postedTransactionIds).toHaveLength(2);
-    capturePostedJournals(r);
     const before = canonicalSerialize(s);
     expect(applyD2SettlementAtomically(s, r, context).status).toBe("already_committed");
     expect(canonicalSerialize(s)).toBe(before);
@@ -43,16 +42,14 @@ describe("#149 typed shared settlement foundation (independent mock sources only
   it("pays eligible $1000 expense before equal plan deposit, with no wage or entitlement asset", () => {
     const r = admit(fsa()), s = state("1500");
     const paid = cloneAuthoritativeState(s);
-    applyAccountingTransactionAtomically(paid, r.originalTransaction);
+    applyAccountingTransactionAtomically(paid, r.originalTransaction, d2SettlementPostingRegistration(r, "original"));
     expect(paid.accounts[ids.bank]!.cash.equals(money("500"))).toBe(true);
-    actualJournals.set(r.originalTransaction.id, r.originalTransaction);
     expect(applyD2SettlementAtomically(paid, r, context).status).toBe("committed");
     expect(paid.accounts[ids.bank]!.cash.equals(money("1500"))).toBe(true);
     expect(paid.identities.postedTransactionIds).toHaveLength(2);
     expect(paid.positions).toEqual({});
     expect(paid.obligations).toEqual({});
     expect([...r.originalTransaction.legs, ...r.paymentTransaction.legs].some(l => l.type === "income" || l.type === "asset")).toBe(false);
-    capturePostedJournals(r);
     const original = canonicalSerialize(paid);
     expect(applyD2SettlementAtomically(paid, r, context).status).toBe("already_committed");
     expect(canonicalSerialize(paid)).toBe(original);
@@ -67,8 +64,7 @@ describe("#149 typed shared settlement foundation (independent mock sources only
 
   it.each(["500", "500.01"])("records only the authenticated $%s partial reimbursement and consumes the claim once", amount => {
     const r = admit(fsa("partial", amount)), s = state("1500");
-    applyAccountingTransactionAtomically(s, r.originalTransaction);
-    actualJournals.set(r.originalTransaction.id, r.originalTransaction);
+    applyAccountingTransactionAtomically(s, r.originalTransaction, d2SettlementPostingRegistration(r, "original"));
     expect(s.accounts[ids.bank]!.cash.equals(money("500"))).toBe(true);
     const result = applyD2SettlementAtomically(s, r, context);
     expect(result.status).toBe("committed");
@@ -80,7 +76,6 @@ describe("#149 typed shared settlement foundation (independent mock sources only
     expect(s.obligations).toEqual({}); // No claim-wide settled assertion.
     expect(s.positions).toEqual({});
     expect(s.identities.postedTransactionIds).toHaveLength(2);
-    capturePostedJournals(r);
     const before = canonicalSerialize(s);
     const repeat = applyD2SettlementAtomically(s, r, context);
     expect(repeat).toMatchObject({ status: "already_committed", remainingReimbursement: result.remainingReimbursement });
@@ -98,9 +93,8 @@ describe("#149 typed shared settlement foundation (independent mock sources only
 
   it("accepts independently verified prior card recognition without recognizing interest twice", () => {
     const r = admit(card()), s = state();
-    applyAccountingTransactionAtomically(s, r.originalTransaction);
+    applyAccountingTransactionAtomically(s, r.originalTransaction, d2SettlementPostingRegistration(r, "original"));
     expect(s.liabilities[ids.liability]!.balance.equals(money("1020"))).toBe(true);
-    actualJournals.set(r.originalTransaction.id, r.originalTransaction);
     expect(applyD2SettlementAtomically(s, r, context).status).toBe("committed");
     expect(s.liabilities[ids.liability]!.balance.equals(money("820"))).toBe(true);
     expect(s.identities.postedTransactionIds).toHaveLength(2);
@@ -189,8 +183,10 @@ describe("#149 typed shared settlement foundation (independent mock sources only
     const before = canonicalSerialize(s);
     expect(applyD2SettlementAtomically(s, r, context)).toEqual({ status: "incomplete", reason: "original_journal_unavailable" });
     expect(canonicalSerialize(s)).toBe(before);
-    actualJournals.set(r.originalTransaction.id, createAccountingTransaction({ ...r.originalTransaction, type: "altered-original" }));
-    expect(() => applyD2SettlementAtomically(s, r, context)).toThrow();
+    const differentlyPosted = state("1500");
+    applyAccountingTransactionAtomically(differentlyPosted, createAccountingTransaction({ ...r.originalTransaction, type: "altered-original" }),
+      d2SettlementPostingRegistration(r, "original"));
+    expect(() => applyD2SettlementAtomically(differentlyPosted, r, context)).toThrow();
     expect(canonicalSerialize(s)).toBe(before);
   });
 
@@ -338,14 +334,14 @@ describe("#149 typed shared settlement foundation (independent mock sources only
     expect(canonicalSerialize(imported)).toBe(before);
   });
 
-  it("requires independently available actual journals even for identical imported receipts", () => {
+  it("recovers actual journals from committed state independently of provider qualification", () => {
     const r = admit(card()), s = state(); applyD2SettlementAtomically(s, r, context);
     const imported = createAuthoritativeState(s), before = canonicalSerialize(imported);
-    expect(applyD2SettlementAtomically(imported, r, context)).toEqual({ status: "incomplete", reason: "posted_journal_unavailable" });
-    capturePostedJournals(r);
+    expect(applyD2SettlementAtomically(imported, r, context).status).toBe("already_committed");
     expect(() => requalifyD2SettlementReceiptHistory(imported, context)).not.toThrow();
-    actualJournals.set(r.paymentTransaction.id, createAccountingTransaction({ ...r.paymentTransaction, type: "rewritten-payment" }));
-    expect(() => requalifyD2SettlementReceiptHistory(imported, context)).toThrow();
+    const original = imported.d2PostedTransactions![r.paymentTransaction.id]!;
+    expect(() => createAuthoritativeState({ ...imported, d2PostedTransactions: { ...imported.d2PostedTransactions,
+      [r.paymentTransaction.id]: { ...original, transaction: createAccountingTransaction({ ...r.paymentTransaction, type: "rewritten-payment" }) } } })).toThrow();
     expect(canonicalSerialize(imported)).toBe(before);
   });
 

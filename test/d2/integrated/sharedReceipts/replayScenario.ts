@@ -4,7 +4,7 @@ import { createRunContext, runId, scenarioId } from "../../../../src/simulation/
 import { applyD2SettlementAtomically, d2SettlementSourceFingerprint, type D2SettlementReceipt } from "../../../../src/state/index.js";
 import { instant, utcMonthlyPeriods } from "../../../../src/time/index.js";
 import { money, USD } from "../../../../src/values/index.js";
-import { admit, capturePostedJournals, card, context, fsa, ids, state } from "./scenario.js";
+import { admit, card, context, fsa, ids, state } from "./scenario.js";
 import { laterParticipant, laterReceipt } from "./laterParticipant.js";
 
 const ordered = (receipt: D2SettlementReceipt, position: number): D2SettlementReceipt => {
@@ -20,28 +20,28 @@ const ordered = (receipt: D2SettlementReceipt, position: number): D2SettlementRe
 export const loadIndependentReplaySources = () => {
   // These fixed fixtures stand in for an independent source store in each
   // process. No evidence is recovered from the artifact's purported receipts.
-  for (let n = 0; n < 13; n++) capturePostedJournals(admit(ordered(fsa(`portable-fsa:${n}`), n)));
-  capturePostedJournals(admit(ordered({ ...card("portable-card"), bankCashBefore: money("1500") }, 13)));
-  capturePostedJournals(admit(laterReceipt()));
+  for (let n = 0; n < 13; n++) admit(ordered(fsa(`portable-fsa:${n}`), n));
+  admit(ordered({ ...card("portable-card"), bankCashBefore: money("1500") }, 13));
+  admit(laterReceipt());
+  admit(laterReceipt("card"));
 };
-export const replayFixture = (withReceipts = true, months = 13, emptyReceipts = false, inHorizon = false) => {
-  const opening = state("1500");
-  if (emptyReceipts) opening.d2SettlementReceipts = {};
+export const replayFixture = (withReceipts = true, months = 13, emptyReceipts = false, inHorizon = false, kind: "fsa" | "card" = "fsa") => {
+  const opening = state(inHorizon && kind === "card" ? "500" : "1500");
+  if (emptyReceipts) { opening.d2SettlementReceipts = {}; opening.d2PostedTransactions = {}; }
   if (withReceipts) {
     for (let n = 0; n < 13; n++) {
       const receipt = admit(ordered(fsa(`portable-fsa:${n}`), n));
-      applyD2SettlementAtomically(opening, receipt, context); capturePostedJournals(receipt);
+      applyD2SettlementAtomically(opening, receipt, context);
     }
     const receipt = admit(ordered({ ...card("portable-card"), bankCashBefore: opening.accounts[ids.bank]!.cash }, 13));
     applyD2SettlementAtomically(opening, receipt, context);
-    capturePostedJournals(receipt);
   }
   const start = instant("2026-02-01T00:00:00.000Z");
   const runContext = createRunContext({ ...context, runId: runId("149b0000-0000-4000-8000-000000000001"),
     scenarioId: scenarioId("149b0000-0000-4000-8000-000000000002"), simulationStart: start,
     simulationEnd: utcMonthlyPeriods(start, months).at(-1)!.end, baseCurrency: USD });
   const kernel = compileHouseholdKernel({ reconciledOpeningState: opening, reconciledPrimitiveState: createPrimitiveRuntimeStateStore(),
-    ...(inHorizon ? { participants: [laterParticipant()] } : {}),
+    ...(inHorizon ? { participants: [laterParticipant(kind)] } : {}),
     scenarioIdentity: runContext.scenarioId, executionMonths: months,
     scenarioBindings: { synthetic: "#149 receipt persistence only; no FSA/card adapter or tax coverage" } }, start);
   return { opening, kernel, runContext };

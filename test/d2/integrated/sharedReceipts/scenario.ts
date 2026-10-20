@@ -64,7 +64,6 @@ export const fsa = (key = "fsa", reimbursement = "1000"): D2FsaSettlementReceipt
  * fixture, never from the qualify callback's caller-supplied binding. Production
  * plan/issuer evaluation is deliberately absent from this foundation. */
 export const independentSources = new Map<string, D2SettlementReceipt>();
-export const actualJournals = new Map<string, AccountingTransaction>();
 export const availability = { source: true, calls: 0, failAt: 0 };
 const authority: D2SettlementSourceAuthority = {
   qualify: binding => {
@@ -73,7 +72,6 @@ const authority: D2SettlementSourceAuthority = {
     const receipt = independentSources.get(binding.sourceId);
     return receipt === undefined ? { status: "incomplete", reason: "source_not_qualified" } : { status: "qualified", receipt };
   },
-  postedTransaction: id => actualJournals.get(id),
 };
 export const registerMockAuthorities = () => {
   registerD2SettlementSourceAuthority("card_interest_payment", authority);
@@ -82,8 +80,4 @@ export const registerMockAuthorities = () => {
 export const admit = <T extends D2SettlementReceipt>(receipt: T): T => {
   independentSources.set(receipt.source.sourceId, receipt);
   return receipt;
-};
-export const capturePostedJournals = (receipt: D2SettlementReceipt): void => {
-  actualJournals.set(receipt.originalTransaction.id, receipt.originalTransaction);
-  actualJournals.set(receipt.paymentTransaction.id, receipt.paymentTransaction);
 };
