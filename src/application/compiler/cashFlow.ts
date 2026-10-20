@@ -1,4 +1,5 @@
 import { createFundingPolicy, fundingPolicyId } from "../../funding/index.js";
+import { ValidationError } from "../../diagnostics/index.js";
 import { domainId } from "../../identity/index.js";
 import {
   calculationTraceId,
@@ -7,6 +8,7 @@ import {
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { deriveCanonicalRetirementBindings } from "./retirementAuthoring.js";
 import { durablePayrollAllocations, payrollOpeningBalances, supportsD1SpouseHsaScope } from "./payrollAuthoring.js";
+import { durablePayrollWithholding } from "./payrollWithholding.js";
 import { compileOpeningContributionUsage } from "./contributionOpening.js";
 import {
   createAuthoritativeState,
@@ -631,6 +633,18 @@ const validateEventReference = (
 export const compileCashFlow = (
   model: PortableModelEnvelope,
   request: CashFlowCompilerRequest,
+): CompileResult<CompiledCashFlow> => compileCashFlowSources(model, request, false);
+
+/** Household-only partial seam: the tax participant reports omitted source economics. */
+export const compileHouseholdCashFlow = (
+  model: PortableModelEnvelope,
+  request: CashFlowCompilerRequest,
+): CompileResult<CompiledCashFlow> => compileCashFlowSources(model, request, true);
+
+const compileCashFlowSources = (
+  model: PortableModelEnvelope,
+  request: CashFlowCompilerRequest,
+  partialPayroll: boolean,
 ): CompileResult<CompiledCashFlow> => {
   const preflight = preflightCanonicalCollections(model, [
     "Household",
@@ -1541,6 +1555,12 @@ export const compileCashFlow = (
   const expenseStructural = validateInScopeStreams("Expense", expenses);
   if (expenseStructural) return expenseStructural;
 
+  const unsupportedSalary = (stream: CanonicalObject): boolean => stream.income_type === "salary" &&
+    (stream.frequency !== "monthly" || stream.gross_or_net === "net");
+  let withholding: ReturnType<typeof durablePayrollWithholding>;
+  try { withholding = durablePayrollWithholding(model); }
+  catch (error) { if (error instanceof ValidationError) return { status: "invalid_model", diagnostics: error.issues }; throw error; }
+
   const slots: string[] = ["payable"];
   for (const [type, collection, all] of [
     ["Income", incomes, allIncomes],
@@ -1587,6 +1607,17 @@ export const compileCashFlow = (
         request.retirementBindings ?? [],
       );
       if (event) return event;
+      // Structural validation above still covers omitted sources. Do not invent
+      // a gross monthly schedule for legitimate unsupported salary facts.
+      if (type === "Income" && unsupportedSalary(stream)) {
+        if (partialPayroll) continue;
+        // Preserve the established general recurrence diagnostic where no
+        // payroll election is authored. A sourced payroll election adds its
+        // more specific unsupported gross-to-net capability, never a schedule.
+        const payrollElection = withholding.some(item => item.incomeId === id);
+        return unsupportedResult(stream.frequency !== "monthly" && !payrollElection ? "RECURRENCE_UNSUPPORTED" : "PAYROLL_SOURCE_UNSUPPORTED",
+          `Income ${id} requires unsupported pay frequency or net-to-gross mechanics.`, "Income", id);
+      }
       if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never))
         return invalidResult(
           "RECURRENCE_INVALID",
@@ -1710,6 +1741,7 @@ export const compileCashFlow = (
   for (const stream of [...incomes].sort((a, b) =>
     String(a.income_id).localeCompare(String(b.income_id)),
   )) {
+    if (partialPayroll && unsupportedSalary(stream)) continue;
     const id = canonicalId(stream, "income_id")!;
     const growth = resolveGrowth(model, stream, "Income", selected);
     if (growth.status !== "compiled") return growth;
@@ -1728,7 +1760,8 @@ export const compileCashFlow = (
           stream.owner_id === scope.householdId ? "household" : "person",
           String(stream.owner_id),
         ),
-        depositAccountId: domainId("account", accountId),
+        depositAccountId: withholding.find(item => item.incomeId === id)?.depositAccountId ?? domainId("account", accountId),
+        ...(withholding.some(item => item.incomeId === id) ? { payrollWithholding: withholding.filter(item => item.incomeId === id), payrollTaxCreditAccountId: domainId("account", accountId) } : {}),
         payrollContributions: payroll.filter(item => item.incomeId === id).map(item => item.allocation),
         baseMonthlyAmount: money(String(stream.amount), currency),
         start,
@@ -1893,7 +1926,7 @@ export const compileCashFlow = (
   try {
     const ownerId = domainId("person", scope.memberIds[0]!);
     const cashAccountId = domainId("account", accountId);
-    const retirementEvents = [...retirementByIncome.values()].map((binding) =>
+    const retirementEvents = [...retirementByIncome.values()].filter(binding => compiledIncomes.some(income => income.id === binding.incomeId)).map((binding) =>
       Object.freeze({
         id: domainId("event", binding.terminationEventId),
         targetId: domainId("income", binding.incomeId),

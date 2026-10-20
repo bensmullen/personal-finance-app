@@ -37,7 +37,8 @@ describe("D1 committed contribution tax integration", () => {
     };
     const compiled = { ...fixture.compiled, reconciledOpeningState: opening };
     const result = runHouseholdKernel({ kernel: compileHouseholdKernel(compiled, start), runContext: fixture.context, resultTier: "detail" });
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("incomplete");
+    expect(result.outputCapabilities?.cash?.diagnostics).toContainEqual(expect.objectContaining({ category: "wage_gross_to_net_withholding" }));
     expect(result.periods[0]!.statements.income.amount.toString()).toBe("1000");
     expect(result.periods[0]!.statements.expenses.amount.toString()).toBe("100");
     expect(result.periods[0]!.cash.amount.toString()).toBe("1000");
@@ -55,7 +56,8 @@ describe("D1 committed contribution tax integration", () => {
     } }] : [] }) };
     const kernel = compileHouseholdKernel({ ...fixture.compiled, participants: [...fixture.compiled.participants, participant] }, start);
     const detail = runHouseholdKernel({ kernel, runContext: fixture.context, resultTier: "detail" }), summary = runHouseholdKernel({ kernel, runContext: fixture.context });
-    expect(detail.status, JSON.stringify(detail.diagnostics)).toBe("completed");
+    expect(detail.status, JSON.stringify(detail.diagnostics)).toBe("incomplete");
+    expect(detail.outputCapabilities?.cash?.diagnostics).toContainEqual(expect.objectContaining({ category: "wage_gross_to_net_withholding" }));
     expect(detail.periods[0]!.statements.expenses.amount.toString()).toBe("100");
     expect(detail.periods[1]!.statements.expenses.amount.toString()).toBe("-50");
     expect(detail.periods[1]!.statements.income.isZero()).toBe(true);
@@ -73,7 +75,8 @@ describe("D1 committed contribution tax integration", () => {
     const tax = createHouseholdTaxParticipant({ ...fixture.input, catalog: [{ ...fixture.input.catalog[0]!, payroll: syntheticPayroll }] });
     const compiled = { ...fixture.compiled, participants: [tax], cashFlowInput: { ...fixture.compiled.cashFlowInput, incomes: fixture.compiled.cashFlowInput.incomes.map(income => ({ ...income, payrollContributions: [allocation] })) } };
     const result = runHouseholdKernel({ kernel: compileHouseholdKernel(compiled, start), runContext: fixture.context, resultTier: "detail" });
-    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("incomplete");
+    expect(result.outputCapabilities?.cash?.diagnostics).toContainEqual(expect.objectContaining({ category: "wage_gross_to_net_withholding" }));
     expect(result.periods[0]!.statements.expenses.amount.toString()).toBe(expectedTax);
     expect(result.periods[0]!.statements.income.amount.toString()).toBe(character.startsWith("employer_") ? "1100" : "1000");
     expect(result.periods[0]!.cash.amount.toString()).toBe(character.startsWith("employer_") ? "1000" : "900");
