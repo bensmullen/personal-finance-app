@@ -29,13 +29,19 @@ import { forecastDiagnosticMessage } from "../ui/entityPresentation.js";
 import { compileHouseholdTax } from "../src/application/compiler/tax.js";
 import { resolveAnnualFinancialFact } from "../src/application/financialFacts.js";
 
-const loadExample = async (page: import("@playwright/test").Page) => {
+const loadExample = async (page: import("@playwright/test").Page, model = createGoldenHouseholdExampleDraft()) => {
   // Preserve the historical bounded D1 fixture. The flagship has independent
   // one-click U1B coverage rather than changed historical financial assertions.
-  await importDraft(page, createGoldenHouseholdExampleDraft());
+  await importDraft(page, model);
   await configureOwnedFunding(page);
   await page.getByLabel("Simulation end", { exact: true }).fill("2036-01-01");
   await configureTaxSettlement(page);
+  // Import drops session-only authorization. Accept the historical binding
+  // through its existing owner before exercising retirement comparisons.
+  await openPlanDetails(page);
+  await page.getByLabel("Baseline retirement income", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.income);
+  await page.getByLabel("Baseline canonical retirement event", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.retirementEvent);
+  await page.getByRole("button", { name: "Apply retirement binding", exact: true }).click();
   await page.locator('[data-repair="lawScenario"]').check();
   await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
   await clickFinancialDestination(page, "Overview");
@@ -523,7 +529,9 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   const errors: string[] = [];
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   page.on("pageerror", error => errors.push(error.message));
-  await loadExample(page);
+  // Explicit synthetic opening cash funds the $300,000 extra-principal test.
+  // The ordinary historical fixture cannot fund that payment from bank cash.
+  await loadExample(page, patchPersonalObject(createGoldenHouseholdExampleDraft(), "Account", GOLDEN_HOUSEHOLD_IDS.checking, { opening_balance: "400000.00" }));
   await openSalaryFacts(page);
   await page.getByRole("button", { name: "Planning", exact: true }).click();
   await openAuthoringSections(page);

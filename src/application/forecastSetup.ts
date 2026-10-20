@@ -41,18 +41,23 @@ export function acceptPlanningStarters(model: PersonalDraft, values: PlanningSta
     if (value === undefined) continue;
     if (!/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) || (key === "reserveMonths" ? !/^\d+$/.test(value) : decimal(value).compare(decimal("-1")) <= 0)) throw new Error("Use an exact annual rate greater than -100%, or a whole nonnegative number of reserve months.");
     if ((next.objects.Assumption ?? []).filter(isObject).some(item => item.scenario_id === plan.scenario_id && (key === "reserveMonths" ? item.name === "Essential-expense reserve goal" : item.category === category))) continue;
-    const assumptionId = id(), primitiveId = id();
+    const assumptionId = id();
     next = addPersonalObject(next, "Assumption", assumptionId, { name: key === "reserveMonths" ? "Essential-expense reserve goal" : `Accepted starting point · ${category}`, category, value,
-      unit: key === "reserveMonths" ? "months of essential expenses (goal only; no transfers)" : "effective annual rate", scenario_id: plan.scenario_id!, start_date: plan.start_date! });
+      unit: key === "reserveMonths" ? "months of essential expenses (goal only; no transfers)" : "effective annual rate", scenario_id: plan.scenario_id! });
     next = { ...next, objects: { ...next.objects,
       Scenario: (next.objects.Scenario ?? []).map(item => isObject(item) && item.scenario_id === plan.scenario_id ? { ...item, assumption_ids: [...(Array.isArray(item.assumption_ids) ? item.assumption_ids : []), assumptionId] } : item),
     } };
     if (!collection) continue;
-    if (!UUID.test(primitiveId) || (next.objects.PrimitiveInstance ?? []).filter(isObject).some(item => item.primitive_instance_id === primitiveId)) throw new Error("Starting point requires a unique primitive identity.");
-    next = { ...next, objects: { ...next.objects, PrimitiveInstance: [...(next.objects.PrimitiveInstance ?? []), { primitive_instance_id: primitiveId, primitive_id: primitive, input_bindings: { rate: assumptionId }, parameters: {}, scenario_id: plan.scenario_id!, enabled: true }] } };
-    next = { ...next, objects: { ...next.objects,
-      [collection]: (next.objects[collection] ?? []).map(item => isObject(item) && item[link] == null && (collection !== "Income" || item.income_type === "salary") && (collection !== "Investment" || item.investment_type === "fund") ? { ...item, [link]: primitiveId } : item),
-    } };
+    // Rates are shared facts; executable identities belong to each source.
+    const primitives = [...(next.objects.PrimitiveInstance ?? [])];
+    const entries = (next.objects[collection] ?? []).map(item => {
+      if (!isObject(item) || item[link] != null || (collection === "Income" && item.income_type !== "salary") || (collection === "Investment" && item.investment_type !== "fund")) return item;
+      const primitiveId = id();
+      if (!UUID.test(primitiveId) || primitives.filter(isObject).some(existing => String(existing.primitive_instance_id).toLowerCase() === primitiveId.toLowerCase())) throw new Error("Starting point requires a unique primitive identity.");
+      primitives.push({ primitive_instance_id: primitiveId, primitive_id: primitive, input_bindings: { rate: assumptionId }, parameters: {}, scenario_id: plan.scenario_id!, enabled: true });
+      return { ...item, [link]: primitiveId };
+    });
+    next = { ...next, objects: { ...next.objects, PrimitiveInstance: primitives, [collection]: entries } };
   }
   return next;
 }

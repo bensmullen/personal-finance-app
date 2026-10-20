@@ -2,6 +2,8 @@ import { test, expect, type Page, type Locator } from "@playwright/test";
 import { FINANCIAL_FIELDS, entityField } from "../ui/authoring/fieldContract.js";
 import { readFileSync } from "node:fs";
 import { navigateOwner, showReadiness } from "./navigation.js";
+import { createGoldenHouseholdExampleDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
+import { GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 
 const navigate = async (page: Page, area: string, section: string) => {
   await navigateOwner(page, area, section);
@@ -12,6 +14,39 @@ const navigate = async (page: Page, area: string, section: string) => {
 const open = async (scope: Page | Locator, title: string) => {
   const summary = scope.locator("summary").filter({ hasText: title }).first();
   if (await summary.locator("..").getAttribute("open") === null) await summary.click();
+};
+// These journeys exercise the historical NY incomplete-payroll contract. The
+// July-pay Philadelphia age-90 flagship has separate one-click coverage.
+const loadHistoricalMonthlyExample = async (page: Page) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
+  await navigate(page, "Settings", "Import / Export");
+  await page.locator('input[type="file"]').setInputFiles({ name: "historical-monthly.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(createGoldenHouseholdExampleDraft())) });
+  await page.getByRole("button", { name: "Import into session", exact: true }).click();
+  await navigate(page, "Money", "Income");
+  await page.getByLabel("Income receiving account", { exact: true }).selectOption(ids.checking);
+  await navigate(page, "Net Worth", "Debt");
+  await open(page, "Debt & mortgage");
+  await page.getByLabel("Debt owner", { exact: true }).selectOption(ids.person);
+  const mortgage = page.getByRole("group", { name: "Example mortgage", exact: true });
+  await mortgage.getByLabel("First monthly payment", { exact: true }).fill("2022-02-01");
+  await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("360");
+  await mortgage.getByLabel("Mortgage payment account", { exact: true }).selectOption(ids.checking);
+  await mortgage.getByLabel("Same-day mortgage order", { exact: true }).fill("1");
+  await navigate(page, "Plan", "Current Plan");
+  await page.getByLabel("Simulation end", { exact: true }).fill("2026-04-01");
+  await open(page, "Investments");
+  await page.getByLabel("Investment owner", { exact: true }).selectOption(ids.person);
+  await open(page, "Tax payments & refunds");
+  const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
+  await taxes.getByLabel("Tax payment account", { exact: true }).selectOption(ids.checking);
+  await taxes.getByLabel("Tax refund account", { exact: true }).selectOption(ids.checking);
+  for (const [jurisdiction, label] of [["US:FEDERAL", "Federal income tax"], ["US:NY", "New York"]]) {
+    await taxes.getByRole("button", { name: `Suggest April 15 for ${label}`, exact: true }).click();
+    await taxes.getByLabel(`Confirm ${jurisdiction} forecast settlement convention`, { exact: true }).check();
+  }
+  await page.locator('[data-repair="lawScenario"]').check();
+  await expect(page.getByRole("status", { name: "Household forecast status", exact: true })).toHaveAttribute("data-lifecycle", "incomplete", { timeout: 30_000 });
 };
 const assertContractAndGeometry = async (page: Page, width: number) => {
   const registry = JSON.parse(readFileSync(new URL("../docs/specs/verification/u1-fact-ownership.json", import.meta.url), "utf8")) as { records: { id: string }[] };
@@ -56,9 +91,7 @@ test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
-  await page.goto("/");
-  await page.getByRole("button", { name: "Use synthetic example" }).click();
-  await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  await loadHistoricalMonthlyExample(page);
   await navigate(page, "Money", "Cash Flow");
   const pay = page.getByRole("region", { name: "Your Paycheck", exact: true });
   await expect(pay.getByRole("button", { name: "Review selected month" })).toHaveCount(0);
@@ -99,8 +132,7 @@ test("U1 normal navigation, staged salary, direct repair, mortgage and horizon g
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
-  await page.goto("/");
-  await page.getByRole("button", { name: "Use synthetic example" }).click();
+  await loadHistoricalMonthlyExample(page);
   const status = page.getByRole("status", { name: "Household forecast status" });
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete", { timeout: 30_000 });
   await expect(status).toContainText("New York");

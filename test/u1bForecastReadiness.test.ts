@@ -85,6 +85,43 @@ describe("U1B sourced planning readiness", () => {
     expect(result.points[0]!.outputCapabilities?.cash?.status).toBe("complete");
     expect(model.objects.Income).toHaveLength(1);
   }, 30_000);
+  it("executes accepted starters with unique source bindings and changed economics without mutating the proposal", () => {
+    const fixture = createFlagshipHouseholdDraft();
+    // Isolate genuinely unspecified rates while retaining the fixture's explicit
+    // dates, payroll elections, ownership and settlement authorizations.
+    const model: PersonalDraft = { ...fixture, objects: { ...fixture.objects,
+      Assumption: [],
+      PrimitiveInstance: (fixture.objects.PrimitiveInstance as readonly JsonObject[]).filter(item => !["P08", "P23"].includes(String(item.primitive_id))),
+      Scenario: (fixture.objects.Scenario as readonly JsonObject[]).map(item => ({ ...item, assumption_ids: [] })),
+      Income: (fixture.objects.Income as readonly JsonObject[]).map(item => ({ ...item, growth_model_id: null })),
+      Expense: (fixture.objects.Expense as readonly JsonObject[]).map(item => ({ ...item, growth_model_id: null })),
+      Investment: (fixture.objects.Investment as readonly JsonObject[]).map(item => ({ ...item, return_model_id: null })),
+    } };
+    const before = exportPersonalModelJson(model);
+    const request = createHouseholdForecastRequest({ ...createGoldenExampleConfiguration(), simulationEnd: "2027-09-01", investmentPurchaseInstructions: [] }, ids.model);
+    const fingerprint = calculationFingerprint("baseline_forecast", model, request);
+    let index = 600;
+    const accepted = acceptPlanningStarters(model, { inflation: "0.025", wages: "0.03", portfolio: "0.05", reserveMonths: "6" }, () => `90000000-0000-4000-8000-${String(index++).padStart(12, "0")}`);
+    const expenseBindings = (accepted.objects.Expense as readonly JsonObject[]).map(item => item.growth_model_id);
+    expect(new Set(expenseBindings).size).toBe(3);
+    expect(expenseBindings.every(value => typeof value === "string")).toBe(true);
+    expect(calculationFingerprint("baseline_forecast", accepted, request)).not.toBe(fingerprint);
+    const baseline = runPersonalHouseholdForecast(model, request);
+    const result = runPersonalHouseholdForecast(accepted, request);
+    expect(baseline.status, JSON.stringify(baseline.diagnostics)).toBe("completed");
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    if (baseline.status === "unavailable" || result.status === "unavailable") return;
+    expect(result.points).toHaveLength(20);
+    expect(result.points.at(-1)!.statementIncome.amount).not.toBe(baseline.points.at(-1)!.statementIncome.amount);
+    expect(result.points.at(-1)!.investmentValue.amount).not.toBe(baseline.points.at(-1)!.investmentValue.amount);
+    expect(result.points.at(-1)!.statementExpenses.amount).not.toBe(baseline.points.at(-1)!.statementExpenses.amount);
+    expect(result.points.at(-1)!.cash.amount).not.toBe(baseline.points.at(-1)!.cash.amount);
+    expect(accepted.objects.Account).toEqual(model.objects.Account);
+    expect(accepted.objects.Transaction).toEqual(model.objects.Transaction);
+    expect(accepted.objects.Event).toEqual(model.objects.Event);
+    expect(exportPersonalModelJson(model)).toBe(before);
+    expect(calculationFingerprint("baseline_forecast", model, request)).toBe(fingerprint);
+  }, 30_000);
   it("keeps a missing jurisdiction paycheck binding genuinely incomplete", () => {
     const original = createFlagshipHouseholdDraft();
     const model = { ...original, objects: { ...original.objects, PrimitiveInstance: (original.objects.PrimitiveInstance as readonly JsonObject[]).filter(item => item.primitive_instance_id !== "90000000-0000-4000-8000-000000000112") } };

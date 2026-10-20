@@ -5,6 +5,8 @@ import { createFlagshipHouseholdDraft, exportPersonalModelJson, importPersonalMo
 import { readFile } from "node:fs/promises";
 import { selectForecastChartData } from "../src/application/forecastChartData.js";
 import { formatExactMoney } from "../ui/entityPresentation.js";
+import { inspectMortgageWindow } from "../src/application/mortgageChartData.js";
+import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
 import { clickFinancialDestination, navigateOwner } from "./navigation.js";
 
 const status = (page: Page) => page.getByRole("status", { name: "Household forecast status", exact: true });
@@ -84,11 +86,31 @@ for (const width of [1440, 390]) {
     await info.attach(`flagship-${width}-coverage`, { body: JSON.stringify({ status: result.status, requested: result.requestedHorizon, reachedThrough: result.reachedThrough, opening: result.openingSnapshot, retirement: result.retirementMilestones, selectedYear: selected }), contentType: "application/json" });
     await page.screenshot({ path: info.outputPath(`flagship-${width}.png`), fullPage: true });
     await clickFinancialDestination(page, "Cash");
-    await expect(page.getByRole("figure", { name: "Total modeled cash (including cash in investment accounts)", exact: true })).toBeVisible();
-    await expect(page.getByRole("figure", { name: "Modeled statement income versus expenses", exact: true })).toBeVisible();
+    const cash = page.getByRole("figure", { name: "Total modeled cash (including cash in investment accounts)", exact: true });
+    const statements = page.getByRole("figure", { name: "Modeled statement income versus expenses", exact: true });
+    await expect(cash).toBeVisible();
+    await expect(statements).toBeVisible();
+    await cash.getByLabel("Selected projected period", { exact: true }).selectOption(selected.periodStart);
+    await expect(cash.locator(".chart-selected dd").first()).toContainText(formatExactMoney(selected.metrics.totalModeledCash.amount!, selected.metrics.totalModeledCash.currency));
+    // Read actual modeled pay both before and after the accepted retirement,
+    // rather than treating chart presence as financial acceptance.
+    await statements.getByLabel("Monthly range starting", { exact: true }).selectOption(working.periodStart);
+    for (const point of [working, retired]) {
+      await statements.getByLabel("Selected projected period", { exact: true }).selectOption(point.periodStart);
+      await expect(statements.locator(".chart-selected dd")).toHaveText([
+        formatExactMoney(point.statementIncome.amount, point.statementIncome.currency),
+        formatExactMoney(point.statementExpenses.amount, point.statementExpenses.currency),
+      ]);
+    }
     await clickFinancialDestination(page, "Debt");
-    await expect(page.getByRole("figure", { name: "Modeled household liability balances", exact: true })).toBeVisible();
-    await expect(page.getByRole("figure", { name: "Example mortgage monthly cash paid", exact: true })).toBeVisible({ timeout: 30_000 });
+    const liabilities = page.getByRole("figure", { name: "Modeled household liability balances", exact: true });
+    await expect(liabilities).toBeVisible();
+    await page.getByLabel("Selected liability month", { exact: true }).selectOption(result.points[0]!.periodStart);
+    await expect(liabilities.getByRole("status")).toContainText(formatExactMoney(result.points[0]!.totalLiabilities.amount, result.points[0]!.totalLiabilities.currency));
+    const mortgage = page.getByRole("figure", { name: "Example mortgage monthly cash paid", exact: true });
+    await expect(mortgage).toBeVisible({ timeout: 30_000 });
+    const paid = inspectMortgageWindow(result.points.slice(0, 12), GOLDEN_HOUSEHOLD_IDS.mortgage).rows[0]!;
+    await expect(mortgage.getByRole("status")).toHaveText(`2026-01 · Interest paid ${formatExactMoney(paid.interestPaid, paid.currency)} · Scheduled principal paid ${formatExactMoney(paid.scheduledPrincipalPaid, paid.currency)} · Extra principal paid ${formatExactMoney(paid.extraPrincipalPaid, paid.currency)}`);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(errors).toEqual([]);
   });
