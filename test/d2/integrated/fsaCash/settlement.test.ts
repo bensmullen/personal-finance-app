@@ -224,8 +224,27 @@ describe("#202 independently source-qualified FSA physical cash", () => {
     expect(ordered.state.accounts[ids.bank]!.cash.equals(money("2500"))).toBe(true);
     expect(ordered.state.identities.postedTransactionIds).toHaveLength(4);
   });
+  it.each(["1000", "500"])("admits signed same-instant expense then $%s deposit with independent original funding", amount => {
+    const base = source("same", amount, "2026-01-10", "2026-01-10");
+    const s = admit({ ...base,
+      original: { ...base.original, executionOrder: { sequenceId: "actual-bank-sequence", position: 1 } },
+      deposit: { ...base.deposit, executionOrder: { sequenceId: "actual-bank-sequence", position: 2 } } });
+    const out = execute(s, fixture(1));
+    expect(out.periods, JSON.stringify(out.diagnostics)).toHaveLength(1);
+    expect(out.periods[0]!.transactions.map(tx => tx.type)).toEqual(["fsa_medical_expense_payment", "fsa_expense_reimbursement"]);
+    expect(out.state.accounts[ids.bank]!.cash.equals(money("500").plus(money(amount)))).toBe(true);
+    expect(Object.values(out.state.d2PostedTransactions ?? {})).toHaveLength(2);
+    const state = cloneAuthoritativeState(fixture().state); state.accounts[ids.bank]!.cash = money("500");
+    const unfunded = { ...s, original: { ...s.original, bankCashBefore: money("500") } };
+    expect(reject(unfunded, fixture(1, state)).periods).toEqual([]);
+  });
   it("rejects a competing payroll BANK event regardless of participant iteration order", () => {
-    const s = admit(source("same", "1000", "2026-01-10", "2026-01-10"));
+    const base = source("same", "1000", "2026-01-10", "2026-01-10");
+    const s = admit({ ...base,
+      original: { ...base.original, executionOrder: { sequenceId: "actual-bank-sequence", position: 1 } },
+      deposit: { ...base.deposit, executionOrder: { sequenceId: "actual-bank-sequence", position: 2 } } });
+    // Establish that this source can execute by itself; only the competing participant is unsupported.
+    expect(execute(s, fixture(1)).periods).toHaveLength(1);
     const payroll: HouseholdKernelParticipant = { id: "synthetic-payroll", version: "v1", economicInputs: {}, prepare: () => ({ id: "synthetic-payroll", operations: [{
       descriptor: { id: "paycheck", domain: "cash_flow", sequencingInstant: s.original.paidAt, dependsOn: [], traceRefs: [],
         resourceAccesses: [{ kind: "account_cash", accountId: ids.bank, mode: "produce" }] }, execute: candidate => ({ ...candidate, facts: {} }),
