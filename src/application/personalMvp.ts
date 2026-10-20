@@ -1864,11 +1864,18 @@ export const createFlagshipHouseholdDraft = (): PersonalDraft => {
     }),
     Scenario: (draft.objects.Scenario ?? []).map(value => ({ ...(value as JsonObject), end_date: "2080-02-01" })),
     Event: (draft.objects.Event ?? []).map(value => ({ ...(value as JsonObject), start_date: "2055-01-01", name: "Taylor retires at 65 · synthetic accepted plan" })),
+    // One executable growth primitive per Expense, even when all three share
+    // the same explicitly sourced 2.5% cost-inflation assumption.
+    PrimitiveInstance: [...(draft.objects.PrimitiveInstance ?? []), ...[1, 2].map(index => ({
+      ...((draft.objects.PrimitiveInstance ?? []).find(value => (value as JsonObject).primitive_instance_id === "90000000-0000-4000-8000-000000000020") as JsonObject),
+      primitive_instance_id: `90000000-0000-4000-8000-00000000020${index}`,
+    }))],
     Expense: ["Living costs", "Transport", "Travel & leisure"].map((category, index) => ({
       ...(draft.objects.Expense![0] as JsonObject), expense_id: index === 0 ? "90000000-0000-4000-8000-000000000006" : `90000000-0000-4000-8000-00000000010${index}`,
       // Distinct source-authored monthly pay dates avoid an unspecified
       // same-instant expense settlement priority in the real scheduler.
       start_date: ["2026-01-03", "2026-01-10", "2026-01-17"][index]!,
+      growth_model_id: index === 0 ? "90000000-0000-4000-8000-000000000020" : `90000000-0000-4000-8000-00000000020${index}`,
       category, essentiality: index < 2 ? "essential" : "discretionary", amount: ["3000.00", "800.00", "1000.00"][index]!,
     })),
   });
