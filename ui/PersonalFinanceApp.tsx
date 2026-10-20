@@ -3504,6 +3504,13 @@ function HouseholdPlan({
   const [retirementEventId, setRetirementEventId] = useState(retirementBindings[0]?.canonicalEventId ?? "");
   const [retirementDate, setRetirementDate] = useState(retirementBindings[0]?.baselineDate ?? "");
   const [terminationEventId] = useState(() => retirementBindings[0]?.terminationEventId ?? randomId());
+  // The example/import path can install authoritative accepted bindings after
+  // Current Plan first mounts; never leave its local selects silently blank.
+  useEffect(() => {
+    setRetirementIncomeId(retirementBindings[0]?.incomeId ?? "");
+    setRetirementEventId(retirementBindings[0]?.canonicalEventId ?? "");
+    setRetirementDate(retirementBindings[0]?.baselineDate ?? "");
+  }, [retirementBindings]);
   return (
     <>
       <PageHead
