@@ -170,6 +170,26 @@ describe("durable Income authoring and compilation", () => {
     expect(replay.runMetadata).toEqual(summary.runMetadata);
     expect(canonicalSerialize(model)).toBe(before);
   });
+  it("keeps pre-employment months independent of a later unsupported salary", () => {
+    const source = patchPersonalObject(authoredSource(), "Income", golden.income, { frequency: "biweekly", start_date: "2026-02-01" });
+    const authored = authorPayrollWithholding(source, plan({ effectiveDate: "2026-02-01" }));
+    const salary = authored.objects.Income![0]!;
+    if (typeof salary !== "object" || salary === null || Array.isArray(salary)) throw new Error("Expected Income");
+    const model = { ...authored, objects: { ...authored.objects, Asset: [], Investment: [], Liability: [], Expense: [],
+      Income: [salary, { ...salary, income_id: uuid(91), income_type: "interest", source: "independent bank interest", amount: "100", frequency: "monthly", gross_or_net: "gross", start_date: "2026-01-01", growth_model_id: null, related_event_id: null }] } };
+    const compiled = compileHouseholdProjection(model, { cashFlow: { baseCurrency: "USD", simulationStart: "2026-01-01", simulationEnd: "2026-03-01", months: 2, sameInstantCashFlowOrder: "income_before_expense", executionAccountId: golden.checking } });
+    expect(compiled.status, JSON.stringify(compiled.diagnostics)).toBe("compiled");
+    if (compiled.status !== "compiled") throw new Error("Expected a partially supported executable");
+    const context = { ...taxHouseholdFixture().context, scenarioId: domainId("scenario", golden.rootScenario), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-03-01T00:00:00.000Z") };
+    const result = runHouseholdKernel({ kernel: compiled.value.executionKernel!, runContext: context });
+    expect(result.periods).toHaveLength(2);
+    expect(result.periods[0]!.outputCapabilities?.statementIncome?.status).toBe("complete");
+    expect(result.periods[1]!.outputCapabilities?.statementIncome?.status).toBe("incomplete");
+    expect(result.periods[0]!.statements.income.equals(money("100"))).toBe(true);
+    expect(result.periods[1]!.statements.income.equals(money("100"))).toBe(true);
+    expect(result.outputCapabilities?.statementIncome?.diagnostics).toContainEqual(expect.objectContaining({ category: "payroll_source_unsupported", entityId: golden.income }));
+    expect(result.periods.flatMap(period => period.cashFlow?.incomeOccurrences ?? []).every(item => item.streamId !== golden.income)).toBe(true);
+  });
   it("rejects overlap, accepts adjacent dates, and distinguishes absent from user zero", () => {
     const first = authorPayrollWithholding(authoredSource(), plan({ expirationDate: "2026-07-01" }));
     expect(() => authorPayrollWithholding(first, plan({ id: uuid(2), effectiveDate: "2026-06-30" }))).toThrow("Overlapping");
