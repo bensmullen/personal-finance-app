@@ -1611,7 +1611,12 @@ const compileCashFlowSources = (
       // a gross monthly schedule for legitimate unsupported salary facts.
       if (type === "Income" && unsupportedSalary(stream)) {
         if (partialPayroll) continue;
-        return unsupportedResult("PAYROLL_SOURCE_UNSUPPORTED", `Income ${id} requires unsupported pay frequency or net-to-gross mechanics.`, "Income", id);
+        // Preserve the established general recurrence diagnostic where no
+        // payroll election is authored. A sourced payroll election adds its
+        // more specific unsupported gross-to-net capability, never a schedule.
+        const payrollElection = withholding.some(item => item.incomeId === id);
+        return unsupportedResult(stream.frequency !== "monthly" && !payrollElection ? "RECURRENCE_UNSUPPORTED" : "PAYROLL_SOURCE_UNSUPPORTED",
+          `Income ${id} requires unsupported pay frequency or net-to-gross mechanics.`, "Income", id);
       }
       if (!PAYMENT_FREQUENCIES.includes(stream.frequency as never))
         return invalidResult(
