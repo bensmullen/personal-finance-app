@@ -8,8 +8,8 @@ import { resolveTaxCoreRule, taxCatalogFingerprint } from "../../rules/tax/catal
 import { applyTaxCoreRule } from "../../rules/tax/calculator.js";
 import { recognizeTaxLegalBases } from "../../rules/tax/recognition.js";
 import type { TaxIncomeFacts, TaxJurisdictionFacts } from "../../rules/tax/contracts.js";
-import { applySettlement, claimId, createObligation, createRecognitionFact, createSettlement, createSettlementProposal, recognitionId, settlementId, settlementProposalId } from "../../semantics/index.js";
-import { applyAccountingTransactionAtomically, authoritativeClaimHistory, registerAuthoritativeIdentity } from "../../state/index.js";
+import { applySettlement, claimId, createObligation, createSettlement, createSettlementProposal, recognitionId, settlementId, settlementProposalId } from "../../semantics/index.js";
+import { applyAccountingTransactionAtomically, authoritativeClaimHistory, createIndexedRecognitionFact, registerAuthoritativeIdentity } from "../../state/index.js";
 import { subtractMilliseconds, utcDateOnlyInstant, type Instant } from "../../time/index.js";
 import { decimal, money, Money, Quantity, RoundingPolicy, Unit, USD } from "../../values/index.js";
 import type { HouseholdKernelParticipant } from "../householdExecution.js";
@@ -292,7 +292,11 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
             }
           }
           const seenAnnual = new Set<string>();
-          for (const group of [...groups.values()].sort((a, b) => canonicalSerialize(a).localeCompare(canonicalSerialize(b)))) {
+          // Preserve the existing canonical ordering exactly; serialize each
+          // calculation group once rather than on every comparison.
+          const orderedGroups = [...groups.values()].map(group => ({ group, key: canonicalSerialize(group) }))
+            .sort((a, b) => a.key.localeCompare(b.key));
+          for (const { group } of orderedGroups) {
             try {
               const resolved = binding(group.jurisdiction, group.at, group.facts);
               if (!group.local && seenAnnual.has(group.jurisdiction)) { diagnostics.push(taxDiagnostic("annual_rule_transition", "Multiple annual law versions require explicit year-transition semantics.", group.jurisdiction)); continue; }
@@ -372,7 +376,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           const delta = total.minus(priorLiability);
           const provenance = createFactProvenance({ factKind: "model_generated", sourceType: "model", sourceId: id, effectiveAt: at });
           if (delta.isPositive()) {
-            const recognition = createRecognitionFact({ id: recognitionId(`${id}:${jurisdiction}:liability`), category: "tax_liability", amount: delta, recognizedAt: at, provenance, traceRefs: refs }, state.identities.recognitionIds);
+            const recognition = createIndexedRecognitionFact({ id: recognitionId(`${id}:${jurisdiction}:liability`), category: "tax_liability", amount: delta, recognizedAt: at, provenance, traceRefs: refs }, state.identities.recognitionIds);
             registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
             post(`${jurisdiction}:recognition`, "tax_liability", [{ type: "tax", posting: "debit", amount: delta }, { type: "liability", posting: "credit", amount: delta, entityId: liabilityId }], refs);
           } else if (delta.isNegative()) {
@@ -393,7 +397,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           const payment = (suffix: string, requested: Money, kind: string) => {
             if (!requested.isPositive()) return;
             suffix = `${jurisdiction}:${suffix}`;
-            const recognition = createRecognitionFact({ id: recognitionId(`${id}:${suffix}`), category: kind, amount: requested, recognizedAt: at, provenance, traceRefs: refs }, state.identities.recognitionIds);
+            const recognition = createIndexedRecognitionFact({ id: recognitionId(`${id}:${suffix}`), category: kind, amount: requested, recognizedAt: at, provenance, traceRefs: refs }, state.identities.recognitionIds);
             registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
             const obligation = createObligation({ id: claimId(`${id}:${suffix}:claim`), category: kind, originatingRecognitionId: recognition.id, economicOwnerId: input.ownerId, originalAmount: requested, recognizedAt: at, traceRefs: refs }, authoritativeClaimHistory(state));
             state.obligations[obligation.id] = obligation;

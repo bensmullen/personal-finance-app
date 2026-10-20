@@ -328,13 +328,16 @@ export class PersistentStringIndex<T> {
     return undefined;
   }
   *entries(): IterableIterator<readonly [string, T]> {
-    const visit = function* (node: IndexNode<T> | undefined): IterableIterator<readonly [string, T]> {
-      if (node === undefined) return;
-      yield* visit(node.left);
-      yield [node.key, node.value];
-      yield* visit(node.right);
-    };
-    yield* visit(this.#root);
+    // Keep the same in-order snapshot without relaying each entry through
+    // a generator at every ancestor of the persistent tree.
+    const pending: IndexNode<T>[] = [];
+    let node = this.#root;
+    while (node !== undefined || pending.length > 0) {
+      while (node !== undefined) { pending.push(node); node = node.left; }
+      const current = pending.pop()!;
+      yield [current.key, current.value];
+      node = current.right;
+    }
   }
 }
 
@@ -642,7 +645,7 @@ export const createIndexedExecutionState = (opening: AuthoritativeState, supplie
     normalize?: (value: T) => T): Record<string, T> => {
     const previous = indexedRecords.get(record) as IndexedRecord<T> | undefined;
     const next = indexedRecord(previous?.index.fork() ?? new PersistentStringIndex(Object.entries(record).map(([key, value]) =>
-      [key, normalize === undefined ? value : normalize(value)] as const)), mutable, changed, normalize);
+      [key, normalize === undefined ? (mutable ? { ...value } : value) : normalize(value)] as const)), mutable, changed, normalize);
     if (previous !== undefined) for (const key of previous.dirty) next.dirty.add(key);
     return next.record;
   };
@@ -928,7 +931,27 @@ const reconcileClaimIdentityHistory = (state: AuthoritativeState): void => {
   });
 };
 
+type CurrencyIndexedField = "accounts" | "positions" | "liabilities";
+const currencyCheckedIndexes = new WeakMap<Currency, Partial<Record<CurrencyIndexedField, PersistentStringIndex<object>>>>();
+
 export const assertAuthoritativeStateCurrency = (state: AuthoritativeState, currency: Currency): void => {
+  const prior = currencyCheckedIndexes.get(currency) ?? {};
+  const checked: Partial<Record<CurrencyIndexedField, PersistentStringIndex<object>>> = {};
+  let visitedNodes = 0, checkedEntries = 0;
+  const entries = <T extends object>(field: CurrencyIndexedField, record: Record<string, T>): readonly (readonly [string, T])[] => {
+    const indexed = indexedRecords.get(record);
+    if (indexed === undefined) { const values = Object.entries(record); checkedEntries += values.length; return values; }
+    // Entity writes replace persistent values, including writes through mutable
+    // views. Dirty flags are insufficient: structural validation may already
+    // have cleared them before this currency boundary runs.
+    const snapshot = indexed.index.fork();
+    const delta = snapshot.changesSince(prior[field] ?? new PersistentStringIndex<object>());
+    visitedNodes += delta.visitedNodes;
+    checked[field] = snapshot;
+    const values = delta.changes.flatMap(change => change.after === undefined ? [] : [[change.key, change.after as T] as const]);
+    checkedEntries += values.length;
+    return values;
+  };
   const assertCurrency = (amount: Money, fieldPath: string, entityType: string, entityId: string): void => {
     if (!amount.currency.equals(currency)) {
       failValidation({
@@ -942,7 +965,7 @@ export const assertAuthoritativeStateCurrency = (state: AuthoritativeState, curr
       });
     }
   };
-  for (const [key, account] of Object.entries(state.accounts)) assertCurrency(account.cash, `accounts.${key}.cash`, "account", account.id);
+  for (const [key, account] of entries("accounts", state.accounts)) assertCurrency(account.cash, `accounts.${key}.cash`, "account", account.id);
   for (const [key, entry] of Object.entries(state.contributions ?? {})) {
     assertCurrency(entry.amount, `contributions.${key}.amount`, "contribution", key);
     if (entry.eligibleDeduction) assertCurrency(entry.eligibleDeduction, `contributions.${key}.eligibleDeduction`, "contribution", key);
@@ -962,11 +985,16 @@ export const assertAuthoritativeStateCurrency = (state: AuthoritativeState, curr
     for (const leg of proof.transaction.legs) assertCurrency(leg.amount, `d2PostedTransactions.${change.key}`, "d2_posted_transaction", change.key);
   }
   d2PostingCurrencyChecks.set(currency, postingIndex);
-  for (const [key, liability] of Object.entries(state.liabilities)) assertCurrency(liability.balance, `liabilities.${key}.balance`, "liability", liability.id);
-  for (const [key, position] of Object.entries(state.positions)) {
+  for (const [key, liability] of entries("liabilities", state.liabilities)) assertCurrency(liability.balance, `liabilities.${key}.balance`, "liability", liability.id);
+  for (const [key, position] of entries("positions", state.positions)) {
     assertCurrency(position.price, `positions.${key}.price`, "position", position.id);
     assertCurrency(position.carryingValue, `positions.${key}.carryingValue`, "position", position.id);
   }
+  // Publish only successful checks. Optional statutory/receipt ledgers retain
+  // their existing validation and currency checks, including D2 archives.
+  currencyCheckedIndexes.set(currency, checked);
+  try { executionStateIndexes.get(state)?.historyMeter?.({ stateCurrencyEntriesChecked: checkedEntries, stateCurrencyIndexNodesVisited: visitedNodes }); }
+  catch { /* Observational counters cannot affect validation. */ }
 };
 
 const commitCandidate = (target: AuthoritativeState, candidate: AuthoritativeState): void => {

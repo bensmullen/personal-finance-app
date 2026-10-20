@@ -4,11 +4,15 @@ import { compileHouseholdTax, validateResidenceTaxPeriods, validateWorkTaxAlloca
 import { runHouseholdKernel, runCompiledHouseholdProjection, replayHouseholdForecastWindow, type HouseholdForecastSummaryResult, type CompiledHouseholdProjectionRunResult } from "../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
 import { applyHouseholdExecutionOverlay, compileHouseholdKernel } from "../src/simulation/r3/compiledHousehold.js";
-import { canonicalSerialize } from "../src/simulation/run.js";
+import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
+import { createHouseholdForecastRequest } from "../src/application/householdProjection.js";
+import { createGoldenExampleConfiguration } from "../src/application/goldenHousehold.js";
+import { createFlagshipHouseholdDraft } from "../src/application/personalMvp.js";
 import { createHouseholdTaxParticipant, emptyTaxIncome, taxCreditPositionIds, type HouseholdTaxInput, type CompiledTaxIncome } from "../src/simulation/tax.js";
 import { alphaStateTaxCatalog, alphaLocalTaxCatalog, resolveTaxCoreRule, fullYearResidentEligibilityKey, recognizeTaxLegalBases, recognizedGrossTaxableBaseEligibilityKey, applyTaxCoreRule } from "../src/rules/index.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
-import { money, Ratio } from "../src/values/index.js";
+import { money, Ratio, USD } from "../src/values/index.js";
 import { CURRENT_RUN_VERSIONS } from "../src/model/version.js";
 import { ValidationError } from "../src/diagnostics/index.js";
 import { domainId } from "../src/identity/index.js";
@@ -40,6 +44,48 @@ const localFixture = (year: string, months: number, state: string, source: Parti
 };
 
 describe("T1A household tax integration", () => {
+  it.each([[8, "2026-09-01"], [20, "2027-09-01"]] as const)("preserves the exact flagship's %s-month summary, detailed accounting and replay", (months, end) => {
+    // These bounded correctness cases intentionally exclude the 120/360/649
+    // engineering probes. They use the actual one-click financial sources.
+    const model = createFlagshipHouseholdDraft(), source = canonicalSerialize(model);
+    const configuration = { ...createGoldenExampleConfiguration(), simulationEnd: end };
+    const request = createHouseholdForecastRequest(configuration, "8c000000-0000-4000-8000-000000000003");
+    const compiled = compileHouseholdProjection(model, request.compiler);
+    if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled.diagnostics));
+    const context = createRunContext({ runId: runId(request.runIdentity), scenarioId: scenarioId(compiled.value.scenarioIdentity),
+      asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"),
+      simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant(`${end}T00:00:00.000Z`), baseCurrency: USD });
+    const kernel = compiled.value.executionKernel!;
+    const summary = runHouseholdKernel({ kernel, runContext: context });
+    const detail = runHouseholdKernel({ kernel, runContext: context, resultTier: "detail" });
+    expect(summary.status, JSON.stringify(summary.diagnostics)).toBe("completed");
+    expect(detail.status, JSON.stringify(detail.diagnostics)).toBe("completed");
+    expect(summary.reachedThrough).toBe(context.simulationEnd);
+    expect(summary.periods).toHaveLength(months);
+    expect(summary.runMetadata.inputFingerprint).toBe(detail.runMetadata.inputFingerprint);
+    expect(canonicalSerialize(summary.state), differenceContext(summary.state, detail.state)).toBe(canonicalSerialize(detail.state));
+    expect(canonicalSerialize(summary.outputCapabilities)).toBe(canonicalSerialize(detail.outputCapabilities));
+    expect(summary.periods[0]!.cash.equals(money("4007874.71"))).toBe(true);
+    for (let index = 0; index < months; index++) {
+      const projected = summary.periods[index]!, recorded = detail.periods[index]!;
+      expect(projected.statements).toEqual(recorded.statements);
+      expect(projected.cash).toEqual(recorded.cash);
+      expect(projected.netWorth).toEqual(recorded.netWorth);
+      expect(projected.investmentValue).toEqual(recorded.investmentValue);
+      expect(projected.liabilities).toEqual(recorded.liabilities);
+      expect(projected.statements.income.isZero()).toBe(index < 6);
+      for (const transaction of recorded.transactions) assertBalanced(transaction);
+    }
+    const journals = detail.periods.flatMap(period => period.transactions);
+    expect(journals.filter(transaction => transaction.type === "payroll_income")).toHaveLength(months - 6);
+    expect(new Set(journals.map(transaction => transaction.id)).size).toBe(journals.length);
+    const last = detail.periods.at(-1)!.period;
+    const replay = replayHouseholdForecastWindow(summary, last);
+    expect(canonicalSerialize(replay.state)).toBe(canonicalSerialize(detail.state));
+    expect(replay.periods).toEqual(detail.periods.slice(-1));
+    expect(canonicalSerialize(model)).toBe(source);
+  }, 30_000);
+
   // A bounded, source-qualified interest-only case: no wage withholding or benefits are invented.
   const lawScenario = (year = "2027", months = 12) => {
     const seed = taxHouseholdFixture();

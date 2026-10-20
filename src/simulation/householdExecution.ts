@@ -545,7 +545,7 @@ const runCompiledHouseholdProjectionInternal = (
       // Extension participants may call canonical atomic writers directly.
       // Isolate their entire period so a later failure cannot publish staged
       // posting proofs, receipts, identities or economic effects to `state`.
-      let candidateState = participants.length === 0 ? state : cloneAuthoritativeState(state);
+      let candidateState = performance.measure("engine.period_fork", () => participants.length === 0 ? state : cloneAuthoritativeState(state));
       if (participants.length !== 0) restoreOperationRuntime(candidateState, operationRuntime(state));
       let candidatePrimitiveState = primitiveState;
       let liability: VerticalSlice4PeriodResult | undefined;
@@ -841,18 +841,20 @@ const runCompiledHouseholdProjectionInternal = (
         candidateState = mergeEventPreparationIdentities(candidateState, prepared.cash!);
       }
       if (tier === "summary") {
-        validateAuthoritativeState(candidateState);
-        assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
-        assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
+        performance.measure("engine.validate_commit", () => {
+          validateAuthoritativeState(candidateState);
+          assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
+          assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
+        });
         const currentSummary = performance.measure("engine.statements_metrics", () =>
-          createHouseholdSummaryPeriod(period, state, candidateState, additionalFacts, kernel, runContext.baseCurrency));
-        outputCapabilities = mergeOutputCapabilities([outputCapabilities, currentSummary.outputCapabilities]);
+          createHouseholdSummaryPeriod(period, state, candidateState, additionalFacts, kernel, runContext.baseCurrency, performance));
+        outputCapabilities = performance.measure("engine.capabilities", () => mergeOutputCapabilities([outputCapabilities, currentSummary.outputCapabilities]));
         const summary = Object.freeze({ ...currentSummary, ...(outputCapabilities === undefined ? {} : { outputCapabilities }) });
         diagnostics.push(...(prepared.cash?.diagnostics ?? []), ...additionalFacts.flatMap(fact => [
           ...(fact.summary?.cash?.diagnostics ?? []), ...(fact.summary?.debt?.diagnostics ?? []), ...(fact.diagnostics ?? []),
         ]));
         state = candidateState; primitiveState = candidatePrimitiveState; reachedThrough = period.end;
-        periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata, outputCapabilities);
+        performance.measure("engine.checkpoint", () => periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata, outputCapabilities));
         periodRetention?.acceptSummary?.(summary);
         continue;
       }
@@ -952,12 +954,11 @@ const runCompiledHouseholdProjectionInternal = (
         });
       }
       });
-      validateAuthoritativeState(candidateState);
-      assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
-      assertPrimitiveRuntimeStateConsistent(
-        candidatePrimitiveState,
-        candidateState,
-      );
+      performance.measure("engine.validate_commit", () => {
+        validateAuthoritativeState(candidateState);
+        assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
+        assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
+      });
       const transactions = performance.measure("engine.trace_result", () => Object.freeze(
         [
           ...cashPeriods.flatMap((item) => item.transactions),
@@ -1046,7 +1047,7 @@ const runCompiledHouseholdProjectionInternal = (
                   ...investmentPeriods.map((item) => item.traceRefs),
                 ) ?? Object.freeze([]),
             });
-      const periodCapabilities = mergeOutputCapabilities([outputCapabilities, ...additionalFacts.map(fact => fact.outputCapabilities)]);
+      const periodCapabilities = performance.measure("engine.capabilities", () => mergeOutputCapabilities([outputCapabilities, ...additionalFacts.map(fact => fact.outputCapabilities)]));
       return Object.freeze({
         period: Object.freeze({ ...period }),
         ...(periodCapabilities === undefined ? {} : { outputCapabilities: periodCapabilities }),
@@ -1090,7 +1091,7 @@ const runCompiledHouseholdProjectionInternal = (
       outputCapabilities = periodResult.outputCapabilities ?? outputCapabilities;
       primitiveState = candidatePrimitiveState;
       reachedThrough = period.end;
-      periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata, outputCapabilities);
+      performance.measure("engine.checkpoint", () => periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata, outputCapabilities));
       periodRetention?.accept(periodResult);
       if (periodRetention === undefined || periodRetention.retain(period)) committed.push(periodResult);
     } catch (error) {

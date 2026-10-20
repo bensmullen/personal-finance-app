@@ -7,7 +7,10 @@ import { compileHouseholdProjection } from "../src/application/compiler/househol
 import { runCompiledHouseholdProjection } from "../src/simulation/householdExecution.js";
 import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant } from "../src/time/index.js";
-import { Rate, USD } from "../src/values/index.js";
+import { Currency, money, Quantity, Rate, Unit, USD } from "../src/values/index.js";
+import { domainId } from "../src/identity/index.js";
+import { assertAuthoritativeStateCurrency, cloneAuthoritativeState, createAuthoritativeState, createIndexedExecutionState, createIndexedRecognitionFact, PersistentStringIndex, registerAuthoritativeIdentity, validateAuthoritativeState } from "../src/state/index.js";
+import { createRecognitionFact, recognitionId } from "../src/semantics/index.js";
 import { executeForecastWorkerRequest } from "../ui/forecast/execute.js";
 import { ForecastController, type ForecastWorkerPort } from "../ui/forecast/controller.js";
 import type { ForecastWorkerRequest, ForecastWorkerResponse } from "../ui/forecast/protocol.js";
@@ -27,6 +30,78 @@ const oneMonth = <T extends ReturnType<typeof createRealisticPerformanceFixture>
 }) as T;
 
 describe("performance instrumentation", () => {
+  it("enumerates persistent indexes in exact order across a suspended traversal and divergent forks", () => {
+    const index = new PersistentStringIndex(Array.from({ length: 128 }, (_, n) => [String(n).padStart(3, "0"), n] as const));
+    const iterator = index.entries();
+    expect(iterator.next().value).toEqual(["000", 0]);
+    const fork = index.fork();
+    index.delete("064"); index.set("200", 200);
+    fork.set("064", -64); fork.delete("100");
+    expect([...iterator]).toEqual(Array.from({ length: 127 }, (_, n) => [String(n + 1).padStart(3, "0"), n + 1]));
+    expect([...index.entries()].map(([key]) => key)).toEqual([...Array.from({ length: 128 }, (_, n) => String(n).padStart(3, "0")).filter(key => key !== "064"), "200"]);
+    expect(fork.get("064")).toBe(-64);
+    expect(index.get("064")).toBeUndefined();
+    expect([...fork.entries()].map(([key]) => key)).toEqual(Array.from({ length: 128 }, (_, n) => String(n).padStart(3, "0")).filter(key => key !== "100"));
+  });
+
+  it("checks only changed indexed currency values and still rejects invalid forks after structural validation", () => {
+    const account = domainId("account", "8c000000-0000-4000-8000-000000000001"), liability = domainId("liability", "8c000000-0000-4000-8000-000000000002");
+    const positions = Object.fromEntries(Array.from({ length: 128 }, (_, n) => {
+      const id = domainId("position", `8c000000-0000-4000-8000-${String(n + 100).padStart(12, "0")}`);
+      return [id, { id, accountId: account, quantity: Quantity.parse("1", Unit.of("test")), price: money("1"), carryingValue: money("1") }];
+    }));
+    const opening = createAuthoritativeState({ accounts: { [account]: { id: account, kind: "checking", cash: money("100") } },
+      positions, liabilities: { [liability]: { id: liability, balance: money("10") } } });
+    const counts: Record<string, number> = {};
+    const state = createIndexedExecutionState(opening, values => Object.assign(counts, values));
+    assertAuthoritativeStateCurrency(state, USD);
+    const before = canonicalSerialize(state);
+    assertAuthoritativeStateCurrency(state, USD);
+    expect(counts.stateCurrencyEntriesChecked).toBe(0);
+    const candidate = cloneAuthoritativeState(state);
+    candidate.accounts[account]!.cash = money("99");
+    validateAuthoritativeState(candidate); // Clears dirty flags before currency validation.
+    assertAuthoritativeStateCurrency(candidate, USD);
+    expect(counts.stateCurrencyEntriesChecked).toBe(1);
+    expect(counts.stateCurrencyIndexNodesVisited).toBeLessThan(40);
+    expect(canonicalSerialize(state)).toBe(before);
+    const euro = Currency.of("EUR"), position = Object.keys(positions)[0]!;
+    for (const alter of [
+      () => { candidate.accounts[account]!.cash = money("99", euro); },
+      () => { candidate.positions[position]!.carryingValue = money("1", euro); },
+      () => { candidate.liabilities[liability]!.balance = money("10", euro); },
+    ]) {
+      alter(); validateAuthoritativeState(candidate);
+      expect(() => assertAuthoritativeStateCurrency(candidate, USD)).toThrow();
+      // A failed check cannot make a repeated invalid check succeed.
+      expect(() => assertAuthoritativeStateCurrency(candidate, USD)).toThrow();
+      candidate.accounts[account]!.cash = money("99");
+      candidate.positions[position]!.carryingValue = money("1");
+      candidate.liabilities[liability]!.balance = money("10");
+      assertAuthoritativeStateCurrency(candidate, USD);
+    }
+    assertAuthoritativeStateCurrency(state, USD); // Divergent root must remain valid.
+    expect(() => assertAuthoritativeStateCurrency(state, euro)).toThrow();
+    // Cold mutable states never use an indexed validation certificate.
+    opening.accounts[account]!.cash = money("100", euro);
+    expect(() => assertAuthoritativeStateCurrency(opening, USD)).toThrow();
+    assertAuthoritativeStateCurrency(state, USD);
+    expect(canonicalSerialize(state)).toBe(before);
+  });
+
+  it("keeps indexed recognition validation identical to cold history, including old duplicates", () => {
+    const state = createIndexedExecutionState(createAuthoritativeState());
+    for (let n = 0; n < 128; n++) registerAuthoritativeIdentity(state.identities, "recognitionIds", recognitionId(`tax-history-${n}`));
+    const draft = { id: recognitionId("tax-new"), category: "tax_liability", amount: money("0.01"), recognizedAt: instant("2026-01-31T23:59:59.999Z") };
+    const before = canonicalSerialize(state.identities);
+    expect(createIndexedRecognitionFact(draft, state.identities.recognitionIds)).toEqual(createRecognitionFact(draft, [...state.identities.recognitionIds]));
+    for (const id of ["tax-history-0", "tax-history-64", "tax-history-127"]) {
+      expect(() => createIndexedRecognitionFact({ ...draft, id: recognitionId(id) }, state.identities.recognitionIds)).toThrow();
+    }
+    expect(() => createIndexedRecognitionFact({ ...draft, category: " " }, state.identities.recognitionIds)).toThrow();
+    expect(canonicalSerialize(state.identities)).toBe(before);
+  });
+
   it("returns structured-clone safe Worker records with observational financial execution", () => {
     const fixture = createRealisticPerformanceFixture();
     const request = oneMonth(fixture.request);
@@ -125,6 +200,11 @@ describe("performance instrumentation", () => {
     expect(registry.summary("engine.prepare")?.latest).toBe(1);
     expect(registry.summary("engine.prepare")?.count).toBe(1);
     expect(registry.summary("engine.execute")?.count).toBe(1);
+    for (const phase of ["engine.period_fork", "engine.validate_commit", "engine.capabilities", "engine.checkpoint"] as const) {
+      expect(registry.latest(phase)?.availability).toBe("measured");
+      expect(registry.summary(phase)?.latest).toBeGreaterThan(0);
+      expect(registry.summary(phase)?.count).toBe(1);
+    }
     // A unit-step clock proves these sibling phases cannot include each other.
     expect(registry.summary("compile.model_and_slices")?.latest).toBe(1);
     expect(registry.summary("compile.opening_reconciliation")?.latest).toBe(2);

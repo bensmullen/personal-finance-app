@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { createApplicationPerformanceObserver, requireFullHorizonPerformanceForecast, createPerformanceComparisonValidation, createPerformanceEvidenceSample } from "../src/application/performance.js";
 import { PerformanceRegistry, PERFORMANCE_PHASES, type PerformanceContext } from "../src/diagnostics/performance.js";
@@ -8,6 +9,7 @@ import { createGoldenHouseholdDraft, createGoldenHouseholdForecastRequest, runPe
 import { comparePersonalHouseholdScenarioIntents } from "../src/application/householdProjection.js";
 import { createRealisticPerformanceFixture, createStressPerformanceFixture, createPerformanceScalingFixtures, createFlagshipHorizonProbes } from "../test/fixtures/performanceHouseholds.js";
 import { captureReusableKernelEvidence } from "./r3/captureKernel.js";
+import { canonicalSerialize } from "../src/simulation/run.js";
 
 const configuredCount = (name: string, fallback: number) => {
   const value = Number(process.env[name] ?? fallback);
@@ -70,6 +72,11 @@ if (childMonth !== undefined) {
     pointCount: result.status === "unavailable" ? 0 : result.points.length,
     wallMs, inputCloneMs, outputCloneMs, cpuMs: (cpu.user + cpu.system) / 1000,
     heapAfterBytes: process.memoryUsage().heapUsed, heapDeltaBytes: process.memoryUsage().heapUsed - heapStart,
+    // Exact synthetic output identity, outside timing/CPU/clone samples. This
+    // includes financial points, coverage, diagnostics and source provenance.
+    resultFingerprint: createHash("sha256").update(canonicalSerialize(result)).digest("hex"),
+    structuralCounters: registry.latest("engine.execute")?.resources?.structuralCounters ?? {},
+    phaseInterpretation: "Capability merging inside summary generation is also included in engine.statements_metrics; detailed capability merging is included in engine.trace_result. Phase durations are not an exclusive partition of wall time.",
     phasesMs: Object.fromEntries(PERFORMANCE_PHASES.map(phase => {
       const record = registry.latest(phase);
       return [phase, record?.availability === "measured" ? record.durationMs ?? null : null];
