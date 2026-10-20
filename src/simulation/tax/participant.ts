@@ -208,9 +208,21 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           const runtime = opening.runtime ?? {};
           const year = finalSettlement?.taxYear ?? at.slice(0, 4), prior = yearRuntime(taxRuntime(runtime), year);
           const contributions = Object.values(state.contributions ?? {}).filter(entry => entry.source !== "opening" && entry.at.slice(0, 4) === year && entry.at <= at);
-          const material = input.diagnostics.length > 0 || contributions.length > 0 || prior.economics.some(economic => Object.values(economic.income).some(amount => !amount.isZero())) || prior.diagnostics.size > 0 || instruction !== undefined || finalSettlement !== undefined;
+          // A valid but unsupported salary must taint only periods where that
+          // source could contribute. Before its start (or in other tax years),
+          // independently modeled income remains usable and complete.
+          const authoredDiagnostics = input.diagnostics.filter(diagnostic => {
+            if (diagnostic.category !== "payroll_source_unsupported" || diagnostic.entityId === undefined) return true;
+            const source = sources.get(diagnostic.entityId);
+            if (source === undefined) return true; // Unknown source identity must fail closed.
+            const start = source.start.slice(0, 10), end = source.end?.slice(0, 10);
+            const yearStart = `${year}-01-01`, yearEnd = `${Number(year) + 1}-01-01`;
+            return start < yearEnd && (end === undefined || end >= yearStart) &&
+              (finalSettlement !== undefined || start <= at.slice(0, 10));
+          });
+          const material = authoredDiagnostics.length > 0 || contributions.length > 0 || prior.economics.some(economic => Object.values(economic.income).some(amount => !amount.isZero())) || prior.diagnostics.size > 0 || instruction !== undefined || finalSettlement !== undefined;
           if (!material) return { ...opening, facts: { outputCapabilities: taxOutputCapabilities([]) } };
-          const diagnostics: TaxCapabilityDiagnostic[] = [...input.diagnostics, ...prior.diagnostics];
+          const diagnostics: TaxCapabilityDiagnostic[] = [...authoredDiagnostics, ...prior.diagnostics];
           const filing = input.filingStatuses?.[year];
           if (input.filingStatuses !== undefined && !annualStatus(year)) diagnostics.push({ ...taxDiagnostic(
             filing?.status === "true_conflict" ? "filing_status_conflict" : "filing_status_year_unknown",
