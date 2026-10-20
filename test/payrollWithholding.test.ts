@@ -121,8 +121,17 @@ describe("durable Income authoring and compilation", () => {
   ])("rejects malformed or unconfirmed authorizations %j", changes => {
     expect(() => authorPayrollWithholding(authoredSource(), { ...plan(), ...changes } as PayrollWithholdingPlan)).toThrow();
   });
-  it.each([{ frequency: "fortnightly" }, { gross_or_net: "unknown" }, { income_type: "interest" }])("still rejects malformed or contradictory election sources %j", changes => {
+  it.each([{ frequency: "fortnightly" }, { gross_or_net: "unknown" }])("still rejects malformed election sources %j", changes => {
     expect(() => authorPayrollWithholding(patchPersonalObject(authoredSource(), "Income", golden.income, changes), plan())).toThrow("canonical salary source");
+  });
+  it("rejects a withholding election on a canonical non-salary Income source", () => {
+    // income_type is immutable through the normal editor; author an explicit
+    // canonical contradiction rather than asking patchPersonalObject to ignore it.
+    const source = authoredSource();
+    const altered = { ...source, objects: { ...source.objects, Income: source.objects.Income!.map(item =>
+      typeof item === "object" && item !== null && !Array.isArray(item) && item.income_id === golden.income
+        ? { ...item, income_type: "interest" } : item) } };
+    expect(() => authorPayrollWithholding(altered, plan())).toThrow("canonical salary source");
   });
   it.each([{ frequency: "biweekly" }, { gross_or_net: "net" }])("does not turn unsupported Income %j into a payroll forecast", changes => {
     const model = patchPersonalObject(authoredSource(), "Income", golden.income, changes);
@@ -196,7 +205,10 @@ describe("payroll credits, tax accrual and net final settlement", () => {
     const summary = runHouseholdKernel({ kernel, runContext: fixture.context });
     const detail = runHouseholdKernel({ kernel, runContext: fixture.context, resultTier: "detail" });
     expect(summary.status).toBe(supported ? "completed" : "incomplete");
-    expect(summary.state.positions[credit]!.carryingValue.equals(money("100"))).toBe(true);
+    // Where a 2025 liability is supported, the 2025 paid-tax credit offsets it
+    // immediately (zero remaining). Without a 2025 rule, the unconsumed $100
+    // must remain a NON-investable paid-tax credit, never free portfolio value.
+    expect(summary.state.positions[credit]!.carryingValue.equals(money(supported ? "0" : "100"))).toBe(true);
     expect(summary.periods.at(-1)!.investmentValue.isZero()).toBe(true);
     expect(summary.periods.at(-1)!.cash.equals(money("11700"))).toBe(true);
     expect(summary.state).toEqual(detail.state);
