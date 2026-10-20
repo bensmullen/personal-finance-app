@@ -1,0 +1,53 @@
+# D2-D: authoritative retirement transaction and RMD allocation journal — proposed architecture
+
+**Status:** design for PM review, **not yet approved for runtime implementation**. Tracking: [D2-D #149](https://github.com/bensmullen/personal-finance-app/issues/149), [RMD architecture #204](https://github.com/bensmullen/personal-finance-app/issues/204), [D2-A #146](https://github.com/bensmullen/personal-finance-app/issues/146). PFA-DET-017 / PFA-TAX-015 and [S1–S8](../../specs/capabilities/deterministic-household-financial-semantics.md) are binding. This document proposes a safe mechanism **without modifying the approved economic meaning**.
+
+## Why a journal is necessary
+
+Merged A4 `evaluateWithdrawals` and `evaluateWithdrawalRmd` qualify candidate withdrawals and target annual obligations; cash-only [PR #201](https://github.com/bensmullen/personal-finance-app/pull/201) creates a funded retirement-to-BANK cash transaction. Its legitimate `identities.postedTransactionIds` entry proves an operation *identity*, not the exact withdrawal gross, owner/tax year/authorized source or any approved RMD allocation. Ordinary account balances cannot reconstruct those facts after independent later deposits/withdrawals. A caller-supplied `RmdDistribution.funding="posted_funded"` or conditional `AuthorizationBundle` therefore MUST NOT satisfy an RMD. Current correct output is `rmdSatisfaction:"not_applied"`, incomplete.
+
+## Proposed architecture decision
+
+Choose a **domain-specific, versioned, optional retirement distribution journal attached to `AuthoritativeState`**, *not* a generic transaction-payload registry, a second cash ledger, a new income event, or an unowned replay plugin. Keep the canonical accounting transaction as the sole physical cash writer. The journal is an **atomic, independently validated proof projection** recorded in the same candidate-state commit as that transaction. It records exact settled gross and the *separately approved* allocation to one or more eligible annual RMD obligations, without creating a second asset/liability or implying tax completeness. No user-visible RMD satisfaction until source requalification and restored provenance have been audited.
+
+Suggested logical record `retirementDistributionJournal/v1` (final code types belong to #149):
+- Primary immutable key = canonical `transactionId`; `operationId`, `withdrawalId`, `authorizationId` and any related issuer/payment routing/withholding IDs each preserve one-time uniqueness.
+- `householdId`, `personId`, exact retirement `sourceAccountId`, owned BANK `destinationAccountId`, `instrumentFamily`, `taxBucket`, `effectiveAt`, `taxYear`, original effective dated source/rule snapshot/plan permission fingerprints and unchanging canonical source receipt provenance.
+- `gross`, `netBank`, `withholding` as exact nonnegative `Money` with **gross = net + withholding**. Initial admitted phase remains **verified zero withholding**. Do not create a tax advance credit until #101 authoritatively supports it.
+- Zero or more allocation rows `{allocationId, approvalId, obligationId, sourceAccountId, taxYear, satisfiesRmdYear, amount, late, deadlineVersion, approval/sourceFingerprint}`. Every row links one actual funded transaction; no allocation may exceed eligible gross. Tax year of withdrawal and year satisfied may legitimately differ only in an explicitly sourced deferred-first-RMD circumstance. Store enough temporal evidence to reproduce late/on-time and two-RMD-year behavior.
+- Schema `version`, canonical digest/trace references, committed receipt identity. A digest is *change detection*, **not** external source authentication; untrusted restored data is never accepted because a hash agrees with itself.
+
+## Trust, atomicity and read semantics
+
+1. Re-evaluate original A4 withdrawal inputs plus any approved `evaluateWithdrawalRmd` binding on every admitted event; qualify owner, source/plan, calendar eligibility, bank route, full history/usage, exact gross, available unencumbered retirement CASH and approval content, with independent dated source evidence and current run cutoff. The existing cash adapter may execute without an RMD binding; journal has a zero-allocation record in that case only if the appropriate authority is available.
+2. In one isolated candidate transition, ensure no earlier matching record or consumed authorizations, post the canonical two-leg retirement/BANK cash transfer, then install an immutable journal record and all one-time identities. If either state validation, source evidence, capacity or financial operation fails, **rollback the transaction AND the journal**. Never treat a journal record as its own funding source.
+3. `validateAuthoritativeState`, `createAuthoritativeState`, cloning/indexed execution, `commitCandidate`, serialization and the existing v3 portable checkpoint/replay pipeline must handle the optional record through the *same state authority*. Historical snapshots lacking it remain readable and have **zero authenticated RMD allocations**, not retroactively reconstructed satisfaction. A restored journal entry without its matching committed transaction/idempotency/authorization proof is invalid.
+4. On re-import/replay, recompute journal fingerprints from independently requalified original authority and compare exact operation, amount, account/person, allocation approval IDs, obligation/year and sequencing. The imported record and `postedTransactionIds` alone are insufficient; if provenance or required archived source inputs cannot be requalified, mark `rmdSatisfaction` incomplete and preserve cash truth rather than silently asserting the annual requirement was met. No synthetic `posted_funded` flags.
+5. On the read path, compute each annual obligation from the single A4 owner and sum **only authenticated committed allocation rows** for that exact obligation. Enforce `0 <= satisfied <= required`, annual/cross-account authorized aggregation, uniqueness and eligible withdrawal kinds. The $700 required/$500 posted-and-authorized example leaves **$200**; a second independently posted, authorized $200 makes that year $0; a merely proposed $700 withdrawal leaves $700. Separate first-year deferral, the two-RMD-year and late-received allocations, no automatic liquidation. RMD tax and income character remain incomplete until tax owner is integrated.
+6. **Performance boundary:** maintain indexed lookup by `(person, obligationId, taxYear)` when already available; no per-period O(history^2) full-chain scanning. Pure summary and detail must return equal authoritative state and coverage. Performance improvements must not bypass requalification.
+
+## Staged implementation and dependencies
+
+- **Stage J1 — shared persistence foundation** (serial #149 writer; new Codex V3 only after PM approves this design): add the minimal optional typed state/journal/validation, exact clone/commit/index and portable replay representation and negative tamper/legacy tests, *without* announcing any applied RMD satisfaction. Prefer only `src/state/**`, the minimum actual portable replay paths confirmed from live code, and dedicated `test/d2/integrated/**`; discover those precise paths before constructing ALLOWED_PATHS. Must not edit #101 active tax/payroll/compiler files or UI. Stable `AuthoritativeState` backward compatibility is mandatory.
+- **Stage J2 — integrate actual eligible cash posting and exact RMD allocation** (after audited J1 and merged PR #201): update the retirement cash participant to write/requalify the journal on the same committed transaction, connect only documented annual-obligation calculation and output capabilities. No fabricated inherited/Roth/rollover/QCD credit, unsupported law or tax completeness.
+- **Stage J3 — positive withholding, taxable distribution character and full D2 A4 breadth** (only after #101 tax/payroll and plan/basis authority is ready). These are not in J1/J2.
+- **Parallel independent cash adapters:** [FSA #202](https://github.com/bensmullen/personal-finance-app/issues/202) (after merged C3) and [card #203](https://github.com/bensmullen/personal-finance-app/issues/203) (after merged PR #200) use separate opt-in `src/simulation/d2/integration/{fsaCash,cardBank}/**`. They MUST NOT touch shared `src/state/**`, shared portable replay, U1 owner files, or #101's payroll/tax paths. If either needs a new durable shared receipt port, **STOP and request J1-style single-owner schema design**, not an unsigned or duplicate journal.
+
+## Non-negotiable CI and semantic tests
+
+- **Accounting:** exact USD $500 gross/net, $1000 retirement CASH -> $500, $200 BANK -> $700, combined net-worth unchanged, no new earned/investment income, payment tax credit or RMD auto-sales.
+- **RMD:** $700 due/$500 actual credited/$200 remaining; posted second $200 -> zero; $700 unfunded proposal -> $700 remaining; one withdrawal split into sourced legal obligation allocations limited by the same $500 gross; no double counts on duplicate IDs, source amendments, year changes, wrong aggregation and rollovers.
+- **Atomicity & abuse:** erroneous bank/source owner, forged/unqualified returned receipt, mismatch between state transaction IDs and record gross, journal-only import, duplicate authorization or allocated cents, source deletion, field tamper, rollback after second operation; all fail without phantom satisfaction.
+- **Portability:** old v3 artifact remains parseable but no RMD credit; new artifact and independent-process 13-month replay preserve exact journal, results and pending shortfall. Summary/detail/replay outputs agree.
+- **Integration quality:** typecheck, unit, architecture, build, four E2E shards; independent semantic audit and original issue synchronization. Codex does not poll CI. PM approval of the design and final merges required.
+
+## Alternatives considered
+
+| Approach | Tradeoff | Disposition |
+| --- | --- | --- |
+| Rely on posted IDs alone | No stored amount, approval, RMD-year proof | **Reject — incorrect after replay** |
+| Put payloads in generic transaction IDs or JSON idempotency string | Hard to validate/version, type and restore semantics ambiguous | **Reject** |
+| Mutable separate RMD shadow ledger | Two writers; divergence under failures | **Reject** |
+| Versioned optional authoritative proof record in existing state | Moderate schema/replay change, strong per-operation audit, safe old snapshots | **Recommend**, gated by PM approval |
+
+**PM approval required:** approve versioned optional authoritative distribution/allocation proof, its two-stage J1/J2 rollout and source-unavailable fail-closed read behavior. No Codex journal authorization before that decision and merged design PR.
