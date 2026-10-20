@@ -174,6 +174,10 @@ const configureTaxSettlement = async (page: import("@playwright/test").Page) => 
     await expect(confirmation).not.toBeChecked();
     await confirmation.check();
   }
+  // New explicit law-scenario choice is an actual user action; never bypass
+  // consent just to recover historical end-to-end financial setup assertions.
+  const law = page.getByRole("checkbox", { name: "Use projected current-law scenario", exact: true });
+  if (await law.count()) await law.check();
 };
 
 test("D1-B normal investment controls persist a bank-funded operation without compiler IDs", async ({ page }) => {
@@ -423,7 +427,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   await openSalaryFacts(page);
   const checklist = page.getByRole("region", { name: "Forecast setup checklist" });
   await showReadiness(page);
-  for (const missing of ["Income receiving account", "Investment owner", "Debt owner", "first monthly payment", "number of monthly payments", "mortgage payment account", "same-day mortgage order"]) {
+  for (const missing of ["Income receiving account", "Investment owner", "Debt owner", "first monthly payment", "original payment count", "mortgage payment account", "same-day mortgage order"]) {
     await expect(checklist).toContainText(missing);
   }
   await expect(checklist).toContainText("clears session-only forecast choices");
