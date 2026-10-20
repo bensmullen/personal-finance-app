@@ -19,7 +19,10 @@
         146,
         147,
         148,
-        149
+        149,
+        202,
+        203,
+        204
       ]
     },
     "R11": {
@@ -341,6 +344,30 @@
         "PFA-DET-022"
       ],
       "scope": "Early S1-S8 shared finance contract freeze, one-writer compiler/ledger/scheduler/payroll/tax/read-model integration, explicit A-B-C and U1 #120/withholding #101/tax #138 seam ledger, later U1-authoring handshake, all-domain truth table and final accepted PM UAT. #120 dependency is for D2-D closeout, not early D2 module work."
+    },
+    {
+      "issue_number": 202,
+      "owner_stage": "D2-D-FSA-funded-reimbursement",
+      "blocking_gate": "D2",
+      "depends_on": [114],
+      "spec_requirement_ids": ["PFA-DET-020", "PFA-TAX-015", "PFA-INS-013"],
+      "scope": "D2-D #149 owned opt-in physical FSA paid expense and independently authenticated BANK reimbursement; existing C3 source plan and year-chain evaluator read-only. No payroll/tax, new state schema or finalized carryover; gated on registration/design PR and merged #199. Failing source/funding stays incomplete."
+    },
+    {
+      "issue_number": 203,
+      "owner_stage": "D2-D-issuer-card-funded-payment",
+      "blocking_gate": "D2",
+      "depends_on": [114],
+      "spec_requirement_ids": ["PFA-DET-019", "PFA-TAX-015"],
+      "scope": "D2-D #149 owned opt-in physically funded issuer-quoted card interest and BANK repayment using existing B1 source and card cycle proofs; single household state writer, no generic guessed APR/minimum or shared state schema. Must wait for merged PR #200 and registration PR; late fees/future cycles remain incomplete."
+    },
+    {
+      "issue_number": 204,
+      "owner_stage": "D2-D-RMD-transaction-journal-architecture",
+      "blocking_gate": "D2",
+      "depends_on": [114],
+      "spec_requirement_ids": ["PFA-DET-017", "PFA-TAX-015", "PFA-DET-023"],
+      "scope": "Single-owner shared state and portable replay retirement transaction/RMD allocation journal architecture decision before physical funded RMD satisfaction. Design/PM approval only: no Codex implementation until approved design, merged PR #201 and nonoverlapping #101 paths; follow-on staged J1 state journal then J2 atomic cash-integrated settlement."
     },
     {
       "issue_number": 170,

@@ -34,7 +34,7 @@ describe("issue-backed roadmap traceability", () => {
     for (const id of [100, 101, 102, 105, 120, 146, 147, 148, 149]) expect(ids).toContain(id);
     for (const id of [94, 99, 103, 104]) expect(ids).not.toContain(id);
     expect(registry.stage_gates.D1_U1?.required_issue_numbers).toEqual([120]);
-    expect(registry.stage_gates.D2?.required_issue_numbers).toEqual([114, 146, 147, 148, 149]);
+    expect(registry.stage_gates.D2?.required_issue_numbers).toEqual([114, 146, 147, 148, 149, 202, 203, 204]);
     for (const id of [146, 147, 148]) expect(registry.issues.find(row => row.issue_number === id)?.depends_on).not.toContain(120);
     expect(registry.issues.find(row => row.issue_number === 149)?.depends_on).toContain(120);
     for (const row of registry.issues) {
