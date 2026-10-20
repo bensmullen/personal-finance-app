@@ -33,11 +33,18 @@ export const fsaYearChainFingerprint = (value: unknown): string => {
     .sort(([a], [b]) => compare(a, b)).map(([k, v]) => `${JSON.stringify(k)}:${fsaYearChainFingerprint(v)}`).join(",")}}`;
   return JSON.stringify(value) ?? "null";
 };
-const snapshot = <T>(value: T): T => {
+const snapshot = <T>(value: T, normalizeFacts = true): T => {
   if (value instanceof Money || value === null || typeof value !== "object") return value;
-  if (Array.isArray(value)) return Object.freeze(value.map(snapshot)
-    .sort((a, b) => compare(fsaYearChainFingerprint(a), fsaYearChainFingerprint(b)))) as T;
-  return Object.freeze(Object.fromEntries(Object.entries(value).map(([k, v]) => [k, snapshot(v)]))) as T;
+  if (Array.isArray(value)) {
+    const copied = value.map(item => snapshot(item, normalizeFacts));
+    // Only unordered SOURCE facts are canonicalized. The owning FSA evaluator's
+    // returned arrays are its authoritative output order and must not be sorted.
+    return Object.freeze(normalizeFacts
+      ? copied.sort((a, b) => compare(fsaYearChainFingerprint(a), fsaYearChainFingerprint(b)))
+      : copied) as T;
+  }
+  return Object.freeze(Object.fromEntries(Object.entries(value).map(([k, v]) =>
+    [k, snapshot(v, normalizeFacts)]))) as T;
 };
 const identity = (p: FsaIdentity): FsaIdentity => ({ householdId: p.householdId, personId: p.personId,
   employerId: p.employerId, planId: p.planId, planYearId: p.planYearId });
@@ -92,7 +99,8 @@ export interface FsaYearChainBundle {
 
 /** Compose the owner, never calculate claims or mint a finalized FsaPriorCarryover. */
 export function bindFsaYearChain(input: FsaYearChainRequest): FsaYearChainBundle {
-  const prior = evaluateFsa(input.prior), successor = evaluateFsa(input.successor);
+  const sourceInputs = snapshot(input);
+  const prior = evaluateFsa(sourceInputs.prior), successor = evaluateFsa(sourceInputs.successor);
   const p = input.prior.plan, n = input.successor.plan;
   const fingerprints = { prior: fsaYearChainFingerprint(input.prior), successor: fsaYearChainFingerprint(input.successor),
     priorEvaluation: fsaYearChainFingerprint(prior), successorEvaluation: fsaYearChainFingerprint(successor) };
@@ -180,7 +188,7 @@ export function bindFsaYearChain(input: FsaYearChainRequest): FsaYearChainBundle
     committed: false, postable: false, coverage: "incomplete", proposalCoverage: proposalComplete ? "complete" : "incomplete",
     successorCoverage: "incomplete", netWorthTreatment: "excluded_restricted_entitlement",
     payrollEffectCoverage: "incomplete", reimbursementSettlementCoverage: "incomplete", taxCoverage: "incomplete",
-    inputs: input, fingerprints, evaluations: { prior, successor }, from: identity(p), to: identity(n),
+    inputs: sourceInputs, fingerprints, evaluations: { prior, successor }, from: identity(p), to: identity(n),
     memberIds: { prior: p.members.map(m => m.memberId), successor: n.members.map(m => m.memberId) },
     transferId: input.transferId, effectiveAt: n.period.start,
     closeDueAt: p.termination?.kind === "terminated" ? p.termination.submitEndExclusive : p.submitEndExclusive,
@@ -190,5 +198,5 @@ export function bindFsaYearChain(input: FsaYearChainRequest): FsaYearChainBundle
     provenance: [input.prior, input.successor].flatMap(r => r.receipts.map(receipt => ({
       planYearId: r.plan.planYearId, proofId: receipt.proofId, receiptId: receipt.receiptId, memberId: receipt.memberId,
       incurredAt: receipt.incurredAt, submittedAt: receipt.submittedAt,
-      settlementId: receipt.reimbursement?.status === "settled" ? receipt.reimbursement.settlementId : null }))), diagnostics });
+      settlementId: receipt.reimbursement?.status === "settled" ? receipt.reimbursement.settlementId : null }))), diagnostics }, false);
 }
