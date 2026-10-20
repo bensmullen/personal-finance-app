@@ -435,9 +435,9 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   const configuration = page.getByRole("region", { name: "Household execution configuration" });
   await configureOwnedFunding(page, { missingIncome: true });
   await configureTaxSettlement(page);
-  await expect(checklist).toContainText("Required choices are complete");
-  await configuration.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
-  await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
+  // Accepted, fully sourced setup automatically drives the existing worker;
+  // the missing-choices checklist may disappear before a manual Apply click.
+  await expect(status).toHaveAttribute("data-lifecycle", "incomplete", { timeout: 60_000 });
   await expect(status).not.toHaveAttribute("data-request-id", originalRequest!);
   await expect(status).toContainText("New York");
   await openContributions(page);
