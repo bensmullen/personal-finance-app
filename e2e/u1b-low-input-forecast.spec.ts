@@ -172,7 +172,9 @@ test("sourced young adult gets an editable horizon beyond forty years and a decl
   await start(page); await importModel(page, young);
   await navigateOwner(page, "Plan", "Current Plan");
   await page.getByText("Forecast clock & conventions", { exact: true }).click();
-  await page.getByLabel("As of", { exact: true }).fill("2026-08-01");
+  // Scope to the editable Current Plan owner; the technical standalone drill-down
+  // intentionally also contains a read-only "As of" display.
+  await page.locator('[data-financial-field="asOf"] input').fill("2026-08-01");
   await navigateOwner(page, "Plan", "Current Plan");
   const target = page.getByRole("region", { name: "Age-oriented forecast target", exact: true });
   await expect(target).toContainText("2098-02-01");
