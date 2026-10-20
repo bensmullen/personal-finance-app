@@ -122,6 +122,12 @@ if (warmups === 0 && measuredRuns === 1) {
     }
   }
   await persist(stopped ? "stopped" : "completed");
+  // This explicit one-shot diagnostic is independent of the historical R1/R3
+  // baseline, whose old Golden complete-only assumption can now be incomplete
+  // under authoritative T1A tax capability gates. Never mask a probe cutoff.
+  if (stopped) throw new Error("U1B_FLAGSHIP_DIAGNOSTIC_INCOMPLETE: see benchmarks/u1b-flagship-diagnostics.json; older R1/R3 baselines were not run.");
+  console.log("U1B_FLAGSHIP_DIAGNOSTIC_COMPLETE: separate R1/R3 baselines were not run.");
+  process.exit(0);
 }
 
 const captured = [];
