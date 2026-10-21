@@ -150,6 +150,10 @@ function deriveReceipt(s: FsaCashSource, context: D2SettlementSourceContext): D2
   qualifyFsaCashOriginal(s, context);
   const { request: raw, original: o, deposit: d } = s;
   stamp(d, d.settledAt, context); order(d.executionOrder);
+  // A bank posting cannot be independently confirmed before it occurred.
+  // Prior plan approval may exist, but it is not posted BANK evidence.
+  if (d.status === "posted" && (d.publishedAt < d.settledAt || d.knownAt < d.settledAt))
+    reject("Confirmed BANK deposit evidence cannot predate actual settlement");
   const evidence: FsaSource[] = [];
   const visit = (v: unknown): void => {
     if (!v || typeof v !== "object" || v instanceof Money) return;
