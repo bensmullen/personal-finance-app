@@ -196,6 +196,9 @@ test("U1 normal navigation, staged salary, direct repair, mortgage and horizon g
   await taxes.getByLabel("Tax payment account", { exact: true }).selectOption({ label: "Everyday checking" });
   await taxes.getByLabel("Tax refund account", { exact: true }).selectOption({ label: "Everyday checking" });
   for (const name of ["Federal income tax", "New York"]) {
+    // Jurisdiction-specific tax conventions use their own disclosure sections.
+    // Open the selected legal source before confirming its settlement date.
+    await open(taxes, name);
     await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
   }
   for (const checkbox of await taxes.getByRole("checkbox").all()) await checkbox.check();
