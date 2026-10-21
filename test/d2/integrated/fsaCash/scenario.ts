@@ -54,7 +54,7 @@ export function source(label = "one", amount = "1000", paid = "2026-01-10", sett
   return { sourceId: `source:${label}`, version: "synthetic/v1", request, provenance: provenance(request),
     original: { ...who, proofId, memberId: ids.person, payeeId: r.payeeId, medicalReceiptId, expensePaymentId: `paid:${label}`,
       approvalId: `expense-approved:${label}`, bankAccountId: ids.bank, incurredAt: at(paid), paidAt: at(paid), amount: money("1000"),
-      bankCashBefore: money("1500"), ...publication },
+      bankCashBefore: money("1500"), publishedAt: at(paid), knownAt: at(paid) },
     deposit: { status: "posted", sourceApprovalId: `plan-approved:${label}`, paymentApprovalId: `bank-approved:${label}`,
       authorizationId: `authorization:${label}`, paymentId: `deposit:${label}`, entitlementConsumptionId: `consume:${label}`,
       bankAccountId: ids.bank, householdId: ids.household, ownerId: ids.person, settledAt: at(settled), amount: money(amount),
