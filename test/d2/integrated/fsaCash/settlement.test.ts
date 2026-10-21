@@ -32,9 +32,25 @@ const reject = (s: FsaCashSource, f = fixture()) => {
   expect(out.status).toBe("incomplete");
   expect(out.diagnostics.some(d => d.severity === "error")).toBe(true);
   expect(canonicalSerialize(f.state)).toBe(before);
-  // A failed replay must preserve previously committed historical receipts.
-  expect(out.state.d2SettlementReceipts).toEqual(f.state.d2SettlementReceipts);
-  expect(out.state.d2PostedTransactions).toEqual(f.state.d2PostedTransactions);
+  // A rejected reimbursement never creates a settled receipt, even when an
+  // independently valid medical payment was already committed in an earlier
+  // successful period. A failed *period* rolls back; prior periods do not.
+  expect(Object.keys(out.state.d2SettlementReceipts ?? {}).sort())
+    .toEqual(Object.keys(f.state.d2SettlementReceipts ?? {}).sort());
+  const succeeded = out.periods.flatMap(p => p.transactions);
+  expect(succeeded.every(tx => tx.type === "fsa_medical_expense_payment")).toBe(true);
+  expect(Object.keys(out.state.d2PostedTransactions ?? {}).sort()).toEqual(
+    [...new Set([...Object.keys(f.state.d2PostedTransactions ?? {}), ...succeeded.map(tx => tx.id)])].sort());
+  for (const tx of succeeded) {
+    expect(out.state.d2PostedTransactions?.[tx.id]?.transaction).toEqual(tx);
+    expect(out.state.d2PostedTransactions?.[tx.id]?.registration.role).toBe("original");
+  }
+  const expectedBank = succeeded.reduce((cash, tx) => {
+    const leg = tx.legs.find(l => l.type === "cash" && l.accountId === ids.bank);
+    expect(leg?.posting).toBe("credit");
+    return cash.minus(leg!.amount);
+  }, f.state.accounts[ids.bank]!.cash);
+  expect(out.state.accounts[ids.bank]!.cash.equals(expectedBank)).toBe(true);
   return out;
 };
 
