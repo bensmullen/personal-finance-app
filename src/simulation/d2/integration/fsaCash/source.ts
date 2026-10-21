@@ -132,6 +132,11 @@ export function originalTransaction(s: FsaCashSource) {
 export function qualifyFsaCashOriginal(s: FsaCashSource, context: D2SettlementSourceContext): void {
   const o = s.original;
   stamp(o, o.paidAt, context); instant(o.incurredAt); order(o.executionOrder);
+  // A purported actually-paid bank confirmation cannot be published before
+  // the cash event itself. Earlier plan/medical eligibility facts may exist,
+  // but they are not independent evidence that BANK has already paid.
+  if (o.publishedAt < o.paidAt || o.knownAt < o.paidAt)
+    reject("Independent actual medical BANK payment confirmation predates its event");
   if (![o.householdId, o.personId, o.employerId, o.planId, o.planYearId, o.memberId, o.payeeId,
     o.medicalReceiptId, o.proofId, o.expensePaymentId, o.approvalId, o.bankAccountId].every(text)
     || o.incurredAt > o.paidAt || !exact(o.amount) || !o.amount.isPositive() || !exact(o.bankCashBefore))
