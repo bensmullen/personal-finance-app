@@ -536,7 +536,7 @@ const runCompiledHouseholdProjectionInternal = (
   let reachedThrough: Instant | undefined;
   const diagnostics: ValidationIssue[] = [];
   let outputCapabilities = periodRetention?.resume?.outputCapabilities;
-  const mergeOutputCapabilities = createOutputCapabilityMerger();
+  const mergeOutputCapabilities = createOutputCapabilityMerger(performance);
   for (const period of periods.filter(period =>
     (periodRetention?.resume === undefined || period.start >= periodRetention.resume.at) &&
     (periodRetention?.stopAfter === undefined || period.end <= periodRetention.stopAfter)))

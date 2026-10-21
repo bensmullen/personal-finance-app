@@ -8,7 +8,7 @@ import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/
 import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { createHouseholdForecastRequest, runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
 import { createGoldenExampleConfiguration, createGoldenHouseholdSessionConfiguration, GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
-import { authorMortgageExtra, createFlagshipHouseholdDraft, createGoldenHouseholdExampleDraft } from "../src/application/personalMvp.js";
+import { authorMortgageExtra, createFlagshipHouseholdDraft, createGoldenHouseholdExampleDraft, type JsonObject } from "../src/application/personalMvp.js";
 import { replaceCurrentPlanHorizon } from "../src/application/forecastSetup.js";
 import { createHouseholdTaxParticipant, emptyTaxIncome, taxCreditPositionIds, type HouseholdTaxInput, type CompiledTaxIncome } from "../src/simulation/tax.js";
 import { alphaStateTaxCatalog, alphaLocalTaxCatalog, resolveTaxCoreRule, fullYearResidentEligibilityKey, recognizeTaxLegalBases, recognizedGrossTaxableBaseEligibilityKey, applyTaxCoreRule } from "../src/rules/index.js";
@@ -31,6 +31,9 @@ const differenceContext = (actual: unknown, expected: unknown): string => {
   return `First canonical difference at ${index}: actual=${left.slice(Math.max(0, index - 120), index + 400)} expected=${right.slice(Math.max(0, index - 120), index + 400)}`;
 };
 
+const isJsonObject = (value: unknown): value is JsonObject =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 const localFixture = (year: string, months: number, state: string, source: Partial<CompiledTaxIncome>, inputOverrides: Partial<HouseholdTaxInput> = {}, startMonth = "01") => {
   const fixture = taxHouseholdFixture({ months });
   const from = instant(`${year}-01-01T00:00:00.000Z`), until = instant(`${Number(year) + 1}-01-01T00:00:00.000Z`);
@@ -51,7 +54,7 @@ describe("T1A household tax integration", () => {
     // refuses to overwrite an existing account's immutable opening balance.
     const historical = createGoldenHouseholdExampleDraft();
     const opening = { ...historical, objects: { ...historical.objects,
-      Account: historical.objects.Account!.map(account => typeof account === "object" && account !== null && !Array.isArray(account) && account.account_id === ids.checking
+      Account: historical.objects.Account!.map(account => isJsonObject(account) && account.account_id === ids.checking
         ? { ...account, opening_balance: "400000.00" } : account),
     } };
     const replaced = replaceCurrentPlanHorizon(opening, "8c000000-0000-4000-8000-000000000090",

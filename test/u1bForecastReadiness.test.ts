@@ -5,6 +5,7 @@ import { createGoldenExampleConfiguration, GOLDEN_HOUSEHOLD_IDS as ids } from ".
 import { createHouseholdForecastRequest, runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
 import { calculationFingerprint } from "../src/application/interactiveForecast.js";
 import { acceptRetirementProposal, acceptPlanningStarters } from "../src/application/forecastSetup.js";
+import { diagnosticSummary } from "../ui/authoring/diagnosticSummary.js";
 
 const withDob = (dob: string): PersonalDraft => {
   const model = createGoldenHouseholdDraft();
@@ -12,6 +13,18 @@ const withDob = (dob: string): PersonalDraft => {
 };
 
 describe("U1B sourced planning readiness", () => {
+  it("keeps the economic consequence of partial payroll, contribution and tax coverage visible", () => {
+    const summary = (category: string) => diagnosticSummary({ code: "PFA-TAX-009", entityType: "tax_capability", category, taxYear: "2027" });
+    expect(summary("contribution_annual_facts").problem).toContain("Affected contributions are skipped; wages and other household activity continue");
+    expect(summary("contribution_annual_facts").remedy).toContain("does not establish personal eligibility");
+    expect(summary("wage_gross_to_net_withholding").problem).toContain("Gross earnings do not establish spendable net deposits");
+    expect(summary("wage_gross_to_net_withholding").problem).toContain("after-tax cash and net worth remain incomplete");
+    expect(summary("payroll_source_unsupported").remedy).toContain("unsupported salary and withholding were not executed");
+    for (const category of ["filing_status_year_unknown", "filing_status_conflict", "filing_status", "residence_jurisdiction_periods", "local_residence_jurisdiction"])
+      expect(summary(category).problem).toContain("incomplete");
+    expect(summary("filing_status_year_unknown").remedy).toContain("Household & People");
+    expect(summary("filing_status").remedy).toContain("Import");
+  });
   it.each([
     ["2008-01-01", "2098-02-01"], ["1960-06-15", "2050-07-01"], ["1990-01-01", "2080-02-01"],
   ])("includes %s's birthday month without a forty-year clip", (dob, end) => {

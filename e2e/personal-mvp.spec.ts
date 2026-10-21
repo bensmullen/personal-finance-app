@@ -311,6 +311,23 @@ const importDraft = async (
 
 const rawUuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
+const isJsonObject = (value: unknown): value is JsonObject =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const runIntegratedHistoricalForecast = async (page: import("@playwright/test").Page) => {
+  await page.getByRole("button", { name: "Planning", exact: true }).click();
+  await openAuthoringSections(page);
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  await openAuthoringSections(page);
+  await configureOwnedFunding(page, { calculateSchedule: true });
+  await configureTaxSettlement(page);
+  await page.getByRole("region", { name: "Household execution configuration" }).getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
+  const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+  await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
+  return status;
+};
+
 test("U1 insurance has one policy owner, optional shared life events and durable legacy links", async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -528,7 +545,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   expect(errors).toEqual([]);
 });
 
-test("D1 resolved decisions extend plan dates, guide tax setup and continue projected ten-year contributions", async ({ page }) => {
+test("D1 plan dates and a funded mortgage payoff preserve contractual maturity", async ({ page }) => {
   test.setTimeout(120_000);
   page.setDefaultTimeout(10_000);
   const errors: string[] = [];
@@ -538,7 +555,7 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   // The ordinary historical fixture cannot fund that payment from bank cash.
   const historical = createGoldenHouseholdExampleDraft();
   const funded = { ...historical, objects: { ...historical.objects,
-    Account: historical.objects.Account!.map(account => typeof account === "object" && account !== null && !Array.isArray(account) && account.account_id === GOLDEN_HOUSEHOLD_IDS.checking
+    Account: historical.objects.Account!.map(account => isJsonObject(account) && account.account_id === GOLDEN_HOUSEHOLD_IDS.checking
       ? { ...account, opening_balance: "400000.00" } : account),
   } };
   await loadExample(page, funded);
@@ -594,11 +611,16 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   });
   await openDebtOwner(page);
   await expect(mortgage).toContainText("Contractual final payment / maturity: 2052-01-01");
+  expect(errors).toEqual([]);
+});
 
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
-  await page.locator('input[type="file"]').setInputFiles("test/fixtures/d1-integrated-uat-model.json");
-  await page.getByRole("button", { name: "Import into session", exact: true }).click();
+test("D1 IRA and HSA edits preserve annual eligibility gaps and visible economic consequences", async ({ page }) => {
+  test.setTimeout(120_000);
+  page.setDefaultTimeout(10_000);
+  const errors: string[] = [];
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  page.on("pageerror", error => errors.push(error.message));
+  await importDraft(page, importPersonalModelJson(await readFile(new URL("../test/fixtures/d1-integrated-uat-model.json", import.meta.url), "utf8")));
   await openSalaryFacts(page);
   const manage = async (accountName: string, symbol: string) => {
     await page.getByRole("button", { name: "Investing", exact: true }).click();
@@ -643,29 +665,8 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   expect(hsa).toHaveLength(1); expect(hsa[0]!.allocation.calculation).toMatchObject({ kind: "fixed", amount: expect.objectContaining({}) });
   expect(hsa[0]!.allocation.policy.facts.annualFactProjection).toBeUndefined();
   if (hsa[0]!.allocation.calculation.kind === "fixed") expect(hsa[0]!.allocation.calculation.amount.amount.toString()).toBe("101");
-  await page.getByRole("button", { name: "Planning", exact: true }).click();
-  await openAuthoringSections(page);
-  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
-  await openAuthoringSections(page);
-  const configuration = page.getByRole("region", { name: "Household execution configuration" });
-  await configureOwnedFunding(page, { calculateSchedule: true });
-  await configureTaxSettlement(page);
-  await configuration.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
-  await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
-  // Projected statutory law cannot supply a household's future filing facts.
-  // Confirm this synthetic household's 2027 assumption through its sole editor;
-  // all other future annual eligibility facts intentionally remain unknown.
+  const status = await runIntegratedHistoricalForecast(page);
   await showForecastLimitations(page);
-  await status.getByRole("button", { name: "Review 2027 filing status · Taylor Example", exact: true }).click();
-  const filing = page.getByRole("dialog", { name: "Edit Annual household filing status", exact: true });
-  await filing.getByLabel("Annual household filing status", { exact: true }).selectOption("single");
-  const beforeFilingRequest = await status.getAttribute("data-request-id");
-  await filing.getByRole("button", { name: "Confirm & save fact", exact: true }).click();
-  await expect(filing).toHaveCount(0);
-  await expect(status).not.toHaveAttribute("data-request-id", beforeFilingRequest!, { timeout: 30_000 });
-  await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
-  await showForecastLimitations(page);
-  await expect(status.getByRole("button", { name: "Review 2028 filing status · Taylor Example", exact: true })).toBeVisible();
   await expect(page.getByRole("alert", { name: "Forecast stopped early" })).toHaveCount(0);
   await expect(page.getByText("Completed through 2036-01-01 · Some outputs are partially modeled", { exact: true })).toBeVisible();
   await showHouseholdDetails(page);
@@ -673,7 +674,7 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await expect(basis).toContainText("US:FEDERAL: 2026 source rules projected from 2027-01-01");
   await openContributions(page);
   // Future capacity rows require committed eligible contributions; projected
-  // tax law and one filing fact cannot create an annual contribution allowance.
+  // tax law cannot create an annual contribution allowance.
   const capacity = page.getByRole("region", { name: "Contribution capacity" });
   await expect(capacity).not.toContainText("Projected current law");
   await expect(capacity.locator("tbody tr").filter({ hasText: /\/ 2027\b/ })).toHaveCount(0);
@@ -694,6 +695,30 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await expect(status.locator("pre").filter({ hasText: "Recognized wages lack complete source-bound employer withholding and executed net-pay coverage for every pay occurrence and required jurisdiction." }).first()).toBeVisible();
   expect(roots.some(root => root.includes("contribution_annual_facts"))).toBe(true);
   expect(errors).toEqual([]);
+});
+
+test("D1 annual filing repair changes only its dated year and retains later-year gaps", async ({ page }) => {
+  test.setTimeout(120_000);
+  await importDraft(page, importPersonalModelJson(await readFile(new URL("../test/fixtures/d1-integrated-uat-model.json", import.meta.url), "utf8")));
+  await openSalaryFacts(page);
+  const status = await runIntegratedHistoricalForecast(page);
+  // Exercise this sole owner independently of mortgage/contribution authoring.
+  // Projected statutory law cannot supply future household filing facts.
+  await showForecastLimitations(page);
+  await status.getByRole("button", { name: "Review 2027 filing status · Taylor Example", exact: true }).click();
+  const filing = page.getByRole("dialog", { name: "Edit Annual household filing status", exact: true });
+  await filing.getByLabel("Annual household filing status", { exact: true }).selectOption("single");
+  const beforeFilingRequest = await status.getAttribute("data-request-id");
+  await filing.getByRole("button", { name: "Confirm & save fact", exact: true }).click();
+  await expect(filing).toHaveCount(0);
+  await expect(status).not.toHaveAttribute("data-request-id", beforeFilingRequest!, { timeout: 30_000 });
+  await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
+  await showForecastLimitations(page);
+  await expect(status.getByRole("button", { name: "Review 2027 filing status · Taylor Example", exact: true })).toHaveCount(0);
+  await expect(status.getByRole("button", { name: "Review 2028 filing status · Taylor Example", exact: true })).toBeVisible();
+  await expect(page.getByRole("alert", { name: "Forecast stopped early" })).toHaveCount(0);
+  await expect(page.getByText("Completed through 2036-01-01 · Some outputs are partially modeled", { exact: true })).toBeVisible();
 });
 
 test("D1-C authors, saves, reloads and runs a combined household through normal controls", async ({ page }, testInfo) => {

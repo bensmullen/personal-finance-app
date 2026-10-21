@@ -32,6 +32,83 @@ const oneMonth = <T extends ReturnType<typeof createRealisticPerformanceFixture>
 }) as T;
 
 describe("performance instrumentation", () => {
+  it("shares unique growing prefixes without eagerly retaining an array for every period", () => {
+    const registry = new PerformanceRegistry();
+    const session = createPerformanceSession({ context, clock: { now: () => 0 }, sink: registry });
+    const merge = createOutputCapabilityMerger(session);
+    const periods: TaxOutputCapabilities[] = [];
+    let cumulative: TaxOutputCapabilities | undefined;
+    for (let month = 0; month < 120; month++) {
+      cumulative = merge([cumulative, taxOutputCapabilities([taxDiagnostic("source_gap", `Occurrence ${month}`)])])!;
+      periods.push(cumulative);
+    }
+    session.add("engine.capabilities", 0);
+    session.finish();
+    const counters = registry.latest("engine.capabilities")!.resources!.structuralCounters!;
+    expect(counters.capabilitySequenceNodesCreated).toBeLessThanOrEqual(240);
+    expect(counters.capabilityDiagnosticArraysMaterialized ?? 0).toBe(0);
+    // Getter-backed diagnostics must remain ordinary complete portable arrays.
+    for (const [index, period] of periods.entries()) {
+      expect(period.netWorth?.diagnostics).toHaveLength(index + 1);
+      expect(Object.isFrozen(period.netWorth?.diagnostics)).toBe(true);
+      expect(canonicalSerialize(structuredClone(period))).toBe(canonicalSerialize(period));
+    }
+  });
+  it.each([8, 20, 120])("bounds interning across %i unique diagnostic prefixes without losing prior output history", months => {
+    // Structural correctness work only; engine/browser scaling remains in the
+    // reviewer-owned engineering-validation profile, including 649 months.
+    const registry = new PerformanceRegistry();
+    const session = createPerformanceSession({ context, clock: { now: () => 0 }, sink: registry });
+    const merge = createOutputCapabilityMerger(session);
+    let cumulative: TaxOutputCapabilities | undefined;
+    const published: TaxOutputCapabilities[] = [];
+    const expected: TaxCapabilityDiagnostic[] = [];
+    for (let month = 0; month < months; month++) {
+      const diagnostic = { ...taxDiagnostic("contribution_annual_facts", `Unresolved source ${month}`, "US:FEDERAL", `source-${month}`), taxYear: String(2026 + Math.floor(month / 12)) };
+      expected.push(diagnostic);
+      cumulative = merge([cumulative, taxOutputCapabilities([diagnostic, structuredClone(diagnostic)])])!;
+      published.push(cumulative);
+      expect(canonicalSerialize(cumulative.netWorth?.diagnostics)).toBe(canonicalSerialize(expected));
+      expect(cumulative.netWorth).toBe(cumulative.assets);
+      expect(cumulative.netWorth?.status).toBe("incomplete");
+    }
+    // Exercise a second traversal after eviction, preserving immutable earlier
+    // periods and exact dedup order rather than merely checking final length.
+    for (const [month, value] of published.entries()) {
+      expect(canonicalSerialize(value.netWorth?.diagnostics)).toBe(canonicalSerialize(expected.slice(0, month + 1)));
+      expect(canonicalSerialize(merge([value, structuredClone(value)]))).toBe(canonicalSerialize(value));
+      expect(Object.isFrozen(value.netWorth?.diagnostics)).toBe(true);
+    }
+    session.add("engine.capabilities", 0);
+    session.finish();
+    const counters = registry.latest("engine.capabilities")!.resources!.structuralCounters!;
+    expect(counters.capabilityHistoryCacheSlots).toBeLessThanOrEqual(4096);
+    expect(counters.capabilityDiagnosticCacheKeyChars).toBeLessThanOrEqual(262144);
+    expect(counters.capabilityDiagnosticArrayCacheSlots).toBeLessThanOrEqual(4096);
+    expect(counters.capabilityDiagnosticsVisited).toBeGreaterThanOrEqual(months);
+  });
+  it("evicts large equality keys without deleting provenance or trusting a shallow caller freeze", () => {
+    const registry = new PerformanceRegistry();
+    const session = createPerformanceSession({ context, clock: { now: () => 0 }, sink: registry });
+    const merge = createOutputCapabilityMerger(session);
+    let cumulative: TaxOutputCapabilities | undefined;
+    for (let n = 0; n < 16; n++) cumulative = merge([cumulative, taxOutputCapabilities([
+      taxDiagnostic("source_gap", `${n}:${"source evidence ".repeat(1400)}`),
+    ])]);
+    expect(cumulative!.netWorth!.diagnostics).toHaveLength(16);
+    expect(cumulative!.netWorth!.diagnostics[0]!.message).toMatch(/^0:/);
+    const outputs = ["cash"];
+    const shallow = Object.freeze({ ...taxDiagnostic("source_gap", "Mutable nested source"), affectedOutputs: outputs });
+    const source = { cash: Object.freeze({ dependency: "tax_affected" as const, status: "incomplete" as const, diagnostics: [shallow] }) };
+    const before = merge([source])!;
+    outputs.push("netWorth");
+    const after = merge([source])!;
+    expect(before.cash!.diagnostics[0]!.affectedOutputs).toEqual(["cash"]);
+    expect(after.cash!.diagnostics[0]!.affectedOutputs).toEqual(["cash", "netWorth"]);
+    expect(Object.isFrozen(after.cash!.diagnostics[0]!.affectedOutputs)).toBe(true);
+    session.add("engine.capabilities", 0); session.finish();
+    expect(registry.latest("engine.capabilities")!.resources!.structuralCounters!.capabilityDiagnosticCacheKeyChars).toBeLessThanOrEqual(262144);
+  });
   it("compares full catalog identities exactly without materializing them in diagnostic keys", () => {
     const catalog = `tax-catalog:canonical-v1:${"long catalog source ".repeat(2000)}`;
     const assumption = { version: "projected-current-law/v1" as const, selection: "projectedCurrentLawThrough" as const,
