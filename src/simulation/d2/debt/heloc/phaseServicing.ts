@@ -256,6 +256,13 @@ export function proposeHelocPhaseServicing(input: PhaseServicingRequest): PhaseS
     }
   }
   if (diagnostics.length) return result();
+  // A missing B1 rate computation may be replaced by a verified original
+  // issuer statement, never by an unavailable original line/interest source.
+  // Validate those independent source boundaries before classifying the
+  // computational B1 diagnostics as an eligible quote-only fallback.
+  source(r.source, r.period.start, r.period);
+  source(r.interest.source, r.period.start, r.period);
+  if (diagnostics.length) return result();
   const accrual = evaluateHelocPeriod(r, t.phase.kind);
   const b1 = accrual.coverage === "complete" ? accrual.proposals[0]! : undefined;
   // An original issuer statement can stand in for unavailable computation,
