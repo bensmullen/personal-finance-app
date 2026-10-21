@@ -58,7 +58,7 @@ export function source(label = "one", amount = "1000", paid = "2026-01-10", sett
     deposit: { status: "posted", sourceApprovalId: `plan-approved:${label}`, paymentApprovalId: `bank-approved:${label}`,
       authorizationId: `authorization:${label}`, paymentId: `deposit:${label}`, entitlementConsumptionId: `consume:${label}`,
       bankAccountId: ids.bank, householdId: ids.household, ownerId: ids.person, settledAt: at(settled), amount: money(amount),
-      bankCashBefore: money("500"), ...publication } };
+      bankCashBefore: money("500"), publishedAt: at(settled), knownAt: at(settled) } };
 }
 export const input = (...sources: FsaCashSource[]): FsaCashInput => ({ sources: sources.map(s => ({ sourceId: s.sourceId, expectedSource: fsaCashSourceFingerprint(s) })) });
 export function fixture(months = 2, opening?: AuthoritativeState, month = "2026-01") {
