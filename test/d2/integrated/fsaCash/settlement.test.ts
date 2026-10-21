@@ -251,7 +251,11 @@ describe("#202 independently source-qualified FSA physical cash", () => {
     // Period reporting has the established (date, transaction ID) canonical sort;
     // actual source-signed execution order is proven by writer archive insertion.
     expect(out.periods[0]!.transactions.map(tx => tx.type)).toEqual(["fsa_expense_reimbursement", "fsa_medical_expense_payment"]);
-    expect(Object.values(out.state.d2PostedTransactions ?? {}).map(p => p.registration.role)).toEqual(["original", "settlement"]);
+    // Canonical archive enumeration is sorted by ID rather than posting time.
+    // Both exact signed postings must exist; settlement BANK opening can match
+    // only after the funded original has actually executed.
+    expect(out.state.d2PostedTransactions?.[originalTransaction(s).id]?.registration.role).toBe("original");
+    expect(out.state.d2PostedTransactions?.[qualifyFsaCashSource(s, fixture(1).context).paymentTransaction.id]?.registration.role).toBe("settlement");
     expect(out.state.accounts[ids.bank]!.cash.equals(money("500").plus(money(amount)))).toBe(true);
     expect(Object.values(out.state.d2PostedTransactions ?? {})).toHaveLength(2);
     const state = cloneAuthoritativeState(fixture().state); state.accounts[ids.bank]!.cash = money("500");
