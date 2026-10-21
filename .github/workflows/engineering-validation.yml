@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - performance
+          - forecast-scaling
           - stochastic
           - onboarding
           - provider
@@ -46,6 +47,7 @@ jobs:
           PERF_RUNS: ${{ inputs.runs }}
         run: |
           case "$PROFILE" in
+            forecast-scaling) node tools/ci/forecast-feasibility.mjs --manual; exit $? ;;
             performance) SCRIPT=perf:capture ;;
             stochastic) SCRIPT=stochastic:validate ;;
             onboarding) SCRIPT=onboarding:dry-run ;;

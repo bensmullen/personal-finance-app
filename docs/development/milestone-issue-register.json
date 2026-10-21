@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "as_of": "2026-10-19",
+  "as_of": "2026-10-21",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
   "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120. D2 parallel reallocation 2026-10-17: #103's unimplemented retirement distribution/RMD scope is consolidated into #146; backend #146/#147/#148 may overlap U1 #120 after approved financial contracts and #149 shared interface freeze. #149 alone owns deferred cross-domain/UI seams and final D2-D acceptance. #114 is merged preparation, not D2 functionality. U1B-C #142 closed after PR #157 merged; U1B-D #161 newly allocated to its own stage, implementation sequential after merged registration PR, not blocked by final #120 UAT. U1B-E requires separate later authorization.",
   "stage_gates": {
@@ -74,6 +74,13 @@
       "blocking_transition": "Declare U1B complete or request D1_U1/#120 integrated uncoached owner approval",
       "required_issue_numbers": [
         187
+      ]
+    },
+    "FRAMEWORK_RELIABILITY": {
+      "stage": "Engineering development-framework reliability",
+      "blocking_transition": "Declare approved preflight, CI cost control and task-receipt safeguards implemented only after #218 has merged, selected CI and negative hook self-tests passed. Independent of D1/U1/D2/R11 product acceptance.",
+      "required_issue_numbers": [
+        218
       ]
     }
   },
@@ -349,24 +356,41 @@
       "issue_number": 202,
       "owner_stage": "D2-D-FSA-funded-reimbursement",
       "blocking_gate": "D2",
-      "depends_on": [114],
-      "spec_requirement_ids": ["PFA-DET-020", "PFA-TAX-015", "PFA-INS-013"],
+      "depends_on": [
+        114
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-020",
+        "PFA-TAX-015",
+        "PFA-INS-013"
+      ],
       "scope": "D2-D #149 owned opt-in physical FSA paid expense and independently authenticated BANK reimbursement; existing C3 source plan and year-chain evaluator read-only. No payroll/tax, new state schema or finalized carryover; gated on registration/design PR and merged #199. Failing source/funding stays incomplete."
     },
     {
       "issue_number": 203,
       "owner_stage": "D2-D-issuer-card-funded-payment",
       "blocking_gate": "D2",
-      "depends_on": [114],
-      "spec_requirement_ids": ["PFA-DET-019", "PFA-TAX-015"],
+      "depends_on": [
+        114
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-019",
+        "PFA-TAX-015"
+      ],
       "scope": "D2-D #149 owned opt-in physically funded issuer-quoted card interest and BANK repayment using existing B1 source and card cycle proofs; single household state writer, no generic guessed APR/minimum or shared state schema. Must wait for merged PR #200 and registration PR; late fees/future cycles remain incomplete."
     },
     {
       "issue_number": 204,
       "owner_stage": "D2-D-RMD-transaction-journal-architecture",
       "blocking_gate": "D2",
-      "depends_on": [114],
-      "spec_requirement_ids": ["PFA-DET-017", "PFA-TAX-015", "PFA-DET-023"],
+      "depends_on": [
+        114
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-017",
+        "PFA-TAX-015",
+        "PFA-DET-023"
+      ],
       "scope": "Single-owner shared state and portable replay retirement transaction/RMD allocation journal architecture decision before physical funded RMD satisfaction. Design/PM approval only: no Codex implementation until approved design, merged PR #201 and nonoverlapping #101 paths; follow-on staged J1 state journal then J2 atomic cash-integrated settlement."
     },
     {
@@ -469,6 +493,18 @@
         "PFA-UX-024"
       ],
       "scope": "PM-approved financial-completeness distinction: expressly selected projected-current-law rules may yield computed/completed scenario values with distinct law confidence, but any missing applicable tax/payroll/settlement support still blocks affected outputs. Version/fingerprint and summary/replay consistency; engine/compiler only. Independent prerequisite to #181, then #171/#187 and #120 final UAT."
+    },
+    {
+      "issue_number": 218,
+      "owner_stage": "engineering-framework-reliability",
+      "blocking_gate": "FRAMEWORK_RELIABILITY",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-PERF-019",
+        "PFA-PERF-021",
+        "PFA-UX-024"
+      ],
+      "scope": "PM-approved opt-in bounded local type/unit preflight, selected TypeScript/build/8+20-month feasibility before all four E2E shards, manual progressive 8/20/120/360/649 scaling diagnostics, and fail-closed single-session receipt ownership. FRAMEWORK_RELIABILITY requires merged selected CI and negative hook tests; #181 still independently requires full 649-month success and financial equality. Candidates #134/#217 retain independent ChatGPT curation. Framework only; no U1B/D2 product blocking edge."
     }
   ],
   "legacy_open_task_reconciliation": {
