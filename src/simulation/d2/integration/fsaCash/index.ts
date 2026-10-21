@@ -13,7 +13,7 @@ import { FsaCashIncomplete, depositOperationId, originalOperationId, originalReg
 
 export { FsaCashIncomplete, fsaCashSourceFingerprint, registerFsaCashSourceProvider } from "./source.js";
 export type { FsaCashSource, FsaCashSourceProvider, FsaCashReference, FsaCashOriginal, FsaCashDeposit, FsaCashStamp } from "./source.js";
-export interface FsaCashInput { readonly sources: readonly FsaCashReference[] }
+export interface FsaCashInput { readonly sources: readonly FsaCashReference[]; readonly forecastEnd?: string }
 const participantId = "d2_fsa_cash";
 const codec = "d2-fsa-cash/v1";
 function incomplete(detail: string): never { throw new FsaCashIncomplete("source_not_qualified", detail); }
@@ -70,7 +70,10 @@ function coverage(sources: readonly FsaCashSource[], through: string, forecastEn
       message: `S7: ${s.original.amount.minus(s.deposit.amount).amount.toString()} USD unreimbursed; a separately approved later-claim allocation port is required.` })),
   ];
   return { diagnostics, outputCapabilities: {
-    fsaCashSettlement: { dependency: "tax_independent", status: partial.length || pending.length ? "incomplete" : "complete", diagnostics: [] },
+    // Capabilities are monotonic in the household engine. Before the actual forecast
+    // boundary, do not label a still-pending reimbursement incomplete forever.
+    ...(through >= forecastEnd ? { fsaCashSettlement: { dependency: "tax_independent" as const,
+      status: partial.length || pending.length ? "incomplete" as const : "complete" as const, diagnostics: [] } } : {}),
     fsaPayrollTax: { dependency: "tax_affected", status: "incomplete", diagnostics: [] },
   } };
 }
@@ -92,7 +95,8 @@ const precedes = (a: Event, b: Event): boolean => !!a.order && !!b.order
 
 /** One scheduler and the canonical state writer own both economic events. */
 export function createFsaCashParticipant(configuration: FsaCashInput): HouseholdKernelParticipant {
-  const input = immutableConfiguration({ sources: [...configuration.sources].sort((a, b) => a.sourceId.localeCompare(b.sourceId)) });
+  const input = immutableConfiguration({ sources: [...configuration.sources].sort((a, b) => a.sourceId.localeCompare(b.sourceId)),
+    ...(configuration.forecastEnd === undefined ? {} : { forecastEnd: configuration.forecastEnd }) });
   if (!input.sources.length || new Set(input.sources.map(s => s.sourceId)).size !== input.sources.length)
     incomplete("Distinct source references required");
   // Codec restore re-reads independent source facts instead of treating portable bytes as authority.
@@ -165,7 +169,7 @@ export function createFsaCashParticipant(configuration: FsaCashInput): Household
             }
             // Loss/amendment during posting fails the surrounding period candidate as well.
             readFsaCashSource(ref.sourceId, ref.expectedSource);
-            const facts = coverage(sources, period.end, context.simulationEnd);
+            const facts = coverage(sources, period.end, input.forecastEnd ?? context.simulationEnd);
             if (tier === "summary") {
               const sink = new SummaryOperationSink(transaction.legs[0]!.amount.currency); sink.transaction(transaction);
               return { ...candidate, facts: { ...facts, summary: { evidence: sink.snapshot() } } };
@@ -175,7 +179,7 @@ export function createFsaCashParticipant(configuration: FsaCashInput): Household
       }
       operations.push({ descriptor: { id: `fsa-cash:coverage:${period.start}`, domain: "fsa", operationClass: "fsa:coverage",
         sequencingInstant: period.start, dependsOn: [], resourceAccesses: [], traceRefs: [] },
-        execute: candidate => ({ ...candidate, facts: coverage(sources, period.end, context.simulationEnd) }) });
+        execute: candidate => ({ ...candidate, facts: coverage(sources, period.end, input.forecastEnd ?? context.simulationEnd) }) });
       return { id: participantId, operations };
     },
     observe: (descriptor, _facts, runtime) => {
@@ -190,7 +194,10 @@ export function createFsaCashParticipant(configuration: FsaCashInput): Household
 registerHouseholdParticipantCodec({ codec, restore: value => createFsaCashParticipant(value as FsaCashInput) });
 
 export function attachFsaCash(kernel: CompiledHouseholdKernel, input: FsaCashInput): CompiledHouseholdKernel {
-  const participant = createFsaCashParticipant(input), existing = kernel.executable.participants ?? [];
+  const forecastEnd = kernel.horizon.periods.at(-1)?.end;
+  if (forecastEnd === undefined) incomplete("FSA cash requires an explicit compiled forecast horizon");
+  // The compiled kernel, never the caller, owns the true full forecast boundary.
+  const participant = createFsaCashParticipant({ sources: input.sources, forecastEnd }), existing = kernel.executable.participants ?? [];
   const prior = existing.find(p => p.id === participant.id);
   if (prior && (prior.version !== participant.version || !same(prior.economicInputs, participant.economicInputs)))
     incomplete("Changed source references cannot replace an attached participant");
