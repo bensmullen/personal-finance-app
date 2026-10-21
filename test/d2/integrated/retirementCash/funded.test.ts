@@ -234,14 +234,26 @@ describe("J2-A actual account-scoped RMD satisfaction", () => {
         env: { ...process.env, PFM_RETIREMENT_CASH_TEST_PAYLOAD: payload }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
       });
       expect(worker.status, worker.stderr).toBe(0);
-      expect(JSON.parse(worker.stdout)).toEqual({ state: canonicalSerialize(once.state), periods: canonicalSerialize(once.periods) });
-      writeFileSync(payload, JSON.stringify({ artifact: createPortableHouseholdReplayArtifact(summary), selected }));
-      const unavailable = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
-        fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], {
-        env: { ...process.env, PFM_RETIREMENT_CASH_TEST_PAYLOAD: payload }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
-      });
-      expect(unavailable.status, unavailable.stderr).toBe(0);
-      expect(JSON.parse(unavailable.stdout).state).toBe(canonicalSerialize(once.state));
+      expect(JSON.parse(worker.stdout)).toEqual({ state: canonicalSerialize(once.state), periods: canonicalSerialize(once.periods),
+        sourceEvidence: { present: true, qualification: "qualified" }, satisfaction: { coverage: "incomplete",
+          reason: "source_not_qualified", satisfied: [canonicalSerialize(money("700"))] } });
+      for (const sourceMode of ["absent", "tampered"]) {
+        writeFileSync(payload, JSON.stringify({ artifact: createPortableHouseholdReplayArtifact(summary), selected,
+          fundedPlan: { months, label: `portable:${months}`, amounts: ["700"] }, sourceMode }));
+        const unavailable = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
+          fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], {
+          env: { ...process.env, PFM_RETIREMENT_CASH_TEST_PAYLOAD: payload }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
+        });
+        expect(unavailable.status, `${sourceMode}: ${unavailable.stderr}`).toBe(0);
+        const unverified = JSON.parse(unavailable.stdout);
+        expect(unverified.state).toBe(canonicalSerialize(once.state));
+        expect(unverified.sourceEvidence).toEqual({ present: sourceMode === "tampered",
+          qualification: sourceMode === "tampered" ? "incomplete" : "unavailable" });
+        expect(unverified.satisfaction).toEqual({ coverage: "incomplete",
+          reason: sourceMode === "tampered" ? "source_not_qualified" : "source_unavailable",
+          satisfied: sourceMode === "tampered" ? [canonicalSerialize(money("0"))] : null });
+        expect(unverified.newPosting).toEqual({ periods: 0, state: canonicalSerialize(f.state) });
+      }
     } finally { rmSync(directory, { recursive: true, force: true }); }
     sources.delete(p.raw.sourceId);
     const missing = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(summary))));

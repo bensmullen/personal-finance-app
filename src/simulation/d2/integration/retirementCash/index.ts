@@ -100,18 +100,6 @@ export function createRetirementCashParticipant(configuration: RetirementCashInp
     prepare: (context, period, opening, work = [], tier = "detail") => {
       const raw = input.withdrawals;
       const reference = input.fundedRmd;
-      const published = reference && readRetirementRawSource(reference, context);
-      const hasNewPosting = raw.requests.some(r => at(r.effectiveAt) >= period.start && at(r.effectiveAt) < period.end
-        && !opening.state.identities.postedTransactionIds.includes(accountingTransactionId(r.operationId)));
-      if (reference && !published && hasNewPosting)
-        fail("RETIREMENT_SOURCE_UNAVAILABLE", "New RMD posting requires the independent raw publisher");
-      if (hasNewPosting && published?.binding.rmd.requests.some(r => r.aggregation || r.accounts.length !== 1))
-        fail("RETIREMENT_RMD_UNSUPPORTED_GROUP_JOURNAL", "incomplete/unsupported_group_journal: account-scoped J1 journal required");
-      if (published && hasNewPosting) {
-        const { fundedRmd: _funded, rmd: _rmd, ...cash } = input;
-        const { fundedRmd: _sourceFunded, rmd: _sourceRmd, ...sourceCash } = snapshot(published.cash);
-        if (!same(cash, sourceCash)) fail("RETIREMENT_SOURCE_CHANGED", "Participant inputs must match the independently published cash plan");
-      }
       const evaluation = evaluateWithdrawals(raw);
       if (evaluation.coverage !== "complete")
         fail("RETIREMENT_AUTHORIZATION_INCOMPLETE", `S7: ${evaluation.diagnostics.map(d => `${d.diagnosticCode}:${d.missingFacts.join(",")}`).join(";")}`);
@@ -235,11 +223,23 @@ export function createRetirementCashParticipant(configuration: RetirementCashInp
             legs: [createAccountingLeg({ type: "cash", posting: "debit", amount: c.grossAmount, accountId: bank.id, cashFlowClass: "investing" }),
               createAccountingLeg({ type: "cash", posting: "credit", amount: c.grossAmount, accountId: source.id, cashFlowClass: "investing" })] });
           if (reference) {
+            // Publisher availability is live admission authority, not immutable
+            // descriptor identity. Replay fingerprints opening-period work before
+            // restoring its checkpoint; source loss must not erase that work or
+            // invalidate cash that was already physically settled.
             const currentSource = readRetirementRawSource(reference, context);
-            const qualification = currentSource && qualifyRetirementRawSource(currentSource, c.operationId, context);
-            if (!qualification || qualification.status !== "qualified")
+            if (!currentSource)
+              fail("RETIREMENT_SOURCE_UNAVAILABLE", "New RMD posting requires the independent raw publisher");
+            if (currentSource.binding.rmd.requests.some(r => r.aggregation || r.accounts.length !== 1))
+              fail("RETIREMENT_RMD_UNSUPPORTED_GROUP_JOURNAL", "incomplete/unsupported_group_journal: account-scoped J1 journal required");
+            const { fundedRmd: _funded, rmd: _rmd, ...cash } = input;
+            const { fundedRmd: _sourceFunded, rmd: _sourceRmd, ...sourceCash } = snapshot(currentSource.cash);
+            if (!same(cash, sourceCash))
+              fail("RETIREMENT_SOURCE_CHANGED", "Participant inputs must match the independently published cash plan");
+            const qualification = qualifyRetirementRawSource(currentSource, c.operationId, context);
+            if (qualification.status !== "qualified")
               fail("RETIREMENT_AUTHORIZATION_INCOMPLETE", "Independent raw A4 source does not qualify this distribution");
-            if (!qualifyRetirementPriorHistory(currentSource!, candidate.state, context))
+            if (!qualifyRetirementPriorHistory(currentSource, candidate.state, context))
               fail("RETIREMENT_RMD_HISTORY_UNAVAILABLE", "Exhaustive qualified prior archive and usage are required for a new RMD allocation");
             const result = applyRetirementDistributionAtomically(candidate.state, qualification.distribution, context);
             if (result.status !== "qualified") fail("RETIREMENT_SOURCE_UNAVAILABLE", "Publisher withdrew authorization before atomic commit");
