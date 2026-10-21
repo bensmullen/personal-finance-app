@@ -161,7 +161,7 @@ if (warmups === 0 && measuredRuns === 1) {
     } catch (error) {
       const childOutput = error !== null && typeof error === "object" && "stdout" in error
         ? String(error.stdout) : "";
-      const returned = childOutput.split("\\n").find(line => line.startsWith("U1B_FLAGSHIP_EXECUTION_RETURNED "));
+      const returned = childOutput.split("\n").find(line => line.startsWith("U1B_FLAGSHIP_EXECUTION_RETURNED "));
       const sample = { fixtureId: probe.id, months: probe.months, status: "not_measured",
         failureStage: returned === undefined ? "execution_or_prior" : "post_execution_clone_or_fingerprint",
         ...(returned === undefined ? {} : { lastSuccessfulStage: returned.slice("U1B_FLAGSHIP_EXECUTION_RETURNED ".length) }),
