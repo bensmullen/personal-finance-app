@@ -27,6 +27,15 @@ const watchWorkflow = readFileSync(new URL("../.github/workflows/issue-milestone
 const liveCheck = readFileSync(new URL("../tools/roadmap/verify-issue-stage-register.mjs", import.meta.url), "utf8");
 
 describe("issue-backed roadmap traceability", () => {
+  it('keeps reliability #218 independent of product and candidate gates', () => {
+    const task = registry.issues.find(row => row.issue_number === 218)!;
+    expect(task.owner_stage).toBe('engineering-framework-reliability');
+    expect(task.blocking_gate).toBe('FRAMEWORK_RELIABILITY');
+    expect(task.depends_on).toEqual([]);
+    expect(registry.stage_gates.FRAMEWORK_RELIABILITY?.required_issue_numbers).toEqual([218]);
+    for (const row of registry.issues) expect(row.depends_on).not.toContain(218);
+    for (const candidate of [134, 217]) expect(registry.issues.map(row => row.issue_number)).not.toContain(candidate);
+  });
   it("registers each private-alpha/U1 issue exactly once with a stable mandatory stage", () => {
     expect(registry.schema_version).toBe(1);
     const ids = registry.issues.map(item => item.issue_number);

@@ -80,8 +80,16 @@ conditions when useful. Their exact headings are not parser requirements.
   allowed for a new subtree.
 - Do not edit framework-control files from a product/repair task.
 - Do not install packages or switch package managers.
-- Do not run tests, typecheck, builds, validators, E2E, benchmarks, dev servers,
-  performance captures, or other verification locally.
+- Optional, after #218 is merged: invoke exactly
+  `node tools/codex/limited-local-verification.mjs` or append one directly
+  affected tracked `test/name.test.ts`. Use one simple shell tool call. The
+  audited helper runs the complete typecheck (60s total), then the named unit
+  (30s); no flags, chaining, wrappers, installs or prerequisites. A missing
+  environment yields SKIP. Only one changed-patch correction retry after FAIL
+  with the same test is allowed per turn. PASS never grants acceptance.
+- All other local tests, builds, validators, E2E, benchmarks, dev servers and
+  performance captures remain prohibited. Do not run the helper in the #218
+  implementation turn; the hook requires its merged origin/main version.
 - GitHub CI owns ordinary verification.
 - Resolve implementation questions from repository authority: canonical financial
   specification, executable financial semantics, capability/slice specifications,
@@ -101,6 +109,15 @@ uses a durable active-task receipt to prove provenance, checks both prior and
 incoming authorization, and checkpoints/pushes eligible dirty work before setting
 the new BASE_HEAD. No Stop event is required. A failed checkpoint push preserves
 the local commit and can be retried by resubmitting the same task.
+
+Only the owning session may resume an active receipt. A different session,
+including the same task issue in another chat, is an active foreign writer until
+the owning session stops. Activation is blocked before checkpoint or receipt
+replacement. Same-session sequential turns may resume; stale turns cannot edit
+or publish. Never infer that clean/upstream-synchronized Git proves ownership
+has ended. With ambiguous receipt ownership, preserve receipts and work, inspect
+the read-only diagnostic, and let the operator prepare a fresh isolated
+worktree plus authorized new task after proving clean/synchronized state.
 
 Unknown, unrelated, out-of-scope, protected, dependency-violating, conflicted, or
 ambiguous Git state blocks recovery with `STATE_RECOVERY_REQUIRED`. Preserve work
@@ -158,6 +175,12 @@ If `gh` is unavailable after the branch is successfully pushed, report
 GitHub connector.
 
 ## Completion
+
+Push once and end without watching, polling or waiting for CI (active AL-003).
+AL-002 keeps live task authority compact; AL-004 preserves independently runnable
+acceptance flows and all four shards. Candidate #134 (bounded static preflight)
+and #217 (single-writer ownership) retain independent ChatGPT curation; Codex
+does not edit candidate issues or the lesson ledger.
 
 A successful final response includes:
 
