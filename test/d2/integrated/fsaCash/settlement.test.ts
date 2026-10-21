@@ -32,7 +32,9 @@ const reject = (s: FsaCashSource, f = fixture()) => {
   expect(out.status).toBe("incomplete");
   expect(out.diagnostics.some(d => d.severity === "error")).toBe(true);
   expect(canonicalSerialize(f.state)).toBe(before);
-  expect(Object.keys(out.state.d2SettlementReceipts ?? {})).toHaveLength(0);
+  // A failed replay must preserve previously committed historical receipts.
+  expect(out.state.d2SettlementReceipts).toEqual(f.state.d2SettlementReceipts);
+  expect(out.state.d2PostedTransactions).toEqual(f.state.d2PostedTransactions);
   return out;
 };
 
@@ -246,7 +248,10 @@ describe("#202 independently source-qualified FSA physical cash", () => {
       deposit: { ...base.deposit, executionOrder: { sequenceId: "actual-bank-sequence", position: 2 } } });
     const out = execute(s, fixture(1));
     expect(out.periods, JSON.stringify(out.diagnostics)).toHaveLength(1);
-    expect(out.periods[0]!.transactions.map(tx => tx.type)).toEqual(["fsa_medical_expense_payment", "fsa_expense_reimbursement"]);
+    // Period reporting has the established (date, transaction ID) canonical sort;
+    // actual source-signed execution order is proven by writer archive insertion.
+    expect(out.periods[0]!.transactions.map(tx => tx.type)).toEqual(["fsa_expense_reimbursement", "fsa_medical_expense_payment"]);
+    expect(Object.values(out.state.d2PostedTransactions ?? {}).map(p => p.registration.role)).toEqual(["original", "settlement"]);
     expect(out.state.accounts[ids.bank]!.cash.equals(money("500").plus(money(amount)))).toBe(true);
     expect(Object.values(out.state.d2PostedTransactions ?? {})).toHaveLength(2);
     const state = cloneAuthoritativeState(fixture().state); state.accounts[ids.bank]!.cash = money("500");
