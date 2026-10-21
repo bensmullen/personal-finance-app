@@ -5,9 +5,26 @@
 
 ## 1. Responsibility boundary
 
-Codex implementation and repair turns edit code only. They do not run tests,
-typecheck, builds, validators, benchmarks, dev servers, stochastic/convergence
-runs, onboarding dry runs, or package installation. Consequently Node/npm and
+Codex implementation and repair turns may optionally use the sole audited
+bounded helper after #218 merges (PM approval 2026-10-21):
+`node tools/codex/limited-local-verification.mjs`, optionally followed by one
+directly affected tracked `test/name.test.ts`. The hook verifies the named file
+contains tests and either changed itself or directly imports changed source.
+It runs the complete package typecheck API (`tsc --noEmit` then
+`tsc -p tsconfig.next.json`) within 60 seconds total, then that unit file within
+30 seconds. It invokes local binaries directly, avoiding npm lifecycle hooks.
+One simple tool call per coherent patch; at most one correction retry after
+FAIL, requiring changed content and the same test. PASS/SKIP cannot authorize
+retry. Reservations count even if interrupted; logs and compact PASS/FAIL/SKIP
+receipts live in ignored `.codex/logs`. No flags, wrappers, shell chaining,
+arbitrary test selection, installers or alternate runners. The helper must
+match merged `origin/main`; it is prohibited in its own implementation turn.
+Missing Node/npm/node_modules causes a clear SKIP (no startup requirement).
+PASS is feedback only and never sets acceptance status.
+
+All other local tests, builds, validators, benchmarks, dev servers,
+stochastic/convergence runs, onboarding dry runs and package installation remain
+prohibited. Consequently Node/npm and
 installed dependencies are not implementation-start prerequisites. A desktop
 Local Environment may prepare them for developer convenience, but GitHub Actions
 remains the verification authority.
@@ -41,7 +58,7 @@ their normal unit/typecheck gates. Any other manifest change, unreadable base,
 missing metadata, or changed runtime version conservatively selects the full
 runtime matrix. No change to a tax/model/financial specification is exempt.
 
-**Static type-contract prevention:** Before handing off new typed fixture helpers or changes to overloaded simulation interfaces, review the called signatures and TypeScript `exactOptionalPropertyTypes` behavior. Include compiler/runner API shape expectations in the affected task contract. In the current no-local-verification policy, CI typecheck is the earliest automated feedback; it remains parallel with other independent jobs to preserve critical-path efficiency. A future optional local typecheck allowance requires an explicit policy/hook/self-test decision, not a silent exception.
+**Static type-contract prevention:** Before handing off typed fixtures or overloaded simulation interfaces, review called signatures and `exactOptionalPropertyTypes`. Record expected API shapes. Optional bounded preflight offers early feedback; CI typecheck remains independently authoritative and parallel with spec, architecture, tooling, unit and build.
 
 **Quiet runner failure truth:** Unit runs must fail if either Vitest's process exits nonzero or its JSON report reports failure. When those disagree, preserve the nonzero failure and emit the process exit code, signal, spawn error and human reporter output in CI artifacts. Never convert `0 failed tests` into a green status without confirming clean process exit.
 
@@ -50,6 +67,26 @@ four independent GitHub-hosted shards. A failed or cancelled shard fails the
 aggregate `test` job; each shard uploads distinct failure artifacts. This
 reduces elapsed test time without dropping cases. The existing 20-minute per-job
 ceiling remains damage containment, not a performance allowance.
+
+The four shards wait for successful selected typecheck, build and forecast
+feasibility jobs. `always()` handles optional skipped upstream jobs; cancellation
+or any selected failure/skipped result prevents browser startup. The aggregate
+still requires every selected gate, including feasibility and all four shards.
+Docs and tooling-only paths select no E2E. No fast check runs inside shards.
+
+**Early forecast feasibility:** hot-path/horizon changes select one parallel
+job with 8- and 20-month synthetic forecasts, no warmups or ratio assertions.
+Each subprocess has a 30s ceiling and 512 MiB V8 heap cap; the job has a 4-minute
+ceiling including setup/install/artifact overhead (at most four added runner
+minutes; two probes consume at most one minute). This is damage containment,
+not an absolute performance SLA or a total-RSS guarantee. Disabled selection
+starts no runner and costs zero additional runner minutes. UI-only and docs
+changes do not select it; unknown/toolchain policy changes conservatively do.
+Artifacts record exact checkout head, runtime, process outcome, wall/sample heap,
+real status/period count, capability diagnostics and existing phase counters.
+Unavailable worker/reference measurements remain `not measured`. A failed
+smaller probe stops progression and blocks E2E; diagnostics are retained even
+on failure. No 120/360/649 probe enters ordinary CI.
 
 The aggregate job remains named `test` for branch protection.
 
@@ -147,6 +184,15 @@ is green.
 
 Profiles:
 - `performance` → `perf:capture`;
+- `forecast-scaling` → bounded progressive 8/20/120/360/649 probes (120s and
+  2048 MiB V8 heap per probe; stop at the first failure). Each success records
+  repeat-execution equality of the full read model without retaining financial
+  values, plus compiled-kernel summary/frozen-reference equality of status,
+  horizon, state, primitive state, metadata, diagnostics and summarized periods
+  using the existing R3 contract. Application tax-participant and worker
+  equality remain explicitly unmeasured and separately owned by #181.
+  Full 649-month success and financial equality remain mandatory #181 evidence;
+  neither feasibility nor an `incomplete` full-horizon result closes that gate;
 - `stochastic` → `stochastic:validate`;
 - `onboarding` → `onboarding:dry-run`;
 - `provider` → `calibration:integration`.
@@ -175,6 +221,27 @@ permanent arbitrary global count. Expensive reruns remain outside the
 coding-model turn.
 
 ## 5. Repair loop
+
+This prevention implements the bounded static-check direction in candidate
+[#134](https://github.com/bensmullen/personal-finance-app/issues/134) and ownership
+direction in [#217](https://github.com/bensmullen/personal-finance-app/issues/217).
+ChatGPT reviews #134's state after merged green evidence; candidate curation and
+the lesson ledger remain unchanged by Codex. Active AL-002 keeps task bodies
+compact, AL-003 requires one push then end without CI supervision, and AL-004
+preserves independent acceptance flows plus holistic integration coverage.
+
+**Receipt integrity:** `save_state()` publishes one hash-bound latest receipt;
+Stop compares that receipt's authorization with the current turn. Previously
+any activation could replace it. #181's clean synchronized `da610a3` does not
+prove why replacement occurred; another session remains a hypothesis because
+local runtime evidence was unavailable. Activation now rejects active foreign
+sessions and invalid receipts before any checkpoint/write. Same-session resume
+retains provenance/scope checks; stale Stop never succeeds or replaces an owner.
+The diagnostic reports exact worktree/branch/session and read-only inspection
+commands. Preserve receipts, dirty files and unpushed commits. Have the owning
+session stop normally; ambiguous ownership requires a fresh operator-bootstrap
+worktree and authorized new task after proving clean/upstream-synchronized
+state. Never delete latest-task.json, force-push, reset or rebase as recovery.
 
 Initial implementation is followed by GitHub CI and ChatGPT review.
 
