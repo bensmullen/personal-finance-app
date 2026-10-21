@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { accountingTransactionId, createAccountingLeg, createAccountingTransaction } from "../../../../src/accounting/index.js";
+import { idempotencyKey } from "../../../../src/identity/index.js";
 import { applyAccountingTransactionAtomically, applyRetirementDistributionAtomically, assertAuthoritativeStateCurrency,
   authoritativeStateChangesSince, cloneAuthoritativeState, createAuthoritativeState, createIndexedExecutionState,
   requalifyRetirementDistributionHistory, validateAuthoritativeState, type RetirementDistributionRecord } from "../../../../src/state/index.js";
@@ -15,6 +16,20 @@ beforeAll(registerAuthority);
 beforeEach(() => { sources.clear(); availability.enabled = true; availability.calls = 0; availability.failAt = 0; });
 
 describe("J1 canonical retirement evidence (PM #204; PFA-DET-017 / PFA-TAX-015)", () => {
+  it("keeps empty J1 evidence cheap without accepting orphan commitment IDs", () => {
+    for (const indexed of [false, true]) {
+      const original = createAuthoritativeState();
+      const state = indexed ? createIndexedExecutionState(original) : original;
+      validateAuthoritativeState(state);
+      // Unrelated household payments must not acquire a retirement journal.
+      expect(state.retirementDistributionAllocations).toBeUndefined();
+      expect(state.d2PostedTransactions).toBeUndefined();
+      // The same orphan check remains authoritative for cold and indexed state.
+      const id = idempotencyKey("retirement-j1:record", "missing");
+      state.identities.externalIdempotencyKeys = Object.freeze([...state.identities.externalIdempotencyKeys, id].sort());
+      expect(() => validateAuthoritativeState(state)).toThrow();
+    }
+  });
   it("leaves the actual A4 $700 obligation unsatisfied after a writer-posted $500 and structural allocation", () => {
     const f = cashFixture(), raw = rmdInput(cashInput(f)), evaluated = evaluateWithdrawalRmd(raw);
     const candidate = evaluated.withdrawals.candidates[0]!, allocation = evaluated.bundle!.allocations[0]!;
