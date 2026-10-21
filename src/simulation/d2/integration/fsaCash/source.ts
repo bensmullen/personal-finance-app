@@ -173,6 +173,9 @@ function deriveReceipt(s: FsaCashSource, context: D2SettlementSourceContext): D2
   const r = raw.receipts.find(r => r.proofId === o.proofId && r.receiptId === o.medicalReceiptId);
   const c = evaluation.claims.find(c => c.proofId === o.proofId && c.receiptId === o.medicalReceiptId);
   const h = r?.reimbursement;
+  // Establish narrowed, independently supported proof before reading its fields.
+  if (!r || !c || !h || h.status !== "settled")
+    reject("Qualified claim and settled reimbursement evidence required");
   if (evaluation.entitlementCoverage !== "complete" || !r || !c || raw.receipts.filter(r => r.proofId === o.proofId).length !== 1
     || !h || h.status !== "settled" || !h.settlementId || !h.settledAt || r.payment.status !== "paid" || !r.decision
     || d.status !== "posted" || raw.evaluatedAt !== d.settledAt.slice(0, 10)
@@ -210,7 +213,7 @@ function deriveReceipt(s: FsaCashSource, context: D2SettlementSourceContext): D2
     bankCashBefore: d.bankCashBefore.plus(o.amount), amount: d.amount, eligibleExpense: o.amount, entitlementConsumed: d.amount,
     source, sourceEvidenceFingerprint: d2SettlementSourceFingerprint(source), traceIds, originalTransaction: originalTransaction(s),
     paymentTransaction: createAccountingTransaction({ id: accountingTransactionId(depositOperationId(s)), type: "fsa_expense_reimbursement",
-      date: d.settledAt, traceRefs: traceIds.map(calculationTraceRef), legs: [
+      date: d.settledAt, traceRefs: traceIds.map(id => calculationTraceRef(id)), legs: [
         createAccountingLeg({ type: "cash", posting: "debit", amount: d.amount, accountId: o.bankAccountId, cashFlowClass: "operating" }),
         createAccountingLeg({ type: "expense", posting: "credit", amount: d.amount })] }) });
 }
