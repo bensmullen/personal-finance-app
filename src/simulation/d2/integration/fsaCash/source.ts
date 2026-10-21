@@ -171,11 +171,11 @@ function deriveReceipt(s: FsaCashSource, context: D2SettlementSourceContext): D2
   }
   const evaluation = evaluateFsa(raw);
   const r = raw.receipts.find(r => r.proofId === o.proofId && r.receiptId === o.medicalReceiptId);
-  const c = evaluation.claims.find(c => c.proofId === o.proofId && c.receiptId === o.medicalReceiptId);
+  const c = evaluation.claims.find(c => c.proofId === o.proofId && c.receiptId === o.medicalReceiptId)
+    ?? reject("Qualified FSA claim evidence required");
   const h = r?.reimbursement;
-  // Establish narrowed, independently supported proof before reading its fields.
-  if (!r || !c || !h || h.status !== "settled")
-    reject("Qualified claim and settled reimbursement evidence required");
+  if (!r || !h || h.status !== "settled")
+    throw new FsaCashIncomplete("source_not_qualified", "Settled reimbursement evidence required");
   if (evaluation.entitlementCoverage !== "complete" || !r || !c || raw.receipts.filter(r => r.proofId === o.proofId).length !== 1
     || !h || h.status !== "settled" || !h.settlementId || !h.settledAt || r.payment.status !== "paid" || !r.decision
     || d.status !== "posted" || raw.evaluatedAt !== d.settledAt.slice(0, 10)
