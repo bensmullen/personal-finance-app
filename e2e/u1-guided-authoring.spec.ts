@@ -32,7 +32,9 @@ const loadHistoricalMonthlyExample = async (page: Page) => {
   await navigate(page, "Money", "Income");
   await page.getByLabel("Income receiving account", { exact: true }).selectOption(ids.checking);
   await navigate(page, "Net Worth", "Debt");
-  await open(page, "Debt & mortgage");
+  // Debt & mortgage is now displayed directly, not behind the old disclosure.
+  // Keep the true source-owned financing facts and validation unchanged.
+  await expect(page.getByRole("group", { name: "Example mortgage", exact: true })).toBeVisible();
   await page.getByLabel("Debt owner", { exact: true }).selectOption(ids.person);
   const mortgage = page.getByRole("group", { name: "Example mortgage", exact: true });
   await mortgage.getByLabel("First monthly payment", { exact: true }).fill("2022-02-01");

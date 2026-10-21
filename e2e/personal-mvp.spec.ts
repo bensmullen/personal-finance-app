@@ -2128,6 +2128,10 @@ test("What If executes deterministic investment return", async ({ page }) => {
   });
   await configureOwnedFunding(page);
   await configureTaxSettlement(page);
+  // Imported models do not preserve session-only law consent. Confirm it
+  // explicitly before the bounded historical What-If baseline may run.
+  await page.locator('[data-repair="lawScenario"]').check();
+  await expect(configuration.getByRole("button", { name: "Apply setup & run forecast" })).toBeEnabled();
   await configuration
     .getByRole("button", { name: "Apply setup & run forecast" })
     .click();
