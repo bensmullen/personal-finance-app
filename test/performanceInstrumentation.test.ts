@@ -17,6 +17,8 @@ import type { ForecastWorkerRequest, ForecastWorkerResponse } from "../ui/foreca
 import { calculationFingerprint, toForecastWorkerResult } from "../src/application/interactiveForecast.js";
 import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
 import { createGoldenHouseholdForecastRequest, createGoldenHouseholdScenarioIntents } from "../src/application/goldenHousehold.js";
+import { mergeOutputCapabilities } from "../src/simulation/r3/capabilities.js";
+import { taxDiagnostic, taxOutputCapabilities, type TaxOutputCapabilities } from "../src/simulation/tax/contracts.js";
 
 const context: PerformanceContext = Object.freeze({ runId: "performance-test", fixtureId: "realistic-household", dataClassification: "synthetic", modelCounts: Object.freeze({}), executionLocation: "local_node", runtime: "vitest", cacheState: "not_applicable" });
 const oneMonth = <T extends ReturnType<typeof createRealisticPerformanceFixture>["request"]>(request: T): T => ({
@@ -30,6 +32,37 @@ const oneMonth = <T extends ReturnType<typeof createRealisticPerformanceFixture>
 }) as T;
 
 describe("performance instrumentation", () => {
+  it("preserves exact first-occurrence capability diagnostics while sharing identical frozen output histories", () => {
+    const diagnostics = Array.from({ length: 40 }, (_, n) => taxDiagnostic(
+      `modeled_gap_${n % 13}`, `Source-backed diagnostic ${n % 13}`, "US:FEDERAL", `income-${n % 13}`,
+    ));
+    const tax = taxOutputCapabilities(diagnostics);
+    expect(tax.netWorth).toBe(tax.assets);
+    expect(tax.netWorth?.diagnostics).toHaveLength(40);
+    const separate = taxOutputCapabilities([diagnostics[0]!, taxDiagnostic("other", "Another diagnostic")]);
+    const inputs = [tax, separate, tax] as const;
+    const legacy = (sources: readonly (TaxOutputCapabilities | undefined)[]) => {
+      const result: Record<string, TaxOutputCapabilities[string]> = {};
+      for (const source of sources) for (const [field, value] of Object.entries(source ?? {})) {
+        const prior = result[field];
+        result[field] = Object.freeze({
+          dependency: prior?.dependency === "tax_affected" || value.dependency === "tax_affected" ? "tax_affected" : "tax_independent",
+          status: prior?.status === "incomplete" || value.status === "incomplete" ? "incomplete" : "complete",
+          diagnostics: Object.freeze([...new Map([...(prior?.diagnostics ?? []), ...value.diagnostics].map(item => [canonicalSerialize(item), item])).values()]),
+        });
+      }
+      return Object.freeze(result);
+    };
+    const merged = mergeOutputCapabilities(inputs)!;
+    expect(canonicalSerialize(merged)).toBe(canonicalSerialize(legacy(inputs)));
+    expect(merged.netWorth).toBe(merged.assets);
+    expect(merged.netWorth?.diagnostics).toHaveLength(14);
+    expect(Object.isFrozen(merged.netWorth)).toBe(true);
+    expect(Object.isFrozen(merged.netWorth?.diagnostics)).toBe(true);
+    expect(mergeOutputCapabilities([])).toBeUndefined();
+    expect(mergeOutputCapabilities([undefined, tax])?.netWorth?.status).toBe(tax.netWorth?.status);
+  });
+
   it("enumerates persistent indexes in exact order across a suspended traversal and divergent forks", () => {
     const index = new PersistentStringIndex(Array.from({ length: 128 }, (_, n) => [String(n).padStart(3, "0"), n] as const));
     const iterator = index.entries();
