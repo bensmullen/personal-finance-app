@@ -2,7 +2,7 @@ import { accountingTransactionId, createAccountingLeg, createAccountingTransacti
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { idempotencyKey } from "../../../../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../lineage/index.js";
-import { applyAccountingTransactionAtomically, registerAuthoritativeIdentity } from "../../../../state/index.js";
+import { applyAccountingTransactionAtomically, applyRetirementDistributionAtomically, registerAuthoritativeIdentity } from "../../../../state/index.js";
 import { civilDate, instant, type Period } from "../../../../time/index.js";
 import { Money, USD } from "../../../../values/index.js";
 import { applyHouseholdExecutionOverlay, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
@@ -12,6 +12,10 @@ import { SummaryOperationSink } from "../../../r3/summarySink.js";
 import { canonicalSerialize, type RunContext } from "../../../run.js";
 import { evaluateWithdrawals, type WithdrawalInput, type WithdrawalSource } from "../../retirement/withdrawals/index.js";
 import { evaluateWithdrawalRmd, type AuthorizationBundle, type WithdrawalRmdInput } from "../../retirement/withdrawalRmd/index.js";
+import { readRetirementRawSource, qualifyRetirementRawSource, qualifyRetirementPriorHistory, type RetirementSourceReference } from "./source.js";
+import { evaluateFundedRmdSatisfaction } from "./satisfaction.js";
+export { registerRetirementRawSourcePort, type RetirementRawSourcePort, type RetirementRawSource } from "./source.js";
+export { evaluateFundedRmdSatisfaction } from "./satisfaction.js";
 
 /** Independent event confirmations, never balances maintained by this adapter. */
 export interface RetirementCashConfirmation {
@@ -30,6 +34,7 @@ export interface RetirementCashInput {
   readonly members: readonly { readonly personId: string; readonly source: WithdrawalSource }[];
   readonly confirmations: readonly RetirementCashConfirmation[];
   readonly rmd?: { readonly input: WithdrawalRmdInput; readonly bundle: AuthorizationBundle };
+  readonly fundedRmd?: RetirementSourceReference & { readonly horizon: Period };
 }
 export interface RetirementCashDiagnostic {
   readonly seam: "S7";
@@ -73,6 +78,11 @@ const coverageFacts = () => ({ outputCapabilities, diagnostics: [{ severity: "wa
   { severity: "warning" as const, code: "RETIREMENT_RMD_HISTORY_UNAVAILABLE", entityType: "retirement_cash",
     message: "S7: Conditional allocations and unsupported history cannot authenticate funded RMD satisfaction; no allocation is applied." }] });
 
+// Do not latch a period-local shortfall into the monotonic aggregate capability.
+// Only the full-horizon closing operation publishes funded RMD coverage.
+const fundedCoverageFacts = () => ({ outputCapabilities: Object.fromEntries(Object.entries(outputCapabilities)
+  .filter(([key]) => key !== "rmdSatisfaction")), diagnostics: [coverageFacts().diagnostics[0]!] });
+
 function stamp(s: WithdrawalSource, householdId: string, personId: string, resourceId: string, date: string, context: RunContext): void {
   try { [s.publishedAt, s.asOf, s.effectiveFrom, s.endExclusive].forEach(civilDate); }
   catch { fail("RETIREMENT_SOURCE_UNAVAILABLE", "Valid source dates required"); }
@@ -86,9 +96,22 @@ function stamp(s: WithdrawalSource, householdId: string, personId: string, resou
 /** Opt-in physical CASH only. A4 remains the sole withdrawal admission evaluator. */
 export function createRetirementCashParticipant(configuration: RetirementCashInput): HouseholdKernelParticipant {
   const input = snapshot(configuration);
-  return Object.freeze({ id: participantId, version: "cash-zero-withholding/v1", portableCodec: "d2-retirement-cash/v1", economicInputs: input,
+  return Object.freeze({ id: participantId, version: input.fundedRmd ? "funded-account-rmd/v1" : "cash-zero-withholding/v1", portableCodec: "d2-retirement-cash/v1", economicInputs: input,
     prepare: (context, period, opening, work = [], tier = "detail") => {
       const raw = input.withdrawals;
+      const reference = input.fundedRmd;
+      const published = reference && readRetirementRawSource(reference, context);
+      const hasNewPosting = raw.requests.some(r => at(r.effectiveAt) >= period.start && at(r.effectiveAt) < period.end
+        && !opening.state.identities.postedTransactionIds.includes(accountingTransactionId(r.operationId)));
+      if (reference && !published && hasNewPosting)
+        fail("RETIREMENT_SOURCE_UNAVAILABLE", "New RMD posting requires the independent raw publisher");
+      if (hasNewPosting && published?.binding.rmd.requests.some(r => r.aggregation || r.accounts.length !== 1))
+        fail("RETIREMENT_RMD_UNSUPPORTED_GROUP_JOURNAL", "incomplete/unsupported_group_journal: account-scoped J1 journal required");
+      if (published && hasNewPosting) {
+        const { fundedRmd: _funded, rmd: _rmd, ...cash } = input;
+        const { fundedRmd: _sourceFunded, rmd: _sourceRmd, ...sourceCash } = snapshot(published.cash);
+        if (!same(cash, sourceCash)) fail("RETIREMENT_SOURCE_CHANGED", "Participant inputs must match the independently published cash plan");
+      }
       const evaluation = evaluateWithdrawals(raw);
       if (evaluation.coverage !== "complete")
         fail("RETIREMENT_AUTHORIZATION_INCOMPLETE", `S7: ${evaluation.diagnostics.map(d => `${d.diagnosticCode}:${d.missingFacts.join(",")}`).join(";")}`);
@@ -117,7 +140,7 @@ export function createRetirementCashParticipant(configuration: RetirementCashInp
       if (raw.requests.some(r => at(r.effectiveAt) < period.end)) operations.push({
         descriptor: { id: `d2:retirement-coverage:${period.start}`, domain: "retirement", operationClass: "retirement:coverage",
           sequencingInstant: period.start, dependsOn: [], resourceAccesses: [], traceRefs: [] },
-        execute: candidate => ({ ...candidate, facts: coverageFacts() }),
+        execute: candidate => ({ ...candidate, facts: reference ? fundedCoverageFacts() : coverageFacts() }),
       });
       const active = evaluation.candidates.filter(c => at(c.effectiveAt) >= period.start && at(c.effectiveAt) < period.end);
       const postedIds = new Set(active.filter(c => opening.state.identities.postedTransactionIds.includes(accountingTransactionId(c.operationId))).map(c => c.operationId));
@@ -180,6 +203,8 @@ export function createRetirementCashParticipant(configuration: RetirementCashInp
           && w.resourceAccesses.some(access => access.accountId === source.id || access.accountId === bank.id)))
           fail("HOUSEHOLD_CONTENTION_UNRESOLVED", "Same-date unrelated cash work needs a cross-source reservation/order contract");
         if (posted) {
+          if (reference && !opening.state.retirementDistributionAllocations?.[txId])
+            fail("RETIREMENT_RMD_HISTORY_UNAVAILABLE", "A legacy cash-only ID cannot be converted into J1 RMD credit");
           // Check the final posted prefix frontier for each touched account.
           // IDs alone never license a changed event balance as an identical replay.
           for (const [account, expected] of [[source, q.sourceCashBefore.minus(c.grossAmount)],
@@ -206,18 +231,41 @@ export function createRetirementCashParticipant(configuration: RetirementCashInp
             fail("RETIREMENT_STALE_BALANCE", "Execution cash must equal event confirmations and preserve pending reservations");
           if (candidate.state.identities.postedTransactionIds.includes(txId) || keys.some(key => candidate.state.identities.externalIdempotencyKeys.includes(key)))
             fail("RETIREMENT_STALE_OR_DUPLICATE", "Withdrawal identity or authorization already consumed");
-          const transaction = createAccountingTransaction({ id: txId, type: "retirement_cash_transfer", date: at(c.effectiveAt), traceRefs,
+          let transaction = createAccountingTransaction({ id: txId, type: "retirement_cash_transfer", date: at(c.effectiveAt), traceRefs,
             legs: [createAccountingLeg({ type: "cash", posting: "debit", amount: c.grossAmount, accountId: bank.id, cashFlowClass: "investing" }),
               createAccountingLeg({ type: "cash", posting: "credit", amount: c.grossAmount, accountId: source.id, cashFlowClass: "investing" })] });
-          applyAccountingTransactionAtomically(candidate.state, transaction);
+          if (reference) {
+            const currentSource = readRetirementRawSource(reference, context);
+            const qualification = currentSource && qualifyRetirementRawSource(currentSource, c.operationId, context);
+            if (!qualification || qualification.status !== "qualified")
+              fail("RETIREMENT_AUTHORIZATION_INCOMPLETE", "Independent raw A4 source does not qualify this distribution");
+            if (!qualifyRetirementPriorHistory(currentSource!, candidate.state, context))
+              fail("RETIREMENT_RMD_HISTORY_UNAVAILABLE", "Exhaustive qualified prior archive and usage are required for a new RMD allocation");
+            const result = applyRetirementDistributionAtomically(candidate.state, qualification.distribution, context);
+            if (result.status !== "qualified") fail("RETIREMENT_SOURCE_UNAVAILABLE", "Publisher withdrew authorization before atomic commit");
+            transaction = candidate.state.d2PostedTransactions![txId]!.transaction;
+            const reconciliation = evaluateFundedRmdSatisfaction(reference, candidate.state, context, period.end);
+            if (reconciliation.annual?.diagnostics.some(d => ["obligation_overallocated", "transaction_overallocated"].includes(d.sourceEntityPath)))
+              fail("RETIREMENT_RMD_OVERALLOCATED", "Actual historical plus new allocations exceed authenticated RMD capacity");
+          } else applyAccountingTransactionAtomically(candidate.state, transaction);
           for (const key of keys) registerAuthoritativeIdentity(candidate.state.identities, "externalIdempotencyKeys", key);
           if (tier === "summary") {
             const sink = new SummaryOperationSink(USD); sink.transaction(transaction);
-            return { ...candidate, facts: { ...coverageFacts(), summary: { evidence: sink.snapshot() } } };
+            return { ...candidate, facts: { ...(reference ? fundedCoverageFacts() : coverageFacts()), summary: { evidence: sink.snapshot() } } };
           }
-          return { ...candidate, facts: { ...coverageFacts(), transactions: [transaction], traceRefs } };
+          return { ...candidate, facts: { ...(reference ? fundedCoverageFacts() : coverageFacts()), transactions: [transaction], traceRefs } };
         } });
       }
+      if (reference && period.end === reference.horizon.end) operations.push({
+        descriptor: { id: `d2:retirement-rmd:${period.end}`, domain: "retirement", operationClass: "retirement:coverage",
+          sequencingInstant: instant(new Date(Date.parse(period.end) - 1).toISOString()),
+          dependsOn: active.filter(c => !postedIds.has(c.operationId)).map(c => c.operationId), resourceAccesses: [], traceRefs: [] },
+        execute: candidate => {
+          const result = evaluateFundedRmdSatisfaction(reference, candidate.state, context, period.end);
+          return { ...candidate, facts: { outputCapabilities: { rmdSatisfaction: { dependency: "tax_independent",
+            status: result.coverage, diagnostics: [] } }, diagnostics: result.coverage === "complete" ? [] : [{ severity: "warning",
+            code: "RETIREMENT_RMD_HISTORY_UNAVAILABLE", entityType: "retirement_cash", message: `S7: ${result.reason ?? "Unfunded annual RMD obligation"}` }] } };
+        } });
       return { id: participantId, operations };
     },
     observe: (descriptor, _facts, runtime) => {
@@ -231,7 +279,56 @@ export function createRetirementCashParticipant(configuration: RetirementCashInp
 }
 registerHouseholdParticipantCodec({ codec: "d2-retirement-cash/v1", restore: value => createRetirementCashParticipant(value as RetirementCashInput) });
 
+/** A4 intentionally admits one account CASH snapshot per event date. Separate
+ * dated plans preserve that contract instead of reusing a stale earlier balance. */
+export interface FundedRetirementCashSchedule {
+  readonly plans: readonly RetirementCashInput[];
+  readonly annualSource: RetirementSourceReference;
+  readonly horizon: Period;
+}
+export function createFundedRetirementCashSchedule(configuration: FundedRetirementCashSchedule): HouseholdKernelParticipant {
+  const input = immutableConfiguration(configuration);
+  if (!input.plans.length || input.plans.some(p => !p.fundedRmd || !same(p.fundedRmd.horizon, input.horizon))
+    || !unique(input.plans.flatMap(p => p.withdrawals.requests.map(r => r.operationId))))
+    fail("RETIREMENT_IDENTITY_INVALID", "Distinct source-qualified dated plans and a common full horizon are required");
+  const participants = input.plans.map(createRetirementCashParticipant);
+  return Object.freeze({ id: participantId, version: "funded-account-rmd/v2", portableCodec: "d2-retirement-cash/v2", economicInputs: input,
+    prepare: (context, period, opening, work, tier) => {
+      const operations = participants.flatMap(p => p.prepare(context, period, opening, work, tier).operations)
+        .filter(o => !o.descriptor.id.startsWith("d2:retirement-rmd:"));
+      // Coverage operations are identical; never deduplicate financial work.
+      const seenCoverage = new Set<string>();
+      const prepared = operations.filter(o => !o.descriptor.id.startsWith("d2:retirement-coverage:")
+        || (!seenCoverage.has(o.descriptor.id) && !!seenCoverage.add(o.descriptor.id)));
+      if (period.end === input.horizon.end) prepared.push({
+        descriptor: { id: `d2:retirement-rmd:${period.end}`, domain: "retirement", operationClass: "retirement:coverage",
+          sequencingInstant: instant(new Date(Date.parse(period.end) - 1).toISOString()),
+          dependsOn: prepared.filter(o => !o.descriptor.id.startsWith("d2:retirement-coverage:")).map(o => o.descriptor.id), resourceAccesses: [], traceRefs: [] },
+        execute: candidate => {
+          const result = evaluateFundedRmdSatisfaction({ ...input.annualSource, horizon: input.horizon }, candidate.state, context, period.end);
+          return { ...candidate, facts: { outputCapabilities: { rmdSatisfaction: {
+            dependency: "tax_independent", status: result.coverage, diagnostics: [] } } } };
+        } });
+      return { id: participantId, operations: prepared };
+    },
+    observe: (descriptor, facts, runtime) => participants.reduce((next, p) => p.observe!(descriptor, facts, next), runtime),
+  } satisfies HouseholdKernelParticipant);
+}
+registerHouseholdParticipantCodec({ codec: "d2-retirement-cash/v2", restore: value => createFundedRetirementCashSchedule(value as FundedRetirementCashSchedule) });
+
+export function attachFundedRetirementCashSchedule(kernel: CompiledHouseholdKernel, input: FundedRetirementCashSchedule): CompiledHouseholdKernel {
+  if (!same(input.horizon, { start: kernel.horizon.start, end: kernel.horizon.periods.at(-1)!.end }))
+    fail("RETIREMENT_HORIZON_INVALID", "Dated RMD plans must bind the full compiled forecast horizon");
+  const participant = createFundedRetirementCashSchedule(input), existing = kernel.executable.participants ?? [];
+  const prior = existing.find(p => p.id === participant.id);
+  if (prior && (prior.version !== participant.version || !same(prior.economicInputs, participant.economicInputs)))
+    fail("RETIREMENT_STALE_PARTICIPANT", "An attached retirement schedule cannot be replaced");
+  return prior ? kernel : applyHouseholdExecutionOverlay(kernel, { participants: [...existing, participant] });
+}
+
 export function attachRetirementCash(kernel: CompiledHouseholdKernel, input: RetirementCashInput) {
+  if (input.fundedRmd && !same(input.fundedRmd.horizon, { start: kernel.horizon.start, end: kernel.horizon.periods.at(-1)!.end }))
+    fail("RETIREMENT_HORIZON_INVALID", "RMD horizon must equal the full compiled forecast horizon");
   const participant = createRetirementCashParticipant(input);
   const existing = kernel.executable.participants ?? [];
   const prior = existing.find(p => p.id === participant.id);
