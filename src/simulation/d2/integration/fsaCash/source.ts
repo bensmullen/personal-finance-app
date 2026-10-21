@@ -136,6 +136,37 @@ export function qualifyFsaCashOriginal(s: FsaCashSource, context: D2SettlementSo
     o.medicalReceiptId, o.proofId, o.expensePaymentId, o.approvalId, o.bankAccountId].every(text)
     || o.incurredAt > o.paidAt || !exact(o.amount) || !o.amount.isPositive() || !exact(o.bankCashBefore))
     reject("Missing independently approved actual medical payment");
+  // The original BANK debit is an actual medical payment, independent of any
+  // later FSA reimbursement. It must nonetheless be sourced as PAID at this
+  // event: a bare original confirmation cannot overrule contradictory raw
+  // payment, member, payee or destination evidence.
+  const raw = s.request, plan = raw.plan;
+  const claims = raw.receipts.filter(r => r.proofId === o.proofId && r.receiptId === o.medicalReceiptId);
+  if (claims.length !== 1) reject("Exactly one source-owned original medical payment required");
+  const r = claims[0]!;
+  const fields = ["householdId", "personId", "employerId", "planId", "planYearId"] as const;
+  if (fields.some(field => plan[field] !== o[field] || r[field] !== o[field])
+    || r.memberId !== o.memberId || r.payeeId !== o.payeeId
+    || r.incurredAt !== o.incurredAt.slice(0, 10)
+    || r.payment.status !== "paid" || r.payment.paidAt !== o.paidAt.slice(0, 10)
+    || r.payment.paymentRef !== o.expensePaymentId || !r.payment.amount.equals(o.amount)
+    || !r.incurredAmount.equals(o.amount)
+    || r.destination.accountId !== o.bankAccountId || r.destination.ownerId !== o.personId
+    || r.destination.householdId !== o.householdId
+    || ![plan.period, plan.coverage].every(span => span.start <= r.incurredAt && r.incurredAt < span.endExclusive))
+    reject("Original BANK debit requires matching, source-owned PAID medical expense");
+  const members = plan.members.filter(m => m.memberId === o.memberId
+    && m.coverage.start <= r.incurredAt && r.incurredAt < m.coverage.endExclusive);
+  if (members.length !== 1) reject("Original medical member and coverage must match sourced plan");
+  // Only evidence needed to establish the original payment must be available at
+  // its date. A future adjudication or deposit is never required or invented.
+  for (const e of [plan.planEvidence, members[0]!.evidence, r.evidence, r.destination.evidence]) {
+    const matches = s.provenance.filter(p => same(p.evidence, e));
+    if (matches.length !== 1) reject("Actual payment evidence must have exactly one independent source timestamp");
+    stamp(matches[0]!, o.paidAt, context);
+    if (matches[0]!.knownAt.slice(0, 10) < e.asOf)
+      reject("Original payment evidence predates its source as-of");
+  }
   originalRegistration(s);
 }
 /** Re-evaluate the entire immutable raw history. Never accept a copied receipt callback. */
