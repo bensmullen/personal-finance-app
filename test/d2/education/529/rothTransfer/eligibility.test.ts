@@ -126,6 +126,17 @@ describe("B3-2 conditional 529 beneficiary Roth: PFA-DET §5.7 / S1–S8", () =>
     blocked({ ...r, destination: { ...r.destination, source: source("bad", { beneficiaryId: "parent" }) } }, "SOURCE_SCOPE_MISMATCH");
     blocked({ ...r, authorization: { ...r.authorization, source: source("plan", { version: "conflict" }) } }, "CONFLICTING_SOURCE_ID");
   });
+  it("qualifies historical original-funded lots at their actual source window, not the later Roth-transfer date", () => {
+    const r = request();
+    const old = r.plan.contributions[0]!;
+    const historical = source("old-funding", { asOf: opened, endExclusive: civilDate("2001-01-01") });
+    const valid = { ...r, plan: { ...r.plan,
+      contributions: [{ ...old, source: historical }, ...r.plan.contributions.slice(1)] } };
+    expect(propose529RothTransfers([valid]).proposals).toHaveLength(1);
+    blocked({ ...valid, plan: { ...valid.plan,
+      contributions: [{ ...old, source: { ...historical, endExclusive: opened } }, ...r.plan.contributions.slice(1)] } },
+    "SOURCE_UNVERIFIED_STALE_OR_UNAVAILABLE");
+  });
   it("requires plan and beneficiary history and sourced legal continuity", () => {
     const r = request();
     blocked({ ...r, rules: { ...r.rules!, minimumPlanAgeYears: 27 } }, "PLAN_AGE_NOT_MET");
