@@ -92,6 +92,10 @@ describe("performance instrumentation", () => {
     const later = mergeForRun([first, separate, tax])!;
     expect(canonicalSerialize(later)).toBe(canonicalSerialize(legacy(inputs)));
     expect(mergeForRun([first])?.netWorth).toBe(first.netWorth);
+    const copiedHistory = mergeForRun([structuredClone(first)])!;
+    expect(copiedHistory.netWorth).toBe(first.netWorth);
+    expect(canonicalSerialize(copiedHistory)).toBe(canonicalSerialize(first));
+    expect(mergeForRun([first, structuredClone(first)])?.netWorth).toBe(first.netWorth);
     // Public callers may change their own records between calls. Only the
     // boundary's immutable snapshots may carry memoized equality keys.
     const mutable = { ...diagnostics[0]!, message: "Before edit" };
@@ -221,14 +225,22 @@ describe("performance instrumentation", () => {
     // A different unsupported request must not leave its diagnostics attached
     // when the prior economic fingerprint is restored from cache.
     controller.submit({ ...input, fingerprint: "unsupported-source-basis" }, true);
-    worker.onmessage?.({ data: { ...workerRequest!, outcome: "result", records: [], result: {
+    const unsupportedResponse: ForecastWorkerResponse = { ...workerRequest!, outcome: "result", records: [], result: {
       scope: "household", status: "unavailable", diagnostics: [], message: "Explicit unsupported source",
-    } } });
+    } };
+    worker.onmessage?.({ data: unsupportedResponse });
     expect(controller.state.lifecycle).toBe("unsupported");
+    expect(controller.state.stale).toBe(true);
+    expect(controller.state.latestResult?.status).toBe("unavailable");
     controller.submit(input, true);
     expect(controller.state.lastGoodResult).toBe(original);
     expect(controller.state.latestResult).toBe(original);
     expect(controller.state.stale).toBe(false);
+    // Late delivery from the unsupported fingerprint cannot overwrite a hit.
+    worker.onmessage?.({ data: unsupportedResponse });
+    expect(controller.state.latestResult).toBe(original);
+    expect(controller.state.pending).toBe(false);
+    expect(controller.state.resultFingerprint).toBe(input.fingerprint);
     expect(registry.latest("forecast.total")).toMatchObject({ availability: "not_measured", context: { cacheState: "hit", executionLocation: "browser_main" } });
     expect(registry.latest("forecast.total")?.durationMs).toBeUndefined();
     expect(registry.summary("forecast.total")?.count).toBe(1);

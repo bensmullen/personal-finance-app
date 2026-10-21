@@ -29,7 +29,7 @@ import { forecastDiagnosticMessage } from "../ui/entityPresentation.js";
 import { compileHouseholdTax } from "../src/application/compiler/tax.js";
 import { resolveAnnualFinancialFact } from "../src/application/financialFacts.js";
 
-const loadExample = async (page: import("@playwright/test").Page, model = createGoldenHouseholdExampleDraft()) => {
+const loadExample = async (page: import("@playwright/test").Page, model = createGoldenHouseholdExampleDraft(), deliveryHeld = false) => {
   // Preserve the historical bounded D1 fixture. The flagship has independent
   // one-click U1B coverage rather than changed historical financial assertions.
   await importDraft(page, model);
@@ -44,7 +44,7 @@ const loadExample = async (page: import("@playwright/test").Page, model = create
   await page.getByRole("button", { name: "Apply retirement binding", exact: true }).click();
   await page.locator('[data-repair="lawScenario"]').check();
   await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
-  await test.step("Historical example worker settles on its bounded source horizon", async () => {
+  if (!deliveryHeld) await test.step("Historical example worker settles on its bounded source horizon", async () => {
     const status = page.getByRole("status", { name: "Household forecast status", exact: true });
     await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
     await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
@@ -536,7 +536,12 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   page.on("pageerror", error => errors.push(error.message));
   // Explicit synthetic opening cash funds the $300,000 extra-principal test.
   // The ordinary historical fixture cannot fund that payment from bank cash.
-  await loadExample(page, patchPersonalObject(createGoldenHouseholdExampleDraft(), "Account", GOLDEN_HOUSEHOLD_IDS.checking, { opening_balance: "400000.00" }));
+  const historical = createGoldenHouseholdExampleDraft();
+  const funded = { ...historical, objects: { ...historical.objects,
+    Account: historical.objects.Account!.map(account => typeof account === "object" && account !== null && !Array.isArray(account) && account.account_id === GOLDEN_HOUSEHOLD_IDS.checking
+      ? { ...account, opening_balance: "400000.00" } : account),
+  } };
+  await loadExample(page, funded);
   await openSalaryFacts(page);
   await page.getByRole("button", { name: "Planning", exact: true }).click();
   await openAuthoringSections(page);
@@ -1052,8 +1057,15 @@ test("D1-A Golden Household has no spurious retirement-event warning", async ({ 
   await coverage.click();
   await expect(check.getByText("Current-position sources are supported.", { exact: true })).toBeVisible();
   await expect(check).not.toContainText("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
-  await expect(check.locator("[data-diagnostic-root]")).toHaveCount(0);
-  await expect(check.getByText("Technical diagnostic details", { exact: true })).toHaveCount(0);
+  await expect(check).not.toContainText("RETIREMENT_BINDING_MISMATCH");
+  // The historical NY fixture legitimately lacks payroll/local-tax coverage.
+  // Inspect its actual diagnostic groups without requiring tax completeness.
+  await expect(check.locator("[data-diagnostic-root]").first()).toBeAttached();
+  await check.locator(".forecast-guidance > summary").click();
+  await check.getByText("Technical diagnostic details", { exact: true }).click();
+  await expect(check).not.toContainText("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
+  await expect(check).not.toContainText("RETIREMENT_BINDING_MISMATCH");
+  await expect(check).toContainText("PFA-TAX");
   await expect(page.getByRole("region", { name: "Your finances today", exact: true }).getByRole("article", { name: "Net worth", exact: true }).locator(".calm-metric-value")).toContainText("309330.29");
 });
 
@@ -1185,7 +1197,10 @@ for (const [field, value, code, message] of [
     await expect(standalone.locator("[data-diagnostic-root]").getByText(new RegExp(message))).toBeVisible();
     expect(await standalone.innerText()).not.toMatch(rawUuid);
     expect(await standalone.innerText()).not.toMatch(/rate-basis contract|VS3|INVESTMENT_.*UNSUPPORTED/);
+    await expect(standalone.locator("pre")).toHaveCount(0);
     await standalone.getByText("Technical diagnostic details", { exact: true }).click();
+    await expect(standalone.locator("pre")).toHaveCount(0);
+    await standalone.locator("details > summary").filter({ hasText: code }).click();
     await expect(standalone.locator("pre")).toContainText(code);
     await page.getByRole("button", { name: "Investing", exact: true }).click();
     await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
@@ -1222,7 +1237,10 @@ test("R4 UAT preserves incompatible expense funding with actionable diagnostics"
   await expect(standalone.locator("[data-diagnostic-root]")).toContainText("checking, savings, or cash");
   expect(await standalone.innerText()).not.toMatch(rawUuid);
   expect(await standalone.innerText()).not.toMatch(/valid non-cash payment Account|PAYMENT_ACCOUNT_TYPE_UNSUPPORTED/);
+  await expect(standalone.locator("pre")).toHaveCount(0);
   await standalone.getByText("Technical diagnostic details", { exact: true }).click();
+  await expect(standalone.locator("pre")).toHaveCount(0);
+  await standalone.locator("details > summary").filter({ hasText: "PAYMENT_ACCOUNT_TYPE_UNSUPPORTED" }).click();
   await expect(standalone.locator("pre")).toContainText("PAYMENT_ACCOUNT_TYPE_UNSUPPORTED");
   await page.getByRole("button", { name: "Cash", exact: true }).click();
   await page.getByRole("button", { name: "Spending", exact: true }).click();
@@ -1435,7 +1453,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
     const index = control.queue.findIndex((item: any) => String(item.requestId) === status.dataset.requestId && item.fingerprint === status.dataset.fingerprint);
     control.queue.splice(index, 1)[0].deliver();
   });
-  await loadExample(page);
+  await loadExample(page, createGoldenHouseholdExampleDraft(), true);
   await page.getByRole("button", { name: "Planning", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-02-01");

@@ -24,8 +24,32 @@ export const createOutputCapabilityMerger = () => {
     if (value === undefined) { value = diagnosticKey(diagnostic); keys.set(diagnostic, value); }
     return value;
   };
-  const unique = (diagnostics: readonly Capability["diagnostics"][number][]): Capability["diagnostics"] =>
-    Object.freeze([...new Map(diagnostics.map(diagnostic => [key(diagnostic), diagnostic])).values()]);
+  // Repeated annual projections create equal objects with different identities.
+  // Pairwise WeakMap hits alone cannot share those histories across months.
+  // Intern by exact equality, including complete provenance, within this run.
+  type InternedDiagnostic = { readonly id: number; readonly value: Capability["diagnostics"][number] };
+  const diagnosticsByKey = new Map<string, InternedDiagnostic>();
+  const histories = new Map<string, Capability>();
+  const intern = (dependency: Capability["dependency"], status: Capability["status"], diagnostics: Capability["diagnostics"]): Capability => {
+    const distinct = new Map<string, InternedDiagnostic>();
+    for (const diagnostic of diagnostics) {
+      const equalityKey = key(diagnostic);
+      let entry = diagnosticsByKey.get(equalityKey);
+      if (entry === undefined) {
+        entry = { id: diagnosticsByKey.size, value: diagnostic };
+        diagnosticsByKey.set(equalityKey, entry);
+      }
+      distinct.set(equalityKey, entry);
+    }
+    const entries = [...distinct.values()];
+    const signature = JSON.stringify([dependency, status, entries.map(entry => entry.id)]);
+    let value = histories.get(signature);
+    if (value === undefined) {
+      value = immutableConfiguration<Capability>({ dependency, status, diagnostics: entries.map(entry => entry.value) });
+      histories.set(signature, value);
+    }
+    return value;
+  };
   return (inputs: readonly (TaxOutputCapabilities | undefined)[]): TaxOutputCapabilities | undefined => {
     const result: Record<string, Capability> = {};
     const snapshots = new WeakMap<Capability, Capability>();
@@ -37,7 +61,7 @@ export const createOutputCapabilityMerger = () => {
       if (prior === undefined) {
         let normalized = initial.get(value);
         if (normalized === undefined) {
-          normalized = immutableConfiguration<Capability>({ dependency: value.dependency, status: value.status, diagnostics: unique(value.diagnostics) });
+          normalized = intern(value.dependency, value.status, value.diagnostics);
           initial.set(value, normalized);
           initial.set(normalized, normalized);
         }
@@ -50,11 +74,11 @@ export const createOutputCapabilityMerger = () => {
         }
         let merged = nextForPrior.get(value);
         if (merged === undefined) {
-          merged = immutableConfiguration<Capability>({
-            dependency: prior.dependency === "tax_affected" || value.dependency === "tax_affected" ? "tax_affected" : "tax_independent",
-            status: prior.status === "incomplete" || value.status === "incomplete" ? "incomplete" : "complete",
-            diagnostics: unique([...prior.diagnostics, ...value.diagnostics]),
-          });
+          merged = intern(
+            prior.dependency === "tax_affected" || value.dependency === "tax_affected" ? "tax_affected" : "tax_independent",
+            prior.status === "incomplete" || value.status === "incomplete" ? "incomplete" : "complete",
+            [...prior.diagnostics, ...value.diagnostics],
+          );
           nextForPrior.set(value, merged);
           initial.set(merged, merged);
         }

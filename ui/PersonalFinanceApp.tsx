@@ -3086,8 +3086,8 @@ function DiagnosticList({
   model?: PersonalDraft;
 }) {
   const currentModel = useContext(FinancialResultModels).model;
-  const groups = groupDiagnostics(diagnostics).sort((left, right) => Number("severity" in right.diagnostic && right.diagnostic.severity === "error") - Number("severity" in left.diagnostic && left.diagnostic.severity === "error"));
-  const summaries = [...new Map(groups.map(group => [forecastDiagnosticMessage(group.diagnostic, model ?? currentModel), group])).entries()];
+  const groups = useMemo(() => groupDiagnostics(diagnostics).sort((left, right) => Number("severity" in right.diagnostic && right.diagnostic.severity === "error") - Number("severity" in left.diagnostic && left.diagnostic.severity === "error")), [diagnostics]);
+  const summaries = useMemo(() => [...new Map(groups.map(group => [forecastDiagnosticMessage(group.diagnostic, model ?? currentModel), group])).entries()], [groups, model, currentModel]);
   return (
     <div className="capability">
       <strong>{diagnostics.length > 0 && diagnostics.every(item => item.entityType === "tax_capability") ? "Partially modeled · tax limitations" : "Forecast needs attention"}</strong>
