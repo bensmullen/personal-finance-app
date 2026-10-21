@@ -58,6 +58,7 @@ const gates = {
   unit: false,
   build: false,
   e2e: false,
+  feasibility: false,
 };
 let reason = new Set();
 
@@ -67,6 +68,14 @@ const full = (why) => {
 };
 
 for (const file of files) {
+  if (/^src\/(simulation|primitives|rules|funding|accounting|statements|values|time|application\/compiler)\//.test(file) ||
+      /^src\/(kernel|run|state|values|time|funding|accounting)\.ts$/.test(file) ||
+      /^src\/application\/(householdProjection|performance)\.ts$/.test(file) ||
+      file === 'test/fixtures/performanceHouseholds.ts' ||
+      file === 'tools/ci/forecast-feasibility.mjs') {
+    gates.feasibility = true;
+    reason.add('deterministic forecast hot path/horizon changed');
+  }
   if (/^(package(-lock)?\.json|tsconfig.*\.json|playwright\.config\.ts)$/.test(file)) {
     full("toolchain/config changed");
     continue;
