@@ -113,6 +113,13 @@ describe("#202 independently source-qualified FSA physical cash", () => {
     const missing = { ...s, provenance: s.provenance.map(p => ({ ...p, publishedAt: undefined })) } as unknown as FsaCashSource;
     reject(missing);
   });
+  it("refuses a BANK deposit reported posted before its actual settlement", () => {
+    const s = source();
+    reject({ ...s, deposit: { ...s.deposit,
+      publishedAt: at("2025-01-01"), knownAt: at("2025-01-02") } });
+    reject({ ...s, deposit: { ...s.deposit,
+      publishedAt: at("2026-02-15"), knownAt: at("2026-02-14") } });
+  });
   it("declines future legal eligibility and sources beyond the run cutoff", () => {
     const s = source(), f = fixture();
     reject(s, { ...f, context: { ...f.context, dataCutoff: at("2024-12-31") } });
