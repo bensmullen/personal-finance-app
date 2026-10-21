@@ -30,7 +30,20 @@ const encode = (value: unknown, graph?: EncodingGraph): Wire => {
   graph.active.add(value);
   const payload = encodeValue(value, graph);
   graph.active.delete(value);
-  const key = JSON.stringify(payload), shared = graph.content.get(key);
+  // Every nested definition already has an exact graph ID. A content key
+  // must compare those child IDs, not serialize their entire definitions again:
+  // a growing history otherwise copies every prior month into every ancestor
+  // key, retaining quadratic/cubic intermediate strings in graph.content.
+  // Graph IDs are unique within this artifact, so reference-key equality is
+  // still exact (and content deduplication remains deterministic).
+  const key = JSON.stringify(payload, (_field, nested: unknown) => {
+    if (nested !== null && typeof nested === "object" && !Array.isArray(nested) &&
+        "kind" in nested && nested.kind === "definition") {
+      const [id] = (nested as { readonly value: [number, Wire] }).value;
+      return { kind: "reference", value: id };
+    }
+    return nested;
+  }), shared = graph.content.get(key);
   if (shared !== undefined) { graph.identities.set(value, shared); return shared; }
   const id = graph.content.size, reference = { kind: "reference", value: id };
   graph.content.set(key, reference); graph.identities.set(value, reference);
