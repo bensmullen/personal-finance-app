@@ -41,8 +41,30 @@ export interface InstallmentTerms {
   readonly total: Money;
   readonly openingPrincipal: Money;
   readonly closingPrincipal: Money;
-  /** Required for issuer quotes; reconciled against B1, never silently replaced. */
+  /** Required for issuer quotes; reconciled against B1 when computation qualifies. */
   readonly allocation: { readonly interest: Money; readonly principal: Money; readonly source: Source } | null;
+  /** An independently sourced original, *complete* issuer statement. Required
+   * to admit a quote when B1 interest cannot be reconstructed. Its verified
+   * provenance is a domain input, never permission to post bank cash. */
+  readonly issuerQuote?: {
+    readonly documentId: string;
+    readonly issuerId: string;
+    readonly evidenceKind: "original_complete_issuer_statement";
+    readonly source: Source;
+    readonly period: Window;
+    readonly dueAt: CivilDate;
+    readonly householdId: string;
+    readonly borrowerId: string;
+    readonly lineId: string;
+    readonly liabilityAccountId: string;
+    readonly bankAccountId: string;
+    readonly openingPrincipal: Money;
+    readonly closingPrincipal: Money;
+    readonly interest: Money;
+    readonly principal: Money;
+    readonly fees: Money;
+    readonly total: Money;
+  };
   /** Only an exact-date final contractual quote may include fees. Null means zero. */
   readonly finalQuote: { readonly source: Source; readonly dueAt: CivilDate;
     readonly principal: Money; readonly interest: Money;
@@ -99,7 +121,7 @@ export interface PhaseProposal extends Conditional {
   readonly interest_due: Money;
   readonly fees_due: Money;
   readonly gross_due: Money;
-  readonly interestEvidence: "b1_computed" | "issuer_quoted_b1_reconciled";
+  readonly interestEvidence: "b1_computed" | "issuer_quoted_b1_reconciled" | "issuer_quoted_uncomputed";
   readonly paymentStatus: DatedPayment["status"];
   readonly finalBalanceIntent: Conditional & { readonly opening: Money; readonly closingIfExecuted: Money };
   readonly movements: readonly (Conditional & { readonly operationId: string; readonly authorizationId: string;
@@ -235,15 +257,51 @@ export function proposeHelocPhaseServicing(input: PhaseServicingRequest): PhaseS
   }
   if (diagnostics.length) return result();
   const accrual = evaluateHelocPeriod(r, t.phase.kind);
-  if (accrual.coverage !== "complete") {
+  const b1 = accrual.coverage === "complete" ? accrual.proposals[0]! : undefined;
+  // An original issuer statement can stand in for unavailable computation,
+  // but cannot override conflicting B1 evidence or unrelated invalid data.
+  const quotedWithoutComputation = !b1 && t.method === "issuer_quoted" && !!t.issuerQuote
+    && accrual.diagnostics.length > 0 && accrual.diagnostics.every(d =>
+      ["RATE_TERMS_REQUIRED", "INDEX_UNAVAILABLE", "UNSUPPORTED_INTEREST_CONVENTION"].includes(d.diagnosticCode));
+  if (!b1 && !quotedWithoutComputation) {
     for (const diagnostic of accrual.diagnostics) fail("B1_INCOMPLETE", `${diagnostic.diagnosticCode}: ${diagnostic.missingFacts.join("; ")}`);
     return result();
   }
-  const b1 = accrual.proposals[0]!;
-  // Retain the existing B1 interest identity; never create a second recognition.
-  reserve(b1.claim.claimId); reserve(b1.interestExpenseProposal.operationId); reserve(`${b1.claim.claimId}/settle`);
-  for (const observation of b1.evidence.rate!.observations) reserve(observation.observationId);
-  const interest = cents(b1.claim.amount);
+  if (quotedWithoutComputation) {
+    // B1's normal accrual validation is incomplete here. Retain independent
+    // coverage for line, current period and any present rate source.
+    source(r.source, r.period.start, r.period);
+    source(r.interest.source, r.period.start, r.period);
+    if (r.rate) source(r.rate.source, r.period.start, r.period);
+    if (r.ownerId !== r.borrowerId || !r.openingPrincipal.equals(c.closingPrincipal)
+      || !r.phases.some(phase => phase.kind === t.phase.kind
+        && phase.start <= r.period.start && phase.endExclusive >= r.period.endExclusive))
+      fail("UNSUPPORTED_SERVICING", "Original owner, opening balance and complete sourced phase required");
+  }
+  // Preserve the B1 claim/recognition/settlement IDs on either path.
+  const interestClaimId = `heloc/${r.lineId}/${r.period.start}/${r.period.endExclusive}/interest`;
+  reserve(interestClaimId); reserve(`${interestClaimId}/recognize`); reserve(`${interestClaimId}/settle`);
+  for (const observation of b1?.evidence.rate?.observations ?? []) reserve(observation.observationId);
+  const quote = t.issuerQuote;
+  if (quote) {
+    reserve(quote.documentId);
+    source(quote.source, t.dueAt);
+    if (!named(quote.issuerId) || quote.evidenceKind !== "original_complete_issuer_statement"
+      || !sameWindow(quote.period, r.period) || quote.dueAt !== t.dueAt
+      || quote.householdId !== r.householdId || quote.borrowerId !== r.borrowerId
+      || quote.lineId !== r.lineId || quote.liabilityAccountId !== r.liabilityAccountId
+      || quote.bankAccountId !== r.bankAccountId
+      || quote.source.sourcePublication === t.source.sourcePublication
+      || quote.source.sourcePublication === r.source.sourcePublication
+      || quote.source.publishedAt < r.period.endExclusive || quote.source.asOf < r.period.endExclusive
+      || cents(quote.openingPrincipal) !== balance
+      || cents(quote.closingPrincipal) !== cents(t.closingPrincipal)
+      || cents(quote.total) !== cents(t.total)
+      || !t.allocation || cents(quote.interest) !== cents(t.allocation.interest)
+      || cents(quote.principal) !== cents(t.allocation.principal))
+      fail("QUOTE_MISMATCH", "Original complete issuer statement must match exact period, owner, source, balance, due date and allocation");
+  }
+  const interest = b1 ? cents(b1.claim.amount) : quote ? cents(quote.interest) : 0n;
   const total = cents(t.total);
   let fee = 0n;
   if (t.finalQuote) {
@@ -255,6 +313,8 @@ export function proposeHelocPhaseServicing(input: PhaseServicingRequest): PhaseS
   } else if (t.phase.kind === "balloon" || t.dueAt === r.maturityAt) {
     fail("INSTALLMENT_TERMS_REQUIRED", "Exact-date separately verified contractual final maturity quote required");
   }
+  if (quote && (cents(quote.fees) !== fee || cents(quote.interest) + cents(quote.principal) + cents(quote.fees) !== total))
+    fail("QUOTE_MISMATCH", "Complete issuer interest, principal and separately quoted final fees must sum to cash");
   const principal = total - interest - fee;
   if (principal < 0n || principal > balance || (t.finalQuote !== null && principal !== balance)
     || (principal === 0n && balance > 0n)) fail("QUOTE_MISMATCH", "No negative amortization, over-credit, arrears or unpaid final principal permitted");
@@ -267,17 +327,20 @@ export function proposeHelocPhaseServicing(input: PhaseServicingRequest): PhaseS
       fail("QUOTE_MISMATCH", "Issuer allocation disagrees with supported B1 interest or remaining principal");
   }
   if (diagnostics.length) return result();
-  const evidence = { ...input, checkpoint: { ...c, history }, line: b1.evidence };
+  const evidence = { ...input, checkpoint: { ...c, history }, line: b1?.evidence ?? r };
   return result([{ committed: false, postable: false, contractVersion: "d2-shared/v1", instrumentFamily: "heloc",
     householdId: r.householdId, personId: r.borrowerId, lineId: r.lineId, liabilityAccountId: r.liabilityAccountId, period: r.period,
-    claimId: p.claimId, interestClaimId: b1.claim.claimId, dueAt: t.dueAt,
+    claimId: p.claimId, interestClaimId, dueAt: t.dueAt,
     principal_due: money(principal), interest_due: money(interest), fees_due: money(fee), gross_due: money(total),
-    interestEvidence: t.method === "issuer_quoted" ? "issuer_quoted_b1_reconciled" : "b1_computed", paymentStatus: p.status,
+    interestEvidence: quotedWithoutComputation ? "issuer_quoted_uncomputed"
+      : t.method === "issuer_quoted" ? "issuer_quoted_b1_reconciled" : "b1_computed", paymentStatus: p.status,
     finalBalanceIntent: { committed: false, postable: false, opening: money(balance), closingIfExecuted: money(balance - principal) },
     movements: p.authorization ? [{ committed: false, postable: false, operationId: p.operationId,
       authorizationId: p.authorization.authorizationId, sourceAccountId: r.bankAccountId, destinationAccountId: r.liabilityAccountId,
       principal: money(principal), gross: money(total), recognition: "none" }] : [],
-    evidence, traceRefs: [...new Set([b1.claim.claimId, ...b1.traceRefs, ...history.map(h => h.postingId),
+    evidence, traceRefs: [...new Set([interestClaimId,
+      ...(b1?.traceRefs ?? [r.source.ruleSnapshotId, r.interest.source.ruleSnapshotId]),
+      ...(quote ? [quote.documentId, quote.source.sourcePublication] : []), ...history.map(h => h.postingId),
       t.source.sourcePublication, p.source.sourcePublication, c.source.sourcePublication])].sort(),
   }]);
 }
