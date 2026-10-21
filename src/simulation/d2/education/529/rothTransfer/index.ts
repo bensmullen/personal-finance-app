@@ -39,13 +39,13 @@ export function propose529RothTransfers(input: readonly RothTransferRequest[]): 
     let failure: Incomplete | null = null;
     const exact = (m: Money, path: string): void => need(m instanceof Money && m.currency.equals(r.currency) &&
       r.currency.minorUnitScale === 2 && !m.isNegative() && m.amount.fitsScale(2), "EXACT_MONEY_REQUIRED", path);
-    const source = (v: EducationSource, path: string, scope = { ownerId: p.ownerId, planId: p.planId, providerId: p.providerId }, current = true): void => {
+    const source = (v: EducationSource, path: string, scope = { ownerId: p.ownerId, planId: p.planId, providerId: p.providerId }, current = true, effectiveAt: CivilDate = r.effectiveAt): void => {
       need(Boolean(v), "SOURCE_REQUIRED", path);
       refs.add(v.sourceId);
       for (const d of [v.start, v.endExclusive, v.publishedAt, v.asOf]) date(d, path);
       need([v.sourceId, v.sourcePublication, v.ruleSnapshotId, v.jurisdiction, v.version].every(present), "SOURCE_IDENTITY_REQUIRED", path);
       need(v.verification === "verified" && v.projectionStatus === "verified" && v.ruleFamily === "education_529" &&
-        v.start < v.endExclusive && v.start <= r.effectiveAt && r.effectiveAt < v.endExclusive &&
+        v.start < v.endExclusive && v.start <= effectiveAt && effectiveAt < v.endExclusive &&
         v.publishedAt <= v.asOf && v.asOf <= r.effectiveAt && v.asOf <= r.knownAt &&
         (!current || v.asOf === r.effectiveAt), "SOURCE_UNVERIFIED_STALE_OR_UNAVAILABLE", path);
       need(v.householdId === p.householdId && v.beneficiaryId === p.beneficiaryId && v.ownerId === scope.ownerId &&
@@ -90,7 +90,7 @@ export function propose529RothTransfers(input: readonly RothTransferRequest[]): 
           law.ageStartPermission === "sourced_continuity" && r.history.changes.length > 0), "AGED_HISTORY_REQUIRED", "history");
       unique(r.history.changes.map(c => c.changeId), "history.changes");
       for (const c of r.history.changes) {
-        date(c.at, "history.changes"); source(c.source, "history.changes");
+        date(c.at, "history.changes"); source(c.source, "history.changes", undefined, false, c.at);
         need(c.at >= r.history.openedAt && c.at <= r.effectiveAt && c.continuity === "verified_preserved" &&
           ["plan_transfer", "beneficiary_change"].includes(c.kind) && law.ageStartPermission === "sourced_continuity" &&
           c.source.ruleSnapshotId === law.source.ruleSnapshotId, "LEGAL_CONTINUITY_REQUIRED", "history.changes");
@@ -125,7 +125,7 @@ export function propose529RothTransfers(input: readonly RothTransferRequest[]): 
       unique(r.usage.entries.map(u => u.operationId), "usage.operationId"); unique(r.usage.entries.map(u => u.claimId), "usage.claimId");
       let annualUsed = Money.zero(r.currency), lifetimeUsed = Money.zero(r.currency), rothBasisRecovered = Money.zero(r.currency);
       for (const u of r.usage.entries) {
-        date(u.effectiveAt, "usage.entries"); source(u.source, "usage.entries", u);
+        date(u.effectiveAt, "usage.entries"); source(u.source, "usage.entries", u, false, u.state === "posted" ? u.effectiveAt : r.effectiveAt);
         for (const m of [u.amount, u.basis, u.earnings]) exact(m, "usage.entries");
         need([u.operationId, u.claimId, u.ownerId, u.planId, u.providerId, u.destinationAccountId].every(present) &&
           u.beneficiaryId === p.beneficiaryId && u.operationId !== r.operationId && u.claimId !== r.claimId &&
@@ -167,13 +167,13 @@ export function propose529RothTransfers(input: readonly RothTransferRequest[]): 
       let originalBasis = Money.zero(r.currency), recoveredBasis = rothBasisRecovered;
       for (const c of p.contributions) {
         date(c.fundedAt, "plan.contributions"); exact(c.principal, "plan.contributions");
-        source(c.source, "plan.contributions", undefined, false);
+        source(c.source, "plan.contributions", undefined, false, c.fundedAt);
         need(c.fundedAt >= r.history.openedAt && c.fundedAt <= r.effectiveAt && c.source.asOf >= c.fundedAt &&
           c.principal.isPositive(), "FUNDED_CONTRIBUTION_REQUIRED", "plan.contributions");
         originalBasis = originalBasis.plus(c.principal);
       }
       for (const h of p.distributions) {
-        date(h.effectiveAt, "plan.distributions"); source(h.source, "plan.distributions", undefined, false);
+        date(h.effectiveAt, "plan.distributions"); source(h.source, "plan.distributions", undefined, false, h.effectiveAt);
         for (const m of [h.gross, h.basisRecovered, h.earnings]) exact(m, "plan.distributions");
         need(h.effectiveAt >= r.history.openedAt && h.effectiveAt <= r.effectiveAt && h.source.asOf >= h.effectiveAt &&
           h.gross.isPositive() && h.basisRecovered.plus(h.earnings).equals(h.gross) &&
