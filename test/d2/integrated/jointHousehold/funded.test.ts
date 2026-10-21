@@ -236,6 +236,7 @@ describe("#149 S8-3 funded account-scoped RMD in the real joint household", () =
     const participants = [...s.kernel.executable.participants!];
     const kernel = applyHouseholdExecutionOverlay(s.kernel, { participants: reversed ? participants.reverse() : participants,
       cashFlowInput: { ...s.kernel.cash!.input, incomes: s.kernel.cash!.input.incomes.map(w => ({ ...w, start: payday,
+        growthBaseAt: payday,
         recurrence: { kind: "utc_monthly" as const, anchor: payday, invalidDayPolicy: "skip" as const } })) } });
     const out = runHouseholdKernel({ kernel, runContext: s.context, resultTier: "detail" });
     expect(out.periods).toEqual([]); expect(out.state).toEqual(s.opening);
