@@ -38,9 +38,10 @@ const encode = (value: unknown, graph?: EncodingGraph): Wire => {
   // still exact (and content deduplication remains deterministic).
   const key = JSON.stringify(payload, (_field, nested: unknown) => {
     if (nested !== null && typeof nested === "object" && !Array.isArray(nested) &&
-        "kind" in nested && nested.kind === "definition") {
-      const [id] = (nested as { readonly value: [number, Wire] }).value;
-      return { kind: "reference", value: id };
+        "kind" in nested && nested.kind === "definition" &&
+        "value" in nested && Array.isArray(nested.value) &&
+        typeof nested.value[0] === "number") {
+      return { kind: "reference", value: nested.value[0] };
     }
     return nested;
   }), shared = graph.content.get(key);
