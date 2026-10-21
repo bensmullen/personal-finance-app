@@ -151,7 +151,7 @@ describe("#149 S8-3 funded account-scoped RMD in the real joint household", () =
   });
 
   it.each(["missing", "changed", "stale_rmd", "stale_history", "duplicate_withdrawal", "overallocated", "wrong_owner", "wrong_account"])(
-    "rejects %s before committing January in both participant orders", mode => {
+    "rejects %s at admission or before committing January in both participant orders", mode => {
       const s = fundedHousehold(), p = s.raw[0]!, row = p.binding.allocations[0]!;
       let bad = p;
       if (mode === "missing") sources.delete(p.sourceId);
@@ -168,8 +168,18 @@ describe("#149 S8-3 funded account-scoped RMD in the real joint household", () =
       if (mode === "wrong_owner" || mode === "wrong_account") bad = { ...p, binding: { ...p.binding, allocations: [
         { ...row, ...(mode === "wrong_owner" ? { personId: ids.other } : { sourceAccountId: ids.bank }) }] } };
       if (mode !== "missing") sources.set(p.sourceId, bad);
-      const kernel = mode === "duplicate_withdrawal" ? attachFundedRetirementCashSchedule(s.baseKernel, { ...s.schedule,
-        plans: [{ ...bad.cash, fundedRmd: s.schedule.plans[0]!.fundedRmd }, s.schedule.plans[1]!] }) : s.kernel;
+      if (mode === "duplicate_withdrawal") {
+        // This invariant is rejected at immutable participant construction,
+        // before either participant ordering or any household period exists.
+        // Never weaken J2's construction guard to obtain a runtime diagnostic.
+        const before = canonicalSerialize(s.opening);
+        expect(() => attachFundedRetirementCashSchedule(s.baseKernel, { ...s.schedule,
+          plans: [{ ...bad.cash, fundedRmd: s.schedule.plans[0]!.fundedRmd }, s.schedule.plans[1]!] }))
+          .toThrow("Distinct source-qualified dated plans and a common full horizon are required");
+        expect(canonicalSerialize(s.opening)).toBe(before);
+        return;
+      }
+      const kernel = s.kernel;
       for (const reversed of [false, true]) {
         const participants = [...kernel.executable.participants!];
         const out = runHouseholdKernel({ kernel: applyHouseholdExecutionOverlay(kernel, { participants: reversed ? participants.reverse() : participants }),
