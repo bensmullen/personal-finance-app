@@ -56,9 +56,11 @@ function checkHistory(state: AuthoritativeState, s: FsaCashSource, sources: read
       && c.grossAmount.equals(prior.amount))) incomplete("Full source history omitted or changed a committed reimbursement");
   }
 }
-function coverage(sources: readonly FsaCashSource[], through: string): HouseholdOperationFacts {
+function coverage(sources: readonly FsaCashSource[], through: string, forecastEnd: string): HouseholdOperationFacts {
   const partial = sources.filter(s => s.deposit.settledAt < through && s.deposit.amount.compare(s.original.amount) < 0);
-  const pending = sources.filter(s => s.original.paidAt < through && s.deposit.settledAt >= through);
+  // Missing the forecast horizon is incomplete; a well-sourced later
+  // event *inside* the horizon is not missing coverage for the whole run.
+  const pending = sources.filter(s => s.original.paidAt < through && s.deposit.settledAt >= forecastEnd);
   const diagnostics = [
     { severity: "warning" as const, code: "FSA_PAYROLL_TAX_INCOMPLETE", entityType: "fsa_cash",
       message: "S7: No payroll, wage-base or medical-deduction tax effect is inferred from reimbursement." },
@@ -163,7 +165,7 @@ export function createFsaCashParticipant(configuration: FsaCashInput): Household
             }
             // Loss/amendment during posting fails the surrounding period candidate as well.
             readFsaCashSource(ref.sourceId, ref.expectedSource);
-            const facts = coverage(sources, period.end);
+            const facts = coverage(sources, period.end, context.simulationEnd);
             if (tier === "summary") {
               const sink = new SummaryOperationSink(transaction.legs[0]!.amount.currency); sink.transaction(transaction);
               return { ...candidate, facts: { ...facts, summary: { evidence: sink.snapshot() } } };
@@ -173,7 +175,7 @@ export function createFsaCashParticipant(configuration: FsaCashInput): Household
       }
       operations.push({ descriptor: { id: `fsa-cash:coverage:${period.start}`, domain: "fsa", operationClass: "fsa:coverage",
         sequencingInstant: period.start, dependsOn: [], resourceAccesses: [], traceRefs: [] },
-        execute: candidate => ({ ...candidate, facts: coverage(sources, period.end) }) });
+        execute: candidate => ({ ...candidate, facts: coverage(sources, period.end, context.simulationEnd) }) });
       return { id: participantId, operations };
     },
     observe: (descriptor, _facts, runtime) => {
