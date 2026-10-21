@@ -65,6 +65,13 @@ describe("#202 independently source-qualified FSA physical cash", () => {
     expect(canonicalSerialize({ s, state: f.state })).toBe(before);
   });
 
+  it("does not label an unpaid future plan deposit as complete after medical cash is spent", () => {
+    const s = admit(source()), out = execute(s, fixture(1));
+    expect(out.periods).toHaveLength(1);
+    expect(out.outputCapabilities?.fsaCashSettlement?.status).toBe("incomplete");
+    expect(out.diagnostics.some(d => d.code === "FSA_REIMBURSEMENT_PENDING")).toBe(true);
+    expect(out.state.d2SettlementReceipts).toBeUndefined();
+  });
   it("commits the earlier original without requiring future reimbursement approval", () => {
     const base = source(), s = admit({ ...base, deposit: { ...base.deposit, status: "pending" } });
     const jan = execute(s, fixture(1));
