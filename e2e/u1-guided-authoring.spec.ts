@@ -94,9 +94,16 @@ const assertContractAndGeometry = async (page: Page, width: number) => {
     const scope = await control.evaluate(element => element.closest("[data-authoring-scope]")?.getAttribute("data-authoring-scope"));
     const field = scope?.startsWith("entity-") ? entityField(key!, scope.slice("entity-".length), undefined, false, undefined, await control.getAttribute("aria-label") === "Annual assumption rate" ? "effective annual rate" : undefined) : FINANCIAL_FIELDS[key!];
     expect(field, `${scope}:${key}`).toBeDefined();
+    // A target age is a user-owned proposal with a specialized accessible
+    // label and help copy; its semantic key/binding remains the registry horizon.
+    const ageTarget = key === "horizon" && await control.locator('xpath=ancestor::section[@aria-label="Age-oriented forecast target"]').count() > 0;
+    const expectedLabel = ageTarget ? "Target age" : field!.label;
+    const expectedDescription = ageTarget
+      ? "Requested forecast cutoff age for the explicitly selected planning adults; the birthday month is included."
+      : field!.description;
     const heading = shell.locator(".field-heading label");
-    await expect(heading).toContainText(field!.label);
-    await expect(shell.locator(".field-help summary")).toHaveAttribute("aria-description", new RegExp(field!.description.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    await expect(heading).toContainText(expectedLabel);
+    await expect(shell.locator(".field-help summary")).toHaveAttribute("aria-description", new RegExp(expectedDescription.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     const label = await heading.boundingBox();
     expect(label!.width).toBeGreaterThan(90);
     expect(label!.height).toBeLessThan(100);
