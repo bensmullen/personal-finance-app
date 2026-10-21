@@ -149,9 +149,11 @@ export function qualifyFsaCashOriginal(s: FsaCashSource, context: D2SettlementSo
   const claims = raw.receipts.filter(r => r.proofId === o.proofId && r.receiptId === o.medicalReceiptId);
   if (claims.length !== 1) reject("Exactly one source-owned original medical payment required");
   const r = claims[0]!;
-  const destination = r.destination, receiptEvidence = r.evidence, planEvidence = plan.planEvidence;
-  if (destination === null || receiptEvidence === null || planEvidence === null)
-    reject("Original medical expense requires sourced receipt, plan and owned destination");
+  // Model these as non-null independently to keep strict TS flow analysis
+  // intact through the later composite predicate and source-evidence loop.
+  const destination = r.destination ?? reject("Original medical expense needs an owned destination");
+  const receiptEvidence = r.evidence ?? reject("Original medical payment needs receipt evidence");
+  const planEvidence = plan.planEvidence ?? reject("Original medical payment needs plan evidence");
   const graceEnd = plan.yearEnd?.kind === "grace_period" ? plan.yearEnd.incurredEndExclusive : null;
   // A verified grace period can admit a prior-plan medical expense after the
   // nominal year ends, but cannot silently extend a shorter member enrollment.
