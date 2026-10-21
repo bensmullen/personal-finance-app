@@ -144,8 +144,15 @@ export function qualifyFsaCashOriginal(s: FsaCashSource, context: D2SettlementSo
   const claims = raw.receipts.filter(r => r.proofId === o.proofId && r.receiptId === o.medicalReceiptId);
   if (claims.length !== 1) reject("Exactly one source-owned original medical payment required");
   const r = claims[0]!;
-  if (r.destination === null || r.evidence === null || plan.planEvidence === null)
+  const destination = r.destination, receiptEvidence = r.evidence, planEvidence = plan.planEvidence;
+  if (destination === null || receiptEvidence === null || planEvidence === null)
     reject("Original medical expense requires sourced receipt, plan and owned destination");
+  const graceEnd = plan.yearEnd?.kind === "grace_period" ? plan.yearEnd.incurredEndExclusive : null;
+  // A verified grace period can admit a prior-plan medical expense after the
+  // nominal year ends, but cannot silently extend a shorter member enrollment.
+  const incurredCovered = (span: { readonly start: string; readonly endExclusive: string }) =>
+    span.start <= r.incurredAt && (r.incurredAt < span.endExclusive
+      || (graceEnd !== null && span.endExclusive === plan.period.endExclusive && r.incurredAt < graceEnd));
   const fields = ["householdId", "personId", "employerId", "planId", "planYearId"] as const;
   if (fields.some(field => plan[field] !== o[field] || r[field] !== o[field])
     || r.memberId !== o.memberId || r.payeeId !== o.payeeId
@@ -153,16 +160,15 @@ export function qualifyFsaCashOriginal(s: FsaCashSource, context: D2SettlementSo
     || r.payment.status !== "paid" || r.payment.paidAt !== o.paidAt.slice(0, 10)
     || r.payment.paymentRef !== o.expensePaymentId || !r.payment.amount.equals(o.amount)
     || !r.incurredAmount.equals(o.amount)
-    || r.destination.accountId !== o.bankAccountId || r.destination.ownerId !== o.personId
-    || r.destination.householdId !== o.householdId
-    || ![plan.period, plan.coverage].every(span => span.start <= r.incurredAt && r.incurredAt < span.endExclusive))
+    || destination.accountId !== o.bankAccountId || destination.ownerId !== o.personId
+    || destination.householdId !== o.householdId
+    || ![plan.period, plan.coverage].every(incurredCovered))
     reject("Original BANK debit requires matching, source-owned PAID medical expense");
-  const members = plan.members.filter(m => m.memberId === o.memberId
-    && m.coverage.start <= r.incurredAt && r.incurredAt < m.coverage.endExclusive);
+  const members = plan.members.filter(m => m.memberId === o.memberId && incurredCovered(m.coverage));
   if (members.length !== 1) reject("Original medical member and coverage must match sourced plan");
   // Only evidence needed to establish the original payment must be available at
   // its date. A future adjudication or deposit is never required or invented.
-  for (const e of [plan.planEvidence, members[0]!.evidence, r.evidence, r.destination.evidence]) {
+  for (const e of [planEvidence, members[0]!.evidence, receiptEvidence, destination.evidence]) {
     const matches = s.provenance.filter(p => same(p.evidence, e));
     if (matches.length !== 1) reject("Actual payment evidence must have exactly one independent source timestamp");
     stamp(matches[0]!, o.paidAt, context);
