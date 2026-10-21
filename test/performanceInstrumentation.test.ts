@@ -17,8 +17,8 @@ import type { ForecastWorkerRequest, ForecastWorkerResponse } from "../ui/foreca
 import { calculationFingerprint, toForecastWorkerResult } from "../src/application/interactiveForecast.js";
 import { createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
 import { createGoldenHouseholdForecastRequest, createGoldenHouseholdScenarioIntents } from "../src/application/goldenHousehold.js";
-import { mergeOutputCapabilities } from "../src/simulation/r3/capabilities.js";
-import { taxDiagnostic, taxOutputCapabilities, type TaxOutputCapabilities } from "../src/simulation/tax/contracts.js";
+import { createOutputCapabilityMerger, mergeOutputCapabilities } from "../src/simulation/r3/capabilities.js";
+import { createTaxDiagnosticKey, taxDiagnostic, taxOutputCapabilities, type TaxOutputCapabilities, type TaxCapabilityDiagnostic } from "../src/simulation/tax/contracts.js";
 
 const context: PerformanceContext = Object.freeze({ runId: "performance-test", fixtureId: "realistic-household", dataClassification: "synthetic", modelCounts: Object.freeze({}), executionLocation: "local_node", runtime: "vitest", cacheState: "not_applicable" });
 const oneMonth = <T extends ReturnType<typeof createRealisticPerformanceFixture>["request"]>(request: T): T => ({
@@ -32,6 +32,32 @@ const oneMonth = <T extends ReturnType<typeof createRealisticPerformanceFixture>
 }) as T;
 
 describe("performance instrumentation", () => {
+  it("compares full catalog identities exactly without materializing them in diagnostic keys", () => {
+    const catalog = `tax-catalog:canonical-v1:${"long catalog source ".repeat(2000)}`;
+    const assumption = { version: "projected-current-law/v1" as const, selection: "projectedCurrentLawThrough" as const,
+      modelId: "synthetic-model", householdId: "synthetic-household", through: "2080-02-01", catalogFingerprint: catalog };
+    const diagnostic: TaxCapabilityDiagnostic = { ...taxDiagnostic("projected_current_law", "Explicit projection", "US:FEDERAL"),
+      projectedLaw: { assumption, catalogFingerprint: catalog, ruleId: "projected-rule", ruleVersion: "1",
+        baseRuleId: "verified-rule", baseRuleVersion: "1", baseYear: 2026,
+        effectiveFrom: instant("2027-01-01T00:00:00.000Z"), effectiveUntil: instant("2028-01-01T00:00:00.000Z") } };
+    const { assumption: _assumption, ...unboundLaw } = diagnostic.projectedLaw!;
+    const variants = [diagnostic, structuredClone(diagnostic),
+      { ...diagnostic, projectedLaw: { ...diagnostic.projectedLaw!, catalogFingerprint: `${catalog}different` } },
+      { ...diagnostic, projectedLaw: { ...diagnostic.projectedLaw!, assumption: { ...assumption, catalogFingerprint: `${catalog}different` } } },
+      { ...diagnostic, taxYear: "2027" },
+      { ...diagnostic, projectedLaw: unboundLaw },
+      taxDiagnostic("rule_selection", "Unknown law", "US:FEDERAL")];
+    const key = createTaxDiagnosticKey();
+    for (const left of variants) for (const right of variants)
+      expect(key(left) === key(right)).toBe(canonicalSerialize(left) === canonicalSerialize(right));
+    expect(key(diagnostic).length).toBeLessThan(1500);
+    const expected = [...new Map(variants.map(item => [canonicalSerialize(item), item])).values()];
+    const merged = mergeOutputCapabilities(variants.map(item => taxOutputCapabilities([item], assumption)))!;
+    expect(canonicalSerialize(merged.netWorth?.diagnostics)).toBe(canonicalSerialize(expected));
+    expect(merged.netWorth?.status).toBe("incomplete");
+    expect(merged.netWorth?.diagnostics[0]?.projectedLaw?.catalogFingerprint).toBe(catalog);
+    expect(Object.isFrozen(merged.netWorth?.diagnostics)).toBe(true);
+  });
   it("preserves exact first-occurrence capability diagnostics while sharing identical frozen output histories", () => {
     const diagnostics = Array.from({ length: 40 }, (_, n) => taxDiagnostic(
       `modeled_gap_${n % 13}`, `Source-backed diagnostic ${n % 13}`, "US:FEDERAL", `income-${n % 13}`,
@@ -61,6 +87,20 @@ describe("performance instrumentation", () => {
     expect(Object.isFrozen(merged.netWorth?.diagnostics)).toBe(true);
     expect(mergeOutputCapabilities([])).toBeUndefined();
     expect(mergeOutputCapabilities([undefined, tax])?.netWorth?.status).toBe(tax.netWorth?.status);
+    const mergeForRun = createOutputCapabilityMerger();
+    const first = mergeForRun([tax])!;
+    const later = mergeForRun([first, separate, tax])!;
+    expect(canonicalSerialize(later)).toBe(canonicalSerialize(legacy(inputs)));
+    expect(mergeForRun([first])?.netWorth).toBe(first.netWorth);
+    // Public callers may change their own records between calls. Only the
+    // boundary's immutable snapshots may carry memoized equality keys.
+    const mutable = { ...diagnostics[0]!, message: "Before edit" };
+    const source = { netWorth: { dependency: "tax_affected" as const, status: "incomplete" as const, diagnostics: [mutable] } };
+    const before = mergeForRun([source])!;
+    mutable.message = "After edit";
+    const after = mergeForRun([source])!;
+    expect(before.netWorth?.diagnostics[0]?.message).toBe("Before edit");
+    expect(after.netWorth?.diagnostics[0]?.message).toBe("After edit");
   });
 
   it("enumerates persistent indexes in exact order across a suspended traversal and divergent forks", () => {
@@ -178,8 +218,17 @@ describe("performance instrumentation", () => {
     worker.onmessage?.({ data: response });
     expect(registry.summary("forecast.total")?.count).toBe(1);
     const original = controller.state.lastGoodResult;
+    // A different unsupported request must not leave its diagnostics attached
+    // when the prior economic fingerprint is restored from cache.
+    controller.submit({ ...input, fingerprint: "unsupported-source-basis" }, true);
+    worker.onmessage?.({ data: { ...workerRequest!, outcome: "result", records: [], result: {
+      scope: "household", status: "unavailable", diagnostics: [], message: "Explicit unsupported source",
+    } } });
+    expect(controller.state.lifecycle).toBe("unsupported");
     controller.submit(input, true);
     expect(controller.state.lastGoodResult).toBe(original);
+    expect(controller.state.latestResult).toBe(original);
+    expect(controller.state.stale).toBe(false);
     expect(registry.latest("forecast.total")).toMatchObject({ availability: "not_measured", context: { cacheState: "hit", executionLocation: "browser_main" } });
     expect(registry.latest("forecast.total")?.durationMs).toBeUndefined();
     expect(registry.summary("forecast.total")?.count).toBe(1);

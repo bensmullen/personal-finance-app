@@ -44,6 +44,11 @@ const loadExample = async (page: import("@playwright/test").Page, model = create
   await page.getByRole("button", { name: "Apply retirement binding", exact: true }).click();
   await page.locator('[data-repair="lawScenario"]').check();
   await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
+  await test.step("Historical example worker settles on its bounded source horizon", async () => {
+    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+    await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
+  });
   await clickFinancialDestination(page, "Overview");
   await expect(
     page.getByRole("heading", { name: "Know where you stand." }),
@@ -573,9 +578,15 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await operations.getByLabel("Extra principal checking / savings account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.checking);
   await operations.getByLabel("Operation date", { exact: true }).fill("2031-01-01");
   await operations.getByLabel("Operation cash amount", { exact: true }).fill("300000");
+  const beforeExtra = await status.getAttribute("data-fingerprint");
   await operations.getByRole("button", { name: "Save activity", exact: true }).click();
   await returnToCurrentPlan(page);
-  await expect(page.getByRole("region", { name: "Projected mortgage payoff" })).toContainText("2031-01-01", { timeout: 30_000 });
+  await test.step("Funded extra principal settles in the current worker result and shows its payoff", async () => {
+    await expect(status).not.toHaveAttribute("data-fingerprint", beforeExtra!);
+    await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+    await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
+    await expect(page.getByRole("region", { name: "Projected mortgage payoff" })).toContainText("2031-01-01");
+  });
   await openDebtOwner(page);
   await expect(mortgage).toContainText("Contractual final payment / maturity: 2052-01-01");
 
@@ -2042,6 +2053,11 @@ test("What If executes deterministic investment return", async ({ page }) => {
   await configuration
     .getByRole("button", { name: "Apply setup & run forecast" })
     .click();
+  await test.step("Investment-return source baseline finishes before comparison", async () => {
+    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+    await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
+  });
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   await page.getByLabel("Investment target", { exact: true }).selectOption({ index: 1 });
   await page.getByLabel("Annual growth / return", { exact: true }).fill("7");

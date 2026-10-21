@@ -46,7 +46,11 @@ const loadHistoricalMonthlyExample = async (page: Page) => {
     await taxes.getByLabel(`Confirm ${jurisdiction} forecast settlement convention`, { exact: true }).check();
   }
   await page.locator('[data-repair="lawScenario"]').check();
-  await expect(page.getByRole("status", { name: "Household forecast status", exact: true })).toHaveAttribute("data-lifecycle", "incomplete", { timeout: 30_000 });
+  await test.step("Historical monthly worker returns actual incomplete coverage for January–March", async () => {
+    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+    await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
+  });
 };
 const assertContractAndGeometry = async (page: Page, width: number) => {
   const registry = JSON.parse(readFileSync(new URL("../docs/specs/verification/u1-fact-ownership.json", import.meta.url), "utf8")) as { records: { id: string }[] };
@@ -92,6 +96,18 @@ test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   await loadHistoricalMonthlyExample(page);
+  await test.step("Technical diagnostic provenance is deferred and remains accessible", async () => {
+    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    await expect(status.locator("pre")).toHaveCount(0);
+    await status.locator(".forecast-guidance > summary").click();
+    const technical = status.locator("details").filter({ has: page.locator(":scope > summary", { hasText: /^Technical diagnostic details$/ }) });
+    await technical.locator(":scope > summary").click();
+    await expect(technical.locator("pre")).toHaveCount(0);
+    await technical.locator("details > summary").first().click();
+    await expect(technical.locator("pre").first()).toContainText("PFA-TAX");
+    await technical.locator(":scope > summary").click();
+    await expect(technical.locator("pre")).toHaveCount(0);
+  });
   await navigate(page, "Money", "Cash Flow");
   const pay = page.getByRole("region", { name: "Your Paycheck", exact: true });
   await expect(pay.getByRole("button", { name: "Review selected month" })).toHaveCount(0);

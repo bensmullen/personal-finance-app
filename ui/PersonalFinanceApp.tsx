@@ -3068,6 +3068,14 @@ function PlanHorizonSettings({ draft, settings, setSettings, setDraft, retiremen
   </section></GuidedFields>;
 }
 
+/** Keep large provenance payloads available without serializing closed disclosures. */
+function DeferredDisclosure({ summary, children }: { summary: ReactNode; children: () => ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  return <details onToggle={event => { if (event.target === event.currentTarget) setExpanded(event.currentTarget.open); }}>
+    <summary>{summary}</summary>{expanded && children()}
+  </details>;
+}
+
 function DiagnosticList({
   diagnostics,
   fallback,
@@ -3102,15 +3110,15 @@ function DiagnosticList({
         {(group.diagnostic.category === "payment_funding" || group.diagnostic.category === "settlement_timing") && <ForecastSetupLink target="taxSetup" />}
         {(model ?? currentModel) && <DiagnosticReferences targets={diagnosticTargets((model ?? currentModel)!, group.diagnostic)} />}
       </section>)}</details>}
-      <details><summary>Technical diagnostic details</summary>
-        {groups.map(group => <details key={group.key}><summary>{group.diagnostic.code} · {group.diagnostic.category ?? group.diagnostic.entityType ?? "execution"} · {group.diagnostic.jurisdiction ?? "household"} · {group.occurrences} occurrences · {group.affectedOutputs.length} affected outputs</summary>
+      <DeferredDisclosure summary="Technical diagnostic details">{() => <>
+        {groups.map(group => <DeferredDisclosure key={group.key} summary={<>{group.diagnostic.code} · {group.diagnostic.category ?? group.diagnostic.entityType ?? "execution"} · {group.diagnostic.jurisdiction ?? "household"} · {group.occurrences} occurrences · {group.affectedOutputs.length} affected outputs</>}>{() => <>
           <p>{forecastDiagnosticMessage(group.diagnostic, model ?? currentModel)}</p>
           {(model ?? currentModel) && <DiagnosticReferences targets={diagnosticTargets((model ?? currentModel)!, group.diagnostic)} />}
           <pre>{JSON.stringify({ diagnostic: group.diagnostic, originalMessages: group.messages, affectedOutputs: group.affectedOutputs,
             recordIds: [...new Set(diagnostics.filter(item => groupDiagnostics([item])[0]?.key === group.key).map(item => item.entityId).filter(Boolean))] }, null, 2)}</pre>
-        </details>)}
+        </>}</DeferredDisclosure>)}
         {!groups.length && <pre>{fallback ?? "No richer diagnostic is available."}</pre>}
-      </details>
+      </>}</DeferredDisclosure>
     </div>
   );
 }

@@ -58,7 +58,7 @@ export class ForecastController {
         // Cache hits keep the original financial identity and contribute no fresh timings.
         for (const phase of ["forecast.total", "transport.serialization"] as const)
           this.#record({ phase, availability: "not_measured", context: { ...context, status: cached.status as "completed" | "incomplete" } });
-        this.#publish({ ...settledForecastState(this.#state, cached.status as "completed" | "incomplete", cached), resultModel: input.model, resultRequest: input.request, cacheState: "hit", performanceContext: context });
+        this.#publish({ ...settledForecastState(this.#state, cached.status as "completed" | "incomplete", cached), latestResult: cached, resultModel: input.model, resultRequest: input.request, cacheState: "hit", performanceContext: context });
         return;
       }
       this.#publish({ ...this.#state, cacheState: input.operation === "baseline_forecast" ? "miss" : undefined });

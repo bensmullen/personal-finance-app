@@ -19,7 +19,7 @@ import { SummaryOperationSink } from "../r3/summarySink.js";
 import { activeTaxFact, resolveTaxEligibility } from "./facts.js";
 import { TaxEconomicLedger } from "./economics.js";
 import { TaxDiagnosticLedger } from "./diagnostics.js";
-import { taxBalanceIds, taxDiagnostic, taxOutputCapabilities, type CompiledTaxIncome, type HouseholdTaxInput, type RecognizedTaxEconomics, type TaxCapabilityDiagnostic, type PayrollWithholdingEvidence } from "./contracts.js";
+import { createTaxDiagnosticKey, taxBalanceIds, taxDiagnostic, taxOutputCapabilities, type CompiledTaxIncome, type HouseholdTaxInput, type RecognizedTaxEconomics, type TaxCapabilityDiagnostic, type PayrollWithholdingEvidence } from "./contracts.js";
 export { taxBalanceIds } from "./contracts.js";
 
 const creditUnit = Unit.of("usd_tax_credit");
@@ -117,6 +117,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
     throw new ValidationError({ severity: "error", code: "TAX_PROJECTED_LAW_BASIS_INVALID", message: "Projected law requires an explicit versioned household/model selection bound to this catalog and exclusive date boundary.", entityType: "tax_capability" });
   }
   const bindings = new Map<string, ReturnType<typeof resolveTaxCoreRule> | ValidationError>();
+  const diagnosticKey = createTaxDiagnosticKey();
   const annualStatus = (year: string) => {
     if (input.filingStatuses === undefined) return input.filingStatus;
     const fact = input.filingStatuses[year];
@@ -348,7 +349,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           }
           const account = input.refundAccountId ?? input.fundingPolicy?.orderedSources[0]?.accountId;
           if (!account || !input.fundingPolicy) diagnostics.push(taxDiagnostic("payment_funding", "Explicit tax funding and refund account are required."));
-          const uniqueDiagnostics = [...new Map(diagnostics.map(value => [canonicalSerialize(value), value])).values()];
+          const uniqueDiagnostics = [...new Map(diagnostics.map(value => [diagnosticKey(value), value])).values()];
           for (const jurisdiction of totals.keys()) if (!(input.settlements ?? []).some(item => item.taxYear === year && item.jurisdiction === jurisdiction)) uniqueDiagnostics.push(taxDiagnostic("settlement_timing", "An explicit tax-year final settlement/refund date is required; no filing/payment date is inferred.", jurisdiction));
           // Standalone tax payments never prove a gross-to-net paycheck. Each
           // wage occurrence needs its own executed, source-bound receipt under

@@ -7,7 +7,7 @@ import { realizedMortgageLoans } from "./mortgageLifecycle.js";
 import { SummaryOperationSink, type SummaryAccountingEvidence } from "./r3/summarySink.js";
 import { firstDependencyOrder, indexReachability, indexSequencingInstants } from "./r3/ordering.js";
 import { compareReachableStates, createReachableStateCounters } from "./r3/reachableStates.js";
-import { mergeOutputCapabilities } from "./r3/capabilities.js";
+import { createOutputCapabilityMerger } from "./r3/capabilities.js";
 import { fundingPoolConservationProof, guaranteedFundingIncomeProof } from "./r3/commutativity.js";
 import type { AccountingTransaction } from "../accounting/index.js";
 import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../diagnostics/index.js";
@@ -536,6 +536,7 @@ const runCompiledHouseholdProjectionInternal = (
   let reachedThrough: Instant | undefined;
   const diagnostics: ValidationIssue[] = [];
   let outputCapabilities = periodRetention?.resume?.outputCapabilities;
+  const mergeOutputCapabilities = createOutputCapabilityMerger();
   for (const period of periods.filter(period =>
     (periodRetention?.resume === undefined || period.start >= periodRetention.resume.at) &&
     (periodRetention?.stopAfter === undefined || period.end <= periodRetention.stopAfter)))
@@ -847,7 +848,7 @@ const runCompiledHouseholdProjectionInternal = (
           assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
         });
         const currentSummary = performance.measure("engine.statements_metrics", () =>
-          createHouseholdSummaryPeriod(period, state, candidateState, additionalFacts, kernel, runContext.baseCurrency, performance));
+          createHouseholdSummaryPeriod(period, state, candidateState, additionalFacts, kernel, runContext.baseCurrency, performance, mergeOutputCapabilities));
         outputCapabilities = performance.measure("engine.capabilities", () => mergeOutputCapabilities([outputCapabilities, currentSummary.outputCapabilities]));
         const summary = Object.freeze({ ...currentSummary, ...(outputCapabilities === undefined ? {} : { outputCapabilities }) });
         diagnostics.push(...(prepared.cash?.diagnostics ?? []), ...additionalFacts.flatMap(fact => [

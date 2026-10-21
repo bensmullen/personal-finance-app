@@ -6,6 +6,7 @@ import type { CalculationTraceRef } from "../../lineage/index.js";
 import type { FilingStatus, TaxCoreRule, TaxIncomeFacts, TaxJurisdictionFacts } from "../../rules/tax/contracts.js";
 import type { Instant } from "../../time/index.js";
 import type { Money } from "../../values/index.js";
+import { canonicalSerialize } from "../run.js";
 
 /** Shared payroll/accrual identity; never open a second withholding position. */
 export const taxBalanceIds = (jurisdiction: string, year: string) => {
@@ -151,6 +152,27 @@ export interface OutputTaxCapability {
   readonly diagnostics: readonly TaxCapabilityDiagnostic[];
 }
 export type TaxOutputCapabilities = Readonly<Record<string, OutputTaxCapability>>;
+/** Exact, calculation-local equality keys; published diagnostics stay intact. */
+export const createTaxDiagnosticKey = () => {
+  const catalogs = new Map<string, number>();
+  const token = (value: string): number => {
+    let id = catalogs.get(value);
+    if (id === undefined) { id = catalogs.size; catalogs.set(value, id); }
+    return id;
+  };
+  return (diagnostic: TaxCapabilityDiagnostic): string => {
+    const law = diagnostic.projectedLaw;
+    if (law === undefined) return canonicalSerialize(diagnostic);
+    // Catalog identities are complete canonical content strings, not digests.
+    // Intern them by exact string equality rather than copying/escaping the
+    // entire catalog twice into each diagnostic's temporary deduplication key.
+    return canonicalSerialize({ ...diagnostic, projectedLaw: { ...law,
+      catalogFingerprint: token(law.catalogFingerprint),
+      ...(law.assumption === undefined ? {} : { assumption: { ...law.assumption,
+        catalogFingerprint: token(law.assumption.catalogFingerprint) } }),
+    } });
+  };
+};
 export const taxAffectedOutputs = Object.freeze(["cash", "investmentValue", "assets", "totalAssets", "liabilities", "totalLiabilities", "netWorth", "statementExpenses", "netIncome", "operatingCashFlow", "investingCashFlow", "financingCashFlow", "investmentContributionPrincipal", "contributionPrincipal", "investmentFees", "debtPrincipalReduction", "principalReduction", "endingPrincipal", "outstandingInterest", "interestExpense", "debtBalances", "fees", "gains", "unrealizedGain", "expenseCashSettlement", "outstandingExpenseObligations", "constraintOutcomes", "liquidityShortfalls"]);
 export const taxDiagnostic = (category: string, message: string, jurisdiction?: string, entityId?: string): TaxCapabilityDiagnostic => Object.freeze({
   severity: "warning", code: "PFA-TAX-009", entityType: "tax_capability", category, message,
