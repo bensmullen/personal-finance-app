@@ -169,6 +169,11 @@ const rounded = (n: bigint, d: bigint, mode: "half_up" | "down"): bigint => n / 
 
 /** Pure isolated proposal. Any diagnostic suppresses the entire period. */
 export function proposeHeloc(r: HelocRequest): HelocResult {
+  return evaluateHelocPeriod(r, "interest_only_draw");
+}
+
+/** Shared B1 accrual kernel; phase servicing never publishes its recognition or settlement. */
+export function evaluateHelocPeriod(r: HelocRequest, phase: "interest_only_draw" | "amortizing" | "balloon"): HelocResult {
   const diagnostics: Diagnostic[] = [];
   const fail = (code: DiagnosticCode, fact: string, s = r.source): void => {
     diagnostics.push({ diagnosticCode: code, sourceEntityPath: `heloc/${r.lineId}`, period: r.period,
@@ -217,7 +222,7 @@ export function proposeHeloc(r: HelocRequest): HelocResult {
   if (!phases.length || phases.some((p, i) => !windowOK(p) || (i > 0 && phases[i - 1]!.endExclusive !== p.start))
     || phases[0]!.start !== r.openedAt || phases[phases.length - 1]!.endExclusive !== r.maturityAt)
     fail("INVALID_CONTRACT", "Contiguous phases from opening to maturity required");
-  if (!phases.some(p => p.kind === "interest_only_draw" && covers(p, r.period))
+  if (!phases.some(p => p.kind === phase && covers(p, r.period))
     || r.period.start < r.openedAt || r.period.endExclusive > r.maturityAt)
     fail("UNSUPPORTED_REPAYMENT_PHASE", "Only covered interest-only draw phase supported; amortizing/balloon/maturity payoff requires another approved evaluator");
   sourceOK(r.interest.source, r.period, r.period.start);
