@@ -2,7 +2,7 @@ import { instant } from "../../../../src/time/index.js";
 import { money } from "../../../../src/values/index.js";
 import { registerRetirementRawSourcePort, type RetirementRawSource, type RetirementCashInput } from "../../../../src/simulation/d2/integration/retirementCash/index.js";
 import type { AllocationInstruction, WithdrawalRmdInput } from "../../../../src/simulation/d2/retirement/withdrawalRmd/index.js";
-import { fixture, input, rmdInput } from "./scenario.js";
+import { fixture, input, rmdInput, source } from "./scenario.js";
 
 export const sources = new Map<string, RetirementRawSource>();
 registerRetirementRawSourcePort({ read: reference => sources.get(reference.sourceId) });
@@ -15,7 +15,9 @@ export function funded(f = fixture(), label = "funded", amounts = ["500"]) {
     const binding = rmdInput({ ...i, withdrawals });
     const a = binding.allocations[0]!;
     const { approval: _approval, ...terms } = { ...a, amount: money(amount), allocationId: `allocation:${label}:${n}` };
-    const allocation: AllocationInstruction = { ...terms, approval: { ...a.approval!, id: `approval:${label}:${n}`, terms } };
+    const approvalId = `approval:${label}:${n}`;
+    const allocation: AllocationInstruction = { ...terms, approval: { ...a.approval!, id: approvalId, terms,
+      source: source(approvalId, request.personId, request.effectiveAt, `${label}:${n}:rmd-approval`) } };
     return { cash: { ...i, withdrawals: binding.withdrawals }, binding: { ...binding, allocations: [allocation] } };
   });
   const first = parts[0]!;
