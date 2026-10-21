@@ -55,6 +55,7 @@ describe("#202 independently source-qualified FSA physical cash", () => {
     expect(out.state.identities.settlementIds).toHaveLength(1);
     expect(evaluateFsa(s.request).entitlement!.employeePayrollToDate.isZero()).toBe(true);
     expect(out.outputCapabilities?.fsaPayrollTax?.status).toBe("incomplete");
+    if (amount === "1000") expect(out.outputCapabilities?.fsaCashSettlement?.status).toBe("complete");
     if (amount === "500") {
       expect(out.outputCapabilities?.fsaCashSettlement?.status).toBe("incomplete");
       expect(out.diagnostics.some(d => d.code === "entitlement_installment_port_required")).toBe(true);
