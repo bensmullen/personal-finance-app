@@ -26,7 +26,7 @@ describe("J1 canonical retirement evidence (PM #204; PFA-DET-017 / PFA-TAX-015)"
       expect(state.d2PostedTransactions).toBeUndefined();
       // The same orphan check remains authoritative for cold and indexed state.
       const id = idempotencyKey("retirement-j1:record", "missing");
-      state.identities.externalIdempotencyKeys = Object.freeze([...state.identities.externalIdempotencyKeys, id].sort());
+      Object.assign(state.identities, { externalIdempotencyKeys: Object.freeze([...state.identities.externalIdempotencyKeys, id].sort()) });
       expect(() => validateAuthoritativeState(state)).toThrow();
     }
   });
