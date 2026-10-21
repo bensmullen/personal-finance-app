@@ -128,6 +128,13 @@ describe("#202 independently source-qualified FSA physical cash", () => {
     const out = reject({ ...s, original: { ...s.original, bankCashBefore: money("500") } }, fixture(2, state));
     expect(out.periods).toEqual([]); expect(out.state).toEqual(state);
   });
+  it("refuses a purported actual BANK payment confirmed before it occurred", () => {
+    const s = source(), earlier = { ...s, original: { ...s.original,
+      publishedAt: at("2025-01-01"), knownAt: at("2025-01-02") } };
+    const out = reject(earlier);
+    expect(out.periods).toEqual([]);
+    expect(out.state.identities.postedTransactionIds).toHaveLength(0);
+  });
   it("requires exact source-owner timestamps rather than civil dates or publication text", () => {
     const s = source();
     for (const knownAt of ["2025-01-02", at("2026-03-01")] as const) {
