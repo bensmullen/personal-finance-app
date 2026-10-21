@@ -168,13 +168,23 @@ export const isNonblockingProjectedTaxLaw = (diagnostic: TaxCapabilityDiagnostic
     diagnostic.jurisdiction !== undefined && law.effectiveFrom < law.effectiveUntil &&
     law.effectiveUntil <= `${selection.through}T00:00:00.000Z`;
 };
-export const taxOutputCapabilities = (diagnostics: readonly TaxCapabilityDiagnostic[], selection?: ProjectedCurrentLawAssumption): TaxOutputCapabilities => Object.freeze(Object.fromEntries([
-  ...taxAffectedOutputs.map(field => [field, Object.freeze({ dependency: "tax_affected", status: diagnostics.some(diagnostic => !isNonblockingProjectedTaxLaw(diagnostic, selection)) ? "incomplete" : "complete", diagnostics: Object.freeze([...diagnostics]) })]),
-  ...["statementIncome", "recurringIncomeRecognized", "recurringExpenseRecognized", "currentPosition"].map(field => {
-    const applicable = diagnostics.filter(diagnostic => diagnostic.affectedOutputs.includes(field));
-    return [field, Object.freeze({ dependency: "tax_independent", status: applicable.length ? "incomplete" : "complete", diagnostics: Object.freeze(applicable) })];
-  }),
-]));
+export const taxOutputCapabilities = (diagnostics: readonly TaxCapabilityDiagnostic[], selection?: ProjectedCurrentLawAssumption): TaxOutputCapabilities => {
+  // Every tax-affected field has precisely the same capability semantics and
+  // diagnostic sequence. Share the immutable value rather than cloning this
+  // potentially long annual warning history once per output per period.
+  const affected: OutputTaxCapability = Object.freeze({
+    dependency: "tax_affected",
+    status: diagnostics.some(diagnostic => !isNonblockingProjectedTaxLaw(diagnostic, selection)) ? "incomplete" : "complete",
+    diagnostics: Object.freeze([...diagnostics]),
+  });
+  return Object.freeze(Object.fromEntries([
+    ...taxAffectedOutputs.map(field => [field, affected]),
+    ...["statementIncome", "recurringIncomeRecognized", "recurringExpenseRecognized", "currentPosition"].map(field => {
+      const applicable = diagnostics.filter(diagnostic => diagnostic.affectedOutputs.includes(field));
+      return [field, Object.freeze({ dependency: "tax_independent", status: applicable.length ? "incomplete" : "complete", diagnostics: Object.freeze(applicable) })];
+    }),
+  ]));
+};
 export interface RecognizedTaxEconomics {
   /** Bounded ordinary lump-sum term-life proceeds excluded from federal gross income. */
   readonly excludedFederalTermLifeBenefit?: Money;
