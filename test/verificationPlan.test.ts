@@ -118,7 +118,9 @@ describe("selective verification and main deployment", () => {
   }, 20_000);
   it('selects cheap feasibility for forecast hot paths but no docs/tooling/UI-only probes', () => {
     for (const file of ['src/simulation/householdExecution.ts', 'src/application/householdProjection.ts',
-      'test/fixtures/performanceHouseholds.ts']) expect(planFor(file).feasibility, file).toBe(true);
+      'src/application/forecastReadiness.ts', 'src/application/forecastSetup.ts',
+      'src/application/goldenHousehold.ts', 'test/fixtures/performanceHouseholds.ts'])
+      expect(planFor(file).feasibility, file).toBe(true);
     for (const file of ['docs/notes.md', 'tools/codex/tooling-self-test.mjs', 'ui/Plan.tsx']) {
       expect(planFor(file).feasibility, file).toBe(false);
     }

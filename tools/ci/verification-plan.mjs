@@ -72,6 +72,7 @@ for (const file of files) {
       /^src\/(kernel|run|state|values|time|funding|accounting)\.ts$/.test(file) ||
       /^src\/application\/(householdProjection|performance)\.ts$/.test(file) ||
       file === 'test/fixtures/performanceHouseholds.ts' ||
+      /^src\/application\/(forecastReadiness|forecastSetup|goldenHousehold)\.ts$/.test(file) ||
       file === 'tools/ci/forecast-feasibility.mjs') {
     gates.feasibility = true;
     reason.add('deterministic forecast hot path/horizon changed');
