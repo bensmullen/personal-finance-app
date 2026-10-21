@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.6.21-draft
+**Version:** 0.6.22-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -13,6 +13,10 @@ The sequence intentionally measures and improves the current deterministic path 
 The long-term architecture is a comprehensive financial-planning system, not only a forecast viewer. Forecasting remains the authoritative evaluation engine; planning layers define decisions, goals, constraints, candidate strategies, and comparisons without duplicating financial formulas.
 
 A routine stochastic forecast or strategy evaluation is a budgeted computation product. Accuracy/convergence and compute cost are joint requirements. The implementation SHALL preserve local execution where it is efficient enough and SHALL remain portable to server/cloud workers when local execution cannot meet latency, memory, device, or product-service constraints. Routine forecasts or planning reruns that require multi-dollar cloud compute per user action are not an acceptable steady-state design; exact budgets are established from measured R1/R6/planning data.
+
+### Parallel engineering framework reliability gate
+
+**FRAMEWORK_RELIABILITY — Issue [#218](https://github.com/bensmullen/personal-finance-app/issues/218):** The product manager approved bounded optional local type/unit preflight, early source-backed scaling feasibility checks, and inexpensive static/type/build gating before four-way browser E2E. The same independent framework task investigates the shared worktree latest-task receipt ambiguity without weakening single-writer/scope protections. #218 must pass its own tooling, CI and hook self-tests before its framework implementation is accepted; it does **not** block U1B #181 or any D1/D2/R11 economic product gate. Framework-control paths remain separate from implementation PRs.
 
 ## 2. Dependency sequence
 
