@@ -65,6 +65,15 @@ const assertContractAndGeometry = async (page: Page, width: number) => {
   const controls = page.locator('[data-authoring-scope] input, [data-authoring-scope] select, [data-tax-setup] input, [data-tax-setup] select');
   for (const control of await controls.all()) {
     if (!await control.isVisible()) continue;
+    // Picking adults for a suggested horizon is a transient UI selection, not
+    // an owned/saved financial fact. Verify its accessible group and DOB label;
+    // all actual authoring fields (including target age) still require FieldShell.
+    const planningAdults = control.locator('xpath=ancestor::section[@aria-label="Age-oriented forecast target"]/fieldset[legend="Select planning adults"]');
+    if (await control.getAttribute("type") === "checkbox" && await planningAdults.count()) {
+      await expect(control).toHaveAttribute("type", "checkbox");
+      await expect(control.locator("xpath=ancestor::label[1]")).toContainText("DOB");
+      continue;
+    }
     const shell = control.locator('xpath=ancestor::*[@data-financial-field][1]');
     await expect(shell).toHaveCount(1);
     const key = await shell.getAttribute("data-financial-field");
