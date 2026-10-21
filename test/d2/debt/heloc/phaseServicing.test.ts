@@ -86,7 +86,8 @@ describe("conditional HELOC amortizing and maturity servicing: synthetic exact-c
 
   it("fails closed on absent, stale, partial, non-independent and mismatched issuer statement", () => {
     const r = quoted(), t = r.terms!, q = t.issuerQuote!;
-    reject({ ...r, terms: { ...t, issuerQuote: undefined } }, "B1_INCOMPLETE");
+    const { issuerQuote: _absentQuote, ...noQuote } = t;
+    reject({ ...r, terms: noQuote }, "B1_INCOMPLETE");
     reject({ ...r, terms: { ...t, issuerQuote: { ...q, evidenceKind: "conditional_quote" as typeof q.evidenceKind } } }, "QUOTE_MISMATCH");
     reject({ ...r, terms: { ...t, issuerQuote: { ...q, period: { ...q.period, start: d("2026-01-02") } } } }, "QUOTE_MISMATCH");
     reject({ ...r, terms: { ...t, issuerQuote: { ...q, source: { ...q.source, asOf: d("2026-02-02") } } } }, "SOURCE_UNAVAILABLE");
