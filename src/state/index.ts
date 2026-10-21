@@ -319,6 +319,16 @@ export class PersistentStringIndex<T> {
     }
     return undefined;
   }
+  hasPrefix(prefix: string): boolean {
+    // Ordered lookup avoids materializing an O(history) identity list when
+    // verifying absent retirement commitments on every ordinary cash period.
+    let node = this.#root;
+    while (node !== undefined) {
+      if (node.key.startsWith(prefix)) return true;
+      node = node.key < prefix ? node.right : node.left;
+    }
+    return false;
+  }
   has(key: string): boolean {
     let node = this.#root;
     while (node !== undefined) {
@@ -1161,7 +1171,18 @@ export const retirementDistributionArchiveDelta = (state: AuthoritativeState, be
     set: Object.fromEntries(delta.flatMap(c => c.after === undefined ? [] : [[c.key, c.after]])),
     remove: delta.flatMap(c => c.after === undefined ? [c.key] : []) };
 };
+const retirementRecordPrefix = idempotencyKey("retirement-j1:record", "sentinel").slice(0, -"8:sentinel".length);
 const validateRetirementDistributions = (state: AuthoritativeState): void => {
+  // Most household forecasts contain no J1 journal or D2 posted proof. Still
+  // reject orphaned commitment identities on both cold imports and indexed
+  // execution states, without rebuilding/scanning the retirement history.
+  if (state.retirementDistributionAllocations === undefined && state.d2PostedTransactions === undefined) {
+    const indexed = identityIndexes.get(state.identities)?.externalIdempotencyKeys;
+    if (indexed === undefined
+      ? state.identities.externalIdempotencyKeys.some(id => id.startsWith(retirementRecordPrefix))
+      : indexed.hasPrefix(retirementRecordPrefix)) d2Invalid("Retirement commitment orphaned from journal");
+    return;
+  }
   const previous = retirementHistories.get(state), index = retirementIndex(state.retirementDistributionAllocations);
   const postings = d2PostingIndex(state.d2PostedTransactions);
   const consumed = previous?.consumed.fork() ?? new PersistentStringIndex<string>();
@@ -1212,7 +1233,7 @@ const validateRetirementDistributions = (state: AuthoritativeState): void => {
     for (const c of ids.externalIdempotencyKeys.changesSince(priorIds.externalIdempotencyKeys).changes)
       if (c.before !== undefined && c.after === undefined && consumed.has(c.key)) d2Invalid("Retirement commit inventory removed");
   } else if (previous && previous.identities !== state.identities) for (const [, value] of index.entries()) check(value as RetirementDistributionRecord);
-  const prefix = idempotencyKey("retirement-j1:record", "sentinel").slice(0, -"8:sentinel".length);
+  const prefix = retirementRecordPrefix;
   const added = priorIds && ids ? ids.externalIdempotencyKeys.changesSince(priorIds.externalIdempotencyKeys).changes.flatMap(c => c.after === undefined ? [] : [c.after]) : state.identities.externalIdempotencyKeys;
   for (const id of added) if (id.startsWith(prefix) && !consumed.has(id)) d2Invalid("Retirement commitment orphaned from journal");
   for (const key of indexedRecords.get(state.accounts)?.dirty ?? Object.keys(state.accounts)) {
