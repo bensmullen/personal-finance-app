@@ -76,7 +76,7 @@ if (childMonth !== undefined) {
     // includes financial points, coverage, diagnostics and source provenance.
     resultFingerprint: createHash("sha256").update(canonicalSerialize(result)).digest("hex"),
     structuralCounters: registry.latest("engine.execute")?.resources?.structuralCounters ?? {},
-    phaseInterpretation: "Capability merging inside summary generation is also included in engine.statements_metrics; detailed capability merging is included in engine.trace_result. Phase durations are not an exclusive partition of wall time.",
+    phaseInterpretation: "Capability normalization is a subphase of engine.capabilities, also included in summary statements_metrics or detailed trace_result. application.replay_artifact is a subphase of application.read_model. Diagnostic counters distinguish raw-list inspection, exact key computation, shared-prefix lookup, new merge suffixes and array materialization. Request post includes synchronous enqueue work; worker roundtrip includes queueing/execution/response and is never serialization-only. Phase durations are not an exclusive partition of wall time.",
     phasesMs: Object.fromEntries(PERFORMANCE_PHASES.map(phase => {
       const record = registry.latest(phase);
       return [phase, record?.availability === "measured" ? record.durationMs ?? null : null];

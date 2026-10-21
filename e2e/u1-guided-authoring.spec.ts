@@ -19,7 +19,13 @@ const open = async (scope: Page | Locator, title: string) => {
 // July-pay Philadelphia age-90 flagship has separate one-click coverage.
 const loadHistoricalMonthlyExample = async (page: Page) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
+  // Open the import owner without starting a separate 649-month demonstration.
+  for (const [label, value] of [["Household name", "Historical owner workspace"], ["Monthly income", "0"], ["Opening cash balance", "0"], ["Asset cost basis", "0"], ["Current debt", "0"], ["Monthly spending", "0"]] as const) {
+    await page.getByLabel(label, { exact: true }).fill(value);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+  }
+  await page.getByLabel("Projection horizon (years)", { exact: true }).fill("1");
+  await page.getByRole("button", { name: "Finish setup", exact: true }).click();
   await navigate(page, "Settings", "Import / Export");
   await page.locator('input[type="file"]').setInputFiles({ name: "historical-monthly.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(createGoldenHouseholdExampleDraft())) });
   await page.getByRole("button", { name: "Import into session", exact: true }).click();

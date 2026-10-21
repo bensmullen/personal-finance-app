@@ -3086,7 +3086,15 @@ function DiagnosticList({
   model?: PersonalDraft;
 }) {
   const currentModel = useContext(FinancialResultModels).model;
-  const groups = useMemo(() => groupDiagnostics(diagnostics).sort((left, right) => Number("severity" in right.diagnostic && right.diagnostic.severity === "error") - Number("severity" in left.diagnostic && left.diagnostic.severity === "error")), [diagnostics]);
+  const performanceScope = useContext(BrowserPerformanceScope);
+  const groups = useMemo(() => {
+    const started = browserNow();
+    try { return groupDiagnostics(diagnostics).sort((left, right) => Number("severity" in right.diagnostic && right.diagnostic.severity === "error") - Number("severity" in left.diagnostic && left.diagnostic.severity === "error")); }
+    finally {
+      const ended = browserNow();
+      if (performanceScope?.active && started !== undefined && ended !== undefined) recordBrowserDuration("ui.diagnostic_grouping", ended - started, performanceScope.context);
+    }
+  }, [diagnostics, performanceScope?.context.runId]);
   const summaries = useMemo(() => [...new Map(groups.map(group => [forecastDiagnosticMessage(group.diagnostic, model ?? currentModel), group])).entries()], [groups, model, currentModel]);
   return (
     <div className="capability">

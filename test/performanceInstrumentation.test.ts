@@ -32,6 +32,42 @@ const oneMonth = <T extends ReturnType<typeof createRealisticPerformanceFixture>
 }) as T;
 
 describe("performance instrumentation", () => {
+  it.each([8, 20, 120])("publishes %i growing snapshots using prefix identity and only their new merge suffix", months => {
+    const registry = new PerformanceRegistry();
+    const session = createPerformanceSession({ context, clock: { now: () => 0 }, sink: registry });
+    const merge = createOutputCapabilityMerger(session);
+    const diagnostics: TaxCapabilityDiagnostic[] = [];
+    let prior: TaxOutputCapabilities | undefined;
+    for (let n = 0; n < months; n++) {
+      // Production capability witnesses are deep immutable snapshots. Reuse
+      // their identities as a producer carries earlier witnesses forward.
+      diagnostics.push(taxOutputCapabilities([taxDiagnostic("source_gap", `Occurrence ${n}`)]).netWorth!.diagnostics[0]!);
+      prior = merge([prior, taxOutputCapabilities(diagnostics)])!;
+    }
+    session.add("engine.capabilities", 0); session.finish();
+    const counters = registry.latest("engine.capabilities")!.resources!.structuralCounters!;
+    expect(counters.capabilitySequenceNodesCreated).toBe(months);
+    expect(counters.capabilityMergeSuffixVisited).toBe(months - 1);
+    expect(counters.capabilityDiagnosticKeysComputed).toBe(months);
+    expect(counters.capabilityPrefixSearchSteps).toBeLessThanOrEqual(months * Math.ceil(Math.log2(months)));
+    expect(counters.capabilityDiagnosticArraysMaterialized ?? 0).toBe(0);
+    // Raw incoming lists still require inspection; this counter must expose
+    // that cost separately from merging/publishing the accumulated forecast.
+    expect(counters.capabilityDiagnosticsVisited).toBe(months * (months + 1) / 2);
+    expect(canonicalSerialize(prior!.netWorth!.diagnostics)).toBe(canonicalSerialize(diagnostics));
+    const reverse = merge([taxOutputCapabilities([...diagnostics].reverse()), prior])!;
+    expect(canonicalSerialize(reverse.netWorth!.diagnostics)).toBe(canonicalSerialize([...diagnostics].reverse()));
+  });
+  it("merges divergent immutable branches in exact first-appearance order and preserves incomplete status", () => {
+    const merge = createOutputCapabilityMerger();
+    const diagnostics = [0, 1, 2, 3].map(n => taxDiagnostic("source_gap", `Source ${n}`));
+    const left = merge([taxOutputCapabilities([diagnostics[0]!, diagnostics[1]!, diagnostics[2]!])])!;
+    const right = merge([taxOutputCapabilities([diagnostics[0]!, diagnostics[2]!, diagnostics[3]!])])!;
+    expect(canonicalSerialize(merge([left, right])!.netWorth!.diagnostics)).toBe(canonicalSerialize(diagnostics));
+    expect(canonicalSerialize(merge([right, left])!.netWorth!.diagnostics)).toBe(canonicalSerialize([diagnostics[0], diagnostics[2], diagnostics[3], diagnostics[1]]));
+    expect(merge([left, right])!.netWorth!.status).toBe("incomplete");
+    expect(canonicalSerialize(left.netWorth!.diagnostics)).toBe(canonicalSerialize(diagnostics.slice(0, 3)));
+  });
   it("shares unique growing prefixes without eagerly retaining an array for every period", () => {
     const registry = new PerformanceRegistry();
     const session = createPerformanceSession({ context, clock: { now: () => 0 }, sink: registry });
@@ -82,7 +118,8 @@ describe("performance instrumentation", () => {
     session.add("engine.capabilities", 0);
     session.finish();
     const counters = registry.latest("engine.capabilities")!.resources!.structuralCounters!;
-    expect(counters.capabilityHistoryCacheSlots).toBeLessThanOrEqual(4096);
+    // There is no strongly retained full-history signature cache. Only the
+    // optional materialized-array and exact diagnostic-key caches are bounded.
     expect(counters.capabilityDiagnosticCacheKeyChars).toBeLessThanOrEqual(262144);
     expect(counters.capabilityDiagnosticArrayCacheSlots).toBeLessThanOrEqual(4096);
     expect(counters.capabilityDiagnosticsVisited).toBeGreaterThanOrEqual(months);
@@ -101,11 +138,15 @@ describe("performance instrumentation", () => {
     const shallow = Object.freeze({ ...taxDiagnostic("source_gap", "Mutable nested source"), affectedOutputs: outputs });
     const source = { cash: Object.freeze({ dependency: "tax_affected" as const, status: "incomplete" as const, diagnostics: [shallow] }) };
     const before = merge([source])!;
+    const producerBefore = taxOutputCapabilities([shallow]);
     outputs.push("netWorth");
     const after = merge([source])!;
     expect(before.cash!.diagnostics[0]!.affectedOutputs).toEqual(["cash"]);
     expect(after.cash!.diagnostics[0]!.affectedOutputs).toEqual(["cash", "netWorth"]);
     expect(Object.isFrozen(after.cash!.diagnostics[0]!.affectedOutputs)).toBe(true);
+    const producerAfter = taxOutputCapabilities([shallow]);
+    expect(producerBefore.cash!.diagnostics[0]!.affectedOutputs).toEqual(["cash"]);
+    expect(producerAfter.cash!.diagnostics[0]!.affectedOutputs).toEqual(["cash", "netWorth"]);
     session.add("engine.capabilities", 0); session.finish();
     expect(registry.latest("engine.capabilities")!.resources!.structuralCounters!.capabilityDiagnosticCacheKeyChars).toBeLessThanOrEqual(262144);
   });
@@ -289,14 +330,20 @@ describe("performance instrumentation", () => {
     const registry = new PerformanceRegistry();
     let workerRequest: ForecastWorkerRequest | undefined;
     const worker: ForecastWorkerPort = { onmessage: null, onerror: null, onmessageerror: null, terminate() {}, postMessage(message) { workerRequest = message; } };
-    const controller = new ForecastController(() => worker, { set: () => 0, clear() {} }, () => {}, registry.record.bind(registry));
+    let transportTick = 0;
+    const controller = new ForecastController(() => worker, { set: () => 0, clear() {} }, () => {}, registry.record.bind(registry), () => ++transportTick);
     const input = { operation: "baseline_forecast" as const, fingerprint: calculationFingerprint("baseline_forecast", fixture.model, request), model: fixture.model, request, performanceContext: context };
     controller.submit(input, true);
+    expect(registry.latest("transport.request_post")).toMatchObject({ availability: "measured", durationMs: 1,
+      resources: { structuralCounters: { workerRequestsPosted: 1 } } });
+    expect(registry.latest("transport.worker_roundtrip")).toBeUndefined();
     expect(registry.latest("transport.serialization")).toMatchObject({ availability: "not_measured", context: { executionLocation: "browser_main", cacheState: "miss" } });
     expect(registry.summary("forecast.total")).toBeUndefined();
     let tick = 0;
     const response: ForecastWorkerResponse = executeForecastWorkerRequest(workerRequest!, { now: () => ++tick });
     worker.onmessage?.({ data: response });
+    expect(registry.latest("transport.worker_roundtrip")).toMatchObject({ availability: "measured", durationMs: 2,
+      resources: { structuralCounters: { workerResponsesReceived: 1 } } });
     expect(registry.summary("forecast.total")?.count).toBe(1);
     const original = controller.state.lastGoodResult;
     // A different unsupported request must not leave its diagnostics attached
@@ -322,6 +369,8 @@ describe("performance instrumentation", () => {
     expect(registry.latest("forecast.total")?.durationMs).toBeUndefined();
     expect(registry.summary("forecast.total")?.count).toBe(1);
     expect(registry.summary("transport.serialization")).toBeUndefined();
+    expect(registry.records("transport.request_post")).toHaveLength(2);
+    expect(registry.records("transport.worker_roundtrip")).toHaveLength(2);
     controller.dispose();
   });
 

@@ -555,6 +555,7 @@ const toReadModel = (
   currency: Money["currency"],
   asOf: string,
   dataCutoff: string,
+  performance?: PerformanceSession,
 ): PersonalHouseholdForecastReadModel => {
   const opening = deriveHouseholdClosingMetrics(
     compiled.reconciledOpeningState,
@@ -604,7 +605,8 @@ const toReadModel = (
   });
   const paid = new Set<string>();
   const debtPayoffs: { loanId: string; scheduledAt: string }[] = [];
-  const replayBasis = createPortableHouseholdReplayArtifact(result);
+  const replayBasis = performance === undefined ? createPortableHouseholdReplayArtifact(result)
+    : performance.measure("application.replay_artifact", () => createPortableHouseholdReplayArtifact(result));
   const points = result.periods.map((period) => {
     const balances = period.debtBalances ?? [];
     const bindings = period.explanationBindings;
@@ -883,6 +885,7 @@ const executeInternal = (
         context.baseCurrency,
         context.asOf,
         context.dataCutoff,
+        performance,
       )),
     };
   } catch (error) {

@@ -1,18 +1,67 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { addPersonalObject, createEmptyPersonalDraft, exportPersonalModelJson, getCurrentPosition, type PersonalDraft } from "../src/application/personalMvp.js";
+import { addPersonalObject, createEmptyPersonalDraft, createGoldenHouseholdExampleDraft, exportPersonalModelJson, getCurrentPosition, type PersonalDraft } from "../src/application/personalMvp.js";
 import { clickFinancialDestination, navigateOwner } from "./navigation.js";
 
 const forecastStatus = (page: Page) => page.getByRole("status", { name: "Household forecast status", exact: true });
 
+async function openImportWorkspace(page: Page) {
+  await page.goto("/");
+  for (const [label, value] of [["Household name", "Parity workspace"], ["Monthly income", "0"], ["Opening cash balance", "0"], ["Asset cost basis", "0"], ["Current debt", "0"], ["Monthly spending", "0"]] as const) {
+    await page.getByLabel(label, { exact: true }).fill(value);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+  }
+  await page.getByLabel("Projection horizon (years)", { exact: true }).fill("1");
+  await page.getByRole("button", { name: "Finish setup", exact: true }).click();
+}
+
+// Layout/source/focus recovery uses twenty real historical months, enough for
+// two annual closing points and genuine line geometry. The mandatory
+// one-click 649-month real-engine checks remain in u1b-low-input-forecast.spec.ts.
+async function loadHistoricalOverview(page: Page) {
+  await openImportWorkspace(page);
+  await navigateOwner(page, "Settings", "Import / Export");
+  await page.locator('input[type="file"]').setInputFiles({ name: "historical-parity.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(createGoldenHouseholdExampleDraft())) });
+  await page.getByRole("button", { name: "Import into session", exact: true }).click();
+  await navigateOwner(page, "Money", "Income");
+  await page.getByLabel("Income receiving account", { exact: true }).selectOption({ label: "Everyday checking" });
+  await clickFinancialDestination(page, "Debt");
+  const debt = page.locator("summary").filter({ hasText: /^Debt & mortgage$/ });
+  if (await debt.locator("..").getAttribute("open") === null) await debt.click();
+  await page.getByLabel("Debt owner", { exact: true }).selectOption({ label: "Taylor Example" });
+  const mortgage = page.getByRole("group", { name: "Example mortgage", exact: true });
+  await mortgage.getByLabel("First monthly payment", { exact: true }).fill("2022-02-01");
+  await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("360");
+  await mortgage.getByLabel("Mortgage payment account", { exact: true }).selectOption({ label: "Everyday checking" });
+  await mortgage.getByLabel("Same-day mortgage order", { exact: true }).fill("1");
+  await navigateOwner(page, "Plan", "Current Plan");
+  await page.getByLabel("Simulation end", { exact: true }).fill("2027-09-01");
+  for (const title of ["Investments", "Tax payments & refunds"]) {
+    const summary = page.locator("summary").filter({ hasText: new RegExp(`^${title}$`) });
+    if (await summary.locator("..").getAttribute("open") === null) await summary.click();
+  }
+  await page.getByLabel("Investment owner", { exact: true }).selectOption({ label: "Taylor Example" });
+  const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
+  await taxes.getByLabel("Tax payment account", { exact: true }).selectOption({ label: "Everyday checking" });
+  await taxes.getByLabel("Tax refund account", { exact: true }).selectOption({ label: "Everyday checking" });
+  for (const [jurisdiction, label] of [["US:FEDERAL", "Federal income tax"], ["US:NY", "New York"]] as const) {
+    await taxes.getByRole("button", { name: `Suggest April 15 for ${label}`, exact: true }).click();
+    await taxes.getByLabel(`Confirm ${jurisdiction} forecast settlement convention`, { exact: true }).check();
+  }
+  await page.locator('[data-repair="lawScenario"]').check();
+  await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
+  await expect(forecastStatus(page)).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  await expect(forecastStatus(page)).toHaveAttribute("data-lifecycle", "incomplete");
+  await clickFinancialDestination(page, "Overview");
+}
+
 // Independent first-screen checks: failures in the longer interaction journey
 // below must not prevent either the supported or recorded-only layout checks.
 for (const width of [1440, 390]) {
-  test(`Overview supported plot first-screen layout at ${width}px`, async ({ page }) => {
+  test(`Overview bounded historical plot first-screen layout at ${width}px`, async ({ page }) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
-    await page.goto("/");
-    await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
+    await loadHistoricalOverview(page);
     await expect(forecastStatus(page)).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
     await expect(forecastStatus(page)).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
     const chart = page.getByRole("figure", { name: "Household financial outlook chart", exact: true });
@@ -20,7 +69,9 @@ for (const width of [1440, 390]) {
     await page.evaluate(() => window.scrollTo(0, 0));
     const plot = await chart.locator(".recharts-responsive-container svg.recharts-surface").boundingBox();
     expect(plot!.height).toBeGreaterThanOrEqual(width === 1440 ? 230 : 250);
-    // The Golden result is partially modeled: the first Recharts "complete"\n    // series has no SVG geometry. Assert a real rendered path with commands.\n    await expect(chart.locator('.recharts-line path.recharts-line-curve[d^="M"]').first()).toBeVisible();
+    // Historical tax gaps leave the complete series empty. Require actual
+    // partial-series geometry, not merely a chart container or legend.
+    await expect(chart.locator('.recharts-line path.recharts-line-curve[d^="M"]').first()).toBeVisible();
     await expect(chart.getByRole("group", { name: "Assets, liabilities and net worth legend" }).getByRole("button")).toHaveCount(3);
     if (width === 1440) {
       expect(plot!.y).toBeGreaterThan(0);
@@ -50,8 +101,7 @@ for (const width of [1440, 390]) {
     draft = addPersonalObject(draft, "Person", id("3"), { household_id: id("2"), first_name: "Rick", last_name: "Barlow", date_of_birth: "1981-01-01" });
     draft = addPersonalObject(draft, "Account", id("4"), { name: "H04 checking", account_type: "checking", owner_id: id("3"), currency: "USD", opening_date: "2026-01-01", opening_balance: "1350" });
     draft = addPersonalObject(draft, "Account", id("5"), { name: "H04 savings", account_type: "savings", owner_id: id("3"), currency: "USD", opening_date: "2026-01-01", opening_balance: "2400" });
-    await page.goto("/");
-    await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
+    await openImportWorkspace(page);
     await navigateOwner(page, "Settings", "Import / Export");
     await page.locator('input[type="file"]').setInputFiles({ name: "h04-opening-only.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(draft)) });
     await page.getByRole("button", { name: "Import into session", exact: true }).click();
@@ -107,8 +157,7 @@ async function exportSource(page: Page) {
 for (const width of [1440, 390]) test(`Overview mortgage setup distinguishes retained stale graph from missing graph at ${width}px`, async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
-  await page.goto("/");
-  await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
+  await loadHistoricalOverview(page);
   await expect(forecastStatus(page)).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
   const original = await exportSource(page);
   await clickFinancialDestination(page, "Debt");
@@ -118,7 +167,7 @@ for (const width of [1440, 390]) test(`Overview mortgage setup distinguishes ret
   await payments.fill("");
   await clickFinancialDestination(page, "Overview");
   const correction = page.getByRole("alert", { name: "Priority correction", exact: true });
-  await expect(correction).toContainText("number of monthly payments");
+  await expect(correction).toContainText("original payment count from the dated contract");
   await expect(correction.getByRole("button")).toHaveCount(1);
   await expect(page.locator(".chart-freshness")).toContainText("Out of date");
   await expect(page.locator(".calm-outlook svg.recharts-surface")).toBeVisible();
@@ -159,8 +208,7 @@ for (const width of [1440, 390]) test(`Overview hierarchy, exact current sources
   test.setTimeout(120_000);
   const height = width === 390 ? 844 : 900;
   await page.setViewportSize({ width, height });
-  await page.goto("/");
-  await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
+  await loadHistoricalOverview(page);
   await expect(forecastStatus(page)).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
   const original = await exportSource(page);
   const draft = JSON.parse(original) as PersonalDraft;

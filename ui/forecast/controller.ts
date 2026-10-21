@@ -34,6 +34,7 @@ export class ForecastController {
     readonly scheduler: ForecastScheduler,
     readonly changed: (state: ForecastView) => void,
     readonly record: (record: PerformanceRecord) => void,
+    readonly now: () => number = () => performance.now(),
   ) {}
   get state(): ForecastView { return this.#state; }
   #publish(state: ForecastView): void { this.#state = state; this.changed(state); }
@@ -44,6 +45,7 @@ export class ForecastController {
     this.#worker = undefined;
   }
   #record(record: PerformanceRecord): void { try { this.record(record); } catch { /* Observational only. */ } }
+  #now(): number | undefined { try { const value = this.now(); return Number.isFinite(value) ? value : undefined; } catch { return undefined; } }
   submit(input: ForecastSubmission, immediate = false): void {
     this.#stop();
     const requestId = ++this.#sequence;
@@ -65,6 +67,7 @@ export class ForecastController {
       try {
         const worker = this.makeWorker();
         this.#worker = worker;
+        let sentAt: number | undefined;
         const fail = () => {
           if (!isCurrentForecastResponse(this.#state, message)) return;
           this.#stop();
@@ -74,6 +77,13 @@ export class ForecastController {
         worker.onmessageerror = fail;
         worker.onmessage = ({ data }) => {
           if (data.operation !== message.operation || !isCurrentForecastResponse(this.#state, data)) return;
+          const receivedAt = this.#now();
+          // Includes queueing, execution and response transport. This is never
+          // attributed to serialization or to an exclusive engine phase.
+          this.#record({ phase: "transport.worker_roundtrip", context,
+            availability: sentAt !== undefined && receivedAt !== undefined && receivedAt >= sentAt ? "measured" : "unavailable",
+            ...(sentAt !== undefined && receivedAt !== undefined && receivedAt >= sentAt ? { durationMs: receivedAt - sentAt } : {}),
+            resources: { metering: "not_metered", structuralCounters: { workerResponsesReceived: 1 } } });
           this.#stop();
           for (const record of data.records) this.#record(record);
           if (data.outcome === "error") {
@@ -91,7 +101,13 @@ export class ForecastController {
         // postMessage's full boundary is not reliably separable into serialization vs enqueue.
         // Mark unmeasured, never attribute the roundtrip or financial work to transport.
         this.#record({ phase: "transport.serialization", availability: "not_measured", context });
+        sentAt = this.#now();
         worker.postMessage(message);
+        const postedAt = this.#now();
+        this.#record({ phase: "transport.request_post", context,
+          availability: sentAt !== undefined && postedAt !== undefined && postedAt >= sentAt ? "measured" : "unavailable",
+          ...(sentAt !== undefined && postedAt !== undefined && postedAt >= sentAt ? { durationMs: postedAt - sentAt } : {}),
+          resources: { metering: "not_metered", structuralCounters: { workerRequestsPosted: 1 } } });
       } catch {
         this.#stop();
         this.#publish(settledForecastState(this.#state, "error", undefined, "Worker execution is unavailable. Recalculate to retry."));

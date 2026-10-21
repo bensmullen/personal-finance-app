@@ -296,7 +296,15 @@ const importDraft = async (
   draft: unknown,
 ) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Use synthetic example" }).click();
+  // Import-only journeys need a normal workspace, not an unrelated age-90
+  // worker racing their bounded historical forecast. Keep flagship one-click
+  // execution in its independent full-horizon acceptance cases.
+  for (const [label, value] of [["Household name", "Import workspace"], ["Monthly income", "0"], ["Opening cash balance", "0"], ["Asset cost basis", "0"], ["Current debt", "0"], ["Monthly spending", "0"]] as const) {
+    await page.getByLabel(label, { exact: true }).fill(value);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+  }
+  await page.getByLabel("Projection horizon (years)", { exact: true }).fill("1");
+  await page.getByRole("button", { name: "Finish setup", exact: true }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page
     .getByRole("button", { name: "Import / Export", exact: true })
@@ -313,6 +321,23 @@ const rawUuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
 const isJsonObject = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+test("historical import starts no unrelated flagship worker before execution consent", async ({ page }) => {
+  await page.addInitScript(() => {
+    const observed = window as typeof window & { __historicalWorkerCount: number };
+    observed.__historicalWorkerCount = 0;
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        observed.__historicalWorkerCount++;
+      }
+    };
+  });
+  await importDraft(page, createGoldenHouseholdExampleDraft());
+  await expect(page.getByRole("status", { name: "Household forecast status", exact: true })).toHaveAttribute("data-lifecycle", "idle");
+  expect(await page.evaluate(() => (window as typeof window & { __historicalWorkerCount: number }).__historicalWorkerCount)).toBe(0);
+});
 
 const runIntegratedHistoricalForecast = async (page: import("@playwright/test").Page) => {
   await page.getByRole("button", { name: "Planning", exact: true }).click();
@@ -670,8 +695,9 @@ test("D1 IRA and HSA edits preserve annual eligibility gaps and visible economic
   await expect(page.getByRole("alert", { name: "Forecast stopped early" })).toHaveCount(0);
   await expect(page.getByText("Completed through 2036-01-01 · Some outputs are partially modeled", { exact: true })).toBeVisible();
   await showHouseholdDetails(page);
-  const basis = page.getByRole("region", { name: "Projected law forecast basis" });
-  await expect(basis).toContainText("US:FEDERAL: 2026 source rules projected from 2027-01-01");
+  // No 2027 filing assumption was accepted in this independent contribution
+  // journey. Federal projected-law coverage needs that dated source first.
+  await expect(status.getByRole("button", { name: "Review 2027 filing status · Taylor Example", exact: true })).toBeVisible();
   await openContributions(page);
   // Future capacity rows require committed eligible contributions; projected
   // tax law cannot create an annual contribution allowance.
@@ -719,6 +745,15 @@ test("D1 annual filing repair changes only its dated year and retains later-year
   await expect(status.getByRole("button", { name: "Review 2028 filing status · Taylor Example", exact: true })).toBeVisible();
   await expect(page.getByRole("alert", { name: "Forecast stopped early" })).toHaveCount(0);
   await expect(page.getByText("Completed through 2036-01-01 · Some outputs are partially modeled", { exact: true })).toBeVisible();
+  await showHouseholdDetails(page);
+  const basis = page.getByRole("region", { name: "Projected law forecast basis" });
+  await expect(basis).toBeVisible();
+  const coverage = basis.getByText("Projected law coverage dates", { exact: true });
+  if (await coverage.count() && await coverage.locator("..").getAttribute("open") === null) await coverage.click();
+  await expect(basis).toContainText("US:FEDERAL: 2026 source rules projected from 2027-01-01");
+  const identities = basis.getByText("Projected source rule identities", { exact: true });
+  await identities.click();
+  await expect(basis.getByRole("listitem").filter({ hasText: /US:FEDERAL.*base year 2026/ }).first()).toBeVisible();
 });
 
 test("D1-C authors, saves, reloads and runs a combined household through normal controls", async ({ page }, testInfo) => {
