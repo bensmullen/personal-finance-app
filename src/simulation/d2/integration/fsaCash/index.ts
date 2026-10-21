@@ -58,14 +58,17 @@ function checkHistory(state: AuthoritativeState, s: FsaCashSource, sources: read
 }
 function coverage(sources: readonly FsaCashSource[], through: string): HouseholdOperationFacts {
   const partial = sources.filter(s => s.deposit.settledAt < through && s.deposit.amount.compare(s.original.amount) < 0);
+  const pending = sources.filter(s => s.original.paidAt < through && s.deposit.settledAt >= through);
   const diagnostics = [
     { severity: "warning" as const, code: "FSA_PAYROLL_TAX_INCOMPLETE", entityType: "fsa_cash",
       message: "S7: No payroll, wage-base or medical-deduction tax effect is inferred from reimbursement." },
+    ...pending.map(s => ({ severity: "warning" as const, code: "FSA_REIMBURSEMENT_PENDING", entityType: "fsa_cash",
+      message: `S7: Medical expense ${s.original.medicalReceiptId} is posted; future plan reimbursement is not yet a committed BANK deposit.` })),
     ...partial.map(s => ({ severity: "warning" as const, code: "entitlement_installment_port_required", entityType: "fsa_cash",
       message: `S7: ${s.original.amount.minus(s.deposit.amount).amount.toString()} USD unreimbursed; a separately approved later-claim allocation port is required.` })),
   ];
   return { diagnostics, outputCapabilities: {
-    fsaCashSettlement: { dependency: "tax_independent", status: partial.length ? "incomplete" : "complete", diagnostics: [] },
+    fsaCashSettlement: { dependency: "tax_independent", status: partial.length || pending.length ? "incomplete" : "complete", diagnostics: [] },
     fsaPayrollTax: { dependency: "tax_affected", status: "incomplete", diagnostics: [] },
   } };
 }
