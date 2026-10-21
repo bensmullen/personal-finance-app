@@ -208,7 +208,7 @@ function deriveReceipt(s: FsaCashSource, context: D2SettlementSourceContext): D2
   return immutableConfiguration<D2FsaSettlementReceipt>({ schemaVersion: "d2-shared/settlement-receipt/v1", kind: source.kind,
     id: `${key(s)}:receipt`, operationId: depositOperationId(s), authorizationId: d.authorizationId,
     claimId: claimId(c.claimId), paymentId: d.paymentId, recognitionId: recognitionId(`${key(s)}:recognition`),
-    settlementId: settlementId(h.settlementId), effectiveAt: d.settledAt, bankAccountId: o.bankAccountId,
+    settlementId: settlementId(h.settlementId ?? reject("Settled plan reimbursement ID required")), effectiveAt: d.settledAt, bankAccountId: o.bankAccountId,
     // Shared receipt convention is pre-original; the source independently confirms the later actual opening.
     bankCashBefore: d.bankCashBefore.plus(o.amount), amount: d.amount, eligibleExpense: o.amount, entitlementConsumed: d.amount,
     source, sourceEvidenceFingerprint: d2SettlementSourceFingerprint(source), traceIds, originalTransaction: originalTransaction(s),
