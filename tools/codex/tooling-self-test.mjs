@@ -395,15 +395,15 @@ const recoveryFixture = () => {
   f.dirty();
   fs.mkdirSync(path.join(f.repository, "src/new"), { recursive: true });
   fs.writeFileSync(path.join(f.repository, "src/new", "space and\nnewline.ts"), "// preserved\n");
-  const resumed = f.start({ session_id: "after-limit", turn_id: "second" });
+  const resumed = f.start({ turn_id: "second" });
   assert(resumed.hookSpecificOutput?.additionalContext.includes("authorization accepted"),
     "matching issue provenance must recover without any Stop event");
-  const state = JSON.parse(fs.readFileSync(path.join(f.repository, ".codex/runtime/after-limit-second.json")));
+  const state = JSON.parse(fs.readFileSync(path.join(f.repository, ".codex/runtime/recovery-second.json")));
   assert(state.BASE_HEAD === f.git("rev-parse", "HEAD") && f.git("status", "--porcelain") === "",
     "new BASE_HEAD must be checkpoint HEAD with a clean tree");
   assert(f.git("rev-parse", "HEAD") === f.git("rev-parse", "@{u}"), "checkpoint must be pushed");
   assert(f.git("log", "-1", "--format=%B").includes("WIP: checkpoint blocked PFM task #85"), "checkpoint label");
-  const stop = f.invoke("Stop", { session_id: "after-limit", turn_id: "second",
+  const stop = f.invoke("Stop", { turn_id: "second",
     last_assistant_message: "TASK_STATUS: COMPLETE\nACCEPTANCE_STATUS: SATISFIED" });
   assert(stop.decision === "block" && stop.reason.includes("no implementation commit"),
     "recovery checkpoint cannot become the next turn's implementation");
@@ -544,6 +544,106 @@ rejectedRecovery("committed then reverted out-of-scope work", (f) => {
 }
 
 const taskSkill = fs.readFileSync(path.join(root, ".agents/skills/pfm-pr-task/SKILL.md"), "utf8");
+// Exercise the helper's process truth and complete typecheck API with local
+// test doubles; no real compiler/test suite or installations in these fixtures.
+for (const failure of ['none', 'typecheck', 'unit']) {
+  const directory = path.join(temp, `bounded-helper-${failure}`);
+  for (const sub of ['.codex/runtime', 'node_modules/typescript/bin', 'node_modules/vitest']) {
+    fs.mkdirSync(path.join(directory, sub), { recursive: true });
+  }
+  fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({ scripts: {
+    typecheck: 'tsc --noEmit && tsc -p tsconfig.next.json',
+  } }));
+  fs.writeFileSync(path.join(directory, 'node_modules/typescript/bin/tsc'),
+    `console.log('tsc', process.argv.slice(2).join(' ')); process.exit(${failure === 'typecheck' ? 1 : 0});`);
+  fs.writeFileSync(path.join(directory, 'node_modules/vitest/vitest.mjs'),
+    `console.log('unit', process.argv.slice(2).join(' ')); process.exit(${failure === 'unit' ? 1 : 0});`);
+  const data = JSON.stringify({ ACTIVE: true, WORKTREE: directory, AUTHORIZATION_ID: 'helper-test',
+    PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'fixture' } });
+  fs.writeFileSync(path.join(directory, '.codex/runtime/owner.json'), data);
+  fs.writeFileSync(path.join(directory, '.codex/runtime/latest-task.json'), JSON.stringify({
+    path: 'owner.json', sha256: createHash('sha256').update(data).digest('hex'),
+  }));
+  const result = run(process.execPath, [path.join(root, 'tools/codex/limited-local-verification.mjs'),
+    'test/affected.test.ts'], { cwd: directory });
+  assert(result.status === (failure === 'none' ? 0 : 1), 'bounded helper preserves process failure');
+  const receipt = JSON.parse(fs.readFileSync(path.join(directory, '.codex/logs/preflight-helper-test.json')));
+  assert(receipt.status === (failure === 'none' ? 'PASS' : 'FAIL'), 'compact truthful receipt');
+  const log = fs.readFileSync(receipt.log, 'utf8');
+  assert(log.includes('tsc --noEmit'), 'first complete project typecheck');
+  assert(log.includes('tsc -p tsconfig.next.json') === (failure !== 'typecheck'), 'second project checked after first passes');
+  assert(log.includes('unit run test/affected.test.ts') === (failure !== 'typecheck'), 'unit only after full typecheck success');
+  assert(result.stdout.split('\n').filter(Boolean).length === 1, 'full logs stay out of model receipt');
+  const repeated = run(process.execPath, [path.join(root, 'tools/codex/limited-local-verification.mjs'),
+    'test/affected.test.ts'], { cwd: directory });
+  assert(repeated.status !== 0, 'one reservation cannot execute twice');
+}
+// A foreign active session is never assumed interrupted, even with clean Git.
+for (const dirty of [false, true]) {
+  const f = recoveryFixture();
+  if (dirty) f.dirty();
+  const receipt = path.join(f.repository, '.codex/runtime/latest-task.json');
+  const before = fs.readFileSync(receipt, 'utf8');
+  const snapshot = f.snapshot();
+  const foreign = f.start({ session_id: 'competing-writer', turn_id: 'foreign' });
+  assert(foreign.decision === 'block' && foreign.reason.includes('Active foreign writer'), 'foreign writer rejected');
+  assert(fs.readFileSync(receipt, 'utf8') === before && JSON.stringify(snapshot) === JSON.stringify(f.snapshot()),
+    'foreign activation cannot replace receipt or checkpoint work');
+  const detached = f.invoke('UserPromptSubmit', { prompt: 'PFM_TASK_ISSUE: 85' }, { PFM_POLICY_TEST_BRANCH: '' });
+  assert(detached.decision === 'block' && detached.reason.includes('DETACHED'), 'detached activation rejected');
+}
+{
+  const f = recoveryFixture();
+  const closed = f.invoke('Stop', { last_assistant_message: 'TASK_STATUS: BLOCKED\nBLOCKER: owner done' });
+  assert(closed.continue === true, 'owner can close cleanly');
+  assert(f.start({ session_id: 'new-owner', turn_id: 'new' }).hookSpecificOutput, 'closed owner permits fresh authorization');
+  const receipt = path.join(f.repository, '.codex/runtime/latest-task.json');
+  const before = fs.readFileSync(receipt, 'utf8');
+  f.invoke('Stop', { last_assistant_message: 'TASK_STATUS: BLOCKED\nBLOCKER: owner done' });
+  assert(fs.readFileSync(receipt, 'utf8') === before, 'idempotent old Stop cannot replace new owner');
+}
+{
+  const f = recoveryFixture();
+  const helper = 'tools/codex/limited-local-verification.mjs';
+  const command = `node ${helper} test/affected.test.ts`;
+  fs.mkdirSync(path.join(f.repository, 'tools/codex'), { recursive: true });
+  fs.mkdirSync(path.join(f.repository, 'test'));
+  fs.copyFileSync(path.join(root, helper), path.join(f.repository, helper));
+  fs.writeFileSync(path.join(f.repository, 'test/affected.test.ts'), "import { value } from '../src/allowed.js';\nit('affected', () => value);\n");
+  fs.appendFileSync(path.join(f.repository, '.gitignore'), '.codex/logs/\n');
+  f.git('add', '.'); f.git('commit', '-m', 'preflight fixture');
+  f.git('update-ref', 'refs/remotes/origin/main', f.git('rev-parse', 'HEAD'));
+  f.start();
+  const preflight = text => f.invoke('PreToolUse', { tool_name: 'Bash', tool_input: { command: text } });
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'unaffected named file rejected');
+  f.dirty();
+  for (const unsafe of [`bash -c '${command}'`, `${command}; echo bypass`, `${command} && true`,
+    `${command}\ntrue`, `${command} --passWithNoTests`, `npx ${helper}`, `node ${helper} test/../outside.test.ts`,
+    `NODE_OPTIONS=--import=bad ${command}`, `node ${helper} test/not-found.test.ts`,
+    'npm test', 'npm run codex:verify', 'npm run build:web', 'npx playwright test', 'npm ci']) {
+    assert(preflight(unsafe).hookSpecificOutput?.permissionDecision === 'deny', `unsafe preflight denied: ${unsafe}`);
+  }
+  for (const unsafe of ['gh run watch 123', 'gh pr checks 123 --watch', 'gh run view 123',
+    'node tools/ci/forecast-feasibility.mjs', 'node tools/codex/verify.mjs', 'npm run codex:tooling-test',
+    "bash -c 'npm test'", "sh -c 'npx tsc'"]) {
+    assert(preflight(unsafe).hookSpecificOutput?.permissionDecision === 'deny', `unbounded verification denied: ${unsafe}`);
+  }
+  assert(JSON.stringify(preflight(command)) === '{}', 'exact directly affected helper allowed');
+  const skipped = mustRun(process.execPath, [path.join(f.repository, helper), 'test/affected.test.ts'], { cwd: f.repository });
+  assert(skipped.stdout.startsWith('SKIP preflight:'), 'missing environment skips clearly without installs');
+  const latest = JSON.parse(fs.readFileSync(path.join(f.repository, '.codex/runtime/latest-task.json')));
+  const state = JSON.parse(fs.readFileSync(path.join(f.repository, '.codex/runtime', latest.path)));
+  const receipt = path.join(f.repository, `.codex/logs/preflight-${state.AUTHORIZATION_ID}.json`);
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'SKIP cannot authorize retry');
+  fs.writeFileSync(receipt, JSON.stringify({ status: 'FAIL', patch: state.PREFLIGHT.patch }));
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'FAIL without correction cannot retry');
+  f.dirty();
+  assert(JSON.stringify(preflight(command)) === '{}', 'one corrected FAIL retry allowed');
+  f.dirty();
+  assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'third invocation denied');
+  fs.appendFileSync(path.join(f.repository, helper), '// unmerged edit\n');
+  assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('merged origin/main'), 'unmerged helper refused');
+}
 const handoffPolicy = fs.readFileSync(path.join(root, "docs/development/handoff-authoring-policy.md"), "utf8");
 const refinanceEscalation = [
   "DECISION_NEEDED: For the private-alpha refinance floor, should users be able to refinance only on a scheduled monthly mortgage payment date, or on any calendar date?",

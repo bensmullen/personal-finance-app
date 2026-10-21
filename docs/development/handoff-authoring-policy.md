@@ -144,7 +144,7 @@ from the previous V2 framework, but as prose rather than parser requirements:
 
 These sections are planning aids. Hooks do not require their names or syntax.
 
-**Type-contract preflight (read-only, without running local commands):** When the change creates or alters typed test fixtures, compiler adapters, overloaded function calls or optional-field overrides, read the target signatures and the repository's strict TypeScript configuration before specifying/issuing the implementation handoff. Explicitly check literal overload dispatch, exact optional-property semantics, required-field preservation, replay input/result tier and test-assertion provenance. Record expected typecheck risks in the task issue. Codex performs this as static code inspection while editing, not a typecheck command. GitHub-hosted typecheck remains the first automated authority. Do not reroute all CI behind typecheck: independent gates remain parallel.
+**Type-contract preflight:** Read signatures and strict TypeScript configuration before handing off typed fixtures, adapters, overloads or optional-field overrides. Check literal dispatch, exact optional properties, required fields, replay tiers and assertion provenance. Record likely risks. After #218 merges, Codex may optionally invoke only `node tools/codex/limited-local-verification.mjs` with at most one directly affected tracked `test/name.test.ts` in one simple tool call: full typecheck 60s, then named unit 30s, one correction retry after FAIL. Missing environment skips; no installs, flags, wrappers or shell chaining. The merged-helper and per-turn hook guards enforce this exception; all other local verification remains prohibited. PASS is not acceptance. Independent CI checks remain parallel; only expensive E2E waits for selected typecheck/build/feasibility success. See verification-policy.md for exact boundaries.
 
 ## 5. Edit-scope design
 
@@ -176,6 +176,19 @@ field or a requirement for every one-file repair.
 Independent CI checks should remain parallel under the verification planner.
 Do not duplicate expensive checks in Codex turns or move heavy workloads into
 ordinary CI to obtain parallelism.
+
+One active session owns each linked worktree receipt. A foreign session cannot
+activate even the same issue while that owner is active. Resume interruptions
+in the same owning session; close normally before handing ownership to another
+session. Invalid/missing receipts fail closed. Diagnose with the hook's exact
+worktree/session output and read-only Git/receipt inspection; never rewrite or
+delete another owner's receipt. For ambiguous ownership preserve all work and
+use a fresh operator-bootstrap worktree plus authorized task only after proving
+clean/synchronized Git state. This follows candidate #217; candidate #134's
+preflight review and both candidates' independent ChatGPT curation remain
+separate from #218's FRAMEWORK_RELIABILITY stage. No dependency on #218 is added
+to U1B #181 or D2. Keep AL-002 authority compact, end after one push without CI
+polling (AL-003), and retain independent E2E flows/all four shards (AL-004).
 
 
 ## UX design-ready handoff for substantial user-facing changes

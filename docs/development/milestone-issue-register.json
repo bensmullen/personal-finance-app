@@ -504,7 +504,7 @@
         "PFA-PERF-021",
         "PFA-UX-024"
       ],
-      "scope": "PM-approved opt-in bounded local type/unit preflight, selective TypeScript/build/feasibility before expensive E2E, safe early 649-month runtime scaling evidence, and evidence-backed single-writer Stop receipt guard. Framework only, no direct financial-model or U1B implementation scope; do not block product milestones."
+      "scope": "PM-approved opt-in bounded local type/unit preflight, selected TypeScript/build/8+20-month feasibility before all four E2E shards, manual progressive 8/20/120/360/649 scaling diagnostics, and fail-closed single-session receipt ownership. FRAMEWORK_RELIABILITY requires merged selected CI and negative hook tests; #181 still independently requires full 649-month success and financial equality. Candidates #134/#217 retain independent ChatGPT curation. Framework only; no U1B/D2 product blocking edge."
     }
   ],
   "legacy_open_task_reconciliation": {

@@ -31,6 +31,7 @@ jobs:
       unit: ${{ steps.plan.outputs.unit }}
       build: ${{ steps.plan.outputs.build }}
       e2e: ${{ steps.plan.outputs.e2e }}
+      feasibility: ${{ steps.plan.outputs.feasibility }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -143,10 +144,37 @@ jobs:
         with:
           path: dist
 
+  feasibility:
+    name: forecast-feasibility
+    needs: plan
+    if: needs.plan.outputs.feasibility == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --prefer-offline --no-audit --no-fund
+      - run: node tools/ci/forecast-feasibility.mjs
+      - name: Retain bounded feasibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: forecast-feasibility-${{ github.sha }}
+          path: engineering-validation-artifacts/forecast-feasibility/
+          if-no-files-found: warn
+          retention-days: 7
+
   e2e:
     name: e2e (shard ${{ matrix.shard }}/4)
-    needs: plan
-    if: needs.plan.outputs.e2e == 'true'
+    needs: [plan, typecheck, build, feasibility]
+    if: >-
+      always() && !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.e2e == 'true' &&
+      (needs.plan.outputs.typecheck != 'true' || needs.typecheck.result == 'success') &&
+      (needs.plan.outputs.build != 'true' || needs.build.result == 'success') &&
+      (needs.plan.outputs.feasibility != 'true' || needs.feasibility.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -179,7 +207,7 @@ jobs:
   test:
     name: test
     if: always()
-    needs: [plan, spec, architecture, tooling, typecheck, unit, build, e2e]
+    needs: [plan, spec, architecture, tooling, typecheck, unit, build, feasibility, e2e]
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected gate
@@ -199,12 +227,17 @@ jobs:
           BUILD: ${{ needs.build.result }}
           E2E_ENABLED: ${{ needs.plan.outputs.e2e }}
           E2E: ${{ needs.e2e.result }}
+          FEASIBILITY_ENABLED: ${{ needs.plan.outputs.feasibility }}
+          FEASIBILITY: ${{ needs.feasibility.result }}
         run: |
           test "$PLAN" = success
           require_gate() {
             name="$1"; enabled="$2"; result="$3"
             printf '%s enabled=%s result=%s\n' "$name" "$enabled" "$result"
-            if [ "$enabled" = true ]; then test "$result" = success; fi
+            if [ "$enabled" = true ] && [ "$result" != success ]; then
+              echo "Selected gate $name did not succeed ($result). Browser shards require selected typecheck/build/feasibility success."
+              return 1
+            fi
           }
           require_gate spec "$SPEC_ENABLED" "$SPEC"
           require_gate architecture "$ARCH_ENABLED" "$ARCH"
@@ -212,6 +245,10 @@ jobs:
           require_gate typecheck "$TYPECHECK_ENABLED" "$TYPECHECK"
           require_gate unit "$UNIT_ENABLED" "$UNIT"
           require_gate build "$BUILD_ENABLED" "$BUILD"
+          require_gate feasibility "$FEASIBILITY_ENABLED" "$FEASIBILITY"
+          if [ "$E2E_ENABLED" = true ] && [ "$E2E" = skipped ]; then
+            echo 'E2E blocked: inspect selected typecheck/build/feasibility results above.'
+          fi
           require_gate e2e "$E2E_ENABLED" "$E2E"
       - name: Checkout for agent process incident
         if: failure()
@@ -238,6 +275,7 @@ jobs:
           INCIDENT_GATE_UNIT: ${{ needs.unit.result }}
           INCIDENT_GATE_BUILD: ${{ needs.build.result }}
           INCIDENT_GATE_E2E: ${{ needs.e2e.result }}
+          INCIDENT_GATE_FEASIBILITY: ${{ needs.feasibility.result }}
         run: node tools/ci/write-agent-incident.mjs
       - name: Upload agent process incident
         if: failure()

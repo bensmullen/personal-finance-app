@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -101,7 +102,7 @@ def save_state(root, payload, state):
     temporary.replace(latest)
 
 
-def prior_state(root):
+def prior_state(root, include_closed=False):
     # A single durable receipt avoids guessing among sessions or tied mtimes.
     directory = root / ".codex" / "runtime"
     try:
@@ -113,11 +114,74 @@ def prior_state(root):
         if hashlib.sha256(data).hexdigest() != receipt["sha256"]:
             return None
         state = json.loads(data)
-        if state.get("WORKTREE") != str(root.resolve()) or not state.get("ACTIVE"):
+        if state.get("WORKTREE") != str(root.resolve()) or (not include_closed and not state.get("ACTIVE")):
             return None
         return state
     except Exception:
         return None
+
+
+def receipt_diagnostic(root, state=None):
+    owner = prior_state(root, include_closed=True)
+    return ("STATE_RECOVERY_REQUIRED: active task receipt was superseded or became ambiguous; "
+            f"worktree={root} branch={current_branch(root) or 'DETACHED'} "
+            f"session={(state or {}).get('SESSION_ID', 'unknown')} "
+            f"receipt_session={(owner or {}).get('SESSION_ID', 'unknown')} "
+            f"receipt_active={(owner or {}).get('ACTIVE', 'unknown')}. "
+            "Read-only diagnosis: inspect .codex/runtime/latest-task.json and its hash-bound state, "
+            "git status --porcelain=v1, git rev-parse HEAD and git rev-parse '@{u}'. "
+            "Do not delete/rewrite receipts or infer divergence. Stop the owning writer first; "
+            "for ambiguous ownership use a fresh operator-bootstrap worktree and authorized task "
+            "only after preserving and proving clean/synchronized Git state.")
+
+
+def preflight_patch(root, state):
+    digest = hashlib.sha256()
+    for name in sorted(changed_paths(root, state["BASE_HEAD"])):
+        digest.update(name.encode())
+        path = root / name
+        digest.update(path.read_bytes() if path.is_file() else b"<deleted>")
+    return digest.hexdigest()
+
+
+def limited_preflight(command, root, state):
+    # Match literal text, not shell tokens: no wrappers, substitutions or flags.
+    match = re.fullmatch(r"node tools/codex/limited-local-verification\.mjs(?: (test/[A-Za-z0-9_/-]+\.test\.ts))?", command)
+    if not match:
+        return "Only the exact bounded preflight command is permitted"
+    if not shutil.which('node'):
+        return "SKIP bounded preflight: node unavailable; no installation required"
+    helper = "tools/codex/limited-local-verification.mjs"
+    trusted = run_git(["show", f"origin/main:{helper}"], root)
+    if trusted.returncode or not (root / helper).is_file() or (root / helper).read_text() != trusted.stdout:
+        return "Bounded helper must equal merged origin/main; unavailable during its own implementation"
+    test = match.group(1)
+    if test:
+        path = root / test
+        if not path.is_file() or path.is_symlink() or ".." in Path(test).parts:
+            return "Named test must be an existing regular test file"
+        if run_git(["ls-files", "--error-unmatch", test], root).returncode:
+            return "Named test must be tracked"
+        changed = changed_paths(root, state["BASE_HEAD"])
+        imports = re.findall(r"from\s+[\"'](\.[^\"']+)[\"']", path.read_text())
+        affected = {str((path.parent / item).resolve().relative_to(root.resolve())).removesuffix('.js') + '.ts'
+                    for item in imports if (path.parent / item).resolve().is_relative_to(root.resolve())}
+        if test not in changed and not affected.intersection(changed):
+            return "Named test must itself change or directly import a changed source"
+        if not re.search(r"\b(it|test)\s*\(", path.read_text()):
+            return "Named test has no verified test declarations"
+    used = state.get("PREFLIGHT", {})
+    fingerprint = preflight_patch(root, state)
+    if used:
+        receipt_path = root / '.codex/logs' / f"preflight-{state['AUTHORIZATION_ID']}.json"
+        try:
+            receipt = json.loads(receipt_path.read_text())
+        except Exception:
+            return "Preflight already reserved; missing result cannot authorize retry"
+        if used.get('count', 0) >= 2 or receipt.get('status') != 'FAIL' or receipt.get('patch') != used.get('patch') or fingerprint == used.get('patch') or test != used.get('test'):
+            return "Only one correction retry after FAIL on a changed patch and the same test is permitted"
+    state['PREFLIGHT'] = {'count': used.get('count', 0) + 1, 'patch': fingerprint, 'test': test}
+    return None
 
 
 def task_identity(prompt, metadata):
@@ -641,11 +705,14 @@ def safe_mkdir(command, patterns):
 
 def is_local_verification(command):
     patterns = (
-        r"(^|\s)(npm|pnpm|yarn|bun)\s+(run\s+)?(test|test:e2e|codex:test|codex:e2e|codex:verify|typecheck|build:web|architecture:validate|spec:validate|perf:capture|benchmark|stochastic:validate|onboarding:dry-run)(\s|$)",
+        r"(^|\s)(npm|pnpm|yarn|bun)\s+(run\s+)?(test|test:e2e|codex:test|codex:e2e|codex:tooling-test|codex:verify|typecheck|build:web|architecture:validate|spec:validate|editor:check|perf:capture|benchmark|stochastic:validate|onboarding:dry-run)(\s|$)",
         r"(^|\s)(npx\s+)?(vitest|playwright|jest|mocha|tsc)(\s|$)",
         r"(^|\s)(npm|pnpm|yarn|bun)\s+run\s+(dev|start)(\s|$)",
+        r"(^|\s)(node|npx|bash|sh)[ \t]+[\"']?(tools/codex/(verify|quiet-vitest|quiet-playwright|tooling-self-test)\.mjs|tools/ci/forecast-feasibility\.mjs|node_modules/(typescript|vitest|vite-node|\.bin)/(tsc|vitest|vite-node))",
     )
-    return any(re.search(pattern, command.strip()) for pattern in patterns)
+    # Quoted shell wrappers must not hide an otherwise forbidden command.
+    candidates = [command.strip(), *tokens(command)]
+    return any(re.search(pattern, candidate) for candidate in candidates for pattern in patterns)
 
 
 def is_install(command):
@@ -876,6 +943,7 @@ def user_prompt(payload, root):
         "ACTIVE": True,
         "TASK_IDENTITY": task_identity(task_prompt, attachment_metadata),
         "AUTHORIZATION_ID": os.urandom(16).hex(),
+        "SESSION_ID": str(payload.get("session_id") or "session"),
     }
     if attachment_metadata:
         if attachment_metadata.get("attachment") is not None:
@@ -884,6 +952,23 @@ def user_prompt(payload, root):
             state["TASK_ISSUE"] = attachment_metadata["issue"]
     dirty = git_value(["status", "--porcelain=v1", "--untracked-files=all"], root)
     prior = prior_state(root)
+    receipt_exists = (root / '.codex/runtime/latest-task.json').exists()
+    owner = prior_state(root, include_closed=True)
+    if receipt_exists and not owner:
+        emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Missing valid prior provenance."})
+        return
+    if not receipt_exists:
+        for path in (root / '.codex/runtime').glob('*.json'):
+            try:
+                orphan = json.loads(path.read_text())
+            except Exception:
+                continue
+            if orphan.get('ACTIVE'):
+                emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Missing receipt with active prior provenance."})
+                return
+    if prior and prior.get('SESSION_ID') != state['SESSION_ID']:
+        emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Active foreign writer; activation refused."})
+        return
     # Also retry an interrupted checkpoint push when its local commit is clean.
     pending = (prior and prior.get("TASK_IDENTITY") == state["TASK_IDENTITY"] and
                git_value(["rev-parse", "HEAD"], root) != git_value(["rev-parse", "@{u}"], root) and
@@ -910,7 +995,9 @@ def user_prompt(payload, root):
         source = ""
     context = (
         f"PFM task authorization accepted{source}. Repository edits are restricted to ALLOWED_PATHS. "
-        "Use apply_patch for repository file edits; do not run local tests/builds/validators or install packages. "
+        "Use apply_patch for repository file edits. Optional bounded preflight only: "
+        "node tools/codex/limited-local-verification.mjs [directly affected test/name.test.ts]; "
+        "one invocation and one correction retry after FAIL. No other local verification or installs. "
         "Before stopping, report either TASK_STATUS: COMPLETE with ACCEPTANCE_STATUS: SATISFIED, "
         "or TASK_STATUS: BLOCKED with BLOCKER:/LOOKUP_REQUIRED:. "
         "COMPLETE is accepted only after the task branch is clean, contains an implementation commit, "
@@ -943,11 +1030,17 @@ def pre_tool(payload, root):
         return
 
     if state is None:
-        if tool == "apply_patch" or (tool == "Bash" and is_repository_mutation(command)):
+        if tool == "apply_patch" or (tool == "Bash" and (is_repository_mutation(command) or 'limited-local-verification' in command)):
             deny("No active PFM task authorization. Repository mutation is blocked.")
             return
         emit({})
         return
+
+    latest = prior_state(root)
+    if not state.get('ACTIVE') or not latest or latest.get('AUTHORIZATION_ID') != state.get('AUTHORIZATION_ID'):
+        if tool in {'Bash', 'apply_patch'}:
+            deny(receipt_diagnostic(root, state))
+            return
 
     if tool == "apply_patch" or (
         tool == "Bash"
@@ -968,6 +1061,17 @@ def pre_tool(payload, root):
             return
 
     if tool == "Bash":
+        if re.search(r'(^|\s)gh[ \t]+', command) and not re.match(r'^gh[ \t]+pr[ \t]+create[ \t]+', command):
+            deny('GitHub CLI is publication-only; CI polling/watching is prohibited.')
+            return
+        if re.search(r'(^|\s)(node|npx|bash|sh|env|python[0-9]*)[ \t]+[^\n]*limited-local-verification', command):
+            error = limited_preflight(command, root, state)
+            if error:
+                deny(error)
+            else:
+                save_state(root, payload, state)
+                emit({})
+            return
         if is_local_verification(command):
             deny("Local tests/builds/validators/benchmarks/dev servers are prohibited; GitHub CI owns verification.")
             return
@@ -1053,6 +1157,9 @@ def permission_request(payload, root):
         else safe_pr_create(command, root, state["TARGET_BRANCH"])
     )
     label = "push" if is_push else "PR creation"
+    latest = prior_state(root)
+    if not state.get('ACTIVE') or not latest or latest.get('AUTHORIZATION_ID') != state.get('AUTHORIZATION_ID'):
+        ok, reason = False, receipt_diagnostic(root, state)
     decision = {"behavior": "allow"} if ok else {"behavior": "deny", "message": f"Unsafe {label} blocked: {reason}"}
     emit({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}})
 
@@ -1164,8 +1271,15 @@ def stop(payload, root):
 
     latest = prior_state(root)
     if state.get("ACTIVE") and (not latest or latest.get("AUTHORIZATION_ID") != state.get("AUTHORIZATION_ID")):
-        block_or_stop(payload, "STATE_RECOVERY_REQUIRED: active task receipt was superseded or became ambiguous")
+        block_or_stop(payload, receipt_diagnostic(root, state))
         return
+
+    if not state.get('ACTIVE'):
+        # Idempotent Stop cannot republish a closed turn over a newer owner.
+        message = str(payload.get('last_assistant_message', ''))
+        if "TASK_STATUS: BLOCKED" in message and 'TASK_STATUS: COMPLETE' not in message and ('BLOCKER:' in message or 'LOOKUP_REQUIRED:' in message):
+            emit({"continue": True})
+            return
 
     message = str(payload.get("last_assistant_message") or "")
     attachment_error = attachment_integrity_error(state)
@@ -1223,6 +1337,10 @@ def stop(payload, root):
         block_or_stop(payload, "Cannot report COMPLETE: " + "; ".join(problems))
         return
 
+    if not state.get('ACTIVE'):
+        emit({"continue": True})
+        return
+
     state["ACTIVE"] = False
     save_state(root, payload, state)
     emit({"continue": True})
@@ -1254,14 +1372,18 @@ def main():
         return
 
     try:
-        if payload.get("hook_event_name") in {"UserPromptSubmit", "Stop"}:
+        if payload.get("hook_event_name") in {"UserPromptSubmit", "Stop", "PreToolUse"}:
             directory = root / ".codex" / "runtime"
             directory.mkdir(parents=True, exist_ok=True)
             with (directory / "policy.lock").open("a") as lock:
                 try:
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
-                    emit({"decision": "block", "reason": "STATE_RECOVERY_REQUIRED: another task authorization/checkpoint is in progress"})
+                    reason = "STATE_RECOVERY_REQUIRED: another task authorization/checkpoint is in progress"
+                    if payload.get('hook_event_name') == 'PreToolUse':
+                        deny(reason)
+                    else:
+                        emit({"decision": "block", "reason": reason})
                     return
                 handler(payload, root)
         else:
