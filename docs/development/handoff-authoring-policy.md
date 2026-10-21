@@ -112,6 +112,18 @@ execution requirement for this preview.
 The brief should be as short as the task allows. Complexity belongs in the
 semantic decisions themselves, not in mandatory envelope ceremony.
 
+### Live issue readiness gate before recommending Codex (mandatory)
+
+Immediately **before** telling the product manager to bootstrap, resume, restart, or submit `PFM_TASK_ISSUE: N` to Codex, ChatGPT SHALL:
+
+1. Re-fetch the **live GitHub issue** (body, state, target branch and `PFM_TASK_V3` envelope) and the associated live PR/branch after all planned issue mutations. Do not rely on earlier reads, old conversation summaries, or Codex's self-reported completion.
+2. Confirm that the issue remains open, is a valid implementation task, contains an actionable **current** self-contained repair contract and `ALLOWED_PATHS`, and identifies a concrete Codex-owned next step. Verify dependencies/required product decisions are resolved, relevant evidence and scope are current, and there is no pending reviewer-/PM-owned CI, benchmark, external lookup, approval or worktree operation **declared as a prerequisite to starting Codex**.
+3. Search the **entire issue body**, not just its newest checkpoint, for contradictory instructions such as `do not restart`, `blocked`, `wait for measurements`, `may proceed`, obsolete branch/bootstrap gates or mutually exclusive acceptance claims. Consolidate or explicitly supersede historical gates in the GitHub issue **before** recommending restart. Re-read the resulting saved body; do not assume the write succeeded. Historical evidence belongs in issue comments, not conflicting live instructions (AL-002).
+4. Confirm Git branch and worktree prerequisites separately: no unmerged prerequisite branch or competing shared-file writer, verify `main` integration where necessary, and direct Git synchronization **outside** Codex's active task. Never infer that remote readiness proves the user's local checkout is clean.
+5. Give a **positive Codex-ready verdict** only when all above pass, including a verified latest issue update and a specific `PFM_TASK_ISSUE: N` target. Otherwise **do not instruct the PM to resume Codex**: state the exact outstanding non-Codex action, perform any reviewer-owned action available, and keep the issue explicitly marked not start-ready until its preconditions are satisfied.
+
+This is a ChatGPT planning/handoff requirement, not a new V3 parser marker or Codex hook, and does not authorize polling CI inside Codex. A future CI verification requirement may remain as a **post-push merge gate** when it is not a prerequisite for the next implementation turn. State clearly which applies.
+
 ## 4. Recommended semantic brief
 
 For simple tasks, objective + acceptance + a few implementation constraints may
