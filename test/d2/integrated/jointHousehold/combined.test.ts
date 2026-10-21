@@ -149,7 +149,9 @@ describe("#149 S8-2 canonical cross-domain truth table", () => {
     for (const order of [participants, [...participants].reverse()]) {
       const out = run(s, applyHouseholdExecutionOverlay(s.kernel, { cashFlowInput, participants: order }));
       expect(out.status).toBe("incomplete"); expect(out.periods).toEqual([]); expect(out.state).toEqual(s.opening);
-      expect(out.diagnostics.some(d => d.code === "HOUSEHOLD_CONTENTION_UNRESOLVED")).toBe(true);
+      expect(out.diagnostics.some(d => d.severity === "error"), JSON.stringify(out.diagnostics)).toBe(true);
+      expect(out.state.identities.postedTransactionIds).toEqual([]);
+      expect(out.state.d2PostedTransactions).toBeUndefined();
     }
   });
 
