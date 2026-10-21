@@ -34,7 +34,7 @@ function reconcile(reference: RetirementSourceReference & { readonly horizon: Pe
   const incomplete = (reason: NonNullable<FundedRmdResult["reason"]>): FundedRmdResult => ({ coverage: "incomplete", reason, annual: baseline });
   let horizonComplete = true;
   const owners = new Set(raw.cash.members.map(m => m.personId));
-  for (const account of Object.values(state.accounts).filter(a => a.kind === "retirement" && owners.has(a.ownerId))) {
+  for (const account of Object.values(state.accounts).filter(a => a.kind === "retirement" && typeof a.ownerId === "string" && owners.has(a.ownerId))) {
     const finalYear = Number(new Date(Date.parse(reference.horizon.end) - 1).toISOString().slice(0, 4));
     for (let year = Number(reference.horizon.start.slice(0, 4)); year <= finalYear; year++)
       if (!raw.binding.rmd.requests.some(r => r.taxYear === year && r.personId === account.ownerId && r.accounts[0]?.id === account.id))
