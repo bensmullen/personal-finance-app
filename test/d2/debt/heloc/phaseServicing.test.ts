@@ -54,7 +54,88 @@ const reject = (r: PhaseServicingRequest, code: PhaseDiagnosticCode | "B1_INCOMP
   expect(structuredClone(r)).toEqual(before);
 };
 
+/** Independent original issuer statement, not a synthesized rate or cash posting. */
+const quoted = (input = request()): PhaseServicingRequest => {
+  const r = input.line, t = input.terms!, documentSource: Source = {
+    ...source(), sourcePublication: "Independent original issuer statement: complete period",
+    publishedAt: t.dueAt, asOf: t.dueAt,
+  };
+  return { ...input, line: { ...r, rate: null }, terms: { ...t, method: "issuer_quoted",
+    allocation: { interest: money("5.10"), principal: money("100"), source: documentSource },
+    issuerQuote: { documentId: "issuer:complete:jan", issuerId: "issuer:heloc",
+      evidenceKind: "original_complete_issuer_statement", source: documentSource,
+      period: r.period, dueAt: t.dueAt, householdId: r.householdId, borrowerId: r.borrowerId,
+      lineId: r.lineId, liabilityAccountId: r.liabilityAccountId, bankAccountId: r.bankAccountId,
+      openingPrincipal: money("1000"), closingPrincipal: money("900"), interest: money("5.10"),
+      principal: money("100"), fees: money("0"), total: money("105.10") } } };
+};
+
 describe("conditional HELOC amortizing and maturity servicing: synthetic exact-cent oracles", () => {
+  it("admits separately verified complete issuer interest when B1 rate input is genuinely absent", () => {
+    const input = quoted(), before = structuredClone(input), p = ok(input);
+    expect(p.interestEvidence).toBe("issuer_quoted_uncomputed");
+    expect(p.interestClaimId).toBe("heloc/line/2026-01-01/2026-02-01/interest");
+    expect(p.interest_due.equals(money("5.10"))).toBe(true);
+    expect(p.principal_due.equals(money("100"))).toBe(true);
+    expect(p.gross_due.equals(money("105.10"))).toBe(true);
+    expect(p.traceRefs).toContain("issuer:complete:jan");
+    expect(p.movements.every(m => !m.committed && !m.postable)).toBe(true);
+    expect(structuredClone(input)).toEqual(before);
+    expect(propose(input)).toEqual(propose(input));
+  });
+
+  it("fails closed on absent, stale, partial, non-independent and mismatched issuer statement", () => {
+    const r = quoted(), t = r.terms!, q = t.issuerQuote!;
+    reject({ ...r, terms: { ...t, issuerQuote: undefined } }, "B1_INCOMPLETE");
+    reject({ ...r, terms: { ...t, issuerQuote: { ...q, evidenceKind: "conditional_quote" as typeof q.evidenceKind } } }, "QUOTE_MISMATCH");
+    reject({ ...r, terms: { ...t, issuerQuote: { ...q, period: { ...q.period, start: d("2026-01-02") } } } }, "QUOTE_MISMATCH");
+    reject({ ...r, terms: { ...t, issuerQuote: { ...q, source: { ...q.source, asOf: d("2026-02-02") } } } }, "SOURCE_UNAVAILABLE");
+    reject({ ...r, terms: { ...t, issuerQuote: { ...q, source: { ...q.source, projectionStatus: "unavailable" } } } }, "SOURCE_UNAVAILABLE");
+    reject({ ...r, terms: { ...t, issuerQuote: { ...q, source: { ...q.source, sourcePublication: t.source.sourcePublication } } } }, "QUOTE_MISMATCH");
+    reject({ ...r, terms: { ...t, issuerQuote: { ...q, interest: money("5.11") } } }, "QUOTE_MISMATCH");
+    reject({ ...r, terms: { ...t, issuerQuote: { ...q, borrowerId: "other" } } }, "QUOTE_MISMATCH");
+    reject({ ...r, terms: { ...t, issuerQuote: { ...q, total: money("105.11") } } }, "QUOTE_MISMATCH");
+    reject({ ...r, terms: { ...t, issuerQuote: { ...q, fees: money("0.01") } } }, "QUOTE_MISMATCH");
+    reject({ ...r, line: { ...r.line, interest: { ...r.line.interest, source: {
+      ...r.line.interest.source, projectionStatus: "unavailable" } } } }, "SOURCE_UNAVAILABLE");
+  });
+
+  it("rejects disagreements with complete B1 interest and never lets a quote conceal bad rate law", () => {
+    const q = quoted(), t = q.terms!, original = t.issuerQuote!;
+    const known: PhaseServicingRequest = { ...q, line: { ...q.line, rate: request().line.rate } };
+    expect(ok(known).interestEvidence).toBe("issuer_quoted_b1_reconciled");
+    const amended = { ...t, total: money("105.11"), allocation: { ...t.allocation!, interest: money("5.11") },
+      issuerQuote: { ...original, interest: money("5.11"), total: money("105.11") } };
+    reject({ ...known, terms: amended, payment: { ...known.payment, amount: money("105.11"),
+      funding: { ...known.payment.funding!, amount: money("105.11") } } }, "QUOTE_MISMATCH");
+    reject({ ...q, line: { ...q.line, rate: { ...request().line.rate!, priorRatePpm: -1000n } } },
+      "B1_INCOMPLETE");
+  });
+
+  it("recognizes an independently quoted complete final balloon without computed rate", () => {
+    const r = request(), period = r.line.period;
+    const phase = { ...r.terms!.phase, endExclusive: period.endExclusive, kind: "balloon" as const };
+    const total = money("1007.10");
+    const base: PhaseServicingRequest = { ...r, line: { ...r.line,
+      maturityAt: period.endExclusive, phases: [r.line.phases[0]!, phase] },
+      terms: { ...r.terms!, phase, total, closingPrincipal: money("0"), finalQuote: {
+        source: source(), dueAt: period.endExclusive, principal: money("1000"),
+        interest: money("5.10"), fee: { amount: money("2"), source: source() } } },
+      payment: { ...r.payment, amount: total, funding: { ...r.payment.funding!, amount: total } } };
+    const a = quoted(base), t = a.terms!, q = t.issuerQuote!;
+    const withQuote = { ...a, terms: { ...t,
+      allocation: { ...t.allocation!, principal: money("1000") },
+      issuerQuote: { ...q, principal: money("1000"), closingPrincipal: money("0"),
+        fees: money("2"), total } } };
+    const p = ok(withQuote);
+    expect(p.interestEvidence).toBe("issuer_quoted_uncomputed");
+    expect(p.principal_due.equals(money("1000"))).toBe(true);
+    expect(p.fees_due.equals(money("2"))).toBe(true);
+    expect(p.finalBalanceIntent.closingIfExecuted.isZero()).toBe(true);
+    reject({ ...withQuote, terms: { ...withQuote.terms!, issuerQuote: {
+      ...withQuote.terms!.issuerQuote!, fees: money("2.01") } } }, "QUOTE_MISMATCH");
+  });
+
   it("authors a fixed reset-free installment with separate immutable obligations", () => {
     const r = request(), before = structuredClone(r), p = ok(r);
     // 100000 cents * 60000 ppm * 31 / 365000000 = 509.589... cents -> 510.
