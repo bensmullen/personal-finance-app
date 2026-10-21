@@ -3,6 +3,7 @@ import { accountingTransactionId } from "../../accounting/index.js";
 import { exportHouseholdReplayCheckpoints, registerHouseholdReplayCheckpoints, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
 import { assertD2PostedTransactionHistoryPreserved, assertD2SettlementReceiptHistoryPreserved, createAuthoritativeState,
   d2PostedTransactionArchiveDelta, requalifyD2SettlementReceiptHistory,
+  assertRetirementDistributionHistoryPreserved, retirementDistributionArchiveDelta, requalifyRetirementDistributionHistory,
   type D2SettlementSourceContext, type AuthoritativeState } from "../../state/index.js";
 import { createInputFingerprint } from "../run.js";
 import { TaxEconomicLedger } from "../tax/economics.js";
@@ -95,13 +96,14 @@ interface CheckpointDelta extends Omit<HouseholdReplayCheckpoint, "state"> {
   readonly records: Readonly<Record<string, { readonly present?: boolean; readonly set: Readonly<Record<string, unknown>>; readonly remove: readonly string[] }>>;
   readonly identities: Readonly<Record<string, { readonly add: readonly string[]; readonly remove: readonly string[] }>>;
 }
-const recordKeys = ["accounts", "positions", "liabilities", "obligations", "contributions", "contingentPositions", "ssaMedicarePayments", "d2SettlementReceipts", "d2PostedTransactions"] as const;
+const recordKeys = ["accounts", "positions", "liabilities", "obligations", "contributions", "contingentPositions", "ssaMedicarePayments", "d2SettlementReceipts", "d2PostedTransactions", "retirementDistributionAllocations"] as const;
 /** Sparse state changes, never transaction history or repeated identity prefixes. */
 const checkpointDeltas = (checkpoints: readonly HouseholdReplayCheckpoint[]): readonly CheckpointDelta[] => {
   let before = createAuthoritativeState();
   return checkpoints.map(({ state, ...checkpoint }) => {
     const records = Object.fromEntries(recordKeys.map(key => {
       if (key === "d2PostedTransactions") return [key, d2PostedTransactionArchiveDelta(state, before)];
+      if (key === "retirementDistributionAllocations") return [key, retirementDistributionArchiveDelta(state, before)];
       const prior: Record<string, unknown> = before[key] ?? {}, next: Record<string, unknown> = state[key] ?? {};
       return [key, { present: state[key] !== undefined, set: Object.fromEntries(Object.entries(next).filter(([id, value]) =>
         JSON.stringify(encode(value)) !== JSON.stringify(encode(prior[id] ?? null)))),
@@ -128,14 +130,14 @@ const restoreCheckpointDeltas = (deltas: readonly CheckpointDelta[], cutoff: str
       const change = records[key];
       // Older v3 artifacts did not serialize these optional records. Preserve
       // absence exactly, while refusing to drop an existing receipt implicitly.
-      if ((key === "ssaMedicarePayments" || key === "d2SettlementReceipts" || key === "d2PostedTransactions") && change === undefined && before[key] === undefined) return [];
+      if ((key === "ssaMedicarePayments" || key === "d2SettlementReceipts" || key === "d2PostedTransactions" || key === "retirementDistributionAllocations") && change === undefined && before[key] === undefined) return [];
       if (!change || !Array.isArray(change.remove) || change.remove.some((id: unknown) => typeof id !== "string") ||
         new Set(change.remove).size !== change.remove.length || !change.set || typeof change.set !== "object" || Array.isArray(change.set) ||
         change.present !== undefined && typeof change.present !== "boolean") throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: malformed state delta");
       const next = { ...before[key], ...change.set };
-      if (key === "d2SettlementReceipts" || key === "d2PostedTransactions") for (const [id, value] of Object.entries(change.set)) {
+      if (key === "d2SettlementReceipts" || key === "d2PostedTransactions" || key === "retirementDistributionAllocations") for (const [id, value] of Object.entries(change.set)) {
         const original = key === "d2SettlementReceipts" ? before.d2SettlementReceipts?.[id]
-          : before.d2PostedTransactions?.[accountingTransactionId(id)];
+          : key === "d2PostedTransactions" ? before.d2PostedTransactions?.[accountingTransactionId(id)] : before.retirementDistributionAllocations?.[id];
         if (original !== undefined && JSON.stringify(encode(original)) !== JSON.stringify(encode(value)))
           throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: committed shared receipt cannot be rewritten");
       }
@@ -144,13 +146,14 @@ const restoreCheckpointDeltas = (deltas: readonly CheckpointDelta[], cutoff: str
         if (key === "ssaMedicarePayments") throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: committed SSA receipt cannot be removed");
         if (key === "d2SettlementReceipts") throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: committed shared receipt cannot be removed");
         if (key === "d2PostedTransactions") throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: committed posting proof cannot be removed");
+        if (key === "retirementDistributionAllocations") throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: committed retirement evidence cannot be removed");
         delete next[id];
       }
       // Absent optional state is distinct from an explicitly empty record in
       // canonical replay. Older v3 deltas lacked this bit and retain their
       // previous representation; v1/v2 continue to use opening replay.
       if (change.present === false) {
-        if (key !== "contributions" && key !== "contingentPositions" && key !== "ssaMedicarePayments" && key !== "d2SettlementReceipts" && key !== "d2PostedTransactions" || Object.keys(next).length !== 0)
+        if (key !== "contributions" && key !== "contingentPositions" && key !== "ssaMedicarePayments" && key !== "d2SettlementReceipts" && key !== "d2PostedTransactions" && key !== "retirementDistributionAllocations" || Object.keys(next).length !== 0)
           throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: invalid absent state record");
         return [];
       }
@@ -171,9 +174,11 @@ const restoreCheckpointDeltas = (deltas: readonly CheckpointDelta[], cutoff: str
     before = createAuthoritativeState({ ...stateRecords, identities: nextIds });
     assertD2PostedTransactionHistoryPreserved(receiptHistory, before);
     assertD2SettlementReceiptHistoryPreserved(receiptHistory, before);
+    assertRetirementDistributionHistoryPreserved(receiptHistory, before);
     receiptHistory = before;
     validateSsaMedicareSourceHistory(before, cutoff);
     requalifyD2SettlementReceiptHistory(before, sourceContext);
+    requalifyRetirementDistributionHistory(before, sourceContext);
     return { ...checkpoint, state: before };
   });
 };
@@ -204,6 +209,7 @@ const restorePortableArtifact = (artifact: unknown): Pick<HouseholdForecastSumma
   const executable = { ...base, ...(participants === undefined ? {} : { participants: participants.map(restoreHouseholdParticipant) }) };
   validateSsaMedicareSourceHistory(executable.reconciledOpeningState, restored.runContext.dataCutoff);
   requalifyD2SettlementReceiptHistory(executable.reconciledOpeningState, restored.runContext);
+  requalifyRetirementDistributionHistory(executable.reconciledOpeningState, restored.runContext);
   const kernel = compileHouseholdKernel(executable, restored.runContext.simulationStart);
   const forecast = Object.freeze({ runMetadata: restored.runMetadata, periods: restored.periods,
     replay: Object.freeze({ kernel, runContext: restored.runContext }) });
