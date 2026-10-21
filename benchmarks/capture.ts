@@ -41,6 +41,42 @@ if (!/^[a-f0-9]{40}$/.test(capturedHead)) throw new Error("Captured Git head is 
 // Each probe runs in a separate child process. This permits a diagnostic
 // cutoff without terminating the GitHub job or losing completed horizons.
 // The 240-second cutoff is damage containment, NEVER a product SLA.
+/** Merkle-style canonical identity: equal values hash equally regardless of sharing.
+ * Historical JSON canonicalization expanded the same large replay artifact once
+ * per monthly trace anchor and could exhaust V8 after execution had returned.
+ * Visit each object at most once; preserve sorted keys, ordered arrays and the
+ * existing canonical serialization of financial value classes.
+ */
+const canonicalGraphDigest = (input: unknown): string => {
+  const hashes = new WeakMap<object, string>(), active = new Set<object>();
+  const visit = (value: unknown): string => {
+    if (value === null || typeof value !== "object")
+      return createHash("sha256").update("primitive:").update(canonicalSerialize(value)).digest("hex");
+    const cached = hashes.get(value);
+    if (cached !== undefined) return cached;
+    if (active.has(value)) throw new Error("Canonical benchmark graph cannot contain cycles.");
+    active.add(value);
+    try {
+      const hash = createHash("sha256");
+      if (Array.isArray(value)) {
+        hash.update("array:").update(String(value.length)).update(":");
+        for (const item of value) hash.update(visit(item)).update(";");
+      } else if (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null) {
+        const record = value as Record<string, unknown>;
+        const keys = Object.keys(record).filter(key => record[key] !== undefined).sort();
+        hash.update("record:").update(String(keys.length)).update(":");
+        for (const key of keys) hash.update(JSON.stringify(key)).update(":").update(visit(record[key])).update(";");
+      } else {
+        hash.update("canonical-class:").update(canonicalSerialize(value));
+      }
+      const result = hash.digest("hex");
+      hashes.set(value, result);
+      return result;
+    } finally { active.delete(value); }
+  };
+  return visit(input);
+};
+
 const childMonth = process.env.PFM_U1B_DIAGNOSTIC_PROBE;
 if (childMonth !== undefined) {
   const probe = createFlagshipHorizonProbes().find(item => String(item.months) === childMonth);
@@ -62,6 +98,11 @@ if (childMonth !== undefined) {
   const result = runPersonalHouseholdForecast(probe.model, probe.request,
     createApplicationPerformanceObserver({ now: () => performance.now() }, context, registry));
   const wallMs = performance.now() - start;
+  // Flush a distinct stage marker before clone/hash work. A later child OOM
+  // must not be misreported as an engine execution failure.
+  console.log(`U1B_FLAGSHIP_EXECUTION_RETURNED ${JSON.stringify({ fixtureId: probe.id, months: probe.months, status: result.status,
+    points: result.status === "unavailable" ? 0 : result.points.length, wallMs,
+    heapAfterExecutionBytes: process.memoryUsage().heapUsed })}`);
   const outputCloneStart = performance.now();
   structuredClone(result);
   const outputCloneMs = performance.now() - outputCloneStart;
@@ -74,7 +115,7 @@ if (childMonth !== undefined) {
     heapAfterBytes: process.memoryUsage().heapUsed, heapDeltaBytes: process.memoryUsage().heapUsed - heapStart,
     // Exact synthetic output identity, outside timing/CPU/clone samples. This
     // includes financial points, coverage, diagnostics and source provenance.
-    resultFingerprint: createHash("sha256").update(canonicalSerialize(result)).digest("hex"),
+    resultFingerprint: canonicalGraphDigest(result),
     structuralCounters: registry.latest("engine.execute")?.resources?.structuralCounters ?? {},
     phaseInterpretation: "Capability normalization is a subphase of engine.capabilities, also included in summary statements_metrics or detailed trace_result. application.replay_artifact is a subphase of application.read_model. Diagnostic counters distinguish raw-list inspection, exact key computation, shared-prefix lookup, new merge suffixes and array materialization. Request post includes synchronous enqueue work; worker roundtrip includes queueing/execution/response and is never serialization-only. Phase durations are not an exclusive partition of wall time.",
     phasesMs: Object.fromEntries(PERFORMANCE_PHASES.map(phase => {
@@ -118,7 +159,12 @@ if (warmups === 0 && measuredRuns === 1) {
       await persist("running");
       console.log(line);
     } catch (error) {
+      const childOutput = error !== null && typeof error === "object" && "stdout" in error
+        ? String(error.stdout) : "";
+      const returned = childOutput.split("\\n").find(line => line.startsWith("U1B_FLAGSHIP_EXECUTION_RETURNED "));
       const sample = { fixtureId: probe.id, months: probe.months, status: "not_measured",
+        failureStage: returned === undefined ? "execution_or_prior" : "post_execution_clone_or_fingerprint",
+        ...(returned === undefined ? {} : { lastSuccessfulStage: returned.slice("U1B_FLAGSHIP_EXECUTION_RETURNED ".length) }),
         failure: error instanceof Error ? error.message.slice(0, 150) : "probe_process_failed",
         diagnosticCutoffMs: 240000 };
       samples.push(sample);
