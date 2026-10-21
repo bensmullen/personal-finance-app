@@ -1177,7 +1177,9 @@ const validateRetirementDistributions = (state: AuthoritativeState): void => {
   // reject orphaned commitment identities on both cold imports and indexed
   // execution states, without rebuilding/scanning the retirement history.
   if (state.retirementDistributionAllocations === undefined && state.d2PostedTransactions === undefined) {
-    const indexed = identityIndexes.get(state.identities)?.externalIdempotencyKeys;
+    // Use the index owned by the *current* exposed identity array. A caller
+    // replacing that array cannot keep an old registry index as false proof.
+    const indexed = identityArrays.get(state.identities.externalIdempotencyKeys);
     if (indexed === undefined
       ? state.identities.externalIdempotencyKeys.some(id => id.startsWith(retirementRecordPrefix))
       : indexed.hasPrefix(retirementRecordPrefix)) d2Invalid("Retirement commitment orphaned from journal");
