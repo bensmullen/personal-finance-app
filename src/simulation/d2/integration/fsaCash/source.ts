@@ -144,6 +144,8 @@ export function qualifyFsaCashOriginal(s: FsaCashSource, context: D2SettlementSo
   const claims = raw.receipts.filter(r => r.proofId === o.proofId && r.receiptId === o.medicalReceiptId);
   if (claims.length !== 1) reject("Exactly one source-owned original medical payment required");
   const r = claims[0]!;
+  if (r.destination === null || r.evidence === null || plan.planEvidence === null)
+    reject("Original medical expense requires sourced receipt, plan and owned destination");
   const fields = ["householdId", "personId", "employerId", "planId", "planYearId"] as const;
   if (fields.some(field => plan[field] !== o[field] || r[field] !== o[field])
     || r.memberId !== o.memberId || r.payeeId !== o.payeeId
