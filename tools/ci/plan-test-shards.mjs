@@ -97,7 +97,9 @@ export function discover(kind, directory) {
 
 export function plan(kind, count, directory) {
   mkdirSync(directory, { recursive: true });
-  const inventory = discover(kind, directory);
+  // Independent runners may discover files in different arrival orders; keep
+  // inventory and receipt JSON byte-identical without dropping any identity.
+  const inventory = discover(kind, directory).sort((a, b) => compare(a.id, b.id));
   const baseline = JSON.parse(readFileSync(path.join(root, 'tools/ci/test-duration-baseline.json'), 'utf8'));
   const result = partition(inventory, count, baseline[kind]);
   const proof = { schema: 1, sha: process.env.GITHUB_SHA ?? null, kind, count,

@@ -183,7 +183,8 @@ describe('structured result and process truth', () => {
         const args = process.argv.slice(2);
         const all = Array.from({length:4},(_,i)=>({id:'e2e/sample.spec.ts:'+(i+1)+':1 › case '+(i+1)}));
         const list = args.find(a=>a.startsWith('--test-list='));
-        const selected = list ? readFileSync(list.slice(12),'utf8').trim().split('\\n').map(id=>({id})) : all;
+        // CLI selections are testDir-relative; reporter/receipt IDs remain repo-relative.
+        const selected = list ? readFileSync(list.slice(12),'utf8').trim().split('\\n').map(id=>({id:'e2e/'+id})) : all;
         if(args.includes('--list')) {
           writeFileSync(process.env.PFM_DISCOVERY,JSON.stringify(selected));
         } else {
@@ -219,7 +220,7 @@ describe('structured result and process truth', () => {
       writeFileSync(join(directory, 'node_modules/vitest/vitest.mjs'), `
         import {readFileSync,writeFileSync} from 'node:fs';
         const args=process.argv.slice(2);
-        if(args[0]==='list') console.log(JSON.stringify([1,2,3].map(i=>'test/file'+i+'.test.ts')));
+        if(args[0]==='list') console.log([1,2,3].map(i=>'test/file'+i+'.test.ts').join('\\n'));
         else {
           const selected=JSON.parse(readFileSync(process.env.PFM_UNIT_ASSIGNMENT,'utf8'));
           writeFileSync('selected-unit.json',JSON.stringify({args,selected}));
