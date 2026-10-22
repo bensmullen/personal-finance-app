@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { clickFinancialDestination, navigateOwner } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, expectForecastWindow } from "./navigation.js";
 import { inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";
@@ -48,6 +48,7 @@ async function run(page: Page) {
   await expect(status(page)).not.toHaveAttribute("data-request-id", before ?? "");
   await expect(status(page)).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: 30_000 });
   await expect(status(page)).toHaveAttribute("data-pending", "false");
+  await expectForecastWindow(page, "2026-01-01", "2026-03-01", 2);
 }
 async function setup(page: Page, width = 1440, spending?: string) {
   await page.setViewportSize({ width, height: 900 });
@@ -91,13 +92,15 @@ async function exported(page: Page) {
 async function appliedSource(page: Page) {
   const requestId = await status(page).getAttribute("data-request-id");
   const fingerprint = await status(page).getAttribute("data-fingerprint");
-  const cacheHit = await status(page).locator("dt").filter({ hasText: /^Cache$/ }).locator("xpath=following-sibling::dd[1]").textContent() === "hit";
+  const cacheHit = await status(page).getAttribute("data-cache-state") === "hit";
   const forecast = await page.evaluate(({ requestId, fingerprint, cacheHit }) => {
     const observed = window as typeof window & { __cashResults: ForecastWorkerResponse[] };
     const response = [...observed.__cashResults].reverse().find(item => item.fingerprint === fingerprint && (cacheHit || String(item.requestId) === requestId));
     return response?.outcome === "result" ? response.result as PersonalHouseholdForecastReadModel : undefined;
   }, { requestId, fingerprint, cacheHit });
   if (!forecast || forecast.status === "unavailable") throw new Error("Expected the applied household source");
+  expect(forecast.requestedHorizon).toEqual({ start: "2026-01-01T00:00:00.000Z", end: "2026-03-01T00:00:00.000Z" });
+  expect(forecast.points).toHaveLength(2);
   return forecast;
 }
 

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { addPersonalObject, createEmptyPersonalDraft, createGoldenHouseholdExampleDraft, exportPersonalModelJson, getCurrentPosition, type PersonalDraft } from "../src/application/personalMvp.js";
-import { clickFinancialDestination, navigateOwner } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, openFinancialSection, expectForecastWindow } from "./navigation.js";
 
 const forecastStatus = (page: Page) => page.getByRole("status", { name: "Household forecast status", exact: true });
 
@@ -37,15 +37,15 @@ async function loadHistoricalOverview(page: Page) {
   await navigateOwner(page, "Plan", "Current Plan");
   await page.getByLabel("Simulation end", { exact: true }).fill("2027-09-01");
   for (const title of ["Investments", "Tax payments & refunds"]) {
-    const summary = page.locator("summary").filter({ hasText: new RegExp(`^${title}$`) });
-    if (await summary.locator("..").getAttribute("open") === null) await summary.click();
+    await openFinancialSection(page, title);
   }
   await page.getByLabel("Investment owner", { exact: true }).selectOption({ label: "Taylor Example" });
   const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
   await taxes.getByLabel("Tax payment account", { exact: true }).selectOption({ label: "Everyday checking" });
   await taxes.getByLabel("Tax refund account", { exact: true }).selectOption({ label: "Everyday checking" });
   for (const [jurisdiction, label] of [["US:FEDERAL", "Federal income tax"], ["US:NY", "New York"]] as const) {
-    const section = taxes.locator("summary").filter({ hasText: new RegExp(`^${label}$`) }).first();
+    const section = taxes.locator("summary").filter({ hasText: label }).first();
+    await expect(section).toBeVisible();
     if (await section.locator("..").getAttribute("open") === null) await section.click();
     await taxes.getByRole("button", { name: `Suggest April 15 for ${label}`, exact: true }).click();
     await taxes.getByLabel(`Confirm ${jurisdiction} forecast settlement convention`, { exact: true }).check();
@@ -54,6 +54,7 @@ async function loadHistoricalOverview(page: Page) {
   await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
   await expect(forecastStatus(page)).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
   await expect(forecastStatus(page)).toHaveAttribute("data-lifecycle", "incomplete");
+  await expectForecastWindow(page, "2026-01-01", "2027-09-01", 20);
   await clickFinancialDestination(page, "Overview");
 }
 
@@ -268,9 +269,8 @@ for (const width of [1440, 390]) test(`Overview hierarchy, exact current sources
   // Unapplied session setup must mark the retained chart out of date without
   // changing the recorded current position or presenting the old result as ready.
   await navigateOwner(page, "Plan", "Current Plan");
+  await openFinancialSection(page, "Tax payments & refunds");
   const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
-  const taxDisclosure = taxes.locator("xpath=ancestor::details[1]");
-  if (await taxDisclosure.getAttribute("open") === null) await taxDisclosure.locator(":scope > summary").click();
   await taxes.getByLabel("Tax refund account", { exact: true }).selectOption("");
   await clickFinancialDestination(page, "Overview");
   await expect(forecastStatus(page)).toContainText("Update needed");

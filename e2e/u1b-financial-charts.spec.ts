@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { addPersonalObject, createEmptyPersonalDraft, createGoldenHouseholdExampleDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
-import { clickFinancialDestination, navigateOwner } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, openFinancialSection, expectForecastWindow } from "./navigation.js";
 import { selectForecastChartData, type ForecastChartValue } from "../src/application/forecastChartData.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";
@@ -143,7 +143,7 @@ async function observeBaseline(page: Page) {
 async function appliedSource(page: Page, status: Locator) {
   const requestId = await status.getAttribute("data-request-id");
   const fingerprint = await status.getAttribute("data-fingerprint");
-  const cacheHit = await status.locator("dt").filter({ hasText: /^Cache$/ }).locator("xpath=following-sibling::dd[1]").textContent() === "hit";
+  const cacheHit = await status.getAttribute("data-cache-state") === "hit";
   const result = await page.evaluate(({ requestId, fingerprint, cacheHit }) => {
     const observed = window as typeof window & { __chartBaselines: ForecastWorkerResponse[] };
     const response = [...observed.__chartBaselines].reverse().find(item => item.fingerprint === fingerprint && (cacheHit || String(item.requestId) === requestId));
@@ -176,6 +176,7 @@ async function runAppliedBaseline(page: Page) {
   await expect(status).not.toHaveAttribute("data-request-id", priorRequest ?? "");
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: 30_000 });
   await expect(status).toHaveAttribute("data-pending", "false");
+  await expectForecastWindow(page, "2026-01-01", "2026-04-01", 3);
   return status;
 }
 
@@ -209,13 +210,14 @@ async function boundedGolden(page: Page, width: number, monthlySpending?: string
   await page.getByLabel("Investment owner", { exact: true }).selectOption("90000000-0000-4000-8000-000000000003");
   await page.getByLabel("Simulation start", { exact: true }).fill("2026-01-01");
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-04-01");
+  await openFinancialSection(page, "Tax payments & refunds");
   const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
-  const taxDetails = taxes.locator("xpath=ancestor::details[1]");
-  if (await taxDetails.getAttribute("open") === null) await taxDetails.locator(":scope > summary").click();
+  await expect(taxes).toBeVisible();
   await taxes.getByLabel("Tax payment account", { exact: true }).selectOption({ label: "Everyday checking" });
   await taxes.getByLabel("Tax refund account", { exact: true }).selectOption({ label: "Everyday checking" });
   for (const name of ["Federal income tax", "New York"]) {
-    const section = taxes.locator("summary").filter({ hasText: new RegExp(`^${name}$`) }).first();
+    const section = taxes.locator("summary").filter({ hasText: name }).first();
+    await expect(section).toBeVisible();
     if (await section.locator("..").getAttribute("open") === null) await section.click();
     await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
   }

@@ -3,7 +3,10 @@ import { createFlagshipHouseholdDraft, createGoldenHouseholdDraft, exportPersona
 import { age90Horizon, birthdayAtAge, retirementProposals, resolveForecastReadiness } from "../src/application/forecastReadiness.js";
 import { createGoldenExampleConfiguration, GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 import { createHouseholdForecastRequest, runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
-import { calculationFingerprint } from "../src/application/interactiveForecast.js";
+import { baselineResultMatchesRequest, calculationFingerprint } from "../src/application/interactiveForecast.js";
+import { ForecastController, type ForecastWorkerPort } from "../ui/forecast/controller.js";
+import type { ForecastWorkerRequest } from "../ui/forecast/protocol.js";
+import type { HouseholdForecastRequest, PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import { acceptRetirementProposal, acceptPlanningStarters } from "../src/application/forecastSetup.js";
 import { diagnosticSummary } from "../ui/authoring/diagnosticSummary.js";
 
@@ -12,7 +15,83 @@ const withDob = (dob: string): PersonalDraft => {
   return { ...model, objects: { ...model.objects, Person: (model.objects.Person as readonly JsonObject[]).map(person => ({ ...person, date_of_birth: dob })) } };
 };
 
+// Transport-only fixtures: no amounts or replay are synthesized. The real
+// engine regression below separately requires the actual two monthly results.
+const transportResult = (request: HouseholdForecastRequest, status: "completed" | "incomplete" = "completed", count = request.compiler.cashFlow!.months!): PersonalHouseholdForecastReadModel => {
+  const start = `${request.compiler.cashFlow!.simulationStart}T00:00:00.000Z`;
+  const at = (offset: number) => { const date = new Date(start); date.setUTCMonth(date.getUTCMonth() + offset); return date.toISOString(); };
+  return { scope: "household", status, asOf: `${request.asOf}T00:00:00.000Z`, dataCutoff: `${request.dataCutoff}T00:00:00.000Z`,
+    requestedHorizon: { start, end: `${request.compiler.cashFlow!.simulationEnd}T00:00:00.000Z` },
+    reachedThrough: at(count), points: Array.from({ length: count }, (_, index) => ({ periodStart: at(index), periodEnd: at(index + 1) })),
+  } as unknown as PersonalHouseholdForecastReadModel;
+};
+
+describe("U1B request and period pairing", () => {
+  it("rejects wrong windows, missing completed periods and gaps while preserving truthful zero-period incomplete", () => {
+    const request = createHouseholdForecastRequest({ ...createGoldenExampleConfiguration(), simulationEnd: "2026-03-01" }, ids.model);
+    const good = transportResult(request);
+    expect(baselineResultMatchesRequest(good, request)).toBe(true);
+    expect(baselineResultMatchesRequest(transportResult(request, "completed", 0), request)).toBe(false);
+    expect(baselineResultMatchesRequest(transportResult(request, "incomplete", 0), request)).toBe(true);
+    if (good.status === "unavailable") throw new Error("Expected transport fixture");
+    expect(baselineResultMatchesRequest({ ...good, points: good.points.slice(1) }, request)).toBe(false);
+    expect(baselineResultMatchesRequest({ ...good, requestedHorizon: { ...good.requestedHorizon, end: "2080-02-01T00:00:00.000Z" } }, request)).toBe(false);
+  });
+  it("keeps the latest short request paired through supersession, cache hits, invalidation and retry", () => {
+    const workers: (ForecastWorkerPort & { request?: ForecastWorkerRequest })[] = [];
+    const controller = new ForecastController(() => {
+      const worker: ForecastWorkerPort & { request?: ForecastWorkerRequest } = {
+        onmessage: null, onerror: null, onmessageerror: null, terminate() {}, postMessage(message) { this.request = message; },
+      };
+      workers.push(worker); return worker;
+    }, { set: () => { throw new Error("Immediate submissions expected"); }, clear: () => {} }, () => {}, () => {});
+    const model = createFlagshipHouseholdDraft();
+    const submit = (end: string) => {
+      const request = createHouseholdForecastRequest({ ...createGoldenExampleConfiguration(), simulationEnd: end }, ids.model);
+      return { operation: "baseline_forecast" as const, model, request, fingerprint: calculationFingerprint("baseline_forecast", model, request),
+        performanceContext: { runId: request.runIdentity, dataClassification: "synthetic" as const, modelCounts: {}, executionLocation: "browser_worker" as const, cacheState: "miss" as const } };
+    };
+    const deliver = (index: number, result = transportResult(workers[index]!.request!.request)) => {
+      const message = workers[index]!.request!;
+      workers[index]!.onmessage?.({ data: { operation: message.operation, requestId: message.requestId, fingerprint: message.fingerprint, outcome: "result", result, records: [] } });
+    };
+    const long = submit("2080-02-01"), short = submit("2026-03-01");
+    controller.submit(long, true); controller.submit(short, true);
+    deliver(0);
+    expect(controller.state.pending).toBe(true);
+    const good = transportResult(short.request);
+    deliver(1, good);
+    expect(controller.state).toMatchObject({ lastGoodResult: good, resultRequest: short.request, cacheState: "miss", resultFingerprint: short.fingerprint });
+    controller.submit(short, true);
+    expect(workers).toHaveLength(2);
+    expect(controller.state).toMatchObject({ lastGoodResult: good, cacheState: "hit", pending: false });
+    controller.submit(long, true);
+    expect(controller.state.latestResult).toBeUndefined();
+    controller.invalidate(); deliver(2);
+    expect(controller.state).toMatchObject({ lastGoodResult: good, stale: true, pending: false });
+    controller.submit(long, true);
+    deliver(3, transportResult(short.request));
+    expect(controller.state).toMatchObject({ lifecycle: "error", lastGoodResult: good, stale: true });
+    controller.submit(short, true);
+    expect(controller.state).toMatchObject({ lifecycle: "completed", cacheState: "hit", resultRequest: short.request });
+    controller.reset(); controller.submit(short, true);
+    expect(workers).toHaveLength(5);
+    expect(controller.state.lastGoodResult).toBeUndefined();
+    controller.dispose();
+  });
+});
+
 describe("U1B sourced planning readiness", () => {
+  it("executes both requested months when the accepted flagship horizon is shortened", () => {
+    const model = createFlagshipHouseholdDraft();
+    const configuration = { ...createGoldenExampleConfiguration(), simulationEnd: "2026-03-01" };
+    const result = runPersonalHouseholdForecast(model, createHouseholdForecastRequest(configuration, ids.model));
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    if (result.status === "unavailable") throw new Error(result.message);
+    expect(result.points, JSON.stringify(result.diagnostics)).toHaveLength(2);
+    expect(result.requestedHorizon.end).toBe("2026-03-01T00:00:00.000Z");
+    expect(result.reachedThrough).toBe(result.requestedHorizon.end);
+  });
   it("keeps the economic consequence of partial payroll, contribution and tax coverage visible", () => {
     const summary = (category: string) => diagnosticSummary({ code: "PFA-TAX-009", entityType: "tax_capability", category, taxYear: "2027" });
     expect(summary("contribution_annual_facts").problem).toContain("Affected contributions are skipped; wages and other household activity continue");

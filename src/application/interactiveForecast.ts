@@ -94,6 +94,23 @@ export const calculationFingerprint = (
 export const isCacheableBaseline = (status: string): status is "completed" | "incomplete" =>
   status === "completed" || status === "incomplete";
 
+/** Verify transport pairing without changing the engine's financial status. */
+export const baselineResultMatchesRequest = (result: PersonalHouseholdForecastReadModel, request: HouseholdForecastRequest): boolean => {
+  if (result.status === "unavailable") return true;
+  const boundary = request.compiler.cashFlow ?? request.compiler.investments ?? request.compiler.liabilities;
+  if (!boundary) return false;
+  const start = `${boundary.simulationStart}T00:00:00.000Z`, end = `${boundary.simulationEnd}T00:00:00.000Z`;
+  if (result.requestedHorizon.start !== start || result.requestedHorizon.end !== end || result.asOf !== `${request.asOf}T00:00:00.000Z` || result.dataCutoff !== `${request.dataCutoff}T00:00:00.000Z`) return false;
+  let through = start;
+  for (const point of result.points) {
+    const next = new Date(through);
+    next.setUTCMonth(next.getUTCMonth() + 1);
+    if (point.periodStart !== through || point.periodEnd !== next.toISOString() || point.periodEnd > end) return false;
+    through = point.periodEnd;
+  }
+  return (result.reachedThrough ?? start) === through && (result.status !== "completed" || through === end);
+};
+
 /** Derived, per-session deterministic LRU. Never stores failed or superseded execution. */
 export class BaselineCache<T extends { readonly status: string }> {
   readonly #entries = new Map<string, T>();

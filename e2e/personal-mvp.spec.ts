@@ -181,6 +181,10 @@ const configureTaxSettlement = async (page: import("@playwright/test").Page) => 
   for (const jurisdiction of ["US:FEDERAL", "US:NY"]) {
     const confirmation = panel.getByLabel(`Confirm ${jurisdiction} forecast settlement convention`, { exact: true });
     if (await confirmation.count() === 0) continue;
+    const name = jurisdiction === "US:FEDERAL" ? "Federal income tax" : "New York";
+    const summary = panel.locator("details > summary").filter({ hasText: name }).first();
+    await expect(summary).toBeVisible();
+    if (await summary.locator("..").getAttribute("open") === null) await summary.click({ timeout: 10_000 });
     await panel.getByRole("button", { name: `Suggest April 15 for ${jurisdiction === "US:FEDERAL" ? "Federal income tax" : "New York"}`, exact: true }).click();
     await expect(confirmation).not.toBeChecked();
     await confirmation.check();

@@ -33,6 +33,19 @@ describe("source-backed mortgage chart data", () => {
     const before = JSON.stringify(result), window = inspectMortgageWindow(result.points, ids.mortgage);
     const address = result.points[0]!.traceRefs.find(ref => ref.replayArtifact)!.replayArtifact as { basis: unknown };
     const basis = restorePortableHouseholdReplayArtifact(address.basis);
+    // Route/month changes share validated restoration, but changing the exact
+    // transported attachment must still fail closed after a successful hit.
+    expect(restorePortableHouseholdReplayArtifact(address.basis)).toBe(basis);
+    const transported = structuredClone(address.basis) as { integrity: string; encoded: string };
+    const portable = restorePortableHouseholdReplayArtifact(transported);
+    expect(restorePortableHouseholdReplayArtifact(transported)).toBe(portable);
+    const integrity = transported.integrity;
+    transported.integrity = "corrupted-after-cache-hit";
+    expect(() => restorePortableHouseholdReplayArtifact(transported)).toThrow(/BASIS_MISMATCH/);
+    transported.integrity = integrity;
+    expect(restorePortableHouseholdReplayArtifact(transported)).toBe(portable);
+    transported.encoded += " ";
+    expect(() => restorePortableHouseholdReplayArtifact(transported)).toThrow(/BASIS_MISMATCH/);
     const replay = replayHouseholdForecastWindow(basis, { start: instant(window.start), end: instant(window.end) });
     const loan = basis.replay.kernel.executable.liabilityInput!.loans.find(item => String(item.principalLiabilityId) === ids.mortgage)!;
     for (const [index, row] of window.rows.entries()) {

@@ -1,7 +1,7 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { FINANCIAL_FIELDS, entityField } from "../ui/authoring/fieldContract.js";
 import { readFileSync } from "node:fs";
-import { navigateOwner, showReadiness } from "./navigation.js";
+import { navigateOwner, showReadiness, openFinancialSection } from "./navigation.js";
 import { createGoldenHouseholdExampleDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 
@@ -43,13 +43,16 @@ const loadHistoricalMonthlyExample = async (page: Page) => {
   await mortgage.getByLabel("Same-day mortgage order", { exact: true }).fill("1");
   await navigate(page, "Plan", "Current Plan");
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-04-01");
-  await open(page, "Investments");
+  await openFinancialSection(page, "Investments");
   await page.getByLabel("Investment owner", { exact: true }).selectOption(ids.person);
   await open(page, "Tax payments & refunds");
   const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
   await taxes.getByLabel("Tax payment account", { exact: true }).selectOption(ids.checking);
   await taxes.getByLabel("Tax refund account", { exact: true }).selectOption(ids.checking);
   for (const [jurisdiction, label] of [["US:FEDERAL", "Federal income tax"], ["US:NY", "New York"]]) {
+    const summary = taxes.locator("details > summary").filter({ hasText: label }).first();
+    await expect(summary).toBeVisible();
+    if (await summary.locator("..").getAttribute("open") === null) await summary.click();
     await taxes.getByRole("button", { name: `Suggest April 15 for ${label}`, exact: true }).click();
     await taxes.getByLabel(`Confirm ${jurisdiction} forecast settlement convention`, { exact: true }).check();
   }
@@ -585,9 +588,9 @@ test("Owner repair: isolated mortgage shortfalls name the evaluated payment acco
   await expect(standalone.getByText("Isolated liabilities forecast", { exact: true })).toBeVisible();
   await expect(standalone.getByRole("note").filter({ hasText: /does not include salary or spending/ })).toBeVisible();
   const explanation = standalone.getByRole("region", { name: "Mortgage funding explanation" }).first();
-  await expect(explanation).toContainText("Example mortgage"); await expect(explanation).toContainText("2027");
-  await expect(explanation).toContainText("Payment account: Isolated mortgage bank");
-  await expect(explanation).toContainText("Required"); await expect(explanation).toContainText("available");
+  await expect(explanation).toContainText("Example mortgage"); await expect(explanation).toContainText("2026-01-01");
+  await expect(explanation).toContainText("Payment account Isolated mortgage bank");
+  await expect(explanation).toContainText("Required $1325.29; available $0.00");
   await explanation.getByRole("button", { name: "Review mortgage payment account", exact: true }).click();
   const funding = page.getByLabel("Mortgage payment account", { exact: true });
   await expect(funding).toBeFocused(); await expect(funding).toBeVisible();

@@ -1,6 +1,7 @@
 import { BaselineCache, FORECAST_DEBOUNCE_MS, initialForecastState, isCacheableBaseline, isCurrentForecastResponse, pendingForecastState, settledForecastState, type ForecastState } from "../../src/application/interactiveForecast.js";
 import type { PerformanceContext, PerformanceRecord } from "../../src/application/performance.js";
 import type { ForecastWorkerRequest, ForecastWorkerResponse, ForecastWorkerResult } from "./protocol.js";
+import { baselineResultMatchesRequest } from "../../src/application/interactiveForecast.js";
 
 export interface ForecastWorkerPort {
   onmessage: ((event: { data: ForecastWorkerResponse }) => void) | null;
@@ -50,7 +51,7 @@ export class ForecastController {
     this.#stop();
     const requestId = ++this.#sequence;
     const message = { ...input, requestId } as ForecastWorkerRequest;
-    this.#publish({ ...pendingForecastState(this.#state, requestId, input.fingerprint), cacheState: undefined, performanceContext: undefined });
+    this.#publish({ ...pendingForecastState(this.#state, requestId, input.fingerprint), latestResult: undefined, cacheState: undefined, performanceContext: undefined });
     const run = () => {
       this.#timer = undefined;
       if (!isCurrentForecastResponse(this.#state, message)) return;
@@ -91,6 +92,10 @@ export class ForecastController {
             return;
           }
           const result = data.result;
+          if (input.operation === "baseline_forecast" && "points" in result && "scope" in result && !baselineResultMatchesRequest(result, input.request)) {
+            this.#publish(settledForecastState(this.#state, "error", undefined, "Forecast periods do not match the requested window. Recalculate to retry."));
+            return;
+          }
           const good = isCacheableBaseline(result.status);
           if (input.operation === "baseline_forecast" && good) this.#cache.put(input.fingerprint, result);
           this.#publish({ ...settledForecastState(this.#state, isCacheableBaseline(result.status) ? result.status : "unsupported", result,

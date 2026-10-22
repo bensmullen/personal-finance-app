@@ -232,8 +232,27 @@ const restorePortableArtifact = (artifact: unknown): Pick<HouseholdForecastSumma
   return forecast;
 };
 
+// A transported result shares one attachment across all months. Revalidating
+// every sparse checkpoint on every month/route blocks the browser main thread.
+// Weak ownership releases it with the result; exact wire contents guard mutable
+// structured-clone inputs and ensure corruption is never hidden by a cache hit.
+const restoredArtifacts = new WeakMap<object, {
+  readonly version: PortableHouseholdReplayArtifact["version"];
+  readonly encoded: string;
+  readonly integrity: string | undefined;
+  readonly forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">;
+}>();
 export const restorePortableHouseholdReplayArtifact = (artifact: unknown): Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods"> => {
-  try { return restorePortableArtifact(artifact); }
+  try {
+    const supplied = artifact as PortableHouseholdReplayArtifact | undefined;
+    const cached = typeof artifact === "object" && artifact !== null ? restoredArtifacts.get(artifact) : undefined;
+    if (cached && supplied?.version === cached.version && supplied.encoded === cached.encoded && supplied.integrity === cached.integrity) return cached.forecast;
+    const forecast = restorePortableArtifact(artifact);
+    if (typeof artifact === "object" && artifact !== null && supplied) restoredArtifacts.set(artifact, {
+      version: supplied.version, encoded: supplied.encoded, integrity: supplied.integrity, forecast,
+    });
+    return forecast;
+  }
   catch (error) {
     if ((artifact as PortableHouseholdReplayArtifact | null)?.version === "household-replay/v3")
       throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: portable checkpoint evidence is invalid or unavailable", { cause: error });
