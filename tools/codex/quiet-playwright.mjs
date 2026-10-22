@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { root, plan, selectAssignment } from '../ci/plan-test-shards.mjs';
+import { root, plan, selectAssignment, playwrightListSelector } from '../ci/plan-test-shards.mjs';
 import { readJson, runCaptured, validatePlaywright, writeMeasurements } from '../ci/collect-test-durations.mjs';
 
 const directory = path.join(root, '.codex/logs/playwright');
@@ -22,8 +22,10 @@ try {
     plan('e2e', count, directory);
     selected = selectAssignment(JSON.parse(readFileSync(path.join(directory, 'assignment.json'), 'utf8')), index, 'e2e', count);
     const list = path.join(directory, 'selected.txt');
-    writeFileSync(list, `${selected.map(test => test.id).join('\n')}\n`);
-    if (readFileSync(list, 'utf8').trim() !== selected.map(test => test.id).join('\n')) throw new Error('Cannot load test list');
+    const selectors = selected.map(test => playwrightListSelector(test.id));
+    if (new Set(selectors).size !== selectors.length) throw new Error('Duplicate Playwright selection');
+    writeFileSync(list, `${selectors.join('\n')}\n`);
+    if (readFileSync(list, 'utf8').trim() !== selectors.join('\n')) throw new Error('Cannot load test list');
     filters = [`--test-list=${list}`];
     // Ask Playwright to resolve the list before launching any browsers.
     const discovered = path.join(directory, 'selected-discovery.json');

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 // without introducing a second TypeScript build or repository dependencies.
 const plannerUrl = new URL('../tools/ci/plan-test-shards.mjs', import.meta.url).href;
 const collectorUrl = new URL('../tools/ci/collect-test-durations.mjs', import.meta.url).href;
-const { partition, validatePartition, selectAssignment } = await import(plannerUrl);
+const { partition, validatePartition, selectAssignment, playwrightListSelector } = await import(plannerUrl);
 const { validateVitest, validatePlaywright, runCaptured, playwrightInventory, verifyShardEvidence } = await import(collectorUrl);
 type TestIdentity = { id: string; group?: string };
 const baseline = { unknownMs: 100, durations: { expensive: 10000 } };
@@ -69,6 +69,15 @@ describe('complete deterministic duration balancing', () => {
     expect(result[0].id).toContain('[chromium] › e2e/sample.spec.ts:1:1 › title 0');
     expect(() => playwrightInventory({ allTests: () => [{ ...tests[0], parent: {} }] })).toThrow();
   });
+});
+
+it('formats testDir-relative Playwright test lists without modifying canonical evidence identities', () => {
+  expect(playwrightListSelector('e2e/personal-mvp.spec.ts:54:1 › long finance title'))
+    .toBe('personal-mvp.spec.ts:54:1 › long finance title');
+  expect(playwrightListSelector('[chromium] › e2e/deep/flow.spec.ts:8:1 › outer › 日本語'))
+    .toBe('[chromium] › deep/flow.spec.ts:8:1 › outer › 日本語');
+  expect(() => playwrightListSelector('src/finance.test.ts:8:1 › unknown')).toThrow();
+  expect(() => playwrightListSelector('e2e/only-directory')).toThrow();
 });
 
 describe('structured result and process truth', () => {

@@ -53,6 +53,17 @@ export function partition(inventory, count, baseline = {}) {
   return { shards, estimatedMs: loads };
 }
 
+/** Selection syntax uses Playwright's testDir-relative file path. Keep the
+ * canonical repository-relative ID for inventory/evidence, but strip the
+ * configured e2e/ prefix when writing --test-list entries. Playwright 1.63
+ * otherwise accepts the list and silently resolves zero tests.
+ */
+export function playwrightListSelector(id) {
+  const match = /^(\[[^\]]+\] › )?e2e\/(.+)$/u.exec(id);
+  if (!match || !match[2].includes('.spec.ts')) throw new Error('Unsupported Playwright test-list identity');
+  return `${match[1] ?? ''}${match[2]}`;
+}
+
 function command(args, env = {}) {
   const result = spawnSync(process.execPath, args, { cwd: root, encoding: 'utf8',
     env: { ...process.env, ...env }, timeout: 60_000, maxBuffer: 16 * 1024 * 1024 });
@@ -62,8 +73,12 @@ function command(args, env = {}) {
 
 export function discover(kind, directory) {
   if (kind === 'unit') {
-    const files = JSON.parse(command(['node_modules/vitest/vitest.mjs', 'list', '--filesOnly', '--json']));
-    if (!Array.isArray(files) || files.some(file => typeof file !== 'string')) throw new Error('Invalid Vitest discovery');
+    // Vitest 3.2 --filesOnly is a newline-delimited file list. Combining it
+    // with --json switches to a different discovery payload (test objects),
+    // rather than a JSON string[]; all 3 CI shards rejected that shape.
+    const stdout = command(['node_modules/vitest/vitest.mjs', 'list', '--filesOnly']);
+    const files = stdout.split(/\r?\n/u).map(file => file.trim()).filter(Boolean);
+    if (!files.length || new Set(files).size !== files.length) throw new Error('Invalid Vitest discovery');
     const trackedResult = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' });
     if (trackedResult.status !== 0) throw new Error('Cannot read tracked inventory');
     const tracked = new Set(trackedResult.stdout.split('\0'));
