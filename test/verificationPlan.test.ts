@@ -140,9 +140,9 @@ describe("selective verification and main deployment", () => {
     };
     const shell = workflow.split('        run: |\n')[1]!.split('      - name: Checkout')[0]!
       .split('\n').map(line => line.startsWith('          ') ? line.slice(10) : line).join('\n');
-    const aggregate = (enabled: boolean, typecheck: string, feasibility: string, e2e: string) => spawnSync('bash', ['-e', '-c', shell], {
+    const aggregate = (enabled: boolean, typecheck: string, feasibility: string, e2e: string, unit = 'success') => spawnSync('bash', ['-e', '-c', shell], {
       env: { ...process.env, PLAN: 'success', SPEC_ENABLED: 'false', ARCH_ENABLED: 'false', TOOLING_ENABLED: 'false',
-        UNIT_ENABLED: 'false', TYPECHECK_ENABLED: 'true', TYPECHECK: typecheck, BUILD_ENABLED: 'true', BUILD: 'success',
+        UNIT_ENABLED: 'true', UNIT: unit, TYPECHECK_ENABLED: 'true', TYPECHECK: typecheck, BUILD_ENABLED: 'true', BUILD: 'success',
         FEASIBILITY_ENABLED: String(enabled), FEASIBILITY: feasibility, E2E_ENABLED: 'true', E2E: e2e }, encoding: 'utf8',
     });
     for (const result of ['success', 'failure', 'skipped', 'cancelled']) {
@@ -160,6 +160,10 @@ describe("selective verification and main deployment", () => {
     expect(optional.evaluate(optional.needs, () => true, () => true)).toBe(false);
     expect(aggregate(false, 'success', 'skipped', 'success').status).toBe(0);
     expect(aggregate(false, 'success', 'skipped', 'cancelled').status).not.toBe(0);
+    for (const status of ['failure', 'cancelled', 'skipped', '']) {
+      expect(aggregate(false, 'success', 'skipped', 'success', status).status).not.toBe(0);
+      expect(aggregate(false, 'success', 'skipped', status).status).not.toBe(0);
+    }
     for (const job of ['spec', 'architecture', 'tooling', 'typecheck', 'unit', 'build']) {
       expect(workflow.split(`\n  ${job}:\n`)[1]!.split('\n    runs-on:')[0]).toContain('needs: plan');
     }
@@ -190,7 +194,18 @@ describe("selective verification and main deployment", () => {
   });
   it("runs four independent Playwright CI shards and preserves aggregate gating", () => {
     expect(workflow).toContain("shard: [1, 2, 3, 4]");
-    expect(workflow).toContain("npm run codex:e2e -- --shard=${{ matrix.shard }}/4");
+    expect(workflow).toContain("npm run codex:e2e -- --balanced-shard=${{ matrix.shard }}/4");
+    expect(workflow).toContain("npm run codex:test -- --balanced-shard=${{ matrix.shard }}/3");
+    expect(workflow).toContain("shard: [1, 2, 3]");
+    expect(workflow).not.toContain(' --shard=');
+    expect(workflow).toContain('Require exact-head successful receipts from every selected child');
+    expect(workflow).toContain('--verify-shards "$GITHUB_SHA" "$UNIT_ENABLED" "$E2E_ENABLED"');
+    for (const job of ['unit', 'e2e']) {
+      const section = workflow.split(`\n  ${job}:\n`)[1]!.split(/\n  \w+:\n/u)[0]!;
+      expect(section).toContain('fail-fast: false');
+      expect(section).toContain('timeout-minutes: 20');
+      expect(section).toContain('if: always()');
+    }
     expect(workflow).toContain("name: e2e-diagnostics-${{ matrix.shard }}");
     expect(workflow).toContain("require_gate e2e");
   });
