@@ -605,8 +605,8 @@ const toReadModel = (
   });
   const paid = new Set<string>();
   const debtPayoffs: { loanId: string; scheduledAt: string }[] = [];
-  const replayBasis = performance === undefined ? createPortableHouseholdReplayArtifact(result)
-    : performance.measure("application.replay_artifact", () => createPortableHouseholdReplayArtifact(result));
+  const replayBasis = performance === undefined ? createPortableHouseholdReplayArtifact(result, true)
+    : performance.measure("application.replay_artifact", () => createPortableHouseholdReplayArtifact(result, true));
   const points = result.periods.map((period) => {
     const balances = period.debtBalances ?? [];
     const bindings = period.explanationBindings;

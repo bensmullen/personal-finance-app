@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createFlagshipHouseholdDraft, createGoldenHouseholdDraft, exportPersonalModelJson, importPersonalModelJson, type JsonObject, type PersonalDraft } from "../src/application/personalMvp.js";
+import { createFlagshipHouseholdDraft, createGoldenHouseholdDraft, exportPersonalModelJson, importPersonalModelJson, resolvePersonalSessionSettings, runPersonalForecast, type JsonObject, type PersonalDraft } from "../src/application/personalMvp.js";
 import { age90Horizon, birthdayAtAge, retirementProposals, resolveForecastReadiness } from "../src/application/forecastReadiness.js";
 import { createGoldenExampleConfiguration, GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 import { createHouseholdForecastRequest, runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
 import { baselineResultMatchesRequest, calculationFingerprint } from "../src/application/interactiveForecast.js";
-import { EvidenceController, ForecastController, type EvidenceWorkerPort, type ForecastWorkerPort } from "../ui/forecast/controller.js";
-import type { EvidenceWorkerRequest, EvidenceWorkerResponse, ForecastWorkerRequest } from "../ui/forecast/protocol.js";
+import { boundedEvidencePoints, claimForecastEvidenceWorker, EVIDENCE_DEADLINE_MS, EvidenceController, ForecastController, StandaloneController, type StandaloneWorkerPort, type EvidenceWorkerPort, type ForecastWorkerPort } from "../ui/forecast/controller.js";
+import type { EvidenceWorkerRequest, EvidenceWorkerResponse, ForecastWorkerRequest, StandaloneWorkerRequest } from "../ui/forecast/protocol.js";
 import { executeForecastWorkerRequest } from "../ui/forecast/execute.js";
 import { cashComparison, inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
 import { inspectMortgageWindow } from "../src/application/mortgageChartData.js";
@@ -85,6 +85,142 @@ describe("U1B request and period pairing", () => {
 });
 
 describe("U1B sourced planning readiness", () => {
+  it("bounds real first, middle and final evidence and shares the generating worker without transporting its proof", () => {
+    const model = createFlagshipHouseholdDraft();
+    const configuration = { ...createGoldenExampleConfiguration(), simulationEnd: "2028-02-01" };
+    const request = createHouseholdForecastRequest(configuration, ids.model);
+    const submission = { operation: "baseline_forecast" as const, model, request, fingerprint: calculationFingerprint("baseline_forecast", model, request),
+      performanceContext: { runId: request.runIdentity, dataClassification: "synthetic" as const, modelCounts: {}, executionLocation: "browser_worker" as const, cacheState: "miss" as const } };
+    let baselineMessage: ForecastWorkerRequest | undefined;
+    const baselinePort: ForecastWorkerPort = { onmessage: null, onerror: null, onmessageerror: null, postMessage(message) { baselineMessage = message; }, terminate() {} };
+    const baseline = new ForecastController(() => baselinePort, { set: () => 0, clear() {} }, () => {}, () => {});
+    baseline.submit(submission, true);
+    const response = executeForecastWorkerRequest(baselineMessage!, { now: () => 0 });
+    expect(response.outcome).toBe("result");
+    if (response.outcome !== "result" || !("points" in response.result) || response.result.status === "unavailable") throw new Error("Missing actual forecast");
+    const result = response.result;
+    expect(result.points).toHaveLength(25);
+    baselinePort.onmessage!({ data: response });
+    const worker = claimForecastEvidenceWorker(result)!;
+    expect(worker).toBe(baselinePort);
+    expect(claimForecastEvidenceWorker(result)).toBeUndefined();
+    let count = 0;
+    const messages: EvidenceWorkerRequest[] = [];
+    worker.postMessage = message => {
+      messages.push(structuredClone(message));
+      const response = executeForecastWorkerRequest(structuredClone(message), { now: () => ++count }, progress => worker.onmessage?.({ data: progress }));
+      worker.onmessage?.({ data: response });
+    };
+    const evidence = new EvidenceController({ forecast: result, model }, () => worker);
+    const before = calculationFingerprint("baseline_forecast", model, request);
+    const transportedBasis = structuredClone(boundedEvidencePoints(result, { operation: "mortgage_evidence", startIndex: 0, liabilityId: ids.mortgage }).basis);
+    const transportedPoints = result.points.map(point => ({ ...point, traceRefs: point.traceRefs.map(ref => ({ ...ref,
+      ...(ref.replayArtifact === undefined ? {} : { replayArtifact: { ...(ref.replayArtifact as object), basis: transportedBasis } }),
+    })) }));
+    for (const startIndex of [0, 12, 24]) {
+      const selection = { operation: "mortgage_evidence" as const, startIndex, liabilityId: ids.mortgage };
+      let actual: EvidenceWorkerResponse | undefined;
+      evidence.select(selection, response => { actual = response; });
+      const selected = actual as EvidenceWorkerResponse | undefined;
+      expect(selected?.outcome).toBe("result");
+      if (selected?.outcome === "result") {
+        expect(selected.window).toEqual(inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), ids.mortgage));
+        expect(selected.window).toEqual(inspectMortgageWindow(transportedPoints.slice(startIndex, startIndex + 12), ids.mortgage));
+      }
+      expect(messages.at(-1)!.points).toHaveLength(startIndex === 24 ? 1 : 12);
+      expect(messages.at(-1)!.source?.basis).toBeUndefined();
+      expect(messages.at(-1)!.points.flatMap(point => point.traceRefs).every(ref => !ref.replayArtifact || !("basis" in (ref.replayArtifact as object)))).toBe(true);
+    }
+    evidence.select({ operation: "mortgage_evidence", startIndex: 12, liabilityId: ids.mortgage }, () => {});
+    expect(messages).toHaveLength(3);
+    evidence.select({ operation: "monthly_evidence", startIndex: 12, liabilityId: "" }, response => {
+      expect(response.outcome).toBe("result");
+      if (response.outcome === "result") expect(response.detail).toEqual(inspectMonthlyMoney(result.points[12]!, model));
+    });
+    expect(evidence.diagnostics.map(record => record.phase)).toContain("restored");
+    expect(calculationFingerprint("baseline_forecast", model, request)).toBe(before);
+    evidence.dispose(); baseline.dispose();
+  }, 30_000);
+
+  it("settles never-answered, mismatched, clone, startup and worker errors; retry owns a fresh channel", () => {
+    const model = createFlagshipHouseholdDraft();
+    // Transport fixtures have no financial values; only lifecycle is exercised.
+    const result = { status: "completed", points: [{ periodStart: "2026-01-01", periodEnd: "2026-02-01", traceRefs: [{ traceId: "source-a", replayArtifact: { basis: { version: "household-replay/v3", encoded: "transport-only" }, start: "2026-01-01", end: "2026-02-01" } }] }] } as unknown as PersonalHouseholdForecastReadModel;
+    const timers = new Map<number, () => void>(); let sequence = 0;
+    const scheduler = { set(callback: () => void, delay: number) { expect(delay).toBe(EVIDENCE_DEADLINE_MS); timers.set(++sequence, callback); return sequence; }, clear(handle: unknown) { timers.delete(handle as number); } };
+    const workers: (EvidenceWorkerPort & { message?: EvidenceWorkerRequest; stopped: boolean })[] = [];
+    const controller = new EvidenceController({ forecast: result, model }, () => {
+      const worker: typeof workers[number] = { onmessage: null, onerror: null, onmessageerror: null, stopped: false, postMessage(message) { this.message = message; }, terminate() { this.stopped = true; } };
+      workers.push(worker); return worker;
+    }, scheduler, () => 1);
+    const values: EvidenceWorkerResponse[] = [];
+    const selection = { operation: "mortgage_evidence" as const, startIndex: 0, liabilityId: ids.mortgage };
+    const select = () => controller.select(selection, response => values.push(response), true);
+    select();
+    controller.select({ ...selection, operation: "monthly_evidence" }, response => values.push(response));
+    expect(workers).toHaveLength(1); // concurrent independent panel requests
+    const staleHandler = workers[0]!.onmessage!;
+    [...timers.values()][0]!();
+    expect(values.map(value => value.outcome)).toEqual(["error", "error"]);
+    expect(timers.size).toBe(0);
+    select();
+    staleHandler({ data: { ...workers[0]!.message!, outcome: "error", error: "old" } });
+    expect(values).toHaveLength(2);
+    const next = workers[1]!;
+    next.onmessage!({ data: { ...next.message!, fingerprint: "other-household", outcome: "error", error: "wrong" } });
+    expect(values.at(-1)?.outcome).toBe("error");
+    expect(next.stopped).toBe(true);
+    select(); workers[2]!.onmessageerror!();
+    select(); workers[3]!.onerror!({ preventDefault() {} });
+    select(); const cancelled = workers[4]!.onmessage!; const pending = workers[4]!.message!;
+    controller.dispose(); const length = values.length;
+    cancelled({ data: { ...pending, outcome: "error", error: "disposed" } });
+    expect(values).toHaveLength(length);
+    expect(timers.size).toBe(0);
+    for (const makeWorker of [() => { throw new Error("startup"); }, () => ({ onmessage: null, onerror: null, onmessageerror: null, postMessage() { throw new Error("clone"); }, terminate() {} })]) {
+      const failed = new EvidenceController({ forecast: result, model }, makeWorker, scheduler);
+      failed.select(selection, response => expect(response.outcome).toBe("error"));
+      expect(timers.size).toBe(0);
+    }
+    expect(controller.diagnostics.some(record => record.phase === "timeout")).toBe(true);
+    expect(JSON.stringify(controller.diagnostics)).not.toContain("transport-only");
+  });
+
+  it("runs the exact standalone API off-thread and rejects superseded requests without changing dates or scope", () => {
+    const model = createFlagshipHouseholdDraft(), configuration = createGoldenExampleConfiguration();
+    const request = resolvePersonalSessionSettings(configuration, "cash_flow").request!;
+    const workers: (StandaloneWorkerPort & { message?: StandaloneWorkerRequest; stopped: boolean })[] = [];
+    const views: import("../ui/forecast/controller.js").StandaloneView[] = [];
+    const timers = new Map<number, () => void>(); let timerId = 0;
+    const controller = new StandaloneController(() => {
+      const worker: typeof workers[number] = { onmessage: null, onerror: null, onmessageerror: null, stopped: false, postMessage(message) { this.message = message; }, terminate() { this.stopped = true; } };
+      workers.push(worker); return worker;
+    }, view => views.push(view), { set(callback) { timers.set(++timerId, callback); return timerId; }, clear(handle) { timers.delete(handle as number); } });
+    controller.run(model, request);
+    expect(workers[0]!.message!.request).toEqual(request);
+    expect(request.months).toBe(649);
+    expect(views.at(-1)?.pending).toBe(true); // post only; no synchronous execution
+    const old = workers[0]!.onmessage!;
+    const shortRequest = { ...request, simulationEnd: "2026-03-01", months: 2 };
+    controller.run(model, shortRequest);
+    const actual = executeForecastWorkerRequest(workers[1]!.message!, { now: () => 0 });
+    expect(actual.outcome).toBe("result");
+    if (actual.outcome !== "result") throw new Error(actual.error);
+    expect(actual.result).toEqual(runPersonalForecast(model, shortRequest));
+    expect(actual.result.scope).toBe("cash_flow");
+    old({ data: { ...actual, requestId: workers[0]!.message!.requestId } });
+    expect(views.at(-1)?.pending).toBe(true);
+    workers[1]!.onmessage!({ data: actual });
+    expect(views.at(-1)).toMatchObject({ pending: false, stale: false, result: actual.result });
+    controller.run(model, request); [...timers.values()][0]!();
+    expect(views.at(-1)).toMatchObject({ pending: false, stale: true });
+    expect(views.at(-1)?.error).toContain("retry");
+    controller.run(model, request); controller.cancel();
+    expect(views.at(-1)).toMatchObject({ pending: false, stale: true, cancelled: true });
+    controller.invalidate(); expect(views.at(-1)?.cancelled).toBe(false);
+    controller.reset(); expect(views.at(-1)?.result).toBeUndefined(); controller.dispose();
+  });
+
   it("executes both requested months when the accepted flagship horizon is shortened", () => {
     const model = createFlagshipHouseholdDraft();
     const configuration = { ...createGoldenExampleConfiguration(), simulationEnd: "2026-03-01" };
@@ -100,23 +236,26 @@ describe("U1B sourced planning readiness", () => {
     let tick = 0;
     const clock = { now: () => ++tick };
     const selection = (startIndex: number): EvidenceWorkerRequest => ({ operation: "monthly_evidence", requestId: startIndex + 1, startIndex, liabilityId: "",
+      points: boundedEvidencePoints(result, { operation: "monthly_evidence", startIndex, liabilityId: "" }).points,
       fingerprint: result.points[startIndex]!.traceRefs.find(ref => ref.replayArtifact !== undefined)!.traceId });
+    const proof = boundedEvidencePoints(result, selection(0)).basis;
     for (const index of [0, 1]) {
-      const response = executeForecastWorkerRequest({ ...selection(index), ...(index === 0 ? { source: structuredClone({ forecast: result, model }) } : {}) }, clock);
-      expect(response).toMatchObject({ ...selection(index), outcome: "result", durationMs: 1 });
-      if (response.outcome !== "result") throw new Error(response.error);
+      const response = executeForecastWorkerRequest({ ...selection(index), ...(index === 0 ? { source: structuredClone({ basis: proof, model }) } : {}) }, clock);
+      const { points: _points, ...boundary } = selection(index);
+      expect(response).toMatchObject({ ...boundary, outcome: "result", durationMs: 1 });
+      if (response.outcome !== "result") throw new Error("Expected settled evidence result");
       expect(response.detail).toEqual(inspectMonthlyMoney(result.points[index]!, model));
       expect(cashComparison(response.detail!)?.knownUsesOnly).toBe(true);
       expect(cashComparison(response.detail!)?.drawable).toBe(true);
     }
-    const mortgage = executeForecastWorkerRequest({ ...selection(0), operation: "mortgage_evidence", liabilityId: ids.mortgage }, clock);
+    const mortgage = executeForecastWorkerRequest({ ...selection(0), operation: "mortgage_evidence", liabilityId: ids.mortgage, points: boundedEvidencePoints(result, { operation: "mortgage_evidence", startIndex: 0, liabilityId: ids.mortgage }).points }, clock);
     expect(mortgage.outcome).toBe("result");
     if (mortgage.outcome === "result") expect(mortgage.window).toEqual(inspectMortgageWindow(result.points, ids.mortgage));
     expect(executeForecastWorkerRequest({ ...selection(0), fingerprint: "wrong-source" }, clock).outcome).toBe("error");
     expect(executeForecastWorkerRequest({ ...selection(0), startIndex: -1 }, clock).outcome).toBe("error");
     const missing = { ...result, points: result.points.map(point => ({ ...point, traceRefs: [] })) };
-    expect(executeForecastWorkerRequest({ ...selection(0), source: { forecast: missing, model } }, clock).outcome).toBe("error");
-    expect(executeForecastWorkerRequest({ ...selection(0), source: { forecast: result, model } }, { now() { throw new Error("clock"); } }).outcome).toBe("result");
+    expect(executeForecastWorkerRequest({ ...selection(0), points: missing.points.slice(0, 1), source: { basis: proof, model } }, clock).outcome).toBe("error");
+    expect(executeForecastWorkerRequest({ ...selection(0), source: { basis: proof, model } }, { now() { throw new Error("clock"); } }).outcome).toBe("result");
     expect(JSON.stringify({ model, result })).toBe(before);
     expect(calculationFingerprint("baseline_forecast", model, createHouseholdForecastRequest(configuration, ids.model))).toBe(fingerprintBefore);
 
@@ -133,7 +272,7 @@ describe("U1B sourced planning readiness", () => {
     expect(workers).toHaveLength(1);
     expect(workers[0]!.messages).toHaveLength(1);
     const first = executeForecastWorkerRequest(workers[0]!.messages[0]!, clock);
-    workers[0]!.onmessage?.({ data: { ...first, fingerprint: "superseded-source" } });
+    workers[0]!.onmessage?.({ data: { ...first, requestId: -1, fingerprint: "superseded-source" } });
     expect(delivered).toHaveLength(0);
     workers[0]!.onmessage?.({ data: first });
     expect(cancelled).toHaveLength(0);
@@ -147,7 +286,7 @@ describe("U1B sourced planning readiness", () => {
     expect(delivered.at(-1)?.outcome).toBe("error");
     evidence.select(selection(1), response => delivered.push(response));
     expect(workers).toHaveLength(2);
-    expect(workers[1]!.messages[0]!.source).toEqual({ forecast: result, model });
+    expect(workers[1]!.messages[0]!.source).toEqual({ basis: proof, model });
     const pending = executeForecastWorkerRequest(workers[1]!.messages[0]!, clock);
     evidence.dispose();
     const count = delivered.length;

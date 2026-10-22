@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { domainId, generatedOccurrenceKey, type GeneratedOccurrenceKey } from "../src/identity/index.js";
-import { createAuthoritativeState } from "../src/state/index.js";
-import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { createAuthoritativeState, createIndexedExecutionState } from "../src/state/index.js";
+import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
 import { Money, Rate, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
 import { runVerticalSlice2, type VerticalSlice2Input } from "../src/verticalSlice2.js";
@@ -370,6 +370,23 @@ describe("Vertical Slice 2 growing household cash flow", () => {
     expect(result.state.identities.generatedOccurrenceKeys.some((key) => key.includes(primitive(9)))).toBe(false);
   });
 
+  it("keeps indexed candidate execution economically identical to ordinary standalone state", () => {
+    // Short prepared execution supplies the unindexed comparison; long runs
+    // use the same existing state index as the household kernel.
+    for (const cash of ["0", "1000"]) {
+      const model = input("0.05", "0.02"), source = opening(cash);
+      const before = canonicalSerialize(source);
+      const request = { runContext: context(13), input: model, months: 13 };
+      const plain = runVerticalSlice2({ ...request, openingState: source });
+      const indexed = runVerticalSlice2({ ...request, openingState: createIndexedExecutionState(source) });
+      expect(canonicalSerialize(indexed)).toBe(canonicalSerialize(plain));
+      expect(canonicalSerialize(source)).toBe(before);
+      const long = runVerticalSlice2({ runContext: context(25), input: model, openingState: source, months: 25 });
+      expect(long.status).toBe(plain.status);
+      expect(long.periods.slice(0, 13).map(period => ({ income: period.recurringIncomeRecognized.amount.toString(), expense: period.recurringExpenseRecognized.amount.toString(), cash: period.endingCash.amount.toString(), transactions: period.transactions.map(tx => tx.id) }))).toEqual(
+        plain.periods.map(period => ({ income: period.recurringIncomeRecognized.amount.toString(), expense: period.recurringExpenseRecognized.amount.toString(), cash: period.endingCash.amount.toString(), transactions: period.transactions.map(tx => tx.id) })));
+    }
+  });
   it("completes a deterministic 360-month golden horizon without duplicate occurrences", () => {
     const first = runVerticalSlice2({ runContext: context(360), openingState: opening(), input: input("0.05", "0.02"), months: 360 });
     const second = runVerticalSlice2({ runContext: context(360, "30000000-0000-4000-8000-000000000003"), openingState: opening(), input: input("0.05", "0.02"), months: 360 });

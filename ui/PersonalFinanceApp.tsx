@@ -69,7 +69,6 @@ import {
   migratePersonalModelVersion,
   migratePersistedPersonalModel,
   comparePersonalScenarios,
-  runPersonalForecast,
   resolvePersonalSessionSettings,
   savePersonalModel,
   sessionSettingsFromHorizon,
@@ -104,7 +103,7 @@ import {
   isPersonalPersistenceEnabledOrigin,
 } from "./persistence/indexedDbPersonalModelStore.js";
 
-import { useInteractiveForecast, useForecastEvidence } from "./forecast/useInteractiveForecast.js";
+import { useInteractiveForecast, useForecastEvidence, useStandaloneForecast } from "./forecast/useInteractiveForecast.js";
 import { EditorHub, canRepairEntityField } from "./EntityEditor.js";
 import { mortgageFinalPaymentDate, mortgagePaymentCount } from "../src/application/compiler/liabilities.js";
 import { currentPlan, simulationWindowProblem, replaceCurrentPlanHorizon, acceptRetirementProposal } from "../src/application/forecastSetup.js";
@@ -309,7 +308,8 @@ export function PersonalFinanceApp() {
   const [setupStep, setSetupStep] = useState(0);
   const [forecastScope, setForecastScope] =
     useState<ForecastRequest["scope"]>("cash_flow");
-  const [forecast, setForecast] = useState<PersonalForecastReadModel>();
+  const standalone = useStandaloneForecast();
+  const forecast = !standalone.view.pending && !standalone.view.stale ? standalone.view.result : undefined;
   const [comparison, setComparison] =
     useState<PersonalScenarioComparisonReadModel>();
   const [householdExecution, setHouseholdExecution] =
@@ -432,8 +432,12 @@ export function PersonalFinanceApp() {
     void inspectSavedModel(store);
   }, []);
 
+  useEffect(() => {
+    standalone.controller.invalidate();
+  }, [draft, sessionSettings, liabilityConfig, investmentOwnerId, retirementBindings, householdExecution, forecastScope, standalone.controller]);
+
   const invalidateResults = () => {
-    setForecast(undefined);
+    standalone.controller.reset();
     setComparison(undefined);
     setRunSettingsError("");
   };
@@ -708,17 +712,11 @@ export function PersonalFinanceApp() {
                 openingContractStatus: "current" as const,
               })),
             };
-    setForecast(
-      runPersonalForecast(
-        draft,
-        scope === "cash_flow" && householdExecution?.cashFlowExecutionAccountId
-          ? {
-              ...request,
-              cashFlowExecutionAccountId:
-                householdExecution.cashFlowExecutionAccountId,
-            }
-          : request,
-      ),
+    standalone.controller.run(
+      draft,
+      scope === "cash_flow" && householdExecution?.cashFlowExecutionAccountId
+        ? { ...request, cashFlowExecutionAccountId: householdExecution.cashFlowExecutionAccountId }
+        : request,
     );
   };
   const runComparison = (
@@ -1048,6 +1046,7 @@ export function PersonalFinanceApp() {
                 forecast={forecast}
                 error={runSettingsError}
               />
+              <StandaloneStatus view={standalone.view} cancel={() => standalone.controller.cancel()} />
             </div>
           )}
           {primary === "Plan" && subnav === "Current Plan" && (
@@ -1103,6 +1102,7 @@ export function PersonalFinanceApp() {
               <summary>Expert standalone forecasts</summary>
               <p>Inspect a supported scope independently. These results are separate from the reconciled household outlook.</p>
               <section aria-label="Standalone forecast drill-down">
+                <StandaloneStatus view={standalone.view} cancel={() => standalone.controller.cancel()} />
                 <Plan
                   forecastScope={forecastScope}
                   setScope={setForecastScope}
@@ -1438,9 +1438,15 @@ function MortgageOutlook({ draft, forecast, property = false, currency, selected
   return <section className="panel section-outlook mortgage-outlook" aria-label={property ? "Property mortgage outlook" : "Debt outlook"}
     data-evidence-state={!loans.length ? "unavailable" : models.baseline?.pending ? "pending" : models.baseline?.lifecycle === "error" ? "error" : models.baseline?.lifecycle === "unsupported" ? "unsupported" : !forecast ? "unavailable" : !current ? "stale" : !points.length ? "unavailable" : active?.error ? "error" : active?.window?.status ?? "loading"}>
     <p className="eyebrow">{property ? "Real Estate" : "Debt"}</p><h1>{property ? "Your property" : "Your borrowing"}</h1>
+    <details aria-label="Evidence phase timings"><summary>Evidence loading details</summary>
+      <ul>{active.diagnostics.map((record, index) => <li key={index}>Request {record.requestId} · {record.phase} · {record.pointCount} selected periods · {Math.round(record.elapsedMs)} ms since selection</li>)}</ul>
+    </details>
     {!property && (liabilityData ? <>
       <LiabilityBalanceOutlook data={liabilityData} selectedStart={selectedStart} selectMonth={selectMonth} />
       <div className="mortgage-window-controls" aria-label="Household liability chart window">
+        <label>Liability window starting<select aria-label="Liability window starting" value={points[startIndex]!.periodStart} onChange={event => selectMonth(event.target.value)}>
+          {points.filter((_point, index) => index % 12 === 0).map(point => <option key={point.periodStart} value={point.periodStart}>{point.periodStart.slice(0, 10)}</option>)}
+        </select></label>
         <button disabled={startIndex === 0} onClick={() => selectMonth(points[Math.max(0, startIndex - 12)]!.periodStart)}>Previous liability months</button>
         <button disabled={startIndex + 12 >= points.length} onClick={() => selectMonth(points[startIndex + 12]!.periodStart)}>Next liability months</button>
       </div>
@@ -1748,6 +1754,15 @@ function NetWorthOverview({
       </section>
     </>
   );
+}
+function StandaloneStatus({ view, cancel }: { view: import("./forecast/controller.js").StandaloneView; cancel: () => void }) {
+  return <section aria-label="Standalone calculation status" data-state={view.pending ? "running" : view.error ? "error" : view.cancelled ? "cancelled" : view.stale ? "stale" : view.result?.status ?? "idle"}>
+    {view.pending && <><p role="status">Calculating standalone forecast in a worker…</p><button onClick={cancel}>Cancel standalone forecast</button></>}
+    {view.stale && <p role="status">The retained standalone result is out of date. Run the forecast to refresh it.</p>}
+    {view.cancelled && <p role="status">Standalone forecast cancelled. Run the forecast to try again.</p>}
+    {view.error && <p role="alert">{view.error}</p>}
+    {view.durationMs !== undefined && !view.pending && !view.stale && <details><summary>Standalone execution timing</summary><p>Worker calculation: {Math.round(view.durationMs)} ms</p></details>}
+  </section>;
 }
 function Plan({
   forecastScope,

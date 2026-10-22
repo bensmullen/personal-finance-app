@@ -199,7 +199,7 @@ const restoreCheckpointDeltas = (deltas: readonly CheckpointDelta[], cutoff: str
 
 export interface PortableHouseholdReplayArtifact { readonly version: "household-replay/v1" | "household-replay/v2" | "household-replay/v3"; readonly encoded: string; readonly integrity?: string; }
 /** One shared opening/configuration artifact per forecast; never a detailed history warehouse. */
-export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecastSummaryResult): PortableHouseholdReplayArtifact => {
+export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecastSummaryResult, retainPrivateBasis = false): PortableHouseholdReplayArtifact => {
   const { executionKernel: _kernel, participants, ...base } = forecast.replay.kernel.executable;
   const executable = { ...base, ...(participants === undefined ? {} : { participants: participants.map(portableHouseholdParticipant) }) };
   const graph: EncodingGraph = { identities: new Map<object, Wire>(), content: new Map<string, Wire>(), active: new Set<object>() };
@@ -208,7 +208,14 @@ export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecas
     checkpoints: checkpointDeltas(exportHouseholdReplayCheckpoints(forecast)) }, graph));
   // Change detection, like the run fingerprint; this is not authentication.
   const integrity = createInputFingerprint({ runContext: forecast.replay.runContext, openingState: encoded });
-  return Object.freeze({ version: "household-replay/v3", encoded, integrity });
+  const artifact = Object.freeze({ version: "household-replay/v3" as const, encoded, integrity });
+  // The creating worker already owns the exact committed kernel/checkpoints.
+  // Retaining that immutable basis avoids decoding/requalifying all 649 months
+  // merely to inspect twelve. Transported artifacts still take the full verifier.
+  // Only the application reader may retain its private, unexposed execution.
+  // Ordinary exported artifacts continue to restore the serialized snapshot.
+  if (retainPrivateBasis) restoredArtifacts.set(artifact, { version: artifact.version, encoded, integrity, forecast });
+  return artifact;
 };
 const restorePortableArtifact = (artifact: unknown): Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods"> => {
   const supplied = artifact as PortableHouseholdReplayArtifact | undefined;

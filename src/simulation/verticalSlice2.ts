@@ -33,6 +33,7 @@ import {
   applyAccountingTransactionAtomically,
   assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
+  createIndexedExecutionState,
   registerAuthoritativeIdentity,
   createIndexedRecognitionFact as createRecognitionFact,
   authoritativeClaimHistory,
@@ -804,7 +805,10 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
   const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({
     runContext: request.runContext, openingState: request.openingState, model: request.input, assumptions: { months },
   }));
-  let committedState = cloneAuthoritativeState(request.openingState);
+  // Standalone long horizons use the same indexed immutable candidate state
+  // as household execution. Otherwise each posting recopies the growing claim
+  // and identity history, even though the financial evaluator is unchanged.
+  let committedState = createIndexedExecutionState(cloneAuthoritativeState(request.openingState));
   let committedPrimitiveState = createPrimitiveRuntimeStateStore(request.primitiveState);
   const committedPeriods: VerticalSlice2PeriodResult[] = [];
   const runDiagnostics: ValidationIssue[] = [];

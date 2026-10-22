@@ -16,6 +16,7 @@ type ObservedWindow = typeof window & {
   __u1bResults: ForecastWorkerResponse[];
   __u1bEvidence: { operation: string; requestId: number; fingerprint: string; startIndex: number; outcome: string; durationMs?: number }[];
   __u1bLongTasks: number[];
+  __u1bMortgage?: import("../src/application/mortgageChartData.js").MortgageWindow;
 };
 async function observe(page: Page) {
   await page.addInitScript(() => {
@@ -31,6 +32,7 @@ async function observe(page: Page) {
           const response = event.data;
           if (response.operation === "baseline_forecast" && response.outcome === "result") observed.__u1bResults.push(response);
           if (response.operation === "monthly_evidence" || response.operation === "mortgage_evidence") {
+            if (response.operation === "mortgage_evidence" && response.outcome === "result" && response.window) observed.__u1bMortgage = response.window;
             const { operation, requestId, fingerprint, startIndex, outcome, durationMs } = response;
             observed.__u1bEvidence = [...observed.__u1bEvidence.slice(-15), { operation, requestId, fingerprint, startIndex, outcome, ...(durationMs === undefined ? {} : { durationMs }) }];
           }
@@ -142,6 +144,17 @@ for (const width of [1440, 390]) {
     await expect(mortgage).toBeVisible({ timeout: 30_000 });
     const paid = inspectMortgageWindow(result.points.slice(0, 12), GOLDEN_HOUSEHOLD_IDS.mortgage).rows[0]!;
     await expect(mortgage.getByRole("status")).toHaveText(`2026-01 · Interest paid ${formatExactMoney(paid.interestPaid, paid.currency)} · Scheduled principal paid ${formatExactMoney(paid.scheduledPrincipalPaid, paid.currency)} · Extra principal paid ${formatExactMoney(paid.extraPrincipalPaid, paid.currency)}`);
+    // Real 649-point source: first, middle and final partial windows preserve
+    // all paid/funding/principal and trace IDs, not just chart presence.
+    for (const startIndex of [0, 324, 648]) {
+      if (startIndex) {
+        await page.getByLabel("Liability window starting", { exact: true }).selectOption(result.points[startIndex]!.periodStart);
+      }
+      const expected = inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), GOLDEN_HOUSEHOLD_IDS.mortgage);
+      await expect.poll(() => page.evaluate(() => (window as ObservedWindow).__u1bMortgage?.start)).toBe(expected.start);
+      expect(await page.evaluate(() => (window as ObservedWindow).__u1bMortgage)).toEqual(expected);
+    }
+    await page.getByLabel("Liability window starting", { exact: true }).selectOption(result.points[0]!.periodStart);
     // A second transition verifies responsive navigation and retained month
     // selection after both evidence projections, without another forecast.
     const returnStarted = Date.now();

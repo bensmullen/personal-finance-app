@@ -6,7 +6,7 @@ import { createHouseholdForecastRequest, type PersonalHouseholdSessionExecutionC
 import { resolvePersonalSessionSettings, type PersonalDraft, type PersonalSessionSettings } from "../../src/application/personalMvp.js";
 import { simulationWindowProblem } from "../../src/application/forecastSetup.js";
 import { applicationPerformanceRegistry } from "../../src/application/performance.js";
-import { EvidenceController, ForecastController, type EvidenceWorkerPort, type ForecastSubmission, type ForecastView, type ForecastWorkerPort } from "./controller.js";
+import { claimForecastEvidenceWorker, EvidenceController, ForecastController, StandaloneController, type StandaloneView, type StandaloneWorkerPort, type EvidenceWorkerPort, type ForecastSubmission, type ForecastView, type ForecastWorkerPort } from "./controller.js";
 
 const makeWorker = (): ForecastWorkerPort => new Worker(new URL("./household.worker.ts", import.meta.url), { type: "module" }) as unknown as ForecastWorkerPort;
 const scheduler = {
@@ -16,6 +16,13 @@ const scheduler = {
 
 type EvidenceScope = { controller: EvidenceController; users: number; release?: ReturnType<typeof setTimeout> | undefined };
 const evidenceScopes = new WeakMap<PersonalHouseholdForecastReadModel, WeakMap<PersonalDraft, EvidenceScope>>();
+
+export function useStandaloneForecast() {
+  const [view, setView] = useState<StandaloneView>({ pending: false, stale: false });
+  const [controller] = useState(() => new StandaloneController(() => new Worker(new URL("./household.worker.ts", import.meta.url), { type: "module" }) as unknown as StandaloneWorkerPort, setView));
+  useEffect(() => () => controller.dispose(), [controller]);
+  return { view, controller };
+}
 
 /** Panels share the same replay worker and restoration cache. A one-turn
  * release allows a route change to hand ownership to its destination panel;
@@ -27,7 +34,7 @@ export function useForecastEvidence(forecast: PersonalHouseholdForecastReadModel
     if (!models) { models = new WeakMap(); evidenceScopes.set(forecast, models); }
     let value = models.get(model);
     if (!value) {
-      value = { controller: new EvidenceController({ forecast, model }, () => new Worker(new URL("./household.worker.ts", import.meta.url), { type: "module" }) as unknown as EvidenceWorkerPort), users: 0 };
+      value = { controller: new EvidenceController({ forecast, model }, () => claimForecastEvidenceWorker(forecast) ?? new Worker(new URL("./household.worker.ts", import.meta.url), { type: "module" }) as unknown as EvidenceWorkerPort), users: 0 };
       models.set(model, value);
     }
     return value;
@@ -56,6 +63,7 @@ export function useForecastEvidence(forecast: PersonalHouseholdForecastReadModel
     window: response?.outcome === "result" ? response.window : undefined,
     error: response?.outcome === "error" ? response.error : undefined,
     refresh: () => setRevision(value => value + 1),
+    diagnostics: scope?.controller.diagnostics ?? [],
   };
 }
 

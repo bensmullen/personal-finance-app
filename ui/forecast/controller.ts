@@ -3,6 +3,35 @@ import type { PerformanceContext, PerformanceRecord } from "../../src/applicatio
 import type { ForecastWorkerRequest, ForecastWorkerResponse, ForecastWorkerResult } from "./protocol.js";
 import { baselineResultMatchesRequest } from "../../src/application/interactiveForecast.js";
 import type { EvidenceSelection, EvidenceWorkerRequest, EvidenceWorkerResponse } from "./protocol.js";
+import type { PersonalDraft, PersonalForecastReadModel, ForecastRequest } from "../../src/application/personalMvp.js";
+import type { StandaloneWorkerRequest, StandaloneWorkerResponse } from "./protocol.js";
+import type { PersonalHouseholdForecastReadModel } from "../../src/application/householdProjection.js";
+import type { PortableHouseholdReplayArtifact } from "../../src/simulation/r3/replayArtifact.js";
+
+export const EVIDENCE_DEADLINE_MS = 25_000;
+const evidenceScheduler: ForecastScheduler = { set: (callback, delay) => setTimeout(callback, delay), clear: handle => clearTimeout(handle as ReturnType<typeof setTimeout>) };
+export interface EvidenceDiagnostic {
+  readonly requestId: number;
+  readonly phase: "created" | "posted" | "received" | "restored" | "settled" | "error" | "timeout";
+  readonly elapsedMs: number;
+  readonly pointCount: number;
+}
+
+/** Remove repeated proof attachments without reading/restoring financial state.
+ * The full artifact is still required for integrity and checkpoint validation. */
+export function boundedEvidencePoints(source: PersonalHouseholdForecastReadModel, selection: EvidenceSelection) {
+  if (source.status === "unavailable" || !Number.isSafeInteger(selection.startIndex) || selection.startIndex < 0) throw new Error("Unavailable evidence");
+  const points = source.points.slice(selection.startIndex, selection.startIndex + (selection.operation === "monthly_evidence" ? 1 : 12));
+  if (!points.length) throw new Error("Unavailable period");
+  const basis = (points[0]!.traceRefs.find(ref => ref.replayArtifact !== undefined)?.replayArtifact as { basis?: PortableHouseholdReplayArtifact } | undefined)?.basis;
+  if (!basis) throw new Error("Unavailable proof");
+  return { basis, points: points.map(point => ({ ...point, traceRefs: point.traceRefs.map(ref => {
+    if (ref.replayArtifact === undefined) return ref;
+    const { basis: attached, ...address } = ref.replayArtifact as { basis: PortableHouseholdReplayArtifact; start: string; end: string };
+    if (attached !== basis && (attached.version !== basis.version || attached.integrity !== basis.integrity || attached.encoded !== basis.encoded)) throw new Error("Mismatched proof");
+    return { ...ref, replayArtifact: address };
+  }) })) };
+}
 
 export interface ForecastWorkerPort {
   onmessage: ((event: { data: ForecastWorkerResponse }) => void) | null;
@@ -17,11 +46,86 @@ export interface ForecastScheduler {
 }
 
 export interface EvidenceWorkerPort {
+  readonly evidenceSourceReady?: boolean;
   onmessage: ((event: { data: EvidenceWorkerResponse }) => void) | null;
   onerror: ((event: { preventDefault(): void }) => void) | null;
   onmessageerror: (() => void) | null;
   postMessage(request: EvidenceWorkerRequest): void;
   terminate(): void;
+}
+
+// The baseline controller owns lifetime; evidence panels may claim its idle
+// worker once. A retry after failure/disposal creates a fresh, verified worker.
+const retainedEvidenceWorkers = new WeakMap<object, EvidenceWorkerPort>();
+export function claimForecastEvidenceWorker(forecast: PersonalHouseholdForecastReadModel): EvidenceWorkerPort | undefined {
+  const worker = retainedEvidenceWorkers.get(forecast);
+  retainedEvidenceWorkers.delete(forecast);
+  return worker;
+}
+
+export interface StandaloneWorkerPort {
+  onmessage: ((event: { data: StandaloneWorkerResponse }) => void) | null;
+  onerror: ((event: { preventDefault(): void }) => void) | null;
+  onmessageerror: (() => void) | null;
+  postMessage(message: StandaloneWorkerRequest): void;
+  terminate(): void;
+}
+export interface StandaloneView {
+  readonly pending: boolean;
+  readonly stale: boolean;
+  readonly result?: PersonalForecastReadModel;
+  readonly error?: string | undefined;
+  readonly durationMs?: number;
+  readonly cancelled?: boolean;
+}
+/** Exact existing standalone application API, with independent cancellation and
+ * request ownership. It must never substitute a household run or shorter dates. */
+export class StandaloneController {
+  #worker: StandaloneWorkerPort | undefined;
+  #timer: unknown;
+  #sequence = 0;
+  #view: StandaloneView = { pending: false, stale: false };
+  constructor(readonly makeWorker: () => StandaloneWorkerPort, readonly changed: (view: StandaloneView) => void,
+    readonly scheduler: ForecastScheduler = evidenceScheduler) {}
+  #publish(view: StandaloneView): void { this.#view = view; this.changed(view); }
+  #stop(): void {
+    ++this.#sequence;
+    this.scheduler.clear(this.#timer); this.#timer = undefined;
+    if (this.#worker) {
+      this.#worker.onmessage = null; this.#worker.onerror = null; this.#worker.onmessageerror = null;
+      try { this.#worker.terminate(); } catch { /* Latest request remains authoritative. */ }
+    }
+    this.#worker = undefined;
+  }
+  run(model: PersonalDraft, request: ForecastRequest): void {
+    this.#stop();
+    const requestId = this.#sequence;
+    this.#publish({ ...this.#view, pending: true, stale: this.#view.result !== undefined, error: undefined, cancelled: false });
+    const fail = () => {
+      if (requestId !== this.#sequence) return;
+      this.#stop();
+      this.#publish({ ...this.#view, pending: false, error: "Standalone forecast could not be calculated. Run the forecast again to retry." });
+    };
+    try {
+      const worker = this.makeWorker(); this.#worker = worker;
+      worker.onerror = event => { event.preventDefault(); fail(); };
+      worker.onmessageerror = fail;
+      worker.onmessage = ({ data }) => {
+        if (requestId !== this.#sequence) return;
+        if (data.operation !== "standalone_forecast" || data.requestId !== requestId) { fail(); return; }
+        if (data.outcome === "error" || data.result.scope !== request.scope || data.result.simulationStart !== request.simulationStart || data.result.simulationEnd !== request.simulationEnd) { fail(); return; }
+        if (data.result.status === "completed" && ("points" in data.result ? data.result.points.length : data.result.liabilityPeriodTotals.length) !== request.months) { fail(); return; }
+        this.#stop();
+        this.#publish({ pending: false, stale: false, result: data.result, durationMs: data.durationMs });
+      };
+      this.#timer = this.scheduler.set(fail, 60_000);
+      worker.postMessage({ operation: "standalone_forecast", requestId, model, request });
+    } catch { fail(); }
+  }
+  invalidate(): void { this.#stop(); this.#publish({ ...this.#view, pending: false, stale: this.#view.result !== undefined, error: undefined, cancelled: false }); }
+  cancel(): void { this.#stop(); this.#publish({ ...this.#view, pending: false, stale: this.#view.result !== undefined, cancelled: true }); }
+  reset(): void { this.#stop(); this.#publish({ pending: false, stale: false }); }
+  dispose(): void { this.#stop(); }
 }
 
 /** One evidence worker per immutable source shared by all visible panels.
@@ -31,8 +135,27 @@ export class EvidenceController {
   #sequence = 0;
   #sent = false;
   #cache = new Map<string, EvidenceWorkerResponse>();
-  #pending = new Map<number, { key: string; boundary: Omit<EvidenceWorkerRequest, "source">; listeners: Set<(response: EvidenceWorkerResponse) => void> }>();
-  constructor(readonly source: NonNullable<EvidenceWorkerRequest["source"]>, readonly makeWorker: () => EvidenceWorkerPort) {}
+  #pending = new Map<number, { key: string; boundary: Pick<EvidenceWorkerRequest, "operation" | "requestId" | "fingerprint" | "startIndex" | "liabilityId">; timer?: unknown; started: number; pointCount: number; listeners: Set<(response: EvidenceWorkerResponse) => void> }>();
+  readonly diagnostics: EvidenceDiagnostic[] = [];
+  constructor(readonly source: { forecast: PersonalHouseholdForecastReadModel; model: PersonalDraft }, readonly makeWorker: () => EvidenceWorkerPort,
+    readonly scheduler: ForecastScheduler = evidenceScheduler, readonly now: () => number = () => performance.now()) {}
+  #observe(item: { boundary: { requestId: number }; started: number; pointCount: number }, phase: EvidenceDiagnostic["phase"]): void {
+    try {
+      const elapsedMs = this.now() - item.started;
+      if (Number.isFinite(elapsedMs) && elapsedMs >= 0) {
+        this.diagnostics.push({ requestId: item.boundary.requestId, phase, elapsedMs, pointCount: item.pointCount });
+        if (this.diagnostics.length > 32) this.diagnostics.shift();
+      }
+    } catch { /* Observation never affects execution. */ }
+  }
+  #fail(phase: "error" | "timeout" = "error"): void {
+    const pending = [...this.#pending.values()];
+    this.dispose();
+    for (const item of pending) {
+      this.#observe(item, phase);
+      for (const listener of item.listeners) listener({ ...item.boundary, outcome: "error", error: "Monthly evidence could not be verified. Retry the selected evidence or update the forecast." });
+    }
+  }
   select(selection: EvidenceSelection, changed: (response: EvidenceWorkerResponse) => void, refresh = false): () => void {
     const key = `${selection.operation}:${selection.startIndex}:${selection.liabilityId}`;
     if (refresh) this.#cache.delete(key);
@@ -43,38 +166,61 @@ export class EvidenceController {
     const forecast = this.source.forecast;
     const fingerprint = forecast.status !== "unavailable" ? forecast.points[selection.startIndex]?.traceRefs.find(ref => ref.replayArtifact !== undefined)?.traceId ?? "unavailable" : "unavailable";
     const boundary = { ...selection, requestId: ++this.#sequence, fingerprint };
-    const pending = { key, boundary, listeners: new Set([changed]) };
+    let started = 0;
+    try { started = this.now(); } catch { /* Optional observation. */ }
+    const pending = { key, boundary, started, pointCount: selection.operation === "monthly_evidence" ? 1 : Math.min(12, forecast.status === "unavailable" ? 0 : forecast.points.length - selection.startIndex), timer: undefined as unknown, listeners: new Set([changed]) };
     this.#pending.set(boundary.requestId, pending);
-    const fail = () => {
-      const pending = [...this.#pending.values()];
-      this.dispose();
-      for (const item of pending) for (const listener of item.listeners) listener({ ...item.boundary, outcome: "error", error: "Monthly evidence has missing or mismatched period/source data. Update the forecast and retry." });
-    };
+    const fail = () => this.#fail();
     try {
+      pending.timer = this.scheduler.set(() => {
+        if (pending.listeners.size) this.#fail("timeout");
+        else this.#pending.delete(boundary.requestId);
+      }, EVIDENCE_DEADLINE_MS);
       if (!this.#worker) {
         this.#worker = this.makeWorker();
+        this.#observe(pending, "created");
         this.#worker.onmessage = ({ data }) => {
           const item = this.#pending.get(data.requestId);
-          if (!item || data.operation !== item.boundary.operation || data.fingerprint !== item.boundary.fingerprint || data.startIndex !== item.boundary.startIndex || data.liabilityId !== item.boundary.liabilityId) return;
+          if (!item) return; // Superseded response; live requests still have deadlines.
+          if (data.operation !== item.boundary.operation || data.fingerprint !== item.boundary.fingerprint || data.startIndex !== item.boundary.startIndex || data.liabilityId !== item.boundary.liabilityId) { fail(); return; }
+          if (data.outcome === "progress") {
+            this.#observe(item, data.phase);
+            for (const listener of item.listeners) listener(data);
+            return;
+          }
+          if (data.outcome === "error") { fail(); return; }
           if (data.outcome === "result") {
             const point = this.source.forecast.status !== "unavailable" ? this.source.forecast.points[data.startIndex] : undefined;
-            if (data.operation === "monthly_evidence" ? !data.detail : !data.window || data.window.start !== point?.periodStart || data.window.liabilityId !== data.liabilityId) { fail(); return; }
+            const end = this.source.forecast.status !== "unavailable" ? this.source.forecast.points[data.startIndex + item.pointCount - 1]?.periodEnd : undefined;
+            if (data.operation === "monthly_evidence" ? !data.detail : !data.window || data.window.start !== point?.periodStart || data.window.end !== end || data.window.rows.length !== item.pointCount || data.window.liabilityId !== data.liabilityId ||
+              `household:replay:${data.window.fingerprint}:${point?.periodStart}:${point?.periodEnd}` !== item.boundary.fingerprint ||
+              data.window.rows.some((row, index) => this.source.forecast.status === "unavailable" || row.start !== this.source.forecast.points[data.startIndex + index]?.periodStart || row.end !== this.source.forecast.points[data.startIndex + index]?.periodEnd)) { fail(); return; }
             if (this.#cache.size >= 4) this.#cache.delete(this.#cache.keys().next().value!);
             this.#cache.set(item.key, data);
           }
           this.#pending.delete(data.requestId);
+          this.scheduler.clear(item.timer);
+          this.#observe(item, "settled");
           for (const listener of item.listeners) listener(data);
         };
         this.#worker.onerror = event => { event.preventDefault(); fail(); };
         this.#worker.onmessageerror = fail;
       }
-      this.#worker.postMessage({ ...boundary, ...(!this.#sent ? { source: this.source } : {}) });
+      const bounded = boundedEvidencePoints(forecast, selection);
+      this.#worker.postMessage({ ...boundary, points: bounded.points,
+        ...(!this.#sent ? { source: { ...(!this.#worker.evidenceSourceReady ? { basis: bounded.basis } : {}), model: this.source.model } } : {}) });
+      this.#observe(pending, "posted");
       this.#sent = true;
     } catch { fail(); }
     return () => { pending.listeners.delete(changed); };
   }
   dispose(): void {
-    this.#worker?.terminate(); this.#worker = undefined; this.#sent = false; this.#pending.clear();
+    for (const item of this.#pending.values()) this.scheduler.clear(item.timer);
+    if (this.#worker) {
+      this.#worker.onmessage = null; this.#worker.onerror = null; this.#worker.onmessageerror = null;
+      try { this.#worker.terminate(); } catch { /* Disposed ownership is authoritative. */ }
+    }
+    this.#worker = undefined; this.#sent = false; this.#pending.clear();
   }
 }
 export type ForecastSubmission = ForecastWorkerRequest extends infer R ? R extends ForecastWorkerRequest ? Omit<R, "requestId"> : never : never;
@@ -92,6 +238,7 @@ export class ForecastController {
   #sequence = 0;
   #worker: ForecastWorkerPort | undefined;
   #timer: unknown;
+  #retained: { result: object; worker: EvidenceWorkerPort } | undefined;
   readonly #cache = new BaselineCache<ForecastWorkerResult>();
   constructor(
     readonly makeWorker: () => ForecastWorkerPort,
@@ -108,9 +255,16 @@ export class ForecastController {
     try { this.#worker?.terminate(); } catch { /* Supersession suppression remains authoritative. */ }
     this.#worker = undefined;
   }
+  #releaseEvidence(): void {
+    if (!this.#retained) return;
+    retainedEvidenceWorkers.delete(this.#retained.result);
+    try { this.#retained.worker.terminate(); } catch { /* Ownership still ends. */ }
+    this.#retained = undefined;
+  }
   #record(record: PerformanceRecord): void { try { this.record(record); } catch { /* Observational only. */ } }
   #now(): number | undefined { try { const value = this.now(); return Number.isFinite(value) ? value : undefined; } catch { return undefined; } }
   submit(input: ForecastSubmission, immediate = false): void {
+    this.#releaseEvidence();
     this.#stop();
     const requestId = ++this.#sequence;
     const message = { ...input, requestId } as ForecastWorkerRequest;
@@ -148,18 +302,27 @@ export class ForecastController {
             availability: sentAt !== undefined && receivedAt !== undefined && receivedAt >= sentAt ? "measured" : "unavailable",
             ...(sentAt !== undefined && receivedAt !== undefined && receivedAt >= sentAt ? { durationMs: receivedAt - sentAt } : {}),
             resources: { metering: "not_metered", structuralCounters: { workerResponsesReceived: 1 } } });
-          this.#stop();
           for (const record of data.records) this.#record(record);
           if (data.outcome === "error") {
+            this.#stop();
             this.#publish(settledForecastState(this.#state, "error", undefined, data.error.message));
             return;
           }
           const result = data.result;
           if (input.operation === "baseline_forecast" && "points" in result && "scope" in result && !baselineResultMatchesRequest(result, input.request)) {
+            this.#stop();
             this.#publish(settledForecastState(this.#state, "error", undefined, "Forecast periods do not match the requested window. Recalculate to retry."));
             return;
           }
           const good = isCacheableBaseline(result.status);
+          if (input.operation === "baseline_forecast" && good && "points" in result) {
+            const evidenceWorker = worker as unknown as EvidenceWorkerPort;
+            Object.defineProperty(evidenceWorker, "evidenceSourceReady", { value: true, configurable: true });
+            this.#retained = { result, worker: evidenceWorker };
+            retainedEvidenceWorkers.set(result, evidenceWorker);
+            this.#worker = undefined;
+          }
+          this.#stop();
           if (input.operation === "baseline_forecast" && good) this.#cache.put(input.fingerprint, result);
           this.#publish({ ...settledForecastState(this.#state, isCacheableBaseline(result.status) ? result.status : "unsupported", result,
             result.status === "unavailable" ? result.message : undefined),
@@ -185,18 +348,21 @@ export class ForecastController {
     else this.#timer = this.scheduler.set(run, FORECAST_DEBOUNCE_MS);
   }
   invalidate(message = "Execution configuration is unavailable."): void {
+    this.#releaseEvidence();
     this.#stop();
     this.#publish({ ...this.#state, pending: false, stale: this.#state.lastGoodResult !== undefined,
       lifecycle: this.#state.lastGoodResult === undefined ? "idle" : "stale", latestResult: undefined, message });
   }
   /** A replacement model must never inherit results or diagnostics from another model. */
   reset(): void {
+    this.#releaseEvidence();
     this.#stop();
     ++this.#sequence;
     this.#cache.clear();
     this.#publish(initialForecastState());
   }
   dispose(): void {
+    this.#releaseEvidence();
     this.#stop();
     this.#state = initialForecastState();
     this.#cache.clear();

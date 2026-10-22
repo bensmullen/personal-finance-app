@@ -565,6 +565,29 @@ test("Owner repair: isolated mortgage shortfalls name the evaluated payment acco
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  await page.addInitScript(() => {
+    type Observed = typeof window & { __standaloneRequest?: { scope: string; start: string; end: string; months: number }; __standaloneResult?: { scope: string; status: string; months: number; durationMs: number } };
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        this.addEventListener("message", (event: MessageEvent<import("../ui/forecast/protocol.js").StandaloneWorkerResponse>) => {
+          const response = event.data;
+          if (response.operation === "standalone_forecast" && response.outcome === "result") {
+            const result = response.result;
+            (window as Observed).__standaloneResult = { scope: result.scope, status: result.status, months: "points" in result ? result.points.length : 0, durationMs: response.durationMs };
+          }
+        });
+      }
+      postMessage(message: import("../ui/forecast/protocol.js").StandaloneWorkerRequest) {
+        if (message.operation === "standalone_forecast") {
+          const request = message.request;
+          (window as Observed).__standaloneRequest = { scope: request.scope, start: request.simulationStart, end: request.simulationEnd, months: request.months };
+        }
+        super.postMessage(message);
+      }
+    };
+  });
   await page.goto("/"); await page.getByRole("button", { name: "Use synthetic example" }).click();
   // The supported flagship has $4M in checking, so a shortfall must be
   // authored explicitly rather than assumed. Use the real account owner UI.
@@ -598,7 +621,9 @@ test("Owner repair: isolated mortgage shortfalls name the evaluated payment acco
   await open(page, "Expert standalone forecasts");
   await standalone.getByLabel("Forecast scope", { exact: true }).selectOption("cash_flow");
   await standalone.getByRole("button", { name: "Run cash flow forecast", exact: true }).click();
+  expect(await page.evaluate(() => (window as typeof window & { __standaloneRequest?: unknown }).__standaloneRequest)).toEqual({ scope: "cash_flow", start: "2026-01-01", end: "2080-02-01", months: 649 });
   await expect(standalone.getByText("Standalone cash-flow forecast · no mortgage execution", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as typeof window & { __standaloneResult?: unknown }).__standaloneResult)).toMatchObject({ scope: "cash_flow", status: "completed", months: 649 });
   expect(errors).toEqual([]);
 });
 
