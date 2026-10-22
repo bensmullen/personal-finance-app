@@ -18,6 +18,10 @@ A routine stochastic forecast or strategy evaluation is a budgeted computation p
 
 **FRAMEWORK_RELIABILITY — Issue [#218](https://github.com/bensmullen/personal-finance-app/issues/218):** The product manager approved bounded optional local type/unit preflight, early source-backed scaling feasibility checks, and inexpensive static/type/build gating before four-way browser E2E. The same independent framework task investigates the shared worktree latest-task receipt ambiguity without weakening single-writer/scope protections. #218 must pass its own tooling, CI and hook self-tests before its framework implementation is accepted; it does **not** block U1B #181 or any D1/D2/R11 economic product gate. Framework-control paths remain separate from implementation PRs.
 
+### Independent CI-efficiency optimization gate
+
+**CI_OPTIMIZATION — Issue [#224](https://github.com/bensmullen/personal-finance-app/issues/224):** PM-approved framework-only three-way parallel unit verification and four deterministic duration-balanced E2E shards, with exact inventory/no-duplicate proof, timeout diagnostics and unchanged fail-closed aggregate `test` and deployment requirements. Acceptance requires its own green CI, audited before/after wall-clock and runner-minute evidence, and preservation of every required financial/649-month browser assertion. This framework improvement neither fixes nor weakens the separate #181/PR #207 full-horizon performance acceptance and does not block D1/U1/D2/R11 product execution. Merge this registration PR before Codex bootstrap for #224.
+
 ## 2. Dependency sequence
 
 ~~~text
