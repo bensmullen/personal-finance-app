@@ -82,6 +82,13 @@
       "required_issue_numbers": [
         218
       ]
+    },
+    "CI_OPTIMIZATION": {
+      "stage": "Engineering CI execution efficiency and failure observability",
+      "blocking_transition": "Declare #224 duration-balanced CI optimization implemented only after its framework PR is merged, exact-head selected CI is all-green, test-inventory equivalence and aggregate fail-closed behavior are verified, and critical-path/runner-minute evidence is compared. Independent of D1/U1/D2/R11 product release gates.",
+      "required_issue_numbers": [
+        224
+      ]
     }
   },
   "issues": [
@@ -505,6 +512,18 @@
         "PFA-UX-024"
       ],
       "scope": "PM-approved opt-in bounded local type/unit preflight, selected TypeScript/build/8+20-month feasibility before all four E2E shards, manual progressive 8/20/120/360/649 scaling diagnostics, and fail-closed single-session receipt ownership. FRAMEWORK_RELIABILITY requires merged selected CI and negative hook tests; #181 still independently requires full 649-month success and financial equality. Candidates #134/#217 retain independent ChatGPT curation. Framework only; no U1B/D2 product blocking edge."
+    },
+    {
+      "issue_number": 224,
+      "owner_stage": "engineering-ci-efficiency",
+      "blocking_gate": "CI_OPTIMIZATION",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-PERF-019",
+        "PFA-PERF-021",
+        "PFA-UX-024"
+      ],
+      "scope": "PM-approved framework-only three-way parallel full Vitest verification and four duration-aware Playwright E2E shards, deterministic no-omission/no-duplication inventory planning, preserved 20m containment, fail-closed aggregate test/deploy gate and per-test execution diagnostics. Separate from #181/#207 full 649-month engine acceptance; registration must merge before Codex implementation."
     }
   ],
   "legacy_open_task_reconciliation": {
