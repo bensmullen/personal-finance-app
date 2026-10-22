@@ -590,7 +590,7 @@ test("Owner repair: isolated mortgage shortfalls name the evaluated payment acco
   const explanation = standalone.getByRole("region", { name: "Mortgage funding explanation" }).first();
   await expect(explanation).toContainText("Example mortgage"); await expect(explanation).toContainText("2026-01-01");
   await expect(explanation).toContainText("Payment account: Isolated mortgage bank");
-  await expect(explanation).toContainText("Required $1325.29; available $0.00");
+  await expect(explanation).toContainText("Required $1325.29; available from the evaluated funding sources $0.00");
   await explanation.getByRole("button", { name: "Review mortgage payment account", exact: true }).click();
   const funding = page.getByLabel("Mortgage payment account", { exact: true });
   await expect(funding).toBeFocused(); await expect(funding).toBeVisible();
