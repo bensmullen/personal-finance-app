@@ -110,6 +110,10 @@ for (const width of [1440, 390]) {
   test(`Debt primary household liability chart uses the reconciled source at ${width}px`, async ({ page }) => {
     await observe(page); await setup(page, width);
     const source = await appliedSource(page), expected = inspectLiabilityBalanceWindow(source, 0);
+    expect(source.status).toBe("completed");
+    expect(source.reachedThrough).toBe("2026-03-01T00:00:00.000Z");
+    expect(source.points.map(point => point.statementIncome.amount)).toEqual(["0", "0"]);
+    await expect(status(page)).toHaveAttribute("data-lifecycle", "completed");
     await clickFinancialDestination(page, "Debt");
     const chart = page.getByRole("region", { name: "Household liability balance outlook", exact: true });
     await expect(chart).toHaveAttribute("data-evidence-state", expected.status);

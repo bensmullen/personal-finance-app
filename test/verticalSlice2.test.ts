@@ -103,7 +103,106 @@ const opening = (cash = "0", generatedOccurrenceKeys: readonly GeneratedOccurren
   identities: { generatedOccurrenceKeys },
 });
 
+const futureStreamInput = (kind: "income" | "expense", streamStart: string, streamEnd?: string): VerticalSlice2Input => {
+  const base = input();
+  const future = instant(streamStart);
+  const timing = {
+    start: future,
+    ...(streamEnd === undefined ? {} : { end: instant(streamEnd) }),
+    recurrence: { kind: "utc_monthly" as const, anchor: future, invalidDayPolicy: "skip" as const },
+  };
+  return {
+    ...base,
+    incomes: kind === "income" ? [{ ...base.incomes[0]!, ...timing, growthBaseAt: future }] : [],
+    expenses: kind === "expense" ? [{ ...base.expenses[0]!, ...timing, inflationBaseAt: future }] : [],
+    events: [],
+  };
+};
+
 describe("Vertical Slice 2 growing household cash flow", () => {
+  for (const kind of ["income", "expense"] as const) {
+    it(`keeps future open-ended ${kind} out of early periods and recognizes it once at its source date`, () => {
+      const future = instant("2026-07-02T00:00:00.000Z");
+      const model = futureStreamInput(kind, future);
+      const short = runVerticalSlice2({ runContext: context(2), openingState: opening("500"), input: model, months: 2 });
+      expect(short.status).toBe("completed");
+      expect(short.diagnostics).toEqual([]);
+      expect(short.periods.map(period => period.period)).toEqual(utcMonthlyPeriods(start, 2));
+      expect(short.reachedThrough).toBe(instant("2026-03-01T00:00:00.000Z"));
+      for (const period of short.periods) {
+        expect(period.incomeOccurrences).toEqual([]);
+        expect(period.expenseOccurrences).toEqual([]);
+        expect(period.recognitions).toEqual([]);
+        expect(period.transactions).toEqual([]);
+        expect(period.settlements).toEqual([]);
+        expect(period.recurringIncomeRecognized.equals(money("0"))).toBe(true);
+        expect(period.recurringExpenseRecognized.equals(money("0"))).toBe(true);
+        expect(period.endingCash.equals(money("500"))).toBe(true);
+      }
+      expect(short.state).toEqual(opening("500"));
+
+      const extended = runVerticalSlice2({ runContext: context(7), openingState: opening("500"), input: model, months: 7 });
+      expect(extended.status).toBe("completed");
+      expect(extended.diagnostics).toEqual([]);
+      expect(extended.periods).toHaveLength(7);
+      expect(extended.periods.slice(0, 2)).toEqual(short.periods);
+      const occurrences = extended.periods.flatMap(period => [...period.incomeOccurrences, ...period.expenseOccurrences]);
+      const expectedKey = generatedOccurrenceKey({
+        scenarioId: context(7).scenarioId,
+        primitiveInstanceId: primitive(kind === "income" ? 2 : 5),
+        scheduledAt: future,
+        semanticEffectType: kind === "income" ? "income-recognition" : "expense-recognition",
+        economicTargetId: kind === "income" ? ids.salary : ids.rent,
+      });
+      expect(occurrences).toHaveLength(1);
+      expect(occurrences[0]).toMatchObject({ occurrenceId: expectedKey, scheduledAt: future });
+      expect(occurrences[0]!.amount.equals(money(kind === "income" ? "1000" : "100"))).toBe(true);
+      expect(occurrences[0]!.traceRefs.length).toBeGreaterThan(0);
+      const recognitions = extended.periods.flatMap(period => period.recognitions);
+      expect(recognitions).toHaveLength(1);
+      expect(recognitions[0]).toMatchObject({ recognizedAt: future, sourceOccurrenceKey: expectedKey });
+      const transactions = extended.periods.flatMap(period => period.transactions);
+      expect(transactions).toHaveLength(kind === "income" ? 1 : 2);
+      expect(transactions.every(transaction => transaction.date === future)).toBe(true);
+      expect(extended.state.accounts[ids.cash]!.cash.equals(money(kind === "income" ? "1500" : "400"))).toBe(true);
+      expect(extended.state.liabilities[ids.payable]!.balance.equals(money("0"))).toBe(true);
+      expect(extended.state.identities.generatedOccurrenceKeys.filter(key => key === expectedKey)).toHaveLength(1);
+
+      // Adding a later contractual end must preserve posting amounts,
+      // occurrence identities, provenance and financial traces exactly.
+      const finite = runVerticalSlice2({ runContext: context(7), openingState: opening("500"), input: futureStreamInput(kind, future, "2026-08-02T00:00:00.000Z"), months: 7 });
+      expect(finite.status).toBe("completed");
+      expect(finite.periods).toEqual(extended.periods);
+      expect(finite.state).toEqual(extended.state);
+    });
+
+    it.each(["2026-03-01T00:00:00.000Z", "2026-07-02T00:00:00.000Z"])(`accepts open-ended ${kind} starting at or beyond the exclusive horizon: %s`, streamStart => {
+      const result = runVerticalSlice2({ runContext: context(2), openingState: opening("500"), input: futureStreamInput(kind, streamStart), months: 2 });
+      expect(result.status).toBe("completed");
+      expect(result.periods).toHaveLength(2);
+      expect(result.periods.flatMap(period => [...period.incomeOccurrences, ...period.expenseOccurrences, ...period.transactions])).toEqual([]);
+      expect(result.state).toEqual(opening("500"));
+    });
+
+    it(`accepts a valid finite future ${kind} range without in-window occurrences`, () => {
+      const result = runVerticalSlice2({ runContext: context(2), openingState: opening("500"), input: futureStreamInput(kind, "2026-07-02T00:00:00.000Z", "2026-08-02T00:00:00.000Z"), months: 2 });
+      expect(result.status).toBe("completed");
+      expect(result.diagnostics).toEqual([]);
+      expect(result.periods).toHaveLength(2);
+      expect(result.periods.flatMap(period => [...period.incomeOccurrences, ...period.expenseOccurrences, ...period.transactions])).toEqual([]);
+      expect(result.state).toEqual(opening("500"));
+    });
+
+    it.each([
+      ["2026-01-02T00:00:00.000Z", "2026-01-02T00:00:00.000Z"],
+      ["2026-01-02T00:00:00.000Z", "2026-01-01T00:00:00.000Z"],
+      ["2026-07-02T00:00:00.000Z", "2026-07-02T00:00:00.000Z"],
+      ["2026-07-02T00:00:00.000Z", "2026-07-01T00:00:00.000Z"],
+    ])(`rejects invalid explicit ${kind} bounds inside or beyond the horizon: %s to %s`, (streamStart, streamEnd) => {
+      expect(() => runVerticalSlice2({ runContext: context(2), openingState: opening("500"), input: futureStreamInput(kind, streamStart, streamEnd), months: 2 })).toThrow(/temporal configuration is invalid/);
+    });
+  }
+
   it("prepares only eligible occurrences and exposes economic local ordering", () => {
     const terminated = input();
     const terminatedIncome = { ...terminated.incomes[0]!, terminationEventId: ids.clubStop, primitiveIds: { ...terminated.incomes[0]!.primitiveIds, termination: primitive(11) } };
