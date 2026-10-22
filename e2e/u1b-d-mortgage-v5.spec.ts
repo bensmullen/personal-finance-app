@@ -70,7 +70,13 @@ async function setup(page: Page, width: number, denied = false) {
   const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
   await taxes.getByLabel("Tax payment account", { exact: true }).selectOption({ label: "Everyday checking" });
   await taxes.getByLabel("Tax refund account", { exact: true }).selectOption({ label: "Everyday checking" });
-  for (const name of ["Federal income tax", "New York"]) await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
+  // The explicitly synthetic flagship is resident in Philadelphia, PA.
+  // Confirm every jurisdiction actually sourced by its household record.
+  for (const name of ["Federal income tax", "Pennsylvania", "Philadelphia wage tax"]) {
+    const summary = taxes.locator("summary").filter({ hasText: name }).first();
+    if (await summary.locator("..").getAttribute("open") === null) await summary.click();
+    await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
+  }
   for (const checkbox of await taxes.getByRole("checkbox").all()) await checkbox.check();
   await run(page);
 }

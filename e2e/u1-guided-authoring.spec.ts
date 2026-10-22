@@ -563,6 +563,21 @@ test("Owner repair: isolated mortgage shortfalls name the evaluated payment acco
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   await page.goto("/"); await page.getByRole("button", { name: "Use synthetic example" }).click();
+  // The supported flagship has $4M in checking, so a shortfall must be
+  // authored explicitly rather than assumed. Use the real account owner UI.
+  const bankName = "Isolated mortgage bank";
+  await navigate(page, "Money", "Accounts");
+  await page.getByRole("button", { name: "+ Add Account", exact: true }).click();
+  const bank = page.getByRole("dialog", { name: "Create Account", exact: true });
+  await bank.getByLabel("Name", { exact: true }).fill(bankName);
+  await bank.getByLabel("Account type", { exact: true }).selectOption("checking");
+  await bank.getByLabel("Owner", { exact: true }).selectOption(ids.person);
+  await bank.getByLabel("Account opened", { exact: true }).fill("2026-01-01");
+  await bank.getByLabel("Cash balance", { exact: true }).fill("0");
+  await bank.getByRole("button", { name: "Create Account", exact: true }).click();
+  await expect(bank).toHaveCount(0);
+  await navigate(page, "Net Worth", "Debt");
+  await page.getByLabel("Mortgage payment account", { exact: true }).selectOption({ label: bankName });
   await navigate(page, "Plan", "Current Plan"); await open(page, "Expert standalone forecasts");
   const standalone = page.getByRole("region", { name: "Standalone forecast drill-down" });
   await standalone.getByLabel("Forecast scope", { exact: true }).selectOption("liabilities");
@@ -571,7 +586,7 @@ test("Owner repair: isolated mortgage shortfalls name the evaluated payment acco
   await expect(standalone.getByRole("note").filter({ hasText: /does not include salary or spending/ })).toBeVisible();
   const explanation = standalone.getByRole("region", { name: "Mortgage funding explanation" }).first();
   await expect(explanation).toContainText("Example mortgage"); await expect(explanation).toContainText("2027");
-  await expect(explanation).toContainText("Payment account: Everyday checking");
+  await expect(explanation).toContainText("Payment account: Isolated mortgage bank");
   await expect(explanation).toContainText("Required"); await expect(explanation).toContainText("available");
   await explanation.getByRole("button", { name: "Review mortgage payment account", exact: true }).click();
   const funding = page.getByLabel("Mortgage payment account", { exact: true });
@@ -622,7 +637,8 @@ test("U1 creates payroll contributions through the account action and retains an
   await payroll.getByLabel("Payroll contribution rate", { exact: true }).fill("5");
   await payroll.getByLabel("Employer / plan group", { exact: true }).fill("Example employer");
   await payroll.getByRole("button", { name: "Save payroll contribution", exact: true }).click();
-  await expect(payroll.getByText(/^Saved payroll: traditional 401k to RETIREMENT-DEMO/)).toBeVisible();
+  // The explicitly synthetic flagship has a sourced Roth workplace plan.
+  await expect(payroll.getByText(/^Saved payroll: roth 401k to RETIREMENT-DEMO\./)).toBeVisible();
   await payroll.getByLabel("Payroll contribution rate", { exact: true }).fill("6");
   await open(page, "IRA & brokerage contributions");
   const personal = page.getByRole("region", { name: "Saved investment purchases" });

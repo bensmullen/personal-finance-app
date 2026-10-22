@@ -64,12 +64,20 @@ async function setup(page: Page, width = 1440, spending?: string) {
   await navigateOwner(page, "Plan", "Current Plan");
   await page.getByLabel("Simulation start", { exact: true }).fill("2026-01-01");
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-03-01");
+  // A collapsed <details> exposes only its summary; its child region cannot
+  // be located by role until we open the outer disclosure.
+  const taxSummary = page.locator("details > summary").filter({ hasText: "Tax payments & refunds" }).first();
+  if (await taxSummary.locator("..").getAttribute("open") === null) await taxSummary.click();
   const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
-  const disclosure = taxes.locator("xpath=ancestor::details[1]");
-  if (await disclosure.getAttribute("open") === null) await disclosure.locator(":scope > summary").click();
   await taxes.getByLabel("Tax payment account", { exact: true }).selectOption({ label: "Everyday checking" });
   await taxes.getByLabel("Tax refund account", { exact: true }).selectOption({ label: "Everyday checking" });
-  for (const name of ["Federal income tax", "New York"]) await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
+  // The explicitly synthetic flagship is resident in Philadelphia, PA.
+  // Confirm every jurisdiction actually sourced by its household record.
+  for (const name of ["Federal income tax", "Pennsylvania", "Philadelphia wage tax"]) {
+    const summary = taxes.locator("summary").filter({ hasText: name }).first();
+    if (await summary.locator("..").getAttribute("open") === null) await summary.click();
+    await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
+  }
   for (const checkbox of await taxes.getByRole("checkbox").all()) await checkbox.check();
   await run(page);
   await clickFinancialDestination(page, "Cash");
