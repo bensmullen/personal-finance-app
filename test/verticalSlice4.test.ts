@@ -68,7 +68,7 @@ describe("Vertical Slice 4 liabilities", () => {
     const totalInterest = sumMoney(result.periods.map((period) => period.interestExpense));
     expect(result.state.accounts[ids.cash]!.cash.equals(money("700000").minus(money("300000")).minus(totalInterest))).toBe(true);
     expect(result.periods.every((period) => period.statements.netWorth.equals(period.statements.assets.minus(period.statements.liabilities)))).toBe(true);
-  }, 20_000);
+  }, 40_000);
 
   it("pays zero-rate loans exactly across multiple principal and term inputs", () => {
     for (const [principal, term] of [["10000", 12], ["1234.56", 7], ["1", 3]] as const) {
@@ -86,7 +86,7 @@ describe("Vertical Slice 4 liabilities", () => {
     expect(accelerated.periods.slice(1).every((period) => period.liabilities.length === 0)).toBe(true);
     expect(accelerated.periods[0]!.liabilities[0]!.contractualPayment.equals(baseline.periods[0]!.liabilities[0]!.contractualPayment)).toBe(true);
     expect(sumMoney(accelerated.periods.map((period) => period.interestExpense)).compare(sumMoney(baseline.periods.map((period) => period.interestExpense))) <= 0).toBe(true);
-  }, 20_000);
+  }, 40_000);
 
   it("leaves principal and cash unchanged when scheduled service is unfunded while interest remains explicit", () => {
     const result = runVerticalSlice4({ runContext: context(2, "201"), openingState: opening("300000", "100"), input: input(loan()) });

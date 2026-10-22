@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "provenance": "Synthetic conservative seed, not measured per-test history. Explicit reviewer updates only; artifacts carry exact-checkout measurements. PR #207 historical unit 335s; E2E shards 198s, 137s, cancelled, cancelled at 1200s.",
+  "unit": { "unknownMs": 30000, "durations": {
+    "test/golden.test.ts": 120000,
+    "test/goldenHousehold.test.ts": 120000
+  } },
+  "e2e": { "unknownMs": 120000, "durations": {
+    "e2e/personal-mvp.spec.ts:1536:1 › Golden household runs, compares, explains, and distinguishes modeled liquidity stress": 240000,
+    "e2e/u1b-ux-parity.spec.ts:11:3 › Overview supported plot first-screen layout at 1440px": 240000,
+    "e2e/u1b-ux-parity.spec.ts:11:3 › Overview supported plot first-screen layout at 390px": 240000
+  } }
+}
