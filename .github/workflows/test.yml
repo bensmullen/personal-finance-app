@@ -103,25 +103,33 @@ jobs:
       - run: npm run typecheck
 
   unit:
-    name: unit
+    name: unit (shard ${{ matrix.shard }}/3)
     needs: plan
     if: needs.plan.outputs.unit == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
+      - name: Start diagnostic job budget
+        run: echo "PFM_JOB_STARTED_MS=$(date +%s%3N)" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci --prefer-offline --no-audit --no-fund
-      - run: npm run codex:test
+      - run: npm run codex:test -- --balanced-shard=${{ matrix.shard }}/3
       - name: Upload unit diagnostics
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: unit-diagnostics
-          path: .codex/logs/
+          name: unit-diagnostics-${{ matrix.shard }}-${{ github.sha }}
+          overwrite: true
+          path: .codex/logs/vitest/
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
 
@@ -180,25 +188,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Independent Playwright test-level shards; preserve all tests exactly once.
-        # Four parallel runners reduce the long U1 E2E critical path without retries or skipped coverage.
+        # Exact-checkout test lists, balanced with complete union/dedup proof.
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
+      - name: Start diagnostic job budget
+        run: echo "PFM_JOB_STARTED_MS=$(date +%s%3N)" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci --prefer-offline --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
-      - run: npm run codex:e2e -- --shard=${{ matrix.shard }}/4
+      - run: npm run codex:e2e -- --balanced-shard=${{ matrix.shard }}/4
       - name: Upload E2E diagnostics
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-diagnostics-${{ matrix.shard }}
+          name: e2e-diagnostics-${{ matrix.shard }}-${{ github.sha }}
+          overwrite: true
+          path: .codex/logs/playwright/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload browser failure traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-traces-${{ matrix.shard }}-${{ github.sha }}
+          overwrite: true
           path: |
-            .codex/logs/
             playwright-report/
             test-results/
           if-no-files-found: ignore
@@ -250,6 +269,22 @@ jobs:
             echo 'E2E blocked: inspect selected typecheck/build/feasibility results above.'
           fi
           require_gate e2e "$E2E_ENABLED" "$E2E"
+      - name: Checkout shard evidence verifier
+        uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Download all shard receipts
+        if: needs.plan.outputs.unit == 'true' || needs.plan.outputs.e2e == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-diagnostics-*-${{ github.sha }}'
+          path: .ci-shard-evidence
+      - name: Require exact-head successful receipts from every selected child
+        env:
+          UNIT_ENABLED: ${{ needs.plan.outputs.unit }}
+          E2E_ENABLED: ${{ needs.plan.outputs.e2e }}
+        run: node tools/ci/collect-test-durations.mjs --verify-shards "$GITHUB_SHA" "$UNIT_ENABLED" "$E2E_ENABLED"
       - name: Checkout for agent process incident
         if: failure()
         uses: actions/checkout@v4

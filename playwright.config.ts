@@ -4,9 +4,11 @@ export default defineConfig({
   testDir: "./e2e",
   // Manual UX captures must not enter normal CI discovery or reshuffle E2E shards.
   testIgnore: process.env.PFM_UX_EVIDENCE === "1" ? [] : ["**/ux-evidence.spec.ts"],
-  // Keep local runs predictable, but let independent tests within the single
-  // E2E spec file use multiple workers in CI to reduce wall-clock time.
+  // Four independent runners provide concurrency. One worker per runner bounds
+  // contention with next dev and real browser Workers. #207 measured ~1.17 GB
+  // post-run Node heap; browser peak remains unmeasured.
   fullyParallel: Boolean(process.env.CI),
+  ...(process.env.CI ? { workers: 1 } : {}),
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? "github" : "list",
   use: {
