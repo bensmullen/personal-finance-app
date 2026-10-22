@@ -180,9 +180,14 @@ describe("A4-3 conditional ordinary owner Roth cash candidates", () => {
     expect(c.withholdingAmount.equals(money("12.03"))).toBe(true);
     expect(c.intents.slice(1).reduce((s, i) => s.plus(i.amount), money("0")).equals(c.grossAmount)).toBe(true);
     denied(route(f, { withholding: { ...r.withholding!, instructions } }), "AUTHORIZATION_TERMS");
-    for (const change of [{ beneficiaryPersonId: "spouse" }, { destinationId: "bank" }, { route: "unknown" as const }, { jurisdiction: "wrong" }]) {
+    for (const change of [{ beneficiaryPersonId: "spouse" }, { destinationId: "bank" }, { route: "unknown" as const }]) {
       denied(route(f, { withholding: { ...r.withholding!, instructions: r.withholding!.instructions.map(i => ({ ...i, ...change })) } }), "WITHHOLDING_ROUTE");
     }
+    // Renaming every jurisdiction to the same value invalidates the complete
+    // one-instruction-per-jurisdiction inventory before route validation.
+    denied(route(f, { withholding: { ...r.withholding!, instructions: r.withholding!.instructions.map(i => ({ ...i, jurisdiction: "wrong" })) } }), "INCOMPLETE_WITHHOLDING");
+    // A single incorrectly scoped jurisdiction is instead a route/source error.
+    denied(route(f, { withholding: { ...r.withholding!, instructions: r.withholding!.instructions.map((i, n) => n === 0 ? { ...i, jurisdiction: "wrong" } : i) } }), "WITHHOLDING_ROUTE");
     denied(route(f, { withholding: { ...r.withholding!, source: { ...r.withholding!.source, asOf: opening } } }), "INCOMPLETE_WITHHOLDING");
   });
 
