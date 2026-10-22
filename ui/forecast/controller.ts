@@ -2,6 +2,7 @@ import { BaselineCache, FORECAST_DEBOUNCE_MS, initialForecastState, isCacheableB
 import type { PerformanceContext, PerformanceRecord } from "../../src/application/performance.js";
 import type { ForecastWorkerRequest, ForecastWorkerResponse, ForecastWorkerResult } from "./protocol.js";
 import { baselineResultMatchesRequest } from "../../src/application/interactiveForecast.js";
+import type { EvidenceSelection, EvidenceWorkerRequest, EvidenceWorkerResponse } from "./protocol.js";
 
 export interface ForecastWorkerPort {
   onmessage: ((event: { data: ForecastWorkerResponse }) => void) | null;
@@ -13,6 +14,68 @@ export interface ForecastWorkerPort {
 export interface ForecastScheduler {
   set(callback: () => void, delay: number): unknown;
   clear(handle: unknown): void;
+}
+
+export interface EvidenceWorkerPort {
+  onmessage: ((event: { data: EvidenceWorkerResponse }) => void) | null;
+  onerror: ((event: { preventDefault(): void }) => void) | null;
+  onmessageerror: (() => void) | null;
+  postMessage(request: EvidenceWorkerRequest): void;
+  terminate(): void;
+}
+
+/** One evidence worker per immutable source shared by all visible panels.
+ * It never submits a forecast. Only bounded exact read models cross back. */
+export class EvidenceController {
+  #worker: EvidenceWorkerPort | undefined;
+  #sequence = 0;
+  #sent = false;
+  #cache = new Map<string, EvidenceWorkerResponse>();
+  #pending = new Map<number, { key: string; boundary: Omit<EvidenceWorkerRequest, "source">; listeners: Set<(response: EvidenceWorkerResponse) => void> }>();
+  constructor(readonly source: NonNullable<EvidenceWorkerRequest["source"]>, readonly makeWorker: () => EvidenceWorkerPort) {}
+  select(selection: EvidenceSelection, changed: (response: EvidenceWorkerResponse) => void, refresh = false): () => void {
+    const key = `${selection.operation}:${selection.startIndex}:${selection.liabilityId}`;
+    if (refresh) this.#cache.delete(key);
+    const cached = this.#cache.get(key);
+    if (cached) { changed(cached); return () => {}; }
+    const existing = [...this.#pending.values()].find(item => item.key === key);
+    if (existing) { existing.listeners.add(changed); return () => { existing.listeners.delete(changed); }; }
+    const forecast = this.source.forecast;
+    const fingerprint = forecast.status !== "unavailable" ? forecast.points[selection.startIndex]?.traceRefs.find(ref => ref.replayArtifact !== undefined)?.traceId ?? "unavailable" : "unavailable";
+    const boundary = { ...selection, requestId: ++this.#sequence, fingerprint };
+    const pending = { key, boundary, listeners: new Set([changed]) };
+    this.#pending.set(boundary.requestId, pending);
+    const fail = () => {
+      const pending = [...this.#pending.values()];
+      this.dispose();
+      for (const item of pending) for (const listener of item.listeners) listener({ ...item.boundary, outcome: "error", error: "Monthly evidence has missing or mismatched period/source data. Update the forecast and retry." });
+    };
+    try {
+      if (!this.#worker) {
+        this.#worker = this.makeWorker();
+        this.#worker.onmessage = ({ data }) => {
+          const item = this.#pending.get(data.requestId);
+          if (!item || data.operation !== item.boundary.operation || data.fingerprint !== item.boundary.fingerprint || data.startIndex !== item.boundary.startIndex || data.liabilityId !== item.boundary.liabilityId) return;
+          if (data.outcome === "result") {
+            const point = this.source.forecast.status !== "unavailable" ? this.source.forecast.points[data.startIndex] : undefined;
+            if (data.operation === "monthly_evidence" ? !data.detail : !data.window || data.window.start !== point?.periodStart || data.window.liabilityId !== data.liabilityId) { fail(); return; }
+            if (this.#cache.size >= 4) this.#cache.delete(this.#cache.keys().next().value!);
+            this.#cache.set(item.key, data);
+          }
+          this.#pending.delete(data.requestId);
+          for (const listener of item.listeners) listener(data);
+        };
+        this.#worker.onerror = event => { event.preventDefault(); fail(); };
+        this.#worker.onmessageerror = fail;
+      }
+      this.#worker.postMessage({ ...boundary, ...(!this.#sent ? { source: this.source } : {}) });
+      this.#sent = true;
+    } catch { fail(); }
+    return () => { pending.listeners.delete(changed); };
+  }
+  dispose(): void {
+    this.#worker?.terminate(); this.#worker = undefined; this.#sent = false; this.#pending.clear();
+  }
 }
 export type ForecastSubmission = ForecastWorkerRequest extends infer R ? R extends ForecastWorkerRequest ? Omit<R, "requestId"> : never : never;
 export interface ForecastView extends ForecastState<ForecastWorkerResult> {

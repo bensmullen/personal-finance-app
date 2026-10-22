@@ -4,8 +4,11 @@ import { age90Horizon, birthdayAtAge, retirementProposals, resolveForecastReadin
 import { createGoldenExampleConfiguration, GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 import { createHouseholdForecastRequest, runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
 import { baselineResultMatchesRequest, calculationFingerprint } from "../src/application/interactiveForecast.js";
-import { ForecastController, type ForecastWorkerPort } from "../ui/forecast/controller.js";
-import type { ForecastWorkerRequest } from "../ui/forecast/protocol.js";
+import { EvidenceController, ForecastController, type EvidenceWorkerPort, type ForecastWorkerPort } from "../ui/forecast/controller.js";
+import type { EvidenceWorkerRequest, EvidenceWorkerResponse, ForecastWorkerRequest } from "../ui/forecast/protocol.js";
+import { executeForecastWorkerRequest } from "../ui/forecast/execute.js";
+import { cashComparison, inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
+import { inspectMortgageWindow } from "../src/application/mortgageChartData.js";
 import type { HouseholdForecastRequest, PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import { acceptRetirementProposal, acceptPlanningStarters } from "../src/application/forecastSetup.js";
 import { diagnosticSummary } from "../ui/authoring/diagnosticSummary.js";
@@ -91,6 +94,66 @@ describe("U1B sourced planning readiness", () => {
     expect(result.points, JSON.stringify(result.diagnostics)).toHaveLength(2);
     expect(result.requestedHorizon.end).toBe("2026-03-01T00:00:00.000Z");
     expect(result.reachedThrough).toBe(result.requestedHorizon.end);
+    expect(result.points.map(point => point.statementIncome.amount)).toEqual(["0", "0"]);
+    const before = JSON.stringify({ model, result });
+    const fingerprintBefore = calculationFingerprint("baseline_forecast", model, createHouseholdForecastRequest(configuration, ids.model));
+    let tick = 0;
+    const clock = { now: () => ++tick };
+    const selection = (startIndex: number): EvidenceWorkerRequest => ({ operation: "monthly_evidence", requestId: startIndex + 1, startIndex, liabilityId: "",
+      fingerprint: result.points[startIndex]!.traceRefs.find(ref => ref.replayArtifact !== undefined)!.traceId });
+    for (const index of [0, 1]) {
+      const response = executeForecastWorkerRequest({ ...selection(index), ...(index === 0 ? { source: structuredClone({ forecast: result, model }) } : {}) }, clock);
+      expect(response).toMatchObject({ ...selection(index), outcome: "result", durationMs: 1 });
+      if (response.outcome !== "result") throw new Error(response.error);
+      expect(response.detail).toEqual(inspectMonthlyMoney(result.points[index]!, model));
+      expect(cashComparison(response.detail!)?.knownUsesOnly).toBe(true);
+      expect(cashComparison(response.detail!)?.drawable).toBe(true);
+    }
+    const mortgage = executeForecastWorkerRequest({ ...selection(0), operation: "mortgage_evidence", liabilityId: ids.mortgage }, clock);
+    expect(mortgage.outcome).toBe("result");
+    if (mortgage.outcome === "result") expect(mortgage.window).toEqual(inspectMortgageWindow(result.points, ids.mortgage));
+    expect(executeForecastWorkerRequest({ ...selection(0), fingerprint: "wrong-source" }, clock).outcome).toBe("error");
+    expect(executeForecastWorkerRequest({ ...selection(0), startIndex: -1 }, clock).outcome).toBe("error");
+    const missing = { ...result, points: result.points.map(point => ({ ...point, traceRefs: [] })) };
+    expect(executeForecastWorkerRequest({ ...selection(0), source: { forecast: missing, model } }, clock).outcome).toBe("error");
+    expect(executeForecastWorkerRequest({ ...selection(0), source: { forecast: result, model } }, { now() { throw new Error("clock"); } }).outcome).toBe("result");
+    expect(JSON.stringify({ model, result })).toBe(before);
+    expect(calculationFingerprint("baseline_forecast", model, createHouseholdForecastRequest(configuration, ids.model))).toBe(fingerprintBefore);
+
+    const workers: (EvidenceWorkerPort & { messages: EvidenceWorkerRequest[]; stopped: boolean })[] = [];
+    const evidence = new EvidenceController({ forecast: result, model }, () => {
+      const worker: typeof workers[number] = { onmessage: null, onerror: null, onmessageerror: null, messages: [], stopped: false,
+        postMessage(message) { this.messages.push(message); }, terminate() { this.stopped = true; } };
+      workers.push(worker); return worker;
+    });
+    const delivered: EvidenceWorkerResponse[] = [], cancelled: EvidenceWorkerResponse[] = [];
+    const stop = evidence.select(selection(0), response => cancelled.push(response));
+    evidence.select(selection(0), response => delivered.push(response));
+    stop();
+    expect(workers).toHaveLength(1);
+    expect(workers[0]!.messages).toHaveLength(1);
+    const first = executeForecastWorkerRequest(workers[0]!.messages[0]!, clock);
+    workers[0]!.onmessage?.({ data: { ...first, fingerprint: "superseded-source" } });
+    expect(delivered).toHaveLength(0);
+    workers[0]!.onmessage?.({ data: first });
+    expect(cancelled).toHaveLength(0);
+    expect(delivered).toEqual([first]);
+    evidence.select(selection(0), response => delivered.push(response));
+    expect(workers[0]!.messages).toHaveLength(1); // exact cache hit
+    evidence.select(selection(1), response => delivered.push(response));
+    expect(workers[0]!.messages[1]!.source).toBeUndefined(); // one transported basis
+    workers[0]!.onerror?.({ preventDefault() {} });
+    expect(workers[0]!.stopped).toBe(true);
+    expect(delivered.at(-1)?.outcome).toBe("error");
+    evidence.select(selection(1), response => delivered.push(response));
+    expect(workers).toHaveLength(2);
+    expect(workers[1]!.messages[0]!.source).toEqual({ forecast: result, model });
+    const pending = executeForecastWorkerRequest(workers[1]!.messages[0]!, clock);
+    evidence.dispose();
+    const count = delivered.length;
+    workers[1]!.onmessage?.({ data: pending });
+    expect(delivered).toHaveLength(count);
+    expect(workers[1]!.stopped).toBe(true);
   });
   it("keeps the economic consequence of partial payroll, contribution and tax coverage visible", () => {
     const summary = (category: string) => diagnosticSummary({ code: "PFA-TAX-009", entityType: "tax_capability", category, taxYear: "2027" });

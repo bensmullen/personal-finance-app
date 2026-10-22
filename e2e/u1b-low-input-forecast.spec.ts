@@ -6,21 +6,34 @@ import { readFile } from "node:fs/promises";
 import { selectForecastChartData } from "../src/application/forecastChartData.js";
 import { formatExactMoney } from "../ui/entityPresentation.js";
 import { inspectMortgageWindow } from "../src/application/mortgageChartData.js";
+import { inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
 import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
 import { clickFinancialDestination, navigateOwner } from "./navigation.js";
+import type { EvidenceWorkerResponse } from "../ui/forecast/protocol.js";
 
 const status = (page: Page) => page.getByRole("status", { name: "Household forecast status", exact: true });
-type ObservedWindow = typeof window & { __u1bResults: ForecastWorkerResponse[] };
+type ObservedWindow = typeof window & {
+  __u1bResults: ForecastWorkerResponse[];
+  __u1bEvidence: { operation: string; requestId: number; fingerprint: string; startIndex: number; outcome: string; durationMs?: number }[];
+  __u1bLongTasks: number[];
+};
 async function observe(page: Page) {
   await page.addInitScript(() => {
     const observed = window as ObservedWindow;
     observed.__u1bResults = [];
+    observed.__u1bEvidence = [];
+    observed.__u1bLongTasks = [];
     const NativeWorker = window.Worker;
     window.Worker = class extends NativeWorker {
       constructor(url: string | URL, options?: WorkerOptions) {
         super(url, options);
-        this.addEventListener("message", (event: MessageEvent<ForecastWorkerResponse>) => {
-          if (event.data.operation === "baseline_forecast" && event.data.outcome === "result") observed.__u1bResults.push(event.data);
+        this.addEventListener("message", (event: MessageEvent<ForecastWorkerResponse | EvidenceWorkerResponse>) => {
+          const response = event.data;
+          if (response.operation === "baseline_forecast" && response.outcome === "result") observed.__u1bResults.push(response);
+          if (response.operation === "monthly_evidence" || response.operation === "mortgage_evidence") {
+            const { operation, requestId, fingerprint, startIndex, outcome, durationMs } = response;
+            observed.__u1bEvidence = [...observed.__u1bEvidence.slice(-15), { operation, requestId, fingerprint, startIndex, outcome, ...(durationMs === undefined ? {} : { durationMs }) }];
+          }
         });
       }
     };
@@ -85,11 +98,27 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("region", { name: "Requested and modeled coverage" })).toContainText("2080-02-01");
     await info.attach(`flagship-${width}-coverage`, { body: JSON.stringify({ status: result.status, requested: result.requestedHorizon, reachedThrough: result.reachedThrough, opening: result.openingSnapshot, retirement: result.retirementMilestones, selectedYear: selected }), contentType: "application/json" });
     await page.screenshot({ path: info.outputPath(`flagship-${width}.png`), fullPage: true });
+    // Instrument the actual route transition, after the 649-month result has
+    // committed. Retain only bounded durations and request/source identities.
+    await page.evaluate(() => {
+      if (PerformanceObserver.supportedEntryTypes.includes("longtask")) {
+        new PerformanceObserver(list => {
+          const target = window as ObservedWindow;
+          target.__u1bLongTasks = [...target.__u1bLongTasks, ...list.getEntries().map(entry => entry.duration)].slice(-32);
+        }).observe({ entryTypes: ["longtask"] });
+      }
+    });
+    const requestId = await status(page).getAttribute("data-request-id");
+    const fingerprint = await status(page).getAttribute("data-fingerprint");
+    const cashStarted = Date.now();
     await clickFinancialDestination(page, "Cash");
     const cash = page.getByRole("figure", { name: "Total modeled cash (including cash in investment accounts)", exact: true });
     const statements = page.getByRole("figure", { name: "Modeled statement income versus expenses", exact: true });
     await expect(cash).toBeVisible();
     await expect(statements).toBeVisible();
+    expect(Date.now() - cashStarted).toBeLessThan(10_000);
+    const paycheck = page.getByRole("region", { name: "Your Paycheck", exact: true });
+    await paycheck.getByLabel("paycheck forecast month", { exact: true }).selectOption("2026-02");
     await cash.getByLabel("Selected projected period", { exact: true }).selectOption(selected.periodStart);
     await expect(cash.locator(".chart-selected dd").first()).toContainText(formatExactMoney(selected.metrics.totalModeledCash.amount!, selected.metrics.totalModeledCash.currency));
     // Read actual modeled pay both before and after the accepted retirement,
@@ -102,15 +131,40 @@ for (const width of [1440, 390]) {
         formatExactMoney(point.statementExpenses.amount, point.statementExpenses.currency),
       ]);
     }
+    const debtStarted = Date.now();
     await clickFinancialDestination(page, "Debt");
     const liabilities = page.getByRole("figure", { name: "Modeled household liability balances", exact: true });
     await expect(liabilities).toBeVisible();
+    expect(Date.now() - debtStarted).toBeLessThan(10_000);
     await page.getByLabel("Selected liability month", { exact: true }).selectOption(result.points[0]!.periodStart);
     await expect(liabilities.getByRole("status")).toContainText(formatExactMoney(result.points[0]!.totalLiabilities.amount, result.points[0]!.totalLiabilities.currency));
     const mortgage = page.getByRole("figure", { name: "Example mortgage monthly cash paid", exact: true });
     await expect(mortgage).toBeVisible({ timeout: 30_000 });
     const paid = inspectMortgageWindow(result.points.slice(0, 12), GOLDEN_HOUSEHOLD_IDS.mortgage).rows[0]!;
     await expect(mortgage.getByRole("status")).toHaveText(`2026-01 · Interest paid ${formatExactMoney(paid.interestPaid, paid.currency)} · Scheduled principal paid ${formatExactMoney(paid.scheduledPrincipalPaid, paid.currency)} · Extra principal paid ${formatExactMoney(paid.extraPrincipalPaid, paid.currency)}`);
+    // A second transition verifies responsive navigation and retained month
+    // selection after both evidence projections, without another forecast.
+    const returnStarted = Date.now();
+    await clickFinancialDestination(page, "Cash");
+    await expect(cash).toBeVisible();
+    expect(Date.now() - returnStarted).toBeLessThan(10_000);
+    await expect(paycheck.getByLabel("paycheck forecast month", { exact: true })).toHaveValue("2026-02");
+    await expect(paycheck).toHaveAttribute("data-evidence-state", "incomplete");
+    const comparison = paycheck.getByRole("figure", { name: "Where modeled income goes comparison", exact: true });
+    await expect(comparison).toContainText("Zero modeled income");
+    const february = inspectMonthlyMoney(result.points[1]!);
+    await expect(paycheck.locator(".cash-excess")).toContainText(formatExactMoney(february.additionalFunding, february.currency));
+    await expect(status(page)).toHaveAttribute("data-request-id", requestId!);
+    await expect(status(page)).toHaveAttribute("data-fingerprint", fingerprint!);
+    await expect(status(page)).toHaveAttribute("data-lifecycle", "completed");
+    const navigationEvidence = await page.evaluate(() => ({
+      baselineResponses: (window as ObservedWindow).__u1bResults.length,
+      evidence: (window as ObservedWindow).__u1bEvidence,
+      longTasksMs: (window as ObservedWindow).__u1bLongTasks,
+    }));
+    expect(navigationEvidence.baselineResponses).toBe(1);
+    expect(navigationEvidence.evidence).toContainEqual(expect.objectContaining({ operation: "mortgage_evidence", startIndex: 0, outcome: "result" }));
+    await info.attach(`flagship-${width}-navigation`, { body: JSON.stringify(navigationEvidence), contentType: "application/json" });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(errors).toEqual([]);
   });

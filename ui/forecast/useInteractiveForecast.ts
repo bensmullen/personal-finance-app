@@ -1,16 +1,63 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import type { PersonalHouseholdForecastReadModel } from "../../src/application/householdProjection.js";
+import type { EvidenceSelection, EvidenceWorkerResponse } from "./protocol.js";
 import { calculationFingerprint, INTERACTIVE_ENGINE_VERSION } from "../../src/application/interactiveForecast.js";
 import { createHouseholdForecastRequest, type PersonalHouseholdSessionExecutionConfiguration } from "../../src/application/householdProjection.js";
 import { resolvePersonalSessionSettings, type PersonalDraft, type PersonalSessionSettings } from "../../src/application/personalMvp.js";
 import { simulationWindowProblem } from "../../src/application/forecastSetup.js";
 import { applicationPerformanceRegistry } from "../../src/application/performance.js";
-import { ForecastController, type ForecastSubmission, type ForecastView, type ForecastWorkerPort } from "./controller.js";
+import { EvidenceController, ForecastController, type EvidenceWorkerPort, type ForecastSubmission, type ForecastView, type ForecastWorkerPort } from "./controller.js";
 
 const makeWorker = (): ForecastWorkerPort => new Worker(new URL("./household.worker.ts", import.meta.url), { type: "module" }) as unknown as ForecastWorkerPort;
 const scheduler = {
   set: (callback: () => void, delay: number) => setTimeout(callback, delay),
   clear: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
+
+type EvidenceScope = { controller: EvidenceController; users: number; release?: ReturnType<typeof setTimeout> | undefined };
+const evidenceScopes = new WeakMap<PersonalHouseholdForecastReadModel, WeakMap<PersonalDraft, EvidenceScope>>();
+
+/** Panels share the same replay worker and restoration cache. A one-turn
+ * release allows a route change to hand ownership to its destination panel;
+ * leaving evidence entirely or replacing the source terminates the worker. */
+export function useForecastEvidence(forecast: PersonalHouseholdForecastReadModel | undefined, model: PersonalDraft, current: boolean, selection: EvidenceSelection) {
+  const scope = useMemo(() => {
+    if (!current || !forecast || forecast.status === "unavailable" || !forecast.points.length) return undefined;
+    let models = evidenceScopes.get(forecast);
+    if (!models) { models = new WeakMap(); evidenceScopes.set(forecast, models); }
+    let value = models.get(model);
+    if (!value) {
+      value = { controller: new EvidenceController({ forecast, model }, () => new Worker(new URL("./household.worker.ts", import.meta.url), { type: "module" }) as unknown as EvidenceWorkerPort), users: 0 };
+      models.set(model, value);
+    }
+    return value;
+  }, [forecast, model, current]);
+  const [revision, setRevision] = useState(0);
+  const [settled, setSettled] = useState<{ scope: typeof scope; key: string; response: EvidenceWorkerResponse }>();
+  const { operation, startIndex, liabilityId } = selection;
+  const key = `${operation}:${startIndex}:${liabilityId}:${revision}`;
+  useEffect(() => {
+    if (!scope) return;
+    if (scope.release !== undefined) clearTimeout(scope.release);
+    ++scope.users;
+    return () => {
+      if (--scope.users === 0) scope.release = setTimeout(() => { if (scope.users === 0) scope.controller.dispose(); }, 0);
+    };
+  }, [scope]);
+  useEffect(() => {
+    if (!scope) return;
+    return scope.controller.select({ operation, startIndex, liabilityId }, response => {
+      setSettled({ scope, key, response });
+    }, revision > 0);
+  }, [scope, key, operation, startIndex, liabilityId, revision]);
+  const response = current && scope && settled && settled.scope === scope && settled.key === key ? settled.response : undefined;
+  return {
+    detail: response?.outcome === "result" ? response.detail : undefined,
+    window: response?.outcome === "result" ? response.window : undefined,
+    error: response?.outcome === "error" ? response.error : undefined,
+    refresh: () => setRevision(value => value + 1),
+  };
+}
 
 export function useInteractiveForecast(model: PersonalDraft | undefined, configuration: PersonalHouseholdSessionExecutionConfiguration | undefined, settings: PersonalSessionSettings, replacementIdentity = 0) {
   const [baseline, setBaseline] = useState<ForecastView>({ lifecycle: "idle", pending: false, stale: false });

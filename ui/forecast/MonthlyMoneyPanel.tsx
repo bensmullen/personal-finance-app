@@ -1,14 +1,14 @@
 "use client";
 import * as React from "react";
-import { useEffect, useMemo, useState } from "react";
-import { inspectMonthlyMoney, isPositiveMonthlyMoney } from "../../src/application/monthlyMoney.js";
+import { useEffect, useState } from "react";
+import { isPositiveMonthlyMoney } from "../../src/application/monthlyMoney.js";
 import type { PersonalHouseholdForecastReadModel } from "../../src/application/householdProjection.js";
 import type { PersonalDraft } from "../../src/application/personalMvp.js";
 import { formatExactMoney, referenceLabel, objectEntries, objectId } from "../entityPresentation.js";
 import { FieldShell } from "../authoring/FieldShell.js";
 import { CashAllocation } from "./CashAllocation.js";
+import { useForecastEvidence } from "./useInteractiveForecast.js";
 
-type Detail = ReturnType<typeof inspectMonthlyMoney>;
 export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setup, coverageSetup, selectedMonth, selectMonth }: {
   draft: PersonalDraft; forecast?: PersonalHouseholdForecastReadModel | undefined; current: boolean;
   mode: "paycheck" | "debt" | "spending";
@@ -19,31 +19,20 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
 }) {
   const points = forecast && forecast.status !== "unavailable" ? forecast.points : [];
   const [selected, setSelected] = useState("");
-  const [error, setError] = useState("");
-  const cache = useMemo(() => new Map<string, Detail>(), [forecast, draft]);
-  const [, setRevision] = useState(0);
   const point = points.find(value => value.periodStart.slice(0, 7) === (selectedMonth ?? selected)) ?? points[0];
+  const evidence = useForecastEvidence(forecast, draft, current, { operation: "monthly_evidence", startIndex: point ? points.indexOf(point) : -1, liabilityId: "" });
+  const detail = evidence.detail;
+  const error = evidence.error ? "Monthly evidence could not be loaded. Update the forecast and retry this month." : "";
   useEffect(() => {
     const month = point?.periodStart.slice(0, 7);
     if (month && month !== (selectedMonth ?? selected)) (selectMonth ?? setSelected)(month);
   }, [point, selectedMonth, selected, selectMonth]);
-  const detail = current && point ? cache.get(point.periodStart) : undefined;
   const amount = (value: string) => formatExactMoney(value, detail?.currency ?? point?.cash.currency);
-  const inspect = () => {
-    if (!point || !current) return;
-    try { cache.set(point.periodStart, inspectMonthlyMoney(point, draft)); setError(""); setRevision(value => value + 1); }
-    catch { cache.delete(point.periodStart); setError("Monthly evidence could not be loaded. Update the forecast and retry this month."); }
-  };
-  useEffect(() => {
-    setError("");
-    if (!current || !point || cache.has(point.periodStart)) return;
-    try { cache.set(point.periodStart, inspectMonthlyMoney(point, draft)); setRevision(value => value + 1); }
-    catch { setError("Monthly evidence could not be loaded. Update the forecast and retry this month."); }
-  }, [current, point, cache, draft]);
+  const inspect = evidence.refresh;
   const holdingLink = (id: string) => <button key={id} type="button" onClick={() => review("Investment", id)}>{referenceLabel(draft, "Investment", id)}</button>;
   return <section className="panel monthly-money" data-evidence-state={!point ? "unavailable" : !current ? "stale" : error ? "error" : detail ? "incomplete" : "loading"} aria-label={mode === "paycheck" ? "Your Paycheck" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments and transfers"}>
     <div className="panel-head"><h2>{mode === "paycheck" ? "Where modeled income goes" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments & transfers"}</h2>
-      {!!points.length && <FieldShell fieldKey="moneyMonth" required><select aria-label={`${mode} forecast month`} value={point?.periodStart.slice(0, 7) ?? ""} onChange={event => { (selectMonth ?? setSelected)(event.target.value); setError(""); }}>{points.map(value => <option key={value.periodStart} value={value.periodStart.slice(0, 7)}>{value.periodStart.slice(0, 10)} → {value.periodEnd.slice(0, 10)} (exclusive)</option>)}</select></FieldShell>}
+      {!!points.length && <FieldShell fieldKey="moneyMonth" required><select aria-label={`${mode} forecast month`} value={point?.periodStart.slice(0, 7) ?? ""} onChange={event => (selectMonth ?? setSelected)(event.target.value)}>{points.map(value => <option key={value.periodStart} value={value.periodStart.slice(0, 7)}>{value.periodStart.slice(0, 10)} → {value.periodEnd.slice(0, 10)} (exclusive)</option>)}</select></FieldShell>}
     </div>
     {!current || !point ? <><p role="status">{!point ? "Monthly evidence unavailable. This breakdown needs a supported household forecast." : "Out of date · retained forecast. Monthly evidence needs an update before it can be presented as current."}</p>
       {mode !== "paycheck" && objectEntries(draft, "Liability").filter(value => value.liability_type === "mortgage").map(value => <p key={objectId("Liability", value)}>{referenceLabel(draft, "Liability", objectId("Liability", value))} · Payment not available. Review contractual terms and payment funding in Forecast setup.</p>)}

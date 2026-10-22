@@ -104,7 +104,7 @@ import {
   isPersonalPersistenceEnabledOrigin,
 } from "./persistence/indexedDbPersonalModelStore.js";
 
-import { useInteractiveForecast } from "./forecast/useInteractiveForecast.js";
+import { useInteractiveForecast, useForecastEvidence } from "./forecast/useInteractiveForecast.js";
 import { EditorHub, canRepairEntityField } from "./EntityEditor.js";
 import { mortgageFinalPaymentDate, mortgagePaymentCount } from "../src/application/compiler/liabilities.js";
 import { currentPlan, simulationWindowProblem, replaceCurrentPlanHorizon, acceptRetirementProposal } from "../src/application/forecastSetup.js";
@@ -122,7 +122,7 @@ import { calculationFingerprint } from "../src/application/interactiveForecast.j
 import { HouseholdChart } from "./forecast/HouseholdChart.js";
 import { MonthlyMoneyPanel } from "./forecast/MonthlyMoneyPanel.js";
 import { LiabilityBalanceOutlook, MortgageAmortization } from "./forecast/MortgageAmortization.js";
-import { inspectLiabilityBalanceWindow, MortgageWindowCache, type MortgageWindow } from "../src/application/mortgageChartData.js";
+import { inspectLiabilityBalanceWindow } from "../src/application/mortgageChartData.js";
 import { ForecastDetails, LazyExplanation, ExplanationCache } from "./forecast/details.js";
 import { ResultExplanationCache } from "./forecast/explanations.js";
 import { FINANCIAL_DESTINATIONS, financialDestination } from "./navigation.js";
@@ -1432,15 +1432,7 @@ function MortgageOutlook({ draft, forecast, property = false, currency, selected
   const startIndex = Math.floor(selectedIndex / 12) * 12;
   const selectedStart = points[selectedIndex]?.periodStart ?? "";
   const liabilityData = useMemo(() => current && forecast && points.length ? inspectLiabilityBalanceWindow(forecast, startIndex) : undefined, [current, forecast, points.length, startIndex]);
-  const cache = useMemo(() => current && forecast ? new MortgageWindowCache(forecast) : undefined, [current, forecast, draft]);
-  const [evidence, setEvidence] = useState<{ cache: MortgageWindowCache; id: string; index: number; window?: MortgageWindow; error?: string }>();
-  const [retry, setRetry] = useState(0);
-  useEffect(() => {
-    if (!cache || !liabilityId || !points.length) { setEvidence(undefined); return; }
-    try { setEvidence({ cache, id: liabilityId, index: startIndex, window: cache.get(liabilityId, startIndex) }); }
-    catch (error) { setEvidence({ cache, id: liabilityId, index: startIndex, error: error instanceof Error ? error.message : "Mortgage replay failed. Update the forecast and retry." }); }
-  }, [cache, liabilityId, startIndex, points.length, retry]);
-  const active = evidence?.cache === cache && evidence?.id === liabilityId && evidence?.index === startIndex ? evidence : undefined;
+  const active = useForecastEvidence(forecast, draft, current && !!liabilityId, { operation: "mortgage_evidence", startIndex, liabilityId });
   const review = (id: string) => models.reviewTarget?.({ id, type: "Liability", objectType: "Liability", label: referenceLabel(draft, "Liability", id), editable: false });
   const setup = () => models.reviewTarget?.({ id: "", type: "Forecast setup", label: "Forecast setup", editable: false });
   return <section className="panel section-outlook mortgage-outlook" aria-label={property ? "Property mortgage outlook" : "Debt outlook"}
@@ -1469,7 +1461,7 @@ function MortgageOutlook({ draft, forecast, property = false, currency, selected
         {forecast?.status === "incomplete" && <p>Partial forecast horizon · only successfully modeled periods are available.</p>}
         {selectedMonth && !points.some(point => point.periodStart === selectedMonth) && <p>The previously selected month is outside this forecast. Showing the first supported month.</p>}
         {points.slice(startIndex, startIndex + 12).length < 12 && <p>Partial window at the forecast boundary · no months beyond the supported result are assumed.</p>}
-        {active?.error ? <><p role="alert">{active.error}</p><button onClick={() => setRetry(value => value + 1)}>Retry mortgage evidence</button><button onClick={setup}>Review forecast setup</button></>
+        {active?.error ? <><p role="alert">{active.error}</p><button onClick={active.refresh}>Retry mortgage evidence</button><button onClick={setup}>Review forecast setup</button></>
           : active?.window ? <MortgageAmortization window={active.window} loanName={objectLabel("Liability", selected!)} selectedStart={selectedStart} selectMonth={selectMonth} /> : <p role="status">Loading bounded mortgage evidence…</p>}
         </>}
       {property && <p>{selected?.collateral_id && objectEntries(draft, "Asset").some(asset => asset.asset_id === selected.collateral_id && asset.asset_type === "real_estate")

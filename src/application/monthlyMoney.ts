@@ -171,7 +171,8 @@ export function cashComparison(detail: ReturnType<typeof inspectMonthlyMoney>) {
     const scale = uses.compare(income) > 0 ? uses : income;
     const percent = (value: string) => scale.isPositive()
       ? Number(decimal(value).dividedBy(scale, new RoundingPolicy(8, "half_even")).times(decimal("100")).toString()) : 0;
-    return { categories, coherent, drawable: coherent && income.isPositive() && categories.length > 0,
+    const knownUsesOnly = income.isZero() && uses.isPositive();
+    return { categories, coherent, knownUsesOnly, drawable: coherent && !income.isNegative() && scale.isPositive() && categories.length > 0,
       overflow: excess.isPositive(), remainder: remainder.isPositive(), scale: scale.toString(), percent };
   } catch { return undefined; }
 }

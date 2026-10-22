@@ -137,6 +137,12 @@ for (const width of [1440, 390]) {
     await expect(table.getByRole("row", { name: /Total known uses/ }).getByRole("cell")).toHaveText(exact(expected.totalUses));
     await expect(table.getByRole("row", { name: /^Payroll withholding/ }).getByRole("cell")).toHaveText("Unknown · not modeled");
     const comparison = panel(page).getByRole("figure", { name: "Where modeled income goes comparison", exact: true });
+    expect(expected.denominator).toBe("0");
+    await expect(comparison).toContainText("Zero modeled income");
+    await expect(comparison).toContainText("not a paycheck-funded allocation");
+    await expect(comparison.locator(".cash-income-reference")).toHaveCount(0);
+    await expect(comparison.locator(".paycheck-unallocated")).toHaveCount(0);
+    await expect(comparison.locator(".paycheck-bar > span")).toHaveCount(expected.categories.length);
     const v3 = page.getByRole("figure", { name: "Modeled statement income versus expenses", exact: true });
     const v2 = page.getByRole("figure", { name: "Total modeled cash (including cash in investment accounts)", exact: true });
     const v2Box = await v2.boundingBox(), v3Box = await v3.boundingBox(), v4Box = await comparison.boundingBox();

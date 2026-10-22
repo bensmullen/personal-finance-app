@@ -171,8 +171,18 @@ for (const width of [1440, 390]) {
     await clickFinancialDestination(page, "Debt");
     await expect(outlook(page)).toHaveAttribute("data-evidence-state", "current");
     await expect(outlook(page)).toContainText("No cash payment posted in this month");
-    for (const segment of await outlook(page).locator(".mortgage-month").first().locator(".mortgage-column > span").all())
+    const amortization = outlook(page).getByRole("region", { name: "Mortgage amortization", exact: true });
+    const segments = amortization.getByRole("figure").getByRole("button", { name: /^2026-01:/ }).locator(".mortgage-column > span");
+    await expect(segments).toHaveCount(3);
+    for (const segment of await segments.all())
       await expect(segment).toHaveAttribute("style", "height: 0%;");
+    await amortization.getByText("Exact mortgage payments & sources", { exact: true }).click();
+    const cells = amortization.getByRole("row").filter({ has: page.getByRole("rowheader", { name: /^2026-01-01/ }) }).getByRole("cell");
+    for (const index of [1, 2, 3]) await expect(cells.nth(index)).toHaveText(formatExactMoney("0", expected.rows[0]!.currency));
+    const balance = outlook(page).getByRole("figure", { name: "Modeled household liability balances", exact: true });
+    await expect(balance.locator(".mortgage-month").first().locator(".mortgage-column > span")).not.toHaveAttribute("style", "height: 0%;");
+    expect(expected.rows[0]!.endingPrincipal).not.toBe("0");
+    await expect(cells.nth(4)).toHaveText(formatExactMoney(expected.rows[0]!.endingPrincipal, expected.rows[0]!.currency));
     await fits(page);
   });
   test(`Missing mortgage replay is recoverable without phantom bars at ${width}px`, async ({ page }) => {
