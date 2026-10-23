@@ -256,6 +256,19 @@ work. Failed staging, commits, or pushes preserve data and give an actionable
 STATE_RECOVERY_REQUIRED reason. No automatic stash, reset, clean, branch switch,
 force push, amend, rebase, or history rewrite is permitted.
 
+**Preflight / hook fault handling (mandatory):** Treat optional preflight as
+non-essential to implementation authorization. A failed or unavailable
+preflight never authorizes a bypass of path/single-writer safeguards, but it
+must not prompt the agent to undo valid in-progress work. If permitted
+implementation can proceed, continue with the preflight reported as unavailable
+and leave acceptance to CI; if issue-specific instructions require stopping,
+report BLOCKED without first reverting authorized edits. The Stop hook
+checkpoints eligible WIP; if the hook itself cannot close safely, preserve the
+checkout, receipt, and all edits and require operator recovery. Handoffs must
+never tell Codex to clean/undo partial edits after an optional check fails.
+Framework regression tests must exercise a directly affected import on the
+minimum supported Python runtime and verify blocked-work preservation.
+
 ### Escalation boundary
 
 Codex SHALL self-resolve implementation-only choices using repository authority
