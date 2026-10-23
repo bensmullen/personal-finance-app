@@ -200,15 +200,22 @@ for (const width of [1440, 390]) {
       if (startIndex) {
         await page.getByLabel("Liability window starting", { exact: true }).selectOption(result.points[startIndex]!.periodStart);
       }
-      const expected = inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), GOLDEN_HOUSEHOLD_IDS.mortgage);
+      // Do not run a second independent detailed replay concurrently with
+      // the browser worker: two expensive checkpoint restorations compete for
+      // CI memory at the age-90 middle window. Await the actual sourced worker
+      // result first, then independently verify every paid amount and identity.
+      const selectedStart = result.points[startIndex]!.periodStart;
       try {
-        await expect.poll(() => page.evaluate(() => (window as ObservedWindow).__u1bMortgage?.start)).toBe(expected.start);
+        await expect.poll(() => page.evaluate(() => (window as ObservedWindow).__u1bMortgage?.start),
+          { timeout: 25_000 }).toBe(selectedStart);
       } finally {
         const phases = await page.evaluate(() => ({ transport: (window as ObservedWindow).__u1bTransport, evidence: (window as ObservedWindow).__u1bEvidence }))
           .catch(error => ({ browserUnavailable: String(error) }));
         await info.attach(`flagship-${width}-window-${startIndex}-phases`, { body: JSON.stringify(phases), contentType: "application/json" });
       }
-      expect(await page.evaluate(() => (window as ObservedWindow).__u1bMortgage)).toEqual(expected);
+      const actualWindow = await page.evaluate(() => (window as ObservedWindow).__u1bMortgage);
+      const expected = inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), GOLDEN_HOUSEHOLD_IDS.mortgage);
+      expect(actualWindow).toEqual(expected);
     }
     await page.getByLabel("Liability window starting", { exact: true }).selectOption(result.points[0]!.periodStart);
     // A second transition verifies responsive navigation and retained month
