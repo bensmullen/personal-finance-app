@@ -354,6 +354,16 @@ describe("U1B sourced planning readiness", () => {
     expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
     if (result.status === "unavailable") throw new Error(result.message);
     expect(result.points, JSON.stringify(result.diagnostics)).toHaveLength(2);
+    // The financial baseline remains usable when portable detail proof is
+    // absent in transit. Unsupported Cash/Debt evidence must independently
+    // refuse to draw phantom amounts, while forged proof IDs remain rejected.
+    const sourceRequest = createHouseholdForecastRequest(configuration, ids.model);
+    const missingProof = { ...result, points: result.points.map(point => ({ ...point, traceRefs: [] })) };
+    expect(baselineResultMatchesRequest(missingProof, sourceRequest)).toBe(true);
+    const forgedProof = { ...result, points: result.points.map((point, index) => index === 0
+      ? { ...point, traceRefs: point.traceRefs.map(ref => ref.replayArtifact === undefined ? ref : { ...ref, traceId: "household:replay:forged:wrong:source" }) }
+      : point) };
+    expect(baselineResultMatchesRequest(forgedProof, sourceRequest)).toBe(false);
     expect(result.requestedHorizon.end).toBe("2026-03-01T00:00:00.000Z");
     expect(result.reachedThrough).toBe(result.requestedHorizon.end);
     expect(result.points.map(point => point.statementIncome.amount)).toEqual(["0", "0"]);
