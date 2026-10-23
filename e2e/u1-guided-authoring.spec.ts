@@ -607,8 +607,13 @@ test("Owner repair: isolated mortgage shortfalls name the evaluated payment acco
   await navigate(page, "Plan", "Current Plan"); await open(page, "Expert standalone forecasts");
   const standalone = page.getByRole("region", { name: "Standalone forecast drill-down" });
   await standalone.getByLabel("Forecast scope", { exact: true }).selectOption("liabilities");
+  const liabilitiesStarted = Date.now();
   await standalone.getByRole("button", { name: "Run liabilities forecast", exact: true }).click();
-  await expect(standalone.getByText("Isolated liabilities forecast", { exact: true })).toBeVisible();
+  // A full 649-month isolated run executes in the worker, not the click handler.
+  // Keep the interaction responsive, then wait for its real scoped result
+  // within the production controller's 60-second worker deadline.
+  expect(Date.now() - liabilitiesStarted).toBeLessThan(10_000);
+  await expect(standalone.getByText("Isolated liabilities forecast", { exact: true })).toBeVisible({ timeout: 60_000 });
   await expect(standalone.getByRole("note").filter({ hasText: /does not include salary or spending/ })).toBeVisible();
   const explanation = standalone.getByRole("region", { name: "Mortgage funding explanation" }).first();
   await expect(explanation).toContainText("Example mortgage"); await expect(explanation).toContainText("2026-01-01");
@@ -620,9 +625,11 @@ test("Owner repair: isolated mortgage shortfalls name the evaluated payment acco
   await navigate(page, "Plan", "Current Plan");
   await open(page, "Expert standalone forecasts");
   await standalone.getByLabel("Forecast scope", { exact: true }).selectOption("cash_flow");
+  const cashFlowStarted = Date.now();
   await standalone.getByRole("button", { name: "Run cash flow forecast", exact: true }).click();
+  expect(Date.now() - cashFlowStarted).toBeLessThan(10_000);
   expect(await page.evaluate(() => (window as typeof window & { __standaloneRequest?: unknown }).__standaloneRequest)).toEqual({ scope: "cash_flow", start: "2026-01-01", end: "2080-02-01", months: 649 });
-  await expect(standalone.getByText("Standalone cash-flow forecast · no mortgage execution", { exact: true })).toBeVisible();
+  await expect(standalone.getByText("Standalone cash-flow forecast · no mortgage execution", { exact: true })).toBeVisible({ timeout: 60_000 });
   expect(await page.evaluate(() => (window as typeof window & { __standaloneResult?: unknown }).__standaloneResult)).toMatchObject({ scope: "cash_flow", status: "completed", months: 649 });
   expect(errors).toEqual([]);
 });
