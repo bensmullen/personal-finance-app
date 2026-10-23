@@ -88,7 +88,7 @@ async function actual(page: Page) {
         periodStart: point.periodStart, periodEnd: point.periodEnd,
         cash: point.cash, investmentValue: point.investmentValue,
         totalAssets: point.totalAssets, totalLiabilities: point.totalLiabilities,
-        netWorth: point.netWorth, statementIncome: point.statementIncome,
+        netWorth: point.netWorth, debtBalances: point.debtBalances, statementIncome: point.statementIncome,
         statementExpenses: point.statementExpenses,
         outputCapabilities: point.outputCapabilities, traceIds: point.traceIds,
         traceRefs: [replay],
