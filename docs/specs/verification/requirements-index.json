@@ -61,7 +61,7 @@
       "verification_owners": [
         "automated",
         "engineering-review",
-        "user-validation"
+        "user-uat"
       ],
       "verification_refs": [],
       "implementation_scope": [
@@ -282,7 +282,7 @@
       "verification_owners": [
         "automated",
         "engineering-review",
-        "user-validation"
+        "user-uat"
       ],
       "verification_refs": [],
       "implementation_scope": [
@@ -306,7 +306,7 @@
       "verification_owners": [
         "automated",
         "engineering-review",
-        "user-validation"
+        "user-uat"
       ],
       "verification_refs": [],
       "implementation_scope": [
