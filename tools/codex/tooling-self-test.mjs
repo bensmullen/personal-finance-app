@@ -38,6 +38,11 @@ mustRun("python3", [
   "-c",
   "import ast,pathlib; ast.parse(pathlib.Path(" + JSON.stringify(policy) + ").read_text())",
 ]);
+const hookSource = fs.readFileSync(policy, "utf8");
+for (const unsupported of [".is_relative_to(", ".removesuffix(", ".removeprefix("]) {
+  assert(!hookSource.includes(unsupported),
+    "Python 3.8 compatibility regression in Codex hook: " + unsupported);
+}
 for (const script of [bootstrap, prepareWorktree, setupEnvironment]) {
   mustRun("bash", ["-n", script]);
 }
@@ -609,7 +614,10 @@ for (const dirty of [false, true]) {
   fs.mkdirSync(path.join(f.repository, 'tools/codex'), { recursive: true });
   fs.mkdirSync(path.join(f.repository, 'test'));
   fs.copyFileSync(path.join(root, helper), path.join(f.repository, helper));
-  fs.writeFileSync(path.join(f.repository, 'test/affected.test.ts'), "import { value } from '../src/allowed.js';\nit('affected', () => value);\n");
+  // The bounded hook must accept an in-repository .js import and ignore an
+  // out-of-tree relative import even on Python 3.8 (no Path.is_relative_to).
+  fs.writeFileSync(path.join(f.repository, 'test/affected.test.ts'),
+    "import { value } from '../src/allowed.js';\nimport { outside } from '../../outside.js';\nit('affected', () => value);\n");
   fs.appendFileSync(path.join(f.repository, '.gitignore'), '.codex/logs/\n');
   f.git('add', '.'); f.git('commit', '-m', 'preflight fixture');
   f.git('update-ref', 'refs/remotes/origin/main', f.git('rev-parse', 'HEAD'));
@@ -643,6 +651,29 @@ for (const dirty of [false, true]) {
   assert(preflight(command).hookSpecificOutput?.permissionDecision === 'deny', 'third invocation denied');
   fs.appendFileSync(path.join(f.repository, helper), '// unmerged edit\n');
   assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('merged origin/main'), 'unmerged helper refused');
+}
+{
+  // An unavailable optional preflight must not cost an authorized implementation
+  // patch. A clean BLOCKED Stop checkpoints/pushes the pending work unchanged.
+  const f = recoveryFixture();
+  f.dirty();
+  const before = f.snapshot();
+  const blockedPreflight = f.invoke("PreToolUse", {
+    tool_name: "Bash",
+    tool_input: { command: "node tools/codex/limited-local-verification.mjs test/affected.test.ts" },
+  });
+  assert(blockedPreflight.hookSpecificOutput?.permissionDecision === "deny",
+    "unavailable preflight must deny its tool rather than bypass authorization");
+  assert(f.snapshot().diff === before.diff, "preflight denial must not change authorized WIP");
+  const stopped = f.invoke("Stop", {
+    last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: optional preflight unavailable; preserve authorized partial work",
+  });
+  assert(stopped.continue === true, "blocked Stop must permit safe checkpoint and close task");
+  assert(f.git("rev-parse", "HEAD") === f.git("rev-parse", "@{u}"),
+    "preflight-blocked work must be synchronized with origin");
+  assert(f.git("show", "HEAD:src/allowed.ts").includes("interrupted work"),
+    "preflight-blocked work must not be discarded");
+  f.assertNoUnsafeCommands();
 }
 const handoffPolicy = fs.readFileSync(path.join(root, "docs/development/handoff-authoring-policy.md"), "utf8");
 const refinanceEscalation = [
