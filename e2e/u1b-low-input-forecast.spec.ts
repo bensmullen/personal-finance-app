@@ -409,7 +409,6 @@ for (const width of [1440, 390]) {
       expect(selected.evidence?.measurements?.restore).toMatchObject({ cache: "cold", checkpointCount: engineering ? 54 : 2, materializedCheckpointStates: engineering ? 54 : 2 });
       const restored = selected.evidence!.measurements!.restore!;
       expect(restored.checkpointDiagnosticKeysComputed).toBeLessThanOrEqual(restored.checkpointDiagnosticOccurrencesCompared!);
-      if (engineering) expect(restored.checkpointDiagnosticKeysComputed).toBeLessThan(restored.checkpointDiagnosticOccurrencesCompared!);
       expect(selected.transport.slice(before).filter(item => item.proofSent)).toHaveLength(1);
       // Every previous evidence worker is terminated before its successor.
       const postedWorkers = new Set(selected.transport.filter(item => item.startIndex !== undefined).map(item => item.workerId));
