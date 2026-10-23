@@ -1389,7 +1389,8 @@ function ForecastStatus({ label, state, compact = false, setupChanged = false, u
     <strong>{label} · {state.pending ? "Running" : state.lifecycle === "error" ? "Failed" : state.stale || setupChanged ? "Update needed" : state.lifecycle === "completed" ? "Ready" : state.lifecycle === "incomplete" ? "Partially modeled" : state.lifecycle === "unsupported" ? "Unsupported" : state.lifecycle === "idle" ? "Needs setup" : "Update needed"}</strong>
     {state.pending && <span>{state.lastGoodResult ? "Recalculating" : "Running"} {compact ? "your forecast" : "deterministic forecast"}…</span>}
     {(state.stale || setupChanged) && <span>Old result — inputs changed; these numbers are not current.</span>}
-    {!compact && !state.pending && !state.stale && !setupChanged && state.lifecycle === "completed" && <span>Current result</span>}
+    {!state.pending && !state.stale && !setupChanged && state.cacheState === "hit" && <span>Current result reused</span>}
+    {!compact && !state.pending && !state.stale && !setupChanged && state.lifecycle === "completed" && state.cacheState !== "hit" && <span>Current result</span>}
     {!state.pending && !state.stale && !setupChanged && state.lifecycle === "incomplete" && <><span>Some outputs are incomplete; after-tax totals may be unavailable.</span>
       </>}
     {blocked && !summary && <span>Review the guidance below, correct the supported setup or import a supported model, then Update forecast.</span>}

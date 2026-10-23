@@ -207,6 +207,9 @@ export interface ReplayRestoreMeasurement {
   readonly sourceRequalificationMs?: number;
   readonly kernelCompileMs?: number;
   readonly checkpointRestoreValidationMs?: number;
+  readonly checkpointDiagnosticKeysComputed?: number;
+  readonly checkpointDiagnosticOccurrencesCompared?: number;
+  readonly checkpointUniqueCatalogChars?: number;
   readonly checkpointSizeMeasurementMs?: number;
   readonly checkpointCount: number;
   readonly materializedCheckpointStates: number;
@@ -225,7 +228,7 @@ export interface ReplayRestoreObserver {
   /** Bounded progress survives a later failure; never receives source contents. */
   readonly phase?: (phase: "restore_started" | "decoded" | "integrity_validated" | "participants_restored" | "source_requalified" | "kernel_compiled" | "checkpoints_validated" | "restore_warm") => void;
 }
-type RestoreTimings = { -readonly [K in keyof Pick<ReplayRestoreMeasurement, "decodeMs" | "integrityValidationMs" | "participantRestoreMs" | "sourceRequalificationMs" | "kernelCompileMs" | "checkpointRestoreValidationMs" | "checkpointSizeMeasurementMs" | "serializedCheckpointBytes">]: ReplayRestoreMeasurement[K] };
+type RestoreTimings = { -readonly [K in keyof Pick<ReplayRestoreMeasurement, "decodeMs" | "integrityValidationMs" | "participantRestoreMs" | "sourceRequalificationMs" | "kernelCompileMs" | "checkpointRestoreValidationMs" | "checkpointSizeMeasurementMs" | "serializedCheckpointBytes" | "checkpointDiagnosticKeysComputed" | "checkpointDiagnosticOccurrencesCompared" | "checkpointUniqueCatalogChars">]: ReplayRestoreMeasurement[K] };
 const heapSample = (): number | undefined => {
   try {
     const value = (globalThis.performance as Performance & { memory?: { usedJSHeapSize?: number } } | undefined)?.memory?.usedJSHeapSize;
@@ -296,7 +299,11 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   const forecast = Object.freeze({ runMetadata: restored.runMetadata, periods: restored.periods,
     replay: Object.freeze({ kernel, runContext: restored.runContext }) });
   if (supplied.version === "household-replay/v3") measure("checkpointRestoreValidationMs", () => registerHouseholdReplayCheckpoints(forecast,
-    restoreCheckpointDeltas(restored.checkpoints!, restored.runContext.dataCutoff, restored.runContext, executable.reconciledOpeningState)));
+    restoreCheckpointDeltas(restored.checkpoints!, restored.runContext.dataCutoff, restored.runContext, executable.reconciledOpeningState), counts => {
+      timings.checkpointDiagnosticKeysComputed = counts.diagnosticKeysComputed;
+      timings.checkpointDiagnosticOccurrencesCompared = counts.diagnosticOccurrencesCompared;
+      timings.checkpointUniqueCatalogChars = counts.uniqueCatalogChars;
+    }));
   try { observer?.phase?.("checkpoints_validated"); } catch { /* Observation is optional. */ }
   if (observer?.includeCheckpointBytes) {
     // Locate the original field in the parsed wire, without re-encoding decoded

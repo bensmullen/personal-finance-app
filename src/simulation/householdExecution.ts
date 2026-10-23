@@ -1184,6 +1184,7 @@ export const exportHouseholdReplayCheckpoints = (forecast: Pick<HouseholdForecas
 export const registerHouseholdReplayCheckpoints = (
   forecast: Pick<HouseholdForecastSummaryResult, "periods" | "runMetadata" | "replay">,
   checkpoints: readonly HouseholdReplayCheckpoint[],
+  observe?: (counts: HouseholdReplayVerificationCounts) => void,
 ): void => {
   const mismatch = (): never => { throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: invalid portable checkpoints"); };
   const { runContext, kernel } = forecast.replay;
@@ -1200,10 +1201,20 @@ export const registerHouseholdReplayCheckpoints = (
       Object.values(capabilities).some(value => !value || !["complete", "incomplete"].includes(value.status) ||
         !["tax_independent", "tax_affected"].includes(value.dependency) || !Array.isArray(value.diagnostics)))) mismatch();
   }
+  // Compare every checkpoint's complete capability history with one scoped
+  // exact-content dictionary. Canonical serialization here used to expand the
+  // same projected-law catalog for every warning at all 54 checkpoints. Reuse
+  // the exact replay comparator, retaining ordered occurrences and all fields.
+  // This still validates corrupt siblings even when selecting the first month.
+  if (!equalHouseholdReplaySummaries(checkpoints.map((checkpoint, index) => {
+    const { outputCapabilities: _capabilities, ...period } = expected[index]!;
+    return { ...period, ...(checkpoint.outputCapabilities === undefined ? {} : { outputCapabilities: checkpoint.outputCapabilities }) };
+  }), expected, (phase, counts) => {
+    if (phase === "economics_compared") { try { observe?.(counts); } catch { /* Observation only. */ } }
+  })) mismatch();
   const restored = checkpoints.map((checkpoint, index) => {
     const period = expected[index]!;
     if (checkpoint.runId !== forecast.runMetadata.runId || checkpoint.at !== period.period.end || checkpoint.fingerprint !== forecast.runMetadata.inputFingerprint ||
-      canonicalSerialize(checkpoint.outputCapabilities ?? null) !== canonicalSerialize(period.outputCapabilities ?? null) ||
       checkpoint.runtime === null || typeof checkpoint.runtime !== "object" || Array.isArray(checkpoint.runtime)) mismatch();
     const state = createAuthoritativeState(checkpoint.state);
     // Constructors validate materialized values, but may normalize malformed

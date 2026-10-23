@@ -190,8 +190,11 @@ export class EvidenceController {
       }, EVIDENCE_DEADLINE_MS);
       if (!this.#worker) {
         this.#worker = this.makeWorker();
+        const owner = this.#worker;
+        const failOwner = () => { if (this.#worker === owner) fail(); };
         this.#observe(pending, "created");
         this.#worker.onmessage = ({ data }) => {
+          if (this.#worker !== owner) return;
           const item = this.#pending.get(data.requestId);
           if (!item) {
             this.#observe({ boundary: data, started, pointCount: 0 }, "ignored");
@@ -222,8 +225,8 @@ export class EvidenceController {
           this.#settled.set(data.requestId, { boundary: { requestId: data.requestId, operation: data.operation, startIndex: data.startIndex }, started: item.started, pointCount: item.pointCount });
           for (const listener of item.listeners) listener(data);
         };
-        this.#worker.onerror = event => { event.preventDefault(); fail(); };
-        this.#worker.onmessageerror = fail;
+        this.#worker.onerror = event => { event.preventDefault(); failOwner(); };
+        this.#worker.onmessageerror = failOwner;
       }
       const message = { ...boundary, points: bounded.points,
         ...(!this.#sent ? { source: { ...(!this.#worker.evidenceSourceReady ? { basis: bounded.basis } : {}), model: this.source.model,
@@ -291,7 +294,13 @@ export class ForecastController {
   #record(record: PerformanceRecord): void { try { this.record(record); } catch { /* Observational only. */ } }
   #now(): number | undefined { try { const value = this.now(); return Number.isFinite(value) ? value : undefined; } catch { return undefined; } }
   submit(input: ForecastSubmission, immediate = false): void {
-    this.#releaseEvidence();
+    const cached = input.operation === "baseline_forecast" ? this.#cache.get(input.fingerprint) : undefined;
+    // Only the current immutable result and its original model may keep the
+    // authenticated worker source. The economic cache key is not source proof.
+    const retain = cached !== undefined && cached === this.#retained?.result && cached === this.#state.lastGoodResult &&
+      this.#state.resultFingerprint === input.fingerprint && this.#state.resultModel === input.model &&
+      !this.#state.pending && !this.#state.stale;
+    if (!retain) this.#releaseEvidence();
     this.#stop();
     const requestId = ++this.#sequence;
     const message = { ...input, requestId } as ForecastWorkerRequest;
@@ -299,7 +308,6 @@ export class ForecastController {
     const run = () => {
       this.#timer = undefined;
       if (!isCurrentForecastResponse(this.#state, message)) return;
-      const cached = input.operation === "baseline_forecast" ? this.#cache.get(input.fingerprint) : undefined;
       const context: PerformanceContext = { ...input.performanceContext, executionLocation: "browser_main", cacheState: cached ? "hit" : input.operation === "baseline_forecast" ? "miss" : "not_applicable" };
       if (cached !== undefined) {
         this.#retained = { result: cached };
@@ -353,6 +361,10 @@ export class ForecastController {
             Object.defineProperty(evidenceWorker, "evidenceSourceReady", { value: true, configurable: true });
             this.#retained = { result };
             retainedEvidenceWorkers.set(result, evidenceWorker);
+            worker.onmessage = null;
+            const releaseIdleOwner = () => { if (this.#retained?.result === result) this.#releaseEvidence(); };
+            worker.onerror = event => { event.preventDefault(); releaseIdleOwner(); };
+            worker.onmessageerror = releaseIdleOwner;
             this.#worker = undefined;
           }
           this.#stop();

@@ -35,12 +35,12 @@ function extra(model: PersonalDraft, amount: string, fundingAccountId: string = 
 }
 describe("source-backed mortgage chart data", () => {
   it("keeps compact financial values identical to canonical replay and independently measures cold/warm checkpoints", () => {
-    // Thirteen months exercise one transported checkpoint and a projected-law
+    // Twenty-five months exercise sibling checkpoints and a projected-law
     // year; ordinary unit CI never repeats the 649-month performance fixture.
-    const request = createHouseholdForecastRequest({ ...createGoldenExampleConfiguration(), simulationEnd: "2027-02-01" }, ids.model);
+    const request = createHouseholdForecastRequest({ ...createGoldenExampleConfiguration(), simulationEnd: "2028-02-01" }, ids.model);
     const result = runPersonalHouseholdForecast(createFlagshipHouseholdDraft(), request);
     if (result.status === "unavailable") throw new Error(result.message);
-    expect(result.points).toHaveLength(13);
+    expect(result.points).toHaveLength(25);
     const proof = householdEvidenceProof(result.points)!;
     const canonical = restorePortableHouseholdReplayArtifact(proof);
     const transport = createForecastDiagnosticTransport(result.diagnosticCatalogs!.source, result.diagnosticCatalogs!.entries.map(entry => entry.content));
@@ -56,17 +56,21 @@ describe("source-backed mortgage chart data", () => {
     });
     expect(result.diagnosticCatalogs!.entries).toHaveLength(1);
     const counters = forecastTransportCounters(result);
-    expect(counters.forecastPointCount).toBe(13);
+    expect(counters.forecastPointCount).toBe(25);
     expect(counters.sharedReplayProofCount).toBe(1);
     expect(counters.uniqueCatalogCount).toBe(1);
     expect(counters.projectedLawWarningCount).toBeGreaterThan(0);
     expect(counters.diagnosticBytesAfter).toBeLessThan(counters.diagnosticBytesBefore!);
     let tick = 0;
     const measurements = measureHouseholdCheckpointRestoration(proof, () => ++tick);
-    expect(measurements.cold).toMatchObject({ cache: "cold", checkpointCount: 1, materializedCheckpointStates: 1 });
+    expect(measurements.cold).toMatchObject({ cache: "cold", checkpointCount: 2, materializedCheckpointStates: 2 });
+    expect(measurements.cold.checkpointDiagnosticOccurrencesCompared).toBeGreaterThan(0);
+    expect(measurements.cold.checkpointDiagnosticKeysComputed).toBeGreaterThan(0);
+    expect(measurements.cold.checkpointDiagnosticKeysComputed).toBeLessThanOrEqual(measurements.cold.checkpointDiagnosticOccurrencesCompared!);
+    expect(measurements.cold.checkpointUniqueCatalogChars).toBe(result.diagnosticCatalogs!.entries[0]!.content.length);
     expect(measurements.cold.checkpointRestoreValidationMs).toBeGreaterThan(0);
     expect(measurements.cold.serializedCheckpointBytes).toBeGreaterThan(0);
-    expect(measurements.warm).toMatchObject({ cache: "warm", checkpointCount: 1, materializedCheckpointStates: 0 });
+    expect(measurements.warm).toMatchObject({ cache: "warm", checkpointCount: 2, materializedCheckpointStates: 0 });
     expect(measurements.warm.checkpointRestoreValidationMs).toBeUndefined();
     expect(measurements.cloneMs).toBeGreaterThan(0);
     const selection = { operation: "mortgage_evidence" as const, startIndex: 12, liabilityId: ids.mortgage };
@@ -77,7 +81,7 @@ describe("source-backed mortgage chart data", () => {
     const observation = { now: () => ++tick, record() {}, phase: (phase: string) => { phases.push(phase); } };
     const points = restoreHouseholdEvidencePoints(proof, selection, bounded.points, fingerprint, result.diagnosticCatalogs, observation);
     expect(phases).toEqual(["restore_started", "restore_warm", "catalog_validation_started", "catalog_validated", "qualification_started", "qualification_validated"]);
-    expect(inspectMortgageWindow(points, ids.mortgage, observation)).toEqual(inspectMortgageWindow(result.points.slice(12), ids.mortgage));
+    expect(inspectMortgageWindow(points, ids.mortgage, observation)).toEqual(inspectMortgageWindow(result.points.slice(12, 24), ids.mortgage));
     expect(phases.slice(-9)).toEqual(["restore_started", "restore_warm", "replay_started", "replay_executed",
       "verification_started", "summary_materialized", "capabilities_compared", "economics_compared", "replay_verified"]);
     const table = structuredClone(result.diagnosticCatalogs!);
@@ -94,20 +98,26 @@ describe("source-backed mortgage chart data", () => {
     // checkpoint. Source binding/count validation must still reject it.
     type WireRecord = { kind: string; value: unknown };
     const payload = (wire: WireRecord): WireRecord => wire.kind === "definition" ? (wire.value as [number, WireRecord])[1] : wire;
-    for (const corruption of ["missing", "wrong-date"]) {
+    for (const corruption of ["missing", "wrong-date", "wrong-fingerprint", "capability"]) {
       const wire = JSON.parse(proof.encoded) as WireRecord;
       const root = payload(wire);
       const checkpointField = (root.value as [string, WireRecord][]).find(([key]) => key === "checkpoints")![1];
       const checkpoints = payload(checkpointField).value as WireRecord[];
       if (corruption === "missing") checkpoints.pop();
       else {
-        const first = payload(checkpoints[0]!);
-        const at = (first.value as [string, unknown][]).find(([key]) => key === "at")!;
-        at[1] = result.points[0]!.periodStart;
+        // Corrupt a sibling outside the selected first-month window. Even
+        // with a recomputed envelope it must fail before any values publish.
+        const sibling = payload(checkpoints.at(-1)!);
+        const field = corruption === "wrong-date" ? "at" : corruption === "wrong-fingerprint" ? "fingerprint" : "outputCapabilities";
+        const entry = (sibling.value as [string, unknown][]).find(([key]) => key === field)!;
+        entry[1] = corruption === "capability" ? null : "different-source";
       }
       const encoded = JSON.stringify(wire);
       const tampered = { ...proof, encoded, integrity: createInputFingerprint({ runContext: canonical.replay.runContext, openingState: encoded }) };
       expect(() => restorePortableHouseholdReplayArtifact(tampered)).toThrow(/BASIS_MISMATCH/);
+      const firstSelection = { ...selection, startIndex: 0 };
+      const first = boundedEvidencePoints(result, firstSelection);
+      expect(() => restoreHouseholdEvidencePoints(tampered, firstSelection, first.points, first.points[0]!.traceRefs.find(ref => ref.replayArtifact)!.traceId, table)).toThrow(/BASIS_MISMATCH/);
     }
     const throwingObserver = { now: () => { throw new Error("unavailable clock"); }, record: () => { throw new Error("unavailable sink"); }, phase: () => { throw new Error("unavailable phase sink"); } };
     expect(restorePortableHouseholdReplayArtifact(proof, throwingObserver)).toBe(canonical);

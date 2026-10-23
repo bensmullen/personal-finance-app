@@ -243,6 +243,17 @@ describe("U1B sourced planning readiness", () => {
     expect(messages).toHaveLength(2);
     expect(messages[0]!.source).toEqual({ model });
     expect(messages[1]!.source).toBeUndefined();
+    for (let repeat = 0; repeat < 3; repeat++) {
+      baseline.submit({ ...submission, request: { ...request, runIdentity: `cache-click-${repeat}` } }, true);
+      expect(baseline.state.cacheState).toBe("hit");
+      expect(baseline.state.lastGoodResult).toBe(forecast);
+      expect(forecastEvidenceController(forecast, model, makeWorker)).toBe(cash);
+      // Redundant pending selections share the same original source/request.
+      const cancel = cash.select({ operation: "monthly_evidence", startIndex: 1, liabilityId: "" }, () => {});
+      cancel();
+      expect(messages).toHaveLength(2);
+      expect(stopped).toBe(0);
+    }
     const handler = (port as unknown as EvidenceWorkerPort).onmessage!;
     baseline.invalidate();
     expect(stopped).toBe(1);
@@ -257,6 +268,28 @@ describe("U1B sourced planning readiness", () => {
     expect(stopped).toBe(2);
     baseline.dispose();
     expect(stopped).toBe(2);
+  });
+
+  it.each(["economics", "model", "idle-worker-error", "disposal"] as const)("releases an unclaimed source on %s rather than retaining it on a cache hit", reason => {
+    const model = createFlagshipHouseholdDraft();
+    const request = createHouseholdForecastRequest({ ...createGoldenExampleConfiguration(), simulationEnd: "2026-03-01" }, ids.model);
+    const submission = { operation: "baseline_forecast" as const, model, request, fingerprint: "original",
+      performanceContext: { runId: request.runIdentity, dataClassification: "synthetic" as const, modelCounts: {}, executionLocation: "browser_worker" as const, cacheState: "miss" as const } };
+    let stopped = 0;
+    const port: ForecastWorkerPort = { onmessage: null, onerror: null, onmessageerror: null, postMessage() {}, terminate() { stopped++; } };
+    const controller = new ForecastController(() => port, { set: () => 0, clear() {} }, () => {}, () => {});
+    controller.submit(submission, true);
+    const result = transportResult(request);
+    port.onmessage!({ data: { operation: "baseline_forecast", requestId: controller.state.requestId!, fingerprint: "original", outcome: "result", result, records: [] } });
+    controller.submit(submission, true);
+    expect(stopped).toBe(0);
+    if (reason === "economics") controller.submit({ ...submission, fingerprint: "changed" }, true);
+    if (reason === "model") controller.submit({ ...submission, model: structuredClone(model) }, true);
+    if (reason === "idle-worker-error") port.onerror!({ preventDefault() {} });
+    if (reason === "disposal") controller.dispose();
+    expect(stopped).toBe(1);
+    expect(claimForecastEvidenceWorker(result)).toBeUndefined();
+    controller.dispose();
   });
 
   it("settles never-answered, mismatched, clone, startup and worker errors; retry owns a fresh channel", () => {

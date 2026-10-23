@@ -20,7 +20,7 @@ const telemetryStrings = new Set(["controller", "worker", "page", "crash", "clos
   "restore_started", "decoded", "integrity_validated", "participants_restored", "source_requalified", "kernel_compiled", "checkpoints_validated", "restore_warm",
   "catalog_validation_started", "catalog_validated", "qualification_started", "qualification_validated", "replay_started", "replay_executed", "replay_verified", "replay_cached",
   "verification_started", "summary_materialized", "capabilities_compared", "economics_compared", "replay_mismatched",
-  "retained_source", "transported_source", "missing_source", "cold", "warm"]);
+  "retained_source", "transported_source", "missing_source", "cold", "warm", "terminated"]);
 function safeEvidenceTelemetry(value: unknown): Record<string, string | number> {
   const safe: Record<string, string | number> = {};
   if (!value || typeof value !== "object") return safe;
@@ -28,7 +28,7 @@ function safeEvidenceTelemetry(value: unknown): Record<string, string | number> 
   for (const key of ["surface", "operation", "phase", "outcome", "ownership", "cache"])
     if (typeof record[key] === "string" && telemetryStrings.has(record[key])) safe[key] = record[key];
   if (typeof record.sourceIdentityMatched === "boolean") safe.sourceIdentityMatched = record.sourceIdentityMatched ? 1 : 0;
-  for (const key of ["workerId", "requestId", "startIndex", "elapsedMs", "pointCount", "durationMs", "roundtripMs", "mainHeapBytes", "workerHeapBytes"])
+  for (const key of ["workerId", "requestId", "startIndex", "elapsedMs", "pointCount", "durationMs", "roundtripMs", "mainHeapBytes", "workerHeapBytes", "encodedProofBytes", "postMessageMs"])
     if (typeof record[key] === "number" && Number.isFinite(record[key]) && record[key] >= 0) safe[key] = record[key];
   const verification = record.verification as EvidenceWorkerResponse["verification"];
   if (verification && typeof verification === "object") {
@@ -47,7 +47,7 @@ function safeEvidenceTelemetry(value: unknown): Record<string, string | number> 
     const restore = measurements.restore;
     if (restore && typeof restore === "object") {
       if (restore.cache === "cold" || restore.cache === "warm") safe.cache = restore.cache;
-      for (const key of ["totalMs", "decodeMs", "integrityValidationMs", "participantRestoreMs", "sourceRequalificationMs", "kernelCompileMs", "checkpointRestoreValidationMs", "checkpointSizeMeasurementMs", "checkpointCount", "materializedCheckpointStates", "serializedCheckpointBytes", "heapBeforeBytes", "heapAfterBytes", "peakSampledHeapBytes"] as const) {
+      for (const key of ["totalMs", "decodeMs", "integrityValidationMs", "participantRestoreMs", "sourceRequalificationMs", "kernelCompileMs", "checkpointRestoreValidationMs", "checkpointSizeMeasurementMs", "checkpointCount", "materializedCheckpointStates", "serializedCheckpointBytes", "heapBeforeBytes", "heapAfterBytes", "peakSampledHeapBytes", "checkpointDiagnosticKeysComputed", "checkpointDiagnosticOccurrencesCompared", "checkpointUniqueCatalogChars"] as const) {
         const number = restore[key];
         if (typeof number === "number" && Number.isFinite(number) && number >= 0) safe[`restore.${key}`] = number;
       }
@@ -63,8 +63,9 @@ type ObservedWindow = typeof window & {
   __u1bRecordPhase: (record: unknown) => Promise<void>;
   __u1bResults: ForecastWorkerResponse[];
   __u1bEvidence: { workerId: number; operation: string; requestId: number; fingerprint: string; startIndex: number; outcome: string; phase?: string; durationMs?: number; roundtripMs?: number; measurements?: EvidenceWorkerResponse["measurements"] }[];
-  __u1bTransport: { workerId: number; phase: "posted" | "terminated"; operation?: string; requestId?: number; startIndex?: number; proofSent?: boolean }[];
+  __u1bTransport: { workerId: number; phase: "posted" | "terminated"; operation?: string; requestId?: number; startIndex?: number; proofSent?: boolean; encodedProofBytes?: number; postMessageMs?: number }[];
   __u1bLongTasks: number[];
+  __u1bFailNextEvidence?: boolean;
   __u1bMortgage?: import("../src/application/mortgageChartData.js").MortgageWindow;
   __u1bFebruary?: ReturnType<typeof inspectMonthlyMoney>;
 };
@@ -120,15 +121,28 @@ async function observe(page: Page) {
         });
       }
       override postMessage(message: unknown, options: Transferable[] | StructuredSerializeOptions = []) {
-        const request = message as { operation: string; requestId: number; startIndex?: number; source?: { basis?: unknown } };
+        const request = message as { operation: string; requestId: number; startIndex?: number; source?: { basis?: { encoded: string } } };
         this.posted.set(`${request.operation}:${request.requestId}`, performance.now());
-        observed.__u1bTransport = [...observed.__u1bTransport.slice(-63), { workerId: this.observerId, phase: "posted", operation: request.operation, requestId: request.requestId,
-          ...(request.startIndex === undefined ? {} : { startIndex: request.startIndex, proofSent: request.source?.basis !== undefined }) }];
+        const transport: ObservedWindow["__u1bTransport"][number] = { workerId: this.observerId, phase: "posted", operation: request.operation, requestId: request.requestId,
+          ...(request.startIndex === undefined ? {} : { startIndex: request.startIndex, proofSent: request.source?.basis !== undefined }),
+          ...(request.source?.basis ? { encodedProofBytes: new TextEncoder().encode(request.source.basis.encoded).byteLength } : {}) };
+        observed.__u1bTransport = [...observed.__u1bTransport.slice(-63), transport];
+        // Exercise the real controller's worker-error/retry path. No result or
+        // financial proof is substituted; the retry uses a native fresh worker.
+        if (observed.__u1bFailNextEvidence && request.startIndex !== undefined) {
+          observed.__u1bFailNextEvidence = false;
+          queueMicrotask(() => this.dispatchEvent(new ErrorEvent("error", { cancelable: true })));
+          return;
+        }
+        const postStarted = performance.now();
         if (Array.isArray(options)) super.postMessage(message, options);
         else super.postMessage(message, options);
+        transport.postMessageMs = performance.now() - postStarted;
+        emit({ ...transport, surface: "worker" });
       }
       override terminate() {
         observed.__u1bTransport = [...observed.__u1bTransport.slice(-63), { workerId: this.observerId, phase: "terminated" }];
+        emit({ surface: "worker", workerId: this.observerId, phase: "terminated" });
         super.terminate();
       }
     };
@@ -245,6 +259,9 @@ for (const width of [1440, 390]) {
         }).observe({ entryTypes: ["longtask"] });
       }
     });
+    await page.getByRole("button", { name: "Update forecast", exact: true }).click();
+    await expect(status(page)).toHaveAttribute("data-cache-state", "hit");
+    await expect(status(page)).toContainText("Current result reused");
     const requestId = await status(page).getAttribute("data-request-id");
     const fingerprint = await status(page).getAttribute("data-fingerprint");
     const cashStarted = Date.now();
@@ -350,6 +367,66 @@ for (const width of [1440, 390]) {
     await info.attach(`flagship-${width}-navigation`, { body: JSON.stringify(navigationEvidence), contentType: "application/json" });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(errors).toEqual([]);
+  });
+}
+
+// Independently runnable bounded recovery regression. Reviewers select this
+// test with PFM_COLD_WORKER_ENGINEERING=1 for the single 649-month browser-worker
+// measurement (0/324/648); ordinary CI uses 25 months and never repeats that
+// heavy cold benchmark. Attachments contain only scalar/structural telemetry.
+for (const width of [1440, 390]) {
+  test(`cold worker recovery retains exact original evidence at ${width}px`, async ({ page }, info) => {
+    const engineering = process.env.PFM_COLD_WORKER_ENGINEERING === "1";
+    test.setTimeout(engineering ? 300_000 : 180_000);
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await start(page);
+    if (!engineering) {
+      await navigateOwner(page, "Plan", "Current Plan");
+      await page.getByLabel("Simulation end", { exact: true }).fill("2028-02-01");
+      await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
+    }
+    await expect(status(page)).toHaveAttribute("data-lifecycle", "completed", { timeout: 150_000 });
+    const result = await actual(page);
+    expect(result.points).toHaveLength(engineering ? 649 : 25);
+    await page.getByRole("button", { name: "Update forecast", exact: true }).click();
+    await expect(status(page)).toHaveAttribute("data-cache-state", "hit");
+    const selections = engineering ? [0, 324, 648] : [0, 12, 24];
+    for (const startIndex of selections) {
+      await page.evaluate(() => { (window as ObservedWindow).__u1bFailNextEvidence = true; });
+      if (startIndex === 0) await clickFinancialDestination(page, "Debt");
+      else await page.getByLabel("Liability window starting", { exact: true }).selectOption(result.points[startIndex]!.periodStart);
+      await expect(page.getByRole("button", { name: "Retry mortgage evidence", exact: true })).toBeVisible({ timeout: 25_000 });
+      // No made-up paid bars while source ownership is unavailable.
+      await expect(page.getByRole("figure", { name: "Example mortgage monthly cash paid", exact: true })).toHaveCount(0);
+      const before = await page.evaluate(() => (window as ObservedWindow).__u1bTransport.length);
+      await page.getByRole("button", { name: "Retry mortgage evidence", exact: true }).click();
+      await expect.poll(() => page.evaluate(() => (window as ObservedWindow).__u1bEvidence.filter(item => item.outcome === "result").at(-1)?.startIndex), { timeout: 25_000 }).toBe(startIndex);
+      const selected = await page.evaluate(() => ({ window: (window as ObservedWindow).__u1bMortgage,
+        evidence: (window as ObservedWindow).__u1bEvidence.filter(item => item.outcome === "result").at(-1),
+        transport: (window as ObservedWindow).__u1bTransport }));
+      expect(selected.window).toEqual(inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), GOLDEN_HOUSEHOLD_IDS.mortgage));
+      expect(selected.evidence?.roundtripMs).toBeLessThan(25_000);
+      expect(selected.evidence?.measurements?.restore).toMatchObject({ cache: "cold", checkpointCount: engineering ? 54 : 2, materializedCheckpointStates: engineering ? 54 : 2 });
+      const restored = selected.evidence!.measurements!.restore!;
+      expect(restored.checkpointDiagnosticKeysComputed).toBeLessThanOrEqual(restored.checkpointDiagnosticOccurrencesCompared!);
+      if (engineering) expect(restored.checkpointDiagnosticKeysComputed).toBeLessThan(restored.checkpointDiagnosticOccurrencesCompared!);
+      expect(selected.transport.slice(before).filter(item => item.proofSent)).toHaveLength(1);
+      // Every previous evidence worker is terminated before its successor.
+      const postedWorkers = new Set(selected.transport.filter(item => item.startIndex !== undefined).map(item => item.workerId));
+      const terminated = new Set(selected.transport.filter(item => item.phase === "terminated").map(item => item.workerId));
+      expect([...postedWorkers].filter(id => !terminated.has(id))).toHaveLength(1);
+      await info.attach(`cold-worker-${width}-${startIndex}`, { body: JSON.stringify({
+        engineering, startIndex, evidence: selected.evidence, transport: selected.transport,
+        phases: survivingEvidence.get(page),
+      }), contentType: "application/json" });
+    }
+    const cashStarted = Date.now();
+    await clickFinancialDestination(page, "Cash");
+    const paycheck = page.getByRole("region", { name: "Your Paycheck", exact: true });
+    await paycheck.getByLabel("paycheck forecast month", { exact: true }).selectOption("2026-02");
+    expect(Date.now() - cashStarted).toBeLessThan(10_000);
+    await expect.poll(() => page.evaluate(() => (window as ObservedWindow).__u1bFebruary !== undefined), { timeout: 25_000 }).toBe(true);
+    expect(await page.evaluate(() => (window as ObservedWindow).__u1bFebruary)).toEqual(inspectMonthlyMoney(result.points[1]!, createFlagshipHouseholdDraft()));
   });
 }
 
