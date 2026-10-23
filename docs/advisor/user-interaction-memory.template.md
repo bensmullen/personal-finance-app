@@ -44,4 +44,5 @@
 - Users can view, edit, export, or delete the persisted profile; no invisible profiling.
 - The assistant should ask before storing new attributes and use confirmed preferences only for communication style and education.
 - Real facts, financial values, goals, decisions, forecasts and their provenance stay in their respective authoritative models; reference them via permitted app tools rather than duplicating them here.
+- Conversation-derived hypothetical plan inputs, unsaved drafts, simulation results, and saved plan identities SHALL live only in their appropriate authorized plan/session/run stores, never in this communication-preferences profile. Discussing an alternate plan does not grant consent to store a permanent preference.
 - Keep the profile minimal, scoped, encrypted/protected as appropriate to the approved runtime, and subject to explicit retention/deletion controls.
