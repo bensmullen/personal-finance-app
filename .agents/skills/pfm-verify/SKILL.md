@@ -44,3 +44,9 @@ When a gate fails:
    intentionally changed in a dedicated framework PR.
 
 Never change golden/financial expectations merely to make a gate pass.
+
+For multi-period or high-volume boundary changes, review a bounded test that
+reuses one large source across many records, checks source-ref tampering and
+preserves all occurrences/economics. Inspect serialized payload sizes and unique
+source counts; do not infer browser heap or disk usage from trace bytes. Keep
+649-month/heap benchmarks in independently triggered engineering validation.
