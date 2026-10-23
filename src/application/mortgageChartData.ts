@@ -138,7 +138,7 @@ export function restoreHouseholdEvidencePoints(basis: HouseholdEvidenceProof, se
     const canonical = original.periods[selection.startIndex + index]!.outputCapabilities;
     if (catalogs && !equalCapabilities(canonical === undefined ? null : transport.capabilities(canonical), point.outputCapabilities ?? null))
       throw new Error("Mismatched output capability qualification");
-    if (!catalogs && Object.values(point.outputCapabilities ?? {}).some(output => output.diagnostics.some(item => item.projectedLaw !== undefined)))
+    if (!catalogs && Object.values(point.outputCapabilities ?? {}).some(output => output.diagnostics.some((item: import("./forecastDiagnosticTransport.js").ForecastTaxDiagnostic) => item.projectedLaw !== undefined)))
       throw new Error("Missing source catalog");
   });
   const restored = points.map(point => ({ ...point, traceRefs: point.traceRefs.map(ref => {
