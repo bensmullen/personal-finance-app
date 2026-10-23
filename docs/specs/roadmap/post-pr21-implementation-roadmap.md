@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.6.22-draft
+**Version:** 0.6.24-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -466,6 +466,8 @@ A production Plaid/bank-aggregation integration is not required for O1 or privat
 
 **User validation:** required. Closeout should observe actual onboarding behavior rather than only reviewing screens. The user should verify that the workflow feels substantially faster than manual field-by-field setup and that extracted information is easy to review/correct.
 
+**Future education-advisor reuse (non-blocking):** The optional [PFA-ADV contextual financial guide](../capabilities/contextual-financial-education-advisor.md) may later reuse O1's confirmed intake/provenance and existing U1/P1 source-backed explanations. Any limited, read-only alpha experiment must be separately privacy-reviewed and feature-gated. The advisor, its user-memory persistence, its AI provider, an orchestration gateway, and MCP are **not R11/private-alpha requirements**; no existing U1/O1/P1 owner or gate changes.
+
 ## 10. T1A/T1B — Tax development track
 
 ### T1A — Target-cohort/common-household tax floor
@@ -721,5 +723,10 @@ The following items SHALL remain visible until closed:
 - **Advanced insurance planning (PFA-INS):** probabilistic claims, coverage optimization, underwriting/product-specific recommendation logic, and unsupported policy families may remain incremental. D1 deterministic premiums/payouts plus D2 health-insurance and Medicare premium mechanics required by PFA-DET/PFA-INS are **not deferred** and are required before R5.
 - **Stochastic strategy optimization (P2):** may remain post-alpha if alpha offers explicit scenario/strategy comparison rather than automated optimization; trigger before exposing an automated stochastic strategy recommendation.
 - **Integrated cross-domain optimization (P3):** long-term product capability spanning the supported tax, investment, insurance, retirement, debt, liquidity, and future planning domains, including comprehensive applicable-law tax-strategy optimization as rule coverage matures. It is intentionally not a blanket private-alpha prerequisite, and its domain modules remain independently exposable through capability-scoped planning.
+
+- **Contextual education and conversational what-if financial guide (PFA-ADV):** future, optional capability that explains financial concepts and source-backed forecasts *and* helps users create and simulate alternate financial plans from conversation. It asks for missing planning inputs, distinguishes illustrative assumptions, presents editable draft changes, explains comparable tradeoffs, and requires explicit approval before independently saving a plan. **No financial/securities advice, position recommendations, or autonomous authoritative edits.** Depends on existing O1 candidate/provenance semantics, P1 independent plan/scenario management (#105), authoritative simulations, and U1 accessible chart/explanation surfaces. This additional advisor feature is not a P1/#105/R11/private-alpha requirement. **Trigger:** post-alpha gated feature planning after accepted plan authoring and the requisite privacy/provider/tool-boundary review; alpha education-only experiments remain optional.
+- **AI tool orchestration gateway (future implementation choice):** evaluate a provider-neutral, read-only-first, typed/permission-controlled gateway for authoritative contextual reads, user-directed candidate-plan authoring, simulation preview/comparison and explicit save approval. The conversational plan workflow is an approved future *product requirement*; its exact gateway architecture is undecided. **Trigger:** stable P1/#105 identity, authoring, preview/run and approval seams with a demonstrated user workflow; not mandatory for O1/P1 or R11.
+- **MCP adapter for external AI clients (future idea):** consider an authenticated MCP surface over explicitly reviewed gateway operations so participating external assistants could inspect authorized finance results. Requires cross-household authorization, privacy, provider consent and threat review. **Trigger:** real external-client demand and a secured shared-service architecture; not a substitute for the embedded contextual guide.
+- **Optional ChatGPT-plan allowance / API provider path (future idea):** evaluate participating-app Sign in with ChatGPT delegated plan usage, subject to commercial availability/eligibility; retain separately billed API-provider fallback and explicit user-facing usage budgets. **Trigger:** post-alpha cost/privacy/vendor evaluation. Ordinary ChatGPT subscriptions alone do not grant API billing credits.
 
 Additional deferred capabilities may be added here only with an owner/trigger or planned milestone; deferral SHALL NOT silently erase a requirement.
