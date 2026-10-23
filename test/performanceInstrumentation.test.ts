@@ -311,7 +311,10 @@ describe("performance instrumentation", () => {
     expect(structuredClone(response)).toEqual(response);
     expect(response).toMatchObject({ operation: message.operation, requestId: 1, fingerprint: message.fingerprint });
     expect(response.records.find((record) => record.phase === "forecast.total")?.context).toMatchObject({ executionLocation: "browser_worker", cacheState: "miss", workerConcurrency: 1, status: "incomplete" });
-    expect(response.records.some((record) => record.phase === "transport.serialization")).toBe(false);
+    expect(response.records.filter((record) => record.phase === "transport.serialization")).toEqual([expect.objectContaining({
+      availability: "not_measured",
+      resources: expect.objectContaining({ structuralCounters: expect.objectContaining({ forecastPointCount: expect.any(Number) }) }),
+    })]);
     const clockFailure = executeForecastWorkerRequest(message, { now() { throw new Error("clock"); } });
     expect(clockFailure.outcome === "result" && clockFailure.result).toEqual(response.result);
     expect(clockFailure.records.filter((record) => record.phase === "forecast.total")[0]?.availability).toBe("unavailable");
