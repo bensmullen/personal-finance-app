@@ -4,6 +4,53 @@ import { replayHouseholdForecastWindow } from "../simulation/householdExecution.
 import { instant } from "../time/index.js";
 import { Currency, Money, decimal, RoundingPolicy } from "../values/index.js";
 
+/** Immutable proof transport; financial restoration stays application-owned. */
+export type HouseholdEvidenceProof = PortableHouseholdReplayArtifact;
+export interface HouseholdEvidenceSelection {
+  readonly operation: "monthly_evidence" | "mortgage_evidence";
+  readonly startIndex: number;
+  readonly liabilityId: string;
+}
+
+export function householdEvidenceProof(points: readonly HouseholdForecastPoint[]): HouseholdEvidenceProof | undefined {
+  return (points[0]?.traceRefs.find(ref => ref.replayArtifact !== undefined)?.replayArtifact as { basis?: HouseholdEvidenceProof } | undefined)?.basis;
+}
+
+/** Strip repeated attachments without restoring financial state on the UI thread. */
+export function boundedEvidencePoints(source: PersonalHouseholdForecastReadModel, selection: HouseholdEvidenceSelection) {
+  if (source.status === "unavailable" || !Number.isSafeInteger(selection.startIndex) || selection.startIndex < 0) throw new Error("Unavailable evidence");
+  const points = source.points.slice(selection.startIndex, selection.startIndex + (selection.operation === "monthly_evidence" ? 1 : 12));
+  if (!points.length) throw new Error("Unavailable period");
+  const basis = householdEvidenceProof(points);
+  if (!basis) throw new Error("Unavailable proof");
+  return { basis, points: points.map(point => ({ ...point, traceRefs: point.traceRefs.map(ref => {
+    if (ref.replayArtifact === undefined) return ref;
+    const { basis: attached, ...address } = ref.replayArtifact as { basis: HouseholdEvidenceProof; start: string; end: string };
+    if (!attached || attached !== basis && (attached.version !== basis.version || attached.integrity !== basis.integrity || attached.encoded !== basis.encoded)) throw new Error("Mismatched proof");
+    return { ...ref, replayArtifact: address };
+  }) })) };
+}
+
+/** Authenticate checkpoints and exact original indices before reattaching proof.
+ * Call in the worker; application readers retain ownership of financial replay. */
+export function restoreHouseholdEvidencePoints(basis: HouseholdEvidenceProof, selection: HouseholdEvidenceSelection,
+  points: readonly HouseholdForecastPoint[], fingerprint: string): readonly HouseholdForecastPoint[] {
+  if (!Number.isSafeInteger(selection.startIndex) || selection.startIndex < 0 || points.length < 1 ||
+    points.length > (selection.operation === "monthly_evidence" ? 1 : 12)) throw new Error("Unavailable evidence window");
+  const original = restorePortableHouseholdReplayArtifact(basis);
+  if (points.some((point, index) => original.periods[selection.startIndex + index]?.period.start !== point.periodStart ||
+    original.periods[selection.startIndex + index]?.period.end !== point.periodEnd)) throw new Error("Mismatched period index");
+  const restored = points.map(point => ({ ...point, traceRefs: point.traceRefs.map(ref => {
+    if (ref.replayArtifact === undefined) return ref;
+    const address = ref.replayArtifact as { start: string; end: string };
+    if (address.start !== point.periodStart || address.end !== point.periodEnd ||
+      ref.traceId !== `household:replay:${original.runMetadata.inputFingerprint}:${address.start}:${address.end}`) throw new Error("Mismatched source identity");
+    return { ...ref, replayArtifact: { ...address, basis } };
+  }) }));
+  if (restored[0]!.traceRefs.find(ref => ref.replayArtifact !== undefined)?.traceId !== fingerprint) throw new Error("Mismatched forecast identity");
+  return restored;
+}
+
 export interface MortgageMonth {
   readonly start: string;
   readonly end: string;

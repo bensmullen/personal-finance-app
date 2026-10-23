@@ -6,31 +6,17 @@ import type { EvidenceSelection, EvidenceWorkerRequest, EvidenceWorkerResponse }
 import type { PersonalDraft, PersonalForecastReadModel, ForecastRequest } from "../../src/application/personalMvp.js";
 import type { StandaloneWorkerRequest, StandaloneWorkerResponse } from "./protocol.js";
 import type { PersonalHouseholdForecastReadModel } from "../../src/application/householdProjection.js";
-import type { PortableHouseholdReplayArtifact } from "../../src/simulation/r3/replayArtifact.js";
+import { boundedEvidencePoints } from "../../src/application/mortgageChartData.js";
+export { boundedEvidencePoints } from "../../src/application/mortgageChartData.js";
 
 export const EVIDENCE_DEADLINE_MS = 25_000;
+export const FORECAST_DEADLINE_MS = 150_000;
 const evidenceScheduler: ForecastScheduler = { set: (callback, delay) => setTimeout(callback, delay), clear: handle => clearTimeout(handle as ReturnType<typeof setTimeout>) };
 export interface EvidenceDiagnostic {
   readonly requestId: number;
   readonly phase: "created" | "posted" | "received" | "restored" | "settled" | "error" | "timeout";
   readonly elapsedMs: number;
   readonly pointCount: number;
-}
-
-/** Remove repeated proof attachments without reading/restoring financial state.
- * The full artifact is still required for integrity and checkpoint validation. */
-export function boundedEvidencePoints(source: PersonalHouseholdForecastReadModel, selection: EvidenceSelection) {
-  if (source.status === "unavailable" || !Number.isSafeInteger(selection.startIndex) || selection.startIndex < 0) throw new Error("Unavailable evidence");
-  const points = source.points.slice(selection.startIndex, selection.startIndex + (selection.operation === "monthly_evidence" ? 1 : 12));
-  if (!points.length) throw new Error("Unavailable period");
-  const basis = (points[0]!.traceRefs.find(ref => ref.replayArtifact !== undefined)?.replayArtifact as { basis?: PortableHouseholdReplayArtifact } | undefined)?.basis;
-  if (!basis) throw new Error("Unavailable proof");
-  return { basis, points: points.map(point => ({ ...point, traceRefs: point.traceRefs.map(ref => {
-    if (ref.replayArtifact === undefined) return ref;
-    const { basis: attached, ...address } = ref.replayArtifact as { basis: PortableHouseholdReplayArtifact; start: string; end: string };
-    if (attached !== basis && (attached.version !== basis.version || attached.integrity !== basis.integrity || attached.encoded !== basis.encoded)) throw new Error("Mismatched proof");
-    return { ...ref, replayArtifact: address };
-  }) })) };
 }
 
 export interface ForecastWorkerPort {
@@ -332,6 +318,7 @@ export class ForecastController {
         // postMessage's full boundary is not reliably separable into serialization vs enqueue.
         // Mark unmeasured, never attribute the roundtrip or financial work to transport.
         this.#record({ phase: "transport.serialization", availability: "not_measured", context });
+        this.#timer = this.scheduler.set(fail, FORECAST_DEADLINE_MS);
         sentAt = this.#now();
         worker.postMessage(message);
         const postedAt = this.#now();

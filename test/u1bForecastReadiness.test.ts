@@ -4,7 +4,7 @@ import { age90Horizon, birthdayAtAge, retirementProposals, resolveForecastReadin
 import { createGoldenExampleConfiguration, GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 import { createHouseholdForecastRequest, runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
 import { baselineResultMatchesRequest, calculationFingerprint } from "../src/application/interactiveForecast.js";
-import { boundedEvidencePoints, claimForecastEvidenceWorker, EVIDENCE_DEADLINE_MS, EvidenceController, ForecastController, StandaloneController, type StandaloneWorkerPort, type EvidenceWorkerPort, type ForecastWorkerPort } from "../ui/forecast/controller.js";
+import { boundedEvidencePoints, claimForecastEvidenceWorker, EVIDENCE_DEADLINE_MS, FORECAST_DEADLINE_MS, EvidenceController, ForecastController, StandaloneController, type StandaloneWorkerPort, type EvidenceWorkerPort, type ForecastWorkerPort } from "../ui/forecast/controller.js";
 import type { EvidenceWorkerRequest, EvidenceWorkerResponse, ForecastWorkerRequest, StandaloneWorkerRequest } from "../ui/forecast/protocol.js";
 import { executeForecastWorkerRequest } from "../ui/forecast/execute.js";
 import { cashComparison, inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
@@ -47,7 +47,7 @@ describe("U1B request and period pairing", () => {
         onmessage: null, onerror: null, onmessageerror: null, terminate() {}, postMessage(message) { this.request = message; },
       };
       workers.push(worker); return worker;
-    }, { set: () => { throw new Error("Immediate submissions expected"); }, clear: () => {} }, () => {}, () => {});
+    }, { set: (_callback, delay) => { expect(delay).toBe(FORECAST_DEADLINE_MS); return 0; }, clear: () => {} }, () => {}, () => {});
     const model = createFlagshipHouseholdDraft();
     const submit = (end: string) => {
       const request = createHouseholdForecastRequest({ ...createGoldenExampleConfiguration(), simulationEnd: end }, ids.model);
@@ -85,6 +85,40 @@ describe("U1B request and period pairing", () => {
 });
 
 describe("U1B sourced planning readiness", () => {
+  it("fails closed on a missed baseline response and mismatched identity, then retries on a fresh worker", () => {
+    const model = createFlagshipHouseholdDraft();
+    const request = createHouseholdForecastRequest({ ...createGoldenExampleConfiguration(), simulationEnd: "2026-03-01" }, ids.model);
+    const submission = { operation: "baseline_forecast" as const, model, request, fingerprint: calculationFingerprint("baseline_forecast", model, request),
+      performanceContext: { runId: request.runIdentity, dataClassification: "synthetic" as const, modelCounts: {}, executionLocation: "browser_worker" as const, cacheState: "miss" as const } };
+    const timers = new Map<number, () => void>(); let sequence = 0;
+    const workers: (ForecastWorkerPort & { message?: ForecastWorkerRequest; stopped: boolean })[] = [];
+    const controller = new ForecastController(() => {
+      const worker: typeof workers[number] = { onmessage: null, onerror: null, onmessageerror: null, stopped: false,
+        postMessage(message) { this.message = message; }, terminate() { this.stopped = true; } };
+      workers.push(worker); return worker;
+    }, { set(callback, delay) { expect(delay).toBe(FORECAST_DEADLINE_MS); timers.set(++sequence, callback); return sequence; }, clear(handle) { timers.delete(handle as number); } }, () => {}, () => {});
+    controller.submit(submission, true);
+    const late = workers[0]!.onmessage!;
+    [...timers.values()][0]!();
+    expect(controller.state).toMatchObject({ lifecycle: "error", pending: false });
+    expect(workers[0]!.stopped).toBe(true);
+    expect(timers.size).toBe(0);
+    const deliver = (index: number, fingerprint = submission.fingerprint) => ({ ...workers[index]!.message!, fingerprint,
+      outcome: "result" as const, result: transportResult(request), records: [] });
+    controller.submit(submission, true);
+    late({ data: deliver(0) });
+    expect(controller.state.pending).toBe(true);
+    workers[1]!.onmessage!({ data: deliver(1, "other-household") });
+    expect(controller.state.pending).toBe(true); // Foreign responses cannot settle this request.
+    [...timers.values()][0]!();
+    expect(controller.state).toMatchObject({ lifecycle: "error", pending: false });
+    controller.submit(submission, true);
+    workers[2]!.onmessage!({ data: deliver(2) });
+    expect(controller.state).toMatchObject({ lifecycle: "completed", pending: false });
+    expect(timers.size).toBe(0);
+    controller.dispose();
+  });
+
   it("bounds real first, middle and final evidence and shares the generating worker without transporting its proof", () => {
     const model = createFlagshipHouseholdDraft();
     const configuration = { ...createGoldenExampleConfiguration(), simulationEnd: "2028-02-01" };
@@ -97,8 +131,12 @@ describe("U1B sourced planning readiness", () => {
     baseline.submit(submission, true);
     const response = executeForecastWorkerRequest(baselineMessage!, { now: () => 0 });
     expect(response.outcome).toBe("result");
-    if (response.outcome !== "result" || !("points" in response.result) || response.result.status === "unavailable") throw new Error("Missing actual forecast");
+    if (response.outcome !== "result" || !("points" in response.result)) throw new Error("Missing actual forecast");
     const result = response.result;
+    expect(result.scope).toBe("household");
+    expect(result.status).toBe("completed");
+    expect(result.openingSnapshot.netWorth.amount).toBe("4289330.29");
+    expect(result.points[0]!.cash.amount).toBe("4007874.71");
     expect(result.points).toHaveLength(25);
     baselinePort.onmessage!({ data: response });
     const worker = claimForecastEvidenceWorker(result)!;
@@ -140,6 +178,14 @@ describe("U1B sourced planning readiness", () => {
     expect(evidence.diagnostics.map(record => record.phase)).toContain("restored");
     expect(calculationFingerprint("baseline_forecast", model, request)).toBe(before);
     evidence.dispose(); baseline.dispose();
+    const selected = messages[1]!;
+    const authenticated = { ...selected, source: { basis: transportedBasis, model } };
+    expect(executeForecastWorkerRequest({ ...authenticated, startIndex: 0 }, { now: () => 0 }).outcome).toBe("error");
+    expect(executeForecastWorkerRequest({ ...authenticated, fingerprint: "other-household" }, { now: () => 0 }).outcome).toBe("error");
+    expect(executeForecastWorkerRequest({ ...authenticated, source: { model, basis: { ...transportedBasis, encoded: transportedBasis.encoded + "corrupt" } } }, { now: () => 0 }).outcome).toBe("error");
+    const retried = executeForecastWorkerRequest(authenticated, { now: () => 0 });
+    expect(retried.outcome).toBe("result");
+    if (retried.outcome === "result") expect(retried.window).toEqual(inspectMortgageWindow(result.points.slice(12, 24), ids.mortgage));
   }, 30_000);
 
   it("settles never-answered, mismatched, clone, startup and worker errors; retry owns a fresh channel", () => {
@@ -218,7 +264,25 @@ describe("U1B sourced planning readiness", () => {
     controller.run(model, request); controller.cancel();
     expect(views.at(-1)).toMatchObject({ pending: false, stale: true, cancelled: true });
     controller.invalidate(); expect(views.at(-1)?.cancelled).toBe(false);
+    controller.run(model, request);
+    const foreign = workers.at(-1)!;
+    foreign.onmessage!({ data: { ...actual, requestId: foreign.message!.requestId } }); // Right channel, wrong horizon.
+    expect(views.at(-1)).toMatchObject({ pending: false, stale: true, result: actual.result });
+    expect(views.at(-1)?.error).toContain("retry");
+    controller.run(model, request); workers.at(-1)!.onmessageerror!();
+    expect(views.at(-1)?.error).toContain("retry");
+    controller.run(model, request); workers.at(-1)!.onerror!({ preventDefault() {} });
+    expect(views.at(-1)?.error).toContain("retry");
+    expect(timers.size).toBe(0);
     controller.reset(); expect(views.at(-1)?.result).toBeUndefined(); controller.dispose();
+    for (const makeWorker of [() => { throw new Error("startup"); }, () => ({ onmessage: null, onerror: null, onmessageerror: null,
+      postMessage() { throw new Error("clone"); }, terminate() {} })]) {
+      const failed = new StandaloneController(makeWorker, view => views.push(view));
+      failed.run(model, request);
+      expect(views.at(-1)?.pending).toBe(false);
+      expect(views.at(-1)?.error).toContain("retry");
+      failed.dispose();
+    }
   });
 
   it("executes both requested months when the accepted flagship horizon is shortened", () => {
