@@ -223,7 +223,7 @@ export interface ReplayRestoreObserver {
   /** Extra serialization is for independent/manual engineering validation only. */
   readonly includeCheckpointBytes?: boolean;
 }
-type RestoreTimings = Partial<Pick<ReplayRestoreMeasurement, "decodeMs" | "integrityValidationMs" | "participantRestoreMs" | "sourceRequalificationMs" | "kernelCompileMs" | "checkpointRestoreValidationMs" | "checkpointSizeMeasurementMs" | "serializedCheckpointBytes">>;
+type RestoreTimings = { -readonly [K in keyof Pick<ReplayRestoreMeasurement, "decodeMs" | "integrityValidationMs" | "participantRestoreMs" | "sourceRequalificationMs" | "kernelCompileMs" | "checkpointRestoreValidationMs" | "checkpointSizeMeasurementMs" | "serializedCheckpointBytes">]: ReplayRestoreMeasurement[K] };
 const heapSample = (): number | undefined => {
   try {
     const value = (globalThis.performance as Performance & { memory?: { usedJSHeapSize?: number } } | undefined)?.memory?.usedJSHeapSize;
