@@ -64,6 +64,30 @@ Computational efficiency is now a first-class engine constraint because long-ter
 
 The project SHALL optimize the current stage for correctness, explainability, iteration, and measured computational efficiency rather than speculative infrastructure scale. Cloud/server execution, native acceleration, or additional infrastructure SHALL be justified by measured workload needs after avoidable algorithmic and data-structure inefficiency is addressed.
 
+**Large-content redundancy invariant (all application boundaries):** Large identical
+immutable rule catalogs, metadata, snapshots, diagnostic bodies, replay source
+artifacts, and other shared content SHALL NOT be embedded repeatedly in
+per-period/per-entity records or duplicated across persistence, cache entries,
+application read models, worker/API messages, or retained forecast results.
+The owning layer SHALL retain one canonical immutable source per appropriate
+run/version/tenant scope and use typed references, content tables, or
+semantically lossless aggregation when the workload warrants it. The receiver
+SHALL validate referenced source scope and identity; missing, conflicting or
+tampered references SHALL fail closed. A hash/fingerprint names or verifies
+content but is not the full serialized content, nor is an unchecked digest a
+substitute for source-authenticated proof. Do not merge distinct financial
+occurrences, suppress diagnostics, change economics, or discard provenance,
+qualification, portability or deterministic replay merely to save bytes.
+
+Design reviews SHALL examine *actual serialized/persisted representations*,
+rather than assuming in-memory object sharing or later UI grouping reduces
+transport size. Payload growth across repeated periods/entities and the
+contribution of high-cardinality diagnostics and proof must be bounded and
+measured proportionately to expected use. Small scalar repetition and
+purposeful bounded caches may be retained when simpler and measured as safe;
+this is not a mandate for speculative compression, a new global cache, or
+duplicated storage of authoritative financial state.
+
 ---
 
 # 3. Source-of-truth hierarchy

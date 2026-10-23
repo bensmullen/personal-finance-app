@@ -25,6 +25,15 @@ Check specifically for:
 - observed/modelled provenance confusion;
 - non-deterministic behavior;
 - incorrect golden-test changes.
+- large redundant repeated content in persistence, caches, read models,
+  diagnostics, and worker/API serialization; confirm source references validate
+  scope and exact content, repeated periods do not multiply shared payload,
+  and UI grouping occurs before rather than after expensive transfer where
+  appropriate. Inspect the actual transfer/storage representation rather
+  than inferring cost from JS references, and preserve all distinct financial
+  occurrences, source identity, replay proof, and fail-closed verification.
+  Where material, require bounded size-growth tests and independent heavy
+  byte/heap evidence; never conflate serialized bytes with heap or disk.
 
 Do not perform an unrelated repository-wide refactor review.
 

@@ -76,6 +76,15 @@ conditions when useful. Their exact headings are not parser requirements.
 
 - Stay on `TARGET_BRANCH`.
 - Edit only `ALLOWED_PATHS`.
+- Before writing any high-cardinality/periodic diagnostic, worker/API payload,
+  saved result, cached snapshot, or read model, inspect how much large identical
+  content would be repeated. Keep one immutable run-/source-scoped copy and
+  validated typed references where material; retain occurrence identities,
+  financial provenance and replay proof. Do not place a whole source catalog
+  in a field labeled fingerprint, or assume UI grouping avoids transfer cost.
+  Include a small synthetic fixture for reference validation and non-amplifying
+  serialized size when this risk is present. See the architecture invariant
+  and verification policy; no local heavy benchmark is authorized.
 - Use `apply_patch` for repository content edits. Authorized `mkdir -p` is
   allowed for a new subtree.
 - Do not edit framework-control files from a product/repair task.
@@ -128,6 +137,18 @@ For a normal valid BLOCKED/LOOKUP_REQUIRED stop, the hook checkpoints eligible
 dirty paths and pushes them before permitting the stop. WIP checkpoints preserve
 work; they are not implementation acceptance, verified evidence, or merge-ready
 commits and cannot alone satisfy COMPLETE.
+
+**Optional-preflight/hook failure preservation:** A rejected or crashed optional
+`limited-local-verification` request does **not** invalidate already authorized
+product edits. If ordinary authorized editing remains safe, continue the task
+without the unavailable preflight and report it as not verified. If a task
+explicitly requires stopping, leave authorized working changes **intact** and
+report `TASK_STATUS: BLOCKED` plus the exact hook event/error so the normal
+Stop hook can checkpoint and push WIP. Never reverse authorized edits with
+`apply_patch`, `git restore`, `reset`, `clean`, `stash`, or equivalent
+solely because a tool/preflight failed. If the Stop hook cannot checkpoint,
+preserve the dirty checkout and report the precise recovery condition; no
+false clean/synchronized claim and no new session until ownership is verified.
 
 ## Product-manager escalation
 
