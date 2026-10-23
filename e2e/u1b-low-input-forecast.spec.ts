@@ -19,6 +19,7 @@ const telemetryStrings = new Set(["controller", "worker", "page", "crash", "clos
   "monthly_evidence", "mortgage_evidence", "progress", "result", "received", "source_bound", "restored", "projected",
   "restore_started", "decoded", "integrity_validated", "participants_restored", "source_requalified", "kernel_compiled", "checkpoints_validated", "restore_warm",
   "catalog_validation_started", "catalog_validated", "qualification_started", "qualification_validated", "replay_started", "replay_executed", "replay_verified", "replay_cached",
+  "verification_started", "summary_materialized", "capabilities_compared", "economics_compared", "replay_mismatched",
   "retained_source", "transported_source", "missing_source", "cold", "warm"]);
 function safeEvidenceTelemetry(value: unknown): Record<string, string | number> {
   const safe: Record<string, string | number> = {};
@@ -27,8 +28,16 @@ function safeEvidenceTelemetry(value: unknown): Record<string, string | number> 
   for (const key of ["surface", "operation", "phase", "outcome", "ownership", "cache"])
     if (typeof record[key] === "string" && telemetryStrings.has(record[key])) safe[key] = record[key];
   if (typeof record.sourceIdentityMatched === "boolean") safe.sourceIdentityMatched = record.sourceIdentityMatched ? 1 : 0;
-  for (const key of ["workerId", "requestId", "startIndex", "elapsedMs", "pointCount", "durationMs", "roundtripMs", "mainHeapBytes"])
+  for (const key of ["workerId", "requestId", "startIndex", "elapsedMs", "pointCount", "durationMs", "roundtripMs", "mainHeapBytes", "workerHeapBytes"])
     if (typeof record[key] === "number" && Number.isFinite(record[key]) && record[key] >= 0) safe[key] = record[key];
+  const verification = record.verification as EvidenceWorkerResponse["verification"];
+  if (verification && typeof verification === "object") {
+    for (const key of ["uniqueCatalogCount", "diagnosticKeysComputed", "diagnosticOccurrencesCompared", "capabilityPairsCompared", "economicPeriodsCompared",
+      "uniqueCatalogChars", "diagnosticKeyChars", "economicSummaryChars"] as const) {
+      const number = verification[key];
+      if (typeof number === "number" && Number.isFinite(number) && number >= 0) safe[`verification.${key}`] = number;
+    }
+  }
   const measurements = record.measurements as EvidenceWorkerResponse["measurements"];
   if (measurements && typeof measurements === "object") {
     for (const key of ["selectedMonths", "checkpointCount", "retainedCheckpointStates", "selectedCheckpointIndex", "replayPrefixMonths", "restoreAndSourceValidationMs", "replayAndProjectionMs", "workerHeapAfterBytes"] as const) {
@@ -98,6 +107,7 @@ async function observe(page: Page) {
             emit({ surface: "worker", workerId: this.observerId, operation, requestId, startIndex, outcome, durationMs,
               phase: response.outcome === "progress" ? response.phase : undefined, ownership: response.ownership,
               sourceIdentityMatched: response.sourceIdentityMatched,
+              verification: response.verification, workerHeapBytes: response.workerHeapBytes,
               measurements: response.measurements, roundtripMs: started === undefined ? undefined : performance.now() - started });
             // Keep the original navigation history bounded independently of
             // the finer phase stream retained by the runner above.
@@ -329,6 +339,8 @@ for (const width of [1440, 390]) {
     expect(navigationEvidence.evidence).toContainEqual(expect.objectContaining({ operation: "monthly_evidence", startIndex: 1, outcome: "result" }));
     const survived = survivingEvidence.get(page)!;
     for (const startIndex of [0, 324, 648]) {
+      for (const phase of ["verification_started", "summary_materialized", "capabilities_compared", "economics_compared"])
+        expect(survived).toContainEqual(expect.objectContaining({ surface: "worker", operation: "mortgage_evidence", startIndex, phase }));
       expect(survived).toContainEqual(expect.objectContaining({ surface: "worker", operation: "mortgage_evidence", startIndex, phase: "replay_verified", ownership: "retained_source" }));
       expect(survived).toContainEqual(expect.objectContaining({ surface: "controller", operation: "mortgage_evidence", startIndex, phase: "rendered" }));
     }

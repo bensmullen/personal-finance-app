@@ -169,6 +169,8 @@ describe("U1B sourced planning readiness", () => {
       if (selected?.outcome === "result") {
         expect(selected.ownership).toBe("retained_source");
         expect(selected.sourceIdentityMatched).toBe(true);
+        expect(selected.verification?.economicPeriodsCompared).toBe(startIndex === 24 ? 1 : 12);
+        expect(selected.verification?.diagnosticKeysComputed).toBeGreaterThanOrEqual(0);
         expect(selected.measurements?.restore?.cache).toBe("warm");
         evidence.rendered(selected.requestId);
         expect(evidence.diagnostics.at(-1)).toMatchObject({ phase: "rendered", requestId: selected.requestId, startIndex });
@@ -189,7 +191,8 @@ describe("U1B sourced planning readiness", () => {
       if (response.outcome === "result") expect(response.detail).toEqual(inspectMonthlyMoney(result.points[startIndex]!, model));
     });
     expect(evidence.diagnostics.map(record => record.phase)).toContain("restored");
-    for (const phase of ["source_bound", "restore_warm", "qualification_validated", "replay_started", "replay_executed", "replay_verified"])
+    for (const phase of ["source_bound", "restore_warm", "qualification_validated", "replay_started", "replay_executed",
+      "verification_started", "summary_materialized", "capabilities_compared", "economics_compared", "replay_verified"])
       expect(phaseDurations.map(record => record.phase)).toContain(phase);
     expect(JSON.stringify(evidence.diagnostics)).not.toContain(messages[0]!.fingerprint);
     expect(calculationFingerprint("baseline_forecast", model, request)).toBe(before);

@@ -78,7 +78,8 @@ describe("source-backed mortgage chart data", () => {
     const points = restoreHouseholdEvidencePoints(proof, selection, bounded.points, fingerprint, result.diagnosticCatalogs, observation);
     expect(phases).toEqual(["restore_started", "restore_warm", "catalog_validation_started", "catalog_validated", "qualification_started", "qualification_validated"]);
     expect(inspectMortgageWindow(points, ids.mortgage, observation)).toEqual(inspectMortgageWindow(result.points.slice(12), ids.mortgage));
-    expect(phases.slice(-5)).toEqual(["restore_started", "restore_warm", "replay_started", "replay_executed", "replay_verified"]);
+    expect(phases.slice(-9)).toEqual(["restore_started", "restore_warm", "replay_started", "replay_executed",
+      "verification_started", "summary_materialized", "capabilities_compared", "economics_compared", "replay_verified"]);
     const table = structuredClone(result.diagnosticCatalogs!);
     const corrupt = { ...table, entries: [{ ...table.entries[0]!, content: "changed exact catalog" }] };
     expect(() => restoreHouseholdEvidencePoints(proof, selection, bounded.points, fingerprint, corrupt)).toThrow(/catalog/);

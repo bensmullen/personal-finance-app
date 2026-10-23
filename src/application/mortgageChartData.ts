@@ -8,11 +8,12 @@ import { createForecastDiagnosticEquality, createForecastDiagnosticTransport, va
 /** Immutable proof transport; financial restoration stays application-owned. */
 export type HouseholdEvidenceProof = PortableHouseholdReplayArtifact;
 export type { ReplayRestoreMeasurement } from "../simulation/r3/replayArtifact.js";
+export type { HouseholdReplayVerificationCounts } from "../simulation/householdExecution.js";
 export type HouseholdEvidencePhase = Parameters<NonNullable<import("../simulation/r3/replayArtifact.js").ReplayRestoreObserver["phase"]>>[0]
   | "catalog_validation_started" | "catalog_validated" | "qualification_started" | "qualification_validated"
-  | "replay_started" | "replay_executed" | "replay_verified" | "replay_cached";
+  | import("../simulation/householdExecution.js").HouseholdReplayPhase | "replay_cached";
 export interface HouseholdEvidenceObserver extends ReplayRestoreObserver {
-  readonly phase?: (phase: HouseholdEvidencePhase) => void;
+  readonly phase?: (phase: HouseholdEvidencePhase, counts?: import("../simulation/householdExecution.js").HouseholdReplayVerificationCounts) => void;
 }
 function evidencePhase(observer: HouseholdEvidenceObserver | undefined, phase: HouseholdEvidencePhase): void {
   try { observer?.phase?.(phase); } catch { /* Observation never changes source validation. */ }
@@ -52,7 +53,7 @@ function evidenceWindow(basis: EvidenceBasis, start: string, end: string, observ
   const cached = cache.get(key);
   if (cached) { cache.delete(key); cache.set(key, cached); evidencePhase(observation, "replay_cached"); return cached; }
   const replay = replayHouseholdForecastWindow(basis, { start: instant(start), end: instant(end) }, undefined,
-    phase => evidencePhase(observation, phase));
+    (phase, counts) => { try { observation?.phase?.(phase, counts); } catch { /* Observation only. */ } });
   const boundedReplay = Object.freeze({ periods: replay.periods, closingLiabilities: replay.state.liabilities });
   if (cache.size === 2) cache.delete(cache.keys().next().value!);
   cache.set(key, boundedReplay);

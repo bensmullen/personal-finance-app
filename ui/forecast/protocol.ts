@@ -16,6 +16,9 @@ export type EvidenceWorkerRequest = EvidenceSelection & {
 };
 export type EvidenceWorkerResponse = Pick<EvidenceWorkerRequest, "operation" | "requestId" | "fingerprint" | "startIndex" | "liabilityId"> & {
   readonly durationMs?: number;
+  readonly verification?: import("../../src/application/mortgageChartData.js").HouseholdReplayVerificationCounts;
+  /** A sample at this phase, never a physical/peak heap claim. */
+  readonly workerHeapBytes?: number;
   readonly measurements?: import("../../src/application/mortgageChartData.js").HouseholdEvidenceMeasurements;
   readonly ownership?: "retained_source" | "transported_source" | "missing_source";
   /** True only after original proof, period, catalog and trace identity checks. */

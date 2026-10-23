@@ -41,8 +41,12 @@ export function executeForecastWorkerRequest(message: ForecastWorkerRequest | Ev
   const timing = () => { const end = now(); return started !== undefined && end !== undefined && Number.isFinite(end - started) && end >= started ? { durationMs: end - started } : {}; };
   let ownership: NonNullable<EvidenceWorkerResponse["ownership"]> = "missing_source";
   let sourceIdentityMatched = false;
+  let verification: EvidenceWorkerResponse["verification"];
   const report = (phase: Extract<EvidenceWorkerResponse, { outcome: "progress" }>["phase"], measurements?: EvidenceWorkerResponse["measurements"]) => {
-    try { progress?.({ ...boundary, outcome: "progress", phase, ownership, sourceIdentityMatched, ...(measurements ? { measurements } : {}), ...timing() }); }
+    const heap = sampledJsHeapBytes();
+    try { progress?.({ ...boundary, outcome: "progress", phase, ownership, sourceIdentityMatched,
+      ...(verification ? { verification } : {}), ...(heap === undefined ? {} : { workerHeapBytes: heap }),
+      ...(measurements ? { measurements } : {}), ...timing() }); }
     catch { /* Telemetry cannot change evidence execution. */ }
   };
   try {
@@ -59,7 +63,8 @@ export function executeForecastWorkerRequest(message: ForecastWorkerRequest | Ev
     report("source_bound");
     let restore: ReplayRestoreMeasurement | undefined;
     const selectionMeasurements = () => householdEvidenceSelectionMeasurements(source!.basis!, message, message.points.length);
-    const observation = { now: () => clock.now(), phase: (phase: import("../../src/application/mortgageChartData.js").HouseholdEvidencePhase) => report(phase),
+    const observation = { now: () => clock.now(), phase: (phase: import("../../src/application/mortgageChartData.js").HouseholdEvidencePhase,
+      counts?: EvidenceWorkerResponse["verification"]) => { if (counts) verification = counts; report(phase); },
       record: (measurement: ReplayRestoreMeasurement) => { restore = measurement; } };
     const points = restoreHouseholdEvidencePoints(source.basis, message, message.points, message.fingerprint, source.diagnosticCatalogs,
       observation);
@@ -79,10 +84,10 @@ export function executeForecastWorkerRequest(message: ForecastWorkerRequest | Ev
       ...(restoredAt === undefined || projectedAt === undefined ? {} : { replayAndProjectionMs: Math.max(0, projectedAt - restoredAt) }),
       ...(heap === undefined ? {} : { workerHeapAfterBytes: heap }) };
     report("projected");
-    return { ...boundary, outcome: "result", ...result, measurements, ownership, sourceIdentityMatched, ...timing() };
+    return { ...boundary, outcome: "result", ...result, measurements, ownership, sourceIdentityMatched, ...(verification ? { verification } : {}), ...timing() };
   } catch {
     source = undefined;
     // Portable messages contain no financial facts or raw runtime errors.
-    return { ...boundary, outcome: "error", ownership, sourceIdentityMatched, error: "Monthly evidence has missing or mismatched period/source data. Update the forecast and retry.", ...timing() };
+    return { ...boundary, outcome: "error", ownership, sourceIdentityMatched, ...(verification ? { verification } : {}), error: "Monthly evidence has missing or mismatched period/source data. Update the forecast and retry.", ...timing() };
   }
 }

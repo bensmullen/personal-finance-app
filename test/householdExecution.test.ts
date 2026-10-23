@@ -3,7 +3,10 @@ import { PerformanceRegistry, type PerformanceObserver } from "../src/diagnostic
 import type { CompiledHouseholdProjection } from "../src/application/compiler/householdProjection.js";
 import { domainId } from "../src/identity/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
-import { runCompiledHouseholdProjection } from "../src/simulation/householdExecution.js";
+import { compileHouseholdKernel, equalHouseholdReplaySummaries, replayHouseholdForecastWindow, runHouseholdForecastSummary, runCompiledHouseholdProjection, type HouseholdReplayVerificationCounts } from "../src/simulation/householdExecution.js";
+import { summarizeHouseholdPeriod, type HouseholdForecastSummaryPeriod } from "../src/simulation/r3/forecastSummary.js";
+import type { TaxCapabilityDiagnostic, OutputTaxCapability } from "../src/simulation/tax/contracts.js";
+import { canonicalSerialize } from "../src/simulation/run.js";
 import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
 import { createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { runVerticalSlice3 } from "../src/simulation/verticalSlice3.js";
@@ -33,6 +36,94 @@ const context = (months = 1) => createRunContext({ runId: runId("93000000-0000-4
 const compiled = (lateFailure = false, withAsset = false): CompiledHouseholdProjection => ({ cashFlowInput: cashFlow, ...(lateFailure ? { liabilityInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [{ id: ids.loan, principalLiabilityId: ids.missingPrincipal, interestPayableLiabilityId: ids.missingInterest, primitiveIds: { schedule: primitive("20"), amortization: primitive("21"), accrual: primitive("22") } } as never] } } : {}), reconciledOpeningState: opening(), reconciledPrimitiveState: createPrimitiveRuntimeStateStore(), standaloneAssets: withAsset ? [{ id: ids.standaloneAsset, value: money("7") }] : [], scenarioIdentity: scenario, executionMonths: 1, contentionPolicy: { id: "pr20-order", version: "1", rules: [] }, diagnostics: [], scenarioBindings: { cashFlow: { incomeIds: {}, expenseIds: {}, accountIds: {}, retirementEvents: {} } } });
 
 describe("compiled household execution", () => {
+  it("compares late-horizon warning growth exactly with work proportional to distinct diagnostics, not catalog copies", () => {
+    const base = summarizeHouseholdPeriod(runCompiledHouseholdProjection({ compiled: compiled(), runContext: context() }).periods[0]!);
+    const catalog = JSON.stringify({ rules: "synthetic-rule-content".repeat(11_000) });
+    const diagnostic = (index: number): TaxCapabilityDiagnostic => ({
+      severity: "warning", code: "PFA-TAX-009", category: "projected_current_law", entityType: "tax_capability",
+      message: "Projected current law", jurisdiction: "US:FEDERAL", taxYear: String(2027 + index), affectedOutputs: ["cash", "netWorth"],
+      projectedLaw: { catalogFingerprint: catalog, ruleId: `rule-${index}`, ruleVersion: "1", baseRuleId: "base", baseRuleVersion: "1", baseYear: 2026,
+        effectiveFrom: start, effectiveUntil: end, assumption: { version: "projected-current-law/v1", selection: "projectedCurrentLawThrough",
+          modelId: "synthetic-model", householdId: String(ids.household), through: "2081-01-01", catalogFingerprint: catalog } },
+    });
+    const leftWarnings = Array.from({ length: 341 }, (_, index) => diagnostic(index));
+    const rightWarnings = leftWarnings.map(value => ({ ...value, projectedLaw: { ...value.projectedLaw!, assumption: { ...value.projectedLaw!.assumption! } } }));
+    const periods = (warnings: readonly TaxCapabilityDiagnostic[]): HouseholdForecastSummaryPeriod[] => Array.from({ length: 12 }, (_, index) => {
+      const capability: OutputTaxCapability = { dependency: "tax_affected", status: "complete", diagnostics: warnings.slice(0, 330 + index) };
+      return { ...base, period: { start: instant(new Date(Date.UTC(2053, index, 1)).toISOString()), end: instant(new Date(Date.UTC(2053, index + 1, 1)).toISOString()) },
+        outputCapabilities: { cash: capability, netWorth: capability } };
+    });
+    const left = periods(leftWarnings), right = periods(rightWarnings);
+    let counts: HouseholdReplayVerificationCounts | undefined;
+    expect(equalHouseholdReplaySummaries(left, right, (_phase, value) => { counts = value; })).toBe(true);
+    expect(counts).toMatchObject({ uniqueCatalogCount: 1, uniqueCatalogChars: catalog.length,
+      diagnosticKeysComputed: 682, capabilityPairsCompared: 12, economicPeriodsCompared: 12,
+      diagnosticOccurrencesCompared: 4026 });
+    expect(counts!.diagnosticKeyChars).toBeLessThan(catalog.length * 4);
+    expect(counts!.economicSummaryChars).toBeGreaterThan(0);
+    expect(equalHouseholdReplaySummaries(left, right, () => { throw new Error("unavailable telemetry"); })).toBe(true);
+    const changed = (warnings: readonly TaxCapabilityDiagnostic[]) => [{ ...right[0]!, outputCapabilities: {
+      cash: { ...right[0]!.outputCapabilities!.cash!, diagnostics: warnings }, netWorth: right[0]!.outputCapabilities!.netWorth!,
+    } }, ...right.slice(1)];
+    const original = right[0]!.outputCapabilities!.cash!.diagnostics;
+    // Same shape/length and same warning copy, but different exact rule content.
+    const differentCatalog = catalog.replace("synthetic", "Synthetic");
+    const alteredLaw = { ...original[0]!.projectedLaw!, catalogFingerprint: differentCatalog };
+    expect(equalHouseholdReplaySummaries(left, changed([{ ...original[0]!, projectedLaw: alteredLaw }, ...original.slice(1)]),
+      (_phase, value) => { counts = value; })).toBe(false);
+    expect(counts!.uniqueCatalogCount).toBe(2);
+    for (const warning of [
+      { ...original[0]!, projectedLaw: alteredLaw },
+      { ...original[0]!, projectedLaw: { ...original[0]!.projectedLaw!, assumption: { ...original[0]!.projectedLaw!.assumption!, catalogFingerprint: differentCatalog } } },
+      { ...original[0]!, projectedLaw: { ...original[0]!.projectedLaw!, baseRuleId: "different-source" } },
+      { ...original[0]!, affectedOutputs: ["netWorth", "cash"] },
+      { ...original[0]!, jurisdiction: "US:PA" },
+      { ...original[0]!, taxYear: "2053", message: "different warning" },
+    ]) expect(equalHouseholdReplaySummaries(left, changed([warning, ...original.slice(1)]))).toBe(false);
+    expect(equalHouseholdReplaySummaries(left, changed([original[1]!, original[0]!, ...original.slice(2)]))).toBe(false);
+    expect(equalHouseholdReplaySummaries(left, changed([...original, original[0]!]))).toBe(false);
+    expect(equalHouseholdReplaySummaries(left, changed([original[0]!, original[0]!, ...original.slice(2)]))).toBe(false);
+    for (const metadata of [{ status: "incomplete" as const }, { dependency: "tax_independent" as const }]) {
+      expect(equalHouseholdReplaySummaries(left, [{ ...right[0]!, outputCapabilities: { ...right[0]!.outputCapabilities!,
+        cash: { ...right[0]!.outputCapabilities!.cash!, ...metadata } } }, ...right.slice(1)])).toBe(false);
+    }
+    const { outputCapabilities: _capabilities, ...withoutCapabilities } = right[0]!;
+    expect(equalHouseholdReplaySummaries(left, [withoutCapabilities, ...right.slice(1)])).toBe(false);
+    // Exercise every non-capability summary field through the exact canonical
+    // comparison, including newly added fields, rather than a metric allowlist.
+    for (const field of Object.keys(base).filter(field => field !== "outputCapabilities")) {
+      expect(equalHouseholdReplaySummaries(left, [{ ...right[0]!, [field]: { changed: "source/economics" } }, ...right.slice(1)])).toBe(false);
+    }
+    expect(equalHouseholdReplaySummaries(left, right.slice(1))).toBe(false);
+    // Small bounded oracle: the optimized comparison agrees with the original
+    // canonical equality for ordered warnings without giant catalogs.
+    const small = (warnings: readonly TaxCapabilityDiagnostic[]): HouseholdForecastSummaryPeriod => ({ ...base,
+      outputCapabilities: { cash: { dependency: "tax_affected", status: "complete", diagnostics: warnings } } });
+    const warning = { ...diagnostic(0), projectedLaw: { ...diagnostic(0).projectedLaw!, catalogFingerprint: "catalog-A",
+      assumption: { ...diagnostic(0).projectedLaw!.assumption!, catalogFingerprint: "catalog-A" } } };
+    const a = small([warning, warning]);
+    for (const b of [small([warning, warning]), small([warning]), small([{ ...warning, message: "changed" }, warning]),
+      small([{ ...warning, projectedLaw: { ...warning.projectedLaw, catalogFingerprint: "catalog-B" } }, warning]),
+      { ...a, cash: money("0") }]) {
+      expect(equalHouseholdReplaySummaries([a], [b])).toBe(canonicalSerialize([a]) === canonicalSerialize([b]));
+    }
+  });
+
+  it("fails closed on replay economics and run identity mismatches and reports verification phases", () => {
+    const forecast = runHouseholdForecastSummary({ kernel: compileHouseholdKernel(compiled(), start), runContext: context() });
+    const phases: string[] = [];
+    expect(replayHouseholdForecastWindow(forecast, { start, end }, undefined, phase => { phases.push(phase); }).periods).toHaveLength(1);
+    expect(phases).toEqual(["replay_started", "replay_executed", "verification_started", "summary_materialized", "capabilities_compared", "economics_compared", "replay_verified"]);
+    for (const corrupted of [
+      { ...forecast, periods: [{ ...forecast.periods[0]!, cash: money("999") }] },
+      { ...forecast, runMetadata: { ...forecast.runMetadata, inputFingerprint: "wrong-source" as typeof forecast.runMetadata.inputFingerprint } },
+    ]) {
+      const mismatchPhases: string[] = [];
+      expect(() => replayHouseholdForecastWindow(corrupted, { start, end }, undefined, phase => { mismatchPhases.push(phase); })).toThrow(/did not reproduce the displayed forecast exactly/);
+      expect(mismatchPhases.at(-1)).toBe("replay_mismatched");
+      expect(mismatchPhases).not.toContain("replay_verified");
+    }
+  });
   it("combines a pure D1-B dividend with household income without artificial liquidity contention", () => {
     const participant = createDomainMechanicsParticipant({ currency: "USD", holdings: [{ id: ids.position, accountId: ids.cash, kind: "equity", lots: [] }], operations: [{ id: "dividend", kind: "ordinary_dividend", at: "2026-01-15T00:00:00.000Z", order: 10, amount: "50", holdingId: ids.position, taxFacts: { residenceJurisdictions: [], workJurisdictions: [], eligibility: {} }, sourceRefs: ["compiler:canonical:Investment:" + ids.position] }] });
     const result = runCompiledHouseholdProjection({ compiled: compiled(), runContext: context(), participants: [participant] });
