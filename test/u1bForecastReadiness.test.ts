@@ -361,7 +361,7 @@ describe("U1B sourced planning readiness", () => {
     const missingProof = { ...result, points: result.points.map(point => ({ ...point, traceRefs: [] })) };
     expect(baselineResultMatchesRequest(missingProof, sourceRequest)).toBe(true);
     const forgedProof = { ...result, points: result.points.map((point, index) => index === 0
-      ? { ...point, traceRefs: point.traceRefs.map(ref => ref.replayArtifact === undefined ? ref : { ...ref, traceId: "household:replay:forged:wrong:source" }) }
+      ? { ...point, traceRefs: point.traceRefs.map(ref => ref.replayArtifact === undefined ? ref : { ...ref, traceId: "household:replay:forged:wrong:source" as typeof ref.traceId }) }
       : point) };
     expect(baselineResultMatchesRequest(forgedProof, sourceRequest)).toBe(false);
     expect(result.requestedHorizon.end).toBe("2026-03-01T00:00:00.000Z");
