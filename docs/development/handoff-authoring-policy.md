@@ -149,6 +149,8 @@ from the previous V2 framework, but as prose rather than parser requirements:
 - failure modes and state transitions;
 - claims and known gaps;
 - concurrency/cache/persistence/performance boundaries;
+- expected data volume and duplicate-content risks at serialization,
+  persistence, cache and worker/API/read-model boundaries when material;
 - CI versus heavy-validation ownership;
 - UAT when a human workflow must be validated;
 - explicit out-of-scope items;
