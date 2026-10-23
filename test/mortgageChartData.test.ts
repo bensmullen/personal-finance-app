@@ -81,7 +81,7 @@ describe("source-backed mortgage chart data", () => {
     const wrongSource = { ...table, source: { ...table.source, runId: "different-source" } };
     expect(() => restoreHouseholdEvidencePoints(proof, selection, bounded.points, fingerprint, wrongSource)).toThrow(/CATALOG_MISMATCH/);
     const tamperedPoints = bounded.points.map(point => ({ ...point, outputCapabilities: { ...point.outputCapabilities!,
-      cash: { ...point.outputCapabilities!.cash!, status: "incomplete" as const } } }));
+      cash: { dependency: point.outputCapabilities!.cash!.dependency, status: "incomplete" as const, diagnostics: [] } } }));
     expect(() => restoreHouseholdEvidencePoints(proof, selection, tamperedPoints, fingerprint, table)).toThrow(/qualification/);
     const changedProof = { ...proof, encoded: `${proof.encoded} ` };
     expect(() => restorePortableHouseholdReplayArtifact(changedProof)).toThrow(/BASIS_MISMATCH/);
