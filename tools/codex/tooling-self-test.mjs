@@ -666,7 +666,7 @@ for (const dirty of [false, true]) {
     "unavailable preflight must deny its tool rather than bypass authorization");
   assert(f.snapshot().diff === before.diff, "preflight denial must not change authorized WIP");
   const stopped = f.invoke("Stop", {
-    last_assistant_message: "TASK_STATUS: BLOCKED\\nBLOCKER: optional preflight unavailable; preserve authorized partial work",
+    last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: optional preflight unavailable; preserve authorized partial work",
   });
   assert(stopped.continue === true, "blocked Stop must permit safe checkpoint and close task");
   assert(f.git("rev-parse", "HEAD") === f.git("rev-parse", "@{u}"),
