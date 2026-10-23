@@ -102,6 +102,18 @@ Before emitting an implementation/repair handoff, ChatGPT SHALL:
     domain invariant; do not invent stricter numeric acceptance gates from
     qualitative product language. Identify potentially obsolete tests for
     reviewer classification rather than letting Codex silently delete them.
+12. for any feature that generates many records/periods or moves, stores, or
+    caches derived data, check whether sizable identical content is duplicated
+    across records or layers *before* implementation. Identify ownership,
+    canonical source and lifetime (run/version/tenant), serialized boundary,
+    expected record count, and the smallest correct representation: one
+    immutable source plus validated references or lossless aggregation. Keep
+    occurrence identity and provenance, authoritative proofs, exact semantics,
+    and fail-closed recovery; distinguish a true fixed-size digest from a
+    serialized catalog. Require a bounded fixture demonstrating no proportional
+    growth from repeated identical content, plus payload-size evidence when
+    warranted. Avoid global dedup machinery and heavyweight CI jobs without
+    evidence of need.
 
 For a repair caused by CI, include the classified root cause and any
 sibling or downstream tests vulnerable to the same issue, so that a patch
@@ -137,6 +149,8 @@ from the previous V2 framework, but as prose rather than parser requirements:
 - failure modes and state transitions;
 - claims and known gaps;
 - concurrency/cache/persistence/performance boundaries;
+- expected data volume and duplicate-content risks at serialization,
+  persistence, cache and worker/API/read-model boundaries when material;
 - CI versus heavy-validation ownership;
 - UAT when a human workflow must be validated;
 - explicit out-of-scope items;
