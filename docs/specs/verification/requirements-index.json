@@ -4,6 +4,318 @@
   "owning_manifest": "docs/spec-manifest.json",
   "requirements": [
     {
+      "id": "PFA-ADV-001",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
+      "id": "PFA-ADV-002",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
+      "id": "PFA-ADV-003",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-validation"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
+      "id": "PFA-ADV-004",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
+      "id": "PFA-ADV-005",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
+      "id": "PFA-ADV-006",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
+      "id": "PFA-ADV-007",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
+      "id": "PFA-ADV-008",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
+      "id": "PFA-ADV-009",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
+      "id": "PFA-ADV-010",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
+      "id": "PFA-ADV-011",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
+      "id": "PFA-ADV-012",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
+      "id": "PFA-ADV-013",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-validation"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
+      "id": "PFA-ADV-014",
+      "spec_id": "contextual-financial-education-advisor",
+      "requirement_status": "draft",
+      "parent_requirement_ids": [],
+      "depends_on_requirement_ids": [],
+      "verification_methods": [
+        "analysis",
+        "test",
+        "demonstration"
+      ],
+      "verification_state": "planned",
+      "verification_owners": [
+        "automated",
+        "engineering-review",
+        "user-validation"
+      ],
+      "verification_refs": [],
+      "implementation_scope": [
+        "future optional advisor/",
+        "future contextual UI/",
+        "future per-user interaction profile/"
+      ]
+    },
+    {
       "id": "PFA-CAL-001",
       "spec_id": "market-economic-calibration",
       "requirement_status": "draft",
