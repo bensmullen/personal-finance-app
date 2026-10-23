@@ -175,6 +175,30 @@ approved behavior changes; preserve tests for unchanged behavior. Record
 non-obvious risks briefly in the issue, not in repetitive global boilerplate.
 This is a pre-handoff reasoning check, not an additional runner or Codex gate.
 
+**Large-payload redundancy prevention and semantic audit:** For changed
+multi-period, high-cardinality, cached, persisted, API/worker or diagnostic
+representations, the author and independent ChatGPT reviewer SHALL check for
+repeated sizable identical content *before* it is multiplied across records or
+sent to a different process. Inspect the producing and receiving boundary,
+not only the grouped UI. Require a synthetic bounded test of one source reused
+by many records (including tampered/missing reference negatives), and confirm
+serialization/persisted-byte growth tracks the true unique content plus
+lightweight occurrences, not the full content times occurrence count.
+Compare relevant before/after byte counts and counts of records, unique
+sources, and repeated identities when material. Preservation of every
+occurrence, provenance, exact qualification/replay proof and unchanged
+financial outputs is a correctness gate. A compact hash must not masquerade as
+full original content, and digest collision/trust/immutability scope must be
+addressed. A deliberate repeated copy is permissible only if demonstrably
+small/bounded and the design rationale is documented. Do not log raw catalogs,
+financial inputs, portable proofs or personal data. Distinguish uncompressed
+wire/test serialization from heap, retained storage and disk; measure those
+separately rather than relabeling. Use a baseline or workload-specific budget
+approved by the owner; do not invent a universal byte cap or relax tests to
+avoid finding duplicate payloads. Tiny deterministic regression fixtures
+belong in ordinary CI; representative long-horizon/peak-heap measurement is
+reviewer-owned heavy validation, not a Codex local test or extra default E2E.
+
 **Acceptance assertion provenance:** Behavioral, accessibility, financial,
 boundary, error-state, and meaningful responsive-layout invariants belong in
 automated tests. Every new or changed exact numerical geometry constraint,
