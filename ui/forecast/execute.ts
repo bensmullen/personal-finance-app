@@ -39,25 +39,38 @@ export function executeForecastWorkerRequest(message: ForecastWorkerRequest | Ev
   const now = () => { try { return clock.now(); } catch { return undefined; } };
   const started = now();
   const timing = () => { const end = now(); return started !== undefined && end !== undefined && Number.isFinite(end - started) && end >= started ? { durationMs: end - started } : {}; };
-  const report = (phase: "received" | "restored" | "projected") => progress?.({ ...boundary, outcome: "progress", phase, ...timing() });
+  let ownership: NonNullable<EvidenceWorkerResponse["ownership"]> = "missing_source";
+  let sourceIdentityMatched = false;
+  const report = (phase: Extract<EvidenceWorkerResponse, { outcome: "progress" }>["phase"], measurements?: EvidenceWorkerResponse["measurements"]) => {
+    try { progress?.({ ...boundary, outcome: "progress", phase, ownership, sourceIdentityMatched, ...(measurements ? { measurements } : {}), ...timing() }); }
+    catch { /* Telemetry cannot change evidence execution. */ }
+  };
   try {
     report("received");
     if (message.source) {
       const basis = message.source.basis ?? generatedBasis;
       if (!basis) throw new Error("Missing original proof");
       source = { ...message.source, basis };
+      ownership = message.source.basis ? "transported_source" : "retained_source";
+    } else if (source?.basis) {
+      ownership = source.basis === generatedBasis ? "retained_source" : "transported_source";
     }
     if (!source?.basis) throw new Error("Selected forecast evidence is unavailable.");
+    report("source_bound");
     let restore: ReplayRestoreMeasurement | undefined;
+    const selectionMeasurements = () => householdEvidenceSelectionMeasurements(source!.basis!, message, message.points.length);
+    const observation = { now: () => clock.now(), phase: (phase: import("../../src/application/mortgageChartData.js").HouseholdEvidencePhase) => report(phase),
+      record: (measurement: ReplayRestoreMeasurement) => { restore = measurement; } };
     const points = restoreHouseholdEvidencePoints(source.basis, message, message.points, message.fingerprint, source.diagnosticCatalogs,
-      { now: () => clock.now(), record: measurement => { restore = measurement; } });
+      observation);
+    sourceIdentityMatched = true;
     const restoredAt = now();
-    report("restored");
+    report("restored", { ...selectionMeasurements(), ...(restore === undefined ? {} : { restore }) });
     const point = points[0];
     if (!point) throw new Error("Selected forecast period is unavailable.");
     const result = message.operation === "monthly_evidence"
-      ? { detail: inspectMonthlyMoney(point, source.model) }
-      : { window: inspectMortgageWindow(points, message.liabilityId) };
+      ? { detail: inspectMonthlyMoney(point, source.model, { ...observation, record() {} }) }
+      : { window: inspectMortgageWindow(points, message.liabilityId, { ...observation, record() {} }) };
     const projectedAt = now();
     const heap = sampledJsHeapBytes();
     const measurements = { ...householdEvidenceSelectionMeasurements(source.basis, message, points.length),
@@ -66,10 +79,10 @@ export function executeForecastWorkerRequest(message: ForecastWorkerRequest | Ev
       ...(restoredAt === undefined || projectedAt === undefined ? {} : { replayAndProjectionMs: Math.max(0, projectedAt - restoredAt) }),
       ...(heap === undefined ? {} : { workerHeapAfterBytes: heap }) };
     report("projected");
-    return { ...boundary, outcome: "result", ...result, measurements, ...timing() };
+    return { ...boundary, outcome: "result", ...result, measurements, ownership, sourceIdentityMatched, ...timing() };
   } catch {
     source = undefined;
     // Portable messages contain no financial facts or raw runtime errors.
-    return { ...boundary, outcome: "error", error: "Monthly evidence has missing or mismatched period/source data. Update the forecast and retry.", ...timing() };
+    return { ...boundary, outcome: "error", ownership, sourceIdentityMatched, error: "Monthly evidence has missing or mismatched period/source data. Update the forecast and retry.", ...timing() };
   }
 }

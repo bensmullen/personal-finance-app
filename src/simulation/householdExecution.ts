@@ -1264,7 +1264,11 @@ export const replayHouseholdForecastWindow = (
   forecast: Pick<HouseholdForecastSummaryResult, "periods" | "runMetadata" | "replay">,
   selectedWindow: Period,
   observer?: PerformanceObserver,
+  phase?: (phase: "replay_started" | "replay_executed" | "replay_verified") => void,
 ): CompiledHouseholdProjectionRunResult => {
+  const report = (value: "replay_started" | "replay_executed" | "replay_verified") => {
+    try { phase?.(value); } catch { /* Measurement cannot affect replay. */ }
+  };
   const { kernel, runContext } = forecast.replay;
   const selected = forecast.periods.filter(period => period.period.start >= selectedWindow.start && period.period.end <= selectedWindow.end);
   if (selectedWindow.start >= selectedWindow.end || selected.length === 0 ||
@@ -1274,17 +1278,20 @@ export const replayHouseholdForecastWindow = (
   const performance = createPerformanceSession(observer);
   try {
     const checkpoint = (forecastCheckpoints.get(forecast) ?? []).filter(value => value.at <= selectedWindow.start).at(-1);
+    report("replay_started");
     const replay = runCompiledHouseholdProjectionInternal({
       compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
     }, performance, { accept: () => {}, retain: period => period.start >= selectedWindow.start && period.end <= selectedWindow.end,
       ...(checkpoint === undefined ? {} : { resume: checkpoint }), stopAfter: selectedWindow.end,
       retainDiagnostics: period => period.start >= selectedWindow.start });
+    report("replay_executed");
     performance.counters({ replayCheckpointResumes: checkpoint === undefined ? 0 : 1,
       replayDetailPeriodsMaterialized: replay.periods.length });
     if (canonicalSerialize(replay.runMetadata) !== canonicalSerialize(forecast.runMetadata) ||
         canonicalSerialize(replay.periods.map(summarizeHouseholdPeriod)) !== canonicalSerialize(selected))
       throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_BASIS_MISMATCH",
         message: "Immutable forecast artifacts did not reproduce the displayed forecast exactly.", entityType: "household_projection" });
+    report("replay_verified");
     return Object.freeze({ ...replay, requestedHorizon: Object.freeze({ ...selectedWindow }) });
   } finally {
     performance.finish();

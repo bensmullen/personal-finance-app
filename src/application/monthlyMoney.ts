@@ -28,14 +28,14 @@ export interface MonthlyUse {
 }
 /** Read-only budgeting comparison. Posted cash uses do not establish cash origin. */
 export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: PortableModelEnvelope,
-  observation?: import("../simulation/r3/replayArtifact.js").ReplayRestoreObserver) {
+  observation?: import("./mortgageChartData.js").HouseholdEvidenceObserver) {
   const ref = point.traceRefs.find(value => value.replayArtifact !== undefined);
   if (!ref) throw new Error("Monthly evidence is unavailable");
   const address = ref.replayArtifact as { basis: unknown; start: string; end: string };
   if (address.start !== point.periodStart || address.end !== point.periodEnd) throw new Error("Monthly evidence does not match the selected period");
   const basis = restorePortableHouseholdReplayArtifact(address.basis, observation);
   if (`household:replay:${basis.runMetadata.inputFingerprint}:${address.start}:${address.end}` !== ref.traceId) throw new Error("Monthly evidence identity does not match");
-  const periods = householdEvidenceMonth(basis, address.start, address.end);
+  const periods = householdEvidenceMonth(basis, address.start, address.end, observation);
   const currency = Currency.of(point.cash.currency);
   let income = Money.zero(currency), payroll = Money.zero(currency), otherIncome = Money.zero(currency);
   let employee = Money.zero(currency), deposited = Money.zero(currency), cashChange = Money.zero(currency), otherReceipts = Money.zero(currency);

@@ -17,8 +17,11 @@ export type EvidenceWorkerRequest = EvidenceSelection & {
 export type EvidenceWorkerResponse = Pick<EvidenceWorkerRequest, "operation" | "requestId" | "fingerprint" | "startIndex" | "liabilityId"> & {
   readonly durationMs?: number;
   readonly measurements?: import("../../src/application/mortgageChartData.js").HouseholdEvidenceMeasurements;
+  readonly ownership?: "retained_source" | "transported_source" | "missing_source";
+  /** True only after original proof, period, catalog and trace identity checks. */
+  readonly sourceIdentityMatched?: boolean;
 } & (
-  | { readonly outcome: "progress"; readonly phase: "received" | "restored" | "projected" }
+  | { readonly outcome: "progress"; readonly phase: "received" | "source_bound" | "restored" | "projected" | import("../../src/application/mortgageChartData.js").HouseholdEvidencePhase }
   | { readonly outcome: "result"; readonly detail?: ReturnType<typeof inspectMonthlyMoney>; readonly window?: MortgageWindow }
   | { readonly outcome: "error"; readonly error: string }
 );

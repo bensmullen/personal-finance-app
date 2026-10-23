@@ -40,6 +40,9 @@ export function useForecastEvidence(forecast: PersonalHouseholdForecastReadModel
     }, revision > 0);
   }, [scope, key, operation, startIndex, liabilityId, revision]);
   const response = current && scope && settled && settled.scope === scope && settled.key === key ? settled.response : undefined;
+  useEffect(() => {
+    if (response?.outcome === "result") scope?.rendered(response.requestId);
+  }, [scope, response]);
   return {
     detail: response?.outcome === "result" ? response.detail : undefined,
     window: response?.outcome === "result" ? response.window : undefined,

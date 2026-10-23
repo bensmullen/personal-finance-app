@@ -12,7 +12,46 @@ import { clickFinancialDestination, navigateOwner } from "./navigation.js";
 import type { EvidenceWorkerResponse } from "../ui/forecast/protocol.js";
 
 const status = (page: Page) => page.getByRole("status", { name: "Household forecast status", exact: true });
+// The runner owns this bounded buffer, so a crashed renderer cannot erase the
+// last completed phase. Accept only enumerated metadata and numeric counters.
+const survivingEvidence = new WeakMap<Page, Record<string, string | number>[]>();
+const telemetryStrings = new Set(["controller", "worker", "page", "crash", "closed", "created", "posted", "settled", "rendered", "ignored", "mismatched", "error", "timeout",
+  "monthly_evidence", "mortgage_evidence", "progress", "result", "received", "source_bound", "restored", "projected",
+  "restore_started", "decoded", "integrity_validated", "participants_restored", "source_requalified", "kernel_compiled", "checkpoints_validated", "restore_warm",
+  "catalog_validation_started", "catalog_validated", "qualification_started", "qualification_validated", "replay_started", "replay_executed", "replay_verified", "replay_cached",
+  "retained_source", "transported_source", "missing_source", "cold", "warm"]);
+function safeEvidenceTelemetry(value: unknown): Record<string, string | number> {
+  const safe: Record<string, string | number> = {};
+  if (!value || typeof value !== "object") return safe;
+  const record = value as Record<string, unknown>;
+  for (const key of ["surface", "operation", "phase", "outcome", "ownership", "cache"])
+    if (typeof record[key] === "string" && telemetryStrings.has(record[key])) safe[key] = record[key];
+  if (typeof record.sourceIdentityMatched === "boolean") safe.sourceIdentityMatched = record.sourceIdentityMatched ? 1 : 0;
+  for (const key of ["workerId", "requestId", "startIndex", "elapsedMs", "pointCount", "durationMs", "roundtripMs", "mainHeapBytes"])
+    if (typeof record[key] === "number" && Number.isFinite(record[key]) && record[key] >= 0) safe[key] = record[key];
+  const measurements = record.measurements as EvidenceWorkerResponse["measurements"];
+  if (measurements && typeof measurements === "object") {
+    for (const key of ["selectedMonths", "checkpointCount", "retainedCheckpointStates", "selectedCheckpointIndex", "replayPrefixMonths", "restoreAndSourceValidationMs", "replayAndProjectionMs", "workerHeapAfterBytes"] as const) {
+      const number = measurements[key];
+      if (typeof number === "number" && Number.isFinite(number) && number >= -1) safe[key] = number;
+    }
+    const restore = measurements.restore;
+    if (restore && typeof restore === "object") {
+      if (restore.cache === "cold" || restore.cache === "warm") safe.cache = restore.cache;
+      for (const key of ["totalMs", "decodeMs", "integrityValidationMs", "participantRestoreMs", "sourceRequalificationMs", "kernelCompileMs", "checkpointRestoreValidationMs", "checkpointSizeMeasurementMs", "checkpointCount", "materializedCheckpointStates", "serializedCheckpointBytes", "heapBeforeBytes", "heapAfterBytes", "peakSampledHeapBytes"] as const) {
+        const number = restore[key];
+        if (typeof number === "number" && Number.isFinite(number) && number >= 0) safe[`restore.${key}`] = number;
+      }
+    }
+  }
+  return safe;
+}
+test.afterEach(async ({ page }, info) => {
+  const records = survivingEvidence.get(page);
+  if (records) await info.attach("surviving-evidence-phases", { body: JSON.stringify(records), contentType: "application/json" });
+});
 type ObservedWindow = typeof window & {
+  __u1bRecordPhase: (record: unknown) => Promise<void>;
   __u1bResults: ForecastWorkerResponse[];
   __u1bEvidence: { workerId: number; operation: string; requestId: number; fingerprint: string; startIndex: number; outcome: string; phase?: string; durationMs?: number; roundtripMs?: number; measurements?: EvidenceWorkerResponse["measurements"] }[];
   __u1bTransport: { workerId: number; phase: "posted" | "terminated"; operation?: string; requestId?: number; startIndex?: number; proofSent?: boolean }[];
@@ -21,8 +60,22 @@ type ObservedWindow = typeof window & {
   __u1bFebruary?: ReturnType<typeof inspectMonthlyMoney>;
 };
 async function observe(page: Page) {
+  const records: Record<string, string | number>[] = [];
+  survivingEvidence.set(page, records);
+  const retain = (value: unknown) => {
+    records.push({ ...safeEvidenceTelemetry(value), runnerAtMs: Date.now() });
+    if (records.length > 256) records.shift();
+  };
+  await page.exposeBinding("__u1bRecordPhase", (_source, value: unknown) => retain(value));
+  page.on("crash", () => retain({ surface: "page", phase: "crash" }));
+  page.on("close", () => retain({ surface: "page", phase: "closed" }));
   await page.addInitScript(() => {
     const observed = window as ObservedWindow;
+    const emit = (record: object) => { void observed.__u1bRecordPhase(record).catch(() => {}); };
+    window.addEventListener("pfm-evidence-phase", event => {
+      const mainHeapBytes = (performance as Performance & { memory?: { usedJSHeapSize?: number } }).memory?.usedJSHeapSize;
+      emit({ ...(event as CustomEvent).detail, surface: "controller", mainHeapBytes });
+    });
     observed.__u1bResults = [];
     observed.__u1bEvidence = [];
     observed.__u1bTransport = [];
@@ -42,7 +95,14 @@ async function observe(page: Page) {
             if (response.operation === "monthly_evidence" && response.startIndex === 1 && response.outcome === "result" && response.detail) observed.__u1bFebruary = response.detail;
             const { operation, requestId, fingerprint, startIndex, outcome, durationMs } = response;
             const started = this.posted.get(`${operation}:${requestId}`);
-            observed.__u1bEvidence = [...observed.__u1bEvidence.slice(-63), { workerId: this.observerId, operation, requestId, fingerprint, startIndex, outcome,
+            emit({ surface: "worker", workerId: this.observerId, operation, requestId, startIndex, outcome, durationMs,
+              phase: response.outcome === "progress" ? response.phase : undefined, ownership: response.ownership,
+              sourceIdentityMatched: response.sourceIdentityMatched,
+              measurements: response.measurements, roundtripMs: started === undefined ? undefined : performance.now() - started });
+            // Keep the original navigation history bounded independently of
+            // the finer phase stream retained by the runner above.
+            if (response.outcome !== "progress" || ["received", "restored", "projected"].includes(response.phase))
+              observed.__u1bEvidence = [...observed.__u1bEvidence.slice(-63), { workerId: this.observerId, operation, requestId, fingerprint, startIndex, outcome,
               ...(response.outcome === "progress" ? { phase: response.phase } : {}), ...(durationMs === undefined ? {} : { durationMs }),
               ...(response.measurements === undefined ? {} : { measurements: response.measurements }),
               ...(started === undefined ? {} : { roundtripMs: performance.now() - started }) }];
@@ -267,6 +327,11 @@ for (const width of [1440, 390]) {
     expect(navigationEvidence.evidence).toContainEqual(expect.objectContaining({ operation: "mortgage_evidence", startIndex: 0, outcome: "result" }));
     for (const startIndex of [0, 324, 648]) expect(navigationEvidence.evidence).toContainEqual(expect.objectContaining({ operation: "mortgage_evidence", startIndex, outcome: "result" }));
     expect(navigationEvidence.evidence).toContainEqual(expect.objectContaining({ operation: "monthly_evidence", startIndex: 1, outcome: "result" }));
+    const survived = survivingEvidence.get(page)!;
+    for (const startIndex of [0, 324, 648]) {
+      expect(survived).toContainEqual(expect.objectContaining({ surface: "worker", operation: "mortgage_evidence", startIndex, phase: "replay_verified", ownership: "retained_source" }));
+      expect(survived).toContainEqual(expect.objectContaining({ surface: "controller", operation: "mortgage_evidence", startIndex, phase: "rendered" }));
+    }
     const baselineWorker = navigationEvidence.transport.find(item => item.operation === "baseline_forecast")!.workerId;
     expect(navigationEvidence.transport.filter(item => item.startIndex !== undefined).every(item => item.workerId === baselineWorker && !item.proofSent)).toBe(true);
     expect(navigationEvidence.transport.filter(item => item.phase === "terminated" && item.workerId === baselineWorker)).toHaveLength(0);

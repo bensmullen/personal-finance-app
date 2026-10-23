@@ -14,7 +14,9 @@ export const FORECAST_DEADLINE_MS = 150_000;
 const evidenceScheduler: ForecastScheduler = { set: (callback, delay) => setTimeout(callback, delay), clear: handle => clearTimeout(handle as ReturnType<typeof setTimeout>) };
 export interface EvidenceDiagnostic {
   readonly requestId: number;
-  readonly phase: "created" | "posted" | "received" | "restored" | "projected" | "settled" | "error" | "timeout";
+  readonly operation: EvidenceSelection["operation"];
+  readonly startIndex: number;
+  readonly phase: "created" | "posted" | "settled" | "rendered" | "ignored" | "mismatched" | "error" | "timeout" | Extract<EvidenceWorkerResponse, { outcome: "progress" }>["phase"];
   readonly elapsedMs: number;
   readonly pointCount: number;
 }
@@ -129,16 +131,23 @@ export class EvidenceController {
   #sequence = 0;
   #sent = false;
   #cache = new Map<string, EvidenceWorkerResponse>();
+  #settled = new Map<number, { boundary: Pick<EvidenceWorkerRequest, "requestId" | "operation" | "startIndex">; started: number; pointCount: number }>();
   #pending = new Map<number, { key: string; boundary: Pick<EvidenceWorkerRequest, "operation" | "requestId" | "fingerprint" | "startIndex" | "liabilityId">; timer?: unknown; started: number; pointCount: number; listeners: Set<(response: EvidenceWorkerResponse) => void> }>();
   readonly diagnostics: EvidenceDiagnostic[] = [];
   constructor(readonly source: { forecast: PersonalHouseholdForecastReadModel; model: PersonalDraft }, readonly makeWorker: () => EvidenceWorkerPort,
     readonly scheduler: ForecastScheduler = evidenceScheduler, readonly now: () => number = () => performance.now()) {}
-  #observe(item: { boundary: { requestId: number }; started: number; pointCount: number }, phase: EvidenceDiagnostic["phase"]): void {
+  #observe(item: { boundary: Pick<EvidenceWorkerRequest, "requestId" | "operation" | "startIndex">; started: number; pointCount: number }, phase: EvidenceDiagnostic["phase"]): void {
     try {
       const elapsedMs = this.now() - item.started;
       if (Number.isFinite(elapsedMs) && elapsedMs >= 0) {
-        this.diagnostics.push({ requestId: item.boundary.requestId, phase, elapsedMs, pointCount: item.pointCount });
+        const diagnostic: EvidenceDiagnostic = { requestId: item.boundary.requestId, operation: item.boundary.operation,
+          startIndex: item.boundary.startIndex, phase, elapsedMs, pointCount: item.pointCount };
+        this.diagnostics.push(diagnostic);
         if (this.diagnostics.length > 32) this.diagnostics.shift();
+        // Safe counters only. A test-runner listener can retain these before a
+        // later page crash; no financial source/fingerprint is sent to logs.
+        if (typeof globalThis.dispatchEvent === "function" && typeof CustomEvent === "function")
+          globalThis.dispatchEvent(new CustomEvent("pfm-evidence-phase", { detail: diagnostic }));
       }
     } catch { /* Observation never affects execution. */ }
   }
@@ -184,8 +193,13 @@ export class EvidenceController {
         this.#observe(pending, "created");
         this.#worker.onmessage = ({ data }) => {
           const item = this.#pending.get(data.requestId);
-          if (!item) return; // Superseded response; live requests still have deadlines.
-          if (data.operation !== item.boundary.operation || data.fingerprint !== item.boundary.fingerprint || data.startIndex !== item.boundary.startIndex || data.liabilityId !== item.boundary.liabilityId) { fail(); return; }
+          if (!item) {
+            this.#observe({ boundary: data, started, pointCount: 0 }, "ignored");
+            return; // Superseded response; live requests still have deadlines.
+          }
+          if (data.operation !== item.boundary.operation || data.fingerprint !== item.boundary.fingerprint || data.startIndex !== item.boundary.startIndex || data.liabilityId !== item.boundary.liabilityId) {
+            this.#observe(item, "mismatched"); fail(); return;
+          }
           if (data.outcome === "progress") {
             this.#observe(item, data.phase);
             for (const listener of item.listeners) listener(data);
@@ -204,6 +218,8 @@ export class EvidenceController {
           this.#pending.delete(data.requestId);
           this.scheduler.clear(item.timer);
           this.#observe(item, "settled");
+          if (this.#settled.size >= 4) this.#settled.delete(this.#settled.keys().next().value!);
+          this.#settled.set(data.requestId, { boundary: { requestId: data.requestId, operation: data.operation, startIndex: data.startIndex }, started: item.started, pointCount: item.pointCount });
           for (const listener of item.listeners) listener(data);
         };
         this.#worker.onerror = event => { event.preventDefault(); fail(); };
@@ -218,13 +234,17 @@ export class EvidenceController {
     } catch { fail(); }
     return () => { pending.listeners.delete(changed); };
   }
+  rendered(requestId: number): void {
+    const item = this.#settled.get(requestId);
+    if (item) { this.#observe(item, "rendered"); this.#settled.delete(requestId); }
+  }
   dispose(): void {
     for (const item of this.#pending.values()) this.scheduler.clear(item.timer);
     if (this.#worker) {
       this.#worker.onmessage = null; this.#worker.onerror = null; this.#worker.onmessageerror = null;
       try { this.#worker.terminate(); } catch { /* Disposed ownership is authoritative. */ }
     }
-    this.#worker = undefined; this.#sent = false; this.#pending.clear(); this.#cache.clear();
+    this.#worker = undefined; this.#sent = false; this.#pending.clear(); this.#cache.clear(); this.#settled.clear();
   }
 }
 export type ForecastSubmission = ForecastWorkerRequest extends infer R ? R extends ForecastWorkerRequest ? Omit<R, "requestId"> : never : never;

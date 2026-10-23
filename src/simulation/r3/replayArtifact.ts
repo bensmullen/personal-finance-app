@@ -222,6 +222,8 @@ export interface ReplayRestoreObserver {
   readonly record: (measurement: ReplayRestoreMeasurement) => void;
   /** Extra serialization is for independent/manual engineering validation only. */
   readonly includeCheckpointBytes?: boolean;
+  /** Bounded progress survives a later failure; never receives source contents. */
+  readonly phase?: (phase: "restore_started" | "decoded" | "integrity_validated" | "participants_restored" | "source_requalified" | "kernel_compiled" | "checkpoints_validated" | "restore_warm") => void;
 }
 type RestoreTimings = { -readonly [K in keyof Pick<ReplayRestoreMeasurement, "decodeMs" | "integrityValidationMs" | "participantRestoreMs" | "sourceRequalificationMs" | "kernelCompileMs" | "checkpointRestoreValidationMs" | "checkpointSizeMeasurementMs" | "serializedCheckpointBytes">]: ReplayRestoreMeasurement[K] };
 const heapSample = (): number | undefined => {
@@ -271,6 +273,7 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   const restored = decode(wire) as {
     executable: Omit<ExecutableHouseholdProjection, "participants"> & { readonly participants?: readonly PortableHouseholdParticipant[] }; runContext: RunContext; runMetadata: RunMetadata; periods: readonly HouseholdForecastSummaryPeriod[]; checkpoints?: readonly CheckpointDelta[];
   };
+  try { observer?.phase?.("decoded"); } catch { /* Observation is optional. */ }
   const decodeDuration = elapsed(decodeStarted, safeNow(observer));
   if (decodeDuration !== undefined) timings.decodeMs = (timings.decodeMs ?? 0) + decodeDuration;
   if (observer) sample();
@@ -278,18 +281,23 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
     if (supplied.version === "household-replay/v3" && supplied.integrity !== createInputFingerprint({ runContext: restored.runContext, openingState: supplied.encoded }))
       throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: portable artifact changed");
   });
+  try { observer?.phase?.("integrity_validated"); } catch { /* Observation is optional. */ }
   const { participants, ...base } = restored.executable;
   const executable = measure("participantRestoreMs", () => ({ ...base, ...(participants === undefined ? {} : { participants: participants.map(restoreHouseholdParticipant) }) }));
+  try { observer?.phase?.("participants_restored"); } catch { /* Observation is optional. */ }
   measure("sourceRequalificationMs", () => {
     validateSsaMedicareSourceHistory(executable.reconciledOpeningState, restored.runContext.dataCutoff);
     requalifyD2SettlementReceiptHistory(executable.reconciledOpeningState, restored.runContext);
     requalifyRetirementDistributionHistory(executable.reconciledOpeningState, restored.runContext);
   });
+  try { observer?.phase?.("source_requalified"); } catch { /* Observation is optional. */ }
   const kernel = measure("kernelCompileMs", () => compileHouseholdKernel(executable, restored.runContext.simulationStart));
+  try { observer?.phase?.("kernel_compiled"); } catch { /* Observation is optional. */ }
   const forecast = Object.freeze({ runMetadata: restored.runMetadata, periods: restored.periods,
     replay: Object.freeze({ kernel, runContext: restored.runContext }) });
   if (supplied.version === "household-replay/v3") measure("checkpointRestoreValidationMs", () => registerHouseholdReplayCheckpoints(forecast,
     restoreCheckpointDeltas(restored.checkpoints!, restored.runContext.dataCutoff, restored.runContext, executable.reconciledOpeningState)));
+  try { observer?.phase?.("checkpoints_validated"); } catch { /* Observation is optional. */ }
   if (observer?.includeCheckpointBytes) {
     // Locate the original field in the parsed wire, without re-encoding decoded
     // catalogs or expanded states. Failure of measurement cannot affect restore.
@@ -315,6 +323,7 @@ const restoredArtifacts = new WeakMap<object, {
   readonly forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">;
 }>();
 export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observer?: ReplayRestoreObserver): Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods"> => {
+  try { observer?.phase?.("restore_started"); } catch { /* Observation is optional. */ }
   const before = safeNow(observer), heapBefore = observer ? heapSample() : undefined;
   let peak = heapBefore;
   const sample = () => { const heap = heapSample(); if (heap !== undefined) peak = Math.max(peak ?? 0, heap); };
@@ -333,6 +342,7 @@ export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observ
     const supplied = artifact as PortableHouseholdReplayArtifact | undefined;
     const cached = typeof artifact === "object" && artifact !== null ? restoredArtifacts.get(artifact) : undefined;
     if (cached && supplied?.version === cached.version && supplied.encoded === cached.encoded && supplied.integrity === cached.integrity) {
+      try { observer?.phase?.("restore_warm"); } catch { /* Observation is optional. */ }
       report("warm", cached.forecast); return cached.forecast;
     }
     const timings: RestoreTimings = {};

@@ -167,6 +167,11 @@ describe("U1B sourced planning readiness", () => {
       const selected = actual as EvidenceWorkerResponse | undefined;
       expect(selected?.outcome).toBe("result");
       if (selected?.outcome === "result") {
+        expect(selected.ownership).toBe("retained_source");
+        expect(selected.sourceIdentityMatched).toBe(true);
+        expect(selected.measurements?.restore?.cache).toBe("warm");
+        evidence.rendered(selected.requestId);
+        expect(evidence.diagnostics.at(-1)).toMatchObject({ phase: "rendered", requestId: selected.requestId, startIndex });
         expect(selected.window).toEqual(inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), ids.mortgage));
         const portableStarted = performance.now();
         expect(selected.window).toEqual(inspectMortgageWindow(transportedPoints.slice(startIndex, startIndex + 12), ids.mortgage));
@@ -184,6 +189,9 @@ describe("U1B sourced planning readiness", () => {
       if (response.outcome === "result") expect(response.detail).toEqual(inspectMonthlyMoney(result.points[startIndex]!, model));
     });
     expect(evidence.diagnostics.map(record => record.phase)).toContain("restored");
+    for (const phase of ["source_bound", "restore_warm", "qualification_validated", "replay_started", "replay_executed", "replay_verified"])
+      expect(phaseDurations.map(record => record.phase)).toContain(phase);
+    expect(JSON.stringify(evidence.diagnostics)).not.toContain(messages[0]!.fingerprint);
     expect(calculationFingerprint("baseline_forecast", model, request)).toBe(before);
     evidence.dispose(); baseline.dispose();
     const selected = messages[0]!;
@@ -193,7 +201,10 @@ describe("U1B sourced planning readiness", () => {
     expect(executeForecastWorkerRequest({ ...authenticated, source: { model, basis: { ...transportedBasis, encoded: transportedBasis.encoded + "corrupt" } } }, { now: () => 0 }).outcome).toBe("error");
     const retried = executeForecastWorkerRequest(authenticated, { now: () => 0 });
     expect(retried.outcome).toBe("result");
+    expect(retried.ownership).toBe("transported_source");
     if (retried.outcome === "result") expect(retried.window).toEqual(inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), ids.mortgage));
+    // A failed telemetry consumer cannot invalidate authentic financial replay.
+    expect(executeForecastWorkerRequest(authenticated, { now: () => 0 }, () => { throw new Error("observation unavailable"); }).outcome).toBe("result");
     console.info("U1B bounded evidence phases", { startIndex, phaseDurations });
   }, 30_000);
 

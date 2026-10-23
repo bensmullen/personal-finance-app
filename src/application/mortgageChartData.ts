@@ -1,5 +1,5 @@
 import type { HouseholdForecastPoint, PersonalHouseholdForecastReadModel } from "./householdProjection.js";
-import { restorePortableHouseholdReplayArtifact, type PortableHouseholdReplayArtifact } from "../simulation/r3/replayArtifact.js";
+import { restorePortableHouseholdReplayArtifact, type PortableHouseholdReplayArtifact, type ReplayRestoreObserver } from "../simulation/r3/replayArtifact.js";
 import { replayHouseholdForecastWindow, householdReplayCheckpointSelection } from "../simulation/householdExecution.js";
 import { instant } from "../time/index.js";
 import { Currency, Money, decimal, RoundingPolicy } from "../values/index.js";
@@ -8,6 +8,15 @@ import { createForecastDiagnosticEquality, createForecastDiagnosticTransport, va
 /** Immutable proof transport; financial restoration stays application-owned. */
 export type HouseholdEvidenceProof = PortableHouseholdReplayArtifact;
 export type { ReplayRestoreMeasurement } from "../simulation/r3/replayArtifact.js";
+export type HouseholdEvidencePhase = Parameters<NonNullable<import("../simulation/r3/replayArtifact.js").ReplayRestoreObserver["phase"]>>[0]
+  | "catalog_validation_started" | "catalog_validated" | "qualification_started" | "qualification_validated"
+  | "replay_started" | "replay_executed" | "replay_verified" | "replay_cached";
+export interface HouseholdEvidenceObserver extends ReplayRestoreObserver {
+  readonly phase?: (phase: HouseholdEvidencePhase) => void;
+}
+function evidencePhase(observer: HouseholdEvidenceObserver | undefined, phase: HouseholdEvidencePhase): void {
+  try { observer?.phase?.(phase); } catch { /* Observation never changes source validation. */ }
+}
 export interface HouseholdEvidenceMeasurements {
   readonly restore?: import("../simulation/r3/replayArtifact.js").ReplayRestoreMeasurement;
   readonly startIndex: number;
@@ -34,15 +43,16 @@ type EvidenceWindow = { readonly periods: EvidenceReplay["periods"]; readonly cl
 // Readers restore/check the exact portable wire before looking up this cache.
 const evidenceWindows = new WeakMap<EvidenceBasis, Map<string, EvidenceWindow>>();
 const evidenceCatalogs = new WeakMap<EvidenceBasis, ReadonlySet<string>>();
-function evidenceWindow(basis: EvidenceBasis, start: string, end: string): EvidenceWindow {
+function evidenceWindow(basis: EvidenceBasis, start: string, end: string, observation?: HouseholdEvidenceObserver): EvidenceWindow {
   const selected = basis.periods.filter(period => period.period.start >= start && period.period.end <= end);
   if (!selected.length || selected.length > 12 || selected[0]!.period.start !== start || selected.at(-1)!.period.end !== end)
     throw new Error("Evidence requires one to twelve aligned source periods");
   const key = `${start}:${end}`;
   const cache = evidenceWindows.get(basis) ?? new Map<string, EvidenceWindow>();
   const cached = cache.get(key);
-  if (cached) { cache.delete(key); cache.set(key, cached); return cached; }
-  const replay = replayHouseholdForecastWindow(basis, { start: instant(start), end: instant(end) });
+  if (cached) { cache.delete(key); cache.set(key, cached); evidencePhase(observation, "replay_cached"); return cached; }
+  const replay = replayHouseholdForecastWindow(basis, { start: instant(start), end: instant(end) }, undefined,
+    phase => evidencePhase(observation, phase));
   const boundedReplay = Object.freeze({ periods: replay.periods, closingLiabilities: replay.state.liabilities });
   if (cache.size === 2) cache.delete(cache.keys().next().value!);
   cache.set(key, boundedReplay);
@@ -51,12 +61,12 @@ function evidenceWindow(basis: EvidenceBasis, start: string, end: string): Evide
 }
 
 /** Monthly and mortgage readers share only already verified original detail. */
-export function householdEvidenceMonth(basis: EvidenceBasis, start: string, end: string): EvidenceReplay["periods"] {
+export function householdEvidenceMonth(basis: EvidenceBasis, start: string, end: string, observation?: HouseholdEvidenceObserver): EvidenceReplay["periods"] {
   for (const boundedReplay of evidenceWindows.get(basis)?.values() ?? []) {
     const period = boundedReplay.periods.find(period => period.period.start === start && period.period.end === end);
-    if (period) return Object.freeze([period]);
+    if (period) { evidencePhase(observation, "replay_cached"); return Object.freeze([period]); }
   }
-  return evidenceWindow(basis, start, end).periods;
+  return evidenceWindow(basis, start, end, observation).periods;
 }
 
 export function householdEvidenceProof(points: readonly HouseholdForecastPoint[]): HouseholdEvidenceProof | undefined {
@@ -108,12 +118,13 @@ export function boundedEvidencePoints(source: PersonalHouseholdForecastReadModel
  * Call in the worker; application readers retain ownership of financial replay. */
 export function restoreHouseholdEvidencePoints(basis: HouseholdEvidenceProof, selection: HouseholdEvidenceSelection,
   points: readonly HouseholdForecastPoint[], fingerprint: string, catalogs?: ForecastCatalogTable,
-  observation?: import("../simulation/r3/replayArtifact.js").ReplayRestoreObserver): readonly HouseholdForecastPoint[] {
+  observation?: HouseholdEvidenceObserver): readonly HouseholdForecastPoint[] {
   if (!Number.isSafeInteger(selection.startIndex) || selection.startIndex < 0 || points.length < 1 ||
     points.length > (selection.operation === "monthly_evidence" ? 1 : 12)) throw new Error("Unavailable evidence window");
   const original = restorePortableHouseholdReplayArtifact(basis, observation);
   const source = { runId: String(original.runMetadata.runId), inputFingerprint: String(original.runMetadata.inputFingerprint) };
   if (catalogs) {
+    evidencePhase(observation, "catalog_validation_started");
     validateForecastCatalogTable(catalogs, source);
     const canonicalCatalogs = evidenceCatalogs.get(original) ?? (() => {
       const contents = new Set<string>();
@@ -129,11 +140,13 @@ export function restoreHouseholdEvidencePoints(basis: HouseholdEvidenceProof, se
     })();
     if (catalogs.entries.some(entry => !canonicalCatalogs.has(entry.content)))
       throw new Error("Mismatched canonical catalog content");
+    evidencePhase(observation, "catalog_validated");
   }
   const transport = createForecastDiagnosticTransport(source, catalogs?.entries.map(entry => entry.content));
   const equalCapabilities = createForecastDiagnosticEquality();
   if (points.some((point, index) => original.periods[selection.startIndex + index]?.period.start !== point.periodStart ||
     original.periods[selection.startIndex + index]?.period.end !== point.periodEnd)) throw new Error("Mismatched period index");
+  evidencePhase(observation, "qualification_started");
   points.forEach((point, index) => {
     const canonical = original.periods[selection.startIndex + index]!.outputCapabilities;
     if (catalogs && !equalCapabilities(canonical === undefined ? null : transport.capabilities(canonical), point.outputCapabilities ?? null))
@@ -141,6 +154,7 @@ export function restoreHouseholdEvidencePoints(basis: HouseholdEvidenceProof, se
     if (!catalogs && Object.values(point.outputCapabilities ?? {}).some(output => output.diagnostics.some((item: import("./forecastDiagnosticTransport.js").ForecastTaxDiagnostic) => item.projectedLaw !== undefined)))
       throw new Error("Missing source catalog");
   });
+  evidencePhase(observation, "qualification_validated");
   const restored = points.map(point => ({ ...point, traceRefs: point.traceRefs.map(ref => {
     if (ref.replayArtifact === undefined) return ref;
     const address = ref.replayArtifact as { start: string; end: string };
@@ -213,7 +227,7 @@ export function liabilityBalanceCoordinates(rows: LiabilityBalanceWindow["rows"]
 
 /** Reads one explicit viewport. All financial amounts come from committed replay. */
 export function inspectMortgageWindow(points: readonly HouseholdForecastPoint[], liabilityId: string,
-  observation?: import("../simulation/r3/replayArtifact.js").ReplayRestoreObserver): MortgageWindow {
+  observation?: HouseholdEvidenceObserver): MortgageWindow {
   if (points.length < 1 || points.length > 12) throw new Error("Select between one and twelve modeled months.");
   const addresses = points.map((point, index) => {
     const ref = point.traceRefs.find(value => value.replayArtifact !== undefined);
@@ -237,7 +251,7 @@ export function inspectMortgageWindow(points: readonly HouseholdForecastPoint[],
   if (!loan || loan.debtFamily !== undefined && loan.debtFamily !== "mortgage") throw new Error("Amortization is unavailable for this debt source.");
   const currency = Currency.of(basis.runMetadata.baseCurrency);
   if (points.some(point => point.cash.currency !== currency.code)) throw new Error("Mortgage periods use incompatible currencies.");
-  const replay = evidenceWindow(basis, first.periodStart, last.periodEnd);
+  const replay = evidenceWindow(basis, first.periodStart, last.periodEnd, observation);
   if (replay.periods.length !== points.length) throw new Error("Mortgage replay did not cover the selected window.");
   let previous = firstIndex === 0 ? basis.replay.kernel.executable.reconciledOpeningState.liabilities[loan.principalLiabilityId]?.balance
     : basis.periods.slice(0, firstIndex).flatMap(period => period.debtBalances?.filter(value => value.loanId === loan.id) ?? []).at(-1)?.endingPrincipal;

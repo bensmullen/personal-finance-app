@@ -73,8 +73,12 @@ describe("source-backed mortgage chart data", () => {
     const bounded = boundedEvidencePoints(result, selection);
     const fingerprint = bounded.points[0]!.traceRefs.find(ref => ref.replayArtifact)!.traceId;
     expect(householdEvidenceSelectionMeasurements(proof, selection, 1)).toMatchObject({ startIndex: 12, selectedMonths: 1, selectedCheckpointIndex: 0, replayPrefixMonths: 0 });
-    const points = restoreHouseholdEvidencePoints(proof, selection, bounded.points, fingerprint, result.diagnosticCatalogs);
-    expect(inspectMortgageWindow(points, ids.mortgage)).toEqual(inspectMortgageWindow(result.points.slice(12), ids.mortgage));
+    const phases: string[] = [];
+    const observation = { now: () => ++tick, record() {}, phase: (phase: string) => { phases.push(phase); } };
+    const points = restoreHouseholdEvidencePoints(proof, selection, bounded.points, fingerprint, result.diagnosticCatalogs, observation);
+    expect(phases).toEqual(["restore_started", "restore_warm", "catalog_validation_started", "catalog_validated", "qualification_started", "qualification_validated"]);
+    expect(inspectMortgageWindow(points, ids.mortgage, observation)).toEqual(inspectMortgageWindow(result.points.slice(12), ids.mortgage));
+    expect(phases.slice(-5)).toEqual(["restore_started", "restore_warm", "replay_started", "replay_executed", "replay_verified"]);
     const table = structuredClone(result.diagnosticCatalogs!);
     const corrupt = { ...table, entries: [{ ...table.entries[0]!, content: "changed exact catalog" }] };
     expect(() => restoreHouseholdEvidencePoints(proof, selection, bounded.points, fingerprint, corrupt)).toThrow(/catalog/);
@@ -104,7 +108,7 @@ describe("source-backed mortgage chart data", () => {
       const tampered = { ...proof, encoded, integrity: createInputFingerprint({ runContext: canonical.replay.runContext, openingState: encoded }) };
       expect(() => restorePortableHouseholdReplayArtifact(tampered)).toThrow(/BASIS_MISMATCH/);
     }
-    const throwingObserver = { now: () => { throw new Error("unavailable clock"); }, record: () => { throw new Error("unavailable sink"); } };
+    const throwingObserver = { now: () => { throw new Error("unavailable clock"); }, record: () => { throw new Error("unavailable sink"); }, phase: () => { throw new Error("unavailable phase sink"); } };
     expect(restorePortableHouseholdReplayArtifact(proof, throwingObserver)).toBe(canonical);
   });
   it("reconciles paid leg amounts and principal against the same real integrated replay", () => {
