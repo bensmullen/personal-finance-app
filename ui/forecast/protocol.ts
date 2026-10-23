@@ -17,7 +17,7 @@ export type EvidenceWorkerRequest = EvidenceSelection & {
 export type EvidenceWorkerResponse = Pick<EvidenceWorkerRequest, "operation" | "requestId" | "fingerprint" | "startIndex" | "liabilityId"> & {
   readonly durationMs?: number;
 } & (
-  | { readonly outcome: "progress"; readonly phase: "received" | "restored" }
+  | { readonly outcome: "progress"; readonly phase: "received" | "restored" | "projected" }
   | { readonly outcome: "result"; readonly detail?: ReturnType<typeof inspectMonthlyMoney>; readonly window?: MortgageWindow }
   | { readonly outcome: "error"; readonly error: string }
 );

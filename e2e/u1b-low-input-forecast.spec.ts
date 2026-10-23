@@ -14,18 +14,24 @@ import type { EvidenceWorkerResponse } from "../ui/forecast/protocol.js";
 const status = (page: Page) => page.getByRole("status", { name: "Household forecast status", exact: true });
 type ObservedWindow = typeof window & {
   __u1bResults: ForecastWorkerResponse[];
-  __u1bEvidence: { operation: string; requestId: number; fingerprint: string; startIndex: number; outcome: string; durationMs?: number }[];
+  __u1bEvidence: { workerId: number; operation: string; requestId: number; fingerprint: string; startIndex: number; outcome: string; phase?: string; durationMs?: number; roundtripMs?: number }[];
+  __u1bTransport: { workerId: number; phase: "posted" | "terminated"; operation?: string; requestId?: number; startIndex?: number; proofSent?: boolean }[];
   __u1bLongTasks: number[];
   __u1bMortgage?: import("../src/application/mortgageChartData.js").MortgageWindow;
+  __u1bFebruary?: ReturnType<typeof inspectMonthlyMoney>;
 };
 async function observe(page: Page) {
   await page.addInitScript(() => {
     const observed = window as ObservedWindow;
     observed.__u1bResults = [];
     observed.__u1bEvidence = [];
+    observed.__u1bTransport = [];
     observed.__u1bLongTasks = [];
     const NativeWorker = window.Worker;
+    let nextWorkerId = 0;
     window.Worker = class extends NativeWorker {
+      readonly observerId = ++nextWorkerId;
+      readonly posted = new Map<string, number>();
       constructor(url: string | URL, options?: WorkerOptions) {
         super(url, options);
         this.addEventListener("message", (event: MessageEvent<ForecastWorkerResponse | EvidenceWorkerResponse>) => {
@@ -33,10 +39,26 @@ async function observe(page: Page) {
           if (response.operation === "baseline_forecast" && response.outcome === "result") observed.__u1bResults.push(response);
           if (response.operation === "monthly_evidence" || response.operation === "mortgage_evidence") {
             if (response.operation === "mortgage_evidence" && response.outcome === "result" && response.window) observed.__u1bMortgage = response.window;
+            if (response.operation === "monthly_evidence" && response.startIndex === 1 && response.outcome === "result" && response.detail) observed.__u1bFebruary = response.detail;
             const { operation, requestId, fingerprint, startIndex, outcome, durationMs } = response;
-            observed.__u1bEvidence = [...observed.__u1bEvidence.slice(-15), { operation, requestId, fingerprint, startIndex, outcome, ...(durationMs === undefined ? {} : { durationMs }) }];
+            const started = this.posted.get(`${operation}:${requestId}`);
+            observed.__u1bEvidence = [...observed.__u1bEvidence.slice(-63), { workerId: this.observerId, operation, requestId, fingerprint, startIndex, outcome,
+              ...(response.outcome === "progress" ? { phase: response.phase } : {}), ...(durationMs === undefined ? {} : { durationMs }),
+              ...(started === undefined ? {} : { roundtripMs: performance.now() - started }) }];
           }
         });
+      }
+      override postMessage(message: unknown, options: Transferable[] | StructuredSerializeOptions = []) {
+        const request = message as { operation: string; requestId: number; startIndex?: number; source?: { basis?: unknown } };
+        this.posted.set(`${request.operation}:${request.requestId}`, performance.now());
+        observed.__u1bTransport = [...observed.__u1bTransport.slice(-63), { workerId: this.observerId, phase: "posted", operation: request.operation, requestId: request.requestId,
+          ...(request.startIndex === undefined ? {} : { startIndex: request.startIndex, proofSent: request.source?.basis !== undefined }) }];
+        if (Array.isArray(options)) super.postMessage(message, options);
+        else super.postMessage(message, options);
+      }
+      override terminate() {
+        observed.__u1bTransport = [...observed.__u1bTransport.slice(-63), { workerId: this.observerId, phase: "terminated" }];
+        super.terminate();
       }
     };
   });
@@ -121,6 +143,8 @@ for (const width of [1440, 390]) {
     expect(Date.now() - cashStarted).toBeLessThan(10_000);
     const paycheck = page.getByRole("region", { name: "Your Paycheck", exact: true });
     await paycheck.getByLabel("paycheck forecast month", { exact: true }).selectOption("2026-02");
+    await expect(paycheck.getByRole("button", { name: "Example salary", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => (window as ObservedWindow).__u1bFebruary)).toEqual(inspectMonthlyMoney(result.points[1]!, createFlagshipHouseholdDraft()));
     await cash.getByLabel("Selected projected period", { exact: true }).selectOption(selected.periodStart);
     await expect(cash.locator(".chart-selected dd").first()).toContainText(formatExactMoney(selected.metrics.totalModeledCash.amount!, selected.metrics.totalModeledCash.currency));
     // Read actual modeled pay both before and after the accepted retirement,
@@ -151,7 +175,11 @@ for (const width of [1440, 390]) {
         await page.getByLabel("Liability window starting", { exact: true }).selectOption(result.points[startIndex]!.periodStart);
       }
       const expected = inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), GOLDEN_HOUSEHOLD_IDS.mortgage);
-      await expect.poll(() => page.evaluate(() => (window as ObservedWindow).__u1bMortgage?.start)).toBe(expected.start);
+      try {
+        await expect.poll(() => page.evaluate(() => (window as ObservedWindow).__u1bMortgage?.start)).toBe(expected.start);
+      } finally {
+        await info.attach(`flagship-${width}-window-${startIndex}-phases`, { body: JSON.stringify(await page.evaluate(() => ({ transport: (window as ObservedWindow).__u1bTransport, evidence: (window as ObservedWindow).__u1bEvidence }))), contentType: "application/json" });
+      }
       expect(await page.evaluate(() => (window as ObservedWindow).__u1bMortgage)).toEqual(expected);
     }
     await page.getByLabel("Liability window starting", { exact: true }).selectOption(result.points[0]!.periodStart);
@@ -173,10 +201,16 @@ for (const width of [1440, 390]) {
     const navigationEvidence = await page.evaluate(() => ({
       baselineResponses: (window as ObservedWindow).__u1bResults.length,
       evidence: (window as ObservedWindow).__u1bEvidence,
+      transport: (window as ObservedWindow).__u1bTransport,
       longTasksMs: (window as ObservedWindow).__u1bLongTasks,
     }));
     expect(navigationEvidence.baselineResponses).toBe(1);
     expect(navigationEvidence.evidence).toContainEqual(expect.objectContaining({ operation: "mortgage_evidence", startIndex: 0, outcome: "result" }));
+    for (const startIndex of [0, 324, 648]) expect(navigationEvidence.evidence).toContainEqual(expect.objectContaining({ operation: "mortgage_evidence", startIndex, outcome: "result" }));
+    expect(navigationEvidence.evidence).toContainEqual(expect.objectContaining({ operation: "monthly_evidence", startIndex: 1, outcome: "result" }));
+    const baselineWorker = navigationEvidence.transport.find(item => item.operation === "baseline_forecast")!.workerId;
+    expect(navigationEvidence.transport.filter(item => item.startIndex !== undefined).every(item => item.workerId === baselineWorker && !item.proofSent)).toBe(true);
+    expect(navigationEvidence.transport.filter(item => item.phase === "terminated" && item.workerId === baselineWorker)).toHaveLength(0);
     await info.attach(`flagship-${width}-navigation`, { body: JSON.stringify(navigationEvidence), contentType: "application/json" });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(errors).toEqual([]);

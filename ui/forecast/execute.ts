@@ -38,8 +38,9 @@ export function executeForecastWorkerRequest(message: ForecastWorkerRequest | Ev
   const now = () => { try { return clock.now(); } catch { return undefined; } };
   const started = now();
   const timing = () => { const end = now(); return started !== undefined && end !== undefined && Number.isFinite(end - started) && end >= started ? { durationMs: end - started } : {}; };
+  const report = (phase: "received" | "restored" | "projected") => progress?.({ ...boundary, outcome: "progress", phase, ...timing() });
   try {
-    progress?.({ ...boundary, outcome: "progress", phase: "received" });
+    report("received");
     if (message.source) {
       const basis = message.source.basis ?? generatedBasis;
       if (!basis) throw new Error("Missing original proof");
@@ -47,12 +48,13 @@ export function executeForecastWorkerRequest(message: ForecastWorkerRequest | Ev
     }
     if (!source?.basis) throw new Error("Selected forecast evidence is unavailable.");
     const points = restoreHouseholdEvidencePoints(source.basis, message, message.points, message.fingerprint);
-    progress?.({ ...boundary, outcome: "progress", phase: "restored" });
+    report("restored");
     const point = points[0];
     if (!point) throw new Error("Selected forecast period is unavailable.");
     const result = message.operation === "monthly_evidence"
       ? { detail: inspectMonthlyMoney(point, source.model) }
       : { window: inspectMortgageWindow(points, message.liabilityId) };
+    report("projected");
     return { ...boundary, outcome: "result", ...result, ...timing() };
   } catch {
     source = undefined;

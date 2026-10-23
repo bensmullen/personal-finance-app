@@ -12,6 +12,38 @@ export interface HouseholdEvidenceSelection {
   readonly liabilityId: string;
 }
 
+type EvidenceBasis = ReturnType<typeof restorePortableHouseholdReplayArtifact>;
+type EvidenceReplay = ReturnType<typeof replayHouseholdForecastWindow>;
+type EvidenceWindow = { readonly periods: EvidenceReplay["periods"]; readonly closingLiabilities: EvidenceReplay["state"]["liabilities"] };
+// At most 24 detailed periods per verified source. Keep only the closing loan
+// balances, not the replay's full closing state or identity/posting archives.
+// Readers restore/check the exact portable wire before looking up this cache.
+const evidenceWindows = new WeakMap<EvidenceBasis, Map<string, EvidenceWindow>>();
+function evidenceWindow(basis: EvidenceBasis, start: string, end: string): EvidenceWindow {
+  const selected = basis.periods.filter(period => period.period.start >= start && period.period.end <= end);
+  if (!selected.length || selected.length > 12 || selected[0]!.period.start !== start || selected.at(-1)!.period.end !== end)
+    throw new Error("Evidence requires one to twelve aligned source periods");
+  const key = `${start}:${end}`;
+  const cache = evidenceWindows.get(basis) ?? new Map<string, EvidenceWindow>();
+  const cached = cache.get(key);
+  if (cached) { cache.delete(key); cache.set(key, cached); return cached; }
+  const replay = replayHouseholdForecastWindow(basis, { start: instant(start), end: instant(end) });
+  const window = Object.freeze({ periods: replay.periods, closingLiabilities: replay.state.liabilities });
+  if (cache.size === 2) cache.delete(cache.keys().next().value!);
+  cache.set(key, window);
+  evidenceWindows.set(basis, cache);
+  return window;
+}
+
+/** Monthly and mortgage readers share only already verified original detail. */
+export function householdEvidenceMonth(basis: EvidenceBasis, start: string, end: string): EvidenceReplay["periods"] {
+  for (const window of evidenceWindows.get(basis)?.values() ?? []) {
+    const period = window.periods.find(period => period.period.start === start && period.period.end === end);
+    if (period) return Object.freeze([period]);
+  }
+  return evidenceWindow(basis, start, end).periods;
+}
+
 export function householdEvidenceProof(points: readonly HouseholdForecastPoint[]): HouseholdEvidenceProof | undefined {
   return (points[0]?.traceRefs.find(ref => ref.replayArtifact !== undefined)?.replayArtifact as { basis?: HouseholdEvidenceProof } | undefined)?.basis;
 }
@@ -135,7 +167,7 @@ export function inspectMortgageWindow(points: readonly HouseholdForecastPoint[],
   if (!loan || loan.debtFamily !== undefined && loan.debtFamily !== "mortgage") throw new Error("Amortization is unavailable for this debt source.");
   const currency = Currency.of(basis.runMetadata.baseCurrency);
   if (points.some(point => point.cash.currency !== currency.code)) throw new Error("Mortgage periods use incompatible currencies.");
-  const replay = replayHouseholdForecastWindow(basis, { start: instant(first.periodStart), end: instant(last.periodEnd) });
+  const replay = evidenceWindow(basis, first.periodStart, last.periodEnd);
   if (replay.periods.length !== points.length) throw new Error("Mortgage replay did not cover the selected window.");
   let previous = firstIndex === 0 ? basis.replay.kernel.executable.reconciledOpeningState.liabilities[loan.principalLiabilityId]?.balance
     : basis.periods.slice(0, firstIndex).flatMap(period => period.debtBalances?.filter(value => value.loanId === loan.id) ?? []).at(-1)?.endingPrincipal;
@@ -148,7 +180,7 @@ export function inspectMortgageWindow(points: readonly HouseholdForecastPoint[],
     // opening authority. The verified summary supplies the closing boundary.
     const opening = previous;
     const ending = basis.periods[firstIndex + index]?.debtBalances?.filter(value => value.loanId === loan.id).at(-1)?.endingPrincipal
-      ?? (!principalMovement ? previous : index === replay.periods.length - 1 ? replay.state.liabilities[loan.principalLiabilityId]?.balance : undefined);
+      ?? (!principalMovement ? previous : index === replay.periods.length - 1 ? replay.closingLiabilities[loan.principalLiabilityId]?.balance : undefined);
     if (!opening || !ending) throw new Error("This loan has incomplete principal coverage in the selected window.");
     let interest = zero(), scheduled = zero(), extra = zero();
     const sourceIds: string[] = [], accounts = new Set<string>(), seen = new Set<string>();

@@ -6,16 +6,13 @@ import { createHouseholdForecastRequest, type PersonalHouseholdSessionExecutionC
 import { resolvePersonalSessionSettings, type PersonalDraft, type PersonalSessionSettings } from "../../src/application/personalMvp.js";
 import { simulationWindowProblem } from "../../src/application/forecastSetup.js";
 import { applicationPerformanceRegistry } from "../../src/application/performance.js";
-import { claimForecastEvidenceWorker, EvidenceController, ForecastController, StandaloneController, type StandaloneView, type StandaloneWorkerPort, type EvidenceWorkerPort, type ForecastSubmission, type ForecastView, type ForecastWorkerPort } from "./controller.js";
+import { claimForecastEvidenceWorker, forecastEvidenceController, ForecastController, StandaloneController, type StandaloneView, type StandaloneWorkerPort, type EvidenceWorkerPort, type ForecastSubmission, type ForecastView, type ForecastWorkerPort } from "./controller.js";
 
 const makeWorker = (): ForecastWorkerPort => new Worker(new URL("./household.worker.ts", import.meta.url), { type: "module" }) as unknown as ForecastWorkerPort;
 const scheduler = {
   set: (callback: () => void, delay: number) => setTimeout(callback, delay),
   clear: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
-
-type EvidenceScope = { controller: EvidenceController; users: number; release?: ReturnType<typeof setTimeout> | undefined };
-const evidenceScopes = new WeakMap<PersonalHouseholdForecastReadModel, WeakMap<PersonalDraft, EvidenceScope>>();
 
 export function useStandaloneForecast() {
   const [view, setView] = useState<StandaloneView>({ pending: false, stale: false });
@@ -24,36 +21,21 @@ export function useStandaloneForecast() {
   return { view, controller };
 }
 
-/** Panels share the same replay worker and restoration cache. A one-turn
- * release allows a route change to hand ownership to its destination panel;
- * leaving evidence entirely or replacing the source terminates the worker. */
+/** Panels only subscribe. The baseline controller releases their shared worker
+ * on source replacement, invalidation or disposal, rather than on navigation. */
 export function useForecastEvidence(forecast: PersonalHouseholdForecastReadModel | undefined, model: PersonalDraft, current: boolean, selection: EvidenceSelection) {
-  const scope = useMemo(() => {
-    if (!current || !forecast || forecast.status === "unavailable" || !forecast.points.length) return undefined;
-    let models = evidenceScopes.get(forecast);
-    if (!models) { models = new WeakMap(); evidenceScopes.set(forecast, models); }
-    let value = models.get(model);
-    if (!value) {
-      value = { controller: new EvidenceController({ forecast, model }, () => claimForecastEvidenceWorker(forecast) ?? new Worker(new URL("./household.worker.ts", import.meta.url), { type: "module" }) as unknown as EvidenceWorkerPort), users: 0 };
-      models.set(model, value);
-    }
-    return value;
-  }, [forecast, model, current]);
+  // Resolve ownership on every render: an immediate baseline cache hit can
+  // replace its disposed controller while retaining the exact result object.
+  const scope = current && forecast && forecast.status !== "unavailable" && forecast.points.length
+    ? forecastEvidenceController(forecast, model, () => claimForecastEvidenceWorker(forecast) ?? new Worker(new URL("./household.worker.ts", import.meta.url), { type: "module" }) as unknown as EvidenceWorkerPort)
+    : undefined;
   const [revision, setRevision] = useState(0);
   const [settled, setSettled] = useState<{ scope: typeof scope; key: string; response: EvidenceWorkerResponse }>();
   const { operation, startIndex, liabilityId } = selection;
   const key = `${operation}:${startIndex}:${liabilityId}:${revision}`;
   useEffect(() => {
     if (!scope) return;
-    if (scope.release !== undefined) clearTimeout(scope.release);
-    ++scope.users;
-    return () => {
-      if (--scope.users === 0) scope.release = setTimeout(() => { if (scope.users === 0) scope.controller.dispose(); }, 0);
-    };
-  }, [scope]);
-  useEffect(() => {
-    if (!scope) return;
-    return scope.controller.select({ operation, startIndex, liabilityId }, response => {
+    return scope.select({ operation, startIndex, liabilityId }, response => {
       setSettled({ scope, key, response });
     }, revision > 0);
   }, [scope, key, operation, startIndex, liabilityId, revision]);
@@ -63,7 +45,7 @@ export function useForecastEvidence(forecast: PersonalHouseholdForecastReadModel
     window: response?.outcome === "result" ? response.window : undefined,
     error: response?.outcome === "error" ? response.error : undefined,
     refresh: () => setRevision(value => value + 1),
-    diagnostics: scope?.controller.diagnostics ?? [],
+    diagnostics: scope?.diagnostics ?? [],
   };
 }
 

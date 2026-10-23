@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inspectMortgageWindow, mortgageWindowTotals, MortgageWindowCache } from "../src/application/mortgageChartData.js";
+import { householdEvidenceMonth, inspectMortgageWindow, mortgageWindowTotals, MortgageWindowCache } from "../src/application/mortgageChartData.js";
 import { addPersonalObject, createGoldenHouseholdDraft, patchPersonalObject, type PersonalDraft } from "../src/application/personalMvp.js";
 import { createGoldenHouseholdForecastRequest, GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 import { runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
@@ -33,6 +33,8 @@ describe("source-backed mortgage chart data", () => {
     const before = JSON.stringify(result), window = inspectMortgageWindow(result.points, ids.mortgage);
     const address = result.points[0]!.traceRefs.find(ref => ref.replayArtifact)!.replayArtifact as { basis: unknown };
     const basis = restorePortableHouseholdReplayArtifact(address.basis);
+    const month = householdEvidenceMonth(basis, result.points[1]!.periodStart, result.points[1]!.periodEnd);
+    expect(householdEvidenceMonth(basis, result.points[1]!.periodStart, result.points[1]!.periodEnd)[0]).toBe(month[0]);
     // Route/month changes share validated restoration, but changing the exact
     // transported attachment must still fail closed after a successful hit.
     expect(restorePortableHouseholdReplayArtifact(address.basis)).toBe(basis);
@@ -129,6 +131,10 @@ describe("source-backed mortgage chart data", () => {
     expect(() => inspectMortgageWindow([first], second)).toThrow(/unavailable/);
     const bad = { ...first, traceRefs: first.traceRefs.map(ref => ref.replayArtifact ? { ...ref, traceId: "wrong" as typeof ref.traceId } : ref) };
     expect(() => inspectMortgageWindow([bad], ids.mortgage)).toThrow(/identity/);
+    // A cached verified replay must still reconcile the supplied source DTO.
+    const wrongPrincipal = { ...first, debtBalances: first.debtBalances.map(balance => ({ ...balance, principal: { ...balance.principal, amount: "1" } })) };
+    expect(inspectMortgageWindow([wrongPrincipal], ids.mortgage).status).toBe("incomplete");
+    expect(inspectMortgageWindow([first], ids.mortgage).status).toBe("current");
   });
   it("does not count a same-date refinance replacement as cash principal paid", () => {
     const model = authorMortgageRefinance(createGoldenHouseholdDraft(), { eventId: "d1610000-0000-4000-8000-000000000020", effectId: "d1610000-0000-4000-8000-000000000021", primitiveId: "d1610000-0000-4000-8000-000000000022", liabilityId: ids.mortgage, date: "2026-01-01", annualRate: "0.04", totalPayments: 360 });

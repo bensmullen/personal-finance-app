@@ -14,7 +14,7 @@ export const FORECAST_DEADLINE_MS = 150_000;
 const evidenceScheduler: ForecastScheduler = { set: (callback, delay) => setTimeout(callback, delay), clear: handle => clearTimeout(handle as ReturnType<typeof setTimeout>) };
 export interface EvidenceDiagnostic {
   readonly requestId: number;
-  readonly phase: "created" | "posted" | "received" | "restored" | "settled" | "error" | "timeout";
+  readonly phase: "created" | "posted" | "received" | "restored" | "projected" | "settled" | "error" | "timeout";
   readonly elapsedMs: number;
   readonly pointCount: number;
 }
@@ -40,9 +40,17 @@ export interface EvidenceWorkerPort {
   terminate(): void;
 }
 
-// The baseline controller owns lifetime; evidence panels may claim its idle
-// worker once. A retry after failure/disposal creates a fresh, verified worker.
+// The baseline result owns lifetime across routes, including screens with no
+// evidence panel. Claiming transfers its idle worker to the evidence controller.
 const retainedEvidenceWorkers = new WeakMap<object, EvidenceWorkerPort>();
+const forecastEvidenceControllers = new WeakMap<object, Map<PersonalDraft, EvidenceController>>();
+export function forecastEvidenceController(forecast: PersonalHouseholdForecastReadModel, model: PersonalDraft, makeWorker: () => EvidenceWorkerPort): EvidenceController {
+  let controllers = forecastEvidenceControllers.get(forecast);
+  if (!controllers) { controllers = new Map(); forecastEvidenceControllers.set(forecast, controllers); }
+  let controller = controllers.get(model);
+  if (!controller) { controller = new EvidenceController({ forecast, model }, makeWorker); controllers.set(model, controller); }
+  return controller;
+}
 export function claimForecastEvidenceWorker(forecast: PersonalHouseholdForecastReadModel): EvidenceWorkerPort | undefined {
   const worker = retainedEvidenceWorkers.get(forecast);
   retainedEvidenceWorkers.delete(forecast);
@@ -134,12 +142,15 @@ export class EvidenceController {
       }
     } catch { /* Observation never affects execution. */ }
   }
-  #fail(phase: "error" | "timeout" = "error"): void {
+  #fail(phase: "error" | "timeout" = "error", sourceError = false): void {
     const pending = [...this.#pending.values()];
     this.dispose();
     for (const item of pending) {
       this.#observe(item, phase);
-      for (const listener of item.listeners) listener({ ...item.boundary, outcome: "error", error: "Monthly evidence could not be verified. Retry the selected evidence or update the forecast." });
+      for (const listener of item.listeners) listener({ ...item.boundary, outcome: "error", error: sourceError
+        ? "Monthly evidence has missing or mismatched period/source data. Update the forecast and retry."
+        : phase === "timeout" ? "Monthly evidence took too long to load. Retry the selected evidence or update the forecast."
+          : "Monthly evidence could not be verified. Retry the selected evidence or update the forecast." });
     }
   }
   select(selection: EvidenceSelection, changed: (response: EvidenceWorkerResponse) => void, refresh = false): () => void {
@@ -157,6 +168,12 @@ export class EvidenceController {
     const pending = { key, boundary, started, pointCount: selection.operation === "monthly_evidence" ? 1 : Math.min(12, forecast.status === "unavailable" ? 0 : forecast.points.length - selection.startIndex), timer: undefined as unknown, listeners: new Set([changed]) };
     this.#pending.set(boundary.requestId, pending);
     const fail = () => this.#fail();
+    let bounded: ReturnType<typeof boundedEvidencePoints>;
+    try { bounded = boundedEvidencePoints(forecast, selection); }
+    catch {
+      this.#fail("error", true);
+      return () => {};
+    }
     try {
       pending.timer = this.scheduler.set(() => {
         if (pending.listeners.size) this.#fail("timeout");
@@ -174,7 +191,7 @@ export class EvidenceController {
             for (const listener of item.listeners) listener(data);
             return;
           }
-          if (data.outcome === "error") { fail(); return; }
+          if (data.outcome === "error") { this.#fail("error", true); return; }
           if (data.outcome === "result") {
             const point = this.source.forecast.status !== "unavailable" ? this.source.forecast.points[data.startIndex] : undefined;
             const end = this.source.forecast.status !== "unavailable" ? this.source.forecast.points[data.startIndex + item.pointCount - 1]?.periodEnd : undefined;
@@ -192,11 +209,11 @@ export class EvidenceController {
         this.#worker.onerror = event => { event.preventDefault(); fail(); };
         this.#worker.onmessageerror = fail;
       }
-      const bounded = boundedEvidencePoints(forecast, selection);
-      this.#worker.postMessage({ ...boundary, points: bounded.points,
-        ...(!this.#sent ? { source: { ...(!this.#worker.evidenceSourceReady ? { basis: bounded.basis } : {}), model: this.source.model } } : {}) });
+      const message = { ...boundary, points: bounded.points,
+        ...(!this.#sent ? { source: { ...(!this.#worker.evidenceSourceReady ? { basis: bounded.basis } : {}), model: this.source.model } } : {}) };
       this.#observe(pending, "posted");
       this.#sent = true;
+      this.#worker.postMessage(message);
     } catch { fail(); }
     return () => { pending.listeners.delete(changed); };
   }
@@ -206,7 +223,7 @@ export class EvidenceController {
       this.#worker.onmessage = null; this.#worker.onerror = null; this.#worker.onmessageerror = null;
       try { this.#worker.terminate(); } catch { /* Disposed ownership is authoritative. */ }
     }
-    this.#worker = undefined; this.#sent = false; this.#pending.clear();
+    this.#worker = undefined; this.#sent = false; this.#pending.clear(); this.#cache.clear();
   }
 }
 export type ForecastSubmission = ForecastWorkerRequest extends infer R ? R extends ForecastWorkerRequest ? Omit<R, "requestId"> : never : never;
@@ -224,7 +241,7 @@ export class ForecastController {
   #sequence = 0;
   #worker: ForecastWorkerPort | undefined;
   #timer: unknown;
-  #retained: { result: object; worker: EvidenceWorkerPort } | undefined;
+  #retained: { result: object } | undefined;
   readonly #cache = new BaselineCache<ForecastWorkerResult>();
   constructor(
     readonly makeWorker: () => ForecastWorkerPort,
@@ -243,8 +260,11 @@ export class ForecastController {
   }
   #releaseEvidence(): void {
     if (!this.#retained) return;
+    for (const controller of forecastEvidenceControllers.get(this.#retained.result)?.values() ?? []) controller.dispose();
+    forecastEvidenceControllers.delete(this.#retained.result);
+    const unclaimed = retainedEvidenceWorkers.get(this.#retained.result);
     retainedEvidenceWorkers.delete(this.#retained.result);
-    try { this.#retained.worker.terminate(); } catch { /* Ownership still ends. */ }
+    try { unclaimed?.terminate(); } catch { /* Ownership still ends. */ }
     this.#retained = undefined;
   }
   #record(record: PerformanceRecord): void { try { this.record(record); } catch { /* Observational only. */ } }
@@ -261,6 +281,7 @@ export class ForecastController {
       const cached = input.operation === "baseline_forecast" ? this.#cache.get(input.fingerprint) : undefined;
       const context: PerformanceContext = { ...input.performanceContext, executionLocation: "browser_main", cacheState: cached ? "hit" : input.operation === "baseline_forecast" ? "miss" : "not_applicable" };
       if (cached !== undefined) {
+        this.#retained = { result: cached };
         // Cache hits keep the original financial identity and contribute no fresh timings.
         for (const phase of ["forecast.total", "transport.serialization"] as const)
           this.#record({ phase, availability: "not_measured", context: { ...context, status: cached.status as "completed" | "incomplete" } });
@@ -304,7 +325,7 @@ export class ForecastController {
           if (input.operation === "baseline_forecast" && good && "points" in result) {
             const evidenceWorker = worker as unknown as EvidenceWorkerPort;
             Object.defineProperty(evidenceWorker, "evidenceSourceReady", { value: true, configurable: true });
-            this.#retained = { result, worker: evidenceWorker };
+            this.#retained = { result };
             retainedEvidenceWorkers.set(result, evidenceWorker);
             this.#worker = undefined;
           }
