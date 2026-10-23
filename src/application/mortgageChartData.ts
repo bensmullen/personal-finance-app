@@ -28,17 +28,17 @@ function evidenceWindow(basis: EvidenceBasis, start: string, end: string): Evide
   const cached = cache.get(key);
   if (cached) { cache.delete(key); cache.set(key, cached); return cached; }
   const replay = replayHouseholdForecastWindow(basis, { start: instant(start), end: instant(end) });
-  const window = Object.freeze({ periods: replay.periods, closingLiabilities: replay.state.liabilities });
+  const boundedReplay = Object.freeze({ periods: replay.periods, closingLiabilities: replay.state.liabilities });
   if (cache.size === 2) cache.delete(cache.keys().next().value!);
-  cache.set(key, window);
+  cache.set(key, boundedReplay);
   evidenceWindows.set(basis, cache);
-  return window;
+  return boundedReplay;
 }
 
 /** Monthly and mortgage readers share only already verified original detail. */
 export function householdEvidenceMonth(basis: EvidenceBasis, start: string, end: string): EvidenceReplay["periods"] {
-  for (const window of evidenceWindows.get(basis)?.values() ?? []) {
-    const period = window.periods.find(period => period.period.start === start && period.period.end === end);
+  for (const boundedReplay of evidenceWindows.get(basis)?.values() ?? []) {
+    const period = boundedReplay.periods.find(period => period.period.start === start && period.period.end === end);
     if (period) return Object.freeze([period]);
   }
   return evidenceWindow(basis, start, end).periods;
