@@ -65,9 +65,29 @@ async function observe(page: Page) {
 }
 async function actual(page: Page) {
   const fingerprint = await status(page).getAttribute("data-fingerprint");
+  // Snapshot the EXACT committed 649 monthly readouts without copying the
+  // entire heavyweight per-month diagnostic/lineage graphs across Playwright.
+  // Keep original immutable replay anchors, fingerprints and all chart money:
+  // the test still independently replays first/middle/final paid mortgage flows.
+  // Returning the full worker object previously produced a 323 MiB trace entry,
+  // increasing renderer memory pressure before the late-window worker replay.
   const result = await page.evaluate(fingerprint => {
     const response = [...(window as ObservedWindow).__u1bResults].reverse().find(item => item.fingerprint === fingerprint && item.outcome === "result");
-    return response?.outcome === "result" ? response.result as PersonalHouseholdForecastReadModel : undefined;
+    if (response?.outcome !== "result" || !("points" in response.result)) return undefined;
+    const forecast = response.result as PersonalHouseholdForecastReadModel;
+    return { ...forecast, points: forecast.points.map(point => {
+      const replay = point.traceRefs.find(ref => ref.replayArtifact !== undefined);
+      if (!replay) throw new Error("Committed forecast point lacks original replay source");
+      return {
+        periodStart: point.periodStart, periodEnd: point.periodEnd,
+        cash: point.cash, investmentValue: point.investmentValue,
+        totalAssets: point.totalAssets, totalLiabilities: point.totalLiabilities,
+        netWorth: point.netWorth, statementIncome: point.statementIncome,
+        statementExpenses: point.statementExpenses,
+        outputCapabilities: point.outputCapabilities, traceIds: point.traceIds,
+        traceRefs: [replay],
+      };
+    }) } as PersonalHouseholdForecastReadModel;
   }, fingerprint);
   if (!result || result.status === "unavailable") throw new Error("No actual supported current worker result");
   return result;
@@ -178,7 +198,9 @@ for (const width of [1440, 390]) {
       try {
         await expect.poll(() => page.evaluate(() => (window as ObservedWindow).__u1bMortgage?.start)).toBe(expected.start);
       } finally {
-        await info.attach(`flagship-${width}-window-${startIndex}-phases`, { body: JSON.stringify(await page.evaluate(() => ({ transport: (window as ObservedWindow).__u1bTransport, evidence: (window as ObservedWindow).__u1bEvidence }))), contentType: "application/json" });
+        const phases = await page.evaluate(() => ({ transport: (window as ObservedWindow).__u1bTransport, evidence: (window as ObservedWindow).__u1bEvidence }))
+          .catch(error => ({ browserUnavailable: String(error) }));
+        await info.attach(`flagship-${width}-window-${startIndex}-phases`, { body: JSON.stringify(phases), contentType: "application/json" });
       }
       expect(await page.evaluate(() => (window as ObservedWindow).__u1bMortgage)).toEqual(expected);
     }
