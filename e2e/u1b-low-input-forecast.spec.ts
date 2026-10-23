@@ -69,13 +69,19 @@ async function actual(page: Page) {
   // entire heavyweight per-month diagnostic/lineage graphs across Playwright.
   // Keep original immutable replay anchors, fingerprints and all chart money:
   // the test still independently replays first/middle/final paid mortgage flows.
-  // Returning the full worker object previously produced a 323 MiB trace entry,
-  // increasing renderer memory pressure before the late-window worker replay.
+  // The full worker result caused a 323 MiB Playwright trace transfer:
+  // 304.7 MiB was top-level diagnostics. Project exactly the predicate that
+  // the test checks, without dropping any matching diagnostic or relaxing it.
   const result = await page.evaluate(fingerprint => {
     const response = [...(window as ObservedWindow).__u1bResults].reverse().find(item => item.fingerprint === fingerprint && item.outcome === "result");
     if (response?.outcome !== "result" || !("points" in response.result)) return undefined;
     const forecast = response.result as PersonalHouseholdForecastReadModel;
-    return { ...forecast, points: forecast.points.map(point => {
+    return {
+      ...forecast,
+      // Preserve the exact withholding-coverage assertion without serializing
+      // 649 months of unrelated diagnostics into Playwright and the renderer.
+      diagnostics: forecast.diagnostics.filter(item => "category" in item && item.category === "wage_gross_to_net_withholding"),
+      points: forecast.points.map(point => {
       const replay = point.traceRefs.find(ref => ref.replayArtifact !== undefined);
       if (!replay) throw new Error("Committed forecast point lacks original replay source");
       return {
