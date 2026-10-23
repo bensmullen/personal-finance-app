@@ -420,7 +420,7 @@ describe("U1B sourced planning readiness", () => {
     expect(delivered.at(-1)?.outcome).toBe("error");
     evidence.select(selection(1), response => delivered.push(response));
     expect(workers).toHaveLength(2);
-    expect(workers[1]!.messages[0]!.source).toEqual({ basis: proof, model });
+    expect(workers[1]!.messages[0]!.source).toEqual({ basis: proof, model, diagnosticCatalogs: result.diagnosticCatalogs });
     const pending = executeForecastWorkerRequest(workers[1]!.messages[0]!, clock);
     evidence.dispose();
     const count = delivered.length;
