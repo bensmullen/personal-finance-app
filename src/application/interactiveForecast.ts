@@ -94,7 +94,7 @@ export const forecastResultCatalogsValid = (result: ForecastWorkerResult): boole
     for (const alternative of result.alternatives) for (const period of alternative.points) for (const point of [period.baseline, period.alternative]) {
       let catalogRef: string | undefined;
       for (const output of Object.values(point.outputCapabilities ?? {})) {
-        const law = output.diagnostics.find(item => item.projectedLaw !== undefined)?.projectedLaw;
+        const law = output.diagnostics.find((item: import("./forecastDiagnosticTransport.js").ForecastTaxDiagnostic) => item.projectedLaw !== undefined)?.projectedLaw;
         if (law && "catalogRef" in law) { catalogRef = law.catalogRef; break; }
       }
       const table = tables.find(candidate => point.traceRefs.some(ref => ref.traceId ===
