@@ -30,6 +30,10 @@ Universal financial constraints:
 - settlement cannot re-recognize underlying income/expense;
 - internal owned-account transfers preserve consolidated net worth;
 - do not double-count account containers and their underlying holdings;
+- do not replicate large identical immutable catalogs, proofs, snapshots, or
+  diagnostic content across periods/entities/transport records or storage;
+  instead use canonical content plus scoped, validated references or safe
+  aggregation while preserving every distinct occurrence and source identity;
 - preserve stable identity, idempotency, provenance, and observed-vs-modeled boundaries;
 - never commit real personal financial data, secrets, or diagnostic artifacts containing them.
 
