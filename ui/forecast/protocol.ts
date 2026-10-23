@@ -12,10 +12,11 @@ export type EvidenceWorkerRequest = EvidenceSelection & {
   readonly requestId: number;
   readonly fingerprint: string;
   readonly points: readonly HouseholdForecastPoint[];
-  readonly source?: { readonly basis?: HouseholdEvidenceProof; readonly model: PersonalDraft };
+  readonly source?: { readonly basis?: HouseholdEvidenceProof; readonly model: PersonalDraft; readonly diagnosticCatalogs?: import("../../src/application/forecastDiagnosticTransport.js").ForecastCatalogTable };
 };
 export type EvidenceWorkerResponse = Pick<EvidenceWorkerRequest, "operation" | "requestId" | "fingerprint" | "startIndex" | "liabilityId"> & {
   readonly durationMs?: number;
+  readonly measurements?: import("../../src/application/mortgageChartData.js").HouseholdEvidenceMeasurements;
 } & (
   | { readonly outcome: "progress"; readonly phase: "received" | "restored" | "projected" }
   | { readonly outcome: "result"; readonly detail?: ReturnType<typeof inspectMonthlyMoney>; readonly window?: MortgageWindow }

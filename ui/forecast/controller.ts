@@ -1,7 +1,7 @@
 import { BaselineCache, FORECAST_DEBOUNCE_MS, initialForecastState, isCacheableBaseline, isCurrentForecastResponse, pendingForecastState, settledForecastState, type ForecastState } from "../../src/application/interactiveForecast.js";
 import type { PerformanceContext, PerformanceRecord } from "../../src/application/performance.js";
 import type { ForecastWorkerRequest, ForecastWorkerResponse, ForecastWorkerResult } from "./protocol.js";
-import { baselineResultMatchesRequest } from "../../src/application/interactiveForecast.js";
+import { baselineResultMatchesRequest, forecastResultCatalogsValid } from "../../src/application/interactiveForecast.js";
 import type { EvidenceSelection, EvidenceWorkerRequest, EvidenceWorkerResponse } from "./protocol.js";
 import type { PersonalDraft, PersonalForecastReadModel, ForecastRequest } from "../../src/application/personalMvp.js";
 import type { StandaloneWorkerRequest, StandaloneWorkerResponse } from "./protocol.js";
@@ -210,7 +210,8 @@ export class EvidenceController {
         this.#worker.onmessageerror = fail;
       }
       const message = { ...boundary, points: bounded.points,
-        ...(!this.#sent ? { source: { ...(!this.#worker.evidenceSourceReady ? { basis: bounded.basis } : {}), model: this.source.model } } : {}) };
+        ...(!this.#sent ? { source: { ...(!this.#worker.evidenceSourceReady ? { basis: bounded.basis } : {}), model: this.source.model,
+          ...(forecast.status !== "unavailable" && forecast.diagnosticCatalogs ? { diagnosticCatalogs: forecast.diagnosticCatalogs } : {}) } } : {}) };
       this.#observe(pending, "posted");
       this.#sent = true;
       this.#worker.postMessage(message);
@@ -316,6 +317,11 @@ export class ForecastController {
             return;
           }
           const result = data.result;
+          if (!forecastResultCatalogsValid(result)) {
+            this.#stop();
+            this.#publish(settledForecastState(this.#state, "error", undefined, "Forecast source qualifications do not match. Recalculate to retry."));
+            return;
+          }
           if (input.operation === "baseline_forecast" && "points" in result && "scope" in result && !baselineResultMatchesRequest(result, input.request)) {
             this.#stop();
             this.#publish(settledForecastState(this.#state, "error", undefined, "Forecast periods do not match the requested window. Recalculate to retry."));

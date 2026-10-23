@@ -62,6 +62,12 @@ import { positionMarketValue } from "../valuation/index.js";
 import { utcMonthDifference } from "../time/index.js";
 import type { HouseholdContentionPolicy } from "../simulation/intraperiodScheduler.js";
 import { compileForecastTaxSettlements, type TaxForecastSettlementSetup } from "./taxForecastSetup.js";
+import { createForecastDiagnosticTransport, type ForecastCatalogTable, type ForecastOutputCapabilities, type ForecastDiagnostic } from "./forecastDiagnosticTransport.js";
+
+/** Canonical capabilities remain accepted for in-process/legacy readers;
+ * production read models publish only the explicit compact representation. */
+type HouseholdOutputCapabilities = ForecastOutputCapabilities | import("../simulation/tax/contracts.js").TaxOutputCapabilities;
+type HouseholdDiagnostic = ForecastDiagnostic<ValidationIssue | CapabilityDiagnostic | import("../simulation/tax/contracts.js").TaxCapabilityDiagnostic>;
 
 export interface PersonalHouseholdSessionExecutionConfiguration {
   readonly forecastLawPolicy?: "projected_current_law";
@@ -187,7 +193,7 @@ export type HouseholdLiquidityShortfallReadModel = { readonly mortgageFunding?: 
       readonly evaluatedAt: string;
     });
 export interface HouseholdForecastPoint {
-  readonly outputCapabilities?: import("../simulation/tax/contracts.js").TaxOutputCapabilities;
+  readonly outputCapabilities?: HouseholdOutputCapabilities;
   readonly periodStart: string;
   readonly periodEnd: string;
   readonly cash: HouseholdMoneyReadModel;
@@ -213,7 +219,7 @@ export interface HouseholdForecastPoint {
   readonly traceRefs: readonly CalculationTraceRef[];
 }
 export interface HouseholdOpeningSnapshot {
-  readonly outputCapabilities?: import("../simulation/tax/contracts.js").TaxOutputCapabilities;
+  readonly outputCapabilities?: HouseholdOutputCapabilities;
   readonly cash: HouseholdMoneyReadModel;
   readonly investmentValue: HouseholdMoneyReadModel;
   readonly standaloneAssetValue: HouseholdMoneyReadModel;
@@ -256,6 +262,7 @@ export type PersonalHouseholdForecastReadModel =
       readonly scope: "household";
       readonly status: "completed" | "incomplete";
       readonly projectedLaw?: CompiledHouseholdProjection["projectedLaw"];
+      readonly diagnosticCatalogs?: ForecastCatalogTable;
       readonly points: readonly HouseholdForecastPoint[];
       readonly contributionCapacities: ReturnType<typeof contributionCapacityReadModel>;
       readonly contingentPositions: readonly { readonly positionId: string; readonly accountId: string; readonly value: HouseholdMoneyReadModel }[];
@@ -272,7 +279,7 @@ export type PersonalHouseholdForecastReadModel =
         readonly loanId: string;
         readonly scheduledAt: string;
       }[];
-      readonly diagnostics: readonly (ValidationIssue | CapabilityDiagnostic)[];
+      readonly diagnostics: readonly HouseholdDiagnostic[];
     } & HouseholdForecastBoundaries);
 
 const moneyDto = (value: Money): HouseholdMoneyReadModel =>
@@ -607,6 +614,7 @@ const toReadModel = (
   const debtPayoffs: { loanId: string; scheduledAt: string }[] = [];
   const replayBasis = performance === undefined ? createPortableHouseholdReplayArtifact(result, true)
     : performance.measure("application.replay_artifact", () => createPortableHouseholdReplayArtifact(result, true));
+  const transport = createForecastDiagnosticTransport({ runId: String(result.runMetadata.runId), inputFingerprint: String(result.runMetadata.inputFingerprint) });
   const points = result.periods.map((period) => {
     const balances = period.debtBalances ?? [];
     const bindings = period.explanationBindings;
@@ -635,7 +643,7 @@ const toReadModel = (
     );
     return Object.freeze({
       periodStart: period.period.start,
-      ...(period.outputCapabilities === undefined ? {} : { outputCapabilities: period.outputCapabilities }),
+      ...(period.outputCapabilities === undefined ? {} : { outputCapabilities: transport.capabilities(period.outputCapabilities) }),
       periodEnd: period.period.end,
       cash: moneyDto(period.cash),
       investmentValue: moneyDto(period.investmentValue),
@@ -676,9 +684,11 @@ const toReadModel = (
       traceRefs: navigationRefs,
     });
   });
+  const diagnostics = Object.freeze(result.diagnostics.map(item => transport.diagnostic(item)));
   return Object.freeze({
     scope: "household",
     status: result.status,
+    diagnosticCatalogs: transport.table(),
     requestedHorizon: result.requestedHorizon,
     ...(result.reachedThrough === undefined
       ? {}
@@ -721,7 +731,7 @@ const toReadModel = (
       points.flatMap((point) => point.liquidityShortfalls),
     ),
     debtPayoffs: Object.freeze(debtPayoffs),
-    diagnostics: Object.freeze(result.diagnostics),
+    diagnostics,
   });
 };
 
@@ -972,6 +982,7 @@ export interface HouseholdMetricDelta {
   readonly netWorth: HouseholdMoneyReadModel;
 }
 export interface PersonalHouseholdScenarioComparisonReadModel {
+  readonly diagnosticCatalogs?: readonly ForecastCatalogTable[];
   readonly status: "completed" | "incomplete" | "unavailable";
   readonly executionError?: true;
   readonly baselineName: string;
@@ -995,7 +1006,7 @@ export interface PersonalHouseholdScenarioComparisonReadModel {
       readonly traceRefs: readonly CalculationTraceRef[];
     }[];
   }[];
-  readonly diagnostics: readonly (ValidationIssue | CapabilityDiagnostic)[];
+  readonly diagnostics: readonly HouseholdDiagnostic[];
   readonly message?: string;
 }
 const scenarioDefinition = (
@@ -1160,7 +1171,8 @@ const compareHouseholds = (
       });
     const alternatives: PersonalHouseholdScenarioComparisonReadModel["alternatives"][number][] =
       [];
-    const diagnostics: (ValidationIssue | CapabilityDiagnostic)[] = [
+    const diagnosticCatalogs: ForecastCatalogTable[] = baseline.read.diagnosticCatalogs ? [baseline.read.diagnosticCatalogs] : [];
+    const diagnostics: HouseholdDiagnostic[] = [
       ...baseline.read.diagnostics,
     ];
     let overall: "completed" | "incomplete" = baseline.result.status;
@@ -1177,6 +1189,7 @@ const compareHouseholds = (
           status: "unavailable",
           baselineName: request.baseline.name,
           alternatives: Object.freeze(alternatives),
+          diagnosticCatalogs: Object.freeze(diagnosticCatalogs),
           diagnostics: Object.freeze([
             ...diagnostics,
             ...alternative.read.diagnostics,
@@ -1264,6 +1277,13 @@ const compareHouseholds = (
       )
         overall = "incomplete";
       diagnostics.push(...alternative.read.diagnostics);
+      if (alternative.read.diagnosticCatalogs) {
+        const table = alternative.read.diagnosticCatalogs;
+        const existing = diagnosticCatalogs.find(candidate => candidate.source.runId === table.source.runId && candidate.source.inputFingerprint === table.source.inputFingerprint);
+        if (!existing) diagnosticCatalogs.push(table);
+        else if (existing.entries.length !== table.entries.length || existing.entries.some((entry, index) => entry.id !== table.entries[index]!.id || entry.content !== table.entries[index]!.content))
+          throw new Error("FORECAST_CATALOG_MISMATCH: conflicting comparison source catalogs");
+      }
       const baselineRules = [
         ...new Set(
           baseline.result.periods.flatMap((period) =>
@@ -1299,6 +1319,7 @@ const compareHouseholds = (
       status: overall,
       baselineName: request.baseline.name,
       alternatives: Object.freeze(alternatives),
+      diagnosticCatalogs: Object.freeze(diagnosticCatalogs),
       diagnostics: Object.freeze(diagnostics),
     });
   } catch (error) {

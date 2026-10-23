@@ -5,7 +5,7 @@ import { createFlagshipHouseholdDraft, exportPersonalModelJson, importPersonalMo
 import { readFile } from "node:fs/promises";
 import { selectForecastChartData } from "../src/application/forecastChartData.js";
 import { formatExactMoney } from "../ui/entityPresentation.js";
-import { inspectMortgageWindow } from "../src/application/mortgageChartData.js";
+import { inspectMortgageWindow, householdEvidenceProof, householdEvidenceSelectionMeasurements, type ReplayRestoreMeasurement } from "../src/application/mortgageChartData.js";
 import { inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
 import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
 import { clickFinancialDestination, navigateOwner } from "./navigation.js";
@@ -14,7 +14,7 @@ import type { EvidenceWorkerResponse } from "../ui/forecast/protocol.js";
 const status = (page: Page) => page.getByRole("status", { name: "Household forecast status", exact: true });
 type ObservedWindow = typeof window & {
   __u1bResults: ForecastWorkerResponse[];
-  __u1bEvidence: { workerId: number; operation: string; requestId: number; fingerprint: string; startIndex: number; outcome: string; phase?: string; durationMs?: number; roundtripMs?: number }[];
+  __u1bEvidence: { workerId: number; operation: string; requestId: number; fingerprint: string; startIndex: number; outcome: string; phase?: string; durationMs?: number; roundtripMs?: number; measurements?: EvidenceWorkerResponse["measurements"] }[];
   __u1bTransport: { workerId: number; phase: "posted" | "terminated"; operation?: string; requestId?: number; startIndex?: number; proofSent?: boolean }[];
   __u1bLongTasks: number[];
   __u1bMortgage?: import("../src/application/mortgageChartData.js").MortgageWindow;
@@ -44,6 +44,7 @@ async function observe(page: Page) {
             const started = this.posted.get(`${operation}:${requestId}`);
             observed.__u1bEvidence = [...observed.__u1bEvidence.slice(-63), { workerId: this.observerId, operation, requestId, fingerprint, startIndex, outcome,
               ...(response.outcome === "progress" ? { phase: response.phase } : {}), ...(durationMs === undefined ? {} : { durationMs }),
+              ...(response.measurements === undefined ? {} : { measurements: response.measurements }),
               ...(started === undefined ? {} : { roundtripMs: performance.now() - started }) }];
           }
         });
@@ -119,6 +120,22 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("heading", { name: "Know where you stand.", exact: true })).toBeVisible();
     await expect(status(page)).toHaveAttribute("data-lifecycle", "completed", { timeout: 150_000 });
     const result = await actual(page);
+    const payloadEvidence = await page.evaluate(() => {
+      const response = (window as ObservedWindow).__u1bResults.at(-1);
+      const records = response?.records.filter(record => record.resources?.structuralCounters?.forecastPointCount !== undefined) ?? [];
+      const mainHeapBytes = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize;
+      return { records, ...(mainHeapBytes === undefined ? {} : { mainHeapBytes }) };
+    });
+    const counters = payloadEvidence.records[0]?.resources?.structuralCounters;
+    expect(counters?.forecastPointCount).toBe(649);
+    expect(counters?.projectedLawWarningCount).toBe(1254);
+    expect(counters?.uniqueCatalogCount).toBe(1);
+    expect(counters!.diagnosticBytesAfter).toBeLessThan(counters!.diagnosticBytesBefore! / 20);
+    await info.attach(`flagship-${width}-portable-serialization-counters`, { body: JSON.stringify(payloadEvidence), contentType: "application/json" });
+    const referenceRestores: ReplayRestoreMeasurement[] = [];
+    const referenceObserver = { now: () => performance.now(), includeCheckpointBytes: true,
+      record: (measurement: ReplayRestoreMeasurement) => { referenceRestores.push(measurement); } };
+    const referenceWindows: { startIndex: number; durationMs: number; selectedMonths: number; checkpointCount: number; selectedCheckpointIndex: number; replayPrefixMonths: number }[] = [];
     expect(result.status).toBe("completed");
     expect(result.requestedHorizon.start.slice(0, 10)).toBe("2026-01-01");
     expect(result.requestedHorizon.end.slice(0, 10)).toBe("2080-02-01");
@@ -170,7 +187,7 @@ for (const width of [1440, 390]) {
     const paycheck = page.getByRole("region", { name: "Your Paycheck", exact: true });
     await paycheck.getByLabel("paycheck forecast month", { exact: true }).selectOption("2026-02");
     await expect(paycheck.getByRole("button", { name: "Example salary", exact: true })).toBeVisible();
-    expect(await page.evaluate(() => (window as ObservedWindow).__u1bFebruary)).toEqual(inspectMonthlyMoney(result.points[1]!, createFlagshipHouseholdDraft()));
+    expect(await page.evaluate(() => (window as ObservedWindow).__u1bFebruary)).toEqual(inspectMonthlyMoney(result.points[1]!, createFlagshipHouseholdDraft(), referenceObserver));
     await cash.getByLabel("Selected projected period", { exact: true }).selectOption(selected.periodStart);
     await expect(cash.locator(".chart-selected dd").first()).toContainText(formatExactMoney(selected.metrics.totalModeledCash.amount!, selected.metrics.totalModeledCash.currency));
     // Read actual modeled pay both before and after the accepted retirement,
@@ -192,7 +209,7 @@ for (const width of [1440, 390]) {
     await expect(liabilities.getByRole("status")).toContainText(formatExactMoney(result.points[0]!.totalLiabilities.amount, result.points[0]!.totalLiabilities.currency));
     const mortgage = page.getByRole("figure", { name: "Example mortgage monthly cash paid", exact: true });
     await expect(mortgage).toBeVisible({ timeout: 30_000 });
-    const paid = inspectMortgageWindow(result.points.slice(0, 12), GOLDEN_HOUSEHOLD_IDS.mortgage).rows[0]!;
+    const paid = inspectMortgageWindow(result.points.slice(0, 12), GOLDEN_HOUSEHOLD_IDS.mortgage, referenceObserver).rows[0]!;
     await expect(mortgage.getByRole("status")).toHaveText(`2026-01 · Interest paid ${formatExactMoney(paid.interestPaid, paid.currency)} · Scheduled principal paid ${formatExactMoney(paid.scheduledPrincipalPaid, paid.currency)} · Extra principal paid ${formatExactMoney(paid.extraPrincipalPaid, paid.currency)}`);
     // Real 649-point source: first, middle and final partial windows preserve
     // all paid/funding/principal and trace IDs, not just chart presence.
@@ -214,9 +231,16 @@ for (const width of [1440, 390]) {
         await info.attach(`flagship-${width}-window-${startIndex}-phases`, { body: JSON.stringify(phases), contentType: "application/json" });
       }
       const actualWindow = await page.evaluate(() => (window as ObservedWindow).__u1bMortgage);
-      const expected = inspectMortgageWindow(result.points.slice(startIndex, startIndex + 12), GOLDEN_HOUSEHOLD_IDS.mortgage);
+      const selectedPoints = result.points.slice(startIndex, startIndex + 12), referenceStarted = performance.now();
+      const expected = inspectMortgageWindow(selectedPoints, GOLDEN_HOUSEHOLD_IDS.mortgage, referenceObserver);
+      referenceWindows.push({ durationMs: performance.now() - referenceStarted,
+        ...householdEvidenceSelectionMeasurements(householdEvidenceProof(result.points)!, { operation: "mortgage_evidence", startIndex, liabilityId: GOLDEN_HOUSEHOLD_IDS.mortgage }, selectedPoints.length) });
       expect(actualWindow).toEqual(expected);
     }
+    expect(referenceRestores[0]).toEqual(expect.objectContaining({ cache: "cold", checkpointCount: 54, materializedCheckpointStates: 54 }));
+    expect(referenceRestores[0]!.serializedCheckpointBytes).toBeGreaterThan(0);
+    expect(referenceRestores.slice(1).every(item => item.cache === "warm" && item.materializedCheckpointStates === 0)).toBe(true);
+    await info.attach(`flagship-${width}-independent-checkpoints`, { body: JSON.stringify({ referenceRestores, referenceWindows }), contentType: "application/json" });
     await page.getByLabel("Liability window starting", { exact: true }).selectOption(result.points[0]!.periodStart);
     // A second transition verifies responsive navigation and retained month
     // selection after both evidence projections, without another forecast.

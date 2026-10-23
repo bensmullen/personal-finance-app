@@ -187,7 +187,7 @@ describe("U1B sourced planning readiness", () => {
     expect(calculationFingerprint("baseline_forecast", model, request)).toBe(before);
     evidence.dispose(); baseline.dispose();
     const selected = messages[0]!;
-    const authenticated = { ...selected, source: { basis: transportedBasis, model } };
+    const authenticated = { ...selected, source: { basis: transportedBasis, model, diagnosticCatalogs: result.diagnosticCatalogs! } };
     expect(executeForecastWorkerRequest({ ...authenticated, startIndex: startIndex + 1 }, { now: () => 0 }).outcome).toBe("error");
     expect(executeForecastWorkerRequest({ ...authenticated, fingerprint: "other-household" }, { now: () => 0 }).outcome).toBe("error");
     expect(executeForecastWorkerRequest({ ...authenticated, source: { model, basis: { ...transportedBasis, encoded: transportedBasis.encoded + "corrupt" } } }, { now: () => 0 }).outcome).toBe("error");
@@ -366,9 +366,10 @@ describe("U1B sourced planning readiness", () => {
       fingerprint: result.points[startIndex]!.traceRefs.find(ref => ref.replayArtifact !== undefined)!.traceId });
     const proof = boundedEvidencePoints(result, selection(0)).basis;
     for (const index of [0, 1]) {
-      const response = executeForecastWorkerRequest({ ...selection(index), ...(index === 0 ? { source: structuredClone({ basis: proof, model }) } : {}) }, clock);
+      const response = executeForecastWorkerRequest({ ...selection(index), ...(index === 0 ? { source: structuredClone({ basis: proof, model, diagnosticCatalogs: result.diagnosticCatalogs! }) } : {}) }, clock);
       const { points: _points, ...boundary } = selection(index);
-      expect(response).toMatchObject({ ...boundary, outcome: "result", durationMs: 1 });
+      expect(response).toMatchObject({ ...boundary, outcome: "result", durationMs: expect.any(Number) });
+      expect(response.durationMs).toBeGreaterThan(0);
       if (response.outcome !== "result") throw new Error("Expected settled evidence result");
       expect(response.detail).toEqual(inspectMonthlyMoney(result.points[index]!, model));
       expect(cashComparison(response.detail!)?.knownUsesOnly).toBe(true);

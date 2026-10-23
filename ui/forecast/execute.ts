@@ -1,8 +1,9 @@
 import { executeForecastWorkerRequest as calculate } from "../../src/application/interactiveForecast.js";
 import { inspectMonthlyMoney } from "../../src/application/monthlyMoney.js";
-import { householdEvidenceProof, restoreHouseholdEvidencePoints, inspectMortgageWindow, type HouseholdEvidenceProof } from "../../src/application/mortgageChartData.js";
+import { householdEvidenceProof, householdEvidenceSelectionMeasurements, restoreHouseholdEvidencePoints, inspectMortgageWindow, type HouseholdEvidenceProof, type ReplayRestoreMeasurement } from "../../src/application/mortgageChartData.js";
 import { runPersonalForecast } from "../../src/application/personalMvp.js";
 import type { PerformanceClock } from "../../src/application/performance.js";
+import { sampledJsHeapBytes } from "../../src/application/performance.js";
 import type { EvidenceWorkerRequest, EvidenceWorkerResponse, ForecastWorkerRequest, ForecastWorkerResponse, StandaloneWorkerRequest, StandaloneWorkerResponse } from "./protocol.js";
 
 let source: EvidenceWorkerRequest["source"];
@@ -44,18 +45,28 @@ export function executeForecastWorkerRequest(message: ForecastWorkerRequest | Ev
     if (message.source) {
       const basis = message.source.basis ?? generatedBasis;
       if (!basis) throw new Error("Missing original proof");
-      source = { model: message.source.model, basis };
+      source = { ...message.source, basis };
     }
     if (!source?.basis) throw new Error("Selected forecast evidence is unavailable.");
-    const points = restoreHouseholdEvidencePoints(source.basis, message, message.points, message.fingerprint);
+    let restore: ReplayRestoreMeasurement | undefined;
+    const points = restoreHouseholdEvidencePoints(source.basis, message, message.points, message.fingerprint, source.diagnosticCatalogs,
+      { now: () => clock.now(), record: measurement => { restore = measurement; } });
+    const restoredAt = now();
     report("restored");
     const point = points[0];
     if (!point) throw new Error("Selected forecast period is unavailable.");
     const result = message.operation === "monthly_evidence"
       ? { detail: inspectMonthlyMoney(point, source.model) }
       : { window: inspectMortgageWindow(points, message.liabilityId) };
+    const projectedAt = now();
+    const heap = sampledJsHeapBytes();
+    const measurements = { ...householdEvidenceSelectionMeasurements(source.basis, message, points.length),
+      ...(restore === undefined ? {} : { restore }),
+      ...(started === undefined || restoredAt === undefined ? {} : { restoreAndSourceValidationMs: Math.max(0, restoredAt - started) }),
+      ...(restoredAt === undefined || projectedAt === undefined ? {} : { replayAndProjectionMs: Math.max(0, projectedAt - restoredAt) }),
+      ...(heap === undefined ? {} : { workerHeapAfterBytes: heap }) };
     report("projected");
-    return { ...boundary, outcome: "result", ...result, ...timing() };
+    return { ...boundary, outcome: "result", ...result, measurements, ...timing() };
   } catch {
     source = undefined;
     // Portable messages contain no financial facts or raw runtime errors.

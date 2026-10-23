@@ -1160,6 +1160,18 @@ export interface HouseholdReplayCheckpoint {
 // forecasts without these optional roots can still replay from the opening basis.
 const forecastCheckpoints = new WeakMap<object, readonly HouseholdReplayCheckpoint[]>();
 
+/** Non-materializing engineering evidence; never exports authoritative state. */
+export const householdReplayCheckpointSelection = (
+  forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">, start?: Instant,
+) => {
+  const checkpoints = forecastCheckpoints.get(forecast) ?? [];
+  const selected = start === undefined ? undefined : checkpoints.filter(value => value.at <= start).at(-1);
+  return Object.freeze({ checkpointCount: checkpoints.length, retainedCheckpointStates: checkpoints.length,
+    selectedCheckpointIndex: selected === undefined ? -1 : checkpoints.indexOf(selected),
+    replayPrefixMonths: start === undefined ? 0 : forecast.periods.filter(period =>
+      period.period.start >= (selected?.at ?? forecast.replay.runContext.simulationStart) && period.period.end <= start).length });
+};
+
 /** Materialized data only; private persistent indexes never cross transport. */
 export const exportHouseholdReplayCheckpoints = (forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">): readonly HouseholdReplayCheckpoint[] =>
   Object.freeze((forecastCheckpoints.get(forecast) ?? []).map(checkpoint => Object.freeze({ ...checkpoint,

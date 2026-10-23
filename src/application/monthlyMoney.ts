@@ -27,12 +27,13 @@ export interface MonthlyUse {
   readonly policyIds: readonly string[];
 }
 /** Read-only budgeting comparison. Posted cash uses do not establish cash origin. */
-export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: PortableModelEnvelope) {
+export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: PortableModelEnvelope,
+  observation?: import("../simulation/r3/replayArtifact.js").ReplayRestoreObserver) {
   const ref = point.traceRefs.find(value => value.replayArtifact !== undefined);
   if (!ref) throw new Error("Monthly evidence is unavailable");
   const address = ref.replayArtifact as { basis: unknown; start: string; end: string };
   if (address.start !== point.periodStart || address.end !== point.periodEnd) throw new Error("Monthly evidence does not match the selected period");
-  const basis = restorePortableHouseholdReplayArtifact(address.basis);
+  const basis = restorePortableHouseholdReplayArtifact(address.basis, observation);
   if (`household:replay:${basis.runMetadata.inputFingerprint}:${address.start}:${address.end}` !== ref.traceId) throw new Error("Monthly evidence identity does not match");
   const periods = householdEvidenceMonth(basis, address.start, address.end);
   const currency = Currency.of(point.cash.currency);
