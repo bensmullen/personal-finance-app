@@ -152,8 +152,14 @@ export const baselineResultMatchesRequest = (result: PersonalHouseholdForecastRe
   try {
     validateForecastDiagnostics(result.diagnostics ?? [], [result.openingSnapshot?.outputCapabilities, ...result.points.map(point => point.outputCapabilities)],
       result.diagnosticCatalogs, result.diagnosticCatalogs ? { runId: request.runIdentity, inputFingerprint: result.diagnosticCatalogs.source.inputFingerprint } : undefined);
-    if (result.diagnosticCatalogs && result.points.some(point => !point.traceRefs.some(ref =>
-      ref.traceId === `household:replay:${result.diagnosticCatalogs!.source.inputFingerprint}:${point.periodStart}:${point.periodEnd}`))) return false;
+    // A missing detail-proof is not a missing financial forecast. Retain
+    // verified summaries and let selected evidence fail closed with retry and
+    // no phantom bars. Any *present* replay address still must match source.
+    if (result.diagnosticCatalogs && result.points.some(point => {
+      const expected = `household:replay:${result.diagnosticCatalogs!.source.inputFingerprint}:${point.periodStart}:${point.periodEnd}`;
+      return point.traceRefs.some(ref => (ref.replayArtifact !== undefined || ref.traceId.startsWith("household:replay:"))
+        && ref.traceId !== expected);
+    })) return false;
   } catch { return false; }
   const boundary = request.compiler.cashFlow ?? request.compiler.investments ?? request.compiler.liabilities;
   if (!boundary) return false;
