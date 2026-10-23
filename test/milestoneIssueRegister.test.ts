@@ -35,13 +35,19 @@ describe("issue-backed roadmap traceability", () => {
     expect(registry.stage_gates.CI_OPTIMIZATION?.required_issue_numbers).toEqual([224]);
     for (const row of registry.issues) expect(row.depends_on).not.toContain(224);
   });
-  it('keeps reliability #218 independent of product and candidate gates', () => {
-    const task = registry.issues.find(row => row.issue_number === 218)!;
-    expect(task.owner_stage).toBe('engineering-framework-reliability');
-    expect(task.blocking_gate).toBe('FRAMEWORK_RELIABILITY');
-    expect(task.depends_on).toEqual([]);
-    expect(registry.stage_gates.FRAMEWORK_RELIABILITY?.required_issue_numbers).toEqual([218]);
-    for (const row of registry.issues) expect(row.depends_on).not.toContain(218);
+  it('keeps framework #218 and its Python-hook hotfix #231 independent of product gates', () => {
+    const foundation = registry.issues.find(row => row.issue_number === 218)!;
+    const hotfix = registry.issues.find(row => row.issue_number === 231)!;
+    for (const task of [foundation, hotfix]) {
+      expect(task.owner_stage).toBe('engineering-framework-reliability');
+      expect(task.blocking_gate).toBe('FRAMEWORK_RELIABILITY');
+    }
+    expect(foundation.depends_on).toEqual([]);
+    expect(hotfix.depends_on).toEqual([218]);
+    expect(registry.stage_gates.FRAMEWORK_RELIABILITY?.required_issue_numbers).toEqual([218, 231]);
+    for (const row of registry.issues.filter(row => row.issue_number !== 231))
+      expect(row.depends_on).not.toContain(218);
+    for (const row of registry.issues) expect(row.depends_on).not.toContain(231);
     for (const candidate of [134, 217]) expect(registry.issues.map(row => row.issue_number)).not.toContain(candidate);
   });
   it("registers each private-alpha/U1 issue exactly once with a stable mandatory stage", () => {
