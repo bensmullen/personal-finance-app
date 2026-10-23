@@ -16,6 +16,11 @@ Verify:
 - runtime imports remain acyclic;
 - financial logic has not leaked into presentation code;
 - generated artifacts have not become independent financial authority;
+- substantial immutable catalogs, proofs, snapshots, and diagnostics have
+  one source owner and are not repeated per period/entity across read models,
+  worker/API messages, caches, or persistence. Check the actual serialized
+  boundary, validated scoped references, bounded growth, and provenance;
+  small justified duplication is acceptable, not full-catalog amplification;
 - the change remains inside the requested milestone.
 
 Run the existing architecture validator when execution is appropriate.
