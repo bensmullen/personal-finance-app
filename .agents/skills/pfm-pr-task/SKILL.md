@@ -138,6 +138,18 @@ dirty paths and pushes them before permitting the stop. WIP checkpoints preserve
 work; they are not implementation acceptance, verified evidence, or merge-ready
 commits and cannot alone satisfy COMPLETE.
 
+**Optional-preflight/hook failure preservation:** A rejected or crashed optional
+`limited-local-verification` request does **not** invalidate already authorized
+product edits. If ordinary authorized editing remains safe, continue the task
+without the unavailable preflight and report it as not verified. If a task
+explicitly requires stopping, leave authorized working changes **intact** and
+report `TASK_STATUS: BLOCKED` plus the exact hook event/error so the normal
+Stop hook can checkpoint and push WIP. Never reverse authorized edits with
+`apply_patch`, `git restore`, `reset`, `clean`, `stash`, or equivalent
+solely because a tool/preflight failed. If the Stop hook cannot checkpoint,
+preserve the dirty checkout and report the precise recovery condition; no
+false clean/synchronized claim and no new session until ownership is verified.
+
 ## Product-manager escalation
 
 Before escalating, inspect the narrow authoritative sources and state the actual

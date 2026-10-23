@@ -78,9 +78,15 @@ jobs:
     name: codex-tooling
     needs: plan
     if: needs.plan.outputs.tooling == 'true'
-    runs-on: ubuntu-latest
+    # Python 3.8 binaries are available for 24.04, not ubuntu-latest/26.04.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # Exercise the policy hook under the oldest supported local Python, not
+      # only the newer Python supplied by the runner by default.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
