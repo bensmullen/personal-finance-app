@@ -164,8 +164,16 @@ def limited_preflight(command, root, state):
             return "Named test must be tracked"
         changed = changed_paths(root, state["BASE_HEAD"])
         imports = re.findall(r"from\s+[\"'](\.[^\"']+)[\"']", path.read_text())
-        affected = {str((path.parent / item).resolve().relative_to(root.resolve())).removesuffix('.js') + '.ts'
-                    for item in imports if (path.parent / item).resolve().is_relative_to(root.resolve())}
+        # Python 3.8 lacks Path.is_relative_to and str.removesuffix.
+        # Resolve before relative_to so symlinks cannot authorize out-of-tree sources.
+        affected = set()
+        trusted_root = root.resolve()
+        for item in imports:
+            try:
+                relative = str((path.parent / item).resolve().relative_to(trusted_root))
+            except ValueError:
+                continue
+            affected.add((relative[:-3] if relative.endswith('.js') else relative) + '.ts')
         if test not in changed and not affected.intersection(changed):
             return "Named test must itself change or directly import a changed source"
         if not re.search(r"\b(it|test)\s*\(", path.read_text()):
