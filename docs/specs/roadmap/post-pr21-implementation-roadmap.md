@@ -16,6 +16,9 @@ A routine stochastic forecast or strategy evaluation is a budgeted computation p
 
 ### Parallel engineering framework reliability gate
 
+**Urgent compatibility repair — Issue [#231](https://github.com/bensmullen/personal-finance-app/issues/231):** After framework #218's bounded preflight, the Mac Python 3.8 `PreToolUse` hook failed before it could authorize an optional check and the Codex session discarded unfinished work. #231 corrects the older-Python path operations, tests the hook on Python 3.8, and requires non-destructive BLOCKED work checkpoints. Its independent PR #232 must pass framework checks and merge before Codex resumes the affected #181 implementation; it is a *tooling prerequisite only*, not U1/D1/D2 financial functionality.
+
+
 **FRAMEWORK_RELIABILITY — Issue [#218](https://github.com/bensmullen/personal-finance-app/issues/218):** The product manager approved bounded optional local type/unit preflight, early source-backed scaling feasibility checks, and inexpensive static/type/build gating before four-way browser E2E. The same independent framework task investigates the shared worktree latest-task receipt ambiguity without weakening single-writer/scope protections. #218 must pass its own tooling, CI and hook self-tests before its framework implementation is accepted; it does **not** block U1B #181 or any D1/D2/R11 economic product gate. Framework-control paths remain separate from implementation PRs.
 
 ### Independent CI-efficiency optimization gate
