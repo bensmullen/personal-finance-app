@@ -178,6 +178,15 @@ for (const width of [1440, 390]) {
       scrollWidth: document.documentElement.scrollWidth,
       viewportWidth: innerWidth,
       // Diagnostic only: preserve the strict no-page-overflow assertion.
+      monthAncestors: (() => {
+        const selected = document.querySelector('[aria-label="paycheck forecast month"]');
+        const ancestors: string[] = [];
+        for (let element = selected; element && ancestors.length < 8; element = element.parentElement) {
+          const bounds = element.getBoundingClientRect();
+          ancestors.push(`${element.tagName.toLowerCase()}: ${String(element.className).slice(0, 70)}; x=${Math.round(bounds.left)}, width=${Math.round(bounds.width)}`);
+        }
+        return ancestors;
+      })(),
       overhanging: Array.from(document.querySelectorAll("body *")).flatMap(element => {
         const bounds = element.getBoundingClientRect();
         return bounds.width > 0 && bounds.right > innerWidth + 1

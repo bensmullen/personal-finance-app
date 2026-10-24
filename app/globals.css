@@ -378,8 +378,12 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-cash .chart-selected { padding: .5rem .75rem; margin: .5rem 0 0; }
 .calm-cash .chart-selected .chart-exact-values { margin-top: .25rem; gap: .25rem 1rem; }
 .calm-cash .chart-selected dd { margin-top: .125rem; }
-.calm-cash .cash-month-controls { max-width: 24rem; margin: .5rem 0; }
-.calm-cash .cash-month-controls select { width: 100%; }
+/* Bound the selected-month field to the available chart column, including
+   its 200%-enlarged select and help disclosure. Do not clip exact data tables. */
+.calm-cash .monthly-money, .calm-cash .cash-allocation { min-width: 0; max-width: 100%; width: 100%; }
+.calm-cash .cash-month-controls { display: grid; grid-template-columns: minmax(0,1fr); min-width: 0; width: 100%; max-width: min(100%,24rem); margin: .5rem 0; }
+.calm-cash .cash-month-controls .field-shell { box-sizing: border-box; min-width: 0; max-width: 100%; width: 100%; grid-template-columns: minmax(0,1fr); }
+.calm-cash .cash-month-controls select { box-sizing: border-box; min-width: 0; width: 100%; max-width: 100%; }
 .calm-cash .paycheck-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: .5rem 1rem; margin-block: .75rem; }
 .calm-cash .paycheck-legend small { font-size: var(--chart-caption); }
 .calm-cash .calm-empty { min-height: 12rem; font-size: var(--calm-body); }
