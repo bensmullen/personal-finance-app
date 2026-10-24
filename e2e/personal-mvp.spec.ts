@@ -240,6 +240,8 @@ const showHouseholdDetails = async (page: import("@playwright/test").Page, chann
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: forecastBudget });
   const controls = page.locator(".chart-control-details");
   if (await controls.count() && await controls.getAttribute("open") === null) await controls.locator(":scope > summary").click();
+  const cashDetails = page.locator("details.cash-chart-details");
+  if (await cashDetails.count() && await cashDetails.getAttribute("open") === null) await cashDetails.locator(":scope > summary").click();
   const supporting = page.getByText("Forecast assumptions and supporting details", { exact: true });
   if (await supporting.count() && await supporting.locator("..").getAttribute("open") === null) await supporting.click();
   const details = page.getByRole("button", { name: channel === "baseline" ? "Show forecast details" : /Show .* comparison details/ });
@@ -1821,8 +1823,9 @@ test("money and net-worth workflows update friendly editors and forecast", async
   await expect(
     page.getByRole("alert").filter({ hasText: /The forecast includes \d+ cash shortfall/ }),
   ).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(/No past account history is included/)).toBeVisible();
   await showHouseholdDetails(page, "baseline");
+  // History coverage is still available inside the user-requested Chart Details disclosure.
+  await expect(page.getByText(/No past account history is included/)).toBeVisible();
   await expect(
     page.getByRole("table", { name: "Reconciled household forecast" }),
   ).toBeVisible();

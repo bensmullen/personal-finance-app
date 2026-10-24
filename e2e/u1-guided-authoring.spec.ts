@@ -139,11 +139,15 @@ test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and
   const pay = page.getByRole("region", { name: "Your Paycheck", exact: true });
   await expect(pay.getByRole("button", { name: "Review selected month" })).toHaveCount(0);
   await expect(pay).toContainText("Incomplete allocation");
-  await expect(pay).toContainText("not leftover pay");
+  await expect(pay).toContainText("not disposable or unspent earnings");
+  const cashDetails = page.locator("details.cash-chart-details");
+  await expect(cashDetails).not.toHaveAttribute("open");
+  await cashDetails.locator(":scope > summary").click();
+  await expect(cashDetails).toContainText("not leftover pay");
   await expect(pay.getByRole("img")).toHaveAttribute("aria-label", /Mortgage payment.*total income basis.*taxes withheld not modeled/i);
   await pay.getByLabel("paycheck forecast month").selectOption("2026-02");
-  await expect(pay.locator(".calm-caption")).toHaveText(/February 2026/);
-  const dates = pay.locator("details").filter({ has: page.locator(":scope > summary", { hasText: "Selected month dates and evidence" }) });
+  await expect(cashDetails.locator(".calm-caption")).toHaveText(/February 2026/);
+  const dates = cashDetails.locator("details").filter({ has: page.locator(":scope > summary", { hasText: "Selected month dates and evidence" }) });
   await expect(dates).not.toHaveAttribute("open");
   await dates.locator(":scope > summary").focus();
   await page.keyboard.press("Enter");

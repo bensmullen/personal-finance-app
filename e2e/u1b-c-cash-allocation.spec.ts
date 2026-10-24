@@ -122,7 +122,9 @@ for (const width of [1440, 390]) {
     const chartDetails = page.locator(".cash-chart-details");
     await expect(chartDetails).toHaveCount(1);
     await expect(chartDetails).not.toHaveAttribute("open");
-    await expect(charts.locator("details")).toHaveCount(0);
+    // The month picker retains its tiny accessible field-help disclosure;
+    // only large explanatory chart disclosures belong in Chart Details.
+    await expect(charts.locator("details:not(.field-help)")).toHaveCount(0);
     await expect(charts.locator(".financial-chart")).toHaveCount(2);
     for (const figure of await charts.locator(".financial-chart").all()) {
       const title = await figure.locator("figcaption").boundingBox();

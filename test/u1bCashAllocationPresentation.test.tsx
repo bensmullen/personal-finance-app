@@ -233,11 +233,11 @@ describe("Cash signed bar presentation from selector evidence", () => {
         openingSnapshot: { ...base.openingSnapshot, outputCapabilities: capabilities, cash: { amount: "1000", currency: "USD" } },
         points: Array.from({ length: count }, (_, index) => ({ ...base.points[0]!,
           periodStart: boundary(index), periodEnd: boundary(index + 1), outputCapabilities: capabilities,
-          cash: { amount: decimal("1000").plus(decimal(change).times(index + 1)).toString(), currency: "USD" },
+          cash: { amount: decimal("1000").plus(decimal(change).times(decimal(String(index + 1)))).toString(), currency: "USD" },
         })),
       };
       const annual = selectForecastChartData(source, { granularity: "annual" }).points[0]!;
-      expect(annual.metrics.totalModeledCashChange.amount).toBe(decimal(change).times(count).toString());
+      expect(annual.metrics.totalModeledCashChange.amount).toBe(decimal(change).times(decimal(String(count))).toString());
       expect(annual.metrics.totalModeledCashChange.status).toBe(count === 12 ? "complete" : "incomplete");
       expect(cashChangeAppearance(annual)).toMatchObject({ fill: color, stroke: color, fillOpacity: count === 12 ? 1 : 0.4, "data-direction": direction });
       expect(cashChangeAppearance(annual)["aria-label"]).toContain(count === 12 ? "2027-01-01" : "partial year, 3 months");
