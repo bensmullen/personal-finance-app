@@ -30,6 +30,22 @@ const qualified = (id = "month:0") => {
   if (q.status !== "qualified") throw new Error(q.reason);
   return q;
 };
+/** Edit a named scalar in the real wire record, never an incidental substring
+ * in a different string. Definitions retain their original graph references. */
+function mutateWireField(encoded: string, field: string, from: string, to: string): string {
+  const wire = JSON.parse(encoded);
+  let edits = 0;
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      if (value.length === 2 && value[0] === field && value[1] === from && edits === 0) { value[1] = to; edits++; return; }
+      for (const child of value) visit(child);
+    } else for (const child of Object.values(value)) visit(child);
+  };
+  visit(wire);
+  expect(edits).toBe(1);
+  return JSON.stringify(wire);
+}
 describe("#149 original physical HELOC amortizing/balloon servicing", () => {
   it.each([false, true])("posts literal financed January and posted-history February (computed=%s)", computed => {
     publish(documents(2, false, computed));
@@ -105,8 +121,8 @@ describe("#149 original physical HELOC amortizing/balloon servicing", () => {
 });
 
 describe("independent issuer/BANK admission and exact original history", () => {
-  it("documents the out-of-scope B1 gate: an actually posted draw shares its operation/posting ID", () => {
-    const original = documents(1, false, true)[0]!, r = original.issuer.request;
+  it("services an actual original draw across two installments and cold checkpoint replay", () => {
+    const originals = documents(2, false, true), r = originals[0]!.issuer.request;
     const period = { start: civilDate("2025-12-01"), endExclusive: civilDate("2026-01-01") };
     const draw: HelocRequest = { ...r.line, period, evaluatedAsOf: civilDate("2025-12-31"), openingPrincipal: money("900"),
       rate: { ...r.line.rate!, priorResetAt: period.start }, interest: { ...r.line.interest, dueAt: period.endExclusive },
@@ -122,22 +138,52 @@ describe("independent issuer/BANK admission and exact original history", () => {
     const context = { ...fixture().context, simulationStart: instant("2025-12-01T00:00:00.000Z"), simulationEnd: instant("2026-01-01T00:00:00.000Z") };
     const candidate = { state: opening("400", "900"), primitiveState: createPrimitiveRuntimeStateStore(), runtime: {} };
     const prepared = participant.prepare(context, { start: context.simulationStart, end: context.simulationEnd }, candidate);
-    expect(prepared.operations).toHaveLength(1);
-    const executed = prepared.operations[0]!.execute(candidate, new Map());
+    const drawOperations = prepared.operations.filter(o => o.descriptor.operationClass === "liabilities:heloc_draw");
+    expect(drawOperations).toHaveLength(1);
+    expect(prepared.operations.some(o => o.descriptor.operationClass !== "liabilities:heloc_draw")).toBe(true);
+    const executed = drawOperations[0]!.execute(candidate, new Map());
     expect(executed.state.accounts[ids.bank]!.cash.equals(money("500"))).toBe(true);
     expect(executed.state.liabilities[ids.principal]!.balance.equals(money("1000"))).toBe(true);
     const postingId = executed.state.identities.postedTransactionIds[0]!;
     expect(postingId).toBe(draw.events[0]!.operationId);
-    const request = { ...r, checkpoint: { ...r.checkpoint, originalPrincipal: money("900"), history: [{
+    const history = {
       postingId, operationId: draw.events[0]!.operationId, authorizationId: draw.events[0]!.authorizationId,
       claimId: "original-draw-history-claim", fundingId: "original-draw-history-funding", effectiveAt: draw.events[0]!.effectiveAt,
       sequence: 0, kind: "draw" as const, principal: money("100"), interest: money("0"), cash: money("100"),
-      source: r.line.source, evidenceKind: "canonical_posting" as const }] } };
-    const conditional = proposeHelocPhaseServicing(request);
-    expect(conditional.proposals).toHaveLength(0);
-    expect(conditional.diagnostics.map(d => d.diagnosticCode)).toEqual(["DUPLICATE_CLAIM"]);
-    publish([{ ...original, issuer: withProvenance({ ...original.issuer, request, priorDraws: [quote] }) }]);
-    expect(qualifyHelocServicingSource("month:0", fixture().context)).toMatchObject({ status: "incomplete", diagnosticSeam: "S7" });
+      source: r.line.source, evidenceKind: "canonical_posting" as const };
+    const docs = originals.map(original => ({ ...original, issuer: withProvenance({ ...original.issuer,
+      request: { ...original.issuer.request, checkpoint: { ...original.issuer.request.checkpoint,
+        originalPrincipal: money("900"), history: [history, ...original.issuer.request.checkpoint.history] } }, priorDraws: [quote] }) }));
+    publish(docs);
+    const conditional = proposeHelocPhaseServicing(docs[0]!.issuer.request);
+    expect(conditional.obligationCoverage).toBe("complete");
+    expect(conditional.proposals[0]!.postable).toBe(false);
+    expect(qualified().receipt.openingPrincipal.equals(money("1000"))).toBe(true);
+    const f = fixture(15, executed.state), result = runHouseholdKernel({ kernel: f.kernel, runContext: f.context });
+    expect(result.periods).toHaveLength(15);
+    expect(result.periods[1]!.cash.equals(money("394.90"))).toBe(true);
+    expect(result.periods[1]!.liabilities.equals(money("900"))).toBe(true);
+    expect(result.periods[1]!.netWorth.equals(money("-505.10"))).toBe(true);
+    expect(result.periods[2]!.cash.equals(money("290.76"))).toBe(true);
+    expect(result.periods[2]!.liabilities.equals(money("800"))).toBe(true);
+    expect(result.state.identities.postedTransactionIds).toHaveLength(5);
+    const artifact = createPortableHouseholdReplayArtifact(result);
+    const cold = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(artifact)));
+    expect(canonicalSerialize(replayHouseholdForecastWindow(cold, result.periods[13]!.period).state)).toBe(canonicalSerialize(result.state));
+    const withoutReceipt = createAuthoritativeState({ ...executed.state, identities: { ...executed.state.identities,
+      externalIdempotencyKeys: executed.state.identities.externalIdempotencyKeys.filter(k => !k.includes("d2:heloc-draw-receipt")) } });
+    expect(run(fixture(3, withoutReceipt)).state.identities.postedTransactionIds).toHaveLength(1);
+    publish(docs.map(d => ({ ...d, issuer: { ...d.issuer, priorDraws: [{ ...quote, openingBankCash: money("401") }] } })));
+    expect(run(fixture(3, executed.state)).state.identities.postedTransactionIds).toHaveLength(1);
+    publish(docs);
+    const january = run(fixture(2, executed.state)).state;
+    const second = docs[1]!, checkpoint = second.issuer.request.checkpoint;
+    publish([docs[0]!, { ...second, issuer: withProvenance({ ...second.issuer, priorDraws: [], request: { ...second.issuer.request,
+      checkpoint: { ...checkpoint, originalPrincipal: money("1000"), history: checkpoint.history.filter(h => h.kind !== "draw") } } }) }]);
+    const changedOrigin = run(fixture(3, january));
+    expect(changedOrigin.state.identities.postedTransactionIds).toHaveLength(3);
+    expect(changedOrigin.state.accounts[ids.bank]!.cash.equals(money("394.90"))).toBe(true);
+    expect(changedOrigin.diagnostics.some(d => d.message.includes("Original principal"))).toBe(true);
   });
   const badIssuer: [string, (d: HelocServiceDocument) => HelocServiceDocument][] = [
     ["unfunded scheduled proposal", d => ({ ...d, request: { ...d.request, payment: { ...d.request.payment, status: "scheduled", authorization: null, funding: null } } })],
@@ -204,6 +250,12 @@ describe("independent issuer/BANK admission and exact original history", () => {
     expect(run(fixture(2, opening(), ["month:0", "renamed"])).state.identities.postedTransactionIds).toHaveLength(0);
     expect(() => createHelocServicingParticipant({ sourceIds: ["month:0", "month:0"] })).toThrow();
   });
+  it.each(["authorizationId", "fundingId"] as const)("rejects a BANK approval aliasing its own %s", role => {
+    const d = documents(1)[0]!;
+    publish([{ ...d, bank: { ...d.bank, approvalId: d.bank[role] } }]);
+    expect(qualifyHelocServicingSource("month:0", fixture().context).status).toBe("incomplete");
+    expect(run(fixture(2, opening(), ["month:0"])).state.identities.postedTransactionIds).toHaveLength(0);
+  });
   it("requalifies issuer and BANK during execution, leaving no partial charge", () => {
     const d = documents(1)[0]!;
     let calls = 0;
@@ -250,15 +302,16 @@ describe("actual household scheduler and portable source requalification", () =>
   });
   it("preserves thirteen funded installments, split replay and cold process checkpoints without duplicate journals", () => {
     const docs = documents(13, true); publish(docs);
-    const f = fixture(15, opening(), docs.map(d => d.issuer.sourceId));
+    const f = fixture(25, opening(), docs.map(d => d.issuer.sourceId));
     const result = runHouseholdKernel({ kernel: f.kernel, runContext: f.context });
-    expect(result.periods).toHaveLength(15);
+    expect(result.periods).toHaveLength(25);
     expect(result.state.accounts[ids.bank]!.cash.equals(money("357"))).toBe(true);
     expect(result.state.liabilities[ids.principal]!.balance.equals(money("870"))).toBe(true);
     expect(result.state.identities.postedTransactionIds).toHaveLength(26);
-    expect(exportHouseholdReplayCheckpoints(result).some(c => c.state.d2SettlementReceipts !== undefined)).toBe(true);
+    expect(exportHouseholdReplayCheckpoints(result).some(c => c.at >= instant("2027-02-01T00:00:00.000Z")
+      && Object.keys(c.state.d2SettlementReceipts ?? {}).length === 13)).toBe(true);
     const artifact = createPortableHouseholdReplayArtifact(result), restored = restorePortableHouseholdReplayArtifact(artifact);
-    for (const index of [1, 7, 13, 14]) {
+    for (const index of [1, 7, 13, 24]) {
       const selected = result.periods[index]!.period;
       const full = replayHouseholdForecastWindow(result, selected), cold = replayHouseholdForecastWindow(restored, selected);
       expect(canonicalSerialize(cold.state)).toBe(canonicalSerialize(full.state));
@@ -267,7 +320,7 @@ describe("actual household scheduler and portable source requalification", () =>
     const directory = mkdtempSync(join(tmpdir(), "pfm-heloc-service-")), path = join(directory, "payload.json");
     try {
       for (const sources of [true, false]) {
-        const selected = result.periods[13]!.period, expected = replayHouseholdForecastWindow(result, selected);
+        const selected = result.periods[24]!.period, expected = replayHouseholdForecastWindow(result, selected);
         writeFileSync(path, JSON.stringify({ artifact, selected, sources }), "utf8");
         const worker = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
           fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], { env: { ...process.env, PFM_HELOC_SERVICE_PAYLOAD: path }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
@@ -284,22 +337,36 @@ describe("actual household scheduler and portable source requalification", () =>
     expect(canonicalSerialize(f.kernel.executable.participants![0]!.economicInputs).length).toBeLessThan(250);
     const first = docs[0]!;
     publisher.issuer = id => id === first.issuer.sourceId ? { ...first.issuer, version: "changed/v2" } : docs.find(d => d.issuer.sourceId === id)?.issuer;
-    expect(() => restorePortableHouseholdReplayArtifact(artifact)).toThrow();
+    expect(() => restorePortableHouseholdReplayArtifact({ ...artifact })).toThrow();
+    // Restoring the same object may return its private warm basis. Financial
+    // reuse must still requalify via the participant, even past the last debit.
+    expect(() => replayHouseholdForecastWindow(restorePortableHouseholdReplayArtifact(artifact), result.periods[24]!.period)).toThrow();
     publish(docs); publisher.bank = () => undefined;
-    expect(() => restorePortableHouseholdReplayArtifact(artifact)).toThrow();
+    expect(() => restorePortableHouseholdReplayArtifact({ ...artifact })).toThrow();
+    expect(() => replayHouseholdForecastWindow(restored, result.periods[24]!.period)).toThrow();
     publish(docs);
-    for (const [from, to] of [["heloc_service", "forged_service"], ["bank-approval:month:0", "forged-approval"], ["posted-history:1", "forged-history"]]) {
-      const encoded = artifact.encoded.replace(from!, to!);
-      expect(encoded).not.toBe(artifact.encoded);
-      // Recompute transport integrity: semantic rejection must not rely on SHA
-      // or the artifact integrity fingerprint authenticating a publisher.
-      expect(() => restorePortableHouseholdReplayArtifact({ ...artifact, encoded,
-        integrity: createInputFingerprint({ runContext: f.context, openingState: encoded }) })).toThrow();
-    }
     const state = createAuthoritativeState(result.state);
     requalifyD2SettlementReceiptHistory(state, f.context);
     const before = canonicalSerialize(state);
     for (const r of receipts) expect(applyD2SettlementAtomically(state, r, f.context).status).toBe("already_committed");
     expect(canonicalSerialize(state)).toBe(before);
+  });
+  it.each([
+    ["canonical payment journal type", "type", "heloc_service", "forged_service"],
+    ["independently bound BANK payment approval", "paymentApprovalId", "bank-approval:month:0", "forged-approval"],
+    ["original principal history version", "historyVersion", "posted-history:1", "forged-history"],
+  ])("rejects recomputed-integrity tampering of %s", (_name, field, from, to) => {
+    const docs = documents(13, true); publish(docs);
+    const f = fixture(15, opening(), docs.map(d => d.issuer.sourceId));
+    const result = runHouseholdKernel({ kernel: f.kernel, runContext: f.context });
+    expect(result.state.identities.postedTransactionIds).toHaveLength(26);
+    const artifact = createPortableHouseholdReplayArtifact(result);
+    // Each original first-substring replacement is now a named assertion. The
+    // previous failure was the warm publisher assertion BEFORE this loop.
+    for (const encoded of [artifact.encoded.replace(from!, to!), mutateWireField(artifact.encoded, field!, from!, to!)]) {
+      expect(encoded).not.toBe(artifact.encoded);
+      expect(() => restorePortableHouseholdReplayArtifact({ ...artifact, encoded,
+        integrity: createInputFingerprint({ runContext: f.context, openingState: encoded }) })).toThrow();
+    }
   });
 });

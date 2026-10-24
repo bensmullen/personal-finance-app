@@ -2,7 +2,7 @@ import { accountingTransactionId, type AccountingTransaction } from "../../../..
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { idempotencyKey } from "../../../../identity/index.js";
 import { applyD2HelocOriginalAtomically, applyD2SettlementAtomically, d2SettlementPostingRegistration,
-  requalifyD2SettlementReceiptHistory, type AuthoritativeState, type D2HelocSettlementReceipt } from "../../../../state/index.js";
+  requalifyD2SettlementReceiptHistory, type AuthoritativeState, type D2HelocSettlementReceipt, type D2SettlementSourceContext } from "../../../../state/index.js";
 import { applyHouseholdExecutionOverlay, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
 import type { HouseholdWorkDescriptor } from "../../../intraperiodScheduler.js";
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
@@ -39,11 +39,17 @@ function posted(state: AuthoritativeState, r: D2HelocSettlementReceipt, role: "o
 
 /** B1's history is a conditional input. Check every included original against
  * actual canonical postings; also reject omission of any committed repayment. */
-function principalHistory(state: AuthoritativeState, q: QualifiedHelocService): void {
+function principalHistory(state: AuthoritativeState, q: QualifiedHelocService, context: D2SettlementSourceContext): void {
   const c = q.document.request.checkpoint, r = q.receipt, history = c.history;
   const repayments = Object.values(state.d2SettlementReceipts ?? {}).filter((x): x is D2HelocSettlementReceipt =>
     x.kind === "heloc_phase_service" && x.liabilityId === r.liabilityId && x.effectiveAt <= serviceInstant(c.closingAt));
   for (const old of repayments) {
+    const original = qualifyHelocServicingSource(old.source.sourceId, context);
+    if (original.status !== "qualified" || !same(original.receipt, old)) fail("Prior repayment publisher no longer qualifies");
+    const prior = original.document.request.checkpoint;
+    if (prior.originalAt !== c.originalAt || !prior.originalPrincipal.equals(c.originalPrincipal) || !same(prior.originalSource, c.originalSource)
+      || prior.history.some(h => !history.some(current => current.postingId === h.postingId && same(current, h))))
+      fail("Original principal or already posted historical evidence changed between installments");
     if (old.source.issuerId !== r.source.issuerId || old.source.lineId !== r.source.lineId
       || old.source.personId !== r.source.personId || old.source.householdId !== r.source.householdId
       || !history.some(h => h.kind === "principal_repayment" && h.postingId === old.paymentTransaction.id))
@@ -112,7 +118,16 @@ export function createHelocServicingParticipant(configuration: HelocServicingInp
           canonicalSerialize([r.source.issuerId, r.source.lineId, r.source.periodStart, r.source.periodEnd])];
         // Identity domains may intentionally coincide within ONE receipt (notably
         // the principal-only original/payment journal); never across sources.
-        for (const key of new Set(keys)) { if (used.has(key)) fail("Duplicate source, installment, approval or posting identity"); used.add(key); }
+        const local = new Set<string>();
+        for (const [index, key] of keys.entries()) {
+          // Only canonical journal aliases are expected: charge journal equals
+          // its B1 recognition ID, or principal-only has one journal in both slots.
+          const journalAlias = index === 10 && r.originalProof === "recognized_charge" && key === r.recognitionId
+            || index === 11 && r.originalProof === "principal_only" && key === r.originalTransaction.id;
+          if (used.has(key) || local.has(key) && !journalAlias) fail("Duplicate source, installment, approval or posting identity");
+          local.add(key);
+        }
+        for (const key of local) used.add(key);
         resources(opening.state, r);
         if (opening.state.d2SettlementReceipts?.[r.id] && !same(opening.state.d2SettlementReceipts[r.id], r))
           fail("Committed receipt differs from current independent source");
@@ -158,7 +173,7 @@ export function createHelocServicingParticipant(configuration: HelocServicingInp
           const current = qualifyHelocServicingSource(r.source.sourceId, context);
           if (current.status !== "qualified" || !same(current.receipt, r)) fail("Issuer or BANK source changed after preparation");
           resources(candidate.state, r);
-          principalHistory(candidate.state, q);
+          principalHistory(candidate.state, q, context);
           const existing = candidate.state.d2SettlementReceipts?.[r.id];
           if (existing && !same(existing, r)) fail("Committed receipt changed");
           try {

@@ -1,60 +1,73 @@
-# Physical HELOC servicing — partial implementation, blocked
+# Physical HELOC servicing
 
-Issue #149 authorizes this opt-in participant and its source lookup codec. It is
-not complete or merge-ready. No shared B1, draw, state, tax, scheduler or replay
-file was changed. Local bounded preflight was skipped by the policy hook because
-Node is unavailable; none of the new tests or typechecks has been executed.
+Issue #149 provides an opt-in household participant and portable source-ID
+codec for original amortizing and final-balloon HELOC installments. It does not
+complete tax, unsourced future servicing, all-domain D2 integration, UI or UAT.
 
-## Blocking original-draw history interface
-
-The existing `helocDraws` participant posts a draw with
-`accountingTransactionId(m.operationId)`. That constructor preserves its input,
-so the real canonical posting ID equals the original source operation ID.
-`proposeHelocPhaseServicing` reserves `h.postingId` and `h.operationId` in the
-same untyped uniqueness set (`phaseServicing.ts`, lines 191–207). An authentic
-posted draw therefore yields `DUPLICATE_CLAIM` before a proposal can be admitted.
-Inventing a different posting ID would sever the required canonical proof.
-
-The focused test `documents the out-of-scope B1 gate` executes the existing draw
-participant's actual canonical writer, obtains its committed posting ID, and
-passes that exact identity into B1 principal history. It specifies the current
-failure, not successful draw-to-servicing acceptance.
-
-Required follow-up authorization: a narrow correction to
-`src/simulation/d2/debt/heloc/phaseServicing.ts` and its directly affected B1
-tests, preserving duplicate/reuse rejection between distinct occurrences while
-admitting the producer's actual posting/operation identity pairing. #149
-explicitly keeps B1 read-only and requires stopping for a missing shared port.
-The consumer cannot repair this contract within its two writable subtrees.
-
-## Preserved scoped work
+## Composition and authority
 
 `registerHelocServicingSourcePorts` installs separate authenticated issuer and
-BANK readers once at composition, including in a cold process. The portable
-participant stores only source lookup IDs. The readers reconstruct raw original
-terms/history and exact-date BANK debits independently; a SHA commitment detects
-changes but cannot authenticate a publisher. Original documents remain at the
-publisher. The synchronous SHA utility is reused as content addressing only;
-no tax rules or tax authority are inferred.
+BANK readers once at composition, also in each independent cold process. The
+portable participant stores source lookup IDs only. Readers must retrieve raw
+original terms/history and actual BANK debits independently; neither a receipt,
+its hash, a B1 proposal, nor a document's paid-status text authenticates them.
+Original documents and full history stay at the publisher. The reused SHA
+utility provides compact content addressing only, with no tax-law authority.
 
-`qualifyHelocServicingSource` regenerates unchanged B1 and both signed journals.
-`createHelocServicingParticipant` checks actual prior repayments and exact prior
-draw receipt keys, schedules separate charge and settlement operations, and
-uses only `applyD2HelocOriginalAtomically` / `applyD2SettlementAtomically` to
-change state. New service postings have distinct journal/operation IDs so their
-own later repayment history can satisfy B1. This cannot repair existing draws.
+`qualifyHelocServicingSource` regenerates B1 and both signed journals.
+`createHelocServicingParticipant` checks prior repayments and original principal
+continuity against independently requalified actual canonical receipts. Prior
+draws require the original B1 quote and the exact producer posting,
+authorization and quote-receipt keys. Missing or altered proof fails closed.
+Only `applyD2HelocOriginalAtomically` and `applyD2SettlementAtomically` write
+servicing balances and journals; no second calculator or ledger is introduced.
 
 The daily seam requires actual BANK debit/publication/knowledge at the due-date
-UTC boundary. Missing or stale authority is S7 incomplete. Insufficient cash or
-conflicting same-instant resources fails the entire affected period; previously
+UTC boundary. Missing/stale authority is S7 incomplete. Insufficient cash or
+conflicting same-instant resources fails the whole affected period; previously
 committed periods survive. Principal-only service has one journal. Nonzero
 interest and supported final service fees use a separate existing payable,
-cleared by settlement. Tax and unsourced future servicing remain incomplete.
+cleared exactly once by settlement. Tax and unsourced future coverage remain
+incomplete. Same-instant independent lines require source-approved BANK order.
 
-The unexecuted synthetic tests specify literal January/February economics,
-computed and quoted interest, zero charges, final balloon/service fee, recognized
-original pairing, one-cent shortfall rollback, history/source/identity negatives,
-two-line approved order and cross-participant contention, thirteen funded
-installments, source changes after portable restore, fresh-process replay,
-recomputed transport-integrity tampering, and reference-sized payload growth.
-They do not establish acceptance evidence until CI and independent audit pass.
+## Bounded producer identity compatibility
+
+The original draw producer preserves `operationId` as its accounting journal ID.
+B1 permits that specific within-one-historical-draw posting/operation alias
+while remaining conditional and unpostable. It still reserves the identity
+against every distinct occurrence and every other role, including later
+payment, claim, authorization and funding identities. Repayment aliases and
+other within-record aliases remain rejected. Separate posting/operation IDs
+remain supported. The consumer independently authenticates actual posting;
+this B1 compatibility exception is not authority to trust claimed history.
+
+## Replay and test evidence
+
+The synthetic integration suite exercises an actual draw producer executable,
+then two computed installments: BANK $500 -> $394.90 -> $290.76 and principal
+$1,000 -> $900 -> $800, with expenses $5.10 and $4.14 recognized once. It also
+covers issuer-only quotes, principal-only service, a full balloon with supported
+fee, already recognized charges, insufficient cash by one cent, source/history
+and identity negatives, approved two-line order and participant-order contention.
+The 25-month fixture posts thirteen installments and exports a 24-month portable
+checkpoint, exercising split/full and fresh-process replay without duplication.
+Portable source data stays reference-sized; raw documents are not transported.
+
+The earlier failing line 287 was a changed-publisher assertion on the *same
+already restored artifact object*, before the three tampering replacements.
+The generic replay adapter can return a private warm basis at restore time.
+The repaired test requests a fresh object for cold publisher rejection and
+separately proves warm **financial replay** requalifies before financial reuse.
+No shared cache/replay change is required. Each of the original first-substring
+tampering cases now has a named assertion, plus an exact wire-record field edit:
+signed payment journal `type`, source `paymentApprovalId`, and `historyVersion`.
+Transport integrity is recomputed in every case; authoritative proofs must
+still be rejected. The first approval/history substrings may be inside the
+redundant source fingerprint; exact field edits target their actual source
+binding, rather than relying on that string location.
+
+The optional bounded local preflight was skipped by the policy hook because
+Node is unavailable. Tests/typecheck for this repair have not run locally.
+GitHub CI and independent financial/replay audit at the pushed head remain
+required before PM merge. No dependencies, existing draw producer, shared
+state/tax/scheduler/replay, other domain, UI, or framework files are changed.

@@ -200,6 +200,13 @@ export function qualifyHelocServicingSource(sourceId: string, context: D2Settlem
       originalTransaction, paymentTransaction, liabilityId: principalId, openingPrincipal: p.finalBalanceIntent.opening,
       principalPaid: p.principal_due, interest: p.interest_due, fee: p.fees_due, feeNature: d.feeNature,
       chargeLiabilityId: chargeId, originalProof: charges.isZero() ? "principal_only" : "recognized_charge" };
+    // Source qualification itself rejects cross-role identity reuse, including
+    // direct canonical-writer callers. The charge journal intentionally shares
+    // the B1 recognition ID; principal-only intentionally has one journal.
+    const identities = [receipt.id, receipt.operationId, receipt.authorizationId, receipt.paymentId,
+      source.sourceApprovalId, source.paymentApprovalId, source.fundingId, receipt.claimId,
+      receipt.recognitionId, receipt.settlementId, paymentTransaction.id];
+    if (new Set(identities).size !== identities.length) return incomplete("source_not_qualified");
     return immutableConfiguration({ status: "qualified", document: d, bank: b, receipt });
   } catch { return incomplete("source_not_qualified"); }
 }
