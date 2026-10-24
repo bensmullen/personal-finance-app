@@ -47,16 +47,20 @@ describe("shared household context", () => {
     expect(sharedContextIdentity({ ...draft, objects: { ...draft.objects, Scenario: [] } }, selectedId).plan).toBe("No active plan");
   });
 
-  it("renders one read-only context with independent save and model/forecast meaning", () => {
+  it.each(["Save", "Export your model"])("renders one read-only context with independent %s and model/forecast meaning", saveLabel => {
     const html = renderToStaticMarkup(<SharedContextRibbon {...sharedContextIdentity(createGoldenHouseholdDraft())}
       modelStatus="Ready" modelDetails={<p>As of 2026-01-01; data cutoff 2026-01-01</p>}
-      forecast={<span>Forecast: Partial</span>} save={() => { throw new Error("Render cannot save"); }} saveLabel="Save"
+      forecast={<span>Forecast: Partial</span>} save={() => { throw new Error("Render cannot save"); }} saveLabel={saveLabel}
       storage="Trusted origin; export recommended." onPerson={() => { throw new Error("Render cannot select"); }} onPeople={() => {}} />);
     expect(html).toContain("Model: Ready");
     expect(html).toContain("Forecast: Partial");
     expect(html).toContain("Household forecast");
     expect(html).toContain("Manual save");
-    expect(html).not.toMatch(/<input|<select|\sopen(?:[=>\s])/);
+    expect(html).toContain(`>${saveLabel}</button>`);
+    expect(html).not.toMatch(/<(?:input|select)\b/i);
+    expect(html).not.toMatch(/<details\b[^>]*\sopen(?:[=>\s])/i);
+    expect(html).toContain('class="context-save-cue"');
+    expect(html).toContain("Forecasts do not save.");
     expect(html).not.toContain("90000000-");
     // Its serialization depends on small identity labels, never forecast months.
     expect(html.length).toBeLessThan(5000);

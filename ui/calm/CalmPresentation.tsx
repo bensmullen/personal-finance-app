@@ -55,8 +55,11 @@ export function SharedContextRibbon({ household, people, plan, modelStatus, mode
     <div className="context-plan"><span>{plan}</span><small>Household forecast</small></div>
     <ContextDisclosure title={`Model: ${modelStatus}`} className="context-model">{modelDetails}</ContextDisclosure>
     {forecast}
-    <button className="context-save" type="button" onClick={save}>{saveLabel}</button>
-    <ContextDisclosure title="Storage & privacy" className="context-storage"><p>Manual save — edits stay in memory until saved.</p><p>{storage}</p></ContextDisclosure>
+    <div className="context-save-actions">
+      <button className="context-save" type="button" onClick={save}>{saveLabel}</button>
+      <small className="context-save-cue">Manual save · edits in memory.<br />Forecasts do not save.</small>
+    </div>
+    <ContextDisclosure title="Storage & privacy" className="context-storage"><p>Save or export explicitly to keep changes. Completing a forecast does not save your model.</p><p>{storage}</p></ContextDisclosure>
   </section>;
 }
 

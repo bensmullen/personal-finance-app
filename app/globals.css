@@ -431,13 +431,14 @@ main#main-content { padding: 24px 32px 64px; }
   .calm-outlook .chart { height: 260px; }
   .calm-status { gap: 4px 12px; }
 }
-.more-destinations { position: fixed; z-index: 8; bottom: 72px; left: 12px; right: 12px; max-height: 65vh; overflow: auto; background: white; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 12px; }
+.more-destinations { position: fixed; z-index: 8; bottom: calc(var(--mobile-nav-height, 60px) + 12px); left: 12px; right: 12px; max-height: min(65svh, calc(100svh - var(--mobile-nav-height, 60px) - 24px)); overflow: auto; background: white; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 12px; }
 .more-destinations button { display: block; width: 100%; padding: 12px; text-align: left; border: 0; border-radius: 6px; background: white; color: var(--green-dark); }
 @media (max-width: 900px) {
   .app-shell { grid-template-columns: minmax(0, 1fr); }
   .app-shell > .workspace { grid-column: 1; }
   .app-shell > .primary-nav { position: fixed; z-index: 7; bottom: 0; left: 0; right: 0; grid-column: auto; grid-row: auto; flex-direction: row; justify-content: space-around; gap: 0; padding: 7px 4px max(7px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: white; }
   .primary-nav button { text-align: center; padding: 12px 6px; font-size: 12px; }
+  .app-shell > .primary-nav button { flex: 1 1 0; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
   .primary-nav .desktop-destination { display: none; }
   .primary-nav .mobile-more { display: block; }
   .workspace > .subnav { overflow: visible; padding: 8px 12px; }
@@ -455,7 +456,9 @@ main#main-content { padding: 24px 32px 64px; }
   .panel.outlook { padding: 16px; }
 }
 /* One shared context ribbon. Popovers contain the existing source-owned details. */
-.app-shell > .topbar { height: auto; min-height: 72px; padding: 8px 20px; gap: 12px; align-items: center; position: relative; z-index: 10; }
+/* Header disclosures sit above results, below mobile navigation (7/8) and
+   editor backdrops (10). Raising a child cannot escape this stacking context. */
+.app-shell > .topbar { height: auto; min-height: 72px; padding: 8px 20px; gap: 12px; align-items: center; position: relative; z-index: 6; }
 .app-shell.calm-shell > .topbar { grid-column: 1 / -1; padding: 8px 20px; }
 .calm-shell .topbar .brand { position: static; color: var(--ink); white-space: normal; }
 .shared-context { display: flex; align-items: center; flex: 1 1 0; flex-wrap: wrap; gap: 4px 12px; min-width: 0; font-size: .875rem; }
@@ -473,9 +476,18 @@ main#main-content { padding: 24px 32px 64px; }
 .context-popover button { color: var(--green-dark); background: white; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 4px; max-width: 100%; }
 .context-people .context-popover button { display: block; width: 100%; text-align: left; margin: 4px 0; }
 .context-save { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: white; color: var(--green-dark); }
+.context-save-actions { display: flex; flex: 0 1 15rem; align-items: center; gap: 8px; }
+.context-save-actions > button { flex-shrink: 0; max-width: 100%; }
+.context-save-cue { min-width: 0; font-size: .75rem; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
 .result-warning { color: #805022; font-size: .9375rem; line-height: 1.5; }
 @media (min-width: 901px) {
   .app-shell.calm-shell > .primary-nav { grid-row: 2; padding-top: 26px; }
+  /* Keep the chart and all three current values in the opening desktop view
+     without shrinking the plot, labels or touch targets. */
+  .calm-shell main#main-content { padding-top: 20px; }
+  .calm-page-header { margin-bottom: 18px; }
+  .calm-overview { gap: 12px; }
+  .calm-metrics { margin-top: 8px; }
 }
 @media (max-width: 1100px) {
   .app-shell > .topbar { flex-wrap: wrap; }
@@ -488,6 +500,7 @@ main#main-content { padding: 24px 32px 64px; }
   .context-people { flex: 1 1 50%; }
   .context-plan { flex-basis: 100%; order: 2; }
   .context-storage { order: 3; }
+  .context-save-actions { flex-wrap: wrap; }
   .shared-context .context-forecast { flex: 1 1 100%; flex-wrap: wrap; justify-content: space-between; }
   .context-popover { left: 12px; right: 12px; }
   .shared-context :is(button, summary) { font-size: .875rem; }

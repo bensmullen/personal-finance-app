@@ -1423,7 +1423,8 @@ for (const width of [390, 1440]) {
     const status = page.getByRole("status", { name: "Household forecast status" });
     await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
     await expect(status).toContainText(/Ready|Partially modeled/);
-    await expect(page.getByText(/edits stay in memory until saved/)).toBeVisible();
+    await expect(page.locator(".context-save-cue")).toHaveText(/^Manual save · edits in memory\.\s*Forecasts do not save\.$/);
+    await expect(page.locator(".context-save-cue")).toBeVisible();
     const chart = page.getByRole("figure", { name: "Household financial outlook chart" });
     await expect(chart).toBeVisible();
     await expect(chart).toContainText("USD");
@@ -1627,7 +1628,7 @@ test("guided setup reaches the Personal-MVP overview", async ({ page }) => {
     page.getByText("Your starting financial picture is ready"),
   ).toBeVisible();
   await expect(
-    page.getByText(/edits stay in memory until saved/i),
+    page.locator(".context-save-cue"),
   ).toBeVisible();
   await expect(
     page.getByRole("navigation", { name: "Primary navigation" }),

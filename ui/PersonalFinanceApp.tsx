@@ -282,6 +282,18 @@ export function PersonalFinanceApp() {
   const [moreOpen, setMoreOpen] = useState(false);
   const moreButton = useRef<HTMLButtonElement>(null);
   const morePanel = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const nav = moreButton.current?.closest("nav");
+    const shell = nav?.parentElement;
+    if (!nav || !shell) return;
+    // Enlarged labels can reflow the fixed mobile bar. Keep More above its
+    // actual height rather than assuming a single line of navigation text.
+    const measure = () => shell.style.setProperty("--mobile-nav-height", `${nav.getBoundingClientRect().height}px`);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(nav);
+    return () => { observer.disconnect(); shell.style.removeProperty("--mobile-nav-height"); };
+  }, [Boolean(draft)]);
   const destination = financialDestination(primary, subnav);
   useEffect(() => {
     if (!moreOpen) return;
