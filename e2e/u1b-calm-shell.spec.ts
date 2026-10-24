@@ -48,7 +48,7 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
     await expect(destinations).toHaveCount(0);
   }
 
-  const headings: Record<string, string> = { Overview: "Know where you stand.", Cash: "What comes in and goes out?", Investing: "Your investments", "Real Estate": "Your property", "Other Assets": "Your other assets", Debt: "Your borrowing", Planning: "Your current plan" };
+  const headings: Record<string, string> = { Overview: "Know where you stand.", Cash: "Your cash, coming in and going out.", Investing: "Your investments", "Real Estate": "Your property", "Other Assets": "Your other assets", Debt: "Your borrowing", Planning: "Your current plan" };
   for (const label of ["Overview", "Cash", "Investing", "Real Estate", "Other Assets", "Debt", "Planning"]) {
     await clickFinancialDestination(page, label);
     await expect(page.getByRole("heading", { name: headings[label], exact: true })).toBeVisible();

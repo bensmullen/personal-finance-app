@@ -18,11 +18,56 @@ const screenRegions = [
   [".sidebar / .navbtn / .mobileNav", "Primary navigation / .calm-shell", "235px teal sidebar and mobile More; seven existing financial destinations retained."],
   [".topbar", "topbar / .calm-storage / household-summary", "Adapted for real manual Save/Export, storage privacy and source as-of; no fictional persona picker."],
   ["overview() / .primary-viz", "Overview / .calm-outlook / HouseholdChart", "Real V1 SVG from selector; no-forecast state has no fictional path. Review footprint at both widths."],
+  ["moneyView() / .head-cta / .primary-viz.colstack", "Cash / CalmPageHeader / calm-cash-charts / MonthlyMoneyPanel", "Income and spending owner actions; recorded bank and wrapper cash remain separate; V2, V3 and V4 form a logical scroll sequence. No prototype amounts are imported."],
   [".metrics / .metric", "CalmMetric / .calm-metrics", "Three exact current source values; mobile two columns then full-width net worth. Scope differs from fictional sample."],
   [".grid2 / .panel / .item", "calm-lower-grid / CalmPanel / calm-questions", "Three question-led existing routes; coverage and current-position details collapsed."],
   ["headerStatus() / .statusbox", "ForecastStatus / calm-blocker", "Adapted to true partial, stale, pending, error and setup state; one priority correction."],
   ["graph-frame / chart-table", "FinancialChart / chart-control-details / HouseholdForecastVisual supporting content", "Existing chart economics and keyboard graph retained; controls, exact values, source dates and supporting results disclosed."],
 ];
+
+async function captureCashEvidence(page: Page, info: TestInfo, width: number, scenario: "flagship" | "h04-opening-only") {
+  const revision = process.env.GITHUB_SHA?.slice(0, 12) || "revision-unrecorded";
+  await clickFinancialDestination(page, "Cash");
+  const panel = page.getByRole("region", { name: "Your Paycheck", exact: true });
+  if (scenario === "flagship") {
+    await panel.getByLabel("paycheck forecast month", { exact: true }).selectOption("2026-07");
+    await expect(panel).toHaveAttribute("data-evidence-state", "incomplete");
+  } else await expect(panel).toHaveAttribute("data-evidence-state", "unavailable");
+  await recordState(page, info, `cash-${scenario}-${width}`);
+  const production = `cash-${scenario}-${width}-${revision}`;
+  const referenceName = `cash-calm-reference-fictional-${scenario}-${width}-${revision}`;
+  const capture = async (target: Page, name: string, fullPage: boolean) => {
+    await target.evaluate(() => window.scrollTo(0, 0));
+    const path = info.outputPath(`${name}.png`);
+    await target.screenshot({ path, fullPage, animations: "disabled" });
+    await info.attach(name, { path, contentType: "image/png" });
+  };
+  await capture(page, `${production}-first-screen`, false);
+  await capture(page, `${production}-full`, true);
+  const opened = [];
+  for (const title of ["Chart Details", "Forecast range / Data coverage", "Forecast assumptions and supporting details", "Selected month dates and evidence", "Exact monthly comparison & receipts", "Recorded cash sources and limitations"]) {
+    for (const summary of await page.getByText(title, { exact: true }).all()) {
+      if (await summary.locator("..").getAttribute("open") === null) {
+        await summary.click(); opened.push(summary);
+      }
+    }
+  }
+  await capture(page, `${production}-expanded`, true);
+  for (const summary of opened.reverse()) await summary.click();
+  const reference = await page.context().newPage();
+  try {
+    await reference.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await reference.setContent(await readFile("docs/alpha/prototypes/level4-h04-h08-pilot.html", "utf8"));
+    await reference.locator(`${width === 390 ? "#mobileNav" : "#navLeft"} [data-nav="cash"]`).click();
+    await expect(reference.getByRole("heading", { name: "Your cash, coming in and going out.", exact: true })).toBeVisible();
+    await capture(reference, `${referenceName}-first-screen`, false);
+    await capture(reference, `${referenceName}-full`, true);
+  } finally { await reference.close(); }
+  const report = info.outputPath(`${production}-comparison.html`);
+  await writeFile(report, `<!doctype html><html lang="en"><meta charset="utf-8"><title>Cash Calm comparison</title><style>body{font:16px system-ui;margin:24px}main{display:flex;gap:24px}figure{margin:0;flex:1;min-width:0}img{width:100%;border:1px solid #aaa}</style><h1>Cash · ${scenario} · ${width} × ${width === 390 ? 844 : 900} · ${revision}</h1><p>Visual review pending. Production ${scenario === "flagship" ? "uses the supported synthetic flagship, with July 2026 selected to expose real posted withholding" : "has only recorded bank balances and no forecast"}. The reference contains fictional Barlow amounts and curves. Compare hierarchy, disclosures, actions and chart grouping; do not compare financial amounts. Expanded production evidence is attached separately.</p><main><figure><figcaption>Production Cash</figcaption><img alt="Production Cash first screen" src="${production}-first-screen.png"><img alt="Production Cash complete scroll sequence" src="${production}-full.png"></figure><figure><figcaption>Approved moneyView reference</figcaption><img alt="Calm prototype Cash first screen" src="${referenceName}-first-screen.png"><img alt="Calm prototype Cash complete scroll sequence" src="${referenceName}-full.png"></figure></main></html>`);
+  await info.attach(`${production}-comparison`, { path: report, contentType: "text/html" });
+  await clickFinancialDestination(page, "Overview");
+}
 
 async function recordState(page: Page, info: TestInfo, scenario: string) {
   const status = page.getByRole("status", { name: "Household forecast status", exact: true });
@@ -110,6 +155,7 @@ test("synthetic H04 opening-only Overview first-screen evidence", async ({ page 
     await writeFile(report, `<!doctype html><html lang="en"><meta charset="utf-8"><title>H04 Overview comparison</title><style>body{font:16px system-ui;margin:24px}main{display:flex;gap:24px;align-items:start}figure{margin:0;flex:1;min-width:0}img{width:100%;border:1px solid #aaa}figcaption{margin:12px 0}</style><h1>H04 opening only · ${width} × ${height} · ${revision}</h1><p>Visual review pending. Production has only synthetic opening checking/savings balances and no Current Plan or forecast. The approved reference has fictional values and a trajectory; compare hierarchy and disclosure, not amounts or forecast coverage.</p><main><figure><figcaption>Current application: synthetic H04 opening-only subset, idle forecast.</figcaption><img alt="Production H04 Overview first screen" src="${productionName}"></figure><figure><figcaption>Approved Calm reference: fictional Barlow household.</figcaption><img alt="Approved Calm Overview first screen" src="${referenceName}"></figure></main></html>`);
     await testInfo.attach(`overview-h04-comparison-${width}-${revision}`, { path: report, contentType: "text/html" });
     await captureExpandedOverview(page, testInfo, width, "h04-opening-only");
+    await captureCashEvidence(page, testInfo, width, "h04-opening-only");
   }
 });
 
@@ -169,6 +215,7 @@ test("synthetic account, income and forecast UX at desktop and narrow viewport",
     await writeFile(comparisonPath, `<!doctype html><html lang="en"><meta charset="utf-8"><title>Overview Calm review ${width}</title><style>body{font:16px system-ui;margin:24px}main{display:flex;align-items:start;gap:24px}figure{margin:0;min-width:0;flex:1}img{width:100%;border:1px solid #aaa}figcaption{margin:12px 0;line-height:1.5}</style><h1>Overview · ${width} × ${height} · ${revision}</h1><p>Visual review pending. Different synthetic examples: compare hierarchy, disclosures and presentation, not monetary values. Production status: ${await page.getByRole("status", { name: "Household forecast status", exact: true }).getAttribute("data-lifecycle")}.</p><main><figure><figcaption>Production: current application synthetic example at this checkout revision.</figcaption><img alt="Production Overview first screen" src="${productionName}"></figure><figure><figcaption>Approved Calm reference: fictional Barlow household from the checked-in prototype at the same revision. H04/H08 production fixture parity is not established.</figcaption><img alt="Approved Calm Overview first screen" src="${referenceName}"></figure></main></html>`);
     await testInfo.attach(`overview-comparison-${width}-${revision}`, { path: comparisonPath, contentType: "text/html" });
     await captureExpandedOverview(page, testInfo, width, "golden-supported");
+    await captureCashEvidence(page, testInfo, width, "flagship");
 
     await navigate(page, "Money", "Income");
     await capture("02-income", width);

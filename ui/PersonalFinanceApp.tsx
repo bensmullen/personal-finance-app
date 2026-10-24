@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CalmAction, CalmDisclosure, CalmMetric, CalmPageHeader, CalmPanel } from "./calm/CalmPresentation.js";
+import { CashChartDetails, CalmAction, CalmDisclosure, CalmMetric, CalmPageHeader, CalmPanel } from "./calm/CalmPresentation.js";
 import {
   Profiler,
   createContext,
@@ -918,15 +918,20 @@ export function PersonalFinanceApp() {
             <CalmAction primary onClick={() => navigateFromOverview("Plan", "Current Plan")}>Explore your plan</CalmAction>
             <CalmAction onClick={() => navigateFromOverview("Money", "Cash Flow")}>See monthly cash</CalmAction>
           </CalmPageHeader>}
+          {primary === "Money" && subnav === "Cash Flow" && <CalmPageHeader eyebrow="Cash · Income & spending" title="Your cash, coming in and going out." description="Follow account balances, income and spending. Gross wages are different from bank deposits.">
+            <CalmAction primary onClick={() => { setCashReturn(true); navigate("Money", "Income"); }}>Review income</CalmAction>
+            <CalmAction onClick={() => { setCashReturn(true); navigate("Money", "Spending"); }}>Edit spending</CalmAction>
+          </CalmPageHeader>}
           {cashReturn && !(primary === "Money" && subnav === "Cash Flow") && <div className="cash-return"><button type="button" onClick={() => { setCashReturn(false); navigate("Money", "Cash Flow"); requestAnimationFrame(() => document.querySelector<HTMLSelectElement>('.monthly-money select')?.focus()); }}>Return to Cash breakdown</button><small>Your selected modeled month is retained.</small></div>}
           {primary !== "Overview" && <section className="household-summary" aria-label="Household current summary">
             <div><p className="eyebrow">{objectEntries(draft, "Household").map(item => objectLabel("Household", item)).join(" · ") || "Household"} · as of {sessionSettings.asOf}</p>
               <p>Recorded current position · {position!.status} · {sessionSettings.baseCurrency}</p></div>
-            <dl><div><dt>Cash</dt><dd>{position!.cash?.display ?? "Unavailable"}</dd></div><div><dt>Debt</dt><dd>{position!.liabilities?.display ?? "Unavailable"}</dd></div><div><dt>Net worth</dt><dd>{position!.netWorth?.display ?? "Unavailable"}</dd></div></dl>
+            {!(primary === "Money" && subnav === "Cash Flow") && <dl><div><dt>Cash</dt><dd>{position!.cash?.display ?? "Unavailable"}</dd></div><div><dt>Debt</dt><dd>{position!.liabilities?.display ?? "Unavailable"}</dd></div><div><dt>Net worth</dt><dd>{position!.netWorth?.display ?? "Unavailable"}</dd></div></dl>}
             <details><summary>Sources &amp; basis</summary><p>Current-position read model from this household’s recorded accounts, holdings, assets and liabilities at {sessionSettings.asOf}; data cutoff {sessionSettings.dataCutoff}. These are current inputs, separate from forecast results.</p>
               <button onClick={() => navigate("Money", "Accounts")}>Review accounts</button> <button onClick={() => navigate("Net Worth", "Debt")}>Review debt</button> <button onClick={() => navigate("Net Worth", "Property & other assets")}>Review asset sources</button></details>
           </section>}
-          {primary !== "Overview" && <ForecastStatus label="Household forecast" state={interactive.baseline} />}
+          {primary !== "Overview" && <ForecastStatus label="Household forecast" state={interactive.baseline} compact={primary === "Money" && subnav === "Cash Flow"}
+            setupChanged={primary === "Money" && subnav === "Cash Flow" && setupChangesPending} />}
           {primary === "Overview" && <Overview
             position={position!} forecast={householdForecast} draft={draft} forecastState={interactive.baseline}
             asOf={sessionSettings.asOf} dataCutoff={sessionSettings.dataCutoff}
@@ -954,11 +959,19 @@ export function PersonalFinanceApp() {
             {setupMissing.length > 0 && <><h3>Here's what's needed to complete this forecast</h3><ul>{setupMissing.map(item => <li key={item.target}><button type="button" onClick={() => openForecastSetup(item)}>{item.message}</button></li>)}</ul></>}
           </section>}
           {primary !== "Overview" && <>
-          {interactive.available && !setupChangesPending && <button className="secondary forecast-update" onClick={runHouseholdForecast}>Update forecast</button>}
-          {settingsProblem && <p className="compact-blocker" role="alert">{settingsProblem} <button onClick={openForecastDates}>Review forecast dates</button></p>}
-          {setupMissing.filter(item => item.target !== "taxSetup").length > 0 && <section className="compact-blocker" aria-label="Required forecast corrections"><ul>{setupMissing.filter(item => item.target !== "taxSetup").map(item => <li key={item.target}><button onClick={() => openForecastSetup(item)}>{item.message}</button></li>)}</ul></section>}
-          {(!interactive.available || setupChangesPending) && <p className="compact-blocker" role="status">{setupMissing[0]?.message ?? "Forecast setup needs confirmation."} <button onClick={() => openForecastSetup(setupMissing[0])}>Review setup</button></p>}
-          {issues.length > 0 && <p className="compact-blocker" role="alert">{issues.length} recorded fact issues require review before relying on forecast results. <button onClick={() => { const panel = document.querySelector<HTMLDetailsElement>(".task-readiness"); if (panel) { panel.open = true; focusRepair(panel); } }}>Review recorded facts</button></p>}
+          {interactive.available && !setupChangesPending && !(primary === "Money" && subnav === "Cash Flow") && <button className="secondary forecast-update" onClick={runHouseholdForecast}>Update forecast</button>}
+          {primary === "Money" && subnav === "Cash Flow" ? <>
+            {(settingsProblem || issues.length > 0 || !interactive.available || setupChangesPending) && <div className="calm-blocker" role="alert" aria-label="Priority correction"><p>{settingsProblem || (issues.length ? "Recorded facts need attention before you rely on this forecast." : setupMissing[0]?.message ?? "Confirm forecast setup to see the path ahead.")}</p><CalmAction onClick={() => {
+              if (settingsProblem) openForecastDates();
+              else if (issues.length) { const panel = document.querySelector<HTMLDetailsElement>(".task-readiness"); if (panel) { panel.open = true; focusRepair(panel); } }
+              else openForecastSetup(setupMissing[0]);
+            }}>Review setup</CalmAction></div>}
+          </> : <>
+            {settingsProblem && <p className="compact-blocker" role="alert">{settingsProblem} <button onClick={openForecastDates}>Review forecast dates</button></p>}
+            {setupMissing.filter(item => item.target !== "taxSetup").length > 0 && <section className="compact-blocker" aria-label="Required forecast corrections"><ul>{setupMissing.filter(item => item.target !== "taxSetup").map(item => <li key={item.target}><button onClick={() => openForecastSetup(item)}>{item.message}</button></li>)}</ul></section>}
+            {(!interactive.available || setupChangesPending) && <p className="compact-blocker" role="status">{setupMissing[0]?.message ?? "Forecast setup needs confirmation."} <button onClick={() => openForecastSetup(setupMissing[0])}>Review setup</button></p>}
+            {issues.length > 0 && <p className="compact-blocker" role="alert">{issues.length} recorded fact issues require review before relying on forecast results. <button onClick={() => { const panel = document.querySelector<HTMLDetailsElement>(".task-readiness"); if (panel) { panel.open = true; focusRepair(panel); } }}>Review recorded facts</button></p>}
+          </>}
           </>}
           <details className="task-readiness">
           <summary>{issues.length ? "Recorded facts need attention" : setupChangesPending ? "Forecast setup changed" : !interactive.available ? "Forecast needs setup" : taxSetupProblem ? "Tax setup needs attention" : "Forecast actions & setup"}</summary>
@@ -1008,9 +1021,11 @@ export function PersonalFinanceApp() {
           {primary === "Money" && subnav === "Cash Flow" && (
             <CashFlow
               position={position!}
+              asOf={sessionSettings.asOf}
               forecast={householdForecast}
               draft={draft}
               run={runHouseholdForecast}
+              pending={interactive.baseline.pending}
               error={runSettingsError}
               selectedMonth={cashMonth}
               selectMonth={setCashMonth}
@@ -1603,8 +1618,10 @@ function MonthlyEvidence({ draft, forecast, mode, selectedMonth, selectMonth }: 
 }
 function CashFlow({
   position,
+  asOf,
   forecast,
   run,
+  pending,
   draft,
   error,
   selectedMonth,
@@ -1612,59 +1629,61 @@ function CashFlow({
   openOwner,
 }: {
   position: ReturnType<typeof getCurrentPosition>;
+  asOf: string;
   forecast: PersonalHouseholdForecastReadModel | undefined;
   run: () => void;
+  pending: boolean;
   draft: PersonalDraft;
   error: string;
   selectedMonth: string;
   selectMonth: (month: string) => void;
   openOwner: (section: string) => void;
 }) {
+  const cashSources = <CalmDisclosure title="Recorded cash sources and limitations">
+    <p>Recorded balances are as of {asOf}. Forecast cash includes bank and investment-account cash. Neither is a take-home paycheck estimate.</p>
+    {position.diagnostics.length > 0 && <DiagnosticList diagnostics={position.diagnostics} />}
+    <CalmAction onClick={() => openOwner("Accounts")}>Review account balances</CalmAction>
+  </CalmDisclosure>;
   return (
-    <>
-      <PageHead
-        eyebrow="Cash · Cash Flow"
-        title="What comes in and goes out?"
-        text="Follow monthly income, spending, and liquidity without losing the exact source values."
-      />
+    <div className="calm-cash">
       <nav className="cash-tasks" aria-label="Cash tasks">
         {(["Income", "Spending", "Accounts", "Insurance & coverage"] as const).map(section => <button key={section} type="button" aria-label={`Review ${section} sources`} onClick={() => openOwner(section)}>{section}</button>)}
       </nav>
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Cash balance and modeled activity</h2>
-          <button className="primary" onClick={run}>
-            Run cash-flow forecast
-          </button>
-        </div>
+      <section className="calm-cash-current" aria-label="Recorded cash today">
+        <article aria-label="Bank cash and savings"><p><strong>Bank cash and savings</strong> · <span className="calm-metric-value">{position.cash?.display ?? "Unavailable"}</span></p><small>Recorded bank accounts · as of {asOf}</small></article>
+        <article aria-label="Cash inside investment accounts"><p><strong>Cash inside investment accounts</strong> · <span className="calm-metric-value">{position.wrapperCash?.display ?? "Unavailable"}</span></p><small>Recorded investment accounts · as of {asOf}</small></article>
+      </section>
+      <section aria-label="How your cash may change" className="calm-panel calm-cash-charts">
+        <button type="button" className="calm-action" onClick={run} disabled={pending}>Run cash-flow forecast</button>
         {error && (
           <p className="field-error" role="alert">
             {error}
           </p>
         )}
+        {forecast && forecast.status !== "unavailable" && <>
+          {forecast.stoppedAt && <p className="chart-qualification" role="status">Forecast stopped at {forecast.stoppedAt.slice(0, 10)}; requested end {forecast.requestedHorizon.end.slice(0, 10)}.</p>}
+          {forecast.liquidityShortfalls.length > 0 && <p className="chart-qualification" role="alert">Modeled liquidity stress · {forecast.liquidityShortfalls.length} funding shortfalls. Review funding sources in Chart Details.</p>}
+        </>}
         {forecast?.status === "completed" ||
         forecast?.status === "incomplete" ? (
           <HouseholdForecastVisual
             forecast={forecast}
             draft={draft}
             cashFlowOnly
+            calm
+            cashSources={cashSources}
           />
         ) : forecast?.status === "unavailable" ? (
-          <DiagnosticList
+          <><p className="calm-empty" role="status">No supported cash trajectory is available. Recorded balances are shown above.</p><CashChartDetails title="Total modeled cash"><CalmDisclosure title="Why this forecast is unavailable"><DiagnosticList
             diagnostics={forecast.diagnostics}
             fallback={forecast.message}
-          />
+          /></CalmDisclosure>{cashSources}</CashChartDetails></>
         ) : (
-          <Empty text="No supported cash forecast yet. Run the household forecast to see its cash trend; no deposits or spending are inferred." />
+          <><Empty text="No supported cash forecast yet. Run the household forecast to see its cash trend; no deposits or spending are inferred." /><CashChartDetails title="Total modeled cash">{cashSources}</CashChartDetails></>
         )}
-      </section>
-      <section className="kpi-grid three">
-        <Kpi label="Monthly income" value={position.monthlyIncome?.display} />
-        <Kpi label="Monthly spending" value={position.monthlySpending?.display} />
-        <Kpi label="Net cash flow" value={position.monthlyCashFlow?.display} />
-      </section>
       <MonthlyEvidence draft={draft} forecast={forecast} mode="paycheck" selectedMonth={selectedMonth} selectMonth={selectMonth} />
-    </>
+      </section>
+    </div>
   );
 }
 function NetWorthOverview({
@@ -3622,6 +3641,7 @@ function HouseholdForecastVisual({
   draft,
   cashFlowOnly = false,
   calm = false,
+  cashSources,
 }: {
   forecast: Extract<
     PersonalHouseholdForecastReadModel,
@@ -3630,6 +3650,7 @@ function HouseholdForecastVisual({
   draft: PersonalDraft;
   cashFlowOnly?: boolean;
   calm?: boolean;
+  cashSources?: React.ReactNode;
 }) {
   const request = useContext(BrowserPerformanceScope);
   const models = useContext(FinancialResultModels);
@@ -3724,7 +3745,7 @@ function HouseholdForecastVisual({
     }}><HouseholdChart forecast={forecast} cashFlowOnly={cashFlowOnly} calm={calm}
       stale={!models.baseline || models.baseline.lastGoodResult !== forecast || models.baseline.resultModel !== draft || models.baseline.pending || models.baseline.stale || !!models.setupChangesPending}
       sourceFingerprint={models.baseline?.lastGoodResult === forecast ? models.baseline.resultFingerprint : undefined}
-      supporting={calm ? <CalmDisclosure title="Forecast assumptions and supporting details">{supporting}</CalmDisclosure> : undefined} /></Profiler>
+      supporting={calm ? <>{cashSources}<CalmDisclosure title="Forecast assumptions and supporting details">{supporting}</CalmDisclosure></> : undefined} /></Profiler>
     {calm && forecast.liquidityShortfalls.length > 0 && <p className="stress" role="alert">The forecast includes {forecast.liquidityShortfalls.length} cash shortfall(s). Some payments could not be fully funded. Review the payment accounts in forecast details before relying on this plan.</p>}
     {!calm && supporting}
   </>;
