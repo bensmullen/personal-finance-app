@@ -2,6 +2,64 @@ import * as React from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
+/** Small disclosures retain labels/IDs, never forecast payloads. */
+export function ContextDisclosure({ title, children, className = "" }: { title: ReactNode; children: ReactNode; className?: string }) {
+  const ref = React.useRef<HTMLDetailsElement>(null);
+  React.useEffect(() => {
+    const close = (event: PointerEvent | KeyboardEvent) => {
+      const root = ref.current;
+      if (!root?.open) return;
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== "Escape" || !root.contains(document.activeElement)) return;
+        event.preventDefault();
+        root.open = false;
+        root.querySelector("summary")?.focus();
+      } else if (!root.contains(event.target as Node)) root.open = false;
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", close);
+    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", close); };
+  }, []);
+  return <details ref={ref} className={`context-disclosure ${className}`}><summary>{title}</summary><div className="context-popover" onClick={event => {
+    if (!(event.target as Element).closest("[data-context-route]")) return;
+    if (ref.current) ref.current.open = false;
+  }}>{children}</div></details>;
+}
+
+export function forecastContextLabel(state: { pending: boolean; stale: boolean; lifecycle: string }, setupChanged = false) {
+  if (state.pending) return "Running";
+  if (state.lifecycle === "error") return "Failed";
+  if (state.lifecycle === "cancelled") return "Cancelled";
+  if (state.stale || setupChanged) return "Out of date";
+  return ({ completed: "Ready", incomplete: "Partial", unsupported: "Unsupported", idle: "Needs setup" } as Record<string, string>)[state.lifecycle] ?? "Unavailable";
+}
+
+export function SharedContextRibbon({ household, people, plan, modelStatus, modelDetails, forecast, save, saveLabel, storage, onPerson, onPeople }: {
+  household: string; people: readonly { id: string; label: string }[]; plan: string;
+  modelStatus: string; modelDetails: ReactNode; forecast: ReactNode;
+  save: () => void; saveLabel: string; storage: string;
+  onPerson: (id: string) => void; onPeople: () => void;
+}) {
+  const choose = (event: React.MouseEvent<HTMLButtonElement>, action: () => void) => {
+    const details = event.currentTarget.closest("details");
+    if (details) { details.open = false; details.querySelector("summary")?.focus(); }
+    action();
+  };
+  return <section className="shared-context" aria-label="Household & status">
+    <ContextDisclosure title={<><span className="context-household">{household}</span><span className="context-menu-hint"> · People</span></>} className="context-people">
+      <h2>Household &amp; People</h2>
+      <p>One household · member links open recorded people. Forecast scope stays household-wide.</p>
+      {people.length ? people.map(person => <button key={person.id} type="button" onClick={event => choose(event, () => onPerson(person.id))}>{person.label}</button>) : <p>No people recorded.</p>}
+      <button type="button" onClick={event => choose(event, onPeople)}>Add / edit household &amp; people</button>
+    </ContextDisclosure>
+    <div className="context-plan"><span>{plan}</span><small>Household forecast</small></div>
+    <ContextDisclosure title={`Model: ${modelStatus}`} className="context-model">{modelDetails}</ContextDisclosure>
+    {forecast}
+    <button className="context-save" type="button" onClick={save}>{saveLabel}</button>
+    <ContextDisclosure title="Storage & privacy" className="context-storage"><p>Manual save — edits stay in memory until saved.</p><p>{storage}</p></ContextDisclosure>
+  </section>;
+}
+
 /** Targets are scoped to one chart, never to the Cash page. */
 const CashDetailsTarget = React.createContext<HTMLElement | null | undefined>(undefined);
 export function CashDetailsContent({ children }: { children: ReactNode }) {

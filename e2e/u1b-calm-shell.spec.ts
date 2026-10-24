@@ -39,7 +39,7 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
     await page.keyboard.press("Enter");
     await expect(destinations).toBeVisible();
     await expect(more).toHaveAttribute("aria-expanded", "true");
-    await page.getByRole("region", { name: "Household current summary" }).click();
+    await page.getByRole("region", { name: "Household & status", exact: true }).locator(".context-plan").click();
     await expect(destinations).toHaveCount(0);
     await expect(more).toHaveAttribute("aria-expanded", "false");
     await more.click();
@@ -52,9 +52,10 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
   for (const label of ["Overview", "Cash", "Investing", "Real Estate", "Other Assets", "Debt", "Planning"]) {
     await clickFinancialDestination(page, label);
     await expect(page.getByRole("heading", { name: headings[label], exact: true })).toBeVisible();
-    const summary = page.getByRole("region", { name: "Household current summary" });
+    const summary = page.getByRole("region", { name: "Household & status", exact: true });
     await expect(summary).toBeVisible();
-    await expect(summary).toContainText("as of 2026-01-01");
+    await expect(summary).toContainText("As of 2026-01-01");
+    await expect(page.locator("#main-content .household-summary, #main-content > .forecast-status, #main-content > .forecast-coverage")).toHaveCount(0);
     const box = await summary.boundingBox();
     expect(box!.y + box!.height).toBeLessThan(900);
     expect(box!.x + box!.width).toBeLessThanOrEqual(width);

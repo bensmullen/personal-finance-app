@@ -454,6 +454,44 @@ main#main-content { padding: 24px 32px 64px; }
   .workspace > .subnav button { padding: 8px; }
   .panel.outlook { padding: 16px; }
 }
+/* One shared context ribbon. Popovers contain the existing source-owned details. */
+.app-shell > .topbar { height: auto; min-height: 72px; padding: 8px 20px; gap: 12px; align-items: center; position: relative; z-index: 10; }
+.app-shell.calm-shell > .topbar { grid-column: 1 / -1; padding: 8px 20px; }
+.calm-shell .topbar .brand { position: static; color: var(--ink); white-space: normal; }
+.shared-context { display: flex; align-items: center; flex: 1 1 0; flex-wrap: wrap; gap: 4px 12px; min-width: 0; font-size: .875rem; }
+.shared-context > * { min-width: 0; max-width: 100%; }
+.context-plan { flex: 1 1 9rem; overflow-wrap: anywhere; }
+.context-plan small { display: block; color: var(--muted); font-size: .875rem; }
+.context-disclosure > summary, .topbar :is(button, .calm-action) { min-height: 44px; font-size: .875rem; white-space: normal; overflow-wrap: anywhere; }
+.context-disclosure > summary { cursor: pointer; padding: 12px 6px; }
+.context-household { font-weight: 650; }
+.context-menu-hint { color: var(--muted); }
+.shared-context .context-forecast { display: flex; align-items: center; gap: 4px; margin: 0; padding: 0; border: 0; background: transparent; font-size: .875rem; }
+.context-forecast > .context-disclosure { flex-basis: auto; }
+.context-popover { position: absolute; z-index: 12; top: 100%; right: 12px; width: min(34rem, calc(100vw - 24px)); max-height: min(65svh, 36rem); overflow: auto; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: white; color: var(--ink); box-shadow: var(--shadow); font-size: 1rem; line-height: 1.5; overflow-wrap: anywhere; }
+.context-popover h2 { font-size: 1.125rem; margin-top: 0; }
+.context-popover button { color: var(--green-dark); background: white; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 4px; max-width: 100%; }
+.context-people .context-popover button { display: block; width: 100%; text-align: left; margin: 4px 0; }
+.context-save { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: white; color: var(--green-dark); }
+.result-warning { color: #805022; font-size: .9375rem; line-height: 1.5; }
+@media (min-width: 901px) {
+  .app-shell.calm-shell > .primary-nav { grid-row: 2; padding-top: 26px; }
+}
+@media (max-width: 1100px) {
+  .app-shell > .topbar { flex-wrap: wrap; }
+  .shared-context { flex-basis: 100%; order: 3; }
+  .topbar .settings-button { margin-left: auto; }
+}
+@media (max-width: 560px) {
+  .app-shell > .topbar, .app-shell.calm-shell > .topbar { padding: 8px 12px; gap: 4px; }
+  .shared-context { gap: 0 8px; }
+  .context-people { flex: 1 1 50%; }
+  .context-plan { flex-basis: 100%; order: 2; }
+  .context-storage { order: 3; }
+  .shared-context .context-forecast { flex: 1 1 100%; flex-wrap: wrap; justify-content: space-between; }
+  .context-popover { left: 12px; right: 12px; }
+  .shared-context :is(button, summary) { font-size: .875rem; }
+}
 /* Source-bound setup guidance remains readable in the existing Calm surfaces. */
 .starting-points, .forecast-coverage, .normalization-preview {
   min-width: 0;

@@ -126,6 +126,7 @@ test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and
   await test.step("Technical diagnostic provenance is deferred and remains accessible", async () => {
     const status = page.getByRole("status", { name: "Household forecast status", exact: true });
     await expect(status.locator("pre")).toHaveCount(0);
+    await status.locator(".context-disclosure > summary").click();
     await status.locator(".forecast-guidance > summary").click();
     const technical = status.locator("details").filter({ has: page.locator(":scope > summary", { hasText: /^Technical diagnostic details$/ }) });
     await technical.locator(":scope > summary").click();

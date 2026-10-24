@@ -1,6 +1,15 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { clickFinancialDestination, showReadiness, showForecastLimitations } from "./navigation.js";
+import { clickFinancialDestination, showReadiness, showForecastLimitations as showSourceForecastLimitations } from "./navigation.js";
+
+async function openRibbonForecast(page: import("@playwright/test").Page) {
+  const disclosure = page.locator(".context-forecast > .context-disclosure");
+  if (await disclosure.getAttribute("open") === null) await disclosure.locator(":scope > summary").click();
+}
+async function showForecastLimitations(page: import("@playwright/test").Page) {
+  await openRibbonForecast(page);
+  await showSourceForecastLimitations(page);
+}
 import {
   addPersonalObject,
   createEmptyPersonalDraft,
@@ -614,7 +623,9 @@ test("D1 plan dates and a funded mortgage payoff preserve contractual maturity",
   const mortgage = await openDebtOwner(page);
   await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("359");
   await expect(mortgage).toContainText("Schedule mismatch");
-  const correction = page.getByRole("region", { name: "Required forecast corrections" }).getByRole("button", { name: /Schedule differs from recorded maturity/ });
+  const blocker = page.getByRole("alert", { name: "Priority correction", exact: true });
+  await expect(blocker).toContainText("Schedule differs from recorded maturity");
+  const correction = blocker.getByRole("button", { name: "Review setup", exact: true });
   await expect(correction).toBeVisible();
   await correction.click();
   await expect(mortgage.getByLabel("Number of monthly payments", { exact: true })).toBeFocused();
@@ -703,6 +714,7 @@ test("D1 IRA and HSA edits preserve annual eligibility gaps and visible economic
   await showHouseholdDetails(page);
   // No 2027 filing assumption was accepted in this independent contribution
   // journey. Federal projected-law coverage needs that dated source first.
+  await openRibbonForecast(page);
   await expect(status.getByRole("button", { name: "Review 2027 filing status · Taylor Example", exact: true })).toBeVisible();
   await openContributions(page);
   // Future capacity rows require committed eligible contributions; projected
@@ -844,6 +856,7 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   const unsupported = page.getByRole("status", { name: "Household forecast status" });
   await expect(unsupported).toHaveAttribute("data-lifecycle", "unsupported");
   await expect(unsupported.locator(".forecast-primary-guidance")).toContainText(/scheduled monthly.*payment date/);
+  await openRibbonForecast(page);
   await expect(unsupported.locator(".forecast-primary-guidance")).toBeVisible();
   await expect(unsupported).toContainText("Old result — inputs changed; these numbers are not current.");
   await expect(unsupported.locator(".forecast-guidance")).not.toHaveAttribute("open");
@@ -1126,12 +1139,13 @@ test("D1-A Golden Household has no spurious retirement-event warning", async ({ 
   await expect(check).not.toContainText("RETIREMENT_BINDING_MISMATCH");
   // The historical NY fixture legitimately lacks payroll/local-tax coverage.
   // Inspect its actual diagnostic groups without requiring tax completeness.
-  await expect(check.locator("[data-diagnostic-root]").first()).toBeAttached();
-  await check.locator(".forecast-guidance > summary").click();
-  await check.getByText("Technical diagnostic details", { exact: true }).click();
-  await expect(check).not.toContainText("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
-  await expect(check).not.toContainText("RETIREMENT_BINDING_MISMATCH");
-  await expect(check).toContainText("PFA-TAX");
+  const forecast = page.getByRole("status", { name: "Household forecast status", exact: true });
+  await expect(forecast.locator("[data-diagnostic-root]").first()).toBeAttached();
+  await showForecastLimitations(page);
+  await forecast.getByText("Technical diagnostic details", { exact: true }).click();
+  await expect(forecast).not.toContainText("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
+  await expect(forecast).not.toContainText("RETIREMENT_BINDING_MISMATCH");
+  await expect(forecast).toContainText("PFA-TAX");
   await expect(page.getByRole("region", { name: "Your finances today", exact: true }).getByRole("article", { name: "Net worth", exact: true }).locator(".calm-metric-value")).toContainText("309330.29");
 });
 
@@ -1458,6 +1472,7 @@ for (const width of [390, 1440]) {
     await expect(status.locator(".forecast-primary-guidance")).toContainText("schedule this monthly forecast cannot execute");
     await expect(status.locator(".forecast-guidance")).not.toHaveAttribute("open");
     const repair = status.locator(".forecast-primary-guidance").getByRole("button", { name: "Review Frequency", exact: true });
+    await openRibbonForecast(page);
     await repair.click();
     await expect(editor.getByLabel("Frequency", { exact: true })).toBeFocused();
     await expect(editor.getByLabel("Frequency", { exact: true })).toBeVisible();
@@ -1527,7 +1542,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
   await page.getByRole("button", { name: "Investing", exact: true }).click();
   await page.locator(".subnav").getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByRole("heading", { name: "What do I own and owe?" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Household current summary" }).locator("dl > div").filter({ has: page.getByText("Net worth", { exact: true }) })).toContainText("309330.29");
+  await expect(page.locator(".kpi").filter({ has: page.getByText("Net worth", { exact: true }) })).toContainText("309330.29");
   await waitQueued();
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toHaveCount(0);
@@ -1692,7 +1707,7 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
 
   await page.getByRole("button", { name: "Investing", exact: true }).click();
   await page.locator(".subnav").getByRole("button", { name: "Overview", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Household current summary" }).locator("dl > div").filter({ has: page.getByText("Net worth", { exact: true }) })).toContainText("309330.29");
+  await expect(page.locator(".kpi").filter({ has: page.getByText("Net worth", { exact: true }) })).toContainText("309330.29");
   await expect(page.getByText("535000", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Planning", exact: true }).click();

@@ -16,7 +16,7 @@ const navigate = async (page: Page, area: string, section: string) => {
 const screenRegions = [
   ["head() / .head / .head-cta", "CalmPageHeader / .calm-page-header", "Matched structure and approved headline; 44px actions adapt prototype touch sizes."],
   [".sidebar / .navbtn / .mobileNav", "Primary navigation / .calm-shell", "235px teal sidebar and mobile More; seven existing financial destinations retained."],
-  [".topbar", "topbar / .calm-storage / household-summary", "Adapted for real manual Save/Export, storage privacy and source as-of; no fictional persona picker."],
+  [".topbar", "SharedContextRibbon / .shared-context / .context-disclosure", "One household/people/active-plan context and distinct Model/Forecast labels across destinations. Manual Save/Export and storage privacy remain independent; canonical Person links do not filter forecasts."],
   ["overview() / .primary-viz", "Overview / .calm-outlook / HouseholdChart", "Real V1 SVG from selector; no-forecast state has no fictional path. Review footprint at both widths."],
   ["moneyView() / .head-cta / .primary-viz.colstack", "Cash / CalmPageHeader / calm-cash-charts / MonthlyMoneyPanel", "Income and spending owner actions; recorded bank and wrapper cash remain separate; V2, V3 and V4 form a logical scroll sequence. No prototype amounts are imported."],
   [".metrics / .metric", "CalmMetric / .calm-metrics", "Three exact current source values; mobile two columns then full-width net worth. Scope differs from fictional sample."],
