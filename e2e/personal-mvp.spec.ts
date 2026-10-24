@@ -1783,7 +1783,11 @@ test("Money cash-flow run uses its explicit scope after Plan selects investments
   await page.getByLabel("Forecast scope", { exact: true }).selectOption("investments");
   await page.getByRole("button", { name: "Cash", exact: true }).click();
   await page.getByRole("button", { name: "Cash Flow", exact: true }).click();
-  await page.getByRole("button", { name: "Run cash-flow forecast" }).click();
+  const cashRun = page.getByRole("button", { name: "Run cash-flow forecast", exact: true });
+  await expect(cashRun).toHaveCount(1);
+  await expect(cashRun).toBeVisible();
+  await cashRun.focus();
+  await page.keyboard.press("Enter");
   await showHouseholdDetails(page, "baseline");
   await expect(
     page.getByRole("table", { name: "Reconciled household forecast" }),
@@ -1815,9 +1819,9 @@ test("money and net-worth workflows update friendly editors and forecast", async
   await page.getByRole("button", { name: "Cash Flow", exact: true }).click();
   await page.getByRole("button", { name: "Run cash-flow forecast" }).click();
   await expect(
-    page.getByText("Financial outcome · Modeled liquidity stress"),
+    page.getByRole("alert").filter({ hasText: /The forecast includes \d+ cash shortfall/ }),
   ).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText("No observed history loaded")).toBeVisible();
+  await expect(page.getByText(/No past account history is included/)).toBeVisible();
   await showHouseholdDetails(page, "baseline");
   await expect(
     page.getByRole("table", { name: "Reconciled household forecast" }),

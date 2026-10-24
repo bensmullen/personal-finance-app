@@ -1,10 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { clickFinancialDestination, navigateOwner, expectForecastWindow } from "./navigation.js";
-import { inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
+import { cashComparison, inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";
-import { addPersonalObject, createEmptyPersonalDraft, exportPersonalModelJson, type PersonalDraft } from "../src/application/personalMvp.js";
+import { addPersonalObject, createEmptyPersonalDraft, exportPersonalModelJson, getCurrentPosition, type PersonalDraft } from "../src/application/personalMvp.js";
 import { decimal } from "../src/values/index.js";
 import { formatExactMoney } from "../ui/entityPresentation.js";
 
@@ -105,6 +105,45 @@ async function appliedSource(page: Page) {
 }
 
 for (const width of [1440, 390]) {
+  test(`Calm Cash shows real flagship withholding and separate recorded balances at ${width}px`, async ({ page }) => {
+    await observe(page);
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
+    await expect(status(page)).toHaveAttribute("data-lifecycle", "completed", { timeout: 30_000 });
+    const model = JSON.parse(await exported(page)) as PersonalDraft;
+    await clickFinancialDestination(page, "Cash");
+    await expect(page.getByRole("heading", { name: "Your cash, coming in and going out.", exact: true })).toBeVisible();
+    const cashRun = page.getByRole("button", { name: "Run cash-flow forecast", exact: true });
+    await expect(cashRun).toHaveCount(1);
+    await expect(cashRun).toBeVisible();
+    await expect(cashRun).toBeEnabled();
+    const recorded = page.getByRole("region", { name: "Recorded cash today", exact: true });
+    await expect(recorded.getByRole("article", { name: "Bank cash and savings", exact: true })).toContainText("Recorded bank accounts · as of 2026-01-01");
+    await expect(recorded.getByRole("article", { name: "Cash inside investment accounts", exact: true })).toContainText("Recorded investment accounts · as of 2026-01-01");
+    const month = panel(page).getByLabel("paycheck forecast month", { exact: true });
+    await month.selectOption("2026-07");
+    await expect(month.locator("option:checked")).toHaveText("July 2026");
+    await expect(panel(page)).toHaveAttribute("data-evidence-state", "incomplete");
+    const source = await page.evaluate(() => {
+      const observed = window as typeof window & { __cashResults: ForecastWorkerResponse[] };
+      const response = observed.__cashResults.at(-1);
+      return response?.outcome === "result" ? response.result as PersonalHouseholdForecastReadModel : undefined;
+    });
+    if (!source || source.status === "unavailable") throw new Error("Expected actual flagship forecast");
+    const expected = inspectMonthlyMoney(source.points.find(point => point.periodStart.startsWith("2026-07"))!, model);
+    expect(expected.withholding).toBe("posted");
+    expect(decimal(expected.withholdingAmount!).isPositive()).toBe(true);
+    expect(expected.categories.some(item => item.label === "Employee retirement")).toBe(false);
+    await expect(panel(page)).toContainText(`${formatExactMoney(expected.withholdingAmount!, expected.currency)} · posted elections only`);
+    await expect(panel(page)).not.toContainText("Unknown · not modeled");
+    await expect(panel(page)).not.toContainText("excludes unmodeled withholding");
+    await panel(page).getByText("Exact monthly comparison & receipts", { exact: true }).click();
+    await expect(panel(page).getByRole("row", { name: /^Payroll withholding coverage/ }).getByRole("cell")).toContainText(formatExactMoney(expected.withholdingAmount!, expected.currency));
+    expect(cashComparison(expected)?.coherent).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+
   test(`Cash selected month matches real replay, exact table and immutable sources at ${width}px`, async ({ page }) => {
     await observe(page);
     await setup(page, width);
@@ -218,6 +257,7 @@ test("Cash owner edit/cancel/save retains month, marks old evidence stale and re
   await editor.getByRole("button", { name: "Save changes", exact: true }).click();
   await page.getByRole("button", { name: "Return to Cash breakdown", exact: true }).click();
   await expect(panel(page)).toHaveAttribute("data-evidence-state", "stale");
+  await expect(page.getByRole("button", { name: "Run cash-flow forecast", exact: true })).toBeVisible();
   await expect(panel(page)).toContainText("Out of date · retained forecast");
   await expect(panel(page).getByRole("img")).toHaveCount(0);
   await expect(month).toHaveValue("2026-02");
@@ -247,8 +287,8 @@ test("Missing replay offers retry and setup without phantom amounts or hiding V2
   await expect(page.getByRole("heading", { name: "Your current plan", exact: true })).toBeVisible();
 });
 
-test("H04 bank-only no forecast has an accessible mobile fallback and owner routes", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 900 });
+for (const width of [1440, 390]) test(`H04 bank-only no forecast has an accessible fallback and owner routes at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
   const id = (n: number) => `cc040000-0000-4000-8000-${String(n).padStart(12, "0")}`;
   let model = createEmptyPersonalDraft(id(1));
   model = addPersonalObject(model, "Household", id(2), { name: "H04 opening cash only", members: [id(3)] });
@@ -260,6 +300,9 @@ test("H04 bank-only no forecast has an accessible mobile fallback and owner rout
   await page.locator('input[type="file"]').setInputFiles({ name: "h04-cash.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(model)) });
   await page.getByRole("button", { name: "Import into session", exact: true }).click();
   await clickFinancialDestination(page, "Cash");
+  const position = getCurrentPosition(model, { asOf: "2026-01-01", baseCurrency: "USD" });
+  await expect(page.getByRole("article", { name: "Bank cash and savings", exact: true }).locator(".calm-metric-value")).toHaveText(position.cash!.display);
+  await expect(page.locator(".financial-chart")).toHaveCount(0);
   await expect(panel(page)).toHaveAttribute("data-evidence-state", "unavailable");
   await expect(panel(page)).toContainText("Monthly evidence unavailable");
   await expect(panel(page).getByRole("img")).toHaveCount(0);
@@ -268,4 +311,10 @@ test("H04 bank-only no forecast has an accessible mobile fallback and owner rout
   await expect(page.getByRole("button", { name: /H04 checking/ })).toBeVisible();
   await page.getByRole("button", { name: "Return to Cash breakdown", exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const cashRun = page.getByRole("button", { name: "Run cash-flow forecast", exact: true });
+  await expect(cashRun).toHaveCount(1);
+  await expect(cashRun).toBeVisible();
+  await cashRun.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "Your current plan", exact: true })).toBeVisible();
 });

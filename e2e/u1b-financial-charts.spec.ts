@@ -377,12 +377,12 @@ for (const width of [1440, 390]) {
     expect(monthly.points).toHaveLength(3);
     expect(annual.points).toHaveLength(1);
     await clickFinancialDestination(page, "Cash");
-    await expect(page.getByRole("heading", { name: "What comes in and goes out?", exact: true, level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Your cash, coming in and going out.", exact: true, level: 1 })).toBeVisible();
     const cash = page.getByRole("figure", { name: cashTitle, exact: true });
     const statements = page.getByRole("figure", { name: statementTitle, exact: true });
     await expect(cash).toBeVisible();
     await expect(statements).toBeVisible();
-    await expect(page.getByText(/No observed history loaded/)).toHaveCount(1);
+    await expect(page.getByText(/No past account history is included/)).toHaveCount(1);
     await expect(grouping(cash)).toHaveValue("annual");
     await expect(cash).toContainText("right axis: signed annual balance change");
     await expect(grouping(statements)).toHaveValue("monthly");

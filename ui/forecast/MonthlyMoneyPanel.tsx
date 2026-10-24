@@ -8,6 +8,7 @@ import { formatExactMoney, referenceLabel, objectEntries, objectId } from "../en
 import { FieldShell } from "../authoring/FieldShell.js";
 import { CashAllocation } from "./CashAllocation.js";
 import { useForecastEvidence } from "./useInteractiveForecast.js";
+import { CalmDisclosure } from "../calm/CalmPresentation.js";
 
 export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setup, coverageSetup, selectedMonth, selectMonth }: {
   draft: PersonalDraft; forecast?: PersonalHouseholdForecastReadModel | undefined; current: boolean;
@@ -30,17 +31,17 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
   const amount = (value: string) => formatExactMoney(value, detail?.currency ?? point?.cash.currency);
   const inspect = evidence.refresh;
   const holdingLink = (id: string) => <button key={id} type="button" onClick={() => review("Investment", id)}>{referenceLabel(draft, "Investment", id)}</button>;
-  return <section className="panel monthly-money" data-evidence-state={!point ? "unavailable" : !current ? "stale" : error ? "error" : detail ? "incomplete" : "loading"} aria-label={mode === "paycheck" ? "Your Paycheck" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments and transfers"}>
-    <div className="panel-head"><h2>{mode === "paycheck" ? "Where modeled income goes" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments & transfers"}</h2>
-      {!!points.length && <FieldShell fieldKey="moneyMonth" required><select aria-label={`${mode} forecast month`} value={point?.periodStart.slice(0, 7) ?? ""} onChange={event => (selectMonth ?? setSelected)(event.target.value)}>{points.map(value => <option key={value.periodStart} value={value.periodStart.slice(0, 7)}>{value.periodStart.slice(0, 10)} → {value.periodEnd.slice(0, 10)} (exclusive)</option>)}</select></FieldShell>}
+  const monthLabel = (value: string) => new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(value));
+  return <section className={`${mode === "paycheck" ? "calm-panel" : "panel"} monthly-money`} data-evidence-state={!point ? "unavailable" : !current ? "stale" : error ? "error" : detail ? "incomplete" : "loading"} aria-label={mode === "paycheck" ? "Your Paycheck" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments and transfers"}>
+    <div className="panel-head"><h2>{mode === "paycheck" ? "Explain this month’s income" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments & transfers"}</h2>
+      {!!points.length && <FieldShell fieldKey="moneyMonth" required><select aria-label={`${mode} forecast month`} value={point?.periodStart.slice(0, 7) ?? ""} onChange={event => (selectMonth ?? setSelected)(event.target.value)}>{points.map(value => <option key={value.periodStart} value={value.periodStart.slice(0, 7)}>{monthLabel(value.periodStart)}</option>)}</select></FieldShell>}
     </div>
     {!current || !point ? <><p role="status">{!point ? "Monthly evidence unavailable. This breakdown needs a supported household forecast." : "Out of date · retained forecast. Monthly evidence needs an update before it can be presented as current."}</p>
       {mode !== "paycheck" && objectEntries(draft, "Liability").filter(value => value.liability_type === "mortgage").map(value => <p key={objectId("Liability", value)}>{referenceLabel(draft, "Liability", objectId("Liability", value))} · Payment not available. Review contractual terms and payment funding in Forecast setup.</p>)}
       <button type="button" onClick={setup}>Review forecast setup</button></> : <>
-      <small>Household · modeled forecast · {point.periodStart.slice(0, 10)} to {point.periodEnd.slice(0, 10)} (exclusive)</small>
-      <small>Current forecast · {forecast?.status === "incomplete" ? "partial forecast horizon" : "selected modeled month"}. Monthly comparison only; annual funding coverage is unavailable.</small>
-      <button type="button" onClick={inspect}>Refresh selected month</button>
-      {!detail && !error && <p role="status">Loading this month's committed activity…</p>}
+      <p className="calm-caption">{monthLabel(point.periodStart)} · {mode === "paycheck" ? "Forecast income compared with uses posted in this month." : "Forecast payments and cash movements for this month."} {forecast?.status === "incomplete" && "Some forecast information is incomplete."}</p>
+      <CalmDisclosure title="Selected month dates and evidence"><p>Household forecast · {point.periodStart} to {point.periodEnd} (exclusive). This monthly comparison does not establish annual funding coverage.</p><button type="button" onClick={inspect}>Refresh selected month</button></CalmDisclosure>
+      {!detail && !error && <p role="status">Loading this month’s breakdown…</p>}
       {error && <><p role="alert">{error}</p><button type="button" onClick={inspect}>Retry selected month</button><button type="button" onClick={setup}>Review forecast setup</button></>}
       {detail && <>
         {mode === "paycheck" && <>
@@ -48,7 +49,7 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
           <small>Same-month income versus posted uses · opening savings and employer contributions excluded from income.</small>
           <CashAllocation draft={draft} detail={detail} review={review} setup={coverageSetup ?? setup} />
           {isPositiveMonthlyMoney(detail.otherIncome) && detail.basis === "gross_payroll" && <small>Other recurring income: {amount(detail.otherIncome)} · outside the payroll basis.</small>}
-          <small>Modeled bank deposits: {amount(detail.deposited)}. This excludes unmodeled withholding and is not an after-tax paycheck estimate.</small>
+          <small>Modeled bank deposits: {amount(detail.deposited)}. Includes the effect of any posted payroll deductions and withholding; not observed bank activity or proof of all taxes.</small>
           {objectEntries(draft, "Income").map(value => <button key={objectId("Income", value)} type="button" onClick={() => review("Income", objectId("Income", value))}>{referenceLabel(draft, "Income", objectId("Income", value))}</button>)}
         </>}
         <details open={mode !== "paycheck"}><summary>Inspect modeled cash uses</summary>
