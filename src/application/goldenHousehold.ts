@@ -91,6 +91,20 @@ export const createGoldenHouseholdForecastRequest = (
     runIdentity,
   );
 
+/** Interactive example, separate from the historical financial regression. */
+export const createGoldenExampleConfiguration = (): PersonalHouseholdSessionExecutionConfiguration => ({
+  ...createGoldenHouseholdSessionConfiguration(),
+  simulationEnd: "2080-02-01",
+  forecastLawPolicy: "projected_current_law",
+  taxSettlementSetup: {
+    paymentAccountId: GOLDEN_HOUSEHOLD_IDS.checking,
+    refundAccountId: GOLDEN_HOUSEHOLD_IDS.checking,
+    conventions: ["US:FEDERAL", "US:PA", "US:PA:PHILADELPHIA:WAGE"].map((jurisdiction, priority) => ({ jurisdiction, priority, monthDay: "04-15", confirmed: true })),
+  },
+  retirementBindings: [{ incomeId: GOLDEN_HOUSEHOLD_IDS.income, canonicalEventId: GOLDEN_HOUSEHOLD_IDS.retirementEvent,
+    terminationEventId: GOLDEN_HOUSEHOLD_IDS.retirementTerminationEvent, baselineDate: "2055-01-01" }],
+});
+
 export const createGoldenHouseholdScenarioIntents =
   (): readonly ExecutableScenarioIntent[] =>
     Object.freeze([

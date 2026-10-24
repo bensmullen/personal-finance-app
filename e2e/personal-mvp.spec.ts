@@ -5,6 +5,7 @@ import {
   addPersonalObject,
   createEmptyPersonalDraft,
   createGoldenHouseholdDraft,
+  createGoldenHouseholdExampleDraft,
   createSyntheticPersonalDraft,
   patchPersonalObject,
   exportPersonalModelJson,
@@ -28,9 +29,27 @@ import { forecastDiagnosticMessage } from "../ui/entityPresentation.js";
 import { compileHouseholdTax } from "../src/application/compiler/tax.js";
 import { resolveAnnualFinancialFact } from "../src/application/financialFacts.js";
 
-const loadExample = async (page: import("@playwright/test").Page) => {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Use synthetic example" }).click();
+const loadExample = async (page: import("@playwright/test").Page, model = createGoldenHouseholdExampleDraft(), deliveryHeld = false) => {
+  // Preserve the historical bounded D1 fixture. The flagship has independent
+  // one-click U1B coverage rather than changed historical financial assertions.
+  await importDraft(page, model);
+  await configureOwnedFunding(page);
+  await page.getByLabel("Simulation end", { exact: true }).fill("2036-01-01");
+  await configureTaxSettlement(page);
+  // Import drops session-only authorization. Accept the historical binding
+  // through its existing owner before exercising retirement comparisons.
+  await openPlanDetails(page);
+  await page.getByLabel("Baseline retirement income", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.income);
+  await page.getByLabel("Baseline canonical retirement event", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.retirementEvent);
+  await page.getByRole("button", { name: "Apply retirement binding", exact: true }).click();
+  await page.locator('[data-repair="lawScenario"]').check();
+  await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
+  if (!deliveryHeld) await test.step("Historical example worker settles on its bounded source horizon", async () => {
+    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+    await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
+  });
+  await clickFinancialDestination(page, "Overview");
   await expect(
     page.getByRole("heading", { name: "Know where you stand." }),
   ).toBeVisible();
@@ -162,10 +181,18 @@ const configureTaxSettlement = async (page: import("@playwright/test").Page) => 
   for (const jurisdiction of ["US:FEDERAL", "US:NY"]) {
     const confirmation = panel.getByLabel(`Confirm ${jurisdiction} forecast settlement convention`, { exact: true });
     if (await confirmation.count() === 0) continue;
+    const name = jurisdiction === "US:FEDERAL" ? "Federal income tax" : "New York";
+    const summary = panel.locator("details > summary").filter({ hasText: name }).first();
+    await expect(summary).toBeVisible();
+    if (await summary.locator("..").getAttribute("open") === null) await summary.click({ timeout: 10_000 });
     await panel.getByRole("button", { name: `Suggest April 15 for ${jurisdiction === "US:FEDERAL" ? "Federal income tax" : "New York"}`, exact: true }).click();
     await expect(confirmation).not.toBeChecked();
     await confirmation.check();
   }
+  // New explicit law-scenario choice is an actual user action; never bypass
+  // consent just to recover historical end-to-end financial setup assertions.
+  const law = page.getByRole("checkbox", { name: "Use projected current-law scenario", exact: true });
+  if (await law.count()) await law.check();
 };
 
 test("D1-B normal investment controls persist a bank-funded operation without compiler IDs", async ({ page }) => {
@@ -259,7 +286,7 @@ const configureOwnedFunding = async (page: import("@playwright/test").Page, opti
   const mortgage = await openDebtOwner(page);
   await page.getByLabel("Debt owner", { exact: true }).selectOption({ label: "Taylor Example" });
   await mortgage.getByLabel("First monthly payment", { exact: true }).fill("2022-02-01");
-  if (options.calculateSchedule) await mortgage.getByRole("button", { name: "Calculate schedule: use 360 payments from first payment through recorded maturity", exact: true }).click();
+  if (options.calculateSchedule) await mortgage.getByRole("button", { name: "Confirm derived original count · 360", exact: true }).click();
   else await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("360");
   await expect(mortgage.getByLabel("Number of monthly payments", { exact: true })).toHaveValue("360");
   await mortgage.getByLabel("Mortgage payment account", { exact: true }).selectOption({ label: "Everyday checking" });
@@ -273,7 +300,15 @@ const importDraft = async (
   draft: unknown,
 ) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Use synthetic example" }).click();
+  // Import-only journeys need a normal workspace, not an unrelated age-90
+  // worker racing their bounded historical forecast. Keep flagship one-click
+  // execution in its independent full-horizon acceptance cases.
+  for (const [label, value] of [["Household name", "Import workspace"], ["Monthly income", "0"], ["Opening cash balance", "0"], ["Asset cost basis", "0"], ["Current debt", "0"], ["Monthly spending", "0"]] as const) {
+    await page.getByLabel(label, { exact: true }).fill(value);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+  }
+  await page.getByLabel("Projection horizon (years)", { exact: true }).fill("1");
+  await page.getByRole("button", { name: "Finish setup", exact: true }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page
     .getByRole("button", { name: "Import / Export", exact: true })
@@ -287,6 +322,40 @@ const importDraft = async (
 };
 
 const rawUuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+const isJsonObject = (value: unknown): value is JsonObject =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+test("historical import starts no unrelated flagship worker before execution consent", async ({ page }) => {
+  await page.addInitScript(() => {
+    const observed = window as typeof window & { __historicalWorkerCount: number };
+    observed.__historicalWorkerCount = 0;
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        observed.__historicalWorkerCount++;
+      }
+    };
+  });
+  await importDraft(page, createGoldenHouseholdExampleDraft());
+  await expect(page.getByRole("status", { name: "Household forecast status", exact: true })).toHaveAttribute("data-lifecycle", "idle");
+  expect(await page.evaluate(() => (window as typeof window & { __historicalWorkerCount: number }).__historicalWorkerCount)).toBe(0);
+});
+
+const runIntegratedHistoricalForecast = async (page: import("@playwright/test").Page) => {
+  await page.getByRole("button", { name: "Planning", exact: true }).click();
+  await openAuthoringSections(page);
+  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
+  await openAuthoringSections(page);
+  await configureOwnedFunding(page, { calculateSchedule: true });
+  await configureTaxSettlement(page);
+  await page.getByRole("region", { name: "Household execution configuration" }).getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
+  const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+  await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
+  return status;
+};
 
 test("U1 insurance has one policy owner, optional shared life events and durable legacy links", async ({ page }, testInfo) => {
   const errors: string[] = [];
@@ -415,7 +484,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   await openSalaryFacts(page);
   const checklist = page.getByRole("region", { name: "Forecast setup checklist" });
   await showReadiness(page);
-  for (const missing of ["Income receiving account", "Investment owner", "Debt owner", "first monthly payment", "number of monthly payments", "mortgage payment account", "same-day mortgage order"]) {
+  for (const missing of ["Income receiving account", "Investment owner", "Debt owner", "first monthly payment", "original payment count", "mortgage payment account", "same-day mortgage order"]) {
     await expect(checklist).toContainText(missing);
   }
   await expect(checklist).toContainText("clears session-only forecast choices");
@@ -423,9 +492,9 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   const configuration = page.getByRole("region", { name: "Household execution configuration" });
   await configureOwnedFunding(page, { missingIncome: true });
   await configureTaxSettlement(page);
-  await expect(checklist).toContainText("Required choices are complete");
-  await configuration.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
-  await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
+  // Accepted, fully sourced setup automatically drives the existing worker;
+  // the missing-choices checklist may disappear before a manual Apply click.
+  await expect(status).toHaveAttribute("data-lifecycle", "incomplete", { timeout: 60_000 });
   await expect(status).not.toHaveAttribute("data-request-id", originalRequest!);
   await expect(status).toContainText("New York");
   await openContributions(page);
@@ -505,13 +574,20 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   expect(errors).toEqual([]);
 });
 
-test("D1 resolved decisions extend plan dates, guide tax setup and continue projected ten-year contributions", async ({ page }) => {
+test("D1 plan dates and a funded mortgage payoff preserve contractual maturity", async ({ page }) => {
   test.setTimeout(120_000);
   page.setDefaultTimeout(10_000);
   const errors: string[] = [];
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   page.on("pageerror", error => errors.push(error.message));
-  await loadExample(page);
+  // Explicit synthetic opening cash funds the $300,000 extra-principal test.
+  // The ordinary historical fixture cannot fund that payment from bank cash.
+  const historical = createGoldenHouseholdExampleDraft();
+  const funded = { ...historical, objects: { ...historical.objects,
+    Account: historical.objects.Account!.map(account => isJsonObject(account) && account.account_id === GOLDEN_HOUSEHOLD_IDS.checking
+      ? { ...account, opening_balance: "400000.00" } : account),
+  } };
+  await loadExample(page, funded);
   await openSalaryFacts(page);
   await page.getByRole("button", { name: "Planning", exact: true }).click();
   await openAuthoringSections(page);
@@ -553,16 +629,27 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await operations.getByLabel("Extra principal checking / savings account", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.checking);
   await operations.getByLabel("Operation date", { exact: true }).fill("2031-01-01");
   await operations.getByLabel("Operation cash amount", { exact: true }).fill("300000");
+  const beforeExtra = await status.getAttribute("data-fingerprint");
   await operations.getByRole("button", { name: "Save activity", exact: true }).click();
   await returnToCurrentPlan(page);
-  await expect(page.getByRole("region", { name: "Projected mortgage payoff" })).toContainText("2031-01-01", { timeout: 30_000 });
+  await test.step("Funded extra principal settles in the current worker result and shows its payoff", async () => {
+    await expect(status).not.toHaveAttribute("data-fingerprint", beforeExtra!);
+    await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+    await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
+    await expect(page.getByRole("region", { name: "Projected mortgage payoff" })).toContainText("2031-01-01");
+  });
   await openDebtOwner(page);
   await expect(mortgage).toContainText("Contractual final payment / maturity: 2052-01-01");
+  expect(errors).toEqual([]);
+});
 
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Import / Export", exact: true }).click();
-  await page.locator('input[type="file"]').setInputFiles("test/fixtures/d1-integrated-uat-model.json");
-  await page.getByRole("button", { name: "Import into session", exact: true }).click();
+test("D1 IRA and HSA edits preserve annual eligibility gaps and visible economic consequences", async ({ page }) => {
+  test.setTimeout(120_000);
+  page.setDefaultTimeout(10_000);
+  const errors: string[] = [];
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  page.on("pageerror", error => errors.push(error.message));
+  await importDraft(page, importPersonalModelJson(await readFile(new URL("../test/fixtures/d1-integrated-uat-model.json", import.meta.url), "utf8")));
   await openSalaryFacts(page);
   const manage = async (accountName: string, symbol: string) => {
     await page.getByRole("button", { name: "Investing", exact: true }).click();
@@ -607,37 +694,17 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   expect(hsa).toHaveLength(1); expect(hsa[0]!.allocation.calculation).toMatchObject({ kind: "fixed", amount: expect.objectContaining({}) });
   expect(hsa[0]!.allocation.policy.facts.annualFactProjection).toBeUndefined();
   if (hsa[0]!.allocation.calculation.kind === "fixed") expect(hsa[0]!.allocation.calculation.amount.amount.toString()).toBe("101");
-  await page.getByRole("button", { name: "Planning", exact: true }).click();
-  await openAuthoringSections(page);
-  await page.getByRole("button", { name: "Current Plan", exact: true }).click();
-  await openAuthoringSections(page);
-  const configuration = page.getByRole("region", { name: "Household execution configuration" });
-  await configureOwnedFunding(page, { calculateSchedule: true });
-  await configureTaxSettlement(page);
-  await configuration.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
-  await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
-  // Projected statutory law cannot supply a household's future filing facts.
-  // Confirm this synthetic household's 2027 assumption through its sole editor;
-  // all other future annual eligibility facts intentionally remain unknown.
+  const status = await runIntegratedHistoricalForecast(page);
   await showForecastLimitations(page);
-  await status.getByRole("button", { name: "Review 2027 filing status · Taylor Example", exact: true }).click();
-  const filing = page.getByRole("dialog", { name: "Edit Annual household filing status", exact: true });
-  await filing.getByLabel("Annual household filing status", { exact: true }).selectOption("single");
-  const beforeFilingRequest = await status.getAttribute("data-request-id");
-  await filing.getByRole("button", { name: "Confirm & save fact", exact: true }).click();
-  await expect(filing).toHaveCount(0);
-  await expect(status).not.toHaveAttribute("data-request-id", beforeFilingRequest!, { timeout: 30_000 });
-  await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
-  await showForecastLimitations(page);
-  await expect(status.getByRole("button", { name: "Review 2028 filing status · Taylor Example", exact: true })).toBeVisible();
   await expect(page.getByRole("alert", { name: "Forecast stopped early" })).toHaveCount(0);
   await expect(page.getByText("Completed through 2036-01-01 · Some outputs are partially modeled", { exact: true })).toBeVisible();
   await showHouseholdDetails(page);
-  const basis = page.getByRole("region", { name: "Projected law forecast basis" });
-  await expect(basis).toContainText("US:FEDERAL: 2026 source rules projected from 2027-01-01");
+  // No 2027 filing assumption was accepted in this independent contribution
+  // journey. Federal projected-law coverage needs that dated source first.
+  await expect(status.getByRole("button", { name: "Review 2027 filing status · Taylor Example", exact: true })).toBeVisible();
   await openContributions(page);
   // Future capacity rows require committed eligible contributions; projected
-  // tax law and one filing fact cannot create an annual contribution allowance.
+  // tax law cannot create an annual contribution allowance.
   const capacity = page.getByRole("region", { name: "Contribution capacity" });
   await expect(capacity).not.toContainText("Projected current law");
   await expect(capacity.locator("tbody tr").filter({ hasText: /\/ 2027\b/ })).toHaveCount(0);
@@ -658,6 +725,39 @@ test("D1 resolved decisions extend plan dates, guide tax setup and continue proj
   await expect(status.locator("pre").filter({ hasText: "Recognized wages lack complete source-bound employer withholding and executed net-pay coverage for every pay occurrence and required jurisdiction." }).first()).toBeVisible();
   expect(roots.some(root => root.includes("contribution_annual_facts"))).toBe(true);
   expect(errors).toEqual([]);
+});
+
+test("D1 annual filing repair changes only its dated year and retains later-year gaps", async ({ page }) => {
+  test.setTimeout(120_000);
+  await importDraft(page, importPersonalModelJson(await readFile(new URL("../test/fixtures/d1-integrated-uat-model.json", import.meta.url), "utf8")));
+  await openSalaryFacts(page);
+  const status = await runIntegratedHistoricalForecast(page);
+  // Exercise this sole owner independently of mortgage/contribution authoring.
+  // Projected statutory law cannot supply future household filing facts.
+  await showForecastLimitations(page);
+  await status.getByRole("button", { name: "Review 2027 filing status · Taylor Example", exact: true }).click();
+  const filing = page.getByRole("dialog", { name: "Edit Annual household filing status", exact: true });
+  await filing.getByLabel("Annual household filing status", { exact: true }).selectOption("single");
+  const beforeFilingRequest = await status.getAttribute("data-request-id");
+  await filing.getByRole("button", { name: "Confirm & save fact", exact: true }).click();
+  await expect(filing).toHaveCount(0);
+  await expect(status).not.toHaveAttribute("data-request-id", beforeFilingRequest!, { timeout: 30_000 });
+  await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
+  await showForecastLimitations(page);
+  await expect(status.getByRole("button", { name: "Review 2027 filing status · Taylor Example", exact: true })).toHaveCount(0);
+  await expect(status.getByRole("button", { name: "Review 2028 filing status · Taylor Example", exact: true })).toBeVisible();
+  await expect(page.getByRole("alert", { name: "Forecast stopped early" })).toHaveCount(0);
+  await expect(page.getByText("Completed through 2036-01-01 · Some outputs are partially modeled", { exact: true })).toBeVisible();
+  await showHouseholdDetails(page);
+  const basis = page.getByRole("region", { name: "Projected law forecast basis" });
+  await expect(basis).toBeVisible();
+  const coverage = basis.getByText("Projected law coverage dates", { exact: true });
+  if (await coverage.count() && await coverage.locator("..").getAttribute("open") === null) await coverage.click();
+  await expect(basis).toContainText("US:FEDERAL: 2026 source rules projected from 2027-01-01");
+  const identities = basis.getByText("Projected source rule identities", { exact: true });
+  await identities.click();
+  await expect(basis.getByRole("listitem").filter({ hasText: /US:FEDERAL.*base year 2026/ }).first()).toBeVisible();
 });
 
 test("D1-C authors, saves, reloads and runs a combined household through normal controls", async ({ page }, testInfo) => {
@@ -1021,8 +1121,15 @@ test("D1-A Golden Household has no spurious retirement-event warning", async ({ 
   await coverage.click();
   await expect(check.getByText("Current-position sources are supported.", { exact: true })).toBeVisible();
   await expect(check).not.toContainText("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
-  await expect(check.locator("[data-diagnostic-root]")).toHaveCount(0);
-  await expect(check.getByText("Technical diagnostic details", { exact: true })).toHaveCount(0);
+  await expect(check).not.toContainText("RETIREMENT_BINDING_MISMATCH");
+  // The historical NY fixture legitimately lacks payroll/local-tax coverage.
+  // Inspect its actual diagnostic groups without requiring tax completeness.
+  await expect(check.locator("[data-diagnostic-root]").first()).toBeAttached();
+  await check.locator(".forecast-guidance > summary").click();
+  await check.getByText("Technical diagnostic details", { exact: true }).click();
+  await expect(check).not.toContainText("MONTHLY_FLOW_EVENT_SEMANTICS_UNSUPPORTED");
+  await expect(check).not.toContainText("RETIREMENT_BINDING_MISMATCH");
+  await expect(check).toContainText("PFA-TAX");
   await expect(page.getByRole("region", { name: "Your finances today", exact: true }).getByRole("article", { name: "Net worth", exact: true }).locator(".calm-metric-value")).toContainText("309330.29");
 });
 
@@ -1154,7 +1261,10 @@ for (const [field, value, code, message] of [
     await expect(standalone.locator("[data-diagnostic-root]").getByText(new RegExp(message))).toBeVisible();
     expect(await standalone.innerText()).not.toMatch(rawUuid);
     expect(await standalone.innerText()).not.toMatch(/rate-basis contract|VS3|INVESTMENT_.*UNSUPPORTED/);
+    await expect(standalone.locator("pre")).toHaveCount(0);
     await standalone.getByText("Technical diagnostic details", { exact: true }).click();
+    await expect(standalone.locator("pre")).toHaveCount(0);
+    await standalone.locator("details > summary").filter({ hasText: code }).click();
     await expect(standalone.locator("pre")).toContainText(code);
     await page.getByRole("button", { name: "Investing", exact: true }).click();
     await page.getByRole("button", { name: "Investments & retirement", exact: true }).click();
@@ -1191,7 +1301,10 @@ test("R4 UAT preserves incompatible expense funding with actionable diagnostics"
   await expect(standalone.locator("[data-diagnostic-root]")).toContainText("checking, savings, or cash");
   expect(await standalone.innerText()).not.toMatch(rawUuid);
   expect(await standalone.innerText()).not.toMatch(/valid non-cash payment Account|PAYMENT_ACCOUNT_TYPE_UNSUPPORTED/);
+  await expect(standalone.locator("pre")).toHaveCount(0);
   await standalone.getByText("Technical diagnostic details", { exact: true }).click();
+  await expect(standalone.locator("pre")).toHaveCount(0);
+  await standalone.locator("details > summary").filter({ hasText: "PAYMENT_ACCOUNT_TYPE_UNSUPPORTED" }).click();
   await expect(standalone.locator("pre")).toContainText("PAYMENT_ACCOUNT_TYPE_UNSUPPORTED");
   await page.getByRole("button", { name: "Cash", exact: true }).click();
   await page.getByRole("button", { name: "Spending", exact: true }).click();
@@ -1404,7 +1517,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
     const index = control.queue.findIndex((item: any) => String(item.requestId) === status.dataset.requestId && item.fingerprint === status.dataset.fingerprint);
     control.queue.splice(index, 1)[0].deliver();
   });
-  await loadExample(page);
+  await loadExample(page, createGoldenHouseholdExampleDraft(), true);
   await page.getByRole("button", { name: "Planning", exact: true }).click();
   await page.getByRole("button", { name: "Current Plan", exact: true }).click();
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-02-01");
@@ -1487,8 +1600,11 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
 test("guided setup reaches the Personal-MVP overview", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Guided setup · 1 of 7")).toBeVisible();
-  for (let step = 0; step < 6; step += 1)
+  for (const [label, value] of [["Household name", "My household"], ["Monthly income", "6000.00"], ["Opening cash balance", "5000.00"], ["Asset cost basis", "350000.00"], ["Current debt", "235000.00"], ["Monthly spending", "4200.00"]]) {
+    await page.getByLabel(label!, { exact: true }).fill(value!);
     await page.getByRole("button", { name: "Continue" }).click();
+  }
+  await page.getByLabel("Projection horizon (years)", { exact: true }).fill("10");
   await page.getByRole("button", { name: "Finish setup" }).click();
   await expect(
     page.getByText("Your starting financial picture is ready"),
@@ -2016,9 +2132,18 @@ test("What If executes deterministic investment return", async ({ page }) => {
   });
   await configureOwnedFunding(page);
   await configureTaxSettlement(page);
+  // Imported models do not preserve session-only law consent. Confirm it
+  // explicitly before the bounded historical What-If baseline may run.
+  await page.locator('[data-repair="lawScenario"]').check();
+  await expect(configuration.getByRole("button", { name: "Apply setup & run forecast" })).toBeEnabled();
   await configuration
     .getByRole("button", { name: "Apply setup & run forecast" })
     .click();
+  await test.step("Investment-return source baseline finishes before comparison", async () => {
+    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+    await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
+  });
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   await page.getByLabel("Investment target", { exact: true }).selectOption({ index: 1 });
   await page.getByLabel("Annual growth / return", { exact: true }).fill("7");

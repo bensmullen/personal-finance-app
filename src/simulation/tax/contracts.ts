@@ -6,6 +6,8 @@ import type { CalculationTraceRef } from "../../lineage/index.js";
 import type { FilingStatus, TaxCoreRule, TaxIncomeFacts, TaxJurisdictionFacts } from "../../rules/tax/contracts.js";
 import type { Instant } from "../../time/index.js";
 import type { Money } from "../../values/index.js";
+import { canonicalSerialize } from "../run.js";
+import { immutableConfiguration } from "../r3/compiledHousehold.js";
 
 /** Shared payroll/accrual identity; never open a second withholding position. */
 export const taxBalanceIds = (jurisdiction: string, year: string) => {
@@ -151,6 +153,30 @@ export interface OutputTaxCapability {
   readonly diagnostics: readonly TaxCapabilityDiagnostic[];
 }
 export type TaxOutputCapabilities = Readonly<Record<string, OutputTaxCapability>>;
+const diagnosticSnapshots = new WeakSet<TaxCapabilityDiagnostic>();
+/** Only this deep-copy boundary establishes memoizable diagnostic identity. */
+export const isTaxDiagnosticSnapshot = (diagnostic: TaxCapabilityDiagnostic): boolean => diagnosticSnapshots.has(diagnostic);
+/** Exact, calculation-local equality keys; published diagnostics stay intact. */
+export const createTaxDiagnosticKey = () => {
+  const catalogs = new Map<string, number>();
+  const token = (value: string): number => {
+    let id = catalogs.get(value);
+    if (id === undefined) { id = catalogs.size; catalogs.set(value, id); }
+    return id;
+  };
+  return (diagnostic: TaxCapabilityDiagnostic): string => {
+    const law = diagnostic.projectedLaw;
+    if (law === undefined) return canonicalSerialize(diagnostic);
+    // Catalog identities are complete canonical content strings, not digests.
+    // Intern them by exact string equality rather than copying/escaping the
+    // entire catalog twice into each diagnostic's temporary deduplication key.
+    return canonicalSerialize({ ...diagnostic, projectedLaw: { ...law,
+      catalogFingerprint: token(law.catalogFingerprint),
+      ...(law.assumption === undefined ? {} : { assumption: { ...law.assumption,
+        catalogFingerprint: token(law.assumption.catalogFingerprint) } }),
+    } });
+  };
+};
 export const taxAffectedOutputs = Object.freeze(["cash", "investmentValue", "assets", "totalAssets", "liabilities", "totalLiabilities", "netWorth", "statementExpenses", "netIncome", "operatingCashFlow", "investingCashFlow", "financingCashFlow", "investmentContributionPrincipal", "contributionPrincipal", "investmentFees", "debtPrincipalReduction", "principalReduction", "endingPrincipal", "outstandingInterest", "interestExpense", "debtBalances", "fees", "gains", "unrealizedGain", "expenseCashSettlement", "outstandingExpenseObligations", "constraintOutcomes", "liquidityShortfalls"]);
 export const taxDiagnostic = (category: string, message: string, jurisdiction?: string, entityId?: string): TaxCapabilityDiagnostic => Object.freeze({
   severity: "warning", code: "PFA-TAX-009", entityType: "tax_capability", category, message,
@@ -168,13 +194,25 @@ export const isNonblockingProjectedTaxLaw = (diagnostic: TaxCapabilityDiagnostic
     diagnostic.jurisdiction !== undefined && law.effectiveFrom < law.effectiveUntil &&
     law.effectiveUntil <= `${selection.through}T00:00:00.000Z`;
 };
-export const taxOutputCapabilities = (diagnostics: readonly TaxCapabilityDiagnostic[], selection?: ProjectedCurrentLawAssumption): TaxOutputCapabilities => Object.freeze(Object.fromEntries([
-  ...taxAffectedOutputs.map(field => [field, Object.freeze({ dependency: "tax_affected", status: diagnostics.some(diagnostic => !isNonblockingProjectedTaxLaw(diagnostic, selection)) ? "incomplete" : "complete", diagnostics: Object.freeze([...diagnostics]) })]),
-  ...["statementIncome", "recurringIncomeRecognized", "recurringExpenseRecognized", "currentPosition"].map(field => {
-    const applicable = diagnostics.filter(diagnostic => diagnostic.affectedOutputs.includes(field));
-    return [field, Object.freeze({ dependency: "tax_independent", status: applicable.length ? "incomplete" : "complete", diagnostics: Object.freeze(applicable) })];
-  }),
-]));
+export const taxOutputCapabilities = (diagnostics: readonly TaxCapabilityDiagnostic[], selection?: ProjectedCurrentLawAssumption): TaxOutputCapabilities => {
+  const snapshots = immutableConfiguration(diagnostics);
+  for (const diagnostic of snapshots) diagnosticSnapshots.add(diagnostic);
+  // Every tax-affected field has precisely the same capability semantics and
+  // diagnostic sequence. Share the immutable value rather than cloning this
+  // potentially long annual warning history once per output per period.
+  const affected: OutputTaxCapability = Object.freeze({
+    dependency: "tax_affected",
+    status: snapshots.some(diagnostic => !isNonblockingProjectedTaxLaw(diagnostic, selection)) ? "incomplete" : "complete",
+    diagnostics: snapshots,
+  });
+  return Object.freeze(Object.fromEntries([
+    ...taxAffectedOutputs.map(field => [field, affected]),
+    ...["statementIncome", "recurringIncomeRecognized", "recurringExpenseRecognized", "currentPosition"].map(field => {
+      const applicable = snapshots.filter(diagnostic => diagnostic.affectedOutputs.includes(field));
+      return [field, Object.freeze({ dependency: "tax_independent", status: applicable.length ? "incomplete" : "complete", diagnostics: Object.freeze(applicable) })];
+    }),
+  ]));
+};
 export interface RecognizedTaxEconomics {
   /** Bounded ordinary lump-sum term-life proceeds excluded from federal gross income. */
   readonly excludedFederalTermLifeBenefit?: Money;

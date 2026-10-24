@@ -1,6 +1,7 @@
 "use client";
-import { cloneElement, useId, useState, useEffect, type ReactElement, type InputHTMLAttributes, type SelectHTMLAttributes, type ReactNode } from "react";
+import { cloneElement, useId, useState, useEffect, type ChangeEvent, type ReactElement, type InputHTMLAttributes, type SelectHTMLAttributes, type ReactNode } from "react";
 import { financialField, fieldProblem, type FinancialField } from "./fieldContract.js";
+import { normalizePersonalInput } from "../forecast/PersonalInputNormalizer.js";
 
 type Control = ReactElement<InputHTMLAttributes<HTMLInputElement> & SelectHTMLAttributes<HTMLSelectElement>>;
 export const confirmationField = (key: string) => ["ytdConfirmed", "taxConfirm", "operationAcceptance", "samePlan"].includes(key);
@@ -33,12 +34,26 @@ export function FieldShell({ fieldKey, children, required = false, error, hint, 
   fieldKey: string; children: Control; required?: boolean; error?: string | undefined; hint?: string; repairKey?: string | undefined; presentation?: FinancialField | undefined;
 }) {
   const field = presentation ?? financialField(fieldKey), id = useId();
+  const [alternateDate, setAlternateDate] = useState("");
   if (field.disclosure !== "technical" && !field.semanticFamily) throw new Error(`Missing financial ownership binding: ${fieldKey}`);
   const readOnly = children.props.readOnly || field.state === "read-only" || field.state === "derived";
   const state = field.state === "derived" ? "derived" : readOnly ? "read-only" : required ? "required" : "optional";
   const value = financialControlValue(fieldKey, children.props);
   const problem = readOnly ? undefined : error ?? fieldProblem(field, value, required);
+  const normalization = !readOnly && children.type === "input" && typeof value === "string" && ["money", "decimal", "percent"].includes(field.format)
+    ? normalizePersonalInput(value, field.format as "money" | "decimal" | "percent", field.unit.includes("USD") ? "USD" : undefined) : undefined;
   const help = `${field.description}${field.why === field.description ? "" : ` ${field.why}`} Unit: ${field.unit}. Example: ${field.example}. Source: ${field.source}. ${field.suggestion}`;
+  const applyCanonical = (canonical: string) => {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    if (!input) return;
+    input.value = canonical;
+    const handler = children.props.onChange as ((event: ChangeEvent<HTMLInputElement>) => void) | undefined;
+    handler?.({ target: input, currentTarget: input } as ChangeEvent<HTMLInputElement>);
+    input.focus();
+  };
+  const fullDate = alternateDate ? normalizePersonalInput(alternateDate, "date") : undefined;
+  const month = alternateDate && ["simulationStart", "simulationEnd", "setupStart"].includes(fieldKey) ? normalizePersonalInput(alternateDate, "month") : undefined;
+  const datePreview = fullDate && !fullDate.ok && month?.ok ? { ok: true as const, canonical: `${month.canonical}-01`, unit: "first day of the selected monthly forecast boundary" } : fullDate;
   return <div className={`field-shell${problem ? " field-invalid" : ""}${readOnly ? " field-readonly" : ""}`} data-financial-field={fieldKey} data-disclosure={field.disclosure} data-field-state={state} data-semantic-family={field.semanticFamily} data-semantic-binding={field.semanticBinding} data-semantic-scope={field.semanticScope}>
     <div className="field-heading"><label htmlFor={id}>{field.label}<FieldStateCue state={state} /></label>
       <details className="field-help"><summary role="button" aria-label={`Help for ${field.label}`} aria-description={help} title={help}>?</summary><div role="note">{help}</div></details>
@@ -46,6 +61,11 @@ export function FieldShell({ fieldKey, children, required = false, error, hint, 
     {cloneElement(children, { id, required: !readOnly && required && (children.props.type !== "checkbox" || confirmationField(fieldKey)), "aria-required": !readOnly && required, "aria-label": children.props["aria-label"] ?? field.label, "aria-invalid": !!problem,
       "aria-describedby": `${id}-hint${problem ? ` ${id}-error` : ""}`, ...({ "data-repair": repairKey ?? fieldKey } as object) })}
     <small id={`${id}-hint`}>{hint ?? field.unit} · {state === "derived" ? "Calculated" : state === "read-only" ? "Read-only" : state === "required" ? "Required" : "Optional"}</small>
+    {normalization?.ok && normalization.canonical !== value && <div className="normalization-preview" role="note">Preview: {normalization.canonical} {normalization.unit}. <button type="button" onClick={() => applyCanonical(normalization.canonical)}>Use normalized value</button></div>}
+    {!readOnly && field.format === "date" && <details className="date-entry"><summary>Enter another date format</summary><label htmlFor={`${id}-alternate`}>Unambiguous full date</label><input id={`${id}-alternate`} aria-label={`Alternate date for ${field.label}`} value={alternateDate} onChange={event => setAlternateDate(event.target.value)} placeholder="31/12/2026 or 2026-12-31" />
+      <small>Day/month order must be unambiguous. Month/year entry is supported only for forecast boundaries that require the first day of the month.</small>
+      {datePreview?.ok ? <p>Preview: {datePreview.canonical} · {datePreview.unit}. <button type="button" onClick={() => { applyCanonical(datePreview.canonical); setAlternateDate(""); }}>Use normalized date</button></p> : datePreview && <p role="alert">{datePreview.reason}</p>}
+    </details>}
     {problem && <p className="field-error" role="alert" id={`${id}-error`}>{problem}</p>}
   </div>;
 }

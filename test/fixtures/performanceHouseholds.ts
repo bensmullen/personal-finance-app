@@ -7,7 +7,9 @@ import {
   type JsonObject,
   type PersonalDraft,
 } from "../../src/application/index.js";
-import { createGoldenHouseholdScenarioIntents } from "../../src/application/goldenHousehold.js";
+import { createGoldenExampleConfiguration, createGoldenHouseholdScenarioIntents } from "../../src/application/goldenHousehold.js";
+import { createFlagshipHouseholdDraft } from "../../src/application/personalMvp.js";
+import { createHouseholdForecastRequest } from "../../src/application/householdProjection.js";
 
 export interface PerformanceFixtureCoverage {
   readonly canonicalObjectCounts: Readonly<Record<string, number>>;
@@ -190,3 +192,24 @@ export const createStressPerformanceFixture = (): PerformanceHouseholdFixture =>
 export const createPerformanceScalingFixtures = (): readonly PerformanceHouseholdFixture[] => Object.freeze(
   [12, 24].flatMap((months) => [1, 2].map((scale) => representative(`scaling:${months}:${scale}`, "a", months, scale))),
 );
+
+/**
+ * Heavy-only U1B diagnostic. Reuses the *exact* one-click flagship model,
+ * economic authorizations and request constructor. Only the exclusive
+ * simulation end varies; do not substitute historical or stress fixtures.
+ * Not part of ordinary Vitest/Playwright or baseline performance samples.
+ */
+export const createFlagshipHorizonProbes = () => {
+  const model = createFlagshipHouseholdDraft();
+  const config = createGoldenExampleConfiguration();
+  return ([ [8, "2026-09-01"], [20, "2027-09-01"], [120, "2036-01-01"],
+    [360, "2056-01-01"], [649, "2080-02-01"] ] as const).map(([months, end]) => Object.freeze({
+    id: `u1b-flagship:${months}`,
+    months,
+    model,
+    request: createHouseholdForecastRequest(
+      { ...config, simulationEnd: end },
+      `90000000-0000-4000-8000-${String(9000 + months).padStart(12, "0")}`,
+    ),
+  }));
+};

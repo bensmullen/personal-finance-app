@@ -151,10 +151,12 @@ const firstMonth = (anchor: Instant): Instant =>
 const contractualOccurrences = (
   anchor: Instant,
   count: number,
+  through?: Instant,
 ): readonly Instant[] => {
   const result: Instant[] = [];
   let month = firstMonth(anchor);
   while (result.length < count) {
+    if (through !== undefined && month > through) break;
     const period = utcMonthlyPeriods(month, 1)[0]!;
     result.push(...utcMonthlyOccurrences(anchor, period, "skip"));
     month = period.end;
@@ -167,15 +169,26 @@ export function mortgageFinalPaymentDate(firstPayment: string, count: string): s
   if (!/^[1-9]\d*$/.test(count) || !Number.isSafeInteger(Number(count)) || Number(count) > 1200) return undefined;
   const anchor = utcDate(firstPayment);
   if (!anchor) return undefined;
-  return contractualOccurrences(anchor, Number(count)).at(-1)?.slice(0, 10);
+  try { return contractualOccurrences(anchor, Number(count)).at(-1)?.slice(0, 10); }
+  catch { return undefined; }
 }
 
 /** Suggest a count only when the recorded maturity is an actual occurrence. */
 export function mortgagePaymentCount(firstPayment: string, maturity: string): string | undefined {
   const anchor = utcDate(firstPayment), final = utcDate(maturity);
   if (!anchor || !final || final < anchor) return undefined;
-  const index = contractualOccurrences(anchor, 1200).findIndex(at => at === final);
-  return index < 0 ? undefined : String(index + 1);
+  try {
+    const index = contractualOccurrences(anchor, 1200, final).findIndex(at => at === final);
+    return index < 0 ? undefined : String(index + 1);
+  } catch { return undefined; }
+}
+
+/** Count the same finite contractual occurrences used by the liability compiler. */
+export function mortgageRemainingSchedule(firstPayment: string, maturity: string, asOf: string): { total: number; remaining: number; next?: string } | undefined {
+  const count = mortgagePaymentCount(firstPayment, maturity), boundary = utcDate(asOf);
+  if (!count || !boundary) return undefined;
+  const remaining = contractualOccurrences(utcDate(firstPayment)!, Number(count)).filter(at => at >= boundary);
+  return { total: Number(count), remaining: remaining.length, ...(remaining[0] === undefined ? {} : { next: remaining[0].slice(0, 10) }) };
 }
 
 const canonicalReference = (

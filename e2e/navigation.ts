@@ -1,13 +1,46 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+
+export async function openFinancialSection(page: Page, title: string) {
+  // Attention text may follow the owned title. Never query an inaccessible
+  // child region to find its collapsed parent.
+  const summary = page.locator(".financial-section > summary").filter({ hasText: title }).first();
+  await expect(summary).toBeVisible();
+  if (await summary.locator("..").getAttribute("open") === null) await summary.click({ timeout: 10_000 });
+  await expect(summary.locator("..")).toHaveAttribute("open", "");
+}
+
+export async function expectForecastWindow(page: Page, start: string, end: string, periods: number) {
+  const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+  await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: 30_000 });
+  await expect(status).toHaveAttribute("data-requested-start", start);
+  await expect(status).toHaveAttribute("data-requested-end", end);
+  await expect(status).toHaveAttribute("data-modeled-periods", String(periods));
+  await expect(status).toHaveAttribute("data-reached-through", `${end}T00:00:00.000Z`);
+  const fingerprint = await status.getAttribute("data-fingerprint");
+  expect(fingerprint).toBeTruthy();
+  await expect(status).toHaveAttribute("data-result-fingerprint", fingerprint!);
+}
 
 /** Follow the same visible destination/More navigation at both supported sizes. */
 export async function clickFinancialDestination(page: Page, label: string) {
   const more = page.getByRole("button", { name: "More", exact: true });
   if (await more.isVisible() && await more.getAttribute("aria-expanded") === "true") await page.keyboard.press("Escape");
   const destination = page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: label, exact: true });
-  if (await destination.isVisible()) { await destination.click(); return; }
-  await page.getByRole("button", { name: "More", exact: true }).click();
-  await page.getByRole("navigation", { name: "More destinations" }).getByRole("button", { name: label, exact: true }).click();
+  if (await destination.isVisible()) {
+    await expect(destination).toBeEnabled();
+    await destination.click({ timeout: 10_000 });
+    await expect(destination).toHaveAttribute("aria-current", "page");
+    return;
+  }
+  await expect(more).toBeVisible();
+  await more.click({ timeout: 10_000 });
+  const menu = page.getByRole("navigation", { name: "More destinations" });
+  const target = menu.getByRole("button", { name: label, exact: true });
+  await expect(target).toBeVisible();
+  await expect(target).toBeEnabled();
+  await target.click({ timeout: 10_000 });
+  await expect(menu).toHaveCount(0);
 }
 
 export async function navigateOwner(page: Page, owner: string, section: string) {

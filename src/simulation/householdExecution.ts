@@ -7,7 +7,8 @@ import { realizedMortgageLoans } from "./mortgageLifecycle.js";
 import { SummaryOperationSink, type SummaryAccountingEvidence } from "./r3/summarySink.js";
 import { firstDependencyOrder, indexReachability, indexSequencingInstants } from "./r3/ordering.js";
 import { compareReachableStates, createReachableStateCounters } from "./r3/reachableStates.js";
-import { mergeOutputCapabilities } from "./r3/capabilities.js";
+import { createOutputCapabilityMerger } from "./r3/capabilities.js";
+import { createTaxDiagnosticKey, type TaxCapabilityDiagnostic, type TaxOutputCapabilities } from "./tax/contracts.js";
 import { fundingPoolConservationProof, guaranteedFundingIncomeProof } from "./r3/commutativity.js";
 import type { AccountingTransaction } from "../accounting/index.js";
 import { ValidationError, createPerformanceSession, type PerformanceObserver, type PerformanceSession, type ValidationIssue } from "../diagnostics/index.js";
@@ -536,6 +537,7 @@ const runCompiledHouseholdProjectionInternal = (
   let reachedThrough: Instant | undefined;
   const diagnostics: ValidationIssue[] = [];
   let outputCapabilities = periodRetention?.resume?.outputCapabilities;
+  const mergeOutputCapabilities = createOutputCapabilityMerger(performance);
   for (const period of periods.filter(period =>
     (periodRetention?.resume === undefined || period.start >= periodRetention.resume.at) &&
     (periodRetention?.stopAfter === undefined || period.end <= periodRetention.stopAfter)))
@@ -545,7 +547,7 @@ const runCompiledHouseholdProjectionInternal = (
       // Extension participants may call canonical atomic writers directly.
       // Isolate their entire period so a later failure cannot publish staged
       // posting proofs, receipts, identities or economic effects to `state`.
-      let candidateState = participants.length === 0 ? state : cloneAuthoritativeState(state);
+      let candidateState = performance.measure("engine.period_fork", () => participants.length === 0 ? state : cloneAuthoritativeState(state));
       if (participants.length !== 0) restoreOperationRuntime(candidateState, operationRuntime(state));
       let candidatePrimitiveState = primitiveState;
       let liability: VerticalSlice4PeriodResult | undefined;
@@ -841,18 +843,20 @@ const runCompiledHouseholdProjectionInternal = (
         candidateState = mergeEventPreparationIdentities(candidateState, prepared.cash!);
       }
       if (tier === "summary") {
-        validateAuthoritativeState(candidateState);
-        assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
-        assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
+        performance.measure("engine.validate_commit", () => {
+          validateAuthoritativeState(candidateState);
+          assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
+          assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
+        });
         const currentSummary = performance.measure("engine.statements_metrics", () =>
-          createHouseholdSummaryPeriod(period, state, candidateState, additionalFacts, kernel, runContext.baseCurrency));
-        outputCapabilities = mergeOutputCapabilities([outputCapabilities, currentSummary.outputCapabilities]);
+          createHouseholdSummaryPeriod(period, state, candidateState, additionalFacts, kernel, runContext.baseCurrency, performance, mergeOutputCapabilities));
+        outputCapabilities = performance.measure("engine.capabilities", () => mergeOutputCapabilities([outputCapabilities, currentSummary.outputCapabilities]));
         const summary = Object.freeze({ ...currentSummary, ...(outputCapabilities === undefined ? {} : { outputCapabilities }) });
         diagnostics.push(...(prepared.cash?.diagnostics ?? []), ...additionalFacts.flatMap(fact => [
           ...(fact.summary?.cash?.diagnostics ?? []), ...(fact.summary?.debt?.diagnostics ?? []), ...(fact.diagnostics ?? []),
         ]));
         state = candidateState; primitiveState = candidatePrimitiveState; reachedThrough = period.end;
-        periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata, outputCapabilities);
+        performance.measure("engine.checkpoint", () => periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata, outputCapabilities));
         periodRetention?.acceptSummary?.(summary);
         continue;
       }
@@ -952,12 +956,11 @@ const runCompiledHouseholdProjectionInternal = (
         });
       }
       });
-      validateAuthoritativeState(candidateState);
-      assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
-      assertPrimitiveRuntimeStateConsistent(
-        candidatePrimitiveState,
-        candidateState,
-      );
+      performance.measure("engine.validate_commit", () => {
+        validateAuthoritativeState(candidateState);
+        assertAuthoritativeStateCurrency(candidateState, runContext.baseCurrency);
+        assertPrimitiveRuntimeStateConsistent(candidatePrimitiveState, candidateState);
+      });
       const transactions = performance.measure("engine.trace_result", () => Object.freeze(
         [
           ...cashPeriods.flatMap((item) => item.transactions),
@@ -1046,7 +1049,7 @@ const runCompiledHouseholdProjectionInternal = (
                   ...investmentPeriods.map((item) => item.traceRefs),
                 ) ?? Object.freeze([]),
             });
-      const periodCapabilities = mergeOutputCapabilities([outputCapabilities, ...additionalFacts.map(fact => fact.outputCapabilities)]);
+      const periodCapabilities = performance.measure("engine.capabilities", () => mergeOutputCapabilities([outputCapabilities, ...additionalFacts.map(fact => fact.outputCapabilities)]));
       return Object.freeze({
         period: Object.freeze({ ...period }),
         ...(periodCapabilities === undefined ? {} : { outputCapabilities: periodCapabilities }),
@@ -1090,7 +1093,7 @@ const runCompiledHouseholdProjectionInternal = (
       outputCapabilities = periodResult.outputCapabilities ?? outputCapabilities;
       primitiveState = candidatePrimitiveState;
       reachedThrough = period.end;
-      periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata, outputCapabilities);
+      performance.measure("engine.checkpoint", () => periodRetention?.checkpoint?.(period, state, primitiveState, runMetadata, outputCapabilities));
       periodRetention?.accept(periodResult);
       if (periodRetention === undefined || periodRetention.retain(period)) committed.push(periodResult);
     } catch (error) {
@@ -1158,6 +1161,18 @@ export interface HouseholdReplayCheckpoint {
 // forecasts without these optional roots can still replay from the opening basis.
 const forecastCheckpoints = new WeakMap<object, readonly HouseholdReplayCheckpoint[]>();
 
+/** Non-materializing engineering evidence; never exports authoritative state. */
+export const householdReplayCheckpointSelection = (
+  forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">, start?: Instant,
+) => {
+  const checkpoints = forecastCheckpoints.get(forecast) ?? [];
+  const selected = start === undefined ? undefined : checkpoints.filter(value => value.at <= start).at(-1);
+  return Object.freeze({ checkpointCount: checkpoints.length, retainedCheckpointStates: checkpoints.length,
+    selectedCheckpointIndex: selected === undefined ? -1 : checkpoints.indexOf(selected),
+    replayPrefixMonths: start === undefined ? 0 : forecast.periods.filter(period =>
+      period.period.start >= (selected?.at ?? forecast.replay.runContext.simulationStart) && period.period.end <= start).length });
+};
+
 /** Materialized data only; private persistent indexes never cross transport. */
 export const exportHouseholdReplayCheckpoints = (forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">): readonly HouseholdReplayCheckpoint[] =>
   Object.freeze((forecastCheckpoints.get(forecast) ?? []).map(checkpoint => Object.freeze({ ...checkpoint,
@@ -1169,6 +1184,7 @@ export const exportHouseholdReplayCheckpoints = (forecast: Pick<HouseholdForecas
 export const registerHouseholdReplayCheckpoints = (
   forecast: Pick<HouseholdForecastSummaryResult, "periods" | "runMetadata" | "replay">,
   checkpoints: readonly HouseholdReplayCheckpoint[],
+  observe?: (counts: HouseholdReplayVerificationCounts) => void,
 ): void => {
   const mismatch = (): never => { throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: invalid portable checkpoints"); };
   const { runContext, kernel } = forecast.replay;
@@ -1185,10 +1201,20 @@ export const registerHouseholdReplayCheckpoints = (
       Object.values(capabilities).some(value => !value || !["complete", "incomplete"].includes(value.status) ||
         !["tax_independent", "tax_affected"].includes(value.dependency) || !Array.isArray(value.diagnostics)))) mismatch();
   }
+  // Compare every checkpoint's complete capability history with one scoped
+  // exact-content dictionary. Canonical serialization here used to expand the
+  // same projected-law catalog for every warning at all 54 checkpoints. Reuse
+  // the exact replay comparator, retaining ordered occurrences and all fields.
+  // This still validates corrupt siblings even when selecting the first month.
+  if (!equalHouseholdReplaySummaries(checkpoints.map((checkpoint, index) => {
+    const { outputCapabilities: _capabilities, ...period } = expected[index]!;
+    return { ...period, ...(checkpoint.outputCapabilities === undefined ? {} : { outputCapabilities: checkpoint.outputCapabilities }) };
+  }), expected, (phase, counts) => {
+    if (phase === "economics_compared") { try { observe?.(counts); } catch { /* Observation only. */ } }
+  })) mismatch();
   const restored = checkpoints.map((checkpoint, index) => {
     const period = expected[index]!;
     if (checkpoint.runId !== forecast.runMetadata.runId || checkpoint.at !== period.period.end || checkpoint.fingerprint !== forecast.runMetadata.inputFingerprint ||
-      canonicalSerialize(checkpoint.outputCapabilities ?? null) !== canonicalSerialize(period.outputCapabilities ?? null) ||
       checkpoint.runtime === null || typeof checkpoint.runtime !== "object" || Array.isArray(checkpoint.runtime)) mismatch();
     const state = createAuthoritativeState(checkpoint.state);
     // Constructors validate materialized values, but may normalize malformed
@@ -1245,12 +1271,102 @@ export const runHouseholdForecastSummary = (
   }
 };
 
+export type HouseholdReplayPhase = "replay_started" | "replay_executed" | "verification_started"
+  | "summary_materialized" | "capabilities_compared" | "economics_compared" | "replay_verified" | "replay_mismatched";
+export interface HouseholdReplayVerificationCounts {
+  readonly uniqueCatalogCount: number;
+  readonly diagnosticKeysComputed: number;
+  readonly diagnosticOccurrencesCompared: number;
+  readonly capabilityPairsCompared: number;
+  readonly economicPeriodsCompared: number;
+  /** String code-unit counts, not serialized wire bytes or physical heap. */
+  readonly uniqueCatalogChars: number;
+  readonly diagnosticKeyChars: number;
+  readonly economicSummaryChars: number;
+}
+
+/** Exact equality without expanding full catalogs into every output/history.
+ * One dictionary spans both sources: even similarly shaped catalogs get
+ * different keys unless their complete content strings are equal. Caches live
+ * only for this synchronous verification; no caller-owned key survives it.
+ */
+export const equalHouseholdReplaySummaries = (
+  actual: readonly HouseholdForecastSummaryPeriod[], expected: readonly HouseholdForecastSummaryPeriod[],
+  phase?: (phase: "capabilities_compared" | "economics_compared", counts: HouseholdReplayVerificationCounts) => void,
+): boolean => {
+  const diagnosticKey = createTaxDiagnosticKey();
+  const keys = new WeakMap<TaxCapabilityDiagnostic, string>();
+  const catalogs = new Set<string>();
+  const pairs = new WeakMap<TaxOutputCapabilities[string], WeakSet<TaxOutputCapabilities[string]>>();
+  let diagnosticKeysComputed = 0, diagnosticOccurrencesCompared = 0, capabilityPairsCompared = 0, economicPeriodsCompared = 0;
+  let uniqueCatalogChars = 0, diagnosticKeyChars = 0, economicSummaryChars = 0;
+  const report = (value: "capabilities_compared" | "economics_compared") => {
+    try { phase?.(value, { uniqueCatalogCount: catalogs.size, diagnosticKeysComputed,
+      diagnosticOccurrencesCompared, capabilityPairsCompared, economicPeriodsCompared,
+      uniqueCatalogChars, diagnosticKeyChars, economicSummaryChars }); } catch { /* Observation only. */ }
+  };
+  const catalog = (value: string) => {
+    if (!catalogs.has(value)) { catalogs.add(value); uniqueCatalogChars += value.length; }
+  };
+  const key = (diagnostic: TaxCapabilityDiagnostic) => {
+    let value = keys.get(diagnostic);
+    if (value === undefined) {
+      if (diagnostic.projectedLaw) {
+        catalog(diagnostic.projectedLaw.catalogFingerprint);
+        if (diagnostic.projectedLaw.assumption) catalog(diagnostic.projectedLaw.assumption.catalogFingerprint);
+      }
+      value = diagnosticKey(diagnostic); keys.set(diagnostic, value); diagnosticKeysComputed++; diagnosticKeyChars += value.length;
+    }
+    return value;
+  };
+  const capabilitiesEqual = (left: TaxOutputCapabilities | undefined, right: TaxOutputCapabilities | undefined): boolean => {
+    if (left === undefined || right === undefined) return left === right;
+    const fields = Object.keys(left).sort();
+    if (canonicalSerialize(fields) !== canonicalSerialize(Object.keys(right).sort())) return false;
+    for (const field of fields) {
+      const a = left[field]!, b = right[field]!;
+      if (pairs.get(a)?.has(b)) continue;
+      capabilityPairsCompared++;
+      const { diagnostics: ad, ...am } = a, { diagnostics: bd, ...bm } = b;
+      if (canonicalSerialize(am) !== canonicalSerialize(bm) || ad.length !== bd.length) return false;
+      for (let index = 0; index < ad.length; index++) {
+        diagnosticOccurrencesCompared++;
+        if (key(ad[index]!) !== key(bd[index]!)) return false;
+      }
+      let matches = pairs.get(a);
+      if (!matches) { matches = new WeakSet(); pairs.set(a, matches); }
+      matches.add(b);
+    }
+    return true;
+  };
+  const capabilitiesMatch = actual.length === expected.length && actual.every((period, index) =>
+    capabilitiesEqual(period.outputCapabilities, expected[index]!.outputCapabilities));
+  report("capabilities_compared");
+  if (!capabilitiesMatch) return false;
+  // Only capabilities are removed. All other fields, including explanation
+  // bindings, periods, financial values and future summary fields stay exact.
+  const economicsMatch = actual.every((period, index) => {
+    const { outputCapabilities: _actual, ...a } = period;
+    const { outputCapabilities: _expected, ...b } = expected[index]!;
+    economicPeriodsCompared++;
+    const left = canonicalSerialize(a), right = canonicalSerialize(b);
+    economicSummaryChars += left.length + right.length;
+    return left === right;
+  });
+  report("economics_compared");
+  return economicsMatch;
+};
+
 /** Regenerate only the selected evidence warehouse from the immutable opening boundary. */
 export const replayHouseholdForecastWindow = (
   forecast: Pick<HouseholdForecastSummaryResult, "periods" | "runMetadata" | "replay">,
   selectedWindow: Period,
   observer?: PerformanceObserver,
+  phase?: (phase: HouseholdReplayPhase, counts?: HouseholdReplayVerificationCounts) => void,
 ): CompiledHouseholdProjectionRunResult => {
+  const report = (value: HouseholdReplayPhase, counts?: HouseholdReplayVerificationCounts) => {
+    try { phase?.(value, counts); } catch { /* Measurement cannot affect replay. */ }
+  };
   const { kernel, runContext } = forecast.replay;
   const selected = forecast.periods.filter(period => period.period.start >= selectedWindow.start && period.period.end <= selectedWindow.end);
   if (selectedWindow.start >= selectedWindow.end || selected.length === 0 ||
@@ -1260,17 +1376,25 @@ export const replayHouseholdForecastWindow = (
   const performance = createPerformanceSession(observer);
   try {
     const checkpoint = (forecastCheckpoints.get(forecast) ?? []).filter(value => value.at <= selectedWindow.start).at(-1);
+    report("replay_started");
     const replay = runCompiledHouseholdProjectionInternal({
       compiled: { ...kernel.executable, executionKernel: kernel }, runContext,
     }, performance, { accept: () => {}, retain: period => period.start >= selectedWindow.start && period.end <= selectedWindow.end,
       ...(checkpoint === undefined ? {} : { resume: checkpoint }), stopAfter: selectedWindow.end,
       retainDiagnostics: period => period.start >= selectedWindow.start });
+    report("replay_executed");
     performance.counters({ replayCheckpointResumes: checkpoint === undefined ? 0 : 1,
       replayDetailPeriodsMaterialized: replay.periods.length });
-    if (canonicalSerialize(replay.runMetadata) !== canonicalSerialize(forecast.runMetadata) ||
-        canonicalSerialize(replay.periods.map(summarizeHouseholdPeriod)) !== canonicalSerialize(selected))
+    report("verification_started");
+    const summaries = replay.periods.map(summarizeHouseholdPeriod);
+    report("summary_materialized");
+    const summariesMatch = equalHouseholdReplaySummaries(summaries, selected, report);
+    if (canonicalSerialize(replay.runMetadata) !== canonicalSerialize(forecast.runMetadata) || !summariesMatch) {
+      report("replay_mismatched");
       throw new ValidationError({ severity: "error", code: "HOUSEHOLD_REPLAY_BASIS_MISMATCH",
         message: "Immutable forecast artifacts did not reproduce the displayed forecast exactly.", entityType: "household_projection" });
+    }
+    report("replay_verified");
     return Object.freeze({ ...replay, requestedHorizon: Object.freeze({ ...selectedWindow }) });
   } finally {
     performance.finish();
