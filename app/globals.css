@@ -393,6 +393,11 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-cash .paycheck-legend small { font-size: var(--chart-caption); }
 .calm-cash .calm-empty { min-height: 12rem; font-size: var(--calm-body); }
 .calm-cash .cash-chart-details { font-size: var(--calm-body); }
+.calm-cash .cash-chart-details > summary { padding-block: .5rem; font-size: var(--chart-control); }
+.calm-cash-current { margin-block: .5rem 1rem; font-size: var(--calm-body); }
+.calm-cash-current p { margin: 0; }
+.calm-cash-current .calm-metric-value { font-size: inherit; font-weight: 600; }
+.calm-cash-current small { display: block; font-size: var(--chart-caption); }
 .cash-chart-details h3 { margin-block: 1rem .5rem; }
 .cash-chart-details :is(.chart-table, .chart-opening, .chart-basis) { font-size: var(--calm-body); }
 /* One-column rows prevent nested dl grids squeezing metric names to letters. */

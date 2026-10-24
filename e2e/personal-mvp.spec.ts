@@ -240,7 +240,7 @@ const showHouseholdDetails = async (page: import("@playwright/test").Page, chann
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: forecastBudget });
   const controls = page.locator(".chart-control-details");
   if (await controls.count() && await controls.getAttribute("open") === null) await controls.locator(":scope > summary").click();
-  const cashDetails = page.locator("details.cash-chart-details");
+  const cashDetails = page.locator(".financial-chart details.cash-chart-details").first();
   if (await cashDetails.count() && await cashDetails.getAttribute("open") === null) await cashDetails.locator(":scope > summary").click();
   const supporting = page.getByText("Forecast assumptions and supporting details", { exact: true });
   if (await supporting.count() && await supporting.locator("..").getAttribute("open") === null) await supporting.click();

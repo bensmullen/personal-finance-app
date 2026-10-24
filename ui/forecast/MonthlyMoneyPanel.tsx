@@ -8,7 +8,7 @@ import { formatExactMoney, referenceLabel, objectEntries, objectId } from "../en
 import { FieldShell } from "../authoring/FieldShell.js";
 import { CashAllocation } from "./CashAllocation.js";
 import { useForecastEvidence } from "./useInteractiveForecast.js";
-import { CashDetailsContent, CalmDisclosure } from "../calm/CalmPresentation.js";
+import { CashDetailsContent, CashDetailsScope, CalmDisclosure } from "../calm/CalmPresentation.js";
 
 export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setup, coverageSetup, selectedMonth, selectMonth }: {
   draft: PersonalDraft; forecast?: PersonalHouseholdForecastReadModel | undefined; current: boolean;
@@ -35,6 +35,7 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
   const Evidence = mode === "paycheck" ? CashDetailsContent : React.Fragment;
   const monthPicker = !!points.length && <FieldShell fieldKey="moneyMonth" required><select aria-label={`${mode} forecast month`} value={point?.periodStart.slice(0, 7) ?? ""} onChange={event => (selectMonth ?? setSelected)(event.target.value)}>{points.map(value => <option key={value.periodStart} value={value.periodStart.slice(0, 7)}>{monthLabel(value.periodStart)}</option>)}</select></FieldShell>;
   return <section className={`${mode === "paycheck" ? "calm-panel" : "panel"} monthly-money`} data-evidence-state={!point ? "unavailable" : !current ? "stale" : error ? "error" : detail ? "incomplete" : "loading"} aria-label={mode === "paycheck" ? "Your Paycheck" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments and transfers"}>
+    <CashDetailsScope enabled={mode === "paycheck"} title="Where modeled income goes">
     <div className="panel-head"><h2>{mode === "paycheck" ? "Explain this month’s income" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments & transfers"}</h2>
       {mode !== "paycheck" && monthPicker}
     </div>
@@ -79,5 +80,6 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
       </>}
     </>}
     {mode === "paycheck" && (!current || !point || !detail) && monthPicker}
+    </CashDetailsScope>
   </section>;
 }

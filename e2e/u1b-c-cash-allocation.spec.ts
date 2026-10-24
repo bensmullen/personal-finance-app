@@ -120,11 +120,36 @@ for (const width of [1440, 390]) {
     await expect(cashRun).toBeEnabled();
     const charts = page.locator(".calm-cash-charts");
     const chartDetails = page.locator(".cash-chart-details");
-    await expect(chartDetails).toHaveCount(1);
-    await expect(chartDetails).not.toHaveAttribute("open");
+    await expect(chartDetails).toHaveCount(3);
+    await expect(chartDetails.nth(0)).toHaveAttribute("aria-label", "Total modeled cash (including cash in investment accounts) Chart Details");
+    await expect(chartDetails.nth(1)).toHaveAttribute("aria-label", "Modeled statement income versus expenses Chart Details");
+    await expect(chartDetails.nth(2)).toHaveAttribute("aria-label", "Where modeled income goes Chart Details");
+    for (const details of await chartDetails.all()) await expect(details).not.toHaveAttribute("open");
+    // The approved sequence is chart → its details → the next chart, in DOM
+    // and rendered geometry. No shared end-of-page evidence container remains.
+    const stack = charts.locator(".financial-chart > figcaption h3, .cash-chart-details > summary, .monthly-money > .panel-head h2");
+    await expect(stack).toHaveText([
+      "Total modeled cash (including cash in investment accounts)", "Chart Details",
+      "Modeled statement income versus expenses", "Chart Details",
+      "Explain this month’s income", "Chart Details",
+    ]);
+    const boxes = await Promise.all((await stack.all()).map(element => element.boundingBox()));
+    for (let index = 1; index < boxes.length; index++) expect(boxes[index]!.y).toBeGreaterThanOrEqual(boxes[index - 1]!.y + boxes[index - 1]!.height);
+    for (const [index, details] of (await chartDetails.all()).entries()) {
+      const summary = details.locator(":scope > summary");
+      expect((await summary.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      await summary.focus();
+      await page.keyboard.press("Enter");
+      await expect(summary).toBeFocused();
+      for (const [otherIndex, other] of (await chartDetails.all()).entries()) {
+        if (otherIndex === index) await expect(other).toHaveAttribute("open", "");
+        else await expect(other).not.toHaveAttribute("open");
+      }
+      await page.keyboard.press("Enter");
+    }
     // The month picker retains its tiny accessible field-help disclosure;
     // only large explanatory chart disclosures belong in Chart Details.
-    await expect(charts.locator("details:not(.field-help)")).toHaveCount(0);
+    await expect(charts.locator("details[open]:not(.field-help)")).toHaveCount(0);
     await expect(charts.locator(".financial-chart")).toHaveCount(2);
     for (const figure of await charts.locator(".financial-chart").all()) {
       const title = await figure.locator("figcaption").boundingBox();
@@ -132,6 +157,11 @@ for (const width of [1440, 390]) {
       const controls = await figure.locator(".chart-controls").boundingBox();
       expect(graphic!.y - (title!.y + title!.height)).toBeLessThan(100);
       expect(controls!.y).toBeGreaterThanOrEqual(graphic!.y + graphic!.height);
+      const selected = await figure.locator(".chart-selected").boundingBox();
+      const summary = await figure.locator(".cash-chart-details > summary").boundingBox();
+      expect(summary!.y).toBeGreaterThanOrEqual(selected!.y + selected!.height);
+      await expect(figure.locator(".cash-chart-details .chart-table")).toHaveCount(1);
+      await expect(figure.getByText("Exact monthly comparison & receipts", { exact: true })).toHaveCount(0);
       const select = figure.getByRole("combobox").first();
       expect((await select.boundingBox())!.height).toBeGreaterThanOrEqual(44);
       expect(await select.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
@@ -147,15 +177,31 @@ for (const width of [1440, 390]) {
     expect(monthControl!.y).toBeGreaterThan(allocationGraphic!.y + allocationGraphic!.height);
     expect(allocationGraphic!.y - (v4Title!.y + v4Title!.height)).toBeLessThan(120);
     const recorded = page.getByRole("region", { name: "Recorded cash today", exact: true });
-    const details = page.locator(".cash-chart-details");
+    const details = panel(page).locator(".cash-chart-details");
+    const allocationDetails = await details.locator(":scope > summary").boundingBox();
+    const allocationLegend = await panel(page).locator(".paycheck-legend").boundingBox();
+    expect(allocationDetails!.y).toBeGreaterThanOrEqual(monthControl!.y + monthControl!.height);
+    expect(allocationDetails!.y).toBeGreaterThanOrEqual(allocationLegend!.y + allocationLegend!.height);
+    await expect(details.locator(".chart-table")).toHaveCount(0);
     await expect(details).not.toHaveAttribute("open");
-    await details.locator(":scope > summary").click();
+    await expect(recorded).toBeVisible();
     await expect(recorded.getByRole("article", { name: "Bank cash and savings", exact: true })).toContainText("Recorded bank accounts · as of 2026-01-01");
     await expect(recorded.getByRole("article", { name: "Cash inside investment accounts", exact: true })).toContainText("Recorded investment accounts · as of 2026-01-01");
     const month = panel(page).getByLabel("paycheck forecast month", { exact: true });
     await month.selectOption("2026-07");
     await expect(month.locator("option:checked")).toHaveText("July 2026");
     await expect(panel(page)).toHaveAttribute("data-evidence-state", "incomplete");
+    const requestBeforeDisclosure = await status(page).getAttribute("data-request-id");
+    const resultsBeforeDisclosure = await page.evaluate(() => (window as typeof window & { __cashResults: ForecastWorkerResponse[] }).__cashResults.length);
+    await details.locator(":scope > summary").focus();
+    await page.keyboard.press("Enter");
+    await expect(details).toHaveAttribute("open", "");
+    await expect(month).toHaveValue("2026-07");
+    await expect(page.getByText("Exact monthly comparison & receipts", { exact: true })).toHaveCount(1);
+    await expect(page.getByText("Forecast assumptions and supporting details", { exact: true })).toHaveCount(1);
+    await expect(status(page)).toHaveAttribute("data-request-id", requestBeforeDisclosure!);
+    expect(await page.evaluate(() => (window as typeof window & { __cashResults: ForecastWorkerResponse[] }).__cashResults.length)).toBe(resultsBeforeDisclosure);
+    for (const other of await charts.locator(".financial-chart .cash-chart-details").all()) await expect(other).not.toHaveAttribute("open");
     const source = await page.evaluate(() => {
       const observed = window as typeof window & { __cashResults: ForecastWorkerResponse[] };
       const response = observed.__cashResults.at(-1);
@@ -221,7 +267,7 @@ for (const width of [1440, 390]) {
     const expected = inspectMonthlyMoney(source.points[1]!, JSON.parse(before) as PersonalDraft);
     if (decimal(expected.unallocated).isPositive()) await expect(panel(page).locator(".paycheck-bar > span").last()).toHaveClass("paycheck-unallocated");
     const exact = (amount: string) => formatExactMoney(amount, expected.currency);
-    const details = page.locator(".cash-chart-details");
+    const details = panel(page).locator(".cash-chart-details");
     await details.locator(":scope > summary").click();
     const summary = details.getByText("Exact monthly comparison & receipts", { exact: true });
     await summary.focus(); await page.keyboard.press("Enter");
@@ -269,7 +315,7 @@ for (const width of [1440, 390]) {
     const widths = await panel(page).locator(".paycheck-bar > span").evaluateAll(spans => spans.map(span => span.getBoundingClientRect().width));
     expect(widths.every(value => value > 0)).toBe(true);
     const expense = expected.categories.find(item => item.expenseIds.length)!;
-    const details = page.locator(".cash-chart-details");
+    const details = panel(page).locator(".cash-chart-details");
     await details.locator(":scope > summary").click();
     await details.getByText(`Review ${expense.label} sources`, { exact: true }).click();
     await details.getByRole("button", { name: `Review ${expense.label}`, exact: true }).click();
@@ -360,7 +406,6 @@ for (const width of [1440, 390]) test(`H04 bank-only no forecast has an accessib
   await page.getByRole("button", { name: "Import into session", exact: true }).click();
   await clickFinancialDestination(page, "Cash");
   const position = getCurrentPosition(model, { asOf: "2026-01-01", baseCurrency: "USD" });
-  await page.locator(".cash-chart-details > summary").click();
   await expect(page.getByRole("article", { name: "Bank cash and savings", exact: true }).locator(".calm-metric-value")).toHaveText(position.cash!.display);
   await expect(page.locator(".financial-chart")).toHaveCount(0);
   await expect(panel(page)).toHaveAttribute("data-evidence-state", "unavailable");

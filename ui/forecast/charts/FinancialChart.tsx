@@ -3,7 +3,7 @@
 import { useId, useState } from "react";
 import * as React from "react";
 import { Bar, Cell, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { CashDetailsContent } from "../../calm/CalmPresentation.js";
+import { CashChartDetails } from "../../calm/CalmPresentation.js";
 import type { ForecastChartData, ForecastChartMetric, ForecastChartPeriod, ForecastChartValue } from "../../../src/application/forecastChartData.js";
 import { formatExactMoney } from "../../entityPresentation.js";
 
@@ -68,7 +68,7 @@ function ChartDetails({ collapsed, children }: { collapsed: boolean; children: R
 }
 
 function EvidenceGroup({ cashPage, title, children }: { cashPage: boolean; title: string; children: React.ReactNode }) {
-  return cashPage ? <section aria-label={`${title} chart details`}>{children}</section> : <>{children}</>;
+  return cashPage ? <CashChartDetails title={title}><section aria-label={`${title} chart details`}>{children}</section></CashChartDetails> : <>{children}</>;
 }
 
 export function FinancialChart({ annual, monthly, kind, stale, calm = false, children }: { annual: ForecastChartData; monthly: ForecastChartData; kind: Kind; stale: boolean; calm?: boolean; children?: React.ReactNode }) {
@@ -96,7 +96,6 @@ export function FinancialChart({ annual, monthly, kind, stale, calm = false, chi
   const opening = source.opening;
   const calmWealth = calm && kind === "wealth";
   const cashPage = calm && kind !== "wealth";
-  const Evidence = cashPage ? CashDetailsContent : React.Fragment;
   const cashAxis: React.ComponentProps<typeof YAxis> = kind === "cash" ? { domain: [(min: number) => Math.min(0, min), (max: number) => Math.max(0, max)], label: { value: source.currency ?? "Currency", angle: -90, position: "insideLeft" } } : {};
   const legend = <div className="chart-legend" role="group" aria-label={`${title} legend`}>{series.map((item, index) => <button key={item.key} type="button" aria-pressed={!hidden.includes(item.key)} onClick={() => setHidden(current => current.includes(item.key) ? current.filter(key => key !== item.key) : [...current, item.key])}><span aria-hidden="true" style={{ color: item.color }}>{item.bar ? "▥" : index === 0 ? "━━" : index === 1 ? "┄┄" : "···"}</span> {item.label}</button>)}</div>;
   const openingDetails = opening && kind !== "statement" && <details className="chart-opening"><summary>Opening position · {date(opening.at)} · snapshot, separate from projected periods</summary><dl className="chart-exact-values">{series.filter(item => !item.bar).map(item => <div key={item.key}><dt>{item.label}</dt><dd>{exactChartValue(opening.metrics[item.key])}</dd></div>)}</dl></details>;
@@ -147,7 +146,6 @@ export function FinancialChart({ annual, monthly, kind, stale, calm = false, chi
         {active && <div className="chart-selected" role="status" aria-label={`${title} exact selected period`}><ExactPeriod point={active} series={series} readable compact /></div>}
       </>}
     </>}
-    <Evidence>
     <EvidenceGroup cashPage={cashPage} title={title}>
     {cashPage && <h3>{title} · details</h3>}
     <ChartDetails collapsed={calmWealth}>
@@ -163,6 +161,5 @@ export function FinancialChart({ annual, monthly, kind, stale, calm = false, chi
     <details className="chart-basis"><summary>Chart sources &amp; basis</summary><p>Source: reconciled household forecast via the exact chart selector. Stock values use the last supported close; period totals sum only covered months. Partial years are not annualized.</p>{source.boundaries && <p>As of {source.boundaries.asOf}; data cutoff {source.boundaries.dataCutoff}. Actual/forecast boundary {source.boundaries.actualForecastBoundary}; all displayed periods are modeled, with no observed performance history.</p>}<p>Bank-only spendable cash, disposable payroll, investment attribution and retirement income by source are unavailable in these charts.</p>{source.sourceFingerprint && <p>Result fingerprint: <code>{source.sourceFingerprint}</code></p>}</details>
     </ChartDetails>
     </EvidenceGroup>
-    </Evidence>
   </figure>;
 }

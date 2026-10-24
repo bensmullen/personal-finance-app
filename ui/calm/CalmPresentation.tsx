@@ -2,11 +2,22 @@ import * as React from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-/** One physical disclosure; each chart owns its live evidence without duplication. */
-export const CashDetailsTarget = React.createContext<HTMLElement | null | undefined>(undefined);
+/** Targets are scoped to one chart, never to the Cash page. */
+const CashDetailsTarget = React.createContext<HTMLElement | null | undefined>(undefined);
 export function CashDetailsContent({ children }: { children: ReactNode }) {
   const target = React.useContext(CashDetailsTarget);
   return target === undefined ? <>{children}</> : target ? createPortal(children, target) : null;
+}
+
+export function CashChartDetails({ title, children }: { title: string; children: ReactNode }) {
+  return <details className="calm-disclosure cash-chart-details" aria-label={`${title} Chart Details`}><summary>Chart Details</summary><div>{children}</div></details>;
+}
+
+/** Keep interspersed monthly evidence mounted once, even while collapsed. */
+export function CashDetailsScope({ enabled, title, children }: { enabled: boolean; title: string; children: ReactNode }) {
+  const [target, setTarget] = React.useState<HTMLDivElement | null>(null);
+  if (!enabled) return <>{children}</>;
+  return <CashDetailsTarget.Provider value={target}>{children}<CashChartDetails title={title}><div ref={setTarget} /></CashChartDetails></CashDetailsTarget.Provider>;
 }
 
 /** Presentation only: callers supply exact, sourced values and state language. */

@@ -140,7 +140,7 @@ test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and
   await expect(pay.getByRole("button", { name: "Review selected month" })).toHaveCount(0);
   await expect(pay).toContainText("Incomplete allocation");
   await expect(pay).toContainText("not disposable or unspent earnings");
-  const cashDetails = page.locator("details.cash-chart-details");
+  const cashDetails = pay.locator("details.cash-chart-details");
   await expect(cashDetails).not.toHaveAttribute("open");
   await cashDetails.locator(":scope > summary").click();
   await expect(cashDetails).toContainText("not leftover pay");

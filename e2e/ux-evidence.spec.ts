@@ -46,9 +46,10 @@ async function captureCashEvidence(page: Page, info: TestInfo, width: number, sc
   await capture(page, `${production}-full`, true);
   const opened = [];
   for (const title of ["Chart Details", "Forecast range / Data coverage", "Forecast assumptions and supporting details", "Selected month dates and evidence", "Exact monthly comparison & receipts", "Recorded cash sources and limitations"]) {
-    const summary = page.getByText(title, { exact: true });
-    if (await summary.count() && await summary.locator("..").getAttribute("open") === null) {
-      await summary.click(); opened.push(summary);
+    for (const summary of await page.getByText(title, { exact: true }).all()) {
+      if (await summary.locator("..").getAttribute("open") === null) {
+        await summary.click(); opened.push(summary);
+      }
     }
   }
   await capture(page, `${production}-expanded`, true);
