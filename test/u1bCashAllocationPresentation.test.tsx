@@ -3,6 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CashAllocation, cashComparison, type MonthlyEvidenceDetail } from "../ui/forecast/CashAllocation.js";
 import { MonthlyMoneyPanel } from "../ui/forecast/MonthlyMoneyPanel.js";
+import { cashChangeAppearance, chartCoordinate } from "../ui/forecast/charts/FinancialChart.js";
+import { selectForecastChartData } from "../src/application/forecastChartData.js";
+import { taxOutputCapabilities } from "../src/simulation/tax/contracts.js";
 import { createEmptyPersonalDraft, patchPersonalObject, type PersonalDraft } from "../src/application/personalMvp.js";
 import { authorPayrollWithholding } from "../src/application/compiler/payrollWithholding.js";
 import { objects } from "../src/application/compiler/shared.js";
@@ -212,6 +215,38 @@ describe("Cash payroll credit classification from authentic committed replay", (
     expect(decimal(detail.income).equals(decimal(detail.deposited))).toBe(true);
     expect(decimal(point.cash.amount).minus(decimal(forecast.openingSnapshot.cash.amount)).equals(decimal(detail.cashChange))).toBe(true);
     expect(JSON.stringify({ model, forecast })).toBe(before);
+  });
+});
+
+describe("Cash signed bar presentation from selector evidence", () => {
+  it.each([12, 3])("preserves positive, negative and zero on a shared currency scale over %i months", count => {
+    const model = createD1IntegratedHousehold();
+    const base = runPersonalHouseholdForecast(model, { compiler: d1IntegratedCompilerRequest(), asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity: "17100000-0000-4000-8000-000000000015" });
+    if (base.status === "unavailable") throw new Error("Expected a supported read-model fixture");
+    // Synthetic chart-source closes isolate sign/coverage, not payroll economics.
+    // Every financial delta and annual qualification is still derived by the selector.
+    const capabilities = taxOutputCapabilities([]);
+    const boundary = (month: number) => new Date(Date.UTC(2026, month, 1)).toISOString();
+    for (const [change, direction, color] of [["10.01", "increase", "#1e6756"], ["-10.01", "decrease", "#a43d3d"], ["0", "zero", "#66726d"]] as const) {
+      const source = { ...base, simulationStart: boundary(0), simulationEnd: boundary(count), reachedThrough: boundary(count),
+        requestedHorizon: { start: boundary(0), end: boundary(count) },
+        openingSnapshot: { ...base.openingSnapshot, outputCapabilities: capabilities, cash: { amount: "1000", currency: "USD" } },
+        points: Array.from({ length: count }, (_, index) => ({ ...base.points[0]!,
+          periodStart: boundary(index), periodEnd: boundary(index + 1), outputCapabilities: capabilities,
+          cash: { amount: decimal("1000").plus(decimal(change).times(index + 1)).toString(), currency: "USD" },
+        })),
+      };
+      const annual = selectForecastChartData(source, { granularity: "annual" }).points[0]!;
+      expect(annual.metrics.totalModeledCashChange.amount).toBe(decimal(change).times(count).toString());
+      expect(annual.metrics.totalModeledCashChange.status).toBe(count === 12 ? "complete" : "incomplete");
+      expect(cashChangeAppearance(annual)).toMatchObject({ fill: color, stroke: color, fillOpacity: count === 12 ? 1 : 0.4, "data-direction": direction });
+      expect(cashChangeAppearance(annual)["aria-label"]).toContain(count === 12 ? "2027-01-01" : "partial year, 3 months");
+      const monthly = selectForecastChartData(source).points[0]!;
+      expect(cashChangeAppearance(monthly)).toMatchObject({ fill: color, fillOpacity: 1, "data-direction": direction });
+      const unavailable = { ...monthly, metrics: { ...monthly.metrics, totalModeledCashChange: { ...monthly.metrics.totalModeledCashChange, amount: null, status: "unavailable" as const } } };
+      expect(chartCoordinate(unavailable.metrics.totalModeledCashChange)).toBeNull();
+      expect(cashChangeAppearance(unavailable)["data-direction"]).toBe("unavailable");
+    }
   });
 });
 

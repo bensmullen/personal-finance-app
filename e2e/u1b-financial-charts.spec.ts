@@ -269,6 +269,12 @@ for (const width of [1440, 390]) {
           expectedValue(point.metrics.totalModeledCash), expectedValue(point.metrics.totalModeledCashChange, true),
         ]);
         await expect(readout).toContainText(`${point.coveredMonthCount} covered ${point.coveredMonthCount === 1 ? "source month" : "source months"}.`);
+        await expect(readout.locator("dt")).toHaveText(["Cash balance", "Signed change"]);
+        for (const label of await readout.locator("dt").all()) {
+          expect((await label.boundingBox())!.width).toBeGreaterThan(100);
+          expect(await label.evaluate(element => getComputedStyle(element).wordBreak)).toBe("normal");
+          expect(await label.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
+        }
         // Exact containment is the product requirement. Keep page overflow
         // strict and also detect clipped text inside an otherwise fitting box.
         expect(await readout.evaluate(element => {
@@ -384,17 +390,23 @@ for (const width of [1440, 390]) {
     await expect(statements).toBeVisible();
     await expect(page.getByText(/No past account history is included/)).toHaveCount(1);
     await expect(grouping(cash)).toHaveValue("annual");
-    await expect(cash).toContainText("right axis: signed annual balance change");
+    await expect(cash).toContainText("one USD axis");
     await expect(grouping(statements)).toHaveValue("monthly");
     await expect(statements).toContainText("not bank receipts/disbursements or disposable wages");
-    await expect(cash.locator(".recharts-yAxis")).toHaveCount(2);
+    await expect(cash.locator(".recharts-yAxis")).toHaveCount(1);
     await expect(statements.locator(".recharts-yAxis")).toHaveCount(1);
     const cashBox = await cash.boundingBox(), statementsBox = await statements.boundingBox();
     expect(cashBox!.y).toBeLessThan(statementsBox!.y);
     await expect(cash).toContainText("Incomplete");
-    await statements.locator(".chart-table > summary").click();
-    await expect(statements.getByRole("table")).toBeVisible();
-    await expect(statements.getByRole("table").locator("tbody tr")).toHaveCount(3);
+    const disclosure = page.locator(".cash-chart-details");
+    await expect(disclosure).not.toHaveAttribute("open");
+    await disclosure.locator(":scope > summary").focus();
+    await page.keyboard.press("Enter");
+    const statementEvidence = disclosure.getByRole("region", { name: `${statementTitle} chart details`, exact: true });
+    const cashEvidence = disclosure.getByRole("region", { name: `${cashTitle} chart details`, exact: true });
+    await statementEvidence.locator(".chart-table > summary").click();
+    await expect(statementEvidence.getByRole("table")).toBeVisible();
+    await expect(statementEvidence.getByRole("table").locator("tbody tr")).toHaveCount(3);
     const statementPeriod = statements.getByRole("combobox", { name: "Selected projected period", exact: true });
     await expect(statements.getByLabel("Monthly range starting", { exact: true })).toHaveValue(monthly.points[0]!.periodStart);
     for (const [index, point] of monthly.points.entries()) {
@@ -405,7 +417,7 @@ for (const width of [1440, 390]) {
       expect(point.metrics.modeledStatementExpenses.status).toBe(raw.outputCapabilities!.statementExpenses!.status);
       await statementPeriod.selectOption(point.periodStart);
       const values = [expectedValue(point.metrics.modeledStatementIncome), expectedValue(point.metrics.modeledStatementExpenses)];
-      await expect(statements.getByRole("table").locator("tbody tr").nth(index).getByRole("cell")).toHaveText(values);
+      await expect(statementEvidence.getByRole("table").locator("tbody tr").nth(index).getByRole("cell")).toHaveText(values);
       await expect(statements.getByRole("status", { name: `${statementTitle} exact selected period`, exact: true }).locator("dd")).toHaveText(values);
     }
     const statementGeometry = await barGeometry(statements);
@@ -433,8 +445,8 @@ for (const width of [1440, 390]) {
     expect(expectedBars).toBeGreaterThan(0);
     expect(visibleBars).toBe(expectedBars);
     expect(statementGeometry.bars).toHaveLength(expectedBars);
-    await cash.locator(".chart-table > summary").click();
-    await expect(cash.getByRole("table").locator("tbody tr")).toHaveCount(1);
+    await cashEvidence.locator(".chart-table > summary").click();
+    await expect(cashEvidence.getByRole("table").locator("tbody tr")).toHaveCount(1);
     const closingCash = source.points.at(-1)!.cash.amount;
     const change = Money.parse(closingCash, USD).minus(Money.parse(source.openingSnapshot.cash.amount, USD)).amount.toString();
     expect(annual.points[0]!.metrics.totalModeledCash.amount).toBe(closingCash);
@@ -452,13 +464,19 @@ for (const width of [1440, 390]) {
     expect(annual.points[0]!.metrics.totalModeledCashChange.status).toBe("incomplete");
     const cashValues = [expectedValue(annual.points[0]!.metrics.totalModeledCash), expectedValue(annual.points[0]!.metrics.totalModeledCashChange, true)];
     await expect(cash.getByRole("status", { name: `${cashTitle} exact selected period`, exact: true }).locator("dd")).toHaveText(cashValues);
-    await expect(cash.getByRole("table").locator("tbody td")).toHaveText(cashValues);
+    await expect(cashEvidence.getByRole("table").locator("tbody td")).toHaveText(cashValues);
     const cashGeometry = await barGeometry(cash);
     expect(cashGeometry.zero.start).toBe(cashGeometry.zero.end);
     const changeDirection = Money.parse(change, USD).compare(Money.zero(USD));
     for (const bar of cashGeometry.bars) {
       expect(bar.series).toContain("chart-bar-totalModeledCashChange-incomplete");
       expectBarAtZero(bar, cashGeometry.zero.start, changeDirection > 0);
+    }
+    const changeBars = cash.locator(".recharts-bar-rectangle .recharts-rectangle");
+    for (const bar of await changeBars.all()) {
+      await expect(bar).toHaveAttribute("fill", changeDirection < 0 ? "#a43d3d" : changeDirection > 0 ? "#1e6756" : "#66726d");
+      await expect(bar).toHaveAttribute("fill-opacity", "0.4");
+      await expect(bar).toHaveAttribute("aria-label", /partial year, 3 months/);
     }
     expect(cashGeometry.bars).toHaveLength(changeDirection === 0 ? 0 : 1);
     const cashLegend = cash.getByRole("button", { name: "Signed cash balance change", exact: true });
@@ -469,17 +487,17 @@ for (const width of [1440, 390]) {
     await cash.getByRole("application").focus(); await page.keyboard.press("ArrowRight");
     await expect(cash.locator(".chart-readout dd")).toHaveText(cashValues);
     await grouping(statements).selectOption("annual");
-    await expect(statements.getByRole("table").locator("tbody tr")).toHaveCount(1);
-    await expect(statements.getByRole("table")).toContainText("partial year, 3 months");
+    await expect(statementEvidence.getByRole("table").locator("tbody tr")).toHaveCount(1);
+    await expect(statementEvidence.getByRole("table")).toContainText("partial year, 3 months");
     for (const [metric, field] of [["modeledStatementIncome", "statementIncome"], ["modeledStatementExpenses", "statementExpenses"]] as const) {
       const coveredSum = source.points.reduce((sum, point) => sum.plus(Money.parse(point[field].amount, USD)), Money.zero(USD)).amount.toString();
       expect(annual.points[0]!.metrics[metric].amount).toBe(coveredSum);
     }
     const statementValues = [expectedValue(annual.points[0]!.metrics.modeledStatementIncome), expectedValue(annual.points[0]!.metrics.modeledStatementExpenses)];
     await expect(statements.getByRole("status", { name: `${statementTitle} exact selected period`, exact: true }).locator("dd")).toHaveText(statementValues);
-    await expect(statements.getByRole("table").locator("tbody td")).toHaveText(statementValues);
+    await expect(statementEvidence.getByRole("table").locator("tbody td")).toHaveText(statementValues);
     await grouping(statements).selectOption("monthly");
-    await expect(statements.getByRole("table").locator("tbody tr")).toHaveCount(3);
+    await expect(statementEvidence.getByRole("table").locator("tbody tr")).toHaveCount(3);
     await expect(status).toHaveAttribute("data-request-id", request!);
     await expect(status).toHaveAttribute("data-fingerprint", fingerprint!);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

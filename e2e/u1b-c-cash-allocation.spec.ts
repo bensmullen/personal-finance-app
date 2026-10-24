@@ -118,7 +118,36 @@ for (const width of [1440, 390]) {
     await expect(cashRun).toHaveCount(1);
     await expect(cashRun).toBeVisible();
     await expect(cashRun).toBeEnabled();
+    const charts = page.locator(".calm-cash-charts");
+    const chartDetails = page.locator(".cash-chart-details");
+    await expect(chartDetails).toHaveCount(1);
+    await expect(chartDetails).not.toHaveAttribute("open");
+    await expect(charts.locator("details")).toHaveCount(0);
+    await expect(charts.locator(".financial-chart")).toHaveCount(2);
+    for (const figure of await charts.locator(".financial-chart").all()) {
+      const title = await figure.locator("figcaption").boundingBox();
+      const graphic = await figure.locator(".chart").boundingBox();
+      const controls = await figure.locator(".chart-controls").boundingBox();
+      expect(graphic!.y - (title!.y + title!.height)).toBeLessThan(100);
+      expect(controls!.y).toBeGreaterThanOrEqual(graphic!.y + graphic!.height);
+      const select = figure.getByRole("combobox").first();
+      expect((await select.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      expect(await select.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
+    }
+    const headings = charts.locator(".financial-chart h3");
+    expect(await headings.first().evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(20);
+    const v3Graphic = await charts.locator(".financial-chart .chart").nth(1).boundingBox();
+    const v4Title = await panel(page).getByRole("heading", { level: 2 }).boundingBox();
+    expect(v4Title!.y).toBeGreaterThan(v3Graphic!.y + v3Graphic!.height);
+    await expect(panel(page)).toHaveAttribute("data-evidence-state", "incomplete");
+    const allocationGraphic = await panel(page).locator(".paycheck-bar").boundingBox();
+    const monthControl = await panel(page).getByLabel("paycheck forecast month", { exact: true }).boundingBox();
+    expect(monthControl!.y).toBeGreaterThan(allocationGraphic!.y + allocationGraphic!.height);
+    expect(allocationGraphic!.y - (v4Title!.y + v4Title!.height)).toBeLessThan(120);
     const recorded = page.getByRole("region", { name: "Recorded cash today", exact: true });
+    const details = page.locator(".cash-chart-details");
+    await expect(details).not.toHaveAttribute("open");
+    await details.locator(":scope > summary").click();
     await expect(recorded.getByRole("article", { name: "Bank cash and savings", exact: true })).toContainText("Recorded bank accounts · as of 2026-01-01");
     await expect(recorded.getByRole("article", { name: "Cash inside investment accounts", exact: true })).toContainText("Recorded investment accounts · as of 2026-01-01");
     const month = panel(page).getByLabel("paycheck forecast month", { exact: true });
@@ -135,12 +164,16 @@ for (const width of [1440, 390]) {
     expect(expected.withholding).toBe("posted");
     expect(decimal(expected.withholdingAmount!).isPositive()).toBe(true);
     expect(expected.categories.some(item => item.label === "Employee retirement")).toBe(false);
-    await expect(panel(page)).toContainText(`${formatExactMoney(expected.withholdingAmount!, expected.currency)} · posted elections only`);
+    await expect(details).toContainText(`${formatExactMoney(expected.withholdingAmount!, expected.currency)} · posted elections only`);
     await expect(panel(page)).not.toContainText("Unknown · not modeled");
     await expect(panel(page)).not.toContainText("excludes unmodeled withholding");
-    await panel(page).getByText("Exact monthly comparison & receipts", { exact: true }).click();
-    await expect(panel(page).getByRole("row", { name: /^Payroll withholding coverage/ }).getByRole("cell")).toContainText(formatExactMoney(expected.withholdingAmount!, expected.currency));
+    await details.getByText("Exact monthly comparison & receipts", { exact: true }).click();
+    await expect(details.getByRole("row", { name: /^Payroll withholding coverage/ }).getByRole("cell")).toContainText(formatExactMoney(expected.withholdingAmount!, expected.currency));
     expect(cashComparison(expected)?.coherent).toBe(true);
+    // Text enlargement must reflow without hiding controls or widening the page.
+    await page.addStyleTag({ content: "html { font-size: 200%; }" });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expect(month).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 
@@ -166,9 +199,11 @@ for (const width of [1440, 390]) {
     const expected = inspectMonthlyMoney(source.points[1]!, JSON.parse(before) as PersonalDraft);
     if (decimal(expected.unallocated).isPositive()) await expect(panel(page).locator(".paycheck-bar > span").last()).toHaveClass("paycheck-unallocated");
     const exact = (amount: string) => formatExactMoney(amount, expected.currency);
-    const summary = panel(page).getByText("Exact monthly comparison & receipts", { exact: true });
+    const details = page.locator(".cash-chart-details");
+    await details.locator(":scope > summary").click();
+    const summary = details.getByText("Exact monthly comparison & receipts", { exact: true });
     await summary.focus(); await page.keyboard.press("Enter");
-    const table = panel(page).getByRole("table");
+    const table = details.getByRole("region", { name: "Exact monthly comparison", exact: true }).getByRole("table");
     await expect(table).toBeVisible();
     for (const item of expected.categories) {
       await expect(table.getByRole("row").filter({ has: page.getByRole("rowheader", { name: item.label, exact: true }) }).getByRole("cell")).toHaveText(exact(item.amount));
@@ -187,8 +222,8 @@ for (const width of [1440, 390]) {
     const v2Box = await v2.boundingBox(), v3Box = await v3.boundingBox(), v4Box = await comparison.boundingBox();
     expect(v2Box!.y).toBeLessThan(v3Box!.y);
     expect(v3Box!.y).toBeLessThan(v4Box!.y);
-    await panel(page).getByRole("region", { name: "Exact monthly comparison", exact: true }).focus();
-    await expect(panel(page).getByRole("region", { name: "Exact monthly comparison", exact: true })).toBeFocused();
+    await details.getByRole("region", { name: "Exact monthly comparison", exact: true }).focus();
+    await expect(details.getByRole("region", { name: "Exact monthly comparison", exact: true })).toBeFocused();
     await expect(status(page)).toHaveAttribute("data-request-id", request!);
     expect(await exported(page)).toBe(before);
     await clickFinancialDestination(page, "Cash");
@@ -212,8 +247,10 @@ for (const width of [1440, 390]) {
     const widths = await panel(page).locator(".paycheck-bar > span").evaluateAll(spans => spans.map(span => span.getBoundingClientRect().width));
     expect(widths.every(value => value > 0)).toBe(true);
     const expense = expected.categories.find(item => item.expenseIds.length)!;
-    await panel(page).getByText(`Review ${expense.label} sources`, { exact: true }).click();
-    await panel(page).getByRole("button", { name: `Review ${expense.label}`, exact: true }).click();
+    const details = page.locator(".cash-chart-details");
+    await details.locator(":scope > summary").click();
+    await details.getByText(`Review ${expense.label} sources`, { exact: true }).click();
+    await details.getByRole("button", { name: `Review ${expense.label}`, exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Edit Expense", exact: true })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -301,6 +338,7 @@ for (const width of [1440, 390]) test(`H04 bank-only no forecast has an accessib
   await page.getByRole("button", { name: "Import into session", exact: true }).click();
   await clickFinancialDestination(page, "Cash");
   const position = getCurrentPosition(model, { asOf: "2026-01-01", baseCurrency: "USD" });
+  await page.locator(".cash-chart-details > summary").click();
   await expect(page.getByRole("article", { name: "Bank cash and savings", exact: true }).locator(".calm-metric-value")).toHaveText(position.cash!.display);
   await expect(page.locator(".financial-chart")).toHaveCount(0);
   await expect(panel(page)).toHaveAttribute("data-evidence-state", "unavailable");

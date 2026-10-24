@@ -81,6 +81,12 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .chart-readout dd { margin: 0; overflow-wrap: anywhere; }
 .financial-chart .recharts-tooltip-wrapper { width: min(380px, 100%); }
 .financial-chart .chart-readout { max-width: 100%; overflow-wrap: anywhere; }
+/* Shared chart hierarchy; Cash composition remains scoped to its own surface. */
+:root { --chart-body: 1rem; --chart-control: .875rem; --chart-caption: .8125rem; --chart-heading: 1.375rem; }
+.financial-chart { font-size: var(--chart-body); line-height: 1.5; }
+.financial-chart .chart-controls, .financial-chart .chart-legend, .financial-chart .recharts-cartesian-axis-tick { font-size: var(--chart-control); }
+.financial-chart .chart-controls label, .financial-chart .chart-exact-values dt { font-size: var(--chart-control); }
+.financial-chart .chart-legend button, .financial-chart summary { min-height: 44px; }
 .card-main, .card-main > span:last-child { min-width: 0; }
 .card-main strong, .card-main small { overflow-wrap: anywhere; }
 .object-icon { flex-shrink: 0; }
@@ -253,7 +259,7 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-shell main#main-content { padding: 33px clamp(18px, 4.25vw, 60px) 76px; max-width: 1240px; }
 .calm-page-header { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 26px; }
 .calm-eyebrow { font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--calm-accent); margin: 0 0 10px; }
-.calm-page-header h1 { font-family: 'Manrope', -apple-system, sans-serif; font-size: clamp(29px, 3.25vw, 43px); font-weight: 800; letter-spacing: -.055em; line-height: 1.16; margin: 0; }
+.calm-page-header h1 { font-family: 'Manrope', -apple-system, sans-serif; font-size: clamp(2rem, 2.5vw, 2.25rem); font-weight: 800; letter-spacing: -.035em; line-height: 1.2; margin: 0; }
 .calm-page-header p:not(.calm-eyebrow), .calm-caption { color: var(--calm-muted); font-size: 14px; line-height: 1.6; margin: 8px 0 16px; }
 .calm-page-header p:not(.calm-eyebrow) { margin: 11px 0 0; }
 .calm-header-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: 9px; flex: 0 0 300px; }
@@ -339,6 +345,53 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-empty > strong { font-size: 19px; color: var(--calm-ink); }
 .calm-empty .calm-blocker { margin-bottom: 0; }
 .calm-law-basis { font-size: 12px; line-height: 1.5; padding-block: 12px; border-top: 1px solid var(--calm-line); }
+/* Cash: title → graphic → controls, then one optional evidence disclosure. */
+.calm-shell { --calm-body: 1rem; --calm-control: .9375rem; }
+.calm-shell > .primary-nav button, .calm-action { font-size: var(--calm-control); }
+.calm-page-header p:not(.calm-eyebrow) { font-size: var(--calm-body); }
+.calm-cash { gap: 1rem; font-size: var(--calm-body); line-height: 1.5; }
+.calm-cash :is(button, select, summary) { min-height: 44px; font-size: var(--calm-control); max-width: 100%; white-space: normal; }
+.calm-cash :is(h2, h3) { line-height: 1.25; overflow-wrap: break-word; }
+.calm-cash h2 { font-size: 1.5rem; }
+.calm-cash h3, .calm-cash-charts .financial-chart h3 { font-size: var(--chart-heading); margin: 0; }
+.calm-cash-charts { padding: clamp(1rem, 2vw, 1.5rem); }
+.calm-cash-charts .financial-charts { gap: 1.25rem; }
+.calm-cash-charts .financial-chart { margin: 0; padding: 1rem 0 0; }
+.calm-cash-charts .financial-chart + .financial-chart { margin-top: 0; padding-top: 1.25rem; }
+.calm-cash-charts .financial-chart .chart { height: clamp(15rem, 25vw, 21rem); margin: .5rem 0; }
+.calm-cash .monthly-money { padding: 1.25rem 0 0; margin-top: 1.25rem; border: 0; border-top: 1px solid var(--calm-line); border-radius: 0; box-shadow: none; }
+.calm-cash .monthly-money .panel-head { margin: 0 0 .5rem; }
+.calm-cash .cash-allocation figure { margin: 0 0 .5rem; }
+.calm-cash .cash-allocation figcaption, .calm-cash .chart-axis-note { font-size: var(--chart-caption); margin: .5rem 0; line-height: 1.5; }
+.calm-cash .cash-allocation > p, .calm-cash .calm-caption, .calm-cash .chart-qualification, .calm-cash .chart-selected { font-size: var(--calm-body); line-height: 1.5; }
+.calm-cash .chart-qualification { margin: .5rem 0; color: #805022; }
+.calm-cash .chart-legend { margin: .5rem 0; gap: .25rem .75rem; }
+.calm-cash .chart-legend button { padding: .25rem; }
+.calm-cash .chart-controls { margin: .5rem 0; gap: .5rem; }
+.calm-cash .chart-control { flex: 1 1 12rem; }
+.calm-cash .chart-selected { padding: .5rem .75rem; margin: .5rem 0 0; }
+.calm-cash .chart-selected .chart-exact-values { margin-top: .25rem; gap: .25rem 1rem; }
+.calm-cash .chart-selected dd { margin-top: .125rem; }
+.calm-cash .cash-month-controls { max-width: 24rem; margin: .5rem 0; }
+.calm-cash .cash-month-controls select { width: 100%; }
+.calm-cash .paycheck-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: .5rem 1rem; margin-block: .75rem; }
+.calm-cash .paycheck-legend small { font-size: var(--chart-caption); }
+.calm-cash .calm-empty { min-height: 12rem; font-size: var(--calm-body); }
+.calm-cash .cash-chart-details { font-size: var(--calm-body); }
+.cash-chart-details h3 { margin-block: 1rem .5rem; }
+.cash-chart-details :is(.chart-table, .chart-opening, .chart-basis) { font-size: var(--calm-body); }
+/* One-column rows prevent nested dl grids squeezing metric names to letters. */
+.calm-cash .financial-chart .recharts-tooltip-wrapper { width: min(24rem, 100%); max-width: 100%; z-index: 2; }
+.calm-cash .financial-chart .chart-readout { width: 100%; padding: .75rem; font-size: var(--chart-control); line-height: 1.4; max-height: min(15rem, 40svh); overflow-y: auto; word-break: normal; overflow-wrap: break-word; }
+.calm-cash .chart-readout p { margin: 0 0 .25rem; }
+.calm-cash .chart-readout dl.chart-exact-values { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; margin: .5rem 0; }
+.calm-cash .chart-readout .chart-exact-values > div { display: block; min-width: 0; }
+.calm-cash .chart-readout .chart-exact-values :is(dt, dd) { font-size: var(--chart-control); margin: 0; overflow-wrap: break-word; }
+@media (max-width: 700px) {
+  .calm-shell { --calm-body: .9375rem; --calm-control: .875rem; }
+  .calm-cash .chart-controls { display: flex; }
+  .calm-cash .chart-control { flex-basis: 100%; }
+}
 @media (max-width: 1100px) { .calm-page-header { align-items: start; flex-direction: column; gap: 8px; } .calm-header-actions { flex-basis: auto; justify-content: start; } }
 @media (max-width: 900px) {
   .app-shell.calm-shell { grid-template-columns: minmax(0, 1fr); }
@@ -350,7 +403,7 @@ main#main-content { padding: 24px 32px 64px; }
   .calm-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
   .calm-metric:last-child { grid-column: 1 / -1; }
   .calm-additional-values { grid-template-columns: minmax(0, 1fr); }
-  .calm-page-header h1 { font-size: 31px; }
+  .calm-page-header h1 { font-size: clamp(1.5rem, 6.5vw, 1.875rem); }
   .calm-metric .calm-metric-value { font-size: 24px; }
   .calm-metric h3 { font-size: 11px; margin-bottom: 11px; }
   .calm-panel, .calm-metric { padding: 18px; }

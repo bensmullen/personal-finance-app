@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CalmAction, CalmDisclosure, CalmMetric, CalmPageHeader, CalmPanel } from "./calm/CalmPresentation.js";
+import { CashDetailsContent, CashDetailsTarget, CalmAction, CalmDisclosure, CalmMetric, CalmPageHeader, CalmPanel } from "./calm/CalmPresentation.js";
 import {
   Profiler,
   createContext,
@@ -1639,22 +1639,24 @@ function CashFlow({
   selectMonth: (month: string) => void;
   openOwner: (section: string) => void;
 }) {
+  const [detailsTarget, setDetailsTarget] = useState<HTMLDivElement | null>(null);
   return (
+    <CashDetailsTarget.Provider value={detailsTarget}>
     <div className="calm-cash">
       <nav className="cash-tasks" aria-label="Cash tasks">
         {(["Income", "Spending", "Accounts", "Insurance & coverage"] as const).map(section => <button key={section} type="button" aria-label={`Review ${section} sources`} onClick={() => openOwner(section)}>{section}</button>)}
       </nav>
-      <section className="calm-cash-current" aria-label="Recorded cash today">
-        <CalmMetric label="Bank cash and savings" value={position.cash?.display} source={`Recorded bank accounts · as of ${asOf}`} explanation="Current bank balances, separate from the forecast below." />
-        <CalmMetric label="Cash inside investment accounts" value={position.wrapperCash?.display} source={`Recorded investment accounts · as of ${asOf}`} explanation="Held inside investment accounts; separate from bank cash and savings." />
-      </section>
-      <CalmPanel title="How your cash may change" className="calm-cash-charts">
+      <section aria-label="How your cash may change" className="calm-panel calm-cash-charts">
         <button type="button" className="calm-action" onClick={run} disabled={pending}>Run cash-flow forecast</button>
         {error && (
           <p className="field-error" role="alert">
             {error}
           </p>
         )}
+        {forecast && forecast.status !== "unavailable" && <>
+          {forecast.stoppedAt && <p className="chart-qualification" role="status">Forecast stopped at {forecast.stoppedAt.slice(0, 10)}; requested end {forecast.requestedHorizon.end.slice(0, 10)}.</p>}
+          {forecast.liquidityShortfalls.length > 0 && <p className="chart-qualification" role="alert">Modeled liquidity stress · {forecast.liquidityShortfalls.length} funding shortfalls. Review funding sources in Chart Details.</p>}
+        </>}
         {forecast?.status === "completed" ||
         forecast?.status === "incomplete" ? (
           <HouseholdForecastVisual
@@ -1664,21 +1666,29 @@ function CashFlow({
             calm
           />
         ) : forecast?.status === "unavailable" ? (
-          <><p className="calm-empty" role="status">No supported cash trajectory is available. Recorded balances above are still available.</p><CalmDisclosure title="Why this forecast is unavailable"><DiagnosticList
+          <><p className="calm-empty" role="status">No supported cash trajectory is available. Recorded balances remain available in Chart Details.</p><CashDetailsContent><CalmDisclosure title="Why this forecast is unavailable"><DiagnosticList
             diagnostics={forecast.diagnostics}
             fallback={forecast.message}
-          /></CalmDisclosure></>
+          /></CalmDisclosure></CashDetailsContent></>
         ) : (
           <Empty text="No supported cash forecast yet. Run the household forecast to see its cash trend; no deposits or spending are inferred." />
         )}
-      </CalmPanel>
       <MonthlyEvidence draft={draft} forecast={forecast} mode="paycheck" selectedMonth={selectedMonth} selectMonth={selectMonth} />
+      </section>
+      <details className="calm-disclosure cash-chart-details"><summary>Chart Details</summary><div>
+      <div ref={setDetailsTarget} />
+      <section className="calm-cash-current" aria-label="Recorded cash today">
+        <CalmMetric label="Bank cash and savings" value={position.cash?.display} source={`Recorded bank accounts · as of ${asOf}`} explanation="Current bank balances, separate from the forecast." />
+        <CalmMetric label="Cash inside investment accounts" value={position.wrapperCash?.display} source={`Recorded investment accounts · as of ${asOf}`} explanation="Held inside investment accounts; separate from bank cash and savings." />
+      </section>
       <CalmDisclosure title="Recorded cash sources and limitations">
         <p>Recorded balances are as of {asOf}. Forecast cash includes bank and investment-account cash. Neither is a take-home paycheck estimate.</p>
         {position.diagnostics.length > 0 && <DiagnosticList diagnostics={position.diagnostics} />}
         <CalmAction onClick={() => openOwner("Accounts")}>Review account balances</CalmAction>
       </CalmDisclosure>
+      </div></details>
     </div>
+    </CashDetailsTarget.Provider>
   );
 }
 function NetWorthOverview({

@@ -1,5 +1,13 @@
 import * as React from "react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
+
+/** One physical disclosure; each chart owns its live evidence without duplication. */
+export const CashDetailsTarget = React.createContext<HTMLElement | null | undefined>(undefined);
+export function CashDetailsContent({ children }: { children: ReactNode }) {
+  const target = React.useContext(CashDetailsTarget);
+  return target === undefined ? <>{children}</> : target ? createPortal(children, target) : null;
+}
 
 /** Presentation only: callers supply exact, sourced values and state language. */
 export function CalmAction({ children, onClick, primary = false }: { children: ReactNode; onClick: () => void; primary?: boolean }) {
