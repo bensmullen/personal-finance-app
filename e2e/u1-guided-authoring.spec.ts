@@ -142,7 +142,12 @@ test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and
   await expect(pay).toContainText("not leftover pay");
   await expect(pay.getByRole("img")).toHaveAttribute("aria-label", /Mortgage payment.*total income basis.*taxes withheld not modeled/i);
   await pay.getByLabel("paycheck forecast month").selectOption("2026-02");
-  await expect(pay).toContainText("2026-02-01 to 2026-03-01");
+  await expect(pay.locator(".calm-caption")).toHaveText(/February 2026/);
+  const dates = pay.locator("details").filter({ has: page.locator(":scope > summary", { hasText: "Selected month dates and evidence" }) });
+  await expect(dates).not.toHaveAttribute("open");
+  await dates.locator(":scope > summary").focus();
+  await page.keyboard.press("Enter");
+  await expect(dates).toContainText("2026-02-01T00:00:00.000Z to 2026-03-01T00:00:00.000Z (exclusive)");
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     const bar = await pay.getByRole("img").boundingBox();

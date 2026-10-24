@@ -931,8 +931,7 @@ export function PersonalFinanceApp() {
               <button onClick={() => navigate("Money", "Accounts")}>Review accounts</button> <button onClick={() => navigate("Net Worth", "Debt")}>Review debt</button> <button onClick={() => navigate("Net Worth", "Property & other assets")}>Review asset sources</button></details>
           </section>}
           {primary !== "Overview" && <ForecastStatus label="Household forecast" state={interactive.baseline} compact={primary === "Money" && subnav === "Cash Flow"}
-            setupChanged={primary === "Money" && subnav === "Cash Flow" && setupChangesPending}
-            update={primary === "Money" && subnav === "Cash Flow" && interactive.available && !setupChangesPending ? runHouseholdForecast : undefined} />}
+            setupChanged={primary === "Money" && subnav === "Cash Flow" && setupChangesPending} />}
           {primary === "Overview" && <Overview
             position={position!} forecast={householdForecast} draft={draft} forecastState={interactive.baseline}
             asOf={sessionSettings.asOf} dataCutoff={sessionSettings.dataCutoff}
@@ -1026,6 +1025,7 @@ export function PersonalFinanceApp() {
               forecast={householdForecast}
               draft={draft}
               run={runHouseholdForecast}
+              pending={interactive.baseline.pending}
               error={runSettingsError}
               selectedMonth={cashMonth}
               selectMonth={setCashMonth}
@@ -1621,6 +1621,7 @@ function CashFlow({
   asOf,
   forecast,
   run,
+  pending,
   draft,
   error,
   selectedMonth,
@@ -1631,6 +1632,7 @@ function CashFlow({
   asOf: string;
   forecast: PersonalHouseholdForecastReadModel | undefined;
   run: () => void;
+  pending: boolean;
   draft: PersonalDraft;
   error: string;
   selectedMonth: string;
@@ -1647,6 +1649,7 @@ function CashFlow({
         <CalmMetric label="Cash inside investment accounts" value={position.wrapperCash?.display} source={`Recorded investment accounts · as of ${asOf}`} explanation="Held inside investment accounts; separate from bank cash and savings." />
       </section>
       <CalmPanel title="How your cash may change" className="calm-cash-charts">
+        <button type="button" className="calm-action" onClick={run} disabled={pending}>Run cash-flow forecast</button>
         {error && (
           <p className="field-error" role="alert">
             {error}
@@ -1674,7 +1677,6 @@ function CashFlow({
         <p>Recorded balances are as of {asOf}. Forecast cash includes bank and investment-account cash. Neither is a take-home paycheck estimate.</p>
         {position.diagnostics.length > 0 && <DiagnosticList diagnostics={position.diagnostics} />}
         <CalmAction onClick={() => openOwner("Accounts")}>Review account balances</CalmAction>
-        <CalmAction onClick={run}>Run cash-flow forecast</CalmAction>
       </CalmDisclosure>
     </div>
   );

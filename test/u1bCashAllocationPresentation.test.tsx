@@ -11,6 +11,10 @@ import { decimal } from "../src/values/index.js";
 import type { MonthlyUse } from "../src/application/monthlyMoney.js";
 import { runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
 import { inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
+import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
+import { restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
+import { householdEvidenceMonth } from "../src/application/mortgageChartData.js";
+import type { HouseholdForecastPoint } from "../src/application/householdProjection.js";
 import { createD1IntegratedHousehold, d1IntegratedCompilerRequest, integratedIds } from "./fixtures/d1IntegratedHousehold.js";
 
 const draft = createEmptyPersonalDraft("cc000000-0000-4000-8000-000000000001");
@@ -25,6 +29,12 @@ function evidence(overrides: Partial<MonthlyEvidenceDetail> = {}): MonthlyEviden
     lines: [], mortgages: [], cashUses: [], withholding: "not_modeled", withholdingAmount: undefined, status: "incomplete", ...overrides };
 }
 const render = (detail = evidence()) => renderToStaticMarkup(React.createElement(CashAllocation, { draft, detail, review: noop, setup: noop }));
+
+function postedMonth(point: HouseholdForecastPoint) {
+  const address = point.traceRefs.find(ref => ref.replayArtifact !== undefined)!.replayArtifact as { basis: unknown; start: string; end: string };
+  const basis = restorePortableHouseholdReplayArtifact(address.basis);
+  return { basis, transactions: householdEvidenceMonth(basis, address.start, address.end).flatMap(period => period.transactions) };
+}
 
 function withheldModel(amount: string | undefined, contributions = true): PersonalDraft {
   let model = createD1IntegratedHousehold();
@@ -68,6 +78,7 @@ describe("Cash payroll credit classification from authentic committed replay", (
     expect(cashComparison(detail)?.coherent).toBe(true);
     const html = render(detail);
     expect(html).toContain("123.45 USD · posted elections only");
+    expect(html).toContain("Withheld from gross payroll · not a second bank cash outflow or spending");
     expect(html).not.toContain("Unknown · not modeled");
     expect(JSON.stringify({ model, forecast })).toBe(before);
     expect(JSON.stringify(runPersonalHouseholdForecast(model, request))).toBe(JSON.stringify(forecast));
@@ -128,18 +139,79 @@ describe("Cash payroll credit classification from authentic committed replay", (
     expect(detail.payroll).toBe("9100");
     expect(detail.deposited).toBe("8426.55");
   });
-  it("does not import a bank tax payment from another month or invent gross wages for net income", () => {
-    const model = patchPersonalObject(withheldModel(undefined, false), "Income", golden.income, { gross_or_net: "net" });
-    const compiler = d1IntegratedCompilerRequest();
-    const forecast = runPersonalHouseholdForecast(model, { compiler: { ...compiler, tax: { ...compiler.tax, payments: compiler.tax.payments.map(item => ({ ...item, at: "2026-02-02T00:00:00.000Z" as typeof item.at })) } }, asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity: "17100000-0000-4000-8000-000000000007" });
-    if (forecast.status === "unavailable") throw new Error("Expected net-income fixture");
+  it("binds same-jurisdiction withholding to each salary occurrence without duplicating credit assets", () => {
+    const source = withheldModel("123.45");
+    const incomeId = "17100000-0000-4000-8000-000000000012";
+    let model: PersonalDraft = { ...source, objects: { ...source.objects, Income: [...source.objects.Income!, {
+      ...objects(source, "Income")[0]!, income_id: incomeId, source: "Second supported salary",
+      amount: "100", start_date: "2026-01-03", growth_model_id: null, related_event_id: null,
+    }] } };
+    model = authorPayrollWithholding(model, {
+      id: "17100000-0000-4000-8000-000000000013", incomeId, ownerId: golden.person,
+      employerId: "Second supported salary", depositAccountId: golden.checking, jurisdiction: "US:FEDERAL",
+      effectiveDate: "2026-01-01", provenance: "Synthetic second employer percentage election", userConfirmed: true,
+      calculation: { kind: "percent_gross", rate: "0.1701" },
+    });
+    const forecast = runPersonalHouseholdForecast(model, { compiler: d1IntegratedCompilerRequest(), asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity: "17100000-0000-4000-8000-000000000014" });
+    if (forecast.status === "unavailable") throw new Error("Expected two supported payroll sources");
+    const before = JSON.stringify({ model, forecast });
     const detail = inspectMonthlyMoney(forecast.points[0]!, model);
-    expect(detail.basis).toBe("household_income");
-    expect(detail.payroll).toBe("0");
-    expect(detail.deposited).toBe("9000");
+    expect(detail.withholding).toBe("posted");
+    expect(detail.withholdingAmount).toBe("140.46");
+    expect(detail.payroll).toBe("9100");
+    expect(detail.deposited).toBe("8409.54");
+    expect(detail.employee).toBe("550");
+    const category = detail.categories.find(item => item.label === "Payroll withholding")!;
+    expect(category.sourceIds).toHaveLength(2);
+    expect(new Set(category.sourceIds).size).toBe(2);
+    expect(category.incomeIds).toEqual(expect.arrayContaining([golden.income, incomeId]));
+    expect(category.holdingIds).toEqual([]);
+    expect(category.accountIds).toEqual([]);
+    const { transactions } = postedMonth(forecast.points[0]!);
+    for (const id of category.sourceIds) {
+      const [transactionId, index] = id.split(":leg:");
+      const leg = transactions.find(tx => tx.id === transactionId)!.legs[Number(index)]!;
+      expect(leg.type).toBe("asset");
+      expect(leg.posting).toBe("debit");
+      expect(["123.45", "17.01"]).toContain(leg.amount.amount.toString());
+    }
+    expect(JSON.stringify({ model, forecast })).toBe(before);
+  });
+  it.each(["gross", "net"])("does not import out-of-month tax or fabricate unsupported %s salary execution", grossOrNet => {
+    const model = patchPersonalObject(withheldModel(undefined, false), "Income", golden.income, { gross_or_net: grossOrNet });
+    const compiler = d1IntegratedCompilerRequest();
+    const request = { compiler: { ...compiler, tax: { ...compiler.tax, payments: compiler.tax.payments.map(item => ({ ...item, at: "2026-02-02T00:00:00.000Z" as typeof item.at })) } }, asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity: "17100000-0000-4000-8000-000000000007" };
+    // The tax-enabled integrated compiler deliberately omits net salary:
+    // it cannot reconstruct gross wages. Other supported domains still run.
+    const compiled = compileHouseholdProjection(model, request.compiler);
+    if (compiled.status !== "compiled") throw new Error("Expected integrated compilation with source-level capability gaps");
+    expect(compiled.value.cashFlowInput?.incomes.some(stream => stream.id === golden.income)).toBe(grossOrNet === "gross");
+    const forecast = runPersonalHouseholdForecast(model, request);
+    if (forecast.status === "unavailable") throw new Error("Expected supported domains alongside salary source limitations");
+    const before = JSON.stringify({ model, forecast });
+    const point = forecast.points[0]!;
+    const { transactions } = postedMonth(point);
+    const salary = transactions.filter(tx => tx.type === "income" || tx.type === "payroll_income");
+    expect(salary).toHaveLength(grossOrNet === "gross" ? 1 : 0);
+    const postedDeposits = salary.flatMap(tx => tx.legs).reduce((sum, leg) =>
+      leg.type === "cash" && leg.posting === "debit" ? sum.plus(leg.amount.amount) : sum, decimal("0"));
+    const detail = inspectMonthlyMoney(point, model);
+    expect(detail.basis).toBe(grossOrNet === "gross" ? "gross_payroll" : "household_income");
+    expect(detail.payroll).toBe(grossOrNet === "gross" ? "9000" : "0");
+    expect(detail.deposited).toBe(postedDeposits.toString());
+    expect(detail.deposited).toBe(grossOrNet === "gross" ? "9000" : "0");
+    if (grossOrNet === "net") {
+      expect(point.outputCapabilities?.statementIncome?.status).toBe("incomplete");
+      expect(forecast.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ category: "payroll_source_unsupported", entityId: golden.income })]));
+      expect(detail.income).toBe("0");
+      expect(detail.employee).toBe("0");
+    }
     expect(detail.withholdingAmount).toBeUndefined();
     expect(detail.categories.some(item => item.label === "Tax cash payment")).toBe(false);
+    expect(transactions.some(tx => tx.type.startsWith("tax") && tx.legs.some(leg => leg.type === "cash" && leg.posting === "credit"))).toBe(false);
     expect(decimal(detail.income).equals(decimal(detail.deposited))).toBe(true);
+    expect(decimal(point.cash.amount).minus(decimal(forecast.openingSnapshot.cash.amount)).equals(decimal(detail.cashChange))).toBe(true);
+    expect(JSON.stringify({ model, forecast })).toBe(before);
   });
 });
 

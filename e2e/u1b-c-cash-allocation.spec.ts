@@ -114,6 +114,10 @@ for (const width of [1440, 390]) {
     const model = JSON.parse(await exported(page)) as PersonalDraft;
     await clickFinancialDestination(page, "Cash");
     await expect(page.getByRole("heading", { name: "Your cash, coming in and going out.", exact: true })).toBeVisible();
+    const cashRun = page.getByRole("button", { name: "Run cash-flow forecast", exact: true });
+    await expect(cashRun).toHaveCount(1);
+    await expect(cashRun).toBeVisible();
+    await expect(cashRun).toBeEnabled();
     const recorded = page.getByRole("region", { name: "Recorded cash today", exact: true });
     await expect(recorded.getByRole("article", { name: "Bank cash and savings", exact: true })).toContainText("Recorded bank accounts · as of 2026-01-01");
     await expect(recorded.getByRole("article", { name: "Cash inside investment accounts", exact: true })).toContainText("Recorded investment accounts · as of 2026-01-01");
@@ -253,6 +257,7 @@ test("Cash owner edit/cancel/save retains month, marks old evidence stale and re
   await editor.getByRole("button", { name: "Save changes", exact: true }).click();
   await page.getByRole("button", { name: "Return to Cash breakdown", exact: true }).click();
   await expect(panel(page)).toHaveAttribute("data-evidence-state", "stale");
+  await expect(page.getByRole("button", { name: "Run cash-flow forecast", exact: true })).toBeVisible();
   await expect(panel(page)).toContainText("Out of date · retained forecast");
   await expect(panel(page).getByRole("img")).toHaveCount(0);
   await expect(month).toHaveValue("2026-02");
@@ -306,4 +311,10 @@ for (const width of [1440, 390]) test(`H04 bank-only no forecast has an accessib
   await expect(page.getByRole("button", { name: /H04 checking/ })).toBeVisible();
   await page.getByRole("button", { name: "Return to Cash breakdown", exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const cashRun = page.getByRole("button", { name: "Run cash-flow forecast", exact: true });
+  await expect(cashRun).toHaveCount(1);
+  await expect(cashRun).toBeVisible();
+  await cashRun.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "Your current plan", exact: true })).toBeVisible();
 });

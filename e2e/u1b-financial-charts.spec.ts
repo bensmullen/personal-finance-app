@@ -382,7 +382,7 @@ for (const width of [1440, 390]) {
     const statements = page.getByRole("figure", { name: statementTitle, exact: true });
     await expect(cash).toBeVisible();
     await expect(statements).toBeVisible();
-    await expect(page.getByText(/No observed history loaded/)).toHaveCount(1);
+    await expect(page.getByText(/No past account history is included/)).toHaveCount(1);
     await expect(grouping(cash)).toHaveValue("annual");
     await expect(cash).toContainText("right axis: signed annual balance change");
     await expect(grouping(statements)).toHaveValue("monthly");

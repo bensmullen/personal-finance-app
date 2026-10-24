@@ -38,6 +38,7 @@ export function CashAllocation({ draft, detail, review, setup }: {
       <span><strong>{item.label}</strong> · {amount(item.amount)}
         {["ira", "brokerage"].includes(item.kind) && <small>Asset transfer · not spending</small>}
         {item.kind === "workplace" && <small>Employee contribution · employer contributions excluded</small>}
+        {item.label === "Payroll withholding" && <small>Withheld from gross payroll · not a second bank cash outflow or spending</small>}
         {item.kind === "mortgage" && <small>Principal & interest · principal repays debt, not consumption</small>}
         <details><summary>Review {item.label} sources</summary>
           {item.incomeIds?.map(id => <button key={id} type="button" onClick={() => review("Income", id)}>Review {referenceLabel(draft, "Income", id)}</button>)}
