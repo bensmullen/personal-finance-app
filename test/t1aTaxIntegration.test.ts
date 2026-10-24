@@ -24,6 +24,45 @@ import type { PayrollWithholdingElection } from "../src/simulation/tax/contracts
 import { taxCatalogFingerprint } from "../src/rules/tax/catalog.js";
 import { taxDiagnostic, taxOutputCapabilities } from "../src/simulation/tax/contracts.js";
 import { mergeOutputCapabilities } from "../src/simulation/r3/capabilities.js";
+import { healthTaxFixture } from "./d2/health/premiums/payrollPort/taxScenario.js";
+import { originals as healthOriginals } from "./d2/health/premiums/payrollPort/scenario.js";
+
+describe("P2 independently sourced health wage bases", () => {
+  it("keeps gross economics and applies different income/payroll/state/local exclusions exactly once", () => {
+    const fixture = healthTaxFixture(), { result, paid, total } = fixture.execute();
+    expect(paid.gross.equals(money("1000"))).toBe(true);
+    expect(paid.takeHomeCash.equals(money("750"))).toBe(true);
+    expect(total("US:FEDERAL").equals(money("75"))).toBe(true); // 85 income + 90 payroll - 100 original credit
+    expect(total("US:NY").equals(money("100"))).toBe(true);
+    expect(total("US:NY:NYC").equals(money("92.50"))).toBe(true);
+    expect(result.facts.outputCapabilities?.cash?.status).toBe("complete");
+    expect(result.facts.diagnostics).not.toEqual(expect.arrayContaining([expect.objectContaining({ category: "wage_gross_to_net_withholding" })]));
+  });
+  it.each(["missing", "inconsistent", "rule", "legal-source"] as const)("preserves actual economics and marks %s legal base incomplete", failure => {
+    const fixture = healthTaxFixture(`tax-${failure}`), original = healthOriginals.get(fixture.deduction.source.sourceId)!;
+    const bases = failure === "missing" ? fixture.bases.filter(b => b.jurisdiction !== "US:NY") : fixture.bases.map(b => b.jurisdiction !== "US:NY" ? b
+      : failure === "inconsistent" ? { ...b, after: money("999") }
+      : failure === "rule" ? { ...b, ruleVersion: "unqualified-version" } : { ...b, legalPlanSourceId: "" });
+    healthOriginals.set(fixture.deduction.source.sourceId, { ...original, deduction: { ...fixture.deduction, appliedJurisdictionWageBases: bases } });
+    const { result, paid, total } = fixture.execute();
+    expect(paid.takeHomeCash.equals(money("750"))).toBe(true);
+    expect(result.state.accounts[fixture.deduction.source.bankAccountId]!.cash.equals(money("750"))).toBe(true);
+    expect(total("US:FEDERAL").equals(money("75"))).toBe(true);
+    expect(total("US:NY").isZero()).toBe(true);
+    expect(result.facts.outputCapabilities?.cash?.status).toBe("incomplete");
+  });
+  it("refuses caller receipts detached from their actual immutable original wage", () => {
+    for (const failure of ["missing", "duplicate", "transaction", "occurrence"] as const) {
+      const fixture = healthTaxFixture(`receipt-${failure}`);
+      const { result } = fixture.execute(r => {
+        if (failure === "missing") { const { healthDeduction: _missing, ...legacy } = r; return [legacy]; }
+        return failure === "duplicate" ? [r, r] : [{ ...r, [failure === "transaction" ? "transactionId" : "occurrenceId"]: "wrong-original" }];
+      });
+      expect(result.facts.outputCapabilities?.cash?.status).toBe("incomplete");
+      expect(result.state.accounts[fixture.deduction.source.bankAccountId]!.cash.equals(money("750"))).toBe(true);
+    }
+  });
+});
 
 const differenceContext = (actual: unknown, expected: unknown): string => {
   const left = canonicalSerialize(actual), right = canonicalSerialize(expected);
