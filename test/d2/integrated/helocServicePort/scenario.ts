@@ -28,7 +28,8 @@ export function original(key = "jan", interest = "5.10", monthIndex = 0): Origin
   const source: Source = { start: civilDate("2020-01-01"), endExclusive: civilDate("2040-01-01"), householdId: ids.household, personId: ids.person,
     lineId: `line:${key}`, liabilityAccountId: ids.principal, bankAccountId: ids.bank, ruleSnapshotId: "synthetic-heloc/v1", jurisdiction: "US:TEST",
     sourcePublication: "synthetic original issuer contract", publishedAt: civilDate("2023-01-01"), asOf: civilDate("2023-01-01"), version: "1", projectionStatus: "verified" };
-  const quoteSource = { ...source, sourcePublication: "synthetic independent complete issuer statement" };
+  const quoteSource = { ...source, sourcePublication: "synthetic independent complete issuer statement",
+    publishedAt: period.endExclusive, asOf: period.endExclusive };
   const amount = money("100").plus(money(interest));
   return { bankOpening: money("500"), bankDebit: { id: `actual-bank-debit:${key}`, amount, at: period.endExclusive, authenticated: true }, feeNature: "none",
     request: { line: { period, evaluatedAsOf: period.endExclusive, householdId: ids.household, ownerId: ids.person, borrowerId: ids.person,

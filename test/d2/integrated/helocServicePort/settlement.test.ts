@@ -7,6 +7,12 @@ import { money, USD } from "../../../../src/values/index.js";
 import { admitted, authorityStatus, context, ids, opening, sources, original, reconstruct } from "./scenario.js";
 
 describe("P1 canonical HELOC original/settlement archive", () => {
+  it("rejects a purported complete issuer statement published before the covered period ended", () => {
+    const raw = original("backdated"), t = raw.request.terms!, q = t.issuerQuote!;
+    const request = { ...raw.request, terms: { ...t, issuerQuote: { ...q,
+      source: { ...q.source, publishedAt: raw.request.line.source.publishedAt, asOf: raw.request.line.source.asOf } } } };
+    expect(reconstruct("backdated", { ...raw, request })).toBeUndefined();
+  });
   it("regenerates B1 computed interest rather than treating an issuer tag as proof", () => {
     const raw = original("computed"), r = raw.request;
     const { issuerQuote: _quote, ...terms } = r.terms!;
