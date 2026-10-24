@@ -51,7 +51,7 @@ export interface OriginalPayrollPremiumFacts {
     readonly employerId: string;
     readonly coverageId: string;
     readonly planId: string;
-    readonly window: PayrollPremiumSourceWindow;
+    readonly evidenceWindow: PayrollPremiumSourceWindow;
     readonly taxCharacter: "section125" | "aftertax" | "unknown";
     readonly section125Qualified: boolean;
   };
@@ -222,7 +222,7 @@ export function proposePayrollPremiumBindings(input: {
     }
     const e = f.election;
     if (e.id !== s.electionId || e.incomeId !== s.incomeId || e.ownerId !== s.ownerId || e.employerId !== s.employerId
-      || e.coverageId !== s.coverageId || e.planId !== s.planId || !windowAt(e.window, s.dueAt, context)) {
+      || e.coverageId !== s.coverageId || e.planId !== s.planId || !windowAt(e.evidenceWindow, s.dueAt, context)) {
       reject("PAYROLL_PLAN_ELECTION_REQUIRED", "source-owned existing effective payroll/plan election bound to this job and coverage"); continue;
     }
     if (f.alreadyAllocated !== false) { reject(f.alreadyAllocated === true ? "PREMIUM_ALREADY_ALLOCATED" : "PRIOR_ALLOCATION_CHECK_REQUIRED",
@@ -292,7 +292,7 @@ export function proposePayrollPremiumBindings(input: {
       premiumOperationId: p.operationId, quoteId: p.quoteId, quoteVersion: p.source.version, memberIds: p.memberIds,
       quoteRef: { ruleSnapshotId: p.source.ruleSnapshotId, asOf: p.source.asOf, effectiveAt: p.effectiveAt, coveragePeriod: p.coveragePeriod },
       claimKeys: keys, employmentRef: { sourceId: f.employment.sourceId, sourceVersion: f.employment.sourceVersion },
-      electionRef: { sourceId: f.election.window.sourceId, sourceVersion: f.election.window.sourceVersion, electionId: s.electionId },
+      electionRef: { sourceId: f.election.evidenceWindow.sourceId, sourceVersion: f.election.evidenceWindow.sourceVersion, electionId: s.electionId },
       proposedCashPayDeduction: { amount: p.memberAmount, ...conditional },
       proposedHealthcareExpense: p.memberAmount.isZero() ? null : { amount: p.memberAmount, claimId: s.claimId, ...conditional },
       employerSubsidy: p.employerAmount,

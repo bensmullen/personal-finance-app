@@ -57,7 +57,7 @@ export function payroll(c: PremiumCoverage, at: Instant = instant("2024-01-15T17
       version: c.quote.source.version, asOf: c.quote.source.asOf, schedule: c.quote.schedule, premiumEffectiveAt: effective, payrollAt: at,
       allocation: "full_quoted_occurrence", grossAmount: c.quote.gross, employerAmount: c.quote.employer, employeeAmount: c.quote.member },
     election: { id: s.electionId, incomeId, ownerId: person, employerId: c.sponsorId, coverageId: c.id, planId: c.planId,
-      window: window(`plan-election:${c.id}`), taxCharacter: "section125", section125Qualified: true },
+      evidenceWindow: window(`plan-election:${c.id}`), taxCharacter: "section125", section125Qualified: true },
     inventoryComplete: true, contributions: [{ id: `contribution:${key}`, character: "traditional_401k", amount: money("50") }],
     withholding: ["US:FEDERAL", "US:STATE", "US:LOCAL"].map((jurisdiction, i) => ({
       election: { id: `withholding:${c.sponsorId}:${jurisdiction}`, version: "payroll-withholding/v1", incomeId, ownerId: person,

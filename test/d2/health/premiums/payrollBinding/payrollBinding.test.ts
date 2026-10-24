@@ -210,7 +210,7 @@ describe("C1-2 conditional original-payroll premium binder", () => {
   it("gates source publication, knowledge, election and employment boundaries precisely", () => {
     const cases: readonly ((r: OriginalPayrollPremiumFacts) => OriginalPayrollPremiumFacts)[] = [
       r => ({ ...r, employment: { ...r.employment, effectiveUntil: r.source.dueAt } }),
-      r => ({ ...r, election: { ...r.election, window: { ...r.election.window, effectiveFrom: instant("2024-01-15T17:00:00.001Z") } } }),
+      r => ({ ...r, election: { ...r.election, evidenceWindow: { ...r.election.evidenceWindow, effectiveFrom: instant("2024-01-15T17:00:00.001Z") } } }),
       r => ({ ...r, employment: { ...r.employment, knownAt: instant("2024-01-01T00:00:00.000Z") } }),
     ];
     for (const update of cases) { const f = scenario(); change(f, update); expect(propose(f.input).intents).toEqual([]); }
