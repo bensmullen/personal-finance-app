@@ -42,8 +42,14 @@ export function chartCoordinate(value: ForecastChartValue): number | null {
 }
 const axisAmount = (value: number) => new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 
-function ExactPeriod({ point, series }: { point: ForecastChartPeriod; series: readonly Series[] }) {
-  return <><strong>Projected {chartPeriodLabel(point)}</strong><dl className="chart-exact-values">{series.map(item => <div key={item.key}><dt>{item.label}</dt><dd>{exactChartValue(point.metrics[item.key], item.key === "totalModeledCashChange")}</dd></div>)}</dl></>;
+function readablePeriod(point: ForecastChartPeriod): string {
+  const label = point.granularity === "annual" ? point.periodStart.slice(0, 4)
+    : new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(point.periodStart));
+  return `${label}${point.coverage === "partial_year" ? ` · partial year, ${point.coveredMonthCount} covered months` : ""}`;
+}
+
+function ExactPeriod({ point, series, readable = false }: { point: ForecastChartPeriod; series: readonly Series[]; readable?: boolean }) {
+  return <><strong>Projected {readable ? readablePeriod(point) : chartPeriodLabel(point)}</strong><dl className="chart-exact-values">{series.map(item => <div key={item.key}><dt>{item.label}</dt><dd>{exactChartValue(point.metrics[item.key], item.key === "totalModeledCashChange")}</dd></div>)}</dl></>;
 }
 
 function ChartDetails({ collapsed, children }: { collapsed: boolean; children: React.ReactNode }) {
@@ -78,11 +84,11 @@ export function FinancialChart({ annual, monthly, kind, stale, calm = false, chi
   const controls = <div className="chart-controls">
     <div className="chart-control"><label htmlFor={`${id}-grouping`}>Period grouping</label><select id={`${id}-grouping`} value={granularity} onChange={event => { setGranularity(event.target.value as "annual" | "monthly"); setSelected(""); }}><option value="annual">Annual · supported horizon</option><option value="monthly">Monthly · up to 12 months</option></select></div>
     {granularity === "monthly" && <div className="chart-control"><label htmlFor={`${id}-range`}>Monthly range starting</label><select id={`${id}-range`} value={monthly.points[startIndex]?.periodStart ?? ""} onChange={event => { setWindowStart(event.target.value); setSelected(""); }}>{monthly.points.map(point => <option key={point.periodStart} value={point.periodStart}>{point.periodStart.slice(0, 7)}</option>)}</select></div>}
-    <div className="chart-control"><label htmlFor={`${id}-period`}>Selected projected period</label><select id={`${id}-period`} value={active?.periodStart ?? ""} onChange={event => setSelected(event.target.value)}>{points.map(point => <option key={point.periodStart} value={point.periodStart}>{chartPeriodLabel(point)}</option>)}</select></div>
+    <div className="chart-control"><label htmlFor={`${id}-period`}>Selected projected period</label><select id={`${id}-period`} value={active?.periodStart ?? ""} onChange={event => setSelected(event.target.value)}>{points.map(point => <option key={point.periodStart} value={point.periodStart}>{calm && kind !== "wealth" ? readablePeriod(point) : chartPeriodLabel(point)}</option>)}</select></div>
   </div>;
   return <figure className="forecast-figure financial-chart" aria-label={kind === "wealth" ? "Household financial outlook chart" : title}>
     <figcaption><h3 id={`${id}-title`}>{title}</h3>
-      <p className="muted">{calm && kind === "wealth" ? `How your assets, debts and net worth may change. Forecast, not account history · ${source.currency}${stale ? " · out of date" : ""}.` : <>Household · {source.currency} · Deterministic projection{stale ? " · out of date" : ""}. {kind === "statement" ? "Recognized modeling measures; these are not bank receipts/disbursements or disposable wages." : "Balances are period-closing stocks."} {kind === "cash" && "Bars show signed change in the same all-account cash balance, not salary less expenses."}</>}</p>
+      <p className="muted">{calm && kind === "wealth" ? `How your assets, debts and net worth may change. Forecast, not account history · ${source.currency}${stale ? " · out of date" : ""}.` : <>Household · {source.currency} · {kind === "wealth" ? "Deterministic projection" : "Forecast, not account history"}{stale ? " · out of date" : ""}. {kind === "statement" ? "Income and expenses when recognized; not bank receipts/disbursements or disposable wages." : "Balances are period-closing stocks."} {kind === "cash" && "Bars show signed change in the same all-account cash balance, not salary less expenses."}</>}</p>
     </figcaption>
     {!calmWealth && openingDetails}
     {!points.length ? <p className={calmWealth ? "calm-empty" : undefined} role="status">{calmWealth ? "No future periods are available. The recorded opening position is separate from a projected path." : "No modeled periods available. The opening snapshot is not projected history."}</p> : <>
@@ -117,7 +123,7 @@ export function FinancialChart({ annual, monthly, kind, stale, calm = false, chi
       {calmWealth && <p className="chart-axis-note">{granularity === "annual" ? "Annual" : "Monthly"} closing balances ({source.currency}). Axis labels and positions are approximate; readouts are exact.</p>}
       {children}
       {calmWealth && points.length > 0 && controls}
-      {active && <div className="chart-selected" role="status" aria-label={`${title} exact selected period`}><ExactPeriod point={active} series={series} /></div>}
+      {active && <div className="chart-selected" role="status" aria-label={`${title} exact selected period`}><ExactPeriod point={active} series={series} readable={calm && kind !== "wealth"} /></div>}
       {points.length > 0 && <details className="chart-table"><summary>Show exact chart data · {points.length} {granularity === "annual" ? points.length === 1 ? "year" : "years" : points.length === 1 ? "month" : "months"}</summary>
         <div className="table-scroll" role="region" aria-label={`${title} exact data`} tabIndex={0}><table><caption>{title} · {stale ? "out of date retained result" : "modeled projection"} · current displayed range</caption><thead><tr><th scope="col">Projected period [start, end)</th>{series.map(item => <th scope="col" key={item.key}>{item.label}</th>)}</tr></thead><tbody>{points.map(point => <tr key={point.periodStart}><th scope="row">{chartPeriodLabel(point)}</th>{series.map(item => <td key={item.key}>{exactChartValue(point.metrics[item.key], item.key === "totalModeledCashChange")}</td>)}</tr>)}</tbody></table></div>
       </details>}

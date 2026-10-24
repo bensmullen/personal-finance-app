@@ -3,7 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CashAllocation, cashComparison, type MonthlyEvidenceDetail } from "../ui/forecast/CashAllocation.js";
 import { MonthlyMoneyPanel } from "../ui/forecast/MonthlyMoneyPanel.js";
-import { createEmptyPersonalDraft } from "../src/application/personalMvp.js";
+import { createEmptyPersonalDraft, patchPersonalObject, type PersonalDraft } from "../src/application/personalMvp.js";
+import { authorPayrollWithholding } from "../src/application/compiler/payrollWithholding.js";
+import { objects } from "../src/application/compiler/shared.js";
+import { GOLDEN_HOUSEHOLD_IDS as golden } from "../src/application/goldenHousehold.js";
+import { decimal } from "../src/values/index.js";
 import type { MonthlyUse } from "../src/application/monthlyMoney.js";
 import { runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
 import { inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
@@ -18,9 +22,126 @@ function evidence(overrides: Partial<MonthlyEvidenceDetail> = {}): MonthlyEviden
   return { currency: "USD", income: "100", payroll: "100", otherIncome: "0", basis: "gross_payroll", denominator: "100",
     categories: [category("Small", "10"), category("Large", "30")], totalUses: "40", unallocated: "60", additionalFunding: "0",
     cashChange: "60", otherReceipts: "0", receipts: [], employee: "0", deposited: "100", unreconciled: "100",
-    lines: [], mortgages: [], cashUses: [], withholding: "not_modeled", status: "incomplete", ...overrides };
+    lines: [], mortgages: [], cashUses: [], withholding: "not_modeled", withholdingAmount: undefined, status: "incomplete", ...overrides };
 }
 const render = (detail = evidence()) => renderToStaticMarkup(React.createElement(CashAllocation, { draft, detail, review: noop, setup: noop }));
+
+function withheldModel(amount: string | undefined, contributions = true): PersonalDraft {
+  let model = createD1IntegratedHousehold();
+  if (!contributions) {
+    const payrollIds = new Set(objects(model, "PrimitiveInstance").filter(item => {
+      const params = item.parameters;
+      return params && typeof params === "object" && !Array.isArray(params) && params.adapter === "d1-payroll-contribution/v1";
+    }).map(item => item.primitive_instance_id));
+    model = { ...model, objects: { ...model.objects,
+      PrimitiveInstance: objects(model, "PrimitiveInstance").filter(item => !payrollIds.has(item.primitive_instance_id)),
+      Investment: objects(model, "Investment").map(item => payrollIds.has(item.contribution_model_id) ? { ...item, contribution_model_id: null } : item),
+    } };
+  }
+  return amount === undefined ? model : authorPayrollWithholding(model, {
+    id: "17100000-0000-4000-8000-000000000001", incomeId: golden.income, ownerId: golden.person,
+    employerId: "Example salary", depositAccountId: golden.checking, jurisdiction: "US:FEDERAL", effectiveDate: "2026-01-01",
+    provenance: "Synthetic selected-month withholding regression", userConfirmed: true, calculation: { kind: "fixed", amount },
+  });
+}
+
+describe("Cash payroll credit classification from authentic committed replay", () => {
+  it.each([true, false])("separates withholding, employee assets and bank-paid tax (contributions %s)", contributions => {
+    const model = withheldModel("123.45", contributions);
+    const request = { compiler: d1IntegratedCompilerRequest(), asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity: "17100000-0000-4000-8000-000000000002" };
+    const forecast = runPersonalHouseholdForecast(model, request);
+    if (forecast.status === "unavailable") throw new Error("Expected committed payroll fixture");
+    const before = JSON.stringify({ model, forecast });
+    const detail = inspectMonthlyMoney(forecast.points[0]!, model);
+    expect(detail.withholding).toBe("posted");
+    expect(detail.withholdingAmount).toBe("123.45");
+    expect(detail.employee).toBe(contributions ? "550" : "0");
+    expect(detail.payroll).toBe("9000");
+    expect(detail.deposited).toBe(contributions ? "8326.55" : "8876.55");
+    expect(detail.unreconciled).toBe(detail.deposited);
+    expect(detail.categories.filter(item => item.label === "Payroll withholding")).toEqual([expect.objectContaining({ kind: "tax", amount: "123.45", holdingIds: [], incomeIds: [golden.income] })]);
+    expect(detail.categories.find(item => item.label === "Tax cash payment")?.amount).toBe("500");
+    expect(detail.categories.some(item => item.label === "Other payroll allocation")).toBe(false);
+    expect(detail.lines.filter(item => item.kind === "employee").map(item => item.amount).sort()).toEqual(contributions ? ["100", "450"] : []);
+    const ids = detail.categories.flatMap(item => item.sourceIds);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(cashComparison(detail)?.coherent).toBe(true);
+    const html = render(detail);
+    expect(html).toContain("123.45 USD · posted elections only");
+    expect(html).not.toContain("Unknown · not modeled");
+    expect(JSON.stringify({ model, forecast })).toBe(before);
+    expect(JSON.stringify(runPersonalHouseholdForecast(model, request))).toBe(JSON.stringify(forecast));
+  });
+  it.each(["0", undefined])("distinguishes explicit zero withholding from missing elections (%s)", amount => {
+    const model = withheldModel(amount, false);
+    const forecast = runPersonalHouseholdForecast(model, { compiler: d1IntegratedCompilerRequest(), asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity: "17100000-0000-4000-8000-000000000003" });
+    if (forecast.status === "unavailable") throw new Error("Expected payroll fixture");
+    const detail = inspectMonthlyMoney(forecast.points[0]!, model);
+    expect(detail.withholdingAmount).toBe(amount);
+    expect(detail.withholding).toBe(amount === "0" ? "posted" : "not_modeled");
+    expect(detail.deposited).toBe("9000");
+    expect(detail.categories.filter(item => item.label === "Payroll withholding")).toEqual([]);
+    expect(detail.employee).toBe("0");
+  });
+  it("keeps distinct posted jurisdiction credits exactly once in the same withholding category", () => {
+    const model = authorPayrollWithholding(withheldModel("123.45"), {
+      id: "17100000-0000-4000-8000-000000000008", incomeId: golden.income, ownerId: golden.person,
+      employerId: "Example salary", depositAccountId: golden.checking, jurisdiction: "US:NY", effectiveDate: "2026-01-01",
+      provenance: "Synthetic second-jurisdiction election", userConfirmed: true, calculation: { kind: "fixed", amount: "17.01" },
+    });
+    const forecast = runPersonalHouseholdForecast(model, { compiler: d1IntegratedCompilerRequest(), asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity: "17100000-0000-4000-8000-000000000009" });
+    if (forecast.status === "unavailable") throw new Error("Expected multi-jurisdiction payroll fixture");
+    const detail = inspectMonthlyMoney(forecast.points[0]!, model);
+    expect(detail.withholdingAmount).toBe("140.46");
+    expect(detail.deposited).toBe("8309.54");
+    const category = detail.categories.find(item => item.label === "Payroll withholding")!;
+    expect(category.amount).toBe("140.46");
+    expect(category.sourceIds).toHaveLength(2);
+    expect(new Set(category.sourceIds).size).toBe(2);
+    expect(category.holdingIds).toEqual([]);
+    expect(detail.employee).toBe("550");
+  });
+  it.each(["gross", "net"])("retains partial coverage with a second unsupported %s payroll election", grossOrNet => {
+    let model = withheldModel("123.45");
+    const salary = objects(model, "Income")[0]!;
+    const incomeId = "17100000-0000-4000-8000-000000000004";
+    model = { ...model, objects: { ...model.objects, Income: [...model.objects.Income!, { ...salary, income_id: incomeId, frequency: "biweekly", gross_or_net: grossOrNet, source: "Second synthetic employer", growth_model_id: null, related_event_id: null }] } };
+    model = authorPayrollWithholding(model, { id: "17100000-0000-4000-8000-000000000005", incomeId, ownerId: golden.person, employerId: "Second synthetic employer", depositAccountId: golden.checking, jurisdiction: "US:FEDERAL", effectiveDate: "2026-01-01", provenance: "Synthetic unsupported election", userConfirmed: true, calculation: { kind: "fixed", amount: "50" } });
+    const forecast = runPersonalHouseholdForecast(model, { compiler: d1IntegratedCompilerRequest(), asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity: "17100000-0000-4000-8000-000000000006" });
+    if (forecast.status === "unavailable") throw new Error("Expected supported payroll alongside unsupported source");
+    const detail = inspectMonthlyMoney(forecast.points[0]!, model);
+    expect(detail.withholding).toBe("partial");
+    expect(detail.withholdingAmount).toBe("123.45");
+    expect(render(detail)).toContain("partial payroll coverage");
+  });
+  it("does not call a mixed month fully covered when another supported salary has no election", () => {
+    const source = withheldModel("123.45");
+    const model = { ...source, objects: { ...source.objects, Income: [...source.objects.Income!, {
+      ...objects(source, "Income")[0]!, income_id: "17100000-0000-4000-8000-000000000010", source: "Second supported salary",
+      amount: "100", start_date: "2026-01-03", growth_model_id: null, related_event_id: null,
+    }] } };
+    const forecast = runPersonalHouseholdForecast(model, { compiler: d1IntegratedCompilerRequest(), asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity: "17100000-0000-4000-8000-000000000011" });
+    if (forecast.status === "unavailable") throw new Error("Expected mixed supported payroll fixture");
+    const detail = inspectMonthlyMoney(forecast.points[0]!, model);
+    expect(detail.withholding).toBe("partial");
+    expect(detail.withholdingAmount).toBe("123.45");
+    expect(detail.payroll).toBe("9100");
+    expect(detail.deposited).toBe("8426.55");
+  });
+  it("does not import a bank tax payment from another month or invent gross wages for net income", () => {
+    const model = patchPersonalObject(withheldModel(undefined, false), "Income", golden.income, { gross_or_net: "net" });
+    const compiler = d1IntegratedCompilerRequest();
+    const forecast = runPersonalHouseholdForecast(model, { compiler: { ...compiler, tax: { ...compiler.tax, payments: compiler.tax.payments.map(item => ({ ...item, at: "2026-02-02T00:00:00.000Z" as typeof item.at })) } }, asOf: "2026-01-01", dataCutoff: "2026-01-01", runIdentity: "17100000-0000-4000-8000-000000000007" });
+    if (forecast.status === "unavailable") throw new Error("Expected net-income fixture");
+    const detail = inspectMonthlyMoney(forecast.points[0]!, model);
+    expect(detail.basis).toBe("household_income");
+    expect(detail.payroll).toBe("0");
+    expect(detail.deposited).toBe("9000");
+    expect(detail.withholdingAmount).toBeUndefined();
+    expect(detail.categories.some(item => item.label === "Tax cash payment")).toBe(false);
+    expect(decimal(detail.income).equals(decimal(detail.deposited))).toBe(true);
+  });
+});
 
 describe("U1B-C partial cash comparison", () => {
   it("sorts exact amounts beyond binary precision, breaks ties by stable identity, and preserves input", () => {

@@ -1,9 +1,10 @@
 import type { HouseholdForecastPoint } from "./householdProjection.js";
 import { restorePortableHouseholdReplayArtifact } from "../simulation/r3/replayArtifact.js";
 import { householdEvidenceMonth } from "./mortgageChartData.js";
-import { Currency, Money, decimal, RoundingPolicy } from "../values/index.js";
+import { Currency, Money, decimal, RoundingPolicy, Unit } from "../values/index.js";
 import type { PortableModelEnvelope } from "../model/modelVersion.js";
 import { objects } from "./compiler/shared.js";
+import { taxBalanceIds } from "../simulation/tax/contracts.js";
 
 export interface MonthlyMoneyLine {
   readonly id: string;
@@ -25,6 +26,7 @@ export interface MonthlyUse {
   readonly liabilityIds: readonly string[];
   readonly expenseIds: readonly string[];
   readonly policyIds: readonly string[];
+  readonly incomeIds?: readonly string[];
 }
 /** Read-only budgeting comparison. Posted cash uses do not establish cash origin. */
 export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: PortableModelEnvelope,
@@ -39,12 +41,12 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
   const currency = Currency.of(point.cash.currency);
   let income = Money.zero(currency), payroll = Money.zero(currency), otherIncome = Money.zero(currency);
   let employee = Money.zero(currency), deposited = Money.zero(currency), cashChange = Money.zero(currency), otherReceipts = Money.zero(currency);
+  let withheld = Money.zero(currency), coveredPayroll = 0, uncoveredPayroll = 0;
   const executable = basis.replay.kernel.executable;
   const loans = executable.liabilityInput?.loans ?? [];
-  const allocations = executable.cashFlowInput?.incomes.flatMap(item => item.payrollContributions ?? []) ?? [];
   const uses = new Map<string, MonthlyUse>();
   const addUse = (kind: MonthlyUseKind, label: string, id: string, amount: Money,
-    refs: { accountIds?: readonly string[]; holdingIds?: readonly string[]; liabilityIds?: readonly string[]; expenseIds?: readonly string[]; policyIds?: readonly string[] } = {}) => {
+    refs: { accountIds?: readonly string[]; holdingIds?: readonly string[]; liabilityIds?: readonly string[]; expenseIds?: readonly string[]; policyIds?: readonly string[]; incomeIds?: readonly string[] } = {}) => {
     if (!amount.isPositive()) return;
     const key = `${kind}:${label}:${(refs.holdingIds ?? []).join()}:${(refs.liabilityIds ?? []).join()}:${(refs.expenseIds ?? []).join()}:${(refs.policyIds ?? []).join()}`;
     const prior = uses.get(key);
@@ -54,6 +56,7 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
       holdingIds: [...new Set([...(prior?.holdingIds ?? []), ...(refs.holdingIds ?? [])])],
       liabilityIds: [...new Set([...(prior?.liabilityIds ?? []), ...(refs.liabilityIds ?? [])])],
       expenseIds: [...new Set([...(prior?.expenseIds ?? []), ...(refs.expenseIds ?? [])])],
+      incomeIds: [...new Set([...(prior?.incomeIds ?? []), ...(refs.incomeIds ?? [])])],
       policyIds: [...new Set([...(prior?.policyIds ?? []), ...(refs.policyIds ?? [])])] });
   };
   const lines: MonthlyMoneyLine[] = [];
@@ -63,10 +66,36 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
   for (const period of periods) for (const tx of period.transactions) {
     if (seen.has(tx.id)) continue;
     seen.add(tx.id);
-    const payrollStream = executable.cashFlowInput?.incomes.find(stream =>
-      tx.id.includes(String(stream.id)) || tx.traceRefs?.some(ref => ref.traceId.includes(String(stream.id))));
+    const payrollStream = executable.cashFlowInput?.incomes.find(stream => tx.type === "payroll_income"
+      ? tx.traceRefs?.some(ref => ref.traceId === `payroll:${tx.id}:gross:${stream.id}`)
+      : tx.id.includes(String(stream.id)) || tx.traceRefs?.some(ref => ref.traceId.includes(String(stream.id))));
+    const allocations = payrollStream?.payrollContributions ?? [];
     const source = model && objects(model, "Income").find(item => item.income_id === payrollStream?.id);
     const isPay = tx.type === "payroll_income" || tx.type === "income" && source?.income_type === "salary" && source.gross_or_net !== "net";
+    // Committed traces bind elections to this occurrence. Tax-credit assets
+    // are neither investment contributions nor independently bank-paid tax.
+    const elections = (payrollStream?.payrollWithholding ?? []).filter(item => item.start <= tx.date && (item.end === undefined || tx.date < item.end));
+    const creditLegs = new Set<number>();
+    let provedElections = 0;
+    if (tx.type === "payroll_income") for (const election of elections) {
+      const prefix = `payroll:withholding:${election.id}:income:${payrollStream!.id}:owner:${election.ownerId}:employer:${election.employerId}:occurrence:`;
+      const suffix = `:year:${tx.date.slice(0, 4)}:jurisdiction:${election.jurisdiction}:provenance:${election.provenance}`;
+      if (!tx.traceRefs?.some(ref => ref.traceId.startsWith(prefix) && ref.traceId.endsWith(suffix))) continue;
+      const positionId = taxBalanceIds(election.jurisdiction, tx.date.slice(0, 4)).creditPositionId;
+      const matches = tx.legs.flatMap((leg, index) => leg.type === "asset" && leg.posting === "debit" && leg.entityId === positionId
+        && leg.quantity?.unit.equals(Unit.of("usd_tax_credit")) && leg.quantity.amount.equals(leg.amount.amount) ? [index] : []);
+      if (matches.length === 1) {
+        const index = matches[0]!;
+        creditLegs.add(index);
+        withheld = withheld.plus(tx.legs[index]!.amount);
+        provedElections++;
+      } else if (!matches.length && (election.calculation.kind === "fixed" ? election.calculation.amount.isZero() : decimal(election.calculation.rate).isZero())) {
+        provedElections++;
+      }
+    }
+    if (isPay) {
+      if (elections.length > 0 && provedElections === elections.length) coveredPayroll++; else uncoveredPayroll++;
+    }
     for (const [index, leg] of tx.legs.entries()) {
       if (leg.type === "cash") {
         cashChange = leg.posting === "debit" ? cashChange.plus(leg.amount) : cashChange.minus(leg.amount);
@@ -99,8 +128,14 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
       }
       if (tx.type === "payroll_income" && leg.type === "asset" && leg.posting === "debit") {
         const allocation = allocations.find(value => value.positionId === leg.entityId && !value.policy.character.startsWith("employer_"));
-        addUse("workplace", allocation?.policy.character === "employee_hsa" ? "Employee HSA" : "Employee retirement",
-          `${tx.id}:leg:${index}`, leg.amount, { holdingIds: [String(leg.entityId)] });
+        if (allocation) {
+          addUse("workplace", allocation.policy.character === "employee_hsa" ? "Employee HSA" : "Employee retirement",
+            `${tx.id}:leg:${index}`, leg.amount, { holdingIds: [String(leg.entityId)] });
+          employee = employee.plus(leg.amount);
+          lines.push({ id: `${tx.id}:leg:${index}`, kind: "employee", date: tx.date, amount: leg.amount.amount.toString(), accountIds: [], holdingIds: [String(leg.entityId)] });
+        } else if (creditLegs.has(index)) {
+          addUse("tax", "Payroll withholding", `${tx.id}:leg:${index}`, leg.amount, { incomeIds: [String(payrollStream!.id)] });
+        } else addUse("other", "Other payroll allocation", `${tx.id}:leg:${index}`, leg.amount);
       }
     }
     // Keep other posted money-out visible, without reclassifying it as an
@@ -114,10 +149,6 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
       for (const leg of tx.legs) {
         if (leg.type === "income" && leg.posting === "credit") income = income.plus(leg.amount);
         if (leg.type === "cash" && leg.posting === "debit") deposited = deposited.plus(leg.amount);
-        if (tx.type === "payroll_income" && leg.type === "asset" && leg.posting === "debit") {
-          employee = employee.plus(leg.amount);
-          lines.push({ id: `${tx.id}:${leg.entityId}`, kind: "employee", date: tx.date, amount: leg.amount.amount.toString(), accountIds: [], holdingIds: [String(leg.entityId)] });
-        }
       }
     }
     if (tx.type === "investment_purchase") {
@@ -148,8 +179,12 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
     cashChange: cashChange.amount.toString(), otherReceipts: otherReceipts.amount.toString(), receipts,
     employee: employee.amount.toString(), deposited: deposited.amount.toString(),
     // This is coverage of gross recognition, NOT leftover or spendable income.
-    unreconciled: income.minus(employee).amount.toString(), lines, mortgages, cashUses,
-    withholding: "not_modeled" as const, status: "incomplete" as const };
+    unreconciled: income.minus(employee).minus(withheld).amount.toString(), lines, mortgages, cashUses,
+    // Posted-election coverage never proves all legal taxes or disposable pay.
+    withholding: coveredPayroll > 0 || withheld.isPositive() ? (!model || uncoveredPayroll > 0 || objects(model, "Income").some(item => item.income_type === "salary"
+      && !executable.cashFlowInput?.incomes.some(stream => stream.id === item.income_id)) ? "partial" as const : "posted" as const) : "not_modeled" as const,
+    withholdingAmount: coveredPayroll > 0 || withheld.isPositive() ? withheld.amount.toString() : undefined,
+    status: "incomplete" as const };
 }
 
 

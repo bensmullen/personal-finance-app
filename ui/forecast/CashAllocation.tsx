@@ -16,14 +16,17 @@ export function CashAllocation({ draft, detail, review, setup }: {
   const view = cashComparison(detail);
   const amount = (value: string) => formatExactMoney(value, detail.currency);
   const categories = view?.categories ?? detail.categories;
+  const withholding = detail.withholdingAmount === undefined ? "Unknown · not modeled"
+    : `${amount(detail.withholdingAmount)} · posted elections only${detail.withholding === "partial" ? "; partial payroll coverage" : "; other taxes may be missing"}`;
+  const withholdingDescription = detail.withholdingAmount === undefined ? "taxes withheld not modeled, amount unknown" : `Payroll withholding: ${withholding}`;
   return <div className="cash-allocation">
-    <p role="note"><strong>Incomplete allocation · source-backed comparison</strong> · Payroll withholding / taxes withheld: amount unknown, not modeled. Unreconciled money is not leftover pay.
+    <p role="note"><strong>Incomplete allocation · source-backed comparison</strong> · {detail.withholdingAmount === undefined ? "Payroll withholding / taxes withheld: amount unknown, not modeled." : `Payroll withholding: ${withholding}.`} Unreconciled money is not leftover pay.
       {" "}<button type="button" onClick={setup}>Review tax coverage & setup</button></p>
-    <p>Illustrative source-backed comparison of same-month income and posted uses. It does not identify which paycheck funded a payment. Savings, borrowing or sale proceeds may also support cash uses.</p>
+    <p>Income and posted uses for the same month. This does not identify which paycheck funded a payment. Savings, borrowing or sale proceeds may also support cash uses.</p>
     {view?.drawable ? <figure aria-label="Where modeled income goes comparison">
       <figcaption>{view.overflow ? `Known uses · scale ${amount(view.scale)}` : `Income basis · ${amount(detail.denominator)}`}{view.knownUsesOnly && ` · Zero modeled income (${amount(detail.denominator)}) · not a paycheck-funded allocation`}</figcaption>
       {view.overflow && !view.knownUsesOnly && <div className="cash-income-reference"><span style={{ width: `${view.percent(detail.denominator)}%` }} /><small>Income reference · {amount(detail.denominator)}</small></div>}
-      <div className="paycheck-bar" role="img" aria-label={`${categories.map(item => `${item.label}: ${amount(item.amount)}`).join("; ")}${view.remainder ? `; Unreconciled arithmetic difference: ${amount(detail.unallocated)}` : ""}; total income basis ${amount(detail.denominator)}; taxes withheld not modeled, amount unknown. ${view.knownUsesOnly ? "Zero modeled income; not a paycheck-funded allocation. " : ""}${view.overflow ? "Scale is total known uses, not a funded income allocation." : "Not disposable earnings."}`}>
+      <div className="paycheck-bar" role="img" aria-label={`${categories.map(item => `${item.label}: ${amount(item.amount)}`).join("; ")}${view.remainder ? `; Unreconciled arithmetic difference: ${amount(detail.unallocated)}` : ""}; total income basis ${amount(detail.denominator)}; ${withholdingDescription}. ${view.knownUsesOnly ? "Zero modeled income; not a paycheck-funded allocation. " : ""}${view.overflow ? "Scale is total known uses, not a funded income allocation." : "Not disposable earnings."}`}>
         {categories.map(item => <span key={item.id} className={`paycheck-${item.kind}`} style={{ width: `${view.percent(item.amount)}%`, flexBasis: "auto" }} title={`${item.label}: ${amount(item.amount)}`} />)}
         {view.remainder && <span className="paycheck-unallocated" style={{ width: `${view.percent(detail.unallocated)}%`, flexBasis: "auto" }} title={`Unreconciled arithmetic difference: ${amount(detail.unallocated)}`} />}
       </div>
@@ -37,6 +40,7 @@ export function CashAllocation({ draft, detail, review, setup }: {
         {item.kind === "workplace" && <small>Employee contribution · employer contributions excluded</small>}
         {item.kind === "mortgage" && <small>Principal & interest · principal repays debt, not consumption</small>}
         <details><summary>Review {item.label} sources</summary>
+          {item.incomeIds?.map(id => <button key={id} type="button" onClick={() => review("Income", id)}>Review {referenceLabel(draft, "Income", id)}</button>)}
           {item.holdingIds.map(id => <button key={id} type="button" onClick={() => review("Investment", id)}>{referenceLabel(draft, "Investment", id)}</button>)}
           {item.liabilityIds.map(id => <button key={id} type="button" onClick={() => review("Liability", id)}>{referenceLabel(draft, "Liability", id)}</button>)}
           {item.expenseIds.map(id => <button key={id} type="button" onClick={() => review("Expense", id)}>Review {referenceLabel(draft, "Expense", id)}</button>)}
@@ -53,7 +57,7 @@ export function CashAllocation({ draft, detail, review, setup }: {
         <tr><th scope="row">Total known uses</th><td>{amount(detail.totalUses)}</td></tr>
         <tr><th scope="row">Unreconciled arithmetic difference · not disposable earnings</th><td>{amount(detail.unallocated)}</td></tr>
         <tr><th scope="row">Uses exceeding this income basis · funding not attributed</th><td>{amount(detail.additionalFunding)}</td></tr>
-        <tr><th scope="row">Payroll withholding</th><td>Unknown · not modeled</td></tr>
+        <tr><th scope="row">{detail.withholdingAmount === undefined ? "Payroll withholding" : "Payroll withholding coverage"}</th><td>{withholding}</td></tr>
         <tr><th scope="row">Net modeled account cash change · flow, not a balance</th><td>{amount(detail.cashChange)}</td></tr>
       </tbody></table></div>
       {detail.receipts.map(receipt => <p key={receipt.id}>{receipt.label}: {amount(receipt.amount)} · <button type="button" onClick={() => review("Account", receipt.accountId)}>{referenceLabel(draft, "Account", receipt.accountId)}</button></p>)}
