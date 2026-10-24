@@ -14,6 +14,9 @@ import {
   applyAccountingTransactionAtomically,
   cloneAuthoritativeState,
   createAuthoritativeState,
+  createIndexedExecutionState,
+  snapshotAuthoritativeCheckpoint,
+  validateAuthoritativeState,
   registerAuthoritativeIdentity,
   serializeAuthoritativeIdentityRegistry,
 } from "../src/state/index.js";
@@ -61,6 +64,37 @@ const validationCode = (operation: () => unknown): string => {
 };
 
 describe("authoritative state and atomic posting", () => {
+  it("validates changed optional records and their changed references across immutable checkpoint forks", () => {
+    const opening = createAuthoritativeState({ ...state(), accounts: { ...state().accounts,
+      [OTHER_ACCOUNT]: { id: OTHER_ACCOUNT, kind: "retirement", cash: money("5") } },
+      contributions: { original: { id: "original", at: AT, personId: "synthetic-person", accountId: OTHER_ACCOUNT,
+        character: "traditional_401k", amount: money("1"), buckets: [] } },
+      contingentPositions: { [POSITION]: { positionId: POSITION, quantity: Quantity.parse("1", SHARE), carryingValue: money("5") } },
+    });
+    const base = snapshotAuthoritativeCheckpoint(createIndexedExecutionState(opening));
+    const valid = createIndexedExecutionState(base);
+    valid.accounts[OTHER_ACCOUNT]!.cash = money("6");
+    valid.positions[POSITION]!.carryingValue = money("6");
+    expect(() => validateAuthoritativeState(valid)).not.toThrow();
+    const missingAccount = createIndexedExecutionState(base);
+    delete missingAccount.accounts[OTHER_ACCOUNT];
+    expect(() => validateAuthoritativeState(missingAccount)).toThrow("Invalid committed contribution");
+    const changedCurrency = createIndexedExecutionState(base);
+    changedCurrency.accounts[OTHER_ACCOUNT]!.cash = money("5", Currency.of("EUR"));
+    expect(() => validateAuthoritativeState(changedCurrency)).toThrow("Invalid committed contribution");
+    const missingPosition = createIndexedExecutionState(base);
+    delete missingPosition.positions[POSITION];
+    expect(() => validateAuthoritativeState(missingPosition)).toThrow("Invalid contingent workplace position");
+    const changedContingent = createIndexedExecutionState(base);
+    changedContingent.contingentPositions![POSITION]!.carryingValue = money("-1");
+    expect(() => validateAuthoritativeState(changedContingent)).toThrow("Invalid contingent workplace position");
+    const changedContribution = createIndexedExecutionState(base);
+    changedContribution.contributions!.original = { ...changedContribution.contributions!.original!, amount: money("-1") };
+    expect(() => validateAuthoritativeState(changedContribution)).toThrow("Invalid committed contribution");
+    expect(base.contributions!.original!.amount.equals(money("1"))).toBe(true);
+    expect(base.contingentPositions![POSITION]!.carryingValue.equals(money("5"))).toBe(true);
+  });
+
   it("is the one shared state contract consumed by kernel and Vertical Slice 1", () => {
     expectTypeOf<SimulationState>().toEqualTypeOf<SliceState>();
   });

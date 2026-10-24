@@ -357,11 +357,16 @@ const paymentValue = (value: unknown): string => {
         : Object.fromEntries(Object.entries(v).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, x]) => [k, plain(x)])) : v;
   return JSON.stringify(plain(value));
 };
+const frozenPaymentValues = new WeakSet<object>();
 const freezePayment = <T>(v: T): T => {
   if (v === null || typeof v !== "object" || v instanceof Money) return v;
-  if (Array.isArray(v)) return Object.freeze(v.map(freezePayment)) as T;
+  if (frozenPaymentValues.has(v)) return v;
+  if (Array.isArray(v)) {
+    const result = Object.freeze(v.map(freezePayment)); frozenPaymentValues.add(result); return result as T;
+  }
   if (Object.getPrototypeOf(v) !== Object.prototype && Object.getPrototypeOf(v) !== null) return v;
-  return Object.freeze(Object.fromEntries(Object.entries(v).map(([k, x]) => [k, freezePayment(x)]))) as T;
+  const result = Object.freeze(Object.fromEntries(Object.entries(v).map(([k, x]) => [k, freezePayment(x)])));
+  frozenPaymentValues.add(result); return result as T;
 };
 const paymentInvalid = (message: string): never => failValidation({ severity: "error", code: "SSA_MEDICARE_PAYMENT_INVALID",
   entityType: "ssa_medicare_payment", message });
@@ -677,6 +682,166 @@ const identityArrays = new WeakMap<object, PersistentStringIndex<string>>();
 const identityKinds: readonly (keyof AuthoritativeIdentityRegistry)[] = [
   "postedTransactionIds", "recognitionIds", "settlementIds", "generatedOccurrenceKeys", "externalIdempotencyKeys",
 ];
+export const checkpointRecordKeys = ["accounts", "positions", "liabilities", "obligations", "contributions", "contingentPositions",
+  "ssaMedicarePayments", "d2SettlementReceipts", "d2PostedTransactions", "retirementDistributionAllocations"] as const;
+type CheckpointRecordKey = typeof checkpointRecordKeys[number];
+export interface AuthoritativeCheckpointDelta {
+  readonly records: Readonly<Record<string, { readonly present?: boolean; readonly set: Readonly<Record<string, unknown>>; readonly remove: readonly string[] }>>;
+  readonly identities: Readonly<Record<string, { readonly add: readonly string[]; readonly remove: readonly string[] }>>;
+}
+const checkpointIndex = (state: AuthoritativeState, key: CheckpointRecordKey): PersistentStringIndex<object> => {
+  const record = state[key];
+  return (record === undefined ? undefined : indexedRecords.get(record)?.index)?.fork()
+    ?? new PersistentStringIndex<object>(Object.entries(record ?? {}));
+};
+export const assertSsaMedicarePaymentHistoryPreserved = (before: AuthoritativeState, after: AuthoritativeState): void => {
+  for (const c of checkpointIndex(after, "ssaMedicarePayments").changesSince(checkpointIndex(before, "ssaMedicarePayments")).changes)
+    if (c.before !== undefined && (c.after === undefined || paymentValue(c.before) !== paymentValue(c.after))) paymentInvalid("Committed SSA/Medicare payment history changed");
+};
+/** Same V3 wire shape, derived from shared roots instead of encoding every
+ * earlier receipt to discover that it is unchanged. */
+export const authoritativeCheckpointDelta = (state: AuthoritativeState, before: AuthoritativeState,
+  equal: (a: unknown, b: unknown) => boolean, observe?: (visited: number, changed: number) => void): AuthoritativeCheckpointDelta => {
+  const records = Object.fromEntries(checkpointRecordKeys.map(key => {
+    const delta = checkpointIndex(state, key).changesSince(checkpointIndex(before, key));
+    const changes = delta.changes.filter(c => c.before === undefined || c.after === undefined || !equal(c.before, c.after));
+    observe?.(delta.visitedNodes, changes.length);
+    return [key, { present: state[key] !== undefined, set: Object.fromEntries(changes.flatMap(c => c.after === undefined ? [] : [[c.key, c.after]])),
+      remove: changes.flatMap(c => c.after === undefined ? [c.key] : []) }];
+  }));
+  const identities = Object.fromEntries(identityKinds.map(kind => {
+    const next = identityIndexes.get(state.identities)?.[kind] ?? new PersistentStringIndex(state.identities[kind].map(id => [id, id] as const));
+    const prior = identityIndexes.get(before.identities)?.[kind] ?? new PersistentStringIndex(before.identities[kind].map(id => [id, id] as const));
+    const delta = next.changesSince(prior);
+    observe?.(delta.visitedNodes, delta.changes.length);
+    return [kind, { add: delta.changes.flatMap(c => c.after === undefined ? [] : [c.key]), remove: delta.changes.flatMap(c => c.after === undefined ? [c.key] : []) }];
+  }));
+  return { records, identities };
+};
+/** Provenance of immutable, structurally validated roots, not source authority
+ * and not a second history store. Cold imports still requalify their sources. */
+const checkpointSnapshots = new WeakSet<AuthoritativeState>();
+export const isAuthoritativeCheckpointSnapshot = (state: AuthoritativeState): boolean => checkpointSnapshots.has(state);
+export const snapshotAuthoritativeCheckpoint = (state: AuthoritativeState, before?: AuthoritativeState,
+  observe?: (visited: number, changed: number) => void, observeMaterialization?: () => void): AuthoritativeState => {
+  if (checkpointSnapshots.has(state)) return state;
+  const ids = identityIndexes.get(state.identities);
+  const indexed = executionStateIndexes.has(state) && ids !== undefined && identityKinds.every(kind => {
+    const exposed = identityArrays.get(state.identities[kind]);
+    return exposed !== undefined && exposed.changesSince(ids[kind]).changes.length === 0;
+  });
+  if (!indexed) {
+    observeMaterialization?.();
+    const exact = createAuthoritativeState(state);
+    if (paymentValue(exact) !== paymentValue(state)) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: checkpoint normalization changed history");
+    state = createIndexedExecutionState(exact);
+  }
+  validateAuthoritativeState(state);
+  const next = createIndexedExecutionState(state);
+  for (const key of checkpointRecordKeys) {
+    if (next[key] === undefined) continue;
+    const index = checkpointIndex(next, key), prior = before === undefined ? new PersistentStringIndex<object>() : checkpointIndex(before, key);
+    const delta = index.changesSince(prior);
+    for (const c of delta.changes) if (c.after !== undefined) {
+      // Mutable financial views already replace these flat value records on
+      // writes. Freezing their backing value preserves the shared tree node.
+      // Claims have already passed normalizeExecutionClaim; retain their
+      // immutable persistent settlement sequences rather than copying them.
+      const value = ["accounts", "positions", "liabilities", "obligations", "contingentPositions"].includes(key) ? Object.freeze(c.after) : freezePayment(c.after);
+      if (value !== c.after) index.set(c.key, value);
+    }
+    observe?.(delta.visitedNodes, delta.changes.length);
+    const indexed = indexedRecord(index, false);
+    const record = new Proxy(indexed.record, { set: () => false, deleteProperty: () => false, defineProperty: () => false,
+      preventExtensions: () => false, setPrototypeOf: () => false });
+    indexedRecords.set(record, { ...indexed, record });
+    Object.assign(next, { [key]: record });
+  }
+  Object.freeze(next.identities);
+  Object.freeze(next);
+  checkpointSnapshots.add(next);
+  return next;
+};
+
+/** Cold-only delta admission. Unlike the posting writer this may accept an
+ * imported proof, but it cannot manufacture its commitment IDs or repair it.
+ * Persistent forks keep every earlier boundary unchanged. */
+export const restoreAuthoritativeCheckpointDelta = (before: AuthoritativeState, input: AuthoritativeCheckpointDelta,
+  observe?: (visited: number, changed: number) => void): AuthoritativeState => {
+  const invalid = (): never => { throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: invalid authoritative checkpoint delta"); };
+  if (!input || !input.records || !input.identities) return invalid();
+  const state = createIndexedExecutionState(before);
+  const immutable = new Set<CheckpointRecordKey>(["ssaMedicarePayments", "d2SettlementReceipts", "d2PostedTransactions", "retirementDistributionAllocations"]);
+  for (const key of checkpointRecordKeys) {
+    const change = input.records[key];
+    if (change === undefined && !["accounts", "positions", "liabilities", "obligations", "contributions", "contingentPositions"].includes(key) && before[key] === undefined) continue;
+    if (!change || !Array.isArray(change.remove) || change.remove.some(id => typeof id !== "string") ||
+        new Set(change.remove).size !== change.remove.length || !change.set || typeof change.set !== "object" || Array.isArray(change.set) ||
+        change.present !== undefined && typeof change.present !== "boolean") return invalid();
+    const index = checkpointIndex(state, key);
+    for (const id of change.remove) {
+      if (!index.has(id) || id in change.set || immutable.has(key)) return invalid();
+      index.delete(id);
+    }
+    const changed: string[] = [];
+    for (const [id, value] of Object.entries(change.set)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return invalid();
+      const prior = index.get(id);
+      if (immutable.has(key) && prior !== undefined && paymentValue(prior) !== paymentValue(value)) return invalid();
+      if (prior !== undefined && paymentValue(prior) === paymentValue(value)) continue;
+      index.set(id, freezePayment(value)); changed.push(id);
+    }
+    observe?.(0, changed.length + change.remove.length);
+    if (change.present === false) {
+      if (["accounts", "positions", "liabilities", "obligations"].includes(key) || index.size !== 0) return invalid();
+      Reflect.deleteProperty(state, key); continue;
+    }
+    // Preserve optional absence exactly, including older V3's omitted bit.
+    if (change.present === undefined && state[key] === undefined && Object.keys(change.set).length === 0 && change.remove.length === 0)
+      Object.assign(state, { [key]: {} });
+    if (["accounts", "positions", "liabilities", "obligations"].includes(key)) {
+      const record = state[key] as Record<string, object>;
+      for (const id of change.remove) Reflect.deleteProperty(record, id);
+      for (const id of changed) {
+        record[id] = index.get(id)!;
+        if (paymentValue(record[id]) !== paymentValue(change.set[id])) return invalid();
+      }
+    } else {
+      const guard = key === "d2PostedTransactions" ? d2PostingWrite as (key: string, a: object | undefined, b: object | undefined) => void
+        : key === "d2SettlementReceipts" ? d2ReceiptWrite as (key: string, a: object | undefined, b: object | undefined) => void
+        : key === "retirementDistributionAllocations" ? retirementWrite as (key: string, a: object | undefined, b: object | undefined) => void : undefined;
+      const record = indexedRecord(index, key === "contingentPositions", guard, freezePayment);
+      Object.assign(state, { [key]: record.record });
+    }
+  }
+  const indexes = identityIndexes.get(state.identities)!;
+  for (const kind of identityKinds) {
+    const change = input.identities[kind];
+    if (!change || !Array.isArray(change.add) || !Array.isArray(change.remove) ||
+        [...change.add, ...change.remove].some(id => typeof id !== "string") ||
+        new Set(change.add).size !== change.add.length || new Set(change.remove).size !== change.remove.length) return invalid();
+    const index = indexes[kind];
+    for (const id of change.remove) {
+      const claims = executionStateIndexes.get(state)!;
+      if (!index.has(id) || kind === "recognitionIds" && claims.recognitionClaims.has(id) || kind === "settlementIds" && claims.settlementClaims.has(id)) return invalid();
+      index.delete(id);
+    }
+    for (const id of change.add) { if (index.has(id) || change.remove.includes(id)) return invalid(); index.set(id, id); }
+    Object.assign(state.identities, { [kind]: identityArray(index.fork()) });
+    observe?.(0, change.add.length + change.remove.length);
+  }
+  // No identity normalization: every imported claim must carry its exact
+  // recognition and settlement inventory before any validation takes place.
+  for (const id of Object.keys(input.records.obligations!.set)) {
+    const claim = state.obligations[id] ?? invalid();
+    assertClaimInvariant(claim);
+    if (!state.identities.recognitionIds.includes(claim.originatingRecognitionId) || claim.settlementIds.some(s => !state.identities.settlementIds.includes(s))) return invalid();
+  }
+  validateAuthoritativeState(state);
+  executionStateIndexes.get(state)!.pendingClaimIds.clear();
+  executionStateIndexes.get(state)!.pendingSettlementIds.clear();
+  return snapshotAuthoritativeCheckpoint(state, before, observe);
+};
 const identityArray = <T extends string>(index: PersistentStringIndex<string>): readonly T[] => {
   const ordinal = (property: PropertyKey): number | undefined => typeof property === "string" && /^(0|[1-9]\d*)$/.test(property)
     ? Number(property) : undefined;
@@ -698,6 +863,10 @@ const identityArray = <T extends string>(index: PersistentStringIndex<string>): 
       return position === undefined ? Reflect.has(target, property) : position < index.size;
     },
     set: () => false,
+    defineProperty: () => false,
+    deleteProperty: () => false,
+    setPrototypeOf: () => false,
+    preventExtensions: () => false,
   });
   identityArrays.set(array, index);
   return array;
@@ -728,6 +897,13 @@ interface ExecutionStateIndex {
   readonly pendingClaimIds: Set<string>;
   readonly pendingSettlementIds: Set<import("../semantics/identity.js").SettlementId>;
   readonly historyMeter?: SettlementHistoryMeter;
+  validatedResources?: Partial<Record<"accounts" | "positions" | "contributions" | "contingentPositions", PersistentStringIndex<object>>>;
+  validatedSsa?: {
+    readonly payments: PersistentStringIndex<object>;
+    readonly accounts: PersistentStringIndex<object>;
+    readonly claims: PersistentStringIndex<object>;
+    readonly identities: AuthoritativeIdentityRegistry;
+  };
 }
 const executionStateIndexes = new WeakMap<AuthoritativeState, ExecutionStateIndex>();
 
@@ -850,8 +1026,8 @@ export const createIndexedExecutionState = (opening: AuthoritativeState, supplie
     accounts: makeRecord(opening.accounts, true), positions: makeRecord(opening.positions, true),
     liabilities: makeRecord(opening.liabilities, true), obligations: makeRecord(opening.obligations, false, updateClaim, value => normalizeExecutionClaim(value, historyMeter)),
     identities: indexedIdentityRegistry(opening.identities),
-    ...(opening.contributions === undefined ? {} : { contributions: { ...opening.contributions } }),
-    ...(opening.contingentPositions === undefined ? {} : { contingentPositions: Object.fromEntries(Object.entries(opening.contingentPositions).map(([key, value]) => [key, { ...value }])) }),
+    ...(opening.contributions === undefined ? {} : { contributions: makeRecord(opening.contributions, false, undefined, freezePayment) }),
+    ...(opening.contingentPositions === undefined ? {} : { contingentPositions: makeRecord(opening.contingentPositions, true) }),
     ...(opening.ssaMedicarePayments === undefined ? {} : { ssaMedicarePayments: makeRecord(opening.ssaMedicarePayments, false, undefined, freezePayment) }),
     ...(opening.d2SettlementReceipts === undefined ? {} : { d2SettlementReceipts: makeRecord(opening.d2SettlementReceipts, false, d2ReceiptWrite, freezePayment) }),
     ...(opening.d2PostedTransactions === undefined ? {} : { d2PostedTransactions: cloneD2PostingRecord(opening.d2PostedTransactions) }),
@@ -866,6 +1042,8 @@ export const createIndexedExecutionState = (opening: AuthoritativeState, supplie
   if (existing === undefined) for (const [key, claim] of Object.entries(state.obligations)) updateClaim(key, undefined, claim);
   if (existing === undefined) { pendingClaimIds.clear(); pendingSettlementIds.clear(); }
   executionStateIndexes.set(state, { recognitionClaims, settlementClaims, activeClaims, pendingClaimIds, pendingSettlementIds,
+    ...(existing?.validatedResources === undefined ? {} : { validatedResources: existing.validatedResources }),
+    ...(existing?.validatedSsa === undefined ? {} : { validatedSsa: existing.validatedSsa }),
     ...(historyMeter === undefined ? {} : { historyMeter }) });
   return state;
 };
@@ -1018,12 +1196,28 @@ export const validateAuthoritativeState = (state: AuthoritativeState, transactio
   validateRetirementDistributions(state);
   validateD2SettlementReceipts(state);
   validateSsaMedicarePayments(state);
-  for (const [id, entry] of Object.entries(state.contributions ?? {})) {
+  const execution = executionStateIndexes.get(state), priorResources = execution?.validatedResources;
+  const resourceRoots = Object.fromEntries((["accounts", "positions", "contributions", "contingentPositions"] as const)
+    .map(key => [key, checkpointIndex(state, key)])) as NonNullable<ExecutionStateIndex["validatedResources"]>;
+  // Balance/price movements do not invalidate a historical contribution's
+  // reference. Deletion, currency or unit changes still check all dependents.
+  const accountReferenceChanged = !indexedRecords.has(state.accounts) || resourceRoots.accounts!.changesSince(priorResources?.accounts ?? new PersistentStringIndex<object>()).changes.some(c => {
+    const a = c.before as AuthoritativeState["accounts"][string] | undefined, b = c.after as AuthoritativeState["accounts"][string] | undefined;
+    return a !== undefined && (b === undefined || !a.cash.currency.equals(b.cash.currency));
+  });
+  const positionReferenceChanged = !indexedRecords.has(state.positions) || resourceRoots.positions!.changesSince(priorResources?.positions ?? new PersistentStringIndex<object>()).changes.some(c => {
+    const a = c.before as AuthoritativeState["positions"][string] | undefined, b = c.after as AuthoritativeState["positions"][string] | undefined;
+    return a !== undefined && (b === undefined || !a.quantity.unit.equals(b.quantity.unit) || !a.price.currency.equals(b.price.currency));
+  });
+  const resourceEntries = <T extends object>(key: "contributions" | "contingentPositions", record: Record<string, T>, full: boolean): readonly (readonly [string, T])[] =>
+    execution === undefined || !indexedRecords.has(record) || full ? Object.entries(record) : resourceRoots[key]!.changesSince(priorResources?.[key] ?? new PersistentStringIndex<object>()).changes
+      .flatMap(c => c.after === undefined ? [] : [[c.key, c.after as T] as const]);
+  for (const [id, entry] of resourceEntries("contributions", state.contributions ?? {}, accountReferenceChanged)) {
     const account = state.accounts[entry.accountId];
     if (id !== entry.id || entry.amount.isNegative() || account === undefined || !entry.amount.currency.equals(account.cash.currency) || entry.buckets.some(bucket => bucket.amount.isNegative() || !bucket.amount.currency.equals(entry.amount.currency) || !bucket.annualLimit.currency.equals(entry.amount.currency) || bucket.annualLimit.isNegative() || bucket.amount.compare(entry.amount) > 0) || entry.eligibleDeduction !== undefined && (entry.eligibleDeduction.isNegative() || entry.eligibleDeduction.compare(entry.amount) > 0))
       failValidation({ severity: "error", code: issueCodes.ruleInputInvalid, message: "Invalid committed contribution ledger entry", entityType: "contribution", entityId: id });
   }
-  for (const [id, entry] of Object.entries(state.contingentPositions ?? {})) {
+  for (const [id, entry] of resourceEntries("contingentPositions", state.contingentPositions ?? {}, positionReferenceChanged)) {
     const position = state.positions[id];
     if (id !== entry.positionId || !position || !entry.quantity.unit.equals(position.quantity.unit) || !entry.carryingValue.currency.equals(position.price.currency) || entry.quantity.amount.isNegative() || entry.carryingValue.isNegative())
       failValidation({ severity: "error", code: issueCodes.negativePositionInvariant, message: "Invalid contingent workplace position", entityType: "position", entityId: id });
@@ -1105,6 +1299,7 @@ export const validateAuthoritativeState = (state: AuthoritativeState, transactio
     }
   }
   for (const record of [state.accounts, state.positions, state.liabilities, state.obligations]) indexedRecords.get(record)?.dirty.clear();
+  if (execution !== undefined) execution.validatedResources = resourceRoots;
 };
 
 const reconcileClaimIdentityHistory = (state: AuthoritativeState): void => {
@@ -1134,7 +1329,7 @@ const reconcileClaimIdentityHistory = (state: AuthoritativeState): void => {
   });
 };
 
-type CurrencyIndexedField = "accounts" | "positions" | "liabilities";
+type CurrencyIndexedField = "accounts" | "positions" | "liabilities" | "contributions" | "contingentPositions" | "ssaMedicarePayments" | "d2SettlementReceipts";
 const currencyCheckedIndexes = new WeakMap<Currency, Partial<Record<CurrencyIndexedField, PersistentStringIndex<object>>>>();
 
 export const assertAuthoritativeStateCurrency = (state: AuthoritativeState, currency: Currency): void => {
@@ -1169,17 +1364,17 @@ export const assertAuthoritativeStateCurrency = (state: AuthoritativeState, curr
     }
   };
   for (const [key, account] of entries("accounts", state.accounts)) assertCurrency(account.cash, `accounts.${key}.cash`, "account", account.id);
-  for (const [key, entry] of Object.entries(state.contributions ?? {})) {
+  for (const [key, entry] of entries("contributions", state.contributions ?? {})) {
     assertCurrency(entry.amount, `contributions.${key}.amount`, "contribution", key);
     if (entry.eligibleDeduction) assertCurrency(entry.eligibleDeduction, `contributions.${key}.eligibleDeduction`, "contribution", key);
     for (const bucket of entry.buckets) { assertCurrency(bucket.amount, `contributions.${key}.bucket.amount`, "contribution", key); assertCurrency(bucket.annualLimit, `contributions.${key}.bucket.annualLimit`, "contribution", key); }
   }
-  for (const [key, entry] of Object.entries(state.contingentPositions ?? {})) assertCurrency(entry.carryingValue, `contingentPositions.${key}.carryingValue`, "position", key);
-  for (const [key, entry] of Object.entries(state.ssaMedicarePayments ?? {})) {
+  for (const [key, entry] of entries("contingentPositions", state.contingentPositions ?? {})) assertCurrency(entry.carryingValue, `contingentPositions.${key}.carryingValue`, "position", key);
+  for (const [key, entry] of entries("ssaMedicarePayments", state.ssaMedicarePayments ?? {})) {
     assertCurrency(entry.payable.grossPayable, `ssaMedicarePayments.${key}.gross`, "ssa_medicare_payment", key);
     assertCurrency(entry.netBank, `ssaMedicarePayments.${key}.netBank`, "ssa_medicare_payment", key);
   }
-  for (const [key, receipt] of Object.entries(state.d2SettlementReceipts ?? {}))
+  for (const [key, receipt] of entries("d2SettlementReceipts", state.d2SettlementReceipts ?? {}))
     for (const amount of d2ReceiptAmounts(receipt)) assertCurrency(amount, `d2SettlementReceipts.${key}`, "d2_settlement_receipt", key);
   const postingIndex = d2PostingIndex(state.d2PostedTransactions);
   for (const change of postingIndex.changesSince(d2PostingCurrencyChecks.get(currency) ?? new PersistentStringIndex<object>()).changes) {
@@ -1442,7 +1637,8 @@ const createD2PostingRecord = (index: PersistentStringIndex<D2PostedTransactionP
   return record;
 };
 const cloneD2PostingRecord = (record: Record<AccountingTransactionId, D2PostedTransactionProof>) =>
-  createD2PostingRecord(d2PostingRecords.get(record)?.fork() ?? new PersistentStringIndex(
+  createD2PostingRecord(d2PostingRecords.get(record)?.fork()
+    ?? (indexedRecords.get(record)?.index as PersistentStringIndex<D2PostedTransactionProof> | undefined)?.fork() ?? new PersistentStringIndex(
     Object.entries(record).map(([key, value]) => [key, freezePayment(value)] as const)));
 const d2PostingIndex = (record: AuthoritativeState["d2PostedTransactions"]): PersistentStringIndex<object> =>
   (record === undefined ? undefined : indexedRecords.get(record)?.index)?.fork()
@@ -2061,6 +2257,26 @@ const paymentRecognitions = (input: SsaMedicarePaymentInput): readonly Recogniti
     amount: c.originalAmount, recognizedAt: input.payable.paymentAt }));
 
 const validateSsaMedicarePayments = (state: AuthoritativeState): void => {
+  const execution = executionStateIndexes.get(state), prior = execution?.validatedSsa;
+  const payments = checkpointIndex(state, "ssaMedicarePayments"), accounts = checkpointIndex(state, "accounts"), claims = checkpointIndex(state, "obligations");
+  const priorIds = prior === undefined ? undefined : identityIndexes.get(prior.identities), ids = identityIndexes.get(state.identities);
+  const unchanged = prior !== undefined && ids !== undefined && priorIds !== undefined &&
+    [state.accounts, state.obligations].every(record => indexedRecords.has(record)) &&
+    (state.ssaMedicarePayments === undefined || indexedRecords.has(state.ssaMedicarePayments)) &&
+    payments.changesSince(prior.payments).changes.length === 0 &&
+    accounts.changesSince(prior.accounts).changes.every(c => {
+      const a = c.before as AccountState | undefined, b = c.after as AccountState | undefined;
+      return a === undefined || b !== undefined && a.kind === b.kind && a.ownerId === b.ownerId && a.cash.currency.equals(b.cash.currency);
+    }) && claims.changesSince(prior.claims).changes.every(c => c.before === undefined) &&
+    identityKinds.every(kind => {
+      const exposed = identityArrays.get(state.identities[kind]);
+      return exposed !== undefined && exposed.changesSince(ids[kind]).changes.length === 0 &&
+        ids[kind].changesSince(priorIds[kind]).changes.every(c => c.after !== undefined);
+    });
+  if (unchanged) {
+    execution!.validatedSsa = { payments, accounts, claims, identities: indexedIdentityRegistry(state.identities) };
+    return;
+  }
   const consumed = new Set<string>(), transactions = new Set<string>(), claimIds = new Set<string>(), settlementIds = new Set<string>();
   for (const [key, record] of Object.entries(state.ssaMedicarePayments ?? {})) {
     if (!record || record.version !== "ssa-medicare-payment/v1" || key !== record.id || key !== paymentKey(record.payable)
@@ -2098,6 +2314,9 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): void => {
       consumed.add(id);
     }
   }
+  // This is structural validation provenance only. The simulation boundary
+  // still independently requalifies original SSA/Medicare sources on import.
+  if (execution !== undefined) execution.validatedSsa = { payments, accounts, claims, identities: indexedIdentityRegistry(state.identities) };
 };
 
 /** Narrowly privileged same-event SSA/Medicare candidate transition. The domain
