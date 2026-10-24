@@ -5,7 +5,8 @@ import type { ExecutableScenarioIntent } from "./compiler/scenarios.js";
 import type { HouseholdForecastRequest, MajorAssetDebtAddition, PersonalHouseholdForecastReadModel, PersonalHouseholdScenarioComparisonReadModel } from "./householdProjection.js";
 import type { PerformanceClock, PerformanceContext, PerformanceObserver, PerformanceRecord } from "./performance.js";
 import { runPersonalHouseholdForecast, comparePersonalHouseholdScenarioIntents, comparePersonalHouseholdMajorAssetDebtAddition } from "./householdProjection.js";
-import { createApplicationPerformanceObserver } from "./performance.js";
+import { createApplicationPerformanceObserver, forecastTransportCounters, sampledJsHeapBytes } from "./performance.js";
+import { validateForecastCatalogTable, validateForecastDiagnostics, validateForecastLawReference } from "./forecastDiagnosticTransport.js";
 
 interface RequestBoundary {
   readonly requestId: number;
@@ -45,6 +46,17 @@ export const executeForecastWorkerRequest = (message: ForecastWorkerRequest, clo
         : comparePersonalHouseholdMajorAssetDebtAddition(message.model, message.request, message.addition);
     if (result.status === "unavailable" && result.executionError)
       return { ...boundary, outcome: "error", error: { code: "EXECUTION_ERROR", message: "Unexpected household execution error." }, records };
+    if ("scope" in result && result.status !== "unavailable") {
+      // Observation failure cannot change a financial execution result.
+      try {
+        const started = clock.now();
+        const counters = forecastTransportCounters(result);
+        const heap = sampledJsHeapBytes();
+        records.push({ phase: "transport.serialization", availability: "not_measured",
+          context: { ...message.performanceContext, executionLocation: "browser_worker", cacheState: "miss" },
+          resources: { metering: "not_metered", structuralCounters: { ...counters, transportCounterCollectionMs: Math.max(0, clock.now() - started) }, ...(heap === undefined ? {} : { memoryBytes: heap }) } });
+      } catch { /* Bounded, optional diagnostics only. */ }
+    }
     // Comparison APIs have no observer seam. Do not invent their timing.
     return { ...boundary, outcome: "result", result: toForecastWorkerResult(result), records };
   } catch {
@@ -55,8 +67,48 @@ export const executeForecastWorkerRequest = (message: ForecastWorkerRequest, clo
 
 export const INTERACTIVE_ENGINE_VERSION = CURRENT_RUN_VERSIONS.engineVersion;
 
+/** Checks both baseline and comparison transport without decoding proof on the
+ * main thread. Exact catalog content is requalified by the source-owned worker. */
+export const forecastResultCatalogsValid = (result: ForecastWorkerResult): boolean => {
+  try {
+    if ("scope" in result) {
+      if (result.status === "unavailable") return true;
+      validateForecastDiagnostics(result.diagnostics ?? [], [result.openingSnapshot?.outputCapabilities, ...(result.points ?? []).map(point => point.outputCapabilities)], result.diagnosticCatalogs);
+      return true;
+    }
+    const tables = result.diagnosticCatalogs ?? [];
+    const sources = new Set<string>();
+    for (const table of tables) {
+      validateForecastCatalogTable(table, table.source);
+      const identity = JSON.stringify([table.source.runId, table.source.inputFingerprint]);
+      if (sources.has(identity)) return false;
+      sources.add(identity);
+    }
+    for (const diagnostic of result.diagnostics ?? []) {
+      const law = diagnostic.projectedLaw;
+      if (!law) continue;
+      const matches = tables.filter(table => table.entries.some(entry => entry.id === law.catalogRef));
+      if (!matches.length || matches.some(table => table.entries.find(entry => entry.id === law.catalogRef)!.content !== matches[0]!.entries.find(entry => entry.id === law.catalogRef)!.content)) return false;
+      validateForecastLawReference(law, matches[0]!);
+    }
+    for (const alternative of result.alternatives) for (const period of alternative.points) for (const point of [period.baseline, period.alternative]) {
+      let catalogRef: string | undefined;
+      for (const output of Object.values(point.outputCapabilities ?? {})) {
+        const law = output.diagnostics.find((item: import("./forecastDiagnosticTransport.js").ForecastTaxDiagnostic) => item.projectedLaw !== undefined)?.projectedLaw;
+        if (law && "catalogRef" in law) { catalogRef = law.catalogRef; break; }
+      }
+      const table = tables.find(candidate => point.traceRefs.some(ref => ref.traceId ===
+        `household:replay:${candidate.source.inputFingerprint}:${point.periodStart}:${point.periodEnd}`) &&
+        (catalogRef === undefined || candidate.entries.some(entry => entry.id === catalogRef)));
+      validateForecastDiagnostics([], [point.outputCapabilities], table);
+    }
+    return true;
+  } catch { return false; }
+};
+
 /** Only transport metadata is canonicalized; direct comparison callers retain exact values. */
 export const toForecastWorkerResult = (result: ForecastWorkerResult): ForecastWorkerResult => {
+  if (!forecastResultCatalogsValid(result)) throw new Error("FORECAST_CATALOG_MISMATCH: invalid diagnostic transport");
   if (!("alternatives" in result)) return result;
   return { ...result, alternatives: result.alternatives.map((alternative) => ({
     ...alternative,
@@ -93,6 +145,35 @@ export const calculationFingerprint = (
 
 export const isCacheableBaseline = (status: string): status is "completed" | "incomplete" =>
   status === "completed" || status === "incomplete";
+
+/** Verify transport pairing without changing the engine's financial status. */
+export const baselineResultMatchesRequest = (result: PersonalHouseholdForecastReadModel, request: HouseholdForecastRequest): boolean => {
+  if (result.status === "unavailable") return true;
+  try {
+    validateForecastDiagnostics(result.diagnostics ?? [], [result.openingSnapshot?.outputCapabilities, ...result.points.map(point => point.outputCapabilities)],
+      result.diagnosticCatalogs, result.diagnosticCatalogs ? { runId: request.runIdentity, inputFingerprint: result.diagnosticCatalogs.source.inputFingerprint } : undefined);
+    // A missing detail-proof is not a missing financial forecast. Retain
+    // verified summaries and let selected evidence fail closed with retry and
+    // no phantom bars. Any *present* replay address still must match source.
+    if (result.diagnosticCatalogs && result.points.some(point => {
+      const expected = `household:replay:${result.diagnosticCatalogs!.source.inputFingerprint}:${point.periodStart}:${point.periodEnd}`;
+      return point.traceRefs.some(ref => (ref.replayArtifact !== undefined || ref.traceId.startsWith("household:replay:"))
+        && ref.traceId !== expected);
+    })) return false;
+  } catch { return false; }
+  const boundary = request.compiler.cashFlow ?? request.compiler.investments ?? request.compiler.liabilities;
+  if (!boundary) return false;
+  const start = `${boundary.simulationStart}T00:00:00.000Z`, end = `${boundary.simulationEnd}T00:00:00.000Z`;
+  if (result.requestedHorizon.start !== start || result.requestedHorizon.end !== end || result.asOf !== `${request.asOf}T00:00:00.000Z` || result.dataCutoff !== `${request.dataCutoff}T00:00:00.000Z`) return false;
+  let through = start;
+  for (const point of result.points) {
+    const next = new Date(through);
+    next.setUTCMonth(next.getUTCMonth() + 1);
+    if (point.periodStart !== through || point.periodEnd !== next.toISOString() || point.periodEnd > end) return false;
+    through = point.periodEnd;
+  }
+  return (result.reachedThrough ?? start) === through && (result.status !== "completed" || through === end);
+};
 
 /** Derived, per-session deterministic LRU. Never stores failed or superseded execution. */
 export class BaselineCache<T extends { readonly status: string }> {

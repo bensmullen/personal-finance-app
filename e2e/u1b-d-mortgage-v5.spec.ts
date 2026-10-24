@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { clickFinancialDestination, navigateOwner } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, expectForecastWindow } from "./navigation.js";
 import { inspectLiabilityBalanceWindow, inspectMortgageWindow } from "../src/application/mortgageChartData.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";
@@ -36,6 +36,7 @@ async function run(page: Page) {
   await expect(status(page)).not.toHaveAttribute("data-request-id", previous ?? "");
   await expect(status(page)).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: 30_000 });
   await expect(status(page)).toHaveAttribute("data-pending", "false");
+  await expectForecastWindow(page, "2026-01-01", "2026-03-01", 2);
 }
 async function setup(page: Page, width: number, denied = false) {
   await page.setViewportSize({ width, height: 900 });
@@ -70,18 +71,28 @@ async function setup(page: Page, width: number, denied = false) {
   const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
   await taxes.getByLabel("Tax payment account", { exact: true }).selectOption({ label: "Everyday checking" });
   await taxes.getByLabel("Tax refund account", { exact: true }).selectOption({ label: "Everyday checking" });
-  for (const name of ["Federal income tax", "New York"]) await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
+  // The explicitly synthetic flagship is resident in Philadelphia, PA.
+  // Confirm every jurisdiction actually sourced by its household record.
+  for (const name of ["Federal income tax", "Pennsylvania", "Philadelphia wage tax"]) {
+    const summary = taxes.locator("summary").filter({ hasText: name }).first();
+    if (await summary.locator("..").getAttribute("open") === null) await summary.click();
+    await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
+  }
   for (const checkbox of await taxes.getByRole("checkbox").all()) await checkbox.check();
   await run(page);
 }
 async function appliedSource(page: Page) {
   const fingerprint = await status(page).getAttribute("data-fingerprint");
-  const result = await page.evaluate(fingerprint => {
+  const requestId = await status(page).getAttribute("data-request-id");
+  const cacheHit = await status(page).getAttribute("data-cache-state") === "hit";
+  const result = await page.evaluate(({ fingerprint, requestId, cacheHit }) => {
     const target = window as typeof window & { __mortgageResponses: ForecastWorkerResponse[] };
-    const response = [...target.__mortgageResponses].reverse().find(item => item.fingerprint === fingerprint && item.outcome === "result");
+    const response = [...target.__mortgageResponses].reverse().find(item => item.fingerprint === fingerprint && item.outcome === "result" && (cacheHit || String(item.requestId) === requestId));
     return response?.outcome === "result" ? response.result as PersonalHouseholdForecastReadModel : undefined;
-  }, fingerprint);
+  }, { fingerprint, requestId, cacheHit });
   if (!result || result.status === "unavailable") throw new Error("Applied household source missing");
+  expect(result.requestedHorizon).toEqual({ start: "2026-01-01T00:00:00.000Z", end: "2026-03-01T00:00:00.000Z" });
+  expect(result.points).toHaveLength(2);
   return result;
 }
 async function fits(page: Page, property = false) {
@@ -99,6 +110,10 @@ for (const width of [1440, 390]) {
   test(`Debt primary household liability chart uses the reconciled source at ${width}px`, async ({ page }) => {
     await observe(page); await setup(page, width);
     const source = await appliedSource(page), expected = inspectLiabilityBalanceWindow(source, 0);
+    expect(source.status).toBe("completed");
+    expect(source.reachedThrough).toBe("2026-03-01T00:00:00.000Z");
+    expect(source.points.map(point => point.statementIncome.amount)).toEqual(["0", "0"]);
+    await expect(status(page)).toHaveAttribute("data-lifecycle", "completed");
     await clickFinancialDestination(page, "Debt");
     const chart = page.getByRole("region", { name: "Household liability balance outlook", exact: true });
     await expect(chart).toHaveAttribute("data-evidence-state", expected.status);
@@ -156,8 +171,18 @@ for (const width of [1440, 390]) {
     await clickFinancialDestination(page, "Debt");
     await expect(outlook(page)).toHaveAttribute("data-evidence-state", "current");
     await expect(outlook(page)).toContainText("No cash payment posted in this month");
-    for (const segment of await outlook(page).locator(".mortgage-month").first().locator(".mortgage-column > span").all())
+    const amortization = outlook(page).getByRole("region", { name: "Mortgage amortization", exact: true });
+    const segments = amortization.getByRole("figure").getByRole("button", { name: /^2026-01:/ }).locator(".mortgage-column > span");
+    await expect(segments).toHaveCount(3);
+    for (const segment of await segments.all())
       await expect(segment).toHaveAttribute("style", "height: 0%;");
+    await amortization.getByText("Exact mortgage payments & sources", { exact: true }).click();
+    const cells = amortization.getByRole("row").filter({ has: page.getByRole("rowheader", { name: /^2026-01-01/ }) }).getByRole("cell");
+    for (const index of [1, 2, 3]) await expect(cells.nth(index)).toHaveText(formatExactMoney("0", expected.rows[0]!.currency));
+    const balance = outlook(page).getByRole("figure", { name: "Modeled household liability balances", exact: true });
+    await expect(balance.locator(".mortgage-month").first().locator(".mortgage-column > span")).not.toHaveAttribute("style", "height: 0%;");
+    expect(expected.rows[0]!.endingPrincipal).not.toBe("0");
+    await expect(cells.nth(4)).toHaveText(formatExactMoney(expected.rows[0]!.endingPrincipal, expected.rows[0]!.currency));
     await fits(page);
   });
   test(`Missing mortgage replay is recoverable without phantom bars at ${width}px`, async ({ page }) => {

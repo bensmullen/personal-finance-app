@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { inspectMortgageWindow, mortgageWindowTotals, MortgageWindowCache } from "../src/application/mortgageChartData.js";
+import { householdEvidenceMonth, householdEvidenceProof, householdEvidenceSelectionMeasurements, measureHouseholdCheckpointRestoration, boundedEvidencePoints, restoreHouseholdEvidencePoints,
+  inspectMortgageWindow, mortgageWindowTotals, MortgageWindowCache } from "../src/application/mortgageChartData.js";
 import { addPersonalObject, createGoldenHouseholdDraft, patchPersonalObject, type PersonalDraft } from "../src/application/personalMvp.js";
 import { createGoldenHouseholdForecastRequest, GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
-import { runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
+import { createHouseholdForecastRequest, runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
+import { createGoldenExampleConfiguration } from "../src/application/goldenHousehold.js";
+import { createFlagshipHouseholdDraft } from "../src/application/personalMvp.js";
+import { createForecastDiagnosticTransport } from "../src/application/forecastDiagnosticTransport.js";
+import { forecastTransportCounters } from "../src/application/performance.js";
 import { authorMortgageExtra, authorMortgageRefinance } from "../src/application/compiler/mortgageLifecycle.js";
 import { restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
 import { replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
 import { instant } from "../src/time/index.js";
 import { money } from "../src/values/index.js";
+import { createInputFingerprint } from "../src/simulation/run.js";
 
 const second = "d1610000-0000-4000-8000-000000000002";
 const isolatedBank = "d1610000-0000-4000-8000-000000000003";
@@ -28,11 +34,114 @@ function extra(model: PersonalDraft, amount: string, fundingAccountId: string = 
   return authorMortgageExtra(model, { eventId: "d1610000-0000-4000-8000-000000000010", effectId: "d1610000-0000-4000-8000-000000000011", primitiveId: "d1610000-0000-4000-8000-000000000012", liabilityId: ids.mortgage, date, amount, fundingAccountId });
 }
 describe("source-backed mortgage chart data", () => {
+  it("keeps compact financial values identical to canonical replay and independently measures cold/warm checkpoints", () => {
+    // Twenty-five months exercise sibling checkpoints and a projected-law
+    // year; ordinary unit CI never repeats the 649-month performance fixture.
+    const request = createHouseholdForecastRequest({ ...createGoldenExampleConfiguration(), simulationEnd: "2028-02-01" }, ids.model);
+    const result = runPersonalHouseholdForecast(createFlagshipHouseholdDraft(), request);
+    if (result.status === "unavailable") throw new Error(result.message);
+    expect(result.points).toHaveLength(25);
+    const proof = householdEvidenceProof(result.points)!;
+    const canonical = restorePortableHouseholdReplayArtifact(proof);
+    const transport = createForecastDiagnosticTransport(result.diagnosticCatalogs!.source, result.diagnosticCatalogs!.entries.map(entry => entry.content));
+    result.points.forEach((point, index) => {
+      const original = canonical.periods[index]!;
+      expect(point.cash.amount).toBe(original.cash.amount.toString());
+      expect(point.netWorth.amount).toBe(original.netWorth.amount.toString());
+      expect(point.totalAssets.amount).toBe(original.assets.amount.toString());
+      expect(point.totalLiabilities.amount).toBe(original.liabilities.amount.toString());
+      expect(point.statementIncome.amount).toBe(original.statements.income.amount.toString());
+      expect(point.statementExpenses.amount).toBe(original.statements.expenses.amount.toString());
+      expect(point.outputCapabilities).toEqual(transport.capabilities(original.outputCapabilities!));
+    });
+    expect(result.diagnosticCatalogs!.entries).toHaveLength(1);
+    const counters = forecastTransportCounters(result);
+    expect(counters.forecastPointCount).toBe(25);
+    expect(counters.sharedReplayProofCount).toBe(1);
+    expect(counters.uniqueCatalogCount).toBe(1);
+    expect(counters.projectedLawWarningCount).toBeGreaterThan(0);
+    expect(counters.diagnosticBytesAfter).toBeLessThan(counters.diagnosticBytesBefore!);
+    let tick = 0;
+    const measurements = measureHouseholdCheckpointRestoration(proof, () => ++tick);
+    expect(measurements.cold).toMatchObject({ cache: "cold", checkpointCount: 2, materializedCheckpointStates: 2 });
+    expect(measurements.cold.checkpointDiagnosticOccurrencesCompared).toBeGreaterThan(0);
+    expect(measurements.cold.checkpointDiagnosticKeysComputed).toBeGreaterThan(0);
+    expect(measurements.cold.checkpointDiagnosticKeysComputed).toBeLessThanOrEqual(measurements.cold.checkpointDiagnosticOccurrencesCompared!);
+    expect(measurements.cold.checkpointUniqueCatalogChars).toBe(result.diagnosticCatalogs!.entries[0]!.content.length);
+    expect(measurements.cold.checkpointRestoreValidationMs).toBeGreaterThan(0);
+    expect(measurements.cold.serializedCheckpointBytes).toBeGreaterThan(0);
+    expect(measurements.warm).toMatchObject({ cache: "warm", checkpointCount: 2, materializedCheckpointStates: 0 });
+    expect(measurements.warm.checkpointRestoreValidationMs).toBeUndefined();
+    expect(measurements.cloneMs).toBeGreaterThan(0);
+    const selection = { operation: "mortgage_evidence" as const, startIndex: 12, liabilityId: ids.mortgage };
+    const bounded = boundedEvidencePoints(result, selection);
+    const fingerprint = bounded.points[0]!.traceRefs.find(ref => ref.replayArtifact)!.traceId;
+    expect(householdEvidenceSelectionMeasurements(proof, selection, 1)).toMatchObject({ startIndex: 12, selectedMonths: 1, selectedCheckpointIndex: 0, replayPrefixMonths: 0 });
+    const phases: string[] = [];
+    const observation = { now: () => ++tick, record() {}, phase: (phase: string) => { phases.push(phase); } };
+    const points = restoreHouseholdEvidencePoints(proof, selection, bounded.points, fingerprint, result.diagnosticCatalogs, observation);
+    expect(phases).toEqual(["restore_started", "restore_warm", "catalog_validation_started", "catalog_validated", "qualification_started", "qualification_validated"]);
+    expect(inspectMortgageWindow(points, ids.mortgage, observation)).toEqual(inspectMortgageWindow(result.points.slice(12, 24), ids.mortgage));
+    expect(phases.slice(-9)).toEqual(["restore_started", "restore_warm", "replay_started", "replay_executed",
+      "verification_started", "summary_materialized", "capabilities_compared", "economics_compared", "replay_verified"]);
+    const table = structuredClone(result.diagnosticCatalogs!);
+    const corrupt = { ...table, entries: [{ ...table.entries[0]!, content: "changed exact catalog" }] };
+    expect(() => restoreHouseholdEvidencePoints(proof, selection, bounded.points, fingerprint, corrupt)).toThrow(/catalog/);
+    const wrongSource = { ...table, source: { ...table.source, runId: "different-source" } };
+    expect(() => restoreHouseholdEvidencePoints(proof, selection, bounded.points, fingerprint, wrongSource)).toThrow(/CATALOG_MISMATCH/);
+    const tamperedPoints = bounded.points.map(point => ({ ...point, outputCapabilities: { ...point.outputCapabilities!,
+      cash: { dependency: point.outputCapabilities!.cash!.dependency, status: "incomplete" as const, diagnostics: [] } } }));
+    expect(() => restoreHouseholdEvidencePoints(proof, selection, tamperedPoints, fingerprint, table)).toThrow(/qualification/);
+    const changedProof = { ...proof, encoded: `${proof.encoded} ` };
+    expect(() => restorePortableHouseholdReplayArtifact(changedProof)).toThrow(/BASIS_MISMATCH/);
+    // Recompute the non-security envelope fingerprint after changing a real
+    // checkpoint. Source binding/count validation must still reject it.
+    type WireRecord = { kind: string; value: unknown };
+    const payload = (wire: WireRecord): WireRecord => wire.kind === "definition" ? (wire.value as [number, WireRecord])[1] : wire;
+    for (const corruption of ["missing", "wrong-date", "wrong-fingerprint", "capability"]) {
+      const wire = JSON.parse(proof.encoded) as WireRecord;
+      const root = payload(wire);
+      const checkpointField = (root.value as [string, WireRecord][]).find(([key]) => key === "checkpoints")![1];
+      const checkpoints = payload(checkpointField).value as WireRecord[];
+      if (corruption === "missing") checkpoints.pop();
+      else {
+        // Corrupt a sibling outside the selected first-month window. Even
+        // with a recomputed envelope it must fail before any values publish.
+        const sibling = payload(checkpoints.at(-1)!);
+        const field = corruption === "wrong-date" ? "at" : corruption === "wrong-fingerprint" ? "fingerprint" : "outputCapabilities";
+        const entry = (sibling.value as [string, unknown][]).find(([key]) => key === field)!;
+        entry[1] = corruption === "capability" ? null : "different-source";
+      }
+      const encoded = JSON.stringify(wire);
+      const tampered = { ...proof, encoded, integrity: createInputFingerprint({ runContext: canonical.replay.runContext, openingState: encoded }) };
+      expect(() => restorePortableHouseholdReplayArtifact(tampered)).toThrow(/BASIS_MISMATCH/);
+      const firstSelection = { ...selection, startIndex: 0 };
+      const first = boundedEvidencePoints(result, firstSelection);
+      expect(() => restoreHouseholdEvidencePoints(tampered, firstSelection, first.points, first.points[0]!.traceRefs.find(ref => ref.replayArtifact)!.traceId, table)).toThrow(/BASIS_MISMATCH/);
+    }
+    const throwingObserver = { now: () => { throw new Error("unavailable clock"); }, record: () => { throw new Error("unavailable sink"); }, phase: () => { throw new Error("unavailable phase sink"); } };
+    expect(restorePortableHouseholdReplayArtifact(proof, throwingObserver)).toBe(canonical);
+  });
   it("reconciles paid leg amounts and principal against the same real integrated replay", () => {
     const result = source(extra(createGoldenHouseholdDraft(), "100"));
     const before = JSON.stringify(result), window = inspectMortgageWindow(result.points, ids.mortgage);
     const address = result.points[0]!.traceRefs.find(ref => ref.replayArtifact)!.replayArtifact as { basis: unknown };
     const basis = restorePortableHouseholdReplayArtifact(address.basis);
+    const month = householdEvidenceMonth(basis, result.points[1]!.periodStart, result.points[1]!.periodEnd);
+    expect(householdEvidenceMonth(basis, result.points[1]!.periodStart, result.points[1]!.periodEnd)[0]).toBe(month[0]);
+    // Route/month changes share validated restoration, but changing the exact
+    // transported attachment must still fail closed after a successful hit.
+    expect(restorePortableHouseholdReplayArtifact(address.basis)).toBe(basis);
+    const transported = structuredClone(address.basis) as { integrity: string; encoded: string };
+    const portable = restorePortableHouseholdReplayArtifact(transported);
+    expect(restorePortableHouseholdReplayArtifact(transported)).toBe(portable);
+    const integrity = transported.integrity;
+    transported.integrity = "corrupted-after-cache-hit";
+    expect(() => restorePortableHouseholdReplayArtifact(transported)).toThrow(/BASIS_MISMATCH/);
+    transported.integrity = integrity;
+    expect(restorePortableHouseholdReplayArtifact(transported)).toBe(portable);
+    transported.encoded += " ";
+    expect(() => restorePortableHouseholdReplayArtifact(transported)).toThrow(/BASIS_MISMATCH/);
     const replay = replayHouseholdForecastWindow(basis, { start: instant(window.start), end: instant(window.end) });
     const loan = basis.replay.kernel.executable.liabilityInput!.loans.find(item => String(item.principalLiabilityId) === ids.mortgage)!;
     for (const [index, row] of window.rows.entries()) {
@@ -116,6 +225,10 @@ describe("source-backed mortgage chart data", () => {
     expect(() => inspectMortgageWindow([first], second)).toThrow(/unavailable/);
     const bad = { ...first, traceRefs: first.traceRefs.map(ref => ref.replayArtifact ? { ...ref, traceId: "wrong" as typeof ref.traceId } : ref) };
     expect(() => inspectMortgageWindow([bad], ids.mortgage)).toThrow(/identity/);
+    // A cached verified replay must still reconcile the supplied source DTO.
+    const wrongPrincipal = { ...first, debtBalances: first.debtBalances.map(balance => ({ ...balance, principal: { ...balance.principal, amount: "1" } })) };
+    expect(inspectMortgageWindow([wrongPrincipal], ids.mortgage).status).toBe("incomplete");
+    expect(inspectMortgageWindow([first], ids.mortgage).status).toBe("current");
   });
   it("does not count a same-date refinance replacement as cash principal paid", () => {
     const model = authorMortgageRefinance(createGoldenHouseholdDraft(), { eventId: "d1610000-0000-4000-8000-000000000020", effectId: "d1610000-0000-4000-8000-000000000021", primitiveId: "d1610000-0000-4000-8000-000000000022", liabilityId: ids.mortgage, date: "2026-01-01", annualRate: "0.04", totalPayments: 360 });

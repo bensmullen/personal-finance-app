@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { clickFinancialDestination, navigateOwner } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, expectForecastWindow } from "./navigation.js";
 import { inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";
@@ -48,6 +48,7 @@ async function run(page: Page) {
   await expect(status(page)).not.toHaveAttribute("data-request-id", before ?? "");
   await expect(status(page)).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: 30_000 });
   await expect(status(page)).toHaveAttribute("data-pending", "false");
+  await expectForecastWindow(page, "2026-01-01", "2026-03-01", 2);
 }
 async function setup(page: Page, width = 1440, spending?: string) {
   await page.setViewportSize({ width, height: 900 });
@@ -64,12 +65,20 @@ async function setup(page: Page, width = 1440, spending?: string) {
   await navigateOwner(page, "Plan", "Current Plan");
   await page.getByLabel("Simulation start", { exact: true }).fill("2026-01-01");
   await page.getByLabel("Simulation end", { exact: true }).fill("2026-03-01");
+  // A collapsed <details> exposes only its summary; its child region cannot
+  // be located by role until we open the outer disclosure.
+  const taxSummary = page.locator("details > summary").filter({ hasText: "Tax payments & refunds" }).first();
+  if (await taxSummary.locator("..").getAttribute("open") === null) await taxSummary.click();
   const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
-  const disclosure = taxes.locator("xpath=ancestor::details[1]");
-  if (await disclosure.getAttribute("open") === null) await disclosure.locator(":scope > summary").click();
   await taxes.getByLabel("Tax payment account", { exact: true }).selectOption({ label: "Everyday checking" });
   await taxes.getByLabel("Tax refund account", { exact: true }).selectOption({ label: "Everyday checking" });
-  for (const name of ["Federal income tax", "New York"]) await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
+  // The explicitly synthetic flagship is resident in Philadelphia, PA.
+  // Confirm every jurisdiction actually sourced by its household record.
+  for (const name of ["Federal income tax", "Pennsylvania", "Philadelphia wage tax"]) {
+    const summary = taxes.locator("summary").filter({ hasText: name }).first();
+    if (await summary.locator("..").getAttribute("open") === null) await summary.click();
+    await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
+  }
   for (const checkbox of await taxes.getByRole("checkbox").all()) await checkbox.check();
   await run(page);
   await clickFinancialDestination(page, "Cash");
@@ -83,13 +92,15 @@ async function exported(page: Page) {
 async function appliedSource(page: Page) {
   const requestId = await status(page).getAttribute("data-request-id");
   const fingerprint = await status(page).getAttribute("data-fingerprint");
-  const cacheHit = await status(page).locator("dt").filter({ hasText: /^Cache$/ }).locator("xpath=following-sibling::dd[1]").textContent() === "hit";
+  const cacheHit = await status(page).getAttribute("data-cache-state") === "hit";
   const forecast = await page.evaluate(({ requestId, fingerprint, cacheHit }) => {
     const observed = window as typeof window & { __cashResults: ForecastWorkerResponse[] };
     const response = [...observed.__cashResults].reverse().find(item => item.fingerprint === fingerprint && (cacheHit || String(item.requestId) === requestId));
     return response?.outcome === "result" ? response.result as PersonalHouseholdForecastReadModel : undefined;
   }, { requestId, fingerprint, cacheHit });
   if (!forecast || forecast.status === "unavailable") throw new Error("Expected the applied household source");
+  expect(forecast.requestedHorizon).toEqual({ start: "2026-01-01T00:00:00.000Z", end: "2026-03-01T00:00:00.000Z" });
+  expect(forecast.points).toHaveLength(2);
   return forecast;
 }
 
@@ -98,6 +109,10 @@ for (const width of [1440, 390]) {
     await observe(page);
     await setup(page, width);
     const source = await appliedSource(page);
+    expect(source.status).toBe("completed");
+    expect(source.reachedThrough).toBe("2026-03-01T00:00:00.000Z");
+    expect(source.points.map(point => point.statementIncome.amount)).toEqual(["0", "0"]);
+    await expect(status(page)).toHaveAttribute("data-lifecycle", "completed");
     const request = await status(page).getAttribute("data-request-id");
     const before = await exported(page);
     await clickFinancialDestination(page, "Cash");
@@ -122,6 +137,12 @@ for (const width of [1440, 390]) {
     await expect(table.getByRole("row", { name: /Total known uses/ }).getByRole("cell")).toHaveText(exact(expected.totalUses));
     await expect(table.getByRole("row", { name: /^Payroll withholding/ }).getByRole("cell")).toHaveText("Unknown · not modeled");
     const comparison = panel(page).getByRole("figure", { name: "Where modeled income goes comparison", exact: true });
+    expect(expected.denominator).toBe("0");
+    await expect(comparison).toContainText("Zero modeled income");
+    await expect(comparison).toContainText("not a paycheck-funded allocation");
+    await expect(comparison.locator(".cash-income-reference")).toHaveCount(0);
+    await expect(comparison.locator(".paycheck-unallocated")).toHaveCount(0);
+    await expect(comparison.locator(".paycheck-bar > span")).toHaveCount(expected.categories.length);
     const v3 = page.getByRole("figure", { name: "Modeled statement income versus expenses", exact: true });
     const v2 = page.getByRole("figure", { name: "Total modeled cash (including cash in investment accounts)", exact: true });
     const v2Box = await v2.boundingBox(), v3Box = await v3.boundingBox(), v4Box = await comparison.boundingBox();

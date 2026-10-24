@@ -8,8 +8,8 @@ import { resolveTaxCoreRule, taxCatalogFingerprint } from "../../rules/tax/catal
 import { applyTaxCoreRule } from "../../rules/tax/calculator.js";
 import { recognizeTaxLegalBases } from "../../rules/tax/recognition.js";
 import type { TaxIncomeFacts, TaxJurisdictionFacts } from "../../rules/tax/contracts.js";
-import { applySettlement, claimId, createObligation, createRecognitionFact, createSettlement, createSettlementProposal, recognitionId, settlementId, settlementProposalId } from "../../semantics/index.js";
-import { applyAccountingTransactionAtomically, authoritativeClaimHistory, registerAuthoritativeIdentity } from "../../state/index.js";
+import { applySettlement, claimId, createObligation, createSettlement, createSettlementProposal, recognitionId, settlementId, settlementProposalId } from "../../semantics/index.js";
+import { applyAccountingTransactionAtomically, authoritativeClaimHistory, createIndexedRecognitionFact, registerAuthoritativeIdentity } from "../../state/index.js";
 import { subtractMilliseconds, utcDateOnlyInstant, type Instant } from "../../time/index.js";
 import { decimal, money, Money, Quantity, RoundingPolicy, Unit, USD } from "../../values/index.js";
 import type { HouseholdKernelParticipant } from "../householdExecution.js";
@@ -19,7 +19,7 @@ import { SummaryOperationSink } from "../r3/summarySink.js";
 import { activeTaxFact, resolveTaxEligibility } from "./facts.js";
 import { TaxEconomicLedger } from "./economics.js";
 import { TaxDiagnosticLedger } from "./diagnostics.js";
-import { taxBalanceIds, taxDiagnostic, taxOutputCapabilities, type CompiledTaxIncome, type HouseholdTaxInput, type RecognizedTaxEconomics, type TaxCapabilityDiagnostic, type PayrollWithholdingEvidence } from "./contracts.js";
+import { createTaxDiagnosticKey, taxBalanceIds, taxDiagnostic, taxOutputCapabilities, type CompiledTaxIncome, type HouseholdTaxInput, type RecognizedTaxEconomics, type TaxCapabilityDiagnostic, type PayrollWithholdingEvidence } from "./contracts.js";
 export { taxBalanceIds } from "./contracts.js";
 
 const creditUnit = Unit.of("usd_tax_credit");
@@ -117,6 +117,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
     throw new ValidationError({ severity: "error", code: "TAX_PROJECTED_LAW_BASIS_INVALID", message: "Projected law requires an explicit versioned household/model selection bound to this catalog and exclusive date boundary.", entityType: "tax_capability" });
   }
   const bindings = new Map<string, ReturnType<typeof resolveTaxCoreRule> | ValidationError>();
+  const diagnosticKey = createTaxDiagnosticKey();
   const annualStatus = (year: string) => {
     if (input.filingStatuses === undefined) return input.filingStatus;
     const fact = input.filingStatuses[year];
@@ -292,7 +293,11 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
             }
           }
           const seenAnnual = new Set<string>();
-          for (const group of [...groups.values()].sort((a, b) => canonicalSerialize(a).localeCompare(canonicalSerialize(b)))) {
+          // Preserve the existing canonical ordering exactly; serialize each
+          // calculation group once rather than on every comparison.
+          const orderedGroups = [...groups.values()].map(group => ({ group, key: canonicalSerialize(group) }))
+            .sort((a, b) => a.key.localeCompare(b.key));
+          for (const { group } of orderedGroups) {
             try {
               const resolved = binding(group.jurisdiction, group.at, group.facts);
               if (!group.local && seenAnnual.has(group.jurisdiction)) { diagnostics.push(taxDiagnostic("annual_rule_transition", "Multiple annual law versions require explicit year-transition semantics.", group.jurisdiction)); continue; }
@@ -344,7 +349,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           }
           const account = input.refundAccountId ?? input.fundingPolicy?.orderedSources[0]?.accountId;
           if (!account || !input.fundingPolicy) diagnostics.push(taxDiagnostic("payment_funding", "Explicit tax funding and refund account are required."));
-          const uniqueDiagnostics = [...new Map(diagnostics.map(value => [canonicalSerialize(value), value])).values()];
+          const uniqueDiagnostics = [...new Map(diagnostics.map(value => [diagnosticKey(value), value])).values()];
           for (const jurisdiction of totals.keys()) if (!(input.settlements ?? []).some(item => item.taxYear === year && item.jurisdiction === jurisdiction)) uniqueDiagnostics.push(taxDiagnostic("settlement_timing", "An explicit tax-year final settlement/refund date is required; no filing/payment date is inferred.", jurisdiction));
           // Standalone tax payments never prove a gross-to-net paycheck. Each
           // wage occurrence needs its own executed, source-bound receipt under
@@ -372,7 +377,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           const delta = total.minus(priorLiability);
           const provenance = createFactProvenance({ factKind: "model_generated", sourceType: "model", sourceId: id, effectiveAt: at });
           if (delta.isPositive()) {
-            const recognition = createRecognitionFact({ id: recognitionId(`${id}:${jurisdiction}:liability`), category: "tax_liability", amount: delta, recognizedAt: at, provenance, traceRefs: refs }, state.identities.recognitionIds);
+            const recognition = createIndexedRecognitionFact({ id: recognitionId(`${id}:${jurisdiction}:liability`), category: "tax_liability", amount: delta, recognizedAt: at, provenance, traceRefs: refs }, state.identities.recognitionIds);
             registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
             post(`${jurisdiction}:recognition`, "tax_liability", [{ type: "tax", posting: "debit", amount: delta }, { type: "liability", posting: "credit", amount: delta, entityId: liabilityId }], refs);
           } else if (delta.isNegative()) {
@@ -393,7 +398,7 @@ export const createHouseholdTaxParticipant = (configuration: HouseholdTaxInput):
           const payment = (suffix: string, requested: Money, kind: string) => {
             if (!requested.isPositive()) return;
             suffix = `${jurisdiction}:${suffix}`;
-            const recognition = createRecognitionFact({ id: recognitionId(`${id}:${suffix}`), category: kind, amount: requested, recognizedAt: at, provenance, traceRefs: refs }, state.identities.recognitionIds);
+            const recognition = createIndexedRecognitionFact({ id: recognitionId(`${id}:${suffix}`), category: kind, amount: requested, recognizedAt: at, provenance, traceRefs: refs }, state.identities.recognitionIds);
             registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
             const obligation = createObligation({ id: claimId(`${id}:${suffix}:claim`), category: kind, originatingRecognitionId: recognition.id, economicOwnerId: input.ownerId, originalAmount: requested, recognizedAt: at, traceRefs: refs }, authoritativeClaimHistory(state));
             state.obligations[obligation.id] = obligation;

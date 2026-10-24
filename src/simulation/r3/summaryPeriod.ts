@@ -10,10 +10,12 @@ import { householdExecutionMetrics } from "./metrics.js";
 import { mergeOutputCapabilities } from "./capabilities.js";
 import { realizedMortgageLoans } from "../mortgageLifecycle.js";
 import { SummaryOperationSink } from "./summarySink.js";
+import type { PerformanceSession } from "../../diagnostics/performance.js";
 
 /** Materializes display facts directly, without a detailed period adapter. */
 export const createHouseholdSummaryPeriod = (period: Period, opening: AuthoritativeState, closing: AuthoritativeState,
-  facts: readonly HouseholdOperationFacts[], kernel: CompiledHouseholdKernel, currency: Currency): HouseholdForecastSummaryPeriod => {
+  facts: readonly HouseholdOperationFacts[], kernel: CompiledHouseholdKernel, currency: Currency, performance?: PerformanceSession,
+  mergeCapabilitiesForRun = mergeOutputCapabilities): HouseholdForecastSummaryPeriod => {
   const operations = facts.flatMap(fact => fact.summary === undefined ? [] : [fact.summary]);
   const cash = operations.flatMap(op => op.cash === undefined ? [] : [op.cash]);
   const investments = operations.flatMap(op => op.investment === undefined ? [] : [op.investment]);
@@ -43,7 +45,9 @@ export const createHouseholdSummaryPeriod = (period: Period, opening: Authoritat
   const rules = [...new Set([...operations.flatMap(op => op.evidence.rules), ...extension.rules])].sort();
   const assumptions = [...new Set([...operations.flatMap(op => op.evidence.assumptions), ...extension.assumptions])].sort();
   const events = [...new Set([...operations.flatMap(op => op.evidence.events), ...extension.events])].sort();
-  const outputCapabilities = mergeOutputCapabilities(facts.map(fact => fact.outputCapabilities));
+  const mergeCapabilities = () => mergeCapabilitiesForRun(facts.map(fact => fact.outputCapabilities));
+  // A subphase of statements_metrics; do not add both durations as exclusive work.
+  const outputCapabilities = performance === undefined ? mergeCapabilities() : performance.measure("engine.capabilities", mergeCapabilities);
   return Object.freeze({ period: Object.freeze({ ...period }), statements: deriveStatementsFromFlows(closing, flows.snapshot(), currency),
     ...(outputCapabilities === undefined ? {} : { outputCapabilities }),
     cash: metrics.cash, investmentValue: metrics.investmentValue, assets: metrics.totalAssets, liabilities: metrics.totalLiabilities, netWorth: metrics.netWorth,

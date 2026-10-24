@@ -67,7 +67,7 @@ describe("U1B-C partial cash comparison", () => {
     expect(html).not.toContain('class="paycheck-unallocated"');
   });
   it.each([
-    { denominator: "0", totalUses: "40", unallocated: "0", additionalFunding: "40" },
+    { denominator: "0", categories: [], totalUses: "0", unallocated: "0", additionalFunding: "0" },
     { denominator: "-10", totalUses: "40", unallocated: "0", additionalFunding: "50" },
     { categories: [], totalUses: "0", unallocated: "100" },
     { categories: [category("Nothing", "0")], totalUses: "0", unallocated: "100" },
@@ -82,6 +82,22 @@ describe("U1B-C partial cash comparison", () => {
     expect(html).toContain("Exact available evidence is below");
     expect(html).toContain("Exact monthly comparison");
     expect(html).not.toMatch(/NaN|Infinity|width:-/);
+  });
+  it("draws positive known uses against genuinely zero income without implying paycheck funding", () => {
+    const detail = evidence({ basis: "household_income", income: "0", payroll: "0", denominator: "0", totalUses: "40", unallocated: "0", additionalFunding: "40" });
+    const before = JSON.stringify(detail), view = cashComparison(detail)!;
+    expect(view).toMatchObject({ coherent: true, drawable: true, knownUsesOnly: true, scale: "40", remainder: false });
+    expect(view.percent("30")).toBe(75);
+    expect(view.percent("10")).toBe(25);
+    const html = render(detail);
+    expect(html).toContain("Zero modeled income (0 USD) · not a paycheck-funded allocation");
+    expect(html).toContain('role="img"');
+    expect(html).toContain("Recorded household income</th><td>0 USD");
+    expect(html).toContain("Additional funding not attributed");
+    expect(html).not.toContain('class="cash-income-reference"');
+    expect(html).not.toContain('class="paycheck-unallocated"');
+    expect(JSON.stringify(detail)).toBe(before);
+    expect(cashComparison({ ...detail, totalUses: "41" })?.drawable).toBe(false);
   });
   it("handles a zero remainder and household income without inventing gross wages", () => {
     const html = render(evidence({ basis: "household_income", categories: [category("Use", "100")], totalUses: "100", unallocated: "0" }));

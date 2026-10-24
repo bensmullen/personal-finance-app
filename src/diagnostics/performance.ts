@@ -9,13 +9,22 @@ export const PERFORMANCE_PHASES = Object.freeze([
   "engine.prepare",
   "engine.schedule_contention",
   "engine.execute",
+  "engine.period_fork",
+  "engine.validate_commit",
+  "engine.capabilities",
+  "engine.capabilities.normalize",
+  "engine.checkpoint",
   "engine.statements_metrics",
   "engine.trace_result",
   "application.read_model",
+  "application.replay_artifact",
   "transport.serialization",
+  "transport.request_post",
+  "transport.worker_roundtrip",
   "ui.react_commit",
   "ui.chart_render",
   "ui.explanation_resolution",
+  "ui.diagnostic_grouping",
 ] as const);
 
 export type PerformancePhase = (typeof PERFORMANCE_PHASES)[number];
