@@ -22,6 +22,28 @@ import { taxHouseholdFixture, taxHouseholdIds as ids } from "./fixtures/t1aTaxHo
 import { deriveStatements } from "../src/statements/index.js";
 import { canonicalSerialize } from "../src/simulation/run.js";
 import { taxRule } from "./fixtures/t1aTaxRules.js";
+import { paycheckFixture as healthPaycheckFixture } from "./d2/health/premiums/payrollPort/scenario.js";
+
+describe("P2 health expense alongside existing retirement payroll", () => {
+  it("reconciles 1000 gross = 50 retirement + 150 health + 100 withholding + 700 BANK", () => {
+    const allocation: PayrollContributionAllocation = { id: "retirement-50", priority: 0,
+      accountId: domainId("account", uuid(80)), positionId: domainId("position", uuid(81)),
+      calculation: { kind: "fixed", amount: money("50") }, vestedFraction: "1",
+      policy: { personId: ids.person, householdId: ids.household, character: "traditional_401k", excessPolicy: "reject",
+        facts: { taxYear: 2026, ageAtYearEnd: 36, eligiblePlanCompensation: money("100000") },
+        limits: ["401k_additions", "401k_elective"].map(kind => ({ kind: kind as "401k_additions" | "401k_elective",
+          ruleId: stableContributionRuleId(ids.person, kind as "401k_additions" | "401k_elective", 2026), target: { targetType: "person", targetId: ids.person },
+          bucketKey: kind === "401k_additions" ? "401k_additions:sponsor" : kind, includedCharacters: contributionCharacters(kind as "401k_additions" | "401k_elective") })) } };
+    const f = healthPaycheckFixture("retirement-health", { at, allocations: [allocation] });
+    const result = payrollContributionCandidate(f.opening, f.input);
+    assertBalanced(result.transactions[0]!);
+    expect(result.gross.equals(money("1000"))).toBe(true);
+    expect(result.employeeContributions.equals(money("50"))).toBe(true);
+    expect(result.takeHomeCash.equals(money("700"))).toBe(true);
+    expect(result.transactions[0]!.legs.filter(l => l.type === "expense")).toEqual([expect.objectContaining({ amount: money("150") })]);
+    expect(result.state.positions[taxBalanceIds("US:FEDERAL", "2026").creditPositionId]!.carryingValue.equals(money("100"))).toBe(true);
+  });
+});
 
 const uuid = (n: number) => `10100000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const at = instant("2026-01-15T00:00:00.000Z");
@@ -91,6 +113,14 @@ describe("source-bound atomic paycheck", () => {
     expect(allocations.every(item => result.state.positions[item.positionId]!.carryingValue.equals(money("100")))).toBe(true);
     expect(result.transactions).toHaveLength(2);
     expect(deriveStatements(result.state, result.transactions, USD).netWorth.equals(money("1100"))).toBe(true);
+    const health = healthPaycheckFixture("hsa-401k-health", { at, allocations });
+    const withHealth = payrollContributionCandidate(health.opening, health.input);
+    withHealth.transactions.forEach(assertBalanced);
+    expect(withHealth.employeeContributions.equals(result.employeeContributions)).toBe(true);
+    expect(withHealth.takeHomeCash.equals(money("450"))).toBe(true);
+    expect(Object.values(withHealth.state.contributions!)).toHaveLength(4);
+    expect(withHealth.transactions[0]!.legs.filter(l => l.type === "expense")).toHaveLength(1);
+    expect(deriveStatements(withHealth.state, withHealth.transactions, USD).netWorth.equals(money("950"))).toBe(true);
     expect(() => payrollContributionCandidate(original, { id: "excess", incomeId: ids.income, ownerId: ids.person, occurrenceId: "excess-pay", at, gross: money("1000"), depositAccountId: ids.cash, allocations, withholding: [election({ calculation: { kind: "fixed", amount: money("701") } })] })).toThrow("exceed available gross");
     expect(original.contributions).toBeUndefined();
     expect(original.accounts[ids.cash]!.cash.isZero()).toBe(true);

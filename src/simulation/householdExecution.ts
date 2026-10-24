@@ -30,6 +30,8 @@ import {
   registerAuthoritativeIdentity,
   validateAuthoritativeState,
   authoritativeStateChangesSince,
+  snapshotAuthoritativeCheckpoint,
+  isAuthoritativeCheckpointSnapshot,
   type AuthoritativeState,
 } from "../state/index.js";
 import { deriveStatements, type Statements } from "../statements/index.js";
@@ -1180,11 +1182,24 @@ export const exportHouseholdReplayCheckpoints = (forecast: Pick<HouseholdForecas
     primitiveState: materializePrimitiveRuntimeStateStore(checkpoint.primitiveState),
   })));
 
+/** Portable export consumes safe persistent views, not the legacy materialized
+ * diagnostic API above. No additional history/cache is retained by this view. */
+export const exportHouseholdReplayCheckpointRoots = (forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">,
+  observe?: (visited: number, changed: number) => void, observeMaterialization?: () => void): readonly HouseholdReplayCheckpoint[] => {
+  let before: AuthoritativeState | undefined;
+  return Object.freeze((forecastCheckpoints.get(forecast) ?? []).map(checkpoint => {
+    const state = snapshotAuthoritativeCheckpoint(checkpoint.state, before, observe, observeMaterialization);
+    before = state;
+    return Object.freeze({ ...checkpoint, state, primitiveState: createPrimitiveRuntimeStateStore(checkpoint.primitiveState) });
+  }));
+};
+
 /** Restore sparse continuation roots only after checking their immutable source. */
 export const registerHouseholdReplayCheckpoints = (
   forecast: Pick<HouseholdForecastSummaryResult, "periods" | "runMetadata" | "replay">,
   checkpoints: readonly HouseholdReplayCheckpoint[],
   observe?: (counts: HouseholdReplayVerificationCounts) => void,
+  observeState?: (fullMaterialization: boolean) => void,
 ): void => {
   const mismatch = (): never => { throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: invalid portable checkpoints"); };
   const { runContext, kernel } = forecast.replay;
@@ -1216,18 +1231,24 @@ export const registerHouseholdReplayCheckpoints = (
     const period = expected[index]!;
     if (checkpoint.runId !== forecast.runMetadata.runId || checkpoint.at !== period.period.end || checkpoint.fingerprint !== forecast.runMetadata.inputFingerprint ||
       checkpoint.runtime === null || typeof checkpoint.runtime !== "object" || Array.isArray(checkpoint.runtime)) mismatch();
-    const state = createAuthoritativeState(checkpoint.state);
+    const sparse = isAuthoritativeCheckpointSnapshot(checkpoint.state);
+    const state = sparse ? checkpoint.state : createAuthoritativeState(checkpoint.state);
     // Constructors validate materialized values, but may normalize malformed
     // identity/claim history. A portable checkpoint must already be exact;
     // silently repairing it would change the committed continuation basis.
-    if (canonicalSerialize(state) !== canonicalSerialize(checkpoint.state)) mismatch();
+    // Sparse roots were admitted with exact changed-row equality and complete
+    // commitment/claim checks, then made immutable. Arbitrary public callers
+    // still take the full constructor/equality boundary, including malformed
+    // identity normalization and mutable materialized diagnostic exports.
+    if (!sparse && canonicalSerialize(state) !== canonicalSerialize(checkpoint.state)) mismatch();
+    try { observeState?.(!sparse); } catch { /* Measurement only. */ }
     assertAuthoritativeStateCurrency(state, runContext.baseCurrency);
     const metrics = householdExecutionMetrics(state, runContext.baseCurrency, kernel.executable);
     for (const [metric, key] of [["cash", "cash"], ["investmentValue", "investmentValue"], ["totalAssets", "assets"], ["totalLiabilities", "liabilities"], ["netWorth", "netWorth"]] as const)
       if (!metrics[metric].equals(period[key])) mismatch();
     const primitiveState = createPrimitiveRuntimeStateStore(checkpoint.primitiveState);
     assertPrimitiveRuntimeStateConsistent(primitiveState, state);
-    return Object.freeze({ ...checkpoint, state: createIndexedExecutionState(state), primitiveState });
+    return Object.freeze({ ...checkpoint, state: sparse ? state : createIndexedExecutionState(state), primitiveState });
   });
   forecastCheckpoints.set(forecast, Object.freeze(restored));
 };

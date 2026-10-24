@@ -8,6 +8,8 @@ import type { Instant } from "../../time/index.js";
 import type { Money } from "../../values/index.js";
 import { canonicalSerialize } from "../run.js";
 import { immutableConfiguration } from "../r3/compiledHousehold.js";
+import type { PayrollHealthDeductionEvidence } from "../../state/index.js";
+export type { PayrollHealthSourceBinding, PayrollHealthDeductionEvidence, AppliedPayrollHealthWageBase } from "../../state/index.js";
 
 /** Shared payroll/accrual identity; never open a second withholding position. */
 export const taxBalanceIds = (jurisdiction: string, year: string) => {
@@ -35,6 +37,7 @@ export interface PayrollWithholdingElection {
 
 /** Produced only by a committed balanced paycheck candidate, including explicit zero. */
 export interface PayrollWithholdingEvidence {
+  readonly healthDeduction?: PayrollHealthDeductionEvidence;
   readonly incomeId: string;
   readonly ownerId: string;
   readonly employerId: string;
