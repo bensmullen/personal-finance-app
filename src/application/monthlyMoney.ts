@@ -1,7 +1,6 @@
 import type { HouseholdForecastPoint } from "./householdProjection.js";
 import { restorePortableHouseholdReplayArtifact } from "../simulation/r3/replayArtifact.js";
-import { replayHouseholdForecastWindow } from "../simulation/householdExecution.js";
-import { instant } from "../time/index.js";
+import { householdEvidenceMonth } from "./mortgageChartData.js";
 import { Currency, Money, decimal, RoundingPolicy } from "../values/index.js";
 import type { PortableModelEnvelope } from "../model/modelVersion.js";
 import { objects } from "./compiler/shared.js";
@@ -28,14 +27,15 @@ export interface MonthlyUse {
   readonly policyIds: readonly string[];
 }
 /** Read-only budgeting comparison. Posted cash uses do not establish cash origin. */
-export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: PortableModelEnvelope) {
+export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: PortableModelEnvelope,
+  observation?: import("./mortgageChartData.js").HouseholdEvidenceObserver) {
   const ref = point.traceRefs.find(value => value.replayArtifact !== undefined);
   if (!ref) throw new Error("Monthly evidence is unavailable");
   const address = ref.replayArtifact as { basis: unknown; start: string; end: string };
   if (address.start !== point.periodStart || address.end !== point.periodEnd) throw new Error("Monthly evidence does not match the selected period");
-  const basis = restorePortableHouseholdReplayArtifact(address.basis);
+  const basis = restorePortableHouseholdReplayArtifact(address.basis, observation);
   if (`household:replay:${basis.runMetadata.inputFingerprint}:${address.start}:${address.end}` !== ref.traceId) throw new Error("Monthly evidence identity does not match");
-  const replay = replayHouseholdForecastWindow(basis, { start: instant(address.start), end: instant(address.end) });
+  const periods = householdEvidenceMonth(basis, address.start, address.end, observation);
   const currency = Currency.of(point.cash.currency);
   let income = Money.zero(currency), payroll = Money.zero(currency), otherIncome = Money.zero(currency);
   let employee = Money.zero(currency), deposited = Money.zero(currency), cashChange = Money.zero(currency), otherReceipts = Money.zero(currency);
@@ -60,7 +60,7 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
   const cashUses: { id: string; date: string; amount: string; accountId: string; label: string }[] = [];
   const seen = new Set<string>();
   const receipts: { id: string; label: string; amount: string; accountId: string }[] = [];
-  for (const period of replay.periods) for (const tx of period.transactions) {
+  for (const period of periods) for (const tx of period.transactions) {
     if (seen.has(tx.id)) continue;
     seen.add(tx.id);
     const payrollStream = executable.cashFlowInput?.incomes.find(stream =>
@@ -125,7 +125,7 @@ export function inspectMonthlyMoney(point: HouseholdForecastPoint, model?: Porta
       for (const leg of tx.legs) if (leg.type === "cash" && leg.posting === "credit") lines.push({ id: `${tx.id}:${leg.accountId}`, kind: "transfer", date: tx.date, amount: leg.amount.amount.toString(), accountIds: [String(leg.accountId)], holdingIds: holdings });
     }
   }
-  const mortgages = replay.periods.flatMap(period => (period.liability?.liabilities ?? []).map(item => {
+  const mortgages = periods.flatMap(period => (period.liability?.liabilities ?? []).map(item => {
     const loan = loans.find(value => value.id === item.loanId);
     const paid = loan ? period.transactions.filter(tx => ["mortgage_principal_payment", "mortgage_interest_settlement"].includes(tx.type) && tx.date === item.scheduledAt && tx.legs.some(leg => leg.type === "liability" && [loan.principalLiabilityId, loan.interestPayableLiabilityId].includes(leg.entityId)))
       .flatMap(tx => tx.legs).reduce((total, leg) => leg.type === "cash" && leg.posting === "credit" ? total.plus(leg.amount) : total, Money.zero(currency)) : undefined;
@@ -171,7 +171,8 @@ export function cashComparison(detail: ReturnType<typeof inspectMonthlyMoney>) {
     const scale = uses.compare(income) > 0 ? uses : income;
     const percent = (value: string) => scale.isPositive()
       ? Number(decimal(value).dividedBy(scale, new RoundingPolicy(8, "half_even")).times(decimal("100")).toString()) : 0;
-    return { categories, coherent, drawable: coherent && income.isPositive() && categories.length > 0,
+    const knownUsesOnly = income.isZero() && uses.isPositive();
+    return { categories, coherent, knownUsesOnly, drawable: coherent && !income.isNegative() && scale.isPositive() && categories.length > 0,
       overflow: excess.isPositive(), remainder: remainder.isPositive(), scale: scale.toString(), percent };
   } catch { return undefined; }
 }

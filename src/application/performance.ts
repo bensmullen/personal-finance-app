@@ -1,8 +1,50 @@
 import { DecimalAmount } from "../values/index.js";
+import type { PersonalHouseholdForecastReadModel } from "./householdProjection.js";
+import { forecastDiagnosticBytes } from "./forecastDiagnosticTransport.js";
 import { PERFORMANCE_PHASES, PerformanceRegistry, type PerformanceContext, type PerformanceObserver, type PerformanceResources } from "../diagnostics/performance.js";
 export { PERFORMANCE_PHASES, type PerformanceContext, type PerformancePhase, type PerformanceClock, type PerformanceObserver, type PerformanceRecord } from "../diagnostics/performance.js";
 
 export const applicationPerformanceRegistry = new PerformanceRegistry(100);
+
+/** Browser JS heap samples are optional and are never inferred from wire size. */
+export const sampledJsHeapBytes = (): number | undefined => {
+  try {
+    const bytes = (globalThis.performance as Performance & { memory?: { usedJSHeapSize?: number } } | undefined)?.memory?.usedJSHeapSize;
+    return typeof bytes === "number" && Number.isFinite(bytes) && bytes >= 0 ? bytes : undefined;
+  } catch { return undefined; }
+};
+
+/** Portable JSON accounting represents each shared replay proof once. These
+ * are serialization bytes, not physical heap, structured-clone or disk usage.
+ * Canonical BEFORE sizes are exact virtual expansion of the compact refs. */
+export function forecastTransportCounters(result: PersonalHouseholdForecastReadModel): Readonly<Record<string, number>> {
+  if (result.status === "unavailable" || !result.diagnosticCatalogs) return Object.freeze({});
+  const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  const proofs: unknown[] = [];
+  const points = result.points.map(point => ({ ...point, traceRefs: point.traceRefs.map(ref => {
+    if (ref.replayArtifact === undefined) return ref;
+    const { basis, ...address } = ref.replayArtifact as { basis?: unknown };
+    if (basis === undefined) return ref;
+    let index = proofs.indexOf(basis);
+    if (index < 0) { index = proofs.length; proofs.push(basis); }
+    return { ...ref, replayArtifact: { ...address, basis: { proofRef: index } } };
+  }) }));
+  const diagnostics = forecastDiagnosticBytes(result.diagnostics, result.diagnosticCatalogs);
+  const pointBytes = forecastDiagnosticBytes(points, result.diagnosticCatalogs);
+  const { points: _points, diagnostics: _diagnostics, diagnosticCatalogs, ...metadata } = result;
+  const proofBytes = bytes(proofs), catalogBytes = bytes(diagnosticCatalogs), metadataBytes = bytes(metadata);
+  return Object.freeze({
+    forecastWarningCount: result.diagnostics.filter(item => "severity" in item && item.severity === "warning").length,
+    projectedLawWarningCount: result.diagnostics.filter(item => item.projectedLaw !== undefined).length,
+    uniqueCatalogCount: diagnosticCatalogs.entries.length,
+    diagnosticBytesBefore: diagnostics.canonical, diagnosticBytesAfter: diagnostics.compact,
+    pointBytesBefore: pointBytes.canonical, pointBytesAfter: pointBytes.compact,
+    replayProofBytes: proofBytes, catalogTableBytes: catalogBytes, metadataBytes,
+    portableSectionsBytesBefore: diagnostics.canonical + pointBytes.canonical + proofBytes + metadataBytes,
+    portableSectionsBytesAfter: diagnostics.compact + pointBytes.compact + proofBytes + catalogBytes + metadataBytes,
+    forecastPointCount: result.points.length, sharedReplayProofCount: proofs.length,
+  });
+}
 
 /** Strict financial completion; capability-gated incomplete results remain rejected. */
 export const requireCompletedPerformanceForecast = <T extends {

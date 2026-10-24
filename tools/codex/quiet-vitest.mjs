@@ -1,118 +1,44 @@
-import { spawnSync } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import path from 'node:path';
+import { root, plan, selectAssignment } from '../ci/plan-test-shards.mjs';
+import { readJson, runCaptured, validateVitest, writeMeasurements } from '../ci/collect-test-durations.mjs';
 
-const scriptPath = fileURLToPath(import.meta.url);
-const root = path.resolve(path.dirname(scriptPath), "../..");
-const logsDirectory = path.join(root, ".codex", "logs");
-const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const reportPath = path.join(logsDirectory, `vitest-${stamp}.json`);
-const rawLogPath = path.join(logsDirectory, `vitest-${stamp}.log`);
-const vitestPath = path.join(root, "node_modules", "vitest", "vitest.mjs");
-const maxFailureOutput = 8 * 1024;
-
-await mkdir(logsDirectory, { recursive: true });
-
-const result = spawnSync(
-  process.execPath,
-  [
-    vitestPath,
-    "run",
-    ...process.argv.slice(2),
-    "--reporter=json",
-    // Preserve Vitest's human reporter for global teardown, unhandled-error and
-    // worker-exit evidence that the JSON assertion report may not include.
-    "--reporter=default",
-    `--outputFile=${reportPath}`,
-  ],
-  {
-    cwd: root,
-    encoding: "utf8",
-    env: process.env,
-    maxBuffer: 20 * 1024 * 1024,
-  },
-);
-
-const rawOutput = [result.stdout, result.stderr].filter(Boolean).join("\n");
-await writeFile(rawLogPath, rawOutput, "utf8");
-
-const relative = (value) => {
-  if (typeof value !== "string" || value.length === 0) return "unknown";
-  const fromRoot = path.relative(root, value);
-  return fromRoot && !fromRoot.startsWith("..") ? fromRoot : value;
-};
-
-const clip = (value, limit = maxFailureOutput) => {
-  const text = String(value ?? "").trim();
-  return text.length <= limit ? text : `${text.slice(0, limit)}\n… output clipped …`;
-};
-
-let report;
+const directory = path.join(root, '.codex/logs/vitest');
+rmSync(directory, { recursive: true, force: true });
+mkdirSync(directory, { recursive: true });
+writeFileSync(path.join(directory, 'execution.json'), JSON.stringify({
+  sha: process.env.GITHUB_SHA ?? null, status: 'planning/incomplete' }));
 try {
-  report = JSON.parse(await readFile(reportPath, "utf8"));
-} catch {
-  report = undefined;
-}
-
-if (result.status === 0 && report?.success === true) {
-  const total = report.numTotalTests ?? 0;
-  const passed = report.numPassedTests ?? total;
-  const files = Array.isArray(report.testResults)
-    ? report.testResults.length
-    : report.numTotalTestSuites ?? 0;
-  console.log(`PASS vitest — ${passed}/${total} tests / ${files} files`);
-  await Promise.all([
-    rm(reportPath, { force: true }),
-    rm(rawLogPath, { force: true }),
-  ]);
-  process.exit(0);
-}
-
-const total = report?.numTotalTests ?? 0;
-const failed = report?.numFailedTests ?? "unknown";
-console.error(`FAIL vitest — ${failed} failed / ${total || "unknown"}`);
-console.error(`Vitest child outcome: exit=${result.status ?? "null"} signal=${result.signal ?? "none"} error=${result.error?.message ?? "none"} reportSuccess=${report?.success ?? "unavailable"}`);
-if (report?.success === true && result.status !== 0) {
-  console.error("All reported assertions passed, but the Vitest process did not exit cleanly; see full captured default reporter for unhandled errors, teardown or worker termination. Nonzero process status remains a hard failure.");
-}
-
-const failureBlocks = [];
-for (const testResult of report?.testResults ?? []) {
-  for (const assertion of testResult.assertionResults ?? []) {
-    if (assertion.status !== "failed") continue;
-    const messages = Array.isArray(assertion.failureMessages)
-      ? assertion.failureMessages.join("\n")
-      : "";
-    failureBlocks.push(
-      `${relative(testResult.name)}\n${assertion.fullName || assertion.title || "failed test"}\n${messages}`,
-    );
+  const args = process.argv.slice(2);
+  const balanced = args.find(arg => arg.startsWith('--balanced-shard='));
+  let selected;
+  let filters = args;
+  if (balanced) {
+    if (args.length !== 1) throw new Error('Balanced shards cannot accept additional selectors');
+    const match = /^--balanced-shard=(\d+)\/(\d+)$/u.exec(balanced);
+    if (!match) throw new Error('Invalid balanced shard');
+    const index = Number(match[1]); const count = Number(match[2]);
+    plan('unit', count, directory);
+    selected = selectAssignment(JSON.parse(readFileSync(path.join(directory, 'assignment.json'), 'utf8')), index, 'unit', count);
+    // Exact config includes, rather than Vitest positional substring filters.
+    process.env.PFM_UNIT_ASSIGNMENT = path.join(directory, 'selected.json');
+    writeFileSync(process.env.PFM_UNIT_ASSIGNMENT, JSON.stringify(selected.map(test => test.id)));
+    filters = [];
   }
-
-  if (
-    testResult.status === "failed"
-    && (testResult.assertionResults?.filter((item) => item.status === "failed").length ?? 0) === 0
-    && testResult.message
-  ) {
-    failureBlocks.push(`${relative(testResult.name)}\n${testResult.message}`);
-  }
+  const reportFile = path.join(directory, 'report.json');
+  const result = await runCaptured(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', ...filters,
+    '--reporter=json', '--reporter=default', '--reporter=./tools/ci/collect-test-durations.mjs',
+    `--outputFile=${reportFile}`], { directory, kind: 'unit' });
+  const report = readJson(reportFile);
+  writeMeasurements(directory, 'unit', report);
+  const valid = validateVitest(report, selected);
+  result.summary.status = result.ok && valid ? 'passed' : 'failed';
+  result.summary.reportValid = valid; result.save();
+  console.log(`${result.summary.status.toUpperCase()} vitest exit=${result.summary.exit} signal=${result.summary.signal} context=${result.summary.context}; diagnostics: ${directory}`);
+  if (result.summary.status !== 'passed') process.exitCode = 1;
+} catch (error) {
+  writeFileSync(path.join(directory, 'planning-error.json'), JSON.stringify({
+    sha: process.env.GITHUB_SHA ?? null, status: 'failed', message: String(error) }));
+  console.error(`FAIL vitest: ${error}`);
+  process.exitCode = 1;
 }
-
-const selected = failureBlocks.slice(0, 10).map((block, index) => {
-  const lines = block.split(/\r?\n/).slice(0, 22).join("\n");
-  return `${index + 1}. ${lines}`;
-}).join("\n\n");
-
-if (selected) {
-  console.error(clip(selected));
-  if (failureBlocks.length > 10) {
-    console.error(`Showing first 10 of ${failureBlocks.length} reported failures.`);
-  }
-} else {
-  const fallback = rawOutput || result.error?.stack || result.error?.message || "Vitest failed without a parseable report.";
-  console.error(clip(fallback));
-}
-
-console.error(`Full report: ${path.relative(root, reportPath)}`);
-console.error(`Full log: ${path.relative(root, rawLogPath)}`);
-process.exitCode = 1;

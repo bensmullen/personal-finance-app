@@ -1,7 +1,9 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { FINANCIAL_FIELDS, entityField } from "../ui/authoring/fieldContract.js";
 import { readFileSync } from "node:fs";
-import { navigateOwner, showReadiness } from "./navigation.js";
+import { navigateOwner, showReadiness, openFinancialSection } from "./navigation.js";
+import { createGoldenHouseholdExampleDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
+import { GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 
 const navigate = async (page: Page, area: string, section: string) => {
   await navigateOwner(page, area, section);
@@ -13,11 +15,68 @@ const open = async (scope: Page | Locator, title: string) => {
   const summary = scope.locator("summary").filter({ hasText: title }).first();
   if (await summary.locator("..").getAttribute("open") === null) await summary.click();
 };
+// These journeys exercise the historical NY incomplete-payroll contract. The
+// July-pay Philadelphia age-90 flagship has separate one-click coverage.
+const loadHistoricalMonthlyExample = async (page: Page) => {
+  await page.goto("/");
+  // Open the import owner without starting a separate 649-month demonstration.
+  for (const [label, value] of [["Household name", "Historical owner workspace"], ["Monthly income", "0"], ["Opening cash balance", "0"], ["Asset cost basis", "0"], ["Current debt", "0"], ["Monthly spending", "0"]] as const) {
+    await page.getByLabel(label, { exact: true }).fill(value);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+  }
+  await page.getByLabel("Projection horizon (years)", { exact: true }).fill("1");
+  await page.getByRole("button", { name: "Finish setup", exact: true }).click();
+  await navigate(page, "Settings", "Import / Export");
+  await page.locator('input[type="file"]').setInputFiles({ name: "historical-monthly.json", mimeType: "application/json", buffer: Buffer.from(exportPersonalModelJson(createGoldenHouseholdExampleDraft())) });
+  await page.getByRole("button", { name: "Import into session", exact: true }).click();
+  await navigate(page, "Money", "Income");
+  await page.getByLabel("Income receiving account", { exact: true }).selectOption(ids.checking);
+  await navigate(page, "Net Worth", "Debt");
+  // Debt & mortgage is now displayed directly, not behind the old disclosure.
+  // Keep the true source-owned financing facts and validation unchanged.
+  await expect(page.getByRole("group", { name: "Example mortgage", exact: true })).toBeVisible();
+  await page.getByLabel("Debt owner", { exact: true }).selectOption(ids.person);
+  const mortgage = page.getByRole("group", { name: "Example mortgage", exact: true });
+  await mortgage.getByLabel("First monthly payment", { exact: true }).fill("2022-02-01");
+  await mortgage.getByLabel("Number of monthly payments", { exact: true }).fill("360");
+  await mortgage.getByLabel("Mortgage payment account", { exact: true }).selectOption(ids.checking);
+  await mortgage.getByLabel("Same-day mortgage order", { exact: true }).fill("1");
+  await navigate(page, "Plan", "Current Plan");
+  await page.getByLabel("Simulation end", { exact: true }).fill("2026-04-01");
+  await openFinancialSection(page, "Investments");
+  await page.getByLabel("Investment owner", { exact: true }).selectOption(ids.person);
+  await open(page, "Tax payments & refunds");
+  const taxes = page.getByRole("region", { name: "Tax payments & refunds", exact: true });
+  await taxes.getByLabel("Tax payment account", { exact: true }).selectOption(ids.checking);
+  await taxes.getByLabel("Tax refund account", { exact: true }).selectOption(ids.checking);
+  for (const [jurisdiction, label] of [["US:FEDERAL", "Federal income tax"], ["US:NY", "New York"]]) {
+    const summary = taxes.locator("details > summary").filter({ hasText: label }).first();
+    await expect(summary).toBeVisible();
+    if (await summary.locator("..").getAttribute("open") === null) await summary.click();
+    await taxes.getByRole("button", { name: `Suggest April 15 for ${label}`, exact: true }).click();
+    await taxes.getByLabel(`Confirm ${jurisdiction} forecast settlement convention`, { exact: true }).check();
+  }
+  await page.locator('[data-repair="lawScenario"]').check();
+  await test.step("Historical monthly worker returns actual incomplete coverage for January–March", async () => {
+    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+    await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
+  });
+};
 const assertContractAndGeometry = async (page: Page, width: number) => {
   const registry = JSON.parse(readFileSync(new URL("../docs/specs/verification/u1-fact-ownership.json", import.meta.url), "utf8")) as { records: { id: string }[] };
   const controls = page.locator('[data-authoring-scope] input, [data-authoring-scope] select, [data-tax-setup] input, [data-tax-setup] select');
   for (const control of await controls.all()) {
     if (!await control.isVisible()) continue;
+    // Picking adults for a suggested horizon is a transient UI selection, not
+    // an owned/saved financial fact. Verify its accessible group and DOB label;
+    // all actual authoring fields (including target age) still require FieldShell.
+    const planningAdults = control.locator('xpath=ancestor::section[@aria-label="Age-oriented forecast target"]/fieldset[legend="Select planning adults"]');
+    if (await control.getAttribute("type") === "checkbox" && await planningAdults.count()) {
+      await expect(control).toHaveAttribute("type", "checkbox");
+      await expect(control.locator("xpath=ancestor::label[1]")).toContainText("DOB");
+      continue;
+    }
     const shell = control.locator('xpath=ancestor::*[@data-financial-field][1]');
     await expect(shell).toHaveCount(1);
     const key = await shell.getAttribute("data-financial-field");
@@ -38,9 +97,16 @@ const assertContractAndGeometry = async (page: Page, width: number) => {
     const scope = await control.evaluate(element => element.closest("[data-authoring-scope]")?.getAttribute("data-authoring-scope"));
     const field = scope?.startsWith("entity-") ? entityField(key!, scope.slice("entity-".length), undefined, false, undefined, await control.getAttribute("aria-label") === "Annual assumption rate" ? "effective annual rate" : undefined) : FINANCIAL_FIELDS[key!];
     expect(field, `${scope}:${key}`).toBeDefined();
+    // A target age is a user-owned proposal with a specialized accessible
+    // label and help copy; its semantic key/binding remains the registry horizon.
+    const ageTarget = key === "horizon" && await control.locator('xpath=ancestor::section[@aria-label="Age-oriented forecast target"]').count() > 0;
+    const expectedLabel = ageTarget ? "Target age" : field!.label;
+    const expectedDescription = ageTarget
+      ? "Requested forecast cutoff age for the explicitly selected planning adults; the birthday month is included."
+      : field!.description;
     const heading = shell.locator(".field-heading label");
-    await expect(heading).toContainText(field!.label);
-    await expect(shell.locator(".field-help summary")).toHaveAttribute("aria-description", new RegExp(field!.description.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    await expect(heading).toContainText(expectedLabel);
+    await expect(shell.locator(".field-help summary")).toHaveAttribute("aria-description", new RegExp(expectedDescription.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     const label = await heading.boundingBox();
     expect(label!.width).toBeGreaterThan(90);
     expect(label!.height).toBeLessThan(100);
@@ -56,9 +122,19 @@ test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
-  await page.goto("/");
-  await page.getByRole("button", { name: "Use synthetic example" }).click();
-  await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  await loadHistoricalMonthlyExample(page);
+  await test.step("Technical diagnostic provenance is deferred and remains accessible", async () => {
+    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    await expect(status.locator("pre")).toHaveCount(0);
+    await status.locator(".forecast-guidance > summary").click();
+    const technical = status.locator("details").filter({ has: page.locator(":scope > summary", { hasText: /^Technical diagnostic details$/ }) });
+    await technical.locator(":scope > summary").click();
+    await expect(technical.locator("pre")).toHaveCount(0);
+    await technical.locator("details > summary").first().click();
+    await expect(technical.locator("pre").first()).toContainText("PFA-TAX");
+    await technical.locator(":scope > summary").click();
+    await expect(technical.locator("pre")).toHaveCount(0);
+  });
   await navigate(page, "Money", "Cash Flow");
   const pay = page.getByRole("region", { name: "Your Paycheck", exact: true });
   await expect(pay.getByRole("button", { name: "Review selected month" })).toHaveCount(0);
@@ -99,8 +175,7 @@ test("U1 normal navigation, staged salary, direct repair, mortgage and horizon g
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
-  await page.goto("/");
-  await page.getByRole("button", { name: "Use synthetic example" }).click();
+  await loadHistoricalMonthlyExample(page);
   const status = page.getByRole("status", { name: "Household forecast status" });
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete", { timeout: 30_000 });
   await expect(status).toContainText("New York");
@@ -140,6 +215,9 @@ test("U1 normal navigation, staged salary, direct repair, mortgage and horizon g
   await taxes.getByLabel("Tax payment account", { exact: true }).selectOption({ label: "Everyday checking" });
   await taxes.getByLabel("Tax refund account", { exact: true }).selectOption({ label: "Everyday checking" });
   for (const name of ["Federal income tax", "New York"]) {
+    // Jurisdiction-specific tax conventions use their own disclosure sections.
+    // Open the selected legal source before confirming its settlement date.
+    await open(taxes, name);
     await taxes.getByRole("button", { name: `Suggest April 15 for ${name}`, exact: true }).click();
   }
   for (const checkbox of await taxes.getByRole("checkbox").all()) await checkbox.check();
@@ -487,25 +565,72 @@ test("Owner repair: isolated mortgage shortfalls name the evaluated payment acco
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  await page.addInitScript(() => {
+    type Observed = typeof window & { __standaloneRequest?: { scope: string; start: string; end: string; months: number }; __standaloneResult?: { scope: string; status: string; months: number; durationMs: number } };
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        this.addEventListener("message", (event: MessageEvent<import("../ui/forecast/protocol.js").StandaloneWorkerResponse>) => {
+          const response = event.data;
+          if (response.operation === "standalone_forecast" && response.outcome === "result") {
+            const result = response.result;
+            (window as Observed).__standaloneResult = { scope: result.scope, status: result.status, months: "points" in result ? result.points.length : 0, durationMs: response.durationMs };
+          }
+        });
+      }
+      postMessage(message: import("../ui/forecast/protocol.js").StandaloneWorkerRequest) {
+        if (message.operation === "standalone_forecast") {
+          const request = message.request;
+          (window as Observed).__standaloneRequest = { scope: request.scope, start: request.simulationStart, end: request.simulationEnd, months: request.months };
+        }
+        super.postMessage(message);
+      }
+    };
+  });
   await page.goto("/"); await page.getByRole("button", { name: "Use synthetic example" }).click();
+  // The supported flagship has $4M in checking, so a shortfall must be
+  // authored explicitly rather than assumed. Use the real account owner UI.
+  const bankName = "Isolated mortgage bank";
+  await navigate(page, "Money", "Accounts");
+  await page.getByRole("button", { name: "+ Add Account", exact: true }).click();
+  const bank = page.getByRole("dialog", { name: "Create Account", exact: true });
+  await bank.getByLabel("Name", { exact: true }).fill(bankName);
+  await bank.getByLabel("Account type", { exact: true }).selectOption("checking");
+  await bank.getByLabel("Owner", { exact: true }).selectOption(ids.person);
+  await bank.getByLabel("Account opened", { exact: true }).fill("2026-01-01");
+  await bank.getByLabel("Cash balance", { exact: true }).fill("0");
+  await bank.getByRole("button", { name: "Create Account", exact: true }).click();
+  await expect(bank).toHaveCount(0);
+  await navigate(page, "Net Worth", "Debt");
+  await page.getByLabel("Mortgage payment account", { exact: true }).selectOption({ label: bankName });
   await navigate(page, "Plan", "Current Plan"); await open(page, "Expert standalone forecasts");
   const standalone = page.getByRole("region", { name: "Standalone forecast drill-down" });
   await standalone.getByLabel("Forecast scope", { exact: true }).selectOption("liabilities");
+  const liabilitiesStarted = Date.now();
   await standalone.getByRole("button", { name: "Run liabilities forecast", exact: true }).click();
-  await expect(standalone.getByText("Isolated liabilities forecast", { exact: true })).toBeVisible();
+  // A full 649-month isolated run executes in the worker, not the click handler.
+  // Keep the interaction responsive, then wait for its real scoped result
+  // within the production controller's 60-second worker deadline.
+  expect(Date.now() - liabilitiesStarted).toBeLessThan(10_000);
+  await expect(standalone.getByText("Isolated liabilities forecast", { exact: true })).toBeVisible({ timeout: 60_000 });
   await expect(standalone.getByRole("note").filter({ hasText: /does not include salary or spending/ })).toBeVisible();
   const explanation = standalone.getByRole("region", { name: "Mortgage funding explanation" }).first();
-  await expect(explanation).toContainText("Example mortgage"); await expect(explanation).toContainText("2027");
-  await expect(explanation).toContainText("Payment account: Everyday checking");
-  await expect(explanation).toContainText("Required"); await expect(explanation).toContainText("available");
+  await expect(explanation).toContainText("Example mortgage"); await expect(explanation).toContainText("2026-01-01");
+  await expect(explanation).toContainText("Payment account: Isolated mortgage bank");
+  await expect(explanation).toContainText("Required $1325.29; available from the evaluated funding sources $0.00");
   await explanation.getByRole("button", { name: "Review mortgage payment account", exact: true }).click();
   const funding = page.getByLabel("Mortgage payment account", { exact: true });
   await expect(funding).toBeFocused(); await expect(funding).toBeVisible();
   await navigate(page, "Plan", "Current Plan");
   await open(page, "Expert standalone forecasts");
   await standalone.getByLabel("Forecast scope", { exact: true }).selectOption("cash_flow");
+  const cashFlowStarted = Date.now();
   await standalone.getByRole("button", { name: "Run cash flow forecast", exact: true }).click();
-  await expect(standalone.getByText("Standalone cash-flow forecast · no mortgage execution", { exact: true })).toBeVisible();
+  expect(Date.now() - cashFlowStarted).toBeLessThan(10_000);
+  expect(await page.evaluate(() => (window as typeof window & { __standaloneRequest?: unknown }).__standaloneRequest)).toEqual({ scope: "cash_flow", start: "2026-01-01", end: "2080-02-01", months: 649 });
+  await expect(standalone.getByText("Standalone cash-flow forecast · no mortgage execution", { exact: true })).toBeVisible({ timeout: 60_000 });
+  expect(await page.evaluate(() => (window as typeof window & { __standaloneResult?: unknown }).__standaloneResult)).toMatchObject({ scope: "cash_flow", status: "completed", months: 649 });
   expect(errors).toEqual([]);
 });
 
@@ -547,7 +672,8 @@ test("U1 creates payroll contributions through the account action and retains an
   await payroll.getByLabel("Payroll contribution rate", { exact: true }).fill("5");
   await payroll.getByLabel("Employer / plan group", { exact: true }).fill("Example employer");
   await payroll.getByRole("button", { name: "Save payroll contribution", exact: true }).click();
-  await expect(payroll.getByText(/^Saved payroll: traditional 401k to RETIREMENT-DEMO/)).toBeVisible();
+  // The explicitly synthetic flagship has a sourced Roth workplace plan.
+  await expect(payroll.getByText(/^Saved payroll: roth 401k to RETIREMENT-DEMO\./)).toBeVisible();
   await payroll.getByLabel("Payroll contribution rate", { exact: true }).fill("6");
   await open(page, "IRA & brokerage contributions");
   const personal = page.getByRole("region", { name: "Saved investment purchases" });

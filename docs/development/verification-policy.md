@@ -62,11 +62,83 @@ runtime matrix. No change to a tax/model/financial specification is exempt.
 
 **Quiet runner failure truth:** Unit runs must fail if either Vitest's process exits nonzero or its JSON report reports failure. When those disagree, preserve the nonzero failure and emit the process exit code, signal, spawn error and human reporter output in CI artifacts. Never convert `0 failed tests` into a green status without confirming clean process exit.
 
-**Parallel E2E:** real runtime/UI/E2E changes run the full Playwright suite in
-four independent GitHub-hosted shards. A failed or cancelled shard fails the
-aggregate `test` job; each shard uploads distinct failure artifacts. This
-reduces elapsed test time without dropping cases. The existing 20-minute per-job
-ceiling remains damage containment, not a performance allowance.
+**Balanced complete inventories (#224):** selected unit/property tests run in
+three independent matrix jobs, retaining Vitest's threads pool and
+`fileParallelism:false`. Each runner discovers the complete tracked Vitest file
+inventory at its checkout, then runs only its exact include list. Selected E2E
+runs in four independent jobs. Each discovers all ordinary Playwright cases via
+the pinned reporter API, preserving the config's manual UX-spec exclusion.
+Playwright resolves the assigned `--test-list` again before browser startup;
+ordinary `--shard` must not be combined with these lists. Exact result identities
+must match the assignment after execution too. New and renamed tests always
+enter discovery; timing data never selects coverage.
+
+`tools/ci/plan-test-shards.mjs` packs longest estimated duration first with
+code-point identity/group ordering and lowest-index shard tie-breaking. Serial
+Playwright suites conservatively keep their entire project/file together. The
+pinned 1.63 reporter's internal suite mode is guarded; API drift fails discovery
+instead of silently splitting a serial suite. Non-ASCII titles are preserved.
+The planner rejects duplicate identities, invalid costs, incomplete unions,
+split serial groups and empty selected shards. Per-runner assignment artifacts
+include the inventory, all lists, counts, estimates and immutable checkout SHA;
+the aggregate compares their full partitions to detect cross-runner drift.
+
+`tools/ci/test-duration-baseline.json` is a version-controlled, non-sensitive
+synthetic seed. Its initial 30s/file and 120s/case unknown costs and heavier
+Golden estimates are conservative scheduling estimates, **not measured
+performance claims**. Historical PR #207's unit job was 5m35s, E2E jobs 1/2
+3m18s/2m17s, with jobs 3/4 cancelled at 20m. These job times do not provide
+per-case measurements. A reviewer may explicitly update exact identities and
+positive millisecond costs using retained evidence; CI never commits timing
+data. Stale keys are ignored and unseen identities receive the unknown cost.
+
+Four-way inter-runner parallelism is retained, with **one Playwright worker per
+runner**. `fullyParallel:CI`, retries=1, the real browser Worker and `next dev`
+webServer remain. #207's Node 649-month evidence measured ~1.17 GB post-run heap,
+not browser peak memory. Combined with two opaque 20-minute cancellations, this
+supports a conservative contention bound, not a claim of measured browser
+speedup. Browser CPU/peak memory and critical-path improvement remain reviewer
+measurements. Do not split journeys or repeat expensive fixture computations
+to improve estimated balance.
+
+**Durable diagnostics and failure truth:** quiet wrappers spawn asynchronously
+and stream bounded output to an on-disk log (8 MiB maximum), with progressive
+identity/start/completion/retry/status events in `progress.jsonl` and compact
+named progress in Actions logs. An execution receipt exists before discovery;
+a hard kill leaves an explicitly incomplete receipt and the last known case.
+The runner sends SIGTERM to the process group after at most 15 minutes of test
+execution, or minute 18 of the job budget including setup/discovery, whichever
+comes first, then SIGKILL after ten seconds if needed. The unchanged 20-minute
+job limit leaves upload headroom where infrastructure permits. Cancellation
+and deadline expiry are hard failures even if reported assertions passed.
+Infrastructure killing the entire job can still prevent uploads; no receipt
+or missing artifacts can prove success.
+
+Per-file unit and per-test E2E `durations.json` records identities, durations,
+attempt and status; `execution.json` includes exit/signal, cancellation/deadline
+context, run attempt, timestamps, exact SHA and structured-report validity.
+Progress contains only timing/identity/status. Raw reports/logs and retained
+failure traces are synthetic CI diagnostics; do not run these workflows on
+personal financial data or add financial values/secrets to timing baselines.
+Each shard uploads diagnostics using `always()`, distinct shard/SHA names and
+seven-day retention, including successful measurements. Browser failure traces
+are separate artifacts. Missing reports, empty execution, partial workers,
+unexpected/skipped browser results, report/assignment mismatch, unhandled
+runner errors and nonzero/signal process outcomes cannot become success.
+
+The selected matrix result must succeed and the aggregate additionally requires
+one exact-SHA passed, clean-exit, valid-report receipt from **each** of the three
+unit/four E2E children. Missing, cancelled, failed or unexecuted children fail
+the branch-protected `test` gate and block deployment.
+
+Before merge, the independent reviewer must inspect exact-head selected CI,
+complete inventory counts and union/dedup evidence, all four successful E2E
+children, negative gate coverage, maximum job wall time and total runner-minutes
+against the historical baseline above. Improvements are targets, never grounds
+to waive assertions. A single full-horizon Golden case exceeding containment
+is a product/performance blocker on #181, not CI success. Framework #224 does
+not repair or approve PR #207; reintegration and its exact-head gates belong to
+the reviewer after this framework merges.
 
 The four shards wait for successful selected typecheck, build and forecast
 feasibility jobs. `always()` handles optional skipped upstream jobs; cancellation
@@ -102,6 +174,30 @@ readiness) when relevant. Anticipate a coordinated test update **only** when the
 approved behavior changes; preserve tests for unchanged behavior. Record
 non-obvious risks briefly in the issue, not in repetitive global boilerplate.
 This is a pre-handoff reasoning check, not an additional runner or Codex gate.
+
+**Large-payload redundancy prevention and semantic audit:** For changed
+multi-period, high-cardinality, cached, persisted, API/worker or diagnostic
+representations, the author and independent ChatGPT reviewer SHALL check for
+repeated sizable identical content *before* it is multiplied across records or
+sent to a different process. Inspect the producing and receiving boundary,
+not only the grouped UI. Require a synthetic bounded test of one source reused
+by many records (including tampered/missing reference negatives), and confirm
+serialization/persisted-byte growth tracks the true unique content plus
+lightweight occurrences, not the full content times occurrence count.
+Compare relevant before/after byte counts and counts of records, unique
+sources, and repeated identities when material. Preservation of every
+occurrence, provenance, exact qualification/replay proof and unchanged
+financial outputs is a correctness gate. A compact hash must not masquerade as
+full original content, and digest collision/trust/immutability scope must be
+addressed. A deliberate repeated copy is permissible only if demonstrably
+small/bounded and the design rationale is documented. Do not log raw catalogs,
+financial inputs, portable proofs or personal data. Distinguish uncompressed
+wire/test serialization from heap, retained storage and disk; measure those
+separately rather than relabeling. Use a baseline or workload-specific budget
+approved by the owner; do not invent a universal byte cap or relax tests to
+avoid finding duplicate payloads. Tiny deterministic regression fixtures
+belong in ordinary CI; representative long-horizon/peak-heap measurement is
+reviewer-owned heavy validation, not a Codex local test or extra default E2E.
 
 **Acceptance assertion provenance:** Behavioral, accessibility, financial,
 boundary, error-state, and meaningful responsive-layout invariants belong in

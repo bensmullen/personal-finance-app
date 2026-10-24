@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { clickFinancialDestination, navigateOwner } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, expectForecastWindow } from "./navigation.js";
 
 async function exportedModelBytes(page: Page) {
   await navigateOwner(page, "Settings", "Import / Export");
@@ -21,6 +21,8 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
   await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
   const status = page.getByRole("status", { name: "Household forecast status" });
   await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
+  await expectForecastWindow(page, "2026-01-01", "2080-02-01", 649);
+  await expect(status).toHaveAttribute("data-lifecycle", "completed");
   const beforeBytes = await exportedModelBytes(page);
   const before = JSON.parse(beforeBytes);
   if (width === 390) {

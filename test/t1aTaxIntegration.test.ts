@@ -4,11 +4,16 @@ import { compileHouseholdTax, validateResidenceTaxPeriods, validateWorkTaxAlloca
 import { runHouseholdKernel, runCompiledHouseholdProjection, replayHouseholdForecastWindow, type HouseholdForecastSummaryResult, type CompiledHouseholdProjectionRunResult } from "../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
 import { applyHouseholdExecutionOverlay, compileHouseholdKernel } from "../src/simulation/r3/compiledHousehold.js";
-import { canonicalSerialize } from "../src/simulation/run.js";
+import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
+import { createHouseholdForecastRequest, runPersonalHouseholdForecast } from "../src/application/householdProjection.js";
+import { createGoldenExampleConfiguration, createGoldenHouseholdSessionConfiguration, GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
+import { authorMortgageExtra, createFlagshipHouseholdDraft, createGoldenHouseholdExampleDraft, type JsonObject } from "../src/application/personalMvp.js";
+import { replaceCurrentPlanHorizon } from "../src/application/forecastSetup.js";
 import { createHouseholdTaxParticipant, emptyTaxIncome, taxCreditPositionIds, type HouseholdTaxInput, type CompiledTaxIncome } from "../src/simulation/tax.js";
 import { alphaStateTaxCatalog, alphaLocalTaxCatalog, resolveTaxCoreRule, fullYearResidentEligibilityKey, recognizeTaxLegalBases, recognizedGrossTaxableBaseEligibilityKey, applyTaxCoreRule } from "../src/rules/index.js";
 import { instant, utcMonthlyPeriods } from "../src/time/index.js";
-import { money, Ratio } from "../src/values/index.js";
+import { money, Ratio, USD } from "../src/values/index.js";
 import { CURRENT_RUN_VERSIONS } from "../src/model/version.js";
 import { ValidationError } from "../src/diagnostics/index.js";
 import { domainId } from "../src/identity/index.js";
@@ -26,6 +31,9 @@ const differenceContext = (actual: unknown, expected: unknown): string => {
   return `First canonical difference at ${index}: actual=${left.slice(Math.max(0, index - 120), index + 400)} expected=${right.slice(Math.max(0, index - 120), index + 400)}`;
 };
 
+const isJsonObject = (value: unknown): value is JsonObject =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 const localFixture = (year: string, months: number, state: string, source: Partial<CompiledTaxIncome>, inputOverrides: Partial<HouseholdTaxInput> = {}, startMonth = "01") => {
   const fixture = taxHouseholdFixture({ months });
   const from = instant(`${year}-01-01T00:00:00.000Z`), until = instant(`${Number(year) + 1}-01-01T00:00:00.000Z`);
@@ -40,6 +48,110 @@ const localFixture = (year: string, months: number, state: string, source: Parti
 };
 
 describe("T1A household tax integration", () => {
+  it("reports an actually funded extra-principal payoff after replacing the historical Current Plan", () => {
+    const ids = GOLDEN_HOUSEHOLD_IDS;
+    // Construct synthetic source evidence. The ordinary editor correctly
+    // refuses to overwrite an existing account's immutable opening balance.
+    const historical = createGoldenHouseholdExampleDraft();
+    const opening = { ...historical, objects: { ...historical.objects,
+      Account: historical.objects.Account!.map(account => isJsonObject(account) && account.account_id === ids.checking
+        ? { ...account, opening_balance: "400000.00" } : account),
+    } };
+    const replaced = replaceCurrentPlanHorizon(opening, "8c000000-0000-4000-8000-000000000090",
+      "2026-01-01", "2037-01-01", { start: "2026-01-01", end: "2026-03-01" });
+    const model = authorMortgageExtra(replaced, { eventId: "8c000000-0000-4000-8000-000000000091",
+      effectId: "8c000000-0000-4000-8000-000000000092", primitiveId: "8c000000-0000-4000-8000-000000000093",
+      liabilityId: ids.mortgage, date: "2026-02-01", amount: "300000", fundingAccountId: ids.checking });
+    const source = canonicalSerialize(model);
+    const request = createHouseholdForecastRequest({ ...createGoldenHouseholdSessionConfiguration(),
+      selectedRootScenarioId: "8c000000-0000-4000-8000-000000000090", simulationEnd: "2026-03-01" },
+      "8c000000-0000-4000-8000-000000000094");
+    const read = runPersonalHouseholdForecast(model, request);
+    if (read.status === "unavailable") throw new Error(read.message);
+    expect(read.reachedThrough).toBe("2026-03-01T00:00:00.000Z");
+    const compiled = compileHouseholdProjection(model, request.compiler);
+    if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled.diagnostics));
+    const loan = compiled.value.liabilityInput!.loans.find(item => item.principalLiabilityId === ids.mortgage)!;
+    expect(compiled.value.reconciledOpeningState.accounts[ids.checking]!.cash.equals(money("400000"))).toBe(true);
+    expect(read.debtPayoffs).toContainEqual({ loanId: String(loan.id), scheduledAt: "2026-02-01T00:00:00.000Z" });
+    expect(read.points.at(-1)!.debtBalances.find(item => item.loanId === loan.id)).toMatchObject({ principal: { amount: "0" }, outstandingInterest: { amount: "0" } });
+    const context = createRunContext({ runId: runId(request.runIdentity), scenarioId: scenarioId(compiled.value.scenarioIdentity),
+      asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"),
+      simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-03-01T00:00:00.000Z"), baseCurrency: USD });
+    const detailed = runHouseholdKernel({ kernel: compiled.value.executionKernel!, runContext: context, resultTier: "detail" });
+    const paid = detailed.periods[1]!.transactions.filter(transaction => transaction.type === "mortgage_extra_principal");
+    expect(paid).toHaveLength(1);
+    for (const transaction of paid) assertBalanced(transaction);
+    const service = detailed.periods[1]!.liability!.liabilities.find(item => item.loanId === loan.id)!;
+    const extra = service.openingPrincipal.minus(service.scheduledPrincipalPaid);
+    expect(extra.isPositive()).toBe(true);
+    expect(extra.compare(money("300000"))).toBeLessThan(0);
+    expect(service.extraPrincipalPaid.equals(extra)).toBe(true);
+    expect(paid[0]!.legs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ posting: "debit", type: "liability", entityId: loan.principalLiabilityId, amount: extra }),
+      expect.objectContaining({ posting: "credit", type: "cash", accountId: ids.checking, amount: extra }),
+    ]));
+    expect(detailed.state.liabilities[loan.principalLiabilityId]!.balance.isZero()).toBe(true);
+    expect(detailed.state.liabilities[loan.interestPayableLiabilityId]!.balance.isZero()).toBe(true);
+    expect(detailed.periods.flatMap(period => period.liquidityShortfalls)).toEqual([]);
+    expect(detailed.state.accounts[ids.checking]!.cash.isNegative()).toBe(false);
+    expect(read.points.at(-1)!.cash.amount).toBe(detailed.periods.at(-1)!.cash.amount.toString());
+    const summary = runHouseholdKernel({ kernel: compiled.value.executionKernel!, runContext: context });
+    expect(canonicalSerialize(summary.state)).toBe(canonicalSerialize(detailed.state));
+    expect(canonicalSerialize(summary.periods.map(period => period.statements))).toBe(canonicalSerialize(detailed.periods.map(period => period.statements)));
+    expect(canonicalSerialize(detailed.periods.at(-1)!.statements)).toBe(canonicalSerialize(
+      replayHouseholdForecastWindow(summary, detailed.periods[1]!.period).periods.at(-1)!.statements));
+    // Restore the original $20,000 source: the identical authorization cannot
+    // invent funding or a payoff when the voluntary payment is unaffordable.
+    const unfunded = runPersonalHouseholdForecast({ ...model, objects: { ...model.objects, Account: historical.objects.Account! } }, request);
+    if (unfunded.status === "unavailable") throw new Error(unfunded.message);
+    expect(unfunded.debtPayoffs).toEqual([]);
+    expect(money(unfunded.points.at(-1)!.debtBalances.find(item => item.loanId === loan.id)!.principal.amount).isPositive()).toBe(true);
+    expect(money(unfunded.points.at(-1)!.cash.amount).isNegative()).toBe(false);
+    expect(canonicalSerialize(model)).toBe(source);
+  });
+  it.each([[8, "2026-09-01"], [20, "2027-09-01"]] as const)("preserves the exact flagship's %s-month summary, detailed accounting and replay", (months, end) => {
+    // These bounded correctness cases intentionally exclude the 120/360/649
+    // engineering probes. They use the actual one-click financial sources.
+    const model = createFlagshipHouseholdDraft(), source = canonicalSerialize(model);
+    const configuration = { ...createGoldenExampleConfiguration(), simulationEnd: end };
+    const request = createHouseholdForecastRequest(configuration, "8c000000-0000-4000-8000-000000000003");
+    const compiled = compileHouseholdProjection(model, request.compiler);
+    if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled.diagnostics));
+    const context = createRunContext({ runId: runId(request.runIdentity), scenarioId: scenarioId(compiled.value.scenarioIdentity),
+      asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"),
+      simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant(`${end}T00:00:00.000Z`), baseCurrency: USD });
+    const kernel = compiled.value.executionKernel!;
+    const summary = runHouseholdKernel({ kernel, runContext: context });
+    const detail = runHouseholdKernel({ kernel, runContext: context, resultTier: "detail" });
+    expect(summary.status, JSON.stringify(summary.diagnostics)).toBe("completed");
+    expect(detail.status, JSON.stringify(detail.diagnostics)).toBe("completed");
+    expect(summary.reachedThrough).toBe(context.simulationEnd);
+    expect(summary.periods).toHaveLength(months);
+    expect(summary.runMetadata.inputFingerprint).toBe(detail.runMetadata.inputFingerprint);
+    expect(canonicalSerialize(summary.state), differenceContext(summary.state, detail.state)).toBe(canonicalSerialize(detail.state));
+    expect(canonicalSerialize(summary.outputCapabilities)).toBe(canonicalSerialize(detail.outputCapabilities));
+    expect(summary.periods[0]!.cash.equals(money("4007874.71"))).toBe(true);
+    for (let index = 0; index < months; index++) {
+      const projected = summary.periods[index]!, recorded = detail.periods[index]!;
+      expect(projected.statements).toEqual(recorded.statements);
+      expect(projected.cash).toEqual(recorded.cash);
+      expect(projected.netWorth).toEqual(recorded.netWorth);
+      expect(projected.investmentValue).toEqual(recorded.investmentValue);
+      expect(projected.liabilities).toEqual(recorded.liabilities);
+      expect(projected.statements.income.isZero()).toBe(index < 6);
+      for (const transaction of recorded.transactions) assertBalanced(transaction);
+    }
+    const journals = detail.periods.flatMap(period => period.transactions);
+    expect(journals.filter(transaction => transaction.type === "payroll_income")).toHaveLength(months - 6);
+    expect(new Set(journals.map(transaction => transaction.id)).size).toBe(journals.length);
+    const last = detail.periods.at(-1)!.period;
+    const replay = replayHouseholdForecastWindow(summary, last);
+    expect(canonicalSerialize(replay.state)).toBe(canonicalSerialize(detail.state));
+    expect(replay.periods).toEqual(detail.periods.slice(-1));
+    expect(canonicalSerialize(model)).toBe(source);
+  }, 30_000);
+
   // A bounded, source-qualified interest-only case: no wage withholding or benefits are invented.
   const lawScenario = (year = "2027", months = 12) => {
     const seed = taxHouseholdFixture();

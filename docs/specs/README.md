@@ -32,6 +32,7 @@ The architecture/governance documents control decomposition and retrieval but do
 - capabilities/application-ux.md
 - capabilities/tax-engine.md
 - capabilities/data-onboarding-and-import.md
+- capabilities/contextual-financial-education-advisor.md (future, non-alpha-blocking)
 
 ## Planning and verification
 
