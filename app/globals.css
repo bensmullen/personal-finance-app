@@ -352,7 +352,10 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-shell { --calm-body: 1rem; --calm-control: .9375rem; }
 .calm-shell > .primary-nav button, .calm-action { font-size: var(--calm-control); }
 .calm-page-header p:not(.calm-eyebrow) { font-size: var(--calm-body); }
-.calm-cash { gap: 1rem; font-size: var(--calm-body); line-height: 1.5; }
+/* A Cash auto-sized grid track can grow to the min-content width of
+   200%-enlarged financial details. Keep it bounded without clipping evidence. */
+.calm-cash { grid-template-columns: minmax(0, 1fr); gap: 1rem; font-size: var(--calm-body); line-height: 1.5; }
+.calm-cash > * { min-width: 0; max-width: 100%; }
 .calm-cash :is(button, select, summary) { min-height: 44px; font-size: var(--calm-control); max-width: 100%; white-space: normal; }
 .calm-cash :is(h2, h3) { line-height: 1.25; overflow-wrap: break-word; }
 .calm-cash h2 { font-size: 1.5rem; }

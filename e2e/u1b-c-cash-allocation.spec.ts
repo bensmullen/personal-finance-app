@@ -174,7 +174,18 @@ for (const width of [1440, 390]) {
     expect(cashComparison(expected)?.coherent).toBe(true);
     // Text enlargement must reflow without hiding controls or widening the page.
     await page.addStyleTag({ content: "html { font-size: 200%; }" });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const enlarged = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: innerWidth,
+      // Diagnostic only: preserve the strict no-page-overflow assertion.
+      overhanging: Array.from(document.querySelectorAll("body *")).flatMap(element => {
+        const bounds = element.getBoundingClientRect();
+        return bounds.width > 0 && bounds.right > innerWidth + 1
+          ? [`${element.tagName.toLowerCase()}: ${String(element.className).slice(0, 90)}; x=${Math.round(bounds.left)}, width=${Math.round(bounds.width)}`]
+          : [];
+      }).slice(0, 18),
+    }));
+    expect(enlarged.scrollWidth, JSON.stringify(enlarged)).toBeLessThanOrEqual(enlarged.viewportWidth);
     await expect(month).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
