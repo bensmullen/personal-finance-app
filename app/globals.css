@@ -345,6 +345,9 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-empty > strong { font-size: 19px; color: var(--calm-ink); }
 .calm-empty .calm-blocker { margin-bottom: 0; }
 .calm-law-basis { font-size: 12px; line-height: 1.5; padding-block: 12px; border-top: 1px solid var(--calm-line); }
+/* Cash is rendered outside .calm-shell on the Cash destination; its Calm
+   tokens must be locally defined or control font declarations become invalid. */
+.calm-cash { --calm-body: 1rem; --calm-control: .9375rem; --calm-ink: #203b3e; --calm-muted: #536d70; --calm-line: #e2eae7; --calm-accent: #126e64; --calm-surface: #fff; }
 /* Cash: title → graphic → controls, then one optional evidence disclosure. */
 .calm-shell { --calm-body: 1rem; --calm-control: .9375rem; }
 .calm-shell > .primary-nav button, .calm-action { font-size: var(--calm-control); }
@@ -388,7 +391,7 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-cash .chart-readout .chart-exact-values > div { display: block; min-width: 0; }
 .calm-cash .chart-readout .chart-exact-values :is(dt, dd) { font-size: var(--chart-control); margin: 0; overflow-wrap: break-word; }
 @media (max-width: 700px) {
-  .calm-shell { --calm-body: .9375rem; --calm-control: .875rem; }
+  .calm-shell, .calm-cash { --calm-body: .9375rem; --calm-control: .875rem; }
   .calm-cash .chart-controls { display: flex; }
   .calm-cash .chart-control { flex-basis: 100%; }
 }

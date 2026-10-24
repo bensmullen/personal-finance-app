@@ -114,9 +114,9 @@ export function FinancialChart({ annual, monthly, kind, stale, calm = false, chi
       {!calmWealth && !cashPage && controls}
       {!cashPage && legend}
       {!plotted.length && <p role="status">All series hidden. Choose a legend item to show it again; exact values remain below.</p>}
-      {partial && <p className="chart-qualification">{cashPage ? "Incomplete forecast · gaps are unavailable. Faded or outlined bars / dotted lines: incomplete values; partial years are not annualized." : calmWealth ? "Dotted lines mark incomplete values; gaps mean unavailable. Tax and other limits remain unresolved." : "Incomplete values use dotted lines with markers or outlined bars. Unavailable values leave gaps. Tax and other capability limits remain unresolved; exact values below retain each metric’s status."}</p>}
+      {partial && !cashPage && <p className="chart-qualification">{cashPage ? "Incomplete forecast · gaps are unavailable. Faded or outlined bars / dotted lines: incomplete values; partial years are not annualized." : calmWealth ? "Dotted lines mark incomplete values; gaps mean unavailable. Tax and other limits remain unresolved." : "Incomplete values use dotted lines with markers or outlined bars. Unavailable values leave gaps. Tax and other capability limits remain unresolved; exact values below retain each metric’s status."}</p>}
       {!calmWealth && !cashPage && <p className="chart-axis-note">{granularity === "annual" ? "Annual" : "Monthly"} {kind === "statement" ? "recognized period totals" : "closing balances"} ({source.currency}). Axis positions are approximate; readouts are exact.</p>}
-      {precisionOmitted && <p role="note">Some amounts exceed chart display precision and are omitted from the graph. Exact values remain available below.</p>}
+      {precisionOmitted && !cashPage && <p role="note">Some amounts exceed chart display precision and are omitted from the graph. Exact values remain available below.</p>}
       <div className="chart">
         <ResponsiveContainer width="100%" height="100%" minWidth={0}>
           <ComposedChart data={rows} accessibilityLayer stackOffset="sign" barCategoryGap="10%" barGap={2} margin={{ top: 12, right: kind === "cash" ? 8 : 16, bottom: 8, left: 0 }}>
@@ -138,6 +138,10 @@ export function FinancialChart({ annual, monthly, kind, stale, calm = false, chi
           </ComposedChart>
         </ResponsiveContainer>
       </div>
+      {/* Keep financially material coverage warnings visible but do not put
+          multi-line text between the chart title and its plotted graphic. */}
+      {cashPage && partial && <p className="chart-qualification">Incomplete forecast · gaps are unavailable. Faded or outlined bars / dotted lines: incomplete values; partial years are not annualized.</p>}
+      {cashPage && precisionOmitted && <p role="note">Some amounts exceed chart display precision and are omitted from the graph. Exact values remain available below.</p>}
       {cashPage && legend}
       {cashPage && <><p className="chart-axis-note">{kind === "cash" ? `Balance and signed change · one ${source.currency} axis. Green + / red −; faded means incomplete. Small changes share the balance scale; use monthly zoom or exact values.` : "Recognized flows · not bank receipts/disbursements or disposable wages."}</p>{controls}
         {active && <div className="chart-selected" role="status" aria-label={`${title} exact selected period`}><ExactPeriod point={active} series={series} readable compact /></div>}
