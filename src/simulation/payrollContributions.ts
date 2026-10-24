@@ -1,6 +1,7 @@
 import { accountingTransactionId, createAccountingLeg, createAccountingTransaction, type AccountId, type PositionId, type AccountingLegDraft } from "../accounting/index.js";
 import { failValidation, issueCodes } from "../diagnostics/index.js";
-import { cloneAuthoritativeState, applyAccountingTransactionAtomically, type AuthoritativeState } from "../state/index.js";
+import { cloneAuthoritativeState, applyAccountingTransactionAtomically, applyPayrollHealthTransactionAtomically, qualifyPayrollHealthSource,
+  payrollHealthPostingEvidence, type AuthoritativeState, type PayrollHealthSourceBinding, type D2SettlementSourceContext } from "../state/index.js";
 import type { Instant } from "../time/index.js";
 import { domainId, type DomainId } from "../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../lineage/index.js";
@@ -8,6 +9,7 @@ import { Money, Quantity, RoundingPolicy, Unit, money, decimal } from "../values
 import { decideContribution, recordContribution, employerContributionCandidate, type ContributionPolicy } from "./contributions.js";
 import { contributionPolicyAt, projectedContributionDiagnostics } from "./contributionProjection.js";
 import { taxBalanceIds, type TaxCapabilityDiagnostic, type PayrollWithholdingElection, type PayrollWithholdingEvidence } from "./tax/contracts.js";
+import { canonicalSerialize } from "./run.js";
 
 export interface PayrollContributionAllocation {
   readonly id: string;
@@ -33,7 +35,15 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   readonly occurrenceId?: string;
   readonly withholding?: readonly PayrollWithholdingElection[];
   readonly taxCreditAccountId?: AccountId;
+  readonly healthPremium?: { readonly source: PayrollHealthSourceBinding; readonly context: D2SettlementSourceContext };
 }) => {
+  const healthQualification = input.healthPremium === undefined ? undefined : qualifyPayrollHealthSource(input.healthPremium.source, input.healthPremium.context);
+  if (healthQualification?.status === "incomplete") return invalid(`Payroll health source incomplete: ${healthQualification.reason}`);
+  const health = healthQualification?.deduction;
+  if (health !== undefined && (canonicalSerialize(health.source) !== canonicalSerialize(input.healthPremium!.source) ||
+      health.source.transactionId !== input.id || health.source.incomeId !== input.incomeId || health.source.ownerId !== input.ownerId ||
+      health.source.occurrenceId !== input.occurrenceId || health.source.bankAccountId !== input.depositAccountId ||
+      health.at !== input.at || !health.gross.equals(input.gross))) return invalid("Payroll health must bind the exact original wage occurrence");
   if (new Set(input.allocations.map(item => item.id)).size !== input.allocations.length || new Set(input.allocations.map(item => item.priority)).size !== input.allocations.length) return invalid("Payroll allocations require unique identities and explicit distinct priorities");
   const employees = input.allocations.filter(item => !item.policy.character.startsWith("employer_"));
   if (input.allocations.some(item => item.policy.character.startsWith("employer_") && employees.some(employee => employee.priority >= item.priority))) return invalid("Explicit employer priority must follow employee allocations used for matching and shared capacity");
@@ -46,6 +56,7 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   const matchedContributions = new Map<string, Money>();
   const matchKey = (allocation: PayrollContributionAllocation): string => allocation.policy.character.endsWith("_hsa") ? `hsa:${allocation.policy.personId}` : `${allocation.policy.personId}:${allocation.policy.limits.find(binding => binding.kind === "401k_additions")?.bucketKey}`;
   const employeeLegs: AccountingLegDraft[] = [];
+  const executedEmployeeContributions: { id: string; character: string; amount: Money }[] = [];
   const employers: PayrollContributionAllocation[] = [];
   for (const allocation of [...input.allocations].sort((a, b) => a.priority - b.priority)) {
     if (allocation.policy.character === "employer_401k" || allocation.policy.character === "employer_hsa") { employers.push(allocation); continue; }
@@ -64,6 +75,7 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
     if (!position.price.times(quantity.amount).round(rounding).equals(decision.accepted)) return invalid("Payroll units do not reconcile to principal");
     employeeLegs.push({ type: "asset", posting: "debit", entityId: allocation.positionId, amount: decision.accepted, quantity });
     candidate = recordContribution(candidate, allocation.policy, allocation.accountId, `${input.id}:${allocation.id}`, input.at, decision, input.incomeId);
+    if (health !== undefined) executedEmployeeContributions.push({ id: `${input.id}:${allocation.id}`, character: allocation.policy.character, amount: decision.accepted });
     if (allocation.policy.character === "traditional_401k" || allocation.policy.character === "roth_401k" || allocation.policy.character === "employee_hsa") matchedContributions.set(matchKey(allocation), (matchedContributions.get(matchKey(allocation)) ?? Money.zero(input.gross.currency)).plus(decision.accepted));
   }
   const elections = (input.withholding ?? []).filter(item => item.start <= input.at && (item.end === undefined || input.at < item.end));
@@ -83,8 +95,16 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   });
   if (new Set(elections.map(item => item.employerId)).size > 1) return invalid("A paycheck cannot mix employer identities");
   const withheld = credits.reduce((sum, credit) => sum.plus(credit.amount), Money.zero(input.gross.currency));
-  const net = input.gross.minus(employee).minus(withheld);
+  const healthExpense = health?.employeeAmount ?? Money.zero(input.gross.currency);
+  const net = input.gross.minus(employee).minus(withheld).minus(healthExpense);
   if (net.isNegative()) return invalid("Withholding and employee deductions exceed available gross payroll cash compensation");
+  if (health !== undefined) {
+    const sort = <T extends { readonly id: string }>(items: readonly T[]) => [...items].sort((a, b) => a.id.localeCompare(b.id));
+    if (elections.some(e => e.employerId !== health.source.employerId) ||
+        canonicalSerialize(sort(executedEmployeeContributions)) !== canonicalSerialize(sort(health.contributions)) ||
+        canonicalSerialize(credits.map(({ electionId, jurisdiction, amount }) => ({ electionId, jurisdiction, amount }))) !== canonicalSerialize(health.withholding))
+      return invalid("Payroll health complete contribution/withholding inventory differs from executed paycheck");
+  }
   const withholdingLegs: AccountingLegDraft[] = [];
   for (const credit of credits) {
     const { creditPositionId } = taxBalanceIds(credit.jurisdiction, credit.taxYear);
@@ -97,10 +117,12 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   const transaction = createAccountingTransaction({ id: accountingTransactionId(input.id), date: input.at, type: "payroll_income", traceRefs: [calculationTraceRef(calculationTraceId(`payroll:${input.id}:gross:${input.incomeId}`), payrollRuleIds), ...credits.flatMap(credit => credit.traceRefs)], legs: [
     ...employeeLegs,
     ...withholdingLegs,
+    ...(healthExpense.isPositive() ? [{ type: "expense" as const, posting: "debit" as const, entityId: health!.expenseId, amount: healthExpense }] : []),
     ...(net.isPositive() ? [{ type: "cash" as const, posting: "debit" as const, amount: net, accountId: input.depositAccountId, cashFlowClass: "operating" as const }] : []),
     { type: "income" as const, posting: "credit" as const, amount: input.gross },
   ].map(createAccountingLeg) });
-  applyAccountingTransactionAtomically(candidate, transaction);
+  if (health === undefined) applyAccountingTransactionAtomically(candidate, transaction);
+  else applyPayrollHealthTransactionAtomically(candidate, transaction, health, input.healthPremium!.context);
   const transactions = [transaction];
   for (const allocation of employers) {
     const calculation = allocation.calculation;
@@ -115,8 +137,9 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
     const posted = employerContributionCandidate(candidate, { id: `${input.id}:${allocation.id}`, at: input.at, accountId: allocation.accountId, positionId: allocation.positionId, requested, vestedFraction: allocation.vestedFraction, policy: allocation.policy, quantityRounding });
     candidate = posted.state; transactions.push(posted.transaction);
   }
-  const withholdingEvidence: PayrollWithholdingEvidence | undefined = elections.length === 0 ? undefined : {
-    incomeId: input.incomeId, ownerId: input.ownerId!, employerId: elections[0]!.employerId, at: input.at, occurrenceId: input.occurrenceId!, transactionId: transaction.id,
+  const withholdingEvidence: PayrollWithholdingEvidence | undefined = elections.length === 0 && health === undefined ? undefined : {
+    ...(health === undefined ? {} : { healthDeduction: payrollHealthPostingEvidence(candidate, transaction.id, input.healthPremium!.context)! }),
+    incomeId: input.incomeId, ownerId: input.ownerId!, employerId: health?.source.employerId ?? elections[0]!.employerId, at: input.at, occurrenceId: input.occurrenceId!, transactionId: transaction.id,
     gross: input.gross, employeeContributions: employee, takeHomeCash: net, depositAccountId: input.depositAccountId, credits: Object.freeze(credits),
   };
   return { state: candidate, transactions: Object.freeze(transactions), gross: input.gross, employeeContributions: employee, takeHomeCash: net, diagnostics: Object.freeze(diagnostics), withholdingEvidence };

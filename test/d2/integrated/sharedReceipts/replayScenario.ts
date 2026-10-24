@@ -13,6 +13,10 @@ const ordered = (receipt: D2SettlementReceipt, position: number): D2SettlementRe
     const source = { ...receipt.source, executionOrder };
     return { ...receipt, source, sourceEvidenceFingerprint: d2SettlementSourceFingerprint(source) };
   }
+  if (receipt.kind === "heloc_phase_service") {
+    const source = { ...receipt.source, executionOrder };
+    return { ...receipt, source, sourceEvidenceFingerprint: d2SettlementSourceFingerprint(source) };
+  }
   const source = { ...receipt.source, executionOrder };
   return { ...receipt, source, sourceEvidenceFingerprint: d2SettlementSourceFingerprint(source) };
 };
