@@ -480,7 +480,12 @@ main#main-content { padding: 24px 32px 64px; }
 .context-save-actions > button { flex-shrink: 0; max-width: 100%; }
 .context-save-cue { min-width: 0; max-width: 10rem; font-size: .875rem; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
 .context-forecast .context-update { padding: 8px 10px; white-space: nowrap; }
-@media (min-width: 1101px) { .context-save-cue { max-width: 7rem; } }
+@media (min-width: 1101px) {
+  /* The plan should not grow into unused space and push storage below the bar
+     when no update button is present (incomplete or setup-needed results). */
+  .context-plan { flex-grow: 0; }
+  .context-save-cue { max-width: 7rem; }
+}
 .result-warning { color: #805022; font-size: .9375rem; line-height: 1.5; }
 @media (min-width: 901px) {
   .shared-context { column-gap: 6px; }
