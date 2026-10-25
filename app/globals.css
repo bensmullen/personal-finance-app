@@ -479,6 +479,8 @@ main#main-content { padding: 24px 32px 64px; }
 .context-save-actions { display: flex; flex: 0 1 auto; align-items: center; gap: 8px; }
 .context-save-actions > button { flex-shrink: 0; max-width: 100%; }
 .context-save-cue { min-width: 0; max-width: 10rem; font-size: .875rem; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
+.context-forecast .context-update { padding: 8px 10px; white-space: nowrap; }
+@media (min-width: 1101px) { .context-save-cue { max-width: 7rem; } }
 .result-warning { color: #805022; font-size: .9375rem; line-height: 1.5; }
 @media (min-width: 901px) {
   .shared-context { column-gap: 6px; }
