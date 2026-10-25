@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { accountingTransactionId } from "../../../../../src/accounting/index.js";
 import { createAuthoritativeState, applyD2SettlementAtomically, requalifyD2SettlementReceiptHistory } from "../../../../../src/state/index.js";
 import { money } from "../../../../../src/values/index.js";
 import { instant } from "../../../../../src/time/index.js";
@@ -40,7 +41,8 @@ describe("#149 S8-4 actual HELOC in funded joint-household execution", () => {
     expect(out.state.liabilities[ids.charges]!.balance.isZero()).toBe(true);
     const txs = out.periods.flatMap(p => p.transactions);
     expect(txs.filter(t => !heloc(t))).toEqual(baseline.periods.flatMap(p => p.transactions));
-    expect(txs.filter(heloc).map(t => [t.type, ...t.legs.map(l => [l.type, l.posting, amount(l.amount)])])).toEqual([
+    expect(txs.filter(heloc).sort((a, b) => a.type.localeCompare(b.type))
+      .map(t => [t.type, ...t.legs.map(l => [l.type, l.posting, amount(l.amount)])])).toEqual([
       ["heloc_interest", ["expense", "debit", "5.1"], ["liability", "credit", "5.1"]],
       ["heloc_service", ["liability", "debit", "100"], ["liability", "debit", "5.1"], ["cash", "credit", "105.1"]],
     ]);
@@ -73,7 +75,7 @@ describe("#149 S8-4 actual HELOC in funded joint-household execution", () => {
     expect(q.status).toBe("qualified");
     if (q.status !== "qualified") throw new Error(q.reason);
     const h = q.document.request.checkpoint.history.find(h => h.kind === "principal_repayment")!;
-    expect(out.state.d2PostedTransactions![h.postingId]!.transaction.id).toBe(h.postingId);
+    expect(out.state.d2PostedTransactions![accountingTransactionId(h.postingId)]!.transaction.id).toBe(h.postingId);
     expect(q.receipt.openingPrincipal.equals(money("900"))).toBe(true);
     const state = createAuthoritativeState(out.state);
     requalifyD2SettlementReceiptHistory(state, s.context);

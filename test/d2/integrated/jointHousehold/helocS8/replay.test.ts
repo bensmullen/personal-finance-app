@@ -11,6 +11,7 @@ import { canonicalSerialize } from "../../../../../src/simulation/run.js";
 import { runHouseholdKernel, replayHouseholdForecastWindow, exportHouseholdReplayCheckpoints } from "../../../../../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../../../../../src/simulation/r3/replayArtifact.js";
 import { archive, debits, ids, jointHeloc, reset } from "./scenario.js";
+import type { FsaCashInput } from "../../../../../src/simulation/d2/integration/fsaCash/index.js";
 
 beforeEach(reset);
 const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
@@ -105,12 +106,28 @@ describe("#149 S8-4 bounded joint HELOC portable history", () => {
     const largeResult = runHouseholdKernel({ kernel: large.kernel, runContext: large.context });
     expect(largeResult.periods, JSON.stringify(largeResult.diagnostics)).toHaveLength(25);
     const largeArtifact = createPortableHouseholdReplayArtifact(largeResult);
+    // Report the separate inherited retirement payload debt as bytes, never as
+    // proof that all D2 source transport is compact. Its migration is excluded
+    // from this repair and remains mandatory before D2 closeout.
+    const legacyRetirement = large.kernel.executable.participants!.find(p => p.id === "d2_retirement_cash")!.economicInputs;
+    const retirementBytes = new TextEncoder().encode(canonicalSerialize(legacyRetirement)).byteLength;
+    expect(canonicalSerialize(legacyRetirement)).toContain("withdrawals");
+    console.info("#149 outstanding retirement economicInputs bytes:", retirementBytes);
     for (const [s, artifact] of [[small, smallArtifact], [large, largeArtifact]] as const) {
       const config = s.kernel.executable.participants!.find(p => p.id === "d2_heloc_servicing")!.economicInputs;
       expect(config).toEqual({ sourceIds: s.pairs.map(p => p.issuer.sourceId).sort() });
       expect(artifact.encoded).not.toContain("Synthetic complete original statement");
       expect(artifact.encoded).not.toContain("original_complete_issuer_statement");
       expect(canonicalSerialize(config)).not.toContain("checkpoint");
+      const fsa = s.kernel.executable.participants!.find(p => p.id === "d2_fsa_cash")!;
+      expect(fsa.portableCodec).toBe("d2-fsa-cash/v2");
+      expect((fsa.economicInputs as FsaCashInput).sources[0]!.expectedSource).toMatch(/^fsa-cash-source\/v2:sha256:[a-f0-9]{64}$/);
+      const receipt = Object.values((s === small ? smallResult : largeResult).state.d2SettlementReceipts!)
+        .find(r => r.kind === "fsa_paid_reimbursement")!;
+      expect(receipt.source.sourceVersion).not.toContain("s8-medical-receipt");
+      expect(receipt.source.sourceVersion).toContain("fsa-cash-source/v2:sha256:");
+      expect(receipt.sourceEvidenceFingerprint).not.toContain("health_fsa_plan");
+      expect(artifact.encoded).not.toContain("Fixed artificial plan; not law");
     }
     const receipts = Object.values(largeResult.state.d2SettlementReceipts!).filter(r => r.kind === "heloc_phase_service");
     expect(receipts).toHaveLength(13);
@@ -119,5 +136,7 @@ describe("#149 S8-4 bounded joint HELOC portable history", () => {
     expect(canonicalSerialize(receipts).length).toBeLessThan(canonicalSerialize(receipts.slice(0, 1)).length * 15);
     expect(largeArtifact.encoded.length).toBeGreaterThan(smallArtifact.encoded.length);
     expect(largeArtifact.encoded.length - smallArtifact.encoded.length).toBeLessThan(smallArtifact.encoded.length * 12);
-  });
+  // CI #40162488195 runner.log reports 8.9s for these two 25-period forecasts,
+  // not a financial mismatch. Bound this serialization oracle alone at 25s.
+  }, 25_000);
 });

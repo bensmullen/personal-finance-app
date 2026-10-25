@@ -4,17 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
-import { applyAccountingTransactionAtomically, applyD2SettlementAtomically, cloneAuthoritativeState } from "../../../../src/state/index.js";
+import { applyAccountingTransactionAtomically, applyD2SettlementAtomically, cloneAuthoritativeState,
+  requalifyD2SettlementReceiptHistory } from "../../../../src/state/index.js";
 import { civilDate } from "../../../../src/time/index.js";
 import { money } from "../../../../src/values/index.js";
-import { canonicalSerialize } from "../../../../src/simulation/run.js";
+import { canonicalSerialize, createInputFingerprint } from "../../../../src/simulation/run.js";
 import { applyHouseholdExecutionOverlay, runHouseholdKernel, replayHouseholdForecastWindow, type HouseholdKernelParticipant } from "../../../../src/simulation/householdExecution.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../../../../src/simulation/r3/replayArtifact.js";
-import { attachFsaCash, createFsaCashParticipant, FsaCashIncomplete, registerFsaCashSourceProvider, type FsaCashSource } from "../../../../src/simulation/d2/integration/fsaCash/index.js";
+import { attachFsaCash, createFsaCashParticipant, FsaCashIncomplete, fsaCashSourceFingerprint,
+  registerFsaCashSourceProvider, type FsaCashSource } from "../../../../src/simulation/d2/integration/fsaCash/index.js";
+import { sha256 } from "../../../../src/rules/tax/t1b/contentIdentity.js";
 import { originalRegistration, originalTransaction, qualifyFsaCashSource } from "../../../../src/simulation/d2/integration/fsaCash/source.js";
 import { evaluateFsa, fsaScopeId, type FsaReceipt } from "../../../../src/simulation/d2/health/fsa/index.js";
 import { bindFsaYearChain, fsaYearChainFingerprint, type FsaYearChainRequest } from "../../../../src/simulation/d2/health/fsa/yearChain/index.js";
-import { at, evidence, fixture, ids, input, provenance, source } from "./scenario.js";
+import { at, evidence, fixture, ids, input, legacyParticipant, provenance, source } from "./scenario.js";
 
 // The real adapter re-evaluates these raw fixed synthetic sources. No shared receipt mock authority.
 const store = new Map<string, FsaCashSource>();
@@ -55,6 +58,138 @@ const reject = (s: FsaCashSource, f = fixture()) => {
 };
 
 describe("#202 independently source-qualified FSA physical cash", () => {
+  it("binds full canonical UTF-8 evidence by v2 digest in both participant and canonical receipt", () => {
+    const s = admit({ ...source(), version: "synthetic/é/v1" }), f = fixture(), out = execute(s, f);
+    expect(out.periods, JSON.stringify(out.diagnostics)).toHaveLength(2);
+    const fingerprint = fsaCashSourceFingerprint(s);
+    expect(fingerprint).toBe(`fsa-cash-source/v2:sha256:${sha256(canonicalSerialize(s))}`);
+    expect(createFsaCashParticipant(input(s))).toMatchObject({ version: "paid-expense-reimbursement/v2", portableCodec: "d2-fsa-cash/v2",
+      economicInputs: { sources: [{ sourceId: s.sourceId, expectedSource: fingerprint }] } });
+    const r = Object.values(out.state.d2SettlementReceipts!)[0]!;
+    if (r.kind !== "fsa_paid_reimbursement") throw new Error("Expected FSA receipt");
+    expect(r.source.sourceId).toBe(s.sourceId);
+    expect(r.source.sourceVersion).toBe(canonicalSerialize({ version: s.version, inputs: fingerprint }));
+    expect(r.source.sourceVersion).not.toContain("medical:one");
+    expect(r.sourceEvidenceFingerprint).not.toContain("Fixed artificial plan; not law");
+    expect(r.eligibleExpense.equals(money("1000"))).toBe(true);
+    expect(r.amount.equals(money("1000"))).toBe(true);
+    const before = canonicalSerialize(out.state);
+    requalifyD2SettlementReceiptHistory(out.state, f.context);
+    expect(applyD2SettlementAtomically(out.state, r, f.context).status).toBe("already_committed");
+    expect(canonicalSerialize(out.state)).toBe(before);
+    store.set(s.sourceId, { ...s, version: "changed-provider-version" });
+    expect(() => requalifyD2SettlementReceiptHistory(out.state, f.context)).toThrow();
+    expect(applyD2SettlementAtomically(out.state, r, f.context).status).toBe("incomplete");
+    expect(canonicalSerialize(out.state)).toBe(before);
+    // The digest detects change; it does not approve a non-paid original.
+    const invalid = { ...s, original: { ...s.original, approvalId: "" } };
+    expect(reject(invalid).periods).toEqual([]);
+  });
+
+  it("rejects malformed reference versions and every changed source domain despite a copied digest", () => {
+    const s = admit(source()), pinned = input(s);
+    for (const expectedSource of [canonicalSerialize(s), "", "a".repeat(64),
+      fsaCashSourceFingerprint(s).replace("/v2:", "/v3:"), fsaCashSourceFingerprint(s).slice(0, -1)]) {
+      expect(() => createFsaCashParticipant({ sources: [{ sourceId: s.sourceId, expectedSource }] })).toThrow(FsaCashIncomplete);
+    }
+    const changed: FsaCashSource[] = [
+      { ...s, sourceId: "other-source" }, { ...s, version: "v2" },
+      { ...s, original: { ...s.original, amount: money("999.99") } },
+      { ...s, deposit: { ...s.deposit, paymentApprovalId: "different" } },
+      { ...s, deposit: { ...s.deposit, knownAt: at("2026-02-16") } },
+      { ...s, request: { ...s.request, plan: { ...s.request.plan, annualElection: money("1999.99") } } },
+      { ...s, provenance: s.provenance.map((p, i) => i ? p : { ...p, publishedAt: at("2025-01-02") }) },
+      { ...s, request: { ...s.request, payroll: [{ ...s.request.plan, contributionId: "yearly-payroll",
+        effectiveAt: civilDate("2026-01-15"), sourceAccountId: ids.bank, contributionSource: "employee_salary_reduction",
+        amount: money("50"), status: "pending", postingRef: null, evidence: evidence("health_fsa_payroll", "yearly-payroll") }] } },
+    ];
+    for (const raw of changed) {
+      expect(fsaCashSourceFingerprint(raw)).not.toBe(fsaCashSourceFingerprint(s));
+      store.set(s.sourceId, raw);
+      expect(() => createFsaCashParticipant(pinned)).toThrow(FsaCashIncomplete);
+    }
+    store.delete(s.sourceId);
+    expect(() => createFsaCashParticipant(pinned)).toThrow(FsaCashIncomplete);
+  });
+
+  it("keeps 1/12/120 authenticated references and receipt bindings proportional without raw originals", () => {
+    const sources = Array.from({ length: 120 }, (_, i) => admit(source(String(i).padStart(3, "0"))));
+    const f = fixture(), sizes: number[] = [];
+    for (const count of [1, 12, 120]) {
+      const refs = input(...sources.slice(0, count)), p = createFsaCashParticipant(refs);
+      expect(p.economicInputs).toEqual(refs);
+      expect(refs.sources.every(r => /^fsa-cash-source\/v2:sha256:[a-f0-9]{64}$/.test(r.expectedSource))).toBe(true);
+      const config = canonicalSerialize(p.economicInputs);
+      expect(config).not.toContain("Fixed artificial plan; not law");
+      expect(config).not.toContain("bankCashBefore");
+      sizes.push(config.length);
+      const bindings = sources.slice(0, count).map(s => qualifyFsaCashSource(s, f.context).source);
+      expect(bindings.every(b => b.sourceVersion.includes("fsa-cash-source/v2:sha256:")
+        && !b.sourceVersion.includes("medical:"))).toBe(true);
+      expect(canonicalSerialize(bindings).length).toBeLessThanOrEqual(canonicalSerialize(bindings.slice(0, 1)).length * count);
+    }
+    expect((sizes[2]! - sizes[1]!) * 11).toBe((sizes[1]! - sizes[0]!) * 108);
+  });
+
+  it("restores historical v1 only against exact publisher, receipt and original proof agreement", () => {
+    const s = admit(source()), f = fixture(13), legacy = legacyParticipant(s, f.context.simulationEnd);
+    const kernel = applyHouseholdExecutionOverlay(f.kernel, { participants: [legacy] });
+    const summary = runHouseholdKernel({ kernel, runContext: f.context });
+    expect(summary.periods, JSON.stringify(summary.diagnostics)).toHaveLength(13);
+    expect(summary.state.accounts[ids.bank]!.cash.equals(money("1500"))).toBe(true);
+    const r = Object.values(summary.state.d2SettlementReceipts!)[0]!;
+    expect(r.source.sourceVersion).toBe(canonicalSerialize({ version: s.version, inputs: canonicalSerialize(s) }));
+    const artifact = createPortableHouseholdReplayArtifact(summary), selected = summary.periods[12]!.period;
+    const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(artifact)));
+    const replay = replayHouseholdForecastWindow(restored, selected);
+    expect(replay.state).toEqual(summary.state);
+    expect(replay.state.d2PostedTransactions).toEqual(summary.state.d2PostedTransactions);
+    expect(replay.state.identities).toEqual(summary.state.identities);
+    requalifyD2SettlementReceiptHistory(replay.state, f.context);
+    expect(applyD2SettlementAtomically(replay.state, r, f.context).status).toBe("already_committed");
+    const noOriginal = cloneAuthoritativeState(replay.state);
+    expect(() => {
+      delete noOriginal.d2PostedTransactions![originalTransaction(s).id];
+      requalifyD2SettlementReceiptHistory(noOriginal, f.context);
+    }).toThrow();
+    // A compact v2 participant may not relabel a v1 receipt or silently rewrite
+    // old canonical source/journal identities in an existing state stream.
+    const mixed = runHouseholdKernel({ kernel: attachFsaCash(fixture(13, summary.state).kernel, input(s)), runContext: f.context });
+    expect(mixed.periods).toEqual([]); expect(mixed.state).toEqual(summary.state);
+
+    // Tamper only the legacy full-source receipt binding, and recompute outer
+    // integrity: independent receipt requalification must still reject it.
+    const changedVersion = canonicalSerialize({ version: s.version, inputs: canonicalSerialize({ ...s, version: "forged" }) });
+    let edits = 0;
+    const change = (v: unknown): unknown => {
+      if (v === r.source.sourceVersion) { edits++; return changedVersion; }
+      if (Array.isArray(v)) return v.map(change);
+      if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, change(x)]));
+      return v;
+    };
+    const encoded = JSON.stringify(change(JSON.parse(artifact.encoded)));
+    expect(edits).toBeGreaterThan(0);
+    expect(() => restorePortableHouseholdReplayArtifact({ ...artifact, encoded,
+      integrity: createInputFingerprint({ runContext: f.context, openingState: encoded }) })).toThrow();
+    const dir = mkdtempSync(join(tmpdir(), "pfm-fsa-legacy-"));
+    try {
+      const payload = join(dir, "payload.json"); writeFileSync(payload, JSON.stringify({ artifact, selected }));
+      for (const mode of ["available", "missing", "amended", "original_changed", "unregistered"]) {
+        const worker = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
+          fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024, timeout: 20_000,
+          env: { ...process.env, PFM_FSA_CASH_PAYLOAD: payload, PFM_FSA_CASH_SOURCE: mode } });
+        expect(worker.error).toBeUndefined(); expect(worker.status, worker.stderr).toBe(0);
+        expect(JSON.parse(worker.stdout)).toEqual(mode === "available"
+          ? { state: canonicalSerialize(replay.state), periods: canonicalSerialize(replay.periods) } : { rejected: true });
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+    store.set(s.sourceId, { ...s, original: { ...s.original, approvalId: "amended" } });
+    expect(() => restorePortableHouseholdReplayArtifact({ ...artifact })).toThrow();
+    expect(() => requalifyD2SettlementReceiptHistory(replay.state, f.context)).toThrow();
+  // One 13-period historical run plus five fresh publisher processes; v1 proof
+  // compatibility is isolated here without changing the ordinary test timeout.
+  }, 60_000);
+
   it.each(["1000", "500"])("pays expense in January and actual $%s deposit in February without earned income", amount => {
     const s = admit(source("one", amount)), f = fixture(), before = canonicalSerialize({ s, state: f.state });
     const out = execute(s, f);
@@ -329,7 +464,7 @@ describe("#202 independently source-qualified FSA physical cash", () => {
     const dir = mkdtempSync(join(tmpdir(), "pfm-fsa-cash-"));
     try {
       const payload = join(dir, "payload.json"); writeFileSync(payload, JSON.stringify({ artifact, selected }));
-      for (const mode of ["available", "missing", "amended"] as const) {
+      for (const mode of ["available", "missing", "amended", "original_changed", "timestamp_changed", "unregistered"] as const) {
         const worker = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
           fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024,
           env: { ...process.env, PFM_FSA_CASH_PAYLOAD: payload, PFM_FSA_CASH_SOURCE: mode } });

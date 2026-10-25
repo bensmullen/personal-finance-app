@@ -121,8 +121,8 @@ export function jointHeloc({ months = 3, payments = 2, service = true } = {}) {
   const fsa = { ...medical, deposit: { ...medical.deposit, bankCashBefore: money("1900").minus(debit) } };
   publishers.fsa = () => fsa;
   // Rebind the actual FSA participant to these distinct documentary BANK facts.
-  // BLOCKER: the shared required fingerprint is the complete source document;
-  // sourceReferenceBoundary.test.ts isolates why acceptance 5 cannot yet hold.
+  // The v2 reference pins the full independent evidence by compact SHA-256;
+  // no medical/plan/BANK originals enter participant configuration.
   const withoutFsa = applyHouseholdExecutionOverlay(s.kernel, { reconciledOpeningState: opening,
     participants: s.kernel.executable.participants!.filter(p => p.id !== "d2_fsa_cash") });
   const base = attachFsaCash(withoutFsa, { sources: [{ sourceId: fsa.sourceId, expectedSource: fsaCashSourceFingerprint(fsa) }] });
