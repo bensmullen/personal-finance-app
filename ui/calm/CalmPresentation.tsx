@@ -13,12 +13,23 @@ export function ContextDisclosure({ title, children, className = "", accessibleL
     const measure = () => {
       const box = root.getBoundingClientRect();
       root.style.setProperty("--context-room", `${Math.max(0, className.includes("context-plan") ? box.right - 12 : window.innerWidth - box.left - 12)}px`);
+      if (root.closest(".context-actions")) {
+        // Desktop details live beside the rail, never over its destinations.
+        // Bound them below the header even after scrolling or enlarging text.
+        const headerBottom = document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0;
+        const bottom = Math.max(12, window.innerHeight - box.bottom);
+        root.style.setProperty("--status-panel-left", `${box.right + 12}px`);
+        root.style.setProperty("--status-panel-bottom", `${bottom}px`);
+        root.style.setProperty("--status-panel-height", `${Math.max(0, window.innerHeight - bottom - Math.max(12, headerBottom + 12))}px`);
+        root.style.setProperty("--status-panel-width", `${Math.max(0, window.innerWidth - box.right - 24)}px`);
+      }
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(root);
     window.addEventListener("resize", measure);
-    return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
+    window.addEventListener("scroll", measure, true);
+    return () => { observer.disconnect(); window.removeEventListener("resize", measure); window.removeEventListener("scroll", measure, true); };
   }, [className, expanded]);
   React.useEffect(() => {
     const close = (event: PointerEvent | KeyboardEvent) => {

@@ -8,7 +8,7 @@ import { formatExactMoney } from "../ui/entityPresentation.js";
 import { inspectMortgageWindow, householdEvidenceProof, householdEvidenceSelectionMeasurements, type ReplayRestoreMeasurement } from "../src/application/mortgageChartData.js";
 import { inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
 import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
-import { clickFinancialDestination, navigateOwner, showStatusActions } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, saveCurrentModel, showStatusActions } from "./navigation.js";
 import type { EvidenceWorkerResponse } from "../ui/forecast/protocol.js";
 
 // Lifecycle/provenance stay observable while More is closed; interactions reveal it below.
@@ -445,7 +445,7 @@ for (const width of [1440, 390]) {
 test("saved flagship recovers durable requested dates and paycheck bank without reauthorizing session choices", async ({ page }) => {
   test.setTimeout(60_000);
   await start(page);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await saveCurrentModel(page);
   await page.reload();
   await page.getByRole("button", { name: "Load saved model", exact: true }).click();
   await expect(status(page)).toHaveAttribute("data-lifecycle", "idle");

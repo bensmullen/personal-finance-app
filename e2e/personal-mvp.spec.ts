@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { clickFinancialDestination, showReadiness, showForecastLimitations as showSourceForecastLimitations } from "./navigation.js";
+import { clickFinancialDestination, saveCurrentModel, showReadiness, showForecastLimitations as showSourceForecastLimitations } from "./navigation.js";
 
 async function openRibbonForecast(page: import("@playwright/test").Page) {
   const more = page.getByRole("button", { name: "More", exact: true });
@@ -114,7 +114,7 @@ test("U1 annual household filing facts have one accessible owner and survive rel
     await page.keyboard.press("Escape");
     await expect(owner.getByRole("button", { name: "Review annual household filing status", exact: true })).toBeFocused();
   }
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await saveCurrentModel(page);
   await page.reload();
   await page.getByRole("button", { name: "Load saved model", exact: true }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -416,7 +416,7 @@ test("U1 insurance has one policy owner, optional shared life events and durable
   }
   await editor.getByRole("button", { name: "Save term-life policy", exact: true }).click();
   await expect(insurance).toContainText("200,000 USD");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await saveCurrentModel(page);
   await page.reload();
   await page.getByRole("button", { name: "Load saved model", exact: true }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -800,7 +800,7 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   await expect(operations.getByLabel("Activity type", { exact: true }).locator('option[value="put"]')).toHaveCount(0);
   await expect(operations.getByLabel("Source / target holding", { exact: true })).toBeDisabled();
   await expect(operations.getByLabel("Activity type", { exact: true }).locator('option[value="call_exercise"]')).toHaveCount(0);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await saveCurrentModel(page);
   await expect(page.getByText("Canonical model saved to this browser")).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Import / Export", exact: true }).click();
@@ -1107,7 +1107,7 @@ test("U1 linked return guards agree across Plan, holding and comparison routes",
   await expect(page.getByRole("button", { name: "Compare investment return", exact: true })).toBeDisabled();
   await page.getByLabel("Annual growth / return", { exact: true }).fill("-20");
   await expect(page.getByRole("button", { name: "Compare investment return", exact: true })).toBeEnabled();
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await saveCurrentModel(page);
   await expect(page.getByText(/Canonical model saved to this browser/)).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "Load saved model", exact: true }).click();
@@ -2288,7 +2288,7 @@ test("manual local save survives reload and explicit load without restoring exec
   await expect(
     page.getByRole("table", { name: "What-if alternative household comparison" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await saveCurrentModel(page);
   await expect(
     page.getByText("Canonical model saved to this browser"),
   ).toBeVisible();
@@ -2329,7 +2329,7 @@ test("current and exact saved recovery exports match, and confirmed delete remov
   page,
 }) => {
   await loadExample(page);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await saveCurrentModel(page);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page
     .getByRole("button", { name: "Import / Export", exact: true })
@@ -2401,7 +2401,7 @@ test("PR21 closeout: configure save reload reconfigure", async ({ page }) => {
   await page.getByRole("button", { name: "Compare income growth" }).click();
   await showHouseholdDetails(page, "comparison", 60_000);
   await expect(page.getByRole("table", { name: "What-if alternative household comparison" })).toBeVisible({ timeout: 60_000 });
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await saveCurrentModel(page);
   await page.reload();
   await page.getByRole("button", { name: "Load saved model" }).click();
   await page.getByRole("button", { name: "Planning", exact: true }).click();

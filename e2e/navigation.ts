@@ -10,6 +10,19 @@ export async function showStatusActions(page: Page) {
   return actions;
 }
 
+/** Manual persistence follows the visible rail / More action at either size. */
+export async function saveCurrentModel(page: Page) {
+  const more = page.getByRole("button", { name: "More", exact: true });
+  const opened = await more.isVisible() && await more.getAttribute("aria-expanded") !== "true";
+  const actions = await showStatusActions(page);
+  const save = actions.getByRole("button", { name: "Save", exact: true });
+  await expect(save).toBeVisible();
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(page.getByText("Canonical model saved to this browser", { exact: true })).toBeVisible();
+  if (opened) await more.click();
+}
+
 export async function openFinancialSection(page: Page, title: string) {
   // Attention text may follow the owned title. Never query an inaccessible
   // child region to find its collapsed parent.

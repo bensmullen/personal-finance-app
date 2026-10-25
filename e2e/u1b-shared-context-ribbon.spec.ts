@@ -1,15 +1,20 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { createGoldenHouseholdDraft, exportPersonalModelJson, type PersonalDraft } from "../src/application/personalMvp.js";
-import { clickFinancialDestination, navigateOwner, expectForecastWindow, showStatusActions as showActions } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, expectForecastWindow, saveCurrentModel, showForecastLimitations, showStatusActions as showActions } from "./navigation.js";
 
 // Only the holistic journey needs the flagship's 649-month worker setup.
 // Independent cases use one-year guided setup followed by unexecuted imports.
-async function openBoundedSession(page: Page, draft = createGoldenHouseholdDraft(), url = "/") {
+async function openBoundedSession(page: Page, draft = createGoldenHouseholdDraft(), url = "/", originReadiness = "Trusted origin:") {
   await page.goto(url);
-  for (const [label, value] of [["Household name", "Ribbon workspace"], ["Monthly income", "0"], ["Opening cash balance", "0"], ["Asset cost basis", "0"], ["Current debt", "0"], ["Monthly spending", "0"]] as const) {
+  // Public/demo replaces the server's trusted-origin fallback in an effect,
+  // proving hydration before the alternate-origin test's first Continue.
+  await expect(page.locator(".setup .privacy")).toContainText(originReadiness);
+  const fields = [["Household name", "Ribbon workspace"], ["Monthly income", "0"], ["Opening cash balance", "0"], ["Asset cost basis", "0"], ["Current debt", "0"], ["Monthly spending", "0"]] as const;
+  for (const [index, [label, value]] of fields.entries()) {
     await page.getByLabel(label, { exact: true }).fill(value);
     await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(page.locator(".setup .eyebrow")).toHaveText(`Guided setup · ${index + 2} of 7`);
   }
   await page.getByLabel("Projection horizon (years)", { exact: true }).fill("1");
   await page.getByRole("button", { name: "Finish setup", exact: true }).click();
@@ -191,7 +196,7 @@ for (const width of [1440, 390]) {
       await expect(privacy).toContainText("Completing a forecast does not save");
     });
 
-    test("nested forecast owner Escape preserves the repair and ordinary disclosure Escape still dismisses", async ({ page }) => {
+    test("partial forecast details preserve navigation access and nested owner Escape", async ({ page }) => {
       const draft = createGoldenHouseholdDraft();
       const salary = draft.objects.Income![0]!;
       // A one-year, salary-only source fixture avoids unrelated mortgage,
@@ -222,6 +227,26 @@ for (const width of [1440, 390]) {
       await expect(status.locator(".status-review")).toHaveCount(1);
       const details = status.locator(".context-disclosure");
       const summary = details.locator(":scope > summary");
+      if (width === 1440) {
+        // Exercise the long real limitation disclosure, with ordinary pointer
+        // clicks on destinations that used to be covered by its warning text.
+        for (const enlarged of [false, true]) {
+          const style = enlarged ? await page.addStyleTag({ content: "html { font-size: 200%; }" }) : undefined;
+          for (const destination of ["Investing", "Cash", "Debt"]) {
+            await showForecastLimitations(page);
+            const panel = (await details.locator(":scope > .context-popover").boundingBox())!;
+            const rail = (await page.getByRole("navigation", { name: "Primary navigation", exact: true }).boundingBox())!;
+            const header = (await page.locator(".topbar").boundingBox())!;
+            expect(panel.x).toBeGreaterThanOrEqual(rail.x + rail.width);
+            expect(panel.y).toBeGreaterThanOrEqual(header.y + header.height);
+            expect(panel.y + panel.height).toBeLessThanOrEqual(900);
+            expect(panel.x + panel.width).toBeLessThanOrEqual(1440);
+            await clickFinancialDestination(page, destination);
+            await expect(details).not.toHaveAttribute("open");
+          }
+          if (style) await style.evaluate(element => element.remove());
+        }
+      }
       await showActions(page);
       await summary.click();
       const repair = details.getByRole("button", { name: "Review Frequency", exact: true });
@@ -498,27 +523,55 @@ for (const kind of ["no root", "multiple roots", "what-if", "disabled root", "du
   });
 }
 
-test("public/demo mode offers Export and accurate privacy instead of Save", async ({ page, baseURL }) => {
-  const local = new URL(baseURL!);
-  const demo = "http://pfm-demo.invalid";
-  await page.route(`${demo}/**`, async route => {
-    const url = new URL(route.request().url());
-    const response = await route.fetch({ url: new URL(url.pathname + url.search, local).href });
-    await route.fulfill({ response });
-  });
-  await openBoundedSession(page, createGoldenHouseholdDraft(), demo);
-  const actions = await showActions(page);
-  await expect(actions.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
-  await expect(actions.getByRole("button", { name: "Export", exact: true })).toBeVisible();
-  const download = page.waitForEvent("download");
-  await actions.getByRole("button", { name: "Export", exact: true }).click();
-  await download;
+for (const enlarged of [false, true]) test(`mobile manual Save through More persists the exact imported model, enlarged ${enlarged}`, async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const draft = createGoldenHouseholdDraft();
+  await openBoundedSession(page, draft);
+  if (enlarged) await page.addStyleTag({ content: "html { font-size: 200%; }" });
+  await clickFinancialDestination(page, "Investing");
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeHidden();
+  await saveCurrentModel(page);
+  await expect(page.getByRole("button", { name: "More", exact: true })).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(".context-actions")).toHaveCount(1);
+  await page.reload();
+  await page.getByRole("button", { name: "Load saved model", exact: true }).click();
   await navigateOwner(page, "Settings", "Import / Export");
-  await expect(page.getByText("Public/demo origin", { exact: true })).toBeVisible();
-  const privacy = page.locator(".calm-disclosure").filter({ has: page.locator("summary", { hasText: /^Storage & privacy$/ }) });
-  await privacy.locator(":scope > summary").click();
-  await expect(privacy).toContainText("does not store personal models");
-  await expect(privacy).toContainText("Do not enter real personal financial information");
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export current model", exact: true }).click();
+  const exported = await download;
+  expect(await readFile((await exported.path())!, "utf8")).toBe(exportPersonalModelJson(draft));
+});
+
+test.describe("reachable public/demo origin", () => {
+  // A real alternate HTTP origin reaches the same Next server for HTML,
+  // assets, Workers and HMR. Retain the runner's trace/screenshot fixtures.
+  test.use({ launchOptions: { args: ["--host-resolver-rules=MAP pfm-demo.invalid 127.0.0.1", "--no-proxy-server"] }, viewport: { width: 1440, height: 900 } });
+  test("public/demo mode offers Export and accurate privacy instead of Save", async ({ page, baseURL }) => {
+    const demo = new URL(baseURL!);
+    demo.hostname = "pfm-demo.invalid";
+    const draft = createGoldenHouseholdDraft();
+    await openBoundedSession(page, draft, demo.href, "Public/demo origin:");
+    expect(new URL(page.url()).origin).toBe(demo.origin);
+    const actions = await showActions(page);
+    await expect(actions.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
+    await expect(actions.getByRole("button", { name: "Export", exact: true })).toBeVisible();
+    await expect(actions.getByRole("button", { name: "Export", exact: true })).toBeEnabled();
+    const download = page.waitForEvent("download");
+    await actions.getByRole("button", { name: "Export", exact: true }).click();
+    const exported = await download;
+    expect(await readFile((await exported.path())!, "utf8")).toBe(exportPersonalModelJson(draft));
+    await navigateOwner(page, "Settings", "Import / Export");
+    await expect(page.getByText("Public/demo origin", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save to this browser", exact: true })).toHaveCount(0);
+    const privacy = page.locator(".calm-disclosure").filter({ has: page.locator("summary", { hasText: /^Storage & privacy$/ }) });
+    await privacy.locator(":scope > summary").click();
+    await expect(privacy).toContainText("does not store personal models");
+    await expect(privacy).toContainText("Do not enter real personal financial information");
+    expect(await page.evaluate(async () => (await indexedDB.databases()).map(database => database.name))).not.toContain("personal-finance-app");
+    await page.reload();
+    await expect(page.locator(".setup .privacy")).toContainText("Public/demo origin:");
+    await expect(page.getByRole("button", { name: "Load saved model", exact: true })).toHaveCount(0);
+  });
 });
 
 for (const kind of ["unlinked person", "foreign pointer", "missing referenced person", "wrong household ID", "missing household link", "duplicate person ID", "missing person ID", "multiple households"]) test(`inconsistent ${kind} offers the canonical correction without false member links`, async ({ page }) => {

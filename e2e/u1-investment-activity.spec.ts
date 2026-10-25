@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { saveCurrentModel } from "./navigation.js";
 import { createGoldenHouseholdDraft, exportPersonalModelJson, importPersonalModelJson, type JsonObject } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 import { compileDomainMechanics } from "../src/application/compiler/domainMechanics.js";
@@ -101,7 +102,7 @@ test("U1 source-holding activity owns distributions, exercise and linked retirem
     const box = await control.boundingBox(); expect(box!.width).toBeGreaterThan(120); expect(box!.x + box!.width).toBeLessThanOrEqual(width);
     await page.screenshot({ path: testInfo.outputPath(`holding-activity-${width}.png`), fullPage: true });
   }
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await saveCurrentModel(page);
   await page.reload(); await page.getByRole("button", { name: "Load saved model", exact: true }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click(); await page.getByRole("button", { name: "Import / Export", exact: true }).click();
   const pending = page.waitForEvent("download"); await page.getByRole("button", { name: "Export current model", exact: true }).click();

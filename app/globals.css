@@ -498,7 +498,7 @@ main#main-content { padding: 24px 32px 64px; }
   .app-shell > .primary-nav { z-index: 5; }
   .context-actions { flex-shrink: 0; }
   .calm-shell .context-actions { color: #d9e8e3; }
-  .context-actions .context-popover { max-width: calc(100vw - 210px); }
+  .context-actions .context-popover { position: fixed; top: auto; bottom: var(--status-panel-bottom, 12px); left: var(--status-panel-left); width: min(34rem, var(--status-panel-width)); max-width: var(--status-panel-width); max-height: var(--status-panel-height); }
   .calm-shell main#main-content { padding-top: 12px; }
   .calm-page-header { margin-bottom: 12px; }
   .calm-overview { gap: 12px; }
