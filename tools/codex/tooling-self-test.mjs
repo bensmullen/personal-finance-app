@@ -397,7 +397,7 @@ const recoveryFixture = () => {
 {
   const f = recoveryFixture();
   const stop = f.invoke("Stop", {
-    last_assistant_message: "TASK_STATUS: BLOCKED\\nBLOCKER: need three additional E2E paths",
+    last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: need three additional E2E paths",
   });
   assert(stop.continue === true, "clean BLOCKED must close the task without losing the checkpoint");
   const priorReceipt = JSON.parse(fs.readFileSync(path.join(f.repository, ".codex/runtime/recovery-first.json")));
@@ -411,12 +411,12 @@ const recoveryFixture = () => {
     "plain PM answer after BLOCKED must explain fresh authorization rather than imply editing is permitted");
   const beforeGrant = f.invoke("PreToolUse", {
     session_id: "new-chat", turn_id: "preauth", tool_name: "apply_patch",
-    tool_input: { command: "*** Begin Patch\\n*** Update File: src/outside.ts\\n*** End Patch" },
+    tool_input: { command: "*** Begin Patch\n*** Update File: src/outside.ts\n*** End Patch" },
   });
   assert(beforeGrant?.hookSpecificOutput?.permissionDecision === "deny",
     "no mutations may occur on a new chat before reauthorization");
 
-  fs.writeFileSync(f.issue, prompt.replace("- src/allowed.ts", "- src/allowed.ts\\n- src/outside.ts"));
+  fs.writeFileSync(f.issue, prompt.replace("- src/allowed.ts", "- src/allowed.ts\n- src/outside.ts"));
   const fresh = f.start({ session_id: "new-chat", turn_id: "authorized" });
   const grant = String(fresh?.hookSpecificOutput?.additionalContext ?? "");
   assert(grant.includes("Closed-task reauthorization") && grant.includes("src/outside.ts")
@@ -428,18 +428,18 @@ const recoveryFixture = () => {
     "new chat must be active with widened paths and a checkpoint-based head");
   const inScope = f.invoke("PreToolUse", {
     session_id: "new-chat", turn_id: "authorized", tool_name: "apply_patch",
-    tool_input: { command: "*** Begin Patch\\n*** Update File: src/outside.ts\\n*** End Patch" },
+    tool_input: { command: "*** Begin Patch\n*** Update File: src/outside.ts\n*** End Patch" },
   });
   assert(JSON.stringify(inScope) === "{}", "newly approved path should be writable only on new grant");
   const oldSession = f.invoke("PreToolUse", {
     session_id: "recovery", turn_id: "first", tool_name: "apply_patch",
-    tool_input: { command: "*** Begin Patch\\n*** Update File: src/allowed.ts\\n*** End Patch" },
+    tool_input: { command: "*** Begin Patch\n*** Update File: src/allowed.ts\n*** End Patch" },
   });
   assert(oldSession?.hookSpecificOutput?.permissionDecision === "deny",
     "closed original session must not revive after another writer's new grant");
   const outside = f.invoke("PreToolUse", {
     session_id: "new-chat", turn_id: "authorized", tool_name: "apply_patch",
-    tool_input: { command: "*** Begin Patch\\n*** Update File: unauthorized.ts\\n*** End Patch" },
+    tool_input: { command: "*** Begin Patch\n*** Update File: unauthorized.ts\n*** End Patch" },
   });
   assert(outside?.hookSpecificOutput?.permissionDecision === "deny",
     "new grant must remain strictly limited to authorized paths");
@@ -450,7 +450,7 @@ const recoveryFixture = () => {
 {
   const f = recoveryFixture();
   const stopped = f.invoke("Stop", {
-    last_assistant_message: "TASK_STATUS: BLOCKED\\nBLOCKER: awaiting approved scope",
+    last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: awaiting approved scope",
   });
   assert(stopped.continue === true, "BLOCKED stop must be successful before remote-race test");
   const head = f.git("rev-parse", "HEAD");
