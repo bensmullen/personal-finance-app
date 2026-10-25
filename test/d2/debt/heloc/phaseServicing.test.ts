@@ -71,6 +71,44 @@ const quoted = (input = request()): PhaseServicingRequest => {
 };
 
 describe("conditional HELOC amortizing and maturity servicing: synthetic exact-cent oracles", () => {
+  const historicalDraw = (): PostedPrincipal => ({ postingId: "actual-draw", operationId: "actual-draw",
+    authorizationId: "draw-authorization", claimId: "draw-history-claim", fundingId: "draw-history-funding",
+    effectiveAt: d("2025-12-15"), sequence: 0, kind: "draw", principal: money("100"), interest: money("0"),
+    cash: money("100"), source: source(), evidenceKind: "canonical_posting" });
+  const withDraw = (history: readonly PostedPrincipal[] = [historicalDraw()]): PhaseServicingRequest => {
+    const r = request();
+    return { ...r, checkpoint: { ...r.checkpoint, originalPrincipal: money("900"), history } };
+  };
+  it("conditionally admits the original draw producer posting/operation alias without granting posting authority", () => {
+    const input = withDraw(), before = structuredClone(input), p = ok(input);
+    expect(p.evidence.checkpoint.history[0]!.postingId).toBe(p.evidence.checkpoint.history[0]!.operationId);
+    expect(p.principal_due.equals(money("100"))).toBe(true);
+    expect(p.interest_due.equals(money("5.10"))).toBe(true);
+    expect(p.committed).toBe(false); expect(p.postable).toBe(false);
+    expect(structuredClone(input)).toEqual(before);
+    expect(ok(withDraw([{ ...historicalDraw(), postingId: "separate-draw-journal" }])).gross_due.equals(p.gross_due)).toBe(true);
+  });
+  it.each(["postingId", "operationId", "authorizationId", "claimId", "fundingId"] as const)(
+    "rejects a draw alias reused in another history record as %s", role => {
+      const first = historicalDraw(), second = { ...first, postingId: "draw-two-posting", operationId: "draw-two-operation",
+        authorizationId: "draw-two-authorization", claimId: "draw-two-claim", fundingId: "draw-two-funding", sequence: 1,
+        [role]: first.postingId };
+      reject(withDraw([first, second]), "DUPLICATE_CLAIM");
+    });
+  it.each(["authorizationId", "claimId", "fundingId"] as const)("rejects the draw alias reused in its own %s", role => {
+    const h = historicalDraw();
+    reject(withDraw([{ ...h, [role]: h.postingId }]), "DUPLICATE_CLAIM");
+  });
+  it("rejects the alias on repayments, noncanonical evidence, duplicate draws and later payment identities", () => {
+    const h = historicalDraw(), r = withDraw();
+    reject(withDraw([{ ...h, kind: "principal_repayment" }]), "DUPLICATE_CLAIM");
+    reject(withDraw([{ ...h, evidenceKind: "conditional_proposal" as PostedPrincipal["evidenceKind"] }]), "DUPLICATE_CLAIM");
+    reject(withDraw([h, { ...h, effectiveAt: d("2025-12-16") }]), "DUPLICATE_CLAIM");
+    reject({ ...r, payment: { ...r.payment, operationId: h.postingId } }, "DUPLICATE_CLAIM");
+    reject({ ...r, payment: { ...r.payment, claimId: h.postingId } }, "DUPLICATE_CLAIM");
+    reject({ ...r, payment: { ...r.payment, authorization: { ...r.payment.authorization!, authorizationId: h.postingId } } }, "DUPLICATE_CLAIM");
+    reject({ ...r, payment: { ...r.payment, funding: { ...r.payment.funding!, fundingId: h.postingId } } }, "DUPLICATE_CLAIM");
+  });
   it("admits separately verified complete issuer interest when B1 rate input is genuinely absent", () => {
     const input = quoted(), before = structuredClone(input), p = ok(input);
     expect(p.interestEvidence).toBe("issuer_quoted_uncomputed");
