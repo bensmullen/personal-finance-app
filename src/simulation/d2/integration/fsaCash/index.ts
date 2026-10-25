@@ -9,13 +9,13 @@ import type { HouseholdOperationFacts } from "../../../r3/domainOperations.js";
 import { evaluateFsa } from "../../health/fsa/index.js";
 import { FsaCashIncomplete, depositOperationId, originalOperationId, originalRegistration, originalTransaction,
   qualifyFsaCashOriginal, qualifyFsaCashSource, readFsaCashSource, same,
-  type FsaCashReference, type FsaCashSource, type FsaCashOrder } from "./source.js";
+  type FsaCashReference, type FsaCashSource, type FsaCashOrder, type FsaCashSourceFormat } from "./source.js";
 
 export { FsaCashIncomplete, fsaCashSourceFingerprint, registerFsaCashSourceProvider } from "./source.js";
 export type { FsaCashSource, FsaCashSourceProvider, FsaCashReference, FsaCashOriginal, FsaCashDeposit, FsaCashStamp } from "./source.js";
 export interface FsaCashInput { readonly sources: readonly FsaCashReference[]; readonly forecastEnd?: string }
 const participantId = "d2_fsa_cash";
-const codec = "d2-fsa-cash/v1";
+const codec = "d2-fsa-cash/v2";
 function incomplete(detail: string): never { throw new FsaCashIncomplete("source_not_qualified", detail); }
 
 function checkArchive(state: AuthoritativeState, s: FsaCashSource, required: boolean): boolean {
@@ -95,15 +95,22 @@ const precedes = (a: Event, b: Event): boolean => !!a.order && !!b.order
 
 /** One scheduler and the canonical state writer own both economic events. */
 export function createFsaCashParticipant(configuration: FsaCashInput): HouseholdKernelParticipant {
+  return createParticipant(configuration, "v2");
+}
+/** v1 is restoration-only: retain the exact historical participant identity,
+ * source version and journal proof after independent full-source agreement. */
+function createParticipant(configuration: FsaCashInput, format: FsaCashSourceFormat): HouseholdKernelParticipant {
   const input = immutableConfiguration({ sources: [...configuration.sources].sort((a, b) => a.sourceId.localeCompare(b.sourceId)),
     ...(configuration.forecastEnd === undefined ? {} : { forecastEnd: configuration.forecastEnd }) });
-  if (!input.sources.length || new Set(input.sources.map(s => s.sourceId)).size !== input.sources.length)
+  if (!input.sources.length || input.sources.some(r => typeof r.expectedSource !== "string")
+    || new Set(input.sources.map(s => s.sourceId)).size !== input.sources.length)
     incomplete("Distinct source references required");
   // Codec restore re-reads independent source facts instead of treating portable bytes as authority.
-  input.sources.forEach(r => readFsaCashSource(r.sourceId, r.expectedSource));
-  return Object.freeze({ id: participantId, version: "paid-expense-reimbursement/v1", portableCodec: codec, economicInputs: input,
+  input.sources.forEach(r => readFsaCashSource(r.sourceId, r.expectedSource, format));
+  return Object.freeze({ id: participantId, version: `paid-expense-reimbursement/${format}`,
+    portableCodec: format === "v1" ? "d2-fsa-cash/v1" : codec, economicInputs: input,
     prepare: (context, period, opening, work = [], tier = "detail") => {
-      const sources = input.sources.map(r => readFsaCashSource(r.sourceId, r.expectedSource));
+      const sources = input.sources.map(r => readFsaCashSource(r.sourceId, r.expectedSource, format));
       try { requalifyD2SettlementReceiptHistory(opening.state, context); }
       catch (error) {
         if (error instanceof FsaCashIncomplete) throw error;
@@ -118,7 +125,7 @@ export function createFsaCashParticipant(configuration: FsaCashInput): Household
           if (checkArchive(opening.state, s, s.original.paidAt < period.start)) posted.add(originalOperationId(s));
         }
         if (s.deposit.settledAt < period.end) {
-          const receipt = qualifyFsaCashSource(s, context);
+          const receipt = qualifyFsaCashSource(s, context, format);
           const prior = opening.state.d2SettlementReceipts?.[receipt.id];
           if (prior) {
             if (!same(prior, receipt)) incomplete("Committed receipt differs from re-derived source");
@@ -137,7 +144,7 @@ export function createFsaCashParticipant(configuration: FsaCashInput): Household
           && w.resourceAccesses.some(a => a.accountId === e.source.original.bankAccountId)))
           incomplete("Unrelated same-instant BANK work lacks a cross-source authenticated sequence");
         if (posted.has(e.id)) continue;
-        const s = e.source, tx = e.role === "original" ? originalTransaction(s) : qualifyFsaCashSource(s, context).paymentTransaction;
+        const s = e.source, tx = e.role === "original" ? originalTransaction(s) : qualifyFsaCashSource(s, context, format).paymentTransaction;
         const traceRefs = tx.traceRefs ?? [];
         const dependencies = active.filter(other => other.at === e.at && precedes(other, e)
           && other.source.original.bankAccountId === s.original.bankAccountId && !posted.has(other.id)).map(other => other.id);
@@ -147,7 +154,7 @@ export function createFsaCashParticipant(configuration: FsaCashInput): Household
           resourceAccesses: [{ kind: "account_cash", accountId: s.original.bankAccountId, mode: e.role === "original" ? "consume" : "produce" }], traceRefs },
           execute: candidate => {
             const ref = input.sources.find(r => r.sourceId === s.sourceId)!;
-            const current = readFsaCashSource(ref.sourceId, ref.expectedSource);
+            const current = readFsaCashSource(ref.sourceId, ref.expectedSource, format);
             const bank = candidate.state.accounts[s.original.bankAccountId];
             if (!bank || bank.ownerId !== s.original.personId || !["checking", "savings"].includes(bank.kind))
               incomplete("Exact source-owned checking/savings BANK required");
@@ -161,14 +168,14 @@ export function createFsaCashParticipant(configuration: FsaCashInput): Household
               applyAccountingTransactionAtomically(candidate.state, transaction, originalRegistration(current));
             } else {
               checkArchive(candidate.state, current, true); checkHistory(candidate.state, current, sources);
-              const receipt = qualifyFsaCashSource(current, context);
+              const receipt = qualifyFsaCashSource(current, context, format);
               const result = applyD2SettlementAtomically(candidate.state, receipt, context);
               if (result.status === "incomplete") throw new FsaCashIncomplete(result.reason, current.sourceId);
               if (result.status !== "committed") incomplete("Unexpected concurrent deposit replay");
               transaction = receipt.paymentTransaction;
             }
             // Loss/amendment during posting fails the surrounding period candidate as well.
-            readFsaCashSource(ref.sourceId, ref.expectedSource);
+            readFsaCashSource(ref.sourceId, ref.expectedSource, format);
             const facts = coverage(sources, period.end, input.forecastEnd ?? context.simulationEnd);
             if (tier === "summary") {
               const sink = new SummaryOperationSink(transaction.legs[0]!.amount.currency); sink.transaction(transaction);
@@ -183,7 +190,7 @@ export function createFsaCashParticipant(configuration: FsaCashInput): Household
       return { id: participantId, operations };
     },
     observe: (descriptor, _facts, runtime) => {
-      const events = input.sources.flatMap(r => eventsFor(readFsaCashSource(r.sourceId, r.expectedSource)));
+      const events = input.sources.flatMap(r => eventsFor(readFsaCashSource(r.sourceId, r.expectedSource, format)));
       if (!events.some(e => e.id === descriptor.id) && events.some(e => e.at === descriptor.sequencingInstant
         && descriptor.resourceAccesses.some(a => a.accountId === e.source.original.bankAccountId)))
         incomplete("Another participant used BANK at an unordered FSA instant");
@@ -192,6 +199,7 @@ export function createFsaCashParticipant(configuration: FsaCashInput): Household
   } satisfies HouseholdKernelParticipant);
 }
 registerHouseholdParticipantCodec({ codec, restore: value => createFsaCashParticipant(value as FsaCashInput) });
+registerHouseholdParticipantCodec({ codec: "d2-fsa-cash/v1", restore: value => createParticipant(value as FsaCashInput, "v1") });
 
 export function attachFsaCash(kernel: CompiledHouseholdKernel, input: FsaCashInput): CompiledHouseholdKernel {
   const forecastEnd = kernel.horizon.periods.at(-1)?.end;
