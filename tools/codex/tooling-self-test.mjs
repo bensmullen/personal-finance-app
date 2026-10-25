@@ -458,7 +458,8 @@ const recoveryFixture = () => {
   const head = f.git("rev-parse", "HEAD");
   const advanced = mustRun("git", ["-C", f.repository, "commit-tree", "HEAD^{tree}", "-p", head,
     "-m", "remote advanced outside this worktree"]).stdout.trim();
-  mustRun("git", ["--git-dir", f.remote, "update-ref", "refs/heads/codex/policy-self-test", advanced]);
+  // A commit-tree object belongs to this local repository; publish it to the test bare origin.
+  mustRun("git", ["-C", f.repository, "push", "origin", advanced + ":refs/heads/codex/policy-self-test"]);
   const rejected = f.start({ session_id: "second-writer", turn_id: "new" });
   assert(rejected.decision === "block" && String(rejected.reason).includes("closed task checkpoint"),
     "remote changed after closed Stop must block stale issue reauthorization");
