@@ -3,6 +3,11 @@ import { readFile } from "node:fs/promises";
 import { createGoldenHouseholdDraft, exportPersonalModelJson, type PersonalDraft } from "../src/application/personalMvp.js";
 import { clickFinancialDestination, navigateOwner, expectForecastWindow, saveCurrentModel, showForecastLimitations, showStatusActions as showActions } from "./navigation.js";
 
+// Browser launch options are worker-scoped. Declare them at file scope:
+// a test.describe-local launchOptions override aborts all Playwright discovery.
+// Other tests do not navigate to the mapped demo hostname.
+test.use({ launchOptions: { args: ["--host-resolver-rules=MAP pfm-demo.invalid 127.0.0.1", "--no-proxy-server"] } });
+
 // Only the holistic journey needs the flagship's 649-month worker setup.
 // Independent cases use one-year guided setup followed by unexecuted imports.
 async function openBoundedSession(page: Page, draft = createGoldenHouseholdDraft(), url = "/", originReadiness = "Trusted origin:") {
@@ -545,7 +550,7 @@ for (const enlarged of [false, true]) test(`mobile manual Save through More pers
 test.describe("reachable public/demo origin", () => {
   // A real alternate HTTP origin reaches the same Next server for HTML,
   // assets, Workers and HMR. Retain the runner's trace/screenshot fixtures.
-  test.use({ launchOptions: { args: ["--host-resolver-rules=MAP pfm-demo.invalid 127.0.0.1", "--no-proxy-server"] }, viewport: { width: 1440, height: 900 } });
+  test.use({ viewport: { width: 1440, height: 900 } });
   test("public/demo mode offers Export and accurate privacy instead of Save", async ({ page, baseURL }) => {
     const demo = new URL(baseURL!);
     demo.hostname = "pfm-demo.invalid";
