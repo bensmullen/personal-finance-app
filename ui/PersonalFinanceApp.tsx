@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { canonicalId, resolveHouseholdScope } from "../src/application/compiler/shared.js";
-import { CashChartDetails, CalmAction, CalmDisclosure, CalmMetric, CalmPageHeader, CalmPanel, ContextDisclosure, SharedContextRibbon, forecastContextLabel } from "./calm/CalmPresentation.js";
+import { CashChartDetails, CalmAction, CalmDisclosure, CalmMetric, CalmPageHeader, CalmPanel, ContextDisclosure, SharedContextRibbon, ResponsiveContextActions, StatusIndicator, forecastContextLabel } from "./calm/CalmPresentation.js";
 import {
   Profiler,
   createContext,
@@ -281,6 +281,7 @@ export function PersonalFinanceApp() {
   const [mortgageLoan, setMortgageLoan] = useState("");
   const [cashReturn, setCashReturn] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [activePerson, setActivePerson] = useState<string | undefined>();
   const moreButton = useRef<HTMLButtonElement>(null);
   const morePanel = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -301,12 +302,14 @@ export function PersonalFinanceApp() {
     morePanel.current?.querySelector<HTMLButtonElement>("button")?.focus();
     const dismiss = () => { setMoreOpen(false); moreButton.current?.focus(); };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { event.preventDefault(); dismiss(); }
+      if (event.key === "Escape" && !event.defaultPrevented && !(event.target instanceof Element && event.target.closest('[role="dialog"], .drawer-backdrop, .context-disclosure[open]'))) { event.preventDefault(); dismiss(); }
     };
     const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest('[role="dialog"], .drawer-backdrop')) return;
       if (event.target instanceof Node && !morePanel.current?.contains(event.target) && !moreButton.current?.contains(event.target)) dismiss();
     };
     const onFocusIn = (event: FocusEvent) => {
+      if (event.target instanceof Element && event.target.closest('[role="dialog"], .drawer-backdrop')) return;
       if (event.target instanceof Node && !morePanel.current?.contains(event.target) && !moreButton.current?.contains(event.target)) setMoreOpen(false);
     };
     document.addEventListener("keydown", onKeyDown);
@@ -591,6 +594,7 @@ export function PersonalFinanceApp() {
   const navigate = (next: Primary, section = SUBNAV[next][0]!) => {
     if (moreOpen) requestAnimationFrame(() => document.getElementById("main-content")?.focus());
     setMoreOpen(false);
+    setActivePerson(undefined);
     setPrimary(next);
     setSubnav(section);
   };
@@ -858,31 +862,18 @@ export function PersonalFinanceApp() {
           <span className="brand-mark">P</span>
           <span>Personal Finance</span>
         </button>
-        <SharedContextRibbon
-          {...contextIdentity}
-          modelStatus={!position ? "Unavailable" : contextIdentity.membershipReview || issues.length || position.status !== "complete" ? "Needs review" : "Ready"}
-          modelDetails={<><h2>Recorded model</h2><p>Current position: {position?.status ?? "unavailable"}. {issues.length} recorded fact issues.</p><p>As of {sessionSettings.asOf}; data cutoff {sessionSettings.dataCutoff}. Model readiness is separate from forecast coverage.</p>{contextIdentity.membershipReview && <><p>{contextIdentity.membershipReview}</p><button data-context-route onClick={() => navigate("Settings", "Household & People")}>Review household &amp; people</button></>}<button data-context-route onClick={() => { const panel = document.querySelector<HTMLDetailsElement>(".task-readiness"); if (panel) { panel.open = true; focusRepair(panel); } }}>Review recorded facts</button></>}
-          forecast={<div className="context-forecast-region" role="region" aria-label="Requested and modeled coverage"><ForecastStatus label="Household forecast" state={interactive.baseline} ribbon setupChanged={setupChangesPending}
-            update={interactive.available && !setupChangesPending ? runHouseholdForecast : undefined}
-            coverage={<section className="forecast-coverage" data-requested-end={sessionSettings.simulationEnd} data-modeled-status={interactive.baseline.stale || interactive.baseline.pending ? "stale" : householdForecast?.status ?? "not_run"}>
-              <p>Requested: {sessionSettings.simulationStart} → <strong>{sessionSettings.simulationEnd}</strong> (exclusive). Requested coverage is not computed coverage.</p>
-              <p>{interactive.baseline.stale || interactive.baseline.pending ? "Updating · retained values are not the current forecast." : householdForecast && householdForecast.status !== "unavailable" ? `Engine status: ${householdForecast.status}. Computed through ${householdForecast.reachedThrough ?? "unavailable"} (exclusive).` : "No supported forecast is available yet."}</p>
-              <p>As of {sessionSettings.asOf}; data cutoff {sessionSettings.dataCutoff}. No observed account history is included. Future tax law uses an explicitly accepted nominal carry-forward scenario; benefits, withdrawals and property appreciation are not assumed.</p>
-              {draft.modelId === "90000000-0000-4000-8000-000000000001" && <details><summary>Synthetic example scope</summary><p>Recorded bank cash, workplace and taxable holdings, a home at recorded cost and a funded fixed mortgage. Retirement spending uses recorded cash. Salary begins {String(objectEntries(draft, "Income")[0]?.start_date ?? "not recorded")}; no earlier paycheck is assumed. Philadelphia payroll elections and annual filing assumptions are explicitly synthetic. Retirement: {getPersonalRetirementPlans(draft).map(plan => `${plan.label} · ${plan.date}`).join("; ")}.</p></details>}
-              {newPlanStarters && <button data-context-route onClick={() => navigateFromOverview("Plan", "Assumptions")}>Review optional starting points</button>}
-              {(!interactive.available || setupChangesPending || settingsProblem) && <button data-context-route onClick={() => settingsProblem ? openForecastDates() : openForecastSetup(setupMissing[0])}>{settingsProblem ? "Review forecast dates" : "Review setup"}</button>}
-            </section>} /></div>}
-          save={() => persistenceMode === "enabled" ? void saveToBrowser() : exportModel()}
-          saveLabel={persistenceMode === "enabled" ? "Save" : "Export your model"}
-          storage={persistenceMode === "enabled" ? "Trusted origin: Save stores this model locally in this browser/origin, without encryption. Export is the recommended backup; JSON exports are plaintext. No financial model is sent to a service." : "This public/demo origin does not store personal models. Export to keep your changes. Do not enter real personal financial information here."}
+        <SharedContextRibbon {...contextIdentity} {...(activePerson ? { activePerson } : {})}
+          onHousehold={() => navigate("Overview")}
+          onPlan={compare => navigate("Plan", compare ? "Compare Plans" : "Current Plan")}
           onPeople={() => navigate("Settings", "Household & People")}
-          onPerson={id => { navigate("Settings", "Household & People"); setEntityRepair({ objectType: "Person", objectId: id, field: "", token: randomId() }); }}
+          onPerson={id => { navigate("Settings", "Household & People"); setActivePerson(id); setEntityRepair({ objectType: "Person", objectId: id, field: "", token: randomId() }); }}
         />
         <button className="secondary settings-button" onClick={() => navigate("Settings")}>
-          Settings
+          <span aria-hidden="true">⚙</span> Settings
         </button>
       </header>
       <nav className="primary-nav" aria-label="Primary navigation">
+        <div className="financial-nav-links">
         {FINANCIAL_DESTINATIONS.map((item) => (
           <button
             key={item.label}
@@ -893,19 +884,36 @@ export function PersonalFinanceApp() {
             {item.label}
           </button>
         ))}
+        </div>
         <button ref={moreButton} className="mobile-more" aria-expanded={moreOpen} aria-controls="more-destinations" onClick={() => setMoreOpen(!moreOpen)}>More</button>
+        <ResponsiveContextActions>
+          <ContextDisclosure className="context-model" accessibleLabel={`Model: ${!position ? "Unavailable" : contextIdentity.membershipReview || issues.length || position.status !== "complete" ? "Needs review" : "Ready"}`} title={<StatusIndicator name="Model" status={!position ? "Unavailable" : contextIdentity.membershipReview || issues.length || position.status !== "complete" ? "Needs review" : "Ready"} />}><><h2>Recorded model</h2><p>Current position: {position?.status ?? "unavailable"}. {issues.length} recorded fact issues.</p><p>As of {sessionSettings.asOf}; data cutoff {sessionSettings.dataCutoff}. Model readiness is separate from forecast coverage.</p>{contextIdentity.membershipReview && <><p>{contextIdentity.membershipReview}</p><button data-context-route onClick={() => navigate("Settings", "Household & People")}>Review household &amp; people</button></>}<button data-context-route onClick={() => { const panel = document.querySelector<HTMLDetailsElement>(".task-readiness"); if (panel) { panel.open = true; focusRepair(panel); } }}>Review recorded facts</button></></ContextDisclosure>
+          <div className="context-forecast-region" role="region" aria-label="Requested and modeled coverage"><ForecastStatus label="Household forecast" state={interactive.baseline} ribbon setupChanged={setupChangesPending}
+            coverage={<section className="forecast-coverage" data-requested-end={sessionSettings.simulationEnd} data-modeled-status={interactive.baseline.stale || interactive.baseline.pending ? "stale" : householdForecast?.status ?? "not_run"}>
+              <p>Requested: {sessionSettings.simulationStart} → <strong>{sessionSettings.simulationEnd}</strong> (exclusive). Requested coverage is not computed coverage.</p>
+              <p>{interactive.baseline.stale || interactive.baseline.pending ? "Updating · retained values are not the current forecast." : householdForecast && householdForecast.status !== "unavailable" ? `Engine status: ${householdForecast.status}. Computed through ${householdForecast.reachedThrough ?? "unavailable"} (exclusive).` : "No supported forecast is available yet."}</p>
+              <p>As of {sessionSettings.asOf}; data cutoff {sessionSettings.dataCutoff}. No observed account history is included. Future tax law uses an explicitly accepted nominal carry-forward scenario; benefits, withdrawals and property appreciation are not assumed.</p>
+              {draft.modelId === "90000000-0000-4000-8000-000000000001" && <details><summary>Synthetic example scope</summary><p>Recorded bank cash, workplace and taxable holdings, a home at recorded cost and a funded fixed mortgage. Retirement spending uses recorded cash. Salary begins {String(objectEntries(draft, "Income")[0]?.start_date ?? "not recorded")}; no earlier paycheck is assumed. Philadelphia payroll elections and annual filing assumptions are explicitly synthetic. Retirement: {getPersonalRetirementPlans(draft).map(plan => `${plan.label} · ${plan.date}`).join("; ")}.</p></details>}
+              {newPlanStarters && <button data-context-route onClick={() => navigateFromOverview("Plan", "Assumptions")}>Review optional starting points</button>}
+              {(!interactive.available || setupChangesPending || settingsProblem) && <button data-context-route onClick={() => settingsProblem ? openForecastDates() : openForecastSetup(setupMissing[0])}>{settingsProblem ? "Review forecast dates" : "Review setup"}</button>}
+            </section>} /></div>
+          <div className="context-command-buttons">
+            <button type="button" className="calm-action context-update" aria-label="Update forecast" title={interactive.available && !setupChangesPending ? "Update forecast" : settingsProblem || setupMissing[0]?.message || "Review and apply Forecast Setup before updating"} onClick={() => interactive.available && !setupChangesPending && !settingsProblem ? runHouseholdForecast() : openForecastSetup(setupMissing[0])}>Update</button>
+            <button className="context-save" type="button" title={persistenceError || notice || "Changes stay in memory until you save or export"} onClick={() => persistenceMode === "enabled" ? void saveToBrowser() : exportModel()}>{persistenceMode === "enabled" ? "Save" : "Export"}</button>
+          </div>
+        </ResponsiveContextActions>
       </nav>
-      {moreOpen && <nav ref={morePanel} id="more-destinations" className="more-destinations" aria-label="More destinations">
+      <nav ref={morePanel} id="more-destinations" hidden={!moreOpen} className="more-destinations" aria-label="More destinations">
         {FINANCIAL_DESTINATIONS.filter(item => ["Real Estate", "Other Assets", "Debt"].includes(item.label)).map(item => <button key={item.label} onClick={() => navigate(item.owner, item.section)}>{item.label}</button>)}
         <button onClick={() => navigate("Settings", "Household & People")}>Household &amp; People</button>
-        <button onClick={() => { navigate("Settings", "Import / Export"); if (persistenceMode === "enabled") void saveToBrowser(); else exportModel(); }}>Save / Return</button>
+        <div id="mobile-status-actions" />
         <button onClick={() => navigate("Net Worth", "Property & other assets")}>Property &amp; other assets sources</button>
         <button onClick={() => navigate("Settings", "Model Settings")}>Model Settings</button>
         <button onClick={() => navigate("Settings", "Technical diagnostics")}>Technical Details</button>
         {(["Money", "Plan"] as const).map(owner => <div key={owner}><p className="eyebrow">{owner === "Money" ? "Cash sources" : "Planning tasks"}</p>{SUBNAV[owner].map(section => <button key={section} onClick={() => navigate(owner, section)}>{section}</button>)}</div>)}
         <button onClick={() => navigate("Net Worth", "Investments & retirement")}>Investments &amp; retirement</button>
         <button onClick={() => navigate("Settings", "Import / Export")}>Data Management</button>
-      </nav>}
+      </nav>
       <div className="workspace">
         <nav className="subnav" aria-label={`${destination} sections`}>
           <p className="eyebrow">{destination}</p>
@@ -955,7 +963,7 @@ export function PersonalFinanceApp() {
               else openForecastSetup(setupMissing[0]);
             }}>{settingsProblem ? "Review forecast dates" : issues.length ? "Review recorded facts" : "Review setup"}</CalmAction>
           </div>}
-          {primary !== "Overview" && !settingsProblem && !issues.length && interactive.available && !setupChangesPending && (interactive.baseline.pending || interactive.baseline.stale || ["incomplete", "unsupported", "error", "cancelled"].includes(interactive.baseline.lifecycle)) && <p className="result-warning" role="note">Household forecast: {forecastContextLabel(interactive.baseline)}. {interactive.baseline.pending || interactive.baseline.stale ? "Retained results are not current." : "Some results are unavailable; review Forecast details in the top ribbon before relying on them."}</p>}
+          {primary !== "Overview" && !settingsProblem && !issues.length && interactive.available && !setupChangesPending && (interactive.baseline.pending || interactive.baseline.stale || ["incomplete", "unsupported", "error", "cancelled"].includes(interactive.baseline.lifecycle)) && <p className="result-warning" role="note">Household forecast: {forecastContextLabel(interactive.baseline)}. {interactive.baseline.pending || interactive.baseline.stale ? "Retained results are not current." : "Some results are unavailable; review Forecast details in Status & Actions before relying on them."}</p>}
           <details className="task-readiness">
           <summary>{issues.length ? "Recorded facts need attention" : setupChangesPending ? "Forecast setup changed" : !interactive.available ? "Forecast needs setup" : taxSetupProblem ? "Tax setup needs attention" : "Forecast actions & setup"}</summary>
           {primary === "Overview" && settingsProblem && <p>{settingsProblem} <button onClick={openForecastDates}>Review forecast dates</button></p>}
@@ -1217,6 +1225,7 @@ export function PersonalFinanceApp() {
               />
             )}
           {entityRepair && <EditorHub contextOnly repairTarget={entityRepair} types={[entityRepair.objectType]} draft={draft} setDraft={updateCanonicalModel} metadata={metadata} setNotice={setNotice} currency={sessionSettings.baseCurrency} selectedScenarioId={effectiveHouseholdExecution?.selectedRootScenarioId} onClose={() => setEntityRepair(undefined)} />}
+          <footer className="page-footer"><button type="button" onClick={() => navigate("Settings", "Import / Export")}>Privacy &amp; data</button></footer>
         </main>
       </div>
     </div>
@@ -1382,16 +1391,24 @@ export function sharedContextIdentity(draft: PersonalDraft, selectedRootScenario
     : scope.status !== "compiled" || people.length !== objectEntries(draft, "Person").length
       ? "Some recorded member identities or household links are missing, invalid or inconsistent."
       : undefined;
-  const labels = people.map(person => objectLabel("Person", person).trim() || "Unnamed person");
+  const labels = people.map(person => typeof person.first_name === "string" && person.first_name.trim() ? person.first_name.trim() : objectLabel("Person", person).trim() || "Unnamed person");
   const labelCounts = new Map<string, number>();
   for (const label of labels) labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
-  const selected = objectEntries(draft, "Scenario").find(item => objectId("Scenario", item) === selectedRootScenarioId && item.enabled === true && item.base_scenario_id == null);
-  const saved = currentPlan(draft);
+  const scenarios = objectEntries(draft, "Scenario");
+  const roots = scenarios.filter(item => item.enabled === true && item.base_scenario_id == null);
+  const matches = roots.filter(item => objectId("Scenario", item) === selectedRootScenarioId);
+  const selected = matches.length === 1 && scenarios.filter(item => objectId("Scenario", item) === selectedRootScenarioId).length === 1 ? matches[0] : undefined;
+  const saved = roots.length === 1 && scenarios.filter(item => item.scenario_id === roots[0]?.scenario_id).length === 1 ? roots[0] : undefined;
   return {
     household: household ? typeof household.name === "string" && household.name.trim() ? household.name : "Unnamed household" : "Household unavailable",
     ...(membershipReview ? { membershipReview } : {}),
-    people: people.map((person, index) => ({ id: objectId("Person", person), label: labelCounts.get(labels[index]!)! > 1 ? `${labels[index]} · ID ${objectId("Person", person)}${person.date_of_birth ? ` · born ${person.date_of_birth}` : ""}` : labels[index]! })),
-    plan: selected ? objectLabel("Scenario", selected) : saved ? `${objectLabel("Scenario", saved)} · saved plan (execution not selected)` : "No active plan",
+    people: people.map((person, index) => {
+      const shortLabel = labels[index]!;
+      const full = objectLabel("Person", person).trim() || shortLabel;
+      const duplicateFull = people.filter(other => objectLabel("Person", other).trim() === full).length > 1;
+      return { id: objectId("Person", person), shortLabel, label: labelCounts.get(shortLabel)! > 1 ? duplicateFull ? `${full} · ID ${objectId("Person", person)}` : full : shortLabel };
+    }),
+    plan: selected ? objectLabel("Scenario", selected) : saved ? `${objectLabel("Scenario", saved)} · saved plan (execution not selected)` : roots.length > 1 ? "Choose plan" : "Plan unavailable",
   };
 }
 
@@ -1445,7 +1462,7 @@ function ForecastStatus({ label, state, compact = false, setupChanged = false, u
     data-requested-start={state.resultRequest?.compiler.cashFlow?.simulationStart} data-requested-end={state.resultRequest?.compiler.cashFlow?.simulationEnd}
     data-modeled-periods={state.lastGoodResult && "points" in state.lastGoodResult ? state.lastGoodResult.points.length : undefined}
     data-reached-through={state.lastGoodResult && "reachedThrough" in state.lastGoodResult ? state.lastGoodResult.reachedThrough : undefined}>
-    {ribbon ? <ContextDisclosure title={`Forecast: ${forecastContextLabel(state, setupChanged)}`}>{content}</ContextDisclosure> : content}
+    {ribbon ? <ContextDisclosure accessibleLabel={`Forecast: ${forecastContextLabel(state, setupChanged)}`} title={<StatusIndicator name="Forecast" status={forecastContextLabel(state, setupChanged)} />}>{content}</ContextDisclosure> : content}
     {ribbon && update && <button type="button" className="calm-action context-update" aria-label="Update forecast" title="Update forecast" onClick={update}>Update</button>}
   </section>;
 }
@@ -4098,6 +4115,7 @@ function Portability({
         title="Keep control of your model"
         text="Compatibility is inspected before import or migration. Local persistence is manual; portable export remains the recommended backup."
       />
+      <CalmDisclosure title="Storage & privacy"><p>Save or export explicitly to keep changes. Completing a forecast does not save your model.</p><p>{persistenceMode === "enabled" ? "Trusted origin: Save stores this model locally in this browser/origin, without encryption. Export is the recommended backup; JSON exports are plaintext. No financial model is sent to a service." : "This public/demo origin does not store personal models. Export to keep your changes. Do not enter real personal financial information here."}</p></CalmDisclosure>
       {persistenceMode === "disabled" && (
         <section className="panel compatibility">
           <strong>Public/demo origin</strong>

@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { clickFinancialDestination, showReadiness, showForecastLimitations as showSourceForecastLimitations } from "./navigation.js";
 
 async function openRibbonForecast(page: import("@playwright/test").Page) {
+  const more = page.getByRole("button", { name: "More", exact: true });
+  if (await more.isVisible() && await more.getAttribute("aria-expanded") !== "true") await more.click();
   const disclosure = page.locator(".context-forecast > .context-disclosure");
   if (await disclosure.getAttribute("open") === null) await disclosure.locator(":scope > summary").click();
 }
@@ -54,7 +56,7 @@ const loadExample = async (page: import("@playwright/test").Page, model = create
   await page.locator('[data-repair="lawScenario"]').check();
   await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
   if (!deliveryHeld) await test.step("Historical example worker settles on its bounded source horizon", async () => {
-    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
     await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
     await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
   });
@@ -350,7 +352,7 @@ test("historical import starts no unrelated flagship worker before execution con
     };
   });
   await importDraft(page, createGoldenHouseholdExampleDraft());
-  await expect(page.getByRole("status", { name: "Household forecast status", exact: true })).toHaveAttribute("data-lifecycle", "idle");
+  await expect(page.locator('.forecast-status[aria-label="Household forecast status"]')).toHaveAttribute("data-lifecycle", "idle");
   expect(await page.evaluate(() => (window as typeof window & { __historicalWorkerCount: number }).__historicalWorkerCount)).toBe(0);
 });
 
@@ -362,7 +364,7 @@ const runIntegratedHistoricalForecast = async (page: import("@playwright/test").
   await configureOwnedFunding(page, { calculateSchedule: true });
   await configureTaxSettlement(page);
   await page.getByRole("region", { name: "Household execution configuration" }).getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
-  const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+  const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
   return status;
@@ -464,7 +466,7 @@ test("D1 UAT example, import, guided setup, edits and readable account/rate cont
   await loadExample(page);
   await openSalaryFacts(page);
   await useShortHorizon(page);
-  const status = page.getByRole("status", { name: "Household forecast status" });
+  const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
   await expect(status).toContainText("Partially modeled");
   await expect(status).toContainText("New York");
@@ -617,7 +619,7 @@ test("D1 plan dates and a funded mortgage payoff preserve contractual maturity",
   await dates.getByLabel("Simulation end", { exact: true }).fill("2036-01-01");
   // The normal example has no recurring statutory contribution. Missing future
   // tax law should remain scoped incompleteness, not truncate economic execution.
-  const status = page.getByRole("status", { name: "Household forecast status" });
+  const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   await expect(status).toHaveAttribute("data-pending", "false");
   await expect(page.getByText("Completed through 2036-01-01 · Some outputs are partially modeled", { exact: true })).toBeVisible();
   const mortgage = await openDebtOwner(page);
@@ -853,7 +855,7 @@ test("D1-C authors, saves, reloads and runs a combined household through normal 
   await mortgageOperations.getByRole("button", { name: "Save activity", exact: true }).click();
   await returnToCurrentPlan(page);
   await page.getByRole("button", { name: "Update forecast", exact: true }).click();
-  const unsupported = page.getByRole("status", { name: "Household forecast status" });
+  const unsupported = page.locator('.forecast-status[aria-label="Household forecast status"]');
   await expect(unsupported).toHaveAttribute("data-lifecycle", "unsupported");
   await expect(unsupported.locator(".forecast-primary-guidance")).toContainText(/scheduled monthly.*payment date/);
   await openRibbonForecast(page);
@@ -1014,7 +1016,7 @@ test("R4 UAT groups cash separately from investment account wrappers and holding
 test("R4 UAT baseline projected return edits the linked assumption and reruns the household forecast", async ({ page }) => {
   await loadExample(page);
   await useShortHorizon(page);
-  const status = page.getByRole("status", { name: "Household forecast status" });
+  const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
   const before = await status.getAttribute("data-request-id");
   await page.getByRole("button", { name: "Investing", exact: true }).click();
@@ -1098,7 +1100,7 @@ test("U1 linked return guards agree across Plan, holding and comparison routes",
   await showHouseholdDetails(page);
   await expect(page.getByRole("table", { name: "Reconciled household forecast" })).toBeVisible();
   // Golden has an independent tax limitation; the financial forecast stays usable.
-  await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-lifecycle", "incomplete");
+  await expect(page.locator('.forecast-status[aria-label="Household forecast status"]')).toHaveAttribute("data-lifecycle", "incomplete");
   await page.getByRole("button", { name: "What If?", exact: true }).click();
   await page.getByLabel("Investment target", { exact: true }).selectOption(GOLDEN_HOUSEHOLD_IDS.retirementInvestment);
   await page.getByLabel("Annual growth / return", { exact: true }).fill("-150");
@@ -1139,7 +1141,7 @@ test("D1-A Golden Household has no spurious retirement-event warning", async ({ 
   await expect(check).not.toContainText("RETIREMENT_BINDING_MISMATCH");
   // The historical NY fixture legitimately lacks payroll/local-tax coverage.
   // Inspect its actual diagnostic groups without requiring tax completeness.
-  const forecast = page.getByRole("status", { name: "Household forecast status", exact: true });
+  const forecast = page.locator('.forecast-status[aria-label="Household forecast status"]');
   await expect(forecast.locator("[data-diagnostic-root]").first()).toBeAttached();
   await showForecastLimitations(page);
   await forecast.getByText("Technical diagnostic details", { exact: true }).click();
@@ -1236,7 +1238,7 @@ test("R4 UAT immutable account, income, and debt facts are not fake editable con
 test("R4 UAT normal investment and spending editors cannot author known unsupported inputs", async ({ page }) => {
   await loadExample(page);
   await useShortHorizon(page);
-  const status = page.getByRole("status", { name: "Household forecast status" });
+  const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
   const request = await status.getAttribute("data-request-id");
   await page.getByRole("button", { name: "Investing", exact: true }).click();
@@ -1340,7 +1342,7 @@ test("R4 current plan shows setup and opens technical details without recalculat
   await loadExample(page);
   await useShortHorizon(page);
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Planning", exact: true }).click();
-  const status = page.getByRole("status", { name: "Household forecast status" });
+  const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
   await expect(page.getByRole("figure", { name: "Household financial outlook chart" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Household execution configuration" })).toBeVisible();
@@ -1420,11 +1422,11 @@ for (const width of [390, 1440]) {
     await useShortHorizon(page);
     await page.setViewportSize({ width, height: 900 });
     await clickFinancialDestination(page, "Overview");
-    const status = page.getByRole("status", { name: "Household forecast status" });
+    const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
     await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
     await expect(status).toContainText(/Ready|Partially modeled/);
-    await expect(page.locator(".context-save-cue")).toHaveText(/^Manual save · edits in memory\.\s*Forecasts do not save\.$/);
-    await expect(page.locator(".context-save-cue")).toBeVisible();
+    await expect(page.locator(".context-save-cue")).toHaveCount(0);
+    await expect(page.locator(".context-actions .context-save")).toHaveCount(1);
     const chart = page.getByRole("figure", { name: "Household financial outlook chart" });
     await expect(chart).toBeVisible();
     await expect(chart).toContainText("USD");
@@ -1525,7 +1527,7 @@ test("R2 real Worker baseline stays responsive, retains stale results and accept
     }
     window.Worker = GatedWorker as unknown as typeof Worker;
   });
-  const status = page.getByRole("status", { name: "Household forecast status" });
+  const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   const waitQueued = async () => page.waitForFunction(() => {
     const status = document.querySelector('[aria-label="Household forecast status"]') as HTMLElement | null;
     return (window as any).__r2Worker.queue.some((item: any) => String(item.requestId) === status?.dataset.requestId && item.fingerprint === status?.dataset.fingerprint);
@@ -1629,8 +1631,8 @@ test("guided setup reaches the Personal-MVP overview", async ({ page }) => {
     page.getByText("Your starting financial picture is ready"),
   ).toBeVisible();
   await expect(
-    page.locator(".context-save-cue"),
-  ).toBeVisible();
+    page.locator(".context-actions .context-save"),
+  ).toHaveCount(1);
   await expect(
     page.getByRole("navigation", { name: "Primary navigation" }),
   ).toContainText("OverviewCashInvestingReal EstateOther AssetsDebtPlanningMore");
@@ -1680,14 +1682,14 @@ test("Golden household runs, compares, explains, and distinguishes modeled liqui
   await showHouseholdDetails(page, "baseline", 60_000);
   await expect(forecast).toBeVisible({ timeout: 60_000 });
   // The Golden model lacks authoritative tax facts; its complete economic horizon remains inspectable.
-  await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-lifecycle", "incomplete");
+  await expect(page.locator('.forecast-status[aria-label="Household forecast status"]')).toHaveAttribute("data-lifecycle", "incomplete");
   await expectOverviewRange(page, "2036-01-01");
   await expect(forecast.locator("tbody tr")).toHaveCount(24);
-  const requestBeforePaging = await page.getByRole("status", { name: "Household forecast status" }).getAttribute("data-request-id");
+  const requestBeforePaging = await page.locator('.forecast-status[aria-label="Household forecast status"]').getAttribute("data-request-id");
   await page.getByRole("button", { name: "Next page", exact: true }).click();
   await expect(forecast.locator("tbody tr")).toHaveCount(24);
   await page.getByRole("button", { name: "Previous page", exact: true }).click();
-  await expect(page.getByRole("status", { name: "Household forecast status" })).toHaveAttribute("data-request-id", requestBeforePaging!);
+  await expect(page.locator('.forecast-status[aria-label="Household forecast status"]')).toHaveAttribute("data-request-id", requestBeforePaging!);
   await forecast.getByText("Explain").first().click();
   await forecast.getByText("Expert calculation details", { exact: true }).first().click();
   await forecast.getByText("Technical trace details", { exact: true }).first().click();
@@ -2164,7 +2166,7 @@ test("What If executes deterministic investment return", async ({ page }) => {
     .getByRole("button", { name: "Apply setup & run forecast" })
     .click();
   await test.step("Investment-return source baseline finishes before comparison", async () => {
-    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
     await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
     await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
   });

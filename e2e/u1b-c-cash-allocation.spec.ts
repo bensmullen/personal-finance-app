@@ -1,6 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { clickFinancialDestination, navigateOwner, expectForecastWindow } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, expectForecastWindow as expectVisibleForecastWindow } from "./navigation.js";
+
+async function expectForecastWindow(page: Page, start: string, end: string, periods: number) {
+  const more = page.getByRole("button", { name: "More", exact: true });
+  const opened = await more.isVisible() && await more.getAttribute("aria-expanded") !== "true";
+  if (opened) await more.click();
+  await expectVisibleForecastWindow(page, start, end, periods);
+  if (opened) await page.keyboard.press("Escape");
+}
 import { cashComparison, inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";
@@ -9,7 +17,7 @@ import { decimal } from "../src/values/index.js";
 import { formatExactMoney } from "../ui/entityPresentation.js";
 
 const panel = (page: Page) => page.getByRole("region", { name: "Your Paycheck", exact: true });
-const status = (page: Page) => page.getByRole("status", { name: "Household forecast status", exact: true });
+const status = (page: Page) => page.locator('.forecast-status[aria-label="Household forecast status"]');
 const errors = new WeakMap<Page, string[]>();
 test.beforeEach(async ({ page }) => {
   test.setTimeout(120_000);
@@ -44,7 +52,11 @@ async function observe(page: Page, corruptReplay = false) {
 async function run(page: Page) {
   await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
   const before = await status(page).getAttribute("data-request-id");
+  const more = page.getByRole("button", { name: "More", exact: true });
+  const mobile = await more.isVisible();
+  if (mobile) await more.click();
   await page.getByRole("button", { name: "Update forecast", exact: true }).click();
+  if (mobile) await page.keyboard.press("Escape");
   await expect(status(page)).not.toHaveAttribute("data-request-id", before ?? "");
   await expect(status(page)).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: 30_000 });
   await expect(status(page)).toHaveAttribute("data-pending", "false");

@@ -1,9 +1,17 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { addPersonalObject, createEmptyPersonalDraft, createGoldenHouseholdExampleDraft, exportPersonalModelJson, getCurrentPosition, type PersonalDraft } from "../src/application/personalMvp.js";
-import { clickFinancialDestination, navigateOwner, openFinancialSection, expectForecastWindow } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, openFinancialSection, expectForecastWindow as expectVisibleForecastWindow } from "./navigation.js";
 
-const forecastStatus = (page: Page) => page.getByRole("status", { name: "Household forecast status", exact: true });
+async function expectForecastWindow(page: Page, start: string, end: string, periods: number) {
+  const more = page.getByRole("button", { name: "More", exact: true });
+  const opened = await more.isVisible() && await more.getAttribute("aria-expanded") !== "true";
+  if (opened) await more.click();
+  await expectVisibleForecastWindow(page, start, end, periods);
+  if (opened) await page.keyboard.press("Escape");
+}
+
+const forecastStatus = (page: Page) => page.locator('.forecast-status[aria-label="Household forecast status"]');
 
 async function openImportWorkspace(page: Page) {
   await page.goto("/");

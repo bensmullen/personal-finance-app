@@ -3,8 +3,23 @@ import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 /** Small disclosures retain labels/IDs, never forecast payloads. */
-export function ContextDisclosure({ title, children, className = "" }: { title: ReactNode; children: ReactNode; className?: string }) {
+export function ContextDisclosure({ title, children, className = "", accessibleLabel }: { title: ReactNode; children: ReactNode; className?: string; accessibleLabel?: string }) {
   const ref = React.useRef<HTMLDetailsElement>(null);
+  const id = React.useId();
+  const [expanded, setExpanded] = React.useState(false);
+  React.useEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+    const measure = () => {
+      const box = root.getBoundingClientRect();
+      root.style.setProperty("--context-room", `${Math.max(0, className.includes("context-plan") ? box.right - 12 : window.innerWidth - box.left - 12)}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    window.addEventListener("resize", measure);
+    return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
+  }, [className]);
   React.useEffect(() => {
     const close = (event: PointerEvent | KeyboardEvent) => {
       const root = ref.current;
@@ -18,13 +33,21 @@ export function ContextDisclosure({ title, children, className = "" }: { title: 
         event.preventDefault();
         root.open = false;
         root.querySelector("summary")?.focus();
-      } else if (!root.contains(event.target as Node)) root.open = false;
+      } else if (!root.contains(event.target as Node)) { root.open = false; root.querySelector("summary")?.focus(); }
     };
     document.addEventListener("pointerdown", close);
     document.addEventListener("keydown", close);
     return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", close); };
   }, []);
-  return <details ref={ref} className={`context-disclosure ${className}`}><summary>{title}</summary><div className="context-popover" onClick={event => {
+  return <details ref={ref} onToggle={event => setExpanded(event.currentTarget.open)} className={`context-disclosure ${className}`} onKeyDown={event => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) || !(event.target instanceof Element) || !event.target.matches("summary, button")) return;
+    const root = event.currentTarget;
+    const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>(".context-popover button:not(:disabled)"));
+    if (!buttons.length) return;
+    event.preventDefault(); root.open = true;
+    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    buttons[event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length]?.focus();
+  }}><summary aria-label={accessibleLabel} aria-expanded={expanded} aria-controls={id}>{title}</summary><div id={id} className="context-popover" onClick={event => {
     if (!(event.target as Element).closest("[data-context-route]")) return;
     if (ref.current) ref.current.open = false;
   }}>{children}</div></details>;
@@ -38,12 +61,11 @@ export function forecastContextLabel(state: { pending: boolean; stale: boolean; 
   return ({ completed: "Ready", incomplete: "Partial", unsupported: "Unsupported", idle: "Needs setup" } as Record<string, string>)[state.lifecycle] ?? "Unavailable";
 }
 
-export function SharedContextRibbon({ household, people, membershipReview, plan, modelStatus, modelDetails, forecast, save, saveLabel, storage, onPerson, onPeople }: {
-  household: string; people: readonly { id: string; label: string }[]; plan: string;
-  membershipReview?: string;
-  modelStatus: string; modelDetails: ReactNode; forecast: ReactNode;
-  save: () => void; saveLabel: string; storage: string;
-  onPerson: (id: string) => void; onPeople: () => void;
+/** Only navigation labels live in the header; financial scope remains household-wide. */
+export function SharedContextRibbon({ people, membershipReview, plan, activePerson, onPerson, onPeople, onHousehold, onPlan }: {
+  household: string; people: readonly { id: string; label: string; shortLabel: string }[]; plan: string;
+  membershipReview?: string; activePerson?: string;
+  onPerson: (id: string) => void; onPeople: () => void; onHousehold: () => void; onPlan: (compare: boolean) => void;
 }) {
   const choose = (event: React.MouseEvent<HTMLButtonElement>, action: () => void) => {
     const details = event.currentTarget.closest("details");
@@ -51,22 +73,40 @@ export function SharedContextRibbon({ household, people, membershipReview, plan,
     action();
   };
   return <section className="shared-context" aria-label="Household & status">
-    <ContextDisclosure title={<><span className="context-household">{household}</span><span className="context-menu-hint"> · People</span></>} className="context-people">
+    <ContextDisclosure title={<><span className="context-household">{people.find(person => person.id === activePerson)?.shortLabel ?? "Household"}</span><span aria-hidden="true">⌄</span></>} className="context-people">
       <h2>Household &amp; People</h2>
-      <p>Member links open recorded people. Forecast scope stays household-wide.</p>
-      {membershipReview && <p role="status">Needs review: {membershipReview} Use Add / edit household &amp; people to correct the recorded relationships.</p>}
-      {people.length ? people.map(person => <button key={person.id} type="button" onClick={event => choose(event, () => onPerson(person.id))}>{person.label}</button>) : <p>No verified household members.</p>}
+      <p>People open recorded profiles. Financial results stay household-wide.</p>
+      <button type="button" aria-pressed={!activePerson} onClick={event => choose(event, onHousehold)}>Household</button>
+      {membershipReview && <p role="status">Needs review: {membershipReview}</p>}
+      {people.length ? people.map(person => <button key={person.id} type="button" aria-pressed={person.id === activePerson} onClick={event => choose(event, () => onPerson(person.id))}>{person.label}</button>) : <p>No verified household members.</p>}
       <button type="button" onClick={event => choose(event, onPeople)}>Add / edit household &amp; people</button>
     </ContextDisclosure>
-    <div className="context-plan"><span>{plan}</span><small>Household forecast</small></div>
-    <ContextDisclosure title={`Model: ${modelStatus}`} className="context-model">{modelDetails}</ContextDisclosure>
-    {forecast}
-    <div className="context-save-actions">
-      <button className="context-save" type="button" onClick={save}>{saveLabel}</button>
-      <small className="context-save-cue">Manual save · edits in memory.<br />Forecasts do not save.</small>
-    </div>
-    <ContextDisclosure title="Storage & privacy" className="context-storage"><p>Save or export explicitly to keep changes. Completing a forecast does not save your model.</p><p>{storage}</p></ContextDisclosure>
+    <ContextDisclosure title={<>{plan}<span aria-hidden="true">⌄</span></>} className="context-plan">
+      <h2>Plan</h2><p>{plan}. Plan links open existing workflows; they do not switch execution.</p>
+      <button type="button" aria-pressed="true" onClick={event => choose(event, () => onPlan(false))}>Current Plan</button>
+      <button type="button" onClick={event => choose(event, () => onPlan(true))}>Compare Plans</button>
+    </ContextDisclosure>
   </section>;
+}
+
+export function StatusIndicator({ name, status }: { name: string; status: string }) {
+  const tone = status === "Ready" ? "ready" : status === "Running" ? "pending" : status === "Failed" ? "error"
+    : ["Needs setup", "Unavailable"].includes(status) ? "idle" : "review";
+  return <><span aria-hidden="true" className={`status-marker status-${tone}`}>{tone === "ready" ? "✓" : tone === "error" ? "!" : tone === "review" ? "!" : ""}</span>{name}</>;
+}
+
+/** One mounted action owner, relocated into More on small screens. */
+export function ResponsiveContextActions({ children }: { children: ReactNode }) {
+  const [mobile, setMobile] = React.useState(false);
+  React.useEffect(() => {
+    const query = window.matchMedia("(max-width: 900px)");
+    const update = () => setMobile(query.matches);
+    update(); query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+  const content = <section className="context-actions" aria-label="Status & Actions">{children}</section>;
+  const target = mobile ? document.getElementById("mobile-status-actions") : null;
+  return target ? createPortal(content, target) : content;
 }
 
 /** Targets are scoped to one chart, never to the Cash page. */

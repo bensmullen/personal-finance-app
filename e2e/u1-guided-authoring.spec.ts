@@ -58,7 +58,7 @@ const loadHistoricalMonthlyExample = async (page: Page) => {
   }
   await page.locator('[data-repair="lawScenario"]').check();
   await test.step("Historical monthly worker returns actual incomplete coverage for January–March", async () => {
-    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
     await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
     await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
   });
@@ -124,7 +124,7 @@ test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   await loadHistoricalMonthlyExample(page);
   await test.step("Technical diagnostic provenance is deferred and remains accessible", async () => {
-    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
     await expect(status.locator("pre")).toHaveCount(0);
     await status.locator(".context-disclosure > summary").click();
     await status.locator(".forecast-guidance > summary").click();
@@ -186,7 +186,7 @@ test("U1 normal navigation, staged salary, direct repair, mortgage and horizon g
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   await loadHistoricalMonthlyExample(page);
-  const status = page.getByRole("status", { name: "Household forecast status" });
+  const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete", { timeout: 30_000 });
   await expect(status).toContainText("New York");
   const messages = await status.locator("[data-diagnostic-root]").allTextContents();

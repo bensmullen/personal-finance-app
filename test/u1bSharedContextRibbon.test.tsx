@@ -1,7 +1,7 @@
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { SharedContextRibbon, forecastContextLabel } from "../ui/calm/CalmPresentation.js";
+import { StatusIndicator, SharedContextRibbon, forecastContextLabel } from "../ui/calm/CalmPresentation.js";
 import { sharedContextIdentity } from "../ui/PersonalFinanceApp.js";
 import { createEmptyPersonalDraft, createGoldenHouseholdDraft, type PersonalDraft } from "../src/application/personalMvp.js";
 
@@ -23,18 +23,18 @@ describe("shared household context", () => {
 
   it("uses real canonical labels, distinct IDs for duplicate names, and explicit empty states", () => {
     const empty = createEmptyPersonalDraft("94000000-0000-4000-8000-000000000240");
-    expect(sharedContextIdentity(empty)).toMatchObject({ household: "Household unavailable", people: [], plan: "No active plan", membershipReview: expect.any(String) });
+    expect(sharedContextIdentity(empty)).toMatchObject({ household: "Household unavailable", people: [], plan: "Plan unavailable", membershipReview: expect.any(String) });
     const draft = createGoldenHouseholdDraft();
     const original = JSON.stringify(draft);
     const one = sharedContextIdentity(draft);
     expect(one.people).toHaveLength(1);
-    expect(one.people[0]!.label).toBe("Taylor Example");
+    expect(one.people[0]!.label).toBe("Taylor");
     const person = draft.objects.Person![0] as Record<string, any>;
     const members = [person, { ...person, person_id: "94000000-0000-4000-8000-000000000241" }, { ...person, person_id: "94000000-0000-4000-8000-000000000242", first_name: "", last_name: "" }];
     const duplicates = { ...draft, objects: { ...draft.objects, Household: [{ ...draft.objects.Household![0]!, members: members.map(item => item.person_id) }], Person: members } };
     const identity = sharedContextIdentity(duplicates);
     expect(new Set(identity.people.map(item => item.id)).size).toBe(3);
-    expect(identity.people.map(item => item.label)).toEqual([`Taylor Example · ID ${person.person_id} · born 1990-01-01`, "Taylor Example · ID 94000000-0000-4000-8000-000000000241 · born 1990-01-01", "Unnamed person"]);
+    expect(identity.people.map(item => item.label)).toEqual([`Taylor Example · ID ${person.person_id}`, "Taylor Example · ID 94000000-0000-4000-8000-000000000241", "Unnamed person"]);
     expect(identity.membershipReview).toBeUndefined();
     expect(sharedContextIdentity({ ...duplicates, objects: { ...duplicates.objects, Person: [...members].reverse() } }).people).toEqual(identity.people);
     expect(JSON.stringify(draft)).toBe(original);
@@ -80,25 +80,54 @@ describe("shared household context", () => {
     const changed = { ...draft, objects: { ...draft.objects, Scenario: [...draft.objects.Scenario!, { ...scenario, scenario_id: selectedId, name: "Selected executable plan" }] } };
     expect(sharedContextIdentity(changed, selectedId).plan).toBe("Selected executable plan");
     expect(sharedContextIdentity(draft, "missing").plan).toContain("saved plan (execution not selected)");
-    expect(sharedContextIdentity({ ...draft, objects: { ...draft.objects, Scenario: [] } }, selectedId).plan).toBe("No active plan");
+    expect(sharedContextIdentity({ ...draft, objects: { ...draft.objects, Scenario: [] } }, selectedId).plan).toBe("Plan unavailable");
   });
 
-  it.each(["Save", "Export your model"])("renders one read-only context with independent %s and model/forecast meaning", saveLabel => {
-    const html = renderToStaticMarkup(<SharedContextRibbon {...sharedContextIdentity(createGoldenHouseholdDraft())}
-      modelStatus="Ready" modelDetails={<p>As of 2026-01-01; data cutoff 2026-01-01</p>}
-      forecast={<span>Forecast: Partial</span>} save={() => { throw new Error("Render cannot save"); }} saveLabel={saveLabel}
-      storage="Trusted origin; export recommended." onPerson={() => { throw new Error("Render cannot select"); }} onPeople={() => {}} />);
-    expect(html).toContain("Model: Ready");
-    expect(html).toContain("Forecast: Partial");
-    expect(html).toContain("Household forecast");
-    expect(html).toContain("Manual save");
-    expect(html).toContain(`>${saveLabel}</button>`);
-    expect(html).not.toMatch(/<(?:input|select)\b/i);
-    expect(html).not.toMatch(/<details\b[^>]*\sopen(?:[=>\s])/i);
-    expect(html).toContain('class="context-save-cue"');
-    expect(html).toContain("Forecasts do not save.");
-    expect(html).not.toContain("90000000-");
-    // Its serialization depends on small identity labels, never forecast months.
+  it("renders only two concise anchored navigation pickers", () => {
+    const identity = sharedContextIdentity(createGoldenHouseholdDraft());
+    const html = renderToStaticMarkup(<SharedContextRibbon {...identity}
+      activePerson={identity.people[0]!.id} onPerson={() => { throw new Error("Render cannot select"); }}
+      onPeople={() => {}} onHousehold={() => {}} onPlan={() => {}} />);
+    expect(html).toContain('class="context-household">Taylor</span>');
+    expect(html).toContain("Compare Plans");
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain("Financial results stay household-wide");
+    expect(html.match(/aria-controls=/g)).toHaveLength(2);
+    expect(html).not.toMatch(/context-(?:model|forecast|save|storage)/);
     expect(html.length).toBeLessThan(5000);
+  });
+
+  it.each([
+    ["Ready", "ready", "✓"], ["Running", "pending", ""], ["Out of date", "review", "!"],
+    ["Partial", "review", "!"], ["Unsupported", "review", "!"], ["Cancelled", "review", "!"],
+    ["Failed", "error", "!"], ["Needs setup", "idle", ""], ["Unavailable", "idle", ""],
+  ])("retains %s meaning without repeated visible state text", (status, tone, icon) => {
+    const html = renderToStaticMarkup(<StatusIndicator name="Forecast" status={status} />);
+    expect(html).toContain(`status-${tone}`);
+    expect(html).toContain(`>${icon}</span>Forecast`);
+    expect(html).not.toContain(status);
+  });
+
+  it("uses full names only when first names collide", () => {
+    const draft = createGoldenHouseholdDraft();
+    const person = draft.objects.Person![0]!;
+    const second = { ...person, person_id: "94000000-0000-4000-8000-000000000249", last_name: "Other" };
+    const changed = { ...draft, objects: { ...draft.objects,
+      Household: [{ ...draft.objects.Household![0]!, members: [person.person_id!, second.person_id] }],
+      Person: [person, second] } };
+    expect(sharedContextIdentity(changed).people.map(person => person.label)).toEqual(["Taylor Example", "Taylor Other"]);
+    expect(sharedContextIdentity(changed).people.map(person => person.shortLabel)).toEqual(["Taylor", "Taylor"]);
+  });
+
+  it("never selects a what-if, disabled or duplicate root as executable context", () => {
+    const draft = createGoldenHouseholdDraft();
+    const root = draft.objects.Scenario![0]!;
+    const id = String(root.scenario_id);
+    for (const patch of [{ enabled: false }, { base_scenario_id: id }]) {
+      const changed = { ...draft, objects: { ...draft.objects, Scenario: [{ ...root, ...patch }] } };
+      expect(sharedContextIdentity(changed, id).plan).toBe("Plan unavailable");
+    }
+    const duplicate = { ...draft, objects: { ...draft.objects, Scenario: [root, root] } };
+    expect(sharedContextIdentity(duplicate, id).plan).toBe("Choose plan");
   });
 });
