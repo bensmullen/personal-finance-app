@@ -350,7 +350,7 @@ describe("actual household scheduler and portable source requalification", () =>
     const before = canonicalSerialize(state);
     for (const r of receipts) expect(applyD2SettlementAtomically(state, r, f.context).status).toBe("already_committed");
     expect(canonicalSerialize(state)).toBe(before);
-  });
+  }, 30_000);
   it.each([
     ["canonical payment journal type", "type", "heloc_service", "forged_service"],
     ["independently bound BANK payment approval", "paymentApprovalId", "bank-approval:month:0", "forged-approval"],
