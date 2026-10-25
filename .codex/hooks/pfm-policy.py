@@ -909,6 +909,16 @@ def user_prompt(payload, root):
         return
 
     if task_prompt is None:
+        owner = prior_state(root, include_closed=True)
+        closed = owner is not None and not owner.get("ACTIVE")
+        recovery_hint = (
+            " A previous PFM task has stopped and its authorization is closed. "
+            "After the operator verifies a clean/upstream-synchronized worktree, "
+            "start a fresh Codex chat in that worktree and submit the live "
+            f"PFM_TASK_ISSUE: {owner['TASK_ISSUE']['number']} pointer."
+            if closed and isinstance(owner.get("TASK_ISSUE"), dict)
+            else ""
+        )
         emit(
             {
                 "hookSpecificOutput": {
@@ -916,6 +926,7 @@ def user_prompt(payload, root):
                     "additionalContext": (
                         "No PFM task authorization is active. This turn is read-only: "
                         "do not edit, install, test, build, commit, or push."
+                        + recovery_hint
                     ),
                 }
             }
@@ -977,6 +988,24 @@ def user_prompt(payload, root):
     if prior and prior.get('SESSION_ID') != state['SESSION_ID']:
         emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Active foreign writer; activation refused."})
         return
+    # A terminal BLOCKED/COMPLETE stop closes the old grant. Reauthorization is
+    # allowed only on a newly validated task turn, and only from a truly shared
+    # clean checkpoint; never inherit a stale local tracking ref as provenance.
+    closed_owner = owner is not None and not owner.get("ACTIVE") and owner.get("TARGET_BRANCH") == target
+    if closed_owner and not dirty:
+        head = git_value(["rev-parse", "HEAD"], root)
+        upstream = git_value(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], root)
+        tracked_head = git_value(["rev-parse", "@{u}"], root)
+        remote = run_git(["ls-remote", "--exit-code", "origin", f"refs/heads/{target}"], root)
+        if (upstream != f"origin/{target}" or not head or tracked_head != head or
+                remote.returncode or remote.stdout.split() != [head, f"refs/heads/{target}"]):
+            emit({"decision": "block", "reason": (
+                "STATE_RECOVERY_REQUIRED: closed task checkpoint is not proven clean and "
+                "synchronized with the live origin branch. Preserve receipts and work; "
+                "perform read-only Git/receipt diagnosis and operator-owned bootstrap "
+                "before opening a fresh Codex chat. Do not delete receipts or reset."
+            )})
+            return
     # Also retry an interrupted checkpoint push when its local commit is clean.
     pending = (prior and prior.get("TASK_IDENTITY") == state["TASK_IDENTITY"] and
                git_value(["rev-parse", "HEAD"], root) != git_value(["rev-parse", "@{u}"], root) and
@@ -1012,6 +1041,16 @@ def user_prompt(payload, root):
         "and is pushed/up-to-date with its origin tracking branch."
     )
     if issue_metadata is not None:
+        if closed_owner and owner.get("TASK_IDENTITY") == state["TASK_IDENTITY"]:
+            additions = [path for path in writes if path not in owner.get("ALLOWED_PATHS", [])]
+            context += (
+                "\nClosed-task reauthorization: a NEW, live GitHub issue grant has replaced "
+                "the previously closed receipt. Ignore the former scope. "
+                f"Updated ALLOWED_PATHS count={len(writes)}, "
+                f"issue_sha256={issue_metadata['sha256']}. "
+                + ("Newly permitted paths: " + ", ".join(additions) + ". " if additions else "")
+                + "This is not permission to revive the old turn or bypass Git ownership."
+            )
         context += (
             "\n\nThe complete repository-owned task contract follows. Treat this as the authoritative "
             "implementation handoff for the current task; do not ask the user to paste it again.\n\n"
