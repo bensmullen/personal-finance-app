@@ -34,7 +34,7 @@ describe("shared household context", () => {
     const duplicates = { ...draft, objects: { ...draft.objects, Household: [{ ...draft.objects.Household![0]!, members: members.map(item => item.person_id) }], Person: members } };
     const identity = sharedContextIdentity(duplicates);
     expect(new Set(identity.people.map(item => item.id)).size).toBe(3);
-    expect(identity.people.map(item => item.label)).toEqual([`Taylor Example · ID ${person.person_id}`, "Taylor Example · ID 94000000-0000-4000-8000-000000000241", "Unnamed person"]);
+    expect(identity.people.map(item => item.label)).toEqual([`Taylor Example · ID ${String(person.person_id).slice(-8)}`, "Taylor Example · ID 00000241", "Unnamed person"]);
     expect(identity.membershipReview).toBeUndefined();
     expect(sharedContextIdentity({ ...duplicates, objects: { ...duplicates.objects, Person: [...members].reverse() } }).people).toEqual(identity.people);
     expect(JSON.stringify(draft)).toBe(original);
@@ -79,7 +79,7 @@ describe("shared household context", () => {
     const scenario = draft.objects.Scenario![0] as Record<string, any>;
     const changed = { ...draft, objects: { ...draft.objects, Scenario: [...draft.objects.Scenario!, { ...scenario, scenario_id: selectedId, name: "Selected executable plan" }] } };
     expect(sharedContextIdentity(changed, selectedId).plan).toBe("Selected executable plan");
-    expect(sharedContextIdentity(draft, "missing").plan).toContain("saved plan (execution not selected)");
+    expect(sharedContextIdentity(draft, "missing").plan).toContain("(saved)");
     expect(sharedContextIdentity({ ...draft, objects: { ...draft.objects, Scenario: [] } }, selectedId).plan).toBe("Plan unavailable");
   });
 

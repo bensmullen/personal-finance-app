@@ -1,14 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { clickFinancialDestination, navigateOwner, expectForecastWindow as expectVisibleForecastWindow } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, expectForecastWindow } from "./navigation.js";
 
-async function expectForecastWindow(page: Page, start: string, end: string, periods: number) {
-  const more = page.getByRole("button", { name: "More", exact: true });
-  const opened = await more.isVisible() && await more.getAttribute("aria-expanded") !== "true";
-  if (opened) await more.click();
-  await expectVisibleForecastWindow(page, start, end, periods);
-  if (opened) await page.keyboard.press("Escape");
-}
 import { cashComparison, inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";

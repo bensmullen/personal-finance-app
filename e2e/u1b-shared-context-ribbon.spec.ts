@@ -1,11 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import { createGoldenHouseholdDraft, exportPersonalModelJson, type PersonalDraft } from "../src/application/personalMvp.js";
-import { clickFinancialDestination, navigateOwner, expectForecastWindow } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, expectForecastWindow, showStatusActions as showActions } from "./navigation.js";
 
 // Only the holistic journey needs the flagship's 649-month worker setup.
 // Independent cases use one-year guided setup followed by unexecuted imports.
-async function openBoundedSession(page: Page, draft = createGoldenHouseholdDraft()) {
-  await page.goto("/");
+async function openBoundedSession(page: Page, draft = createGoldenHouseholdDraft(), url = "/") {
+  await page.goto(url);
   for (const [label, value] of [["Household name", "Ribbon workspace"], ["Monthly income", "0"], ["Opening cash balance", "0"], ["Asset cost basis", "0"], ["Current debt", "0"], ["Monthly spending", "0"]] as const) {
     await page.getByLabel(label, { exact: true }).fill(value);
     await page.getByRole("button", { name: "Continue", exact: true }).click();
@@ -24,10 +25,6 @@ const statusFor = (page: Page) => page.locator('.forecast-status[aria-label="Hou
 // Main's padding is a unique, non-header outside target on every destination,
 // including pages with several owner-editor h1s.
 const actionsFor = (page: Page) => page.locator(".context-actions");
-async function showActions(page: Page) {
-  const more = page.getByRole("button", { name: "More", exact: true });
-  if (await more.isVisible() && await more.getAttribute("aria-expanded") !== "true") await more.click();
-}
 const clickOutside = (page: Page) => page.locator("#main-content").click({ position: { x: 4, y: 4 } });
 
 test("shared context holistic forecast, navigation and person-owner journey", async ({ page }) => {
@@ -40,6 +37,8 @@ test("shared context holistic forecast, navigation and person-owner journey", as
   const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
   await expect(status).toHaveAttribute("data-lifecycle", "completed");
+  await expect(status.locator(".context-disclosure > summary")).toHaveAccessibleName("Forecast: Ready");
+  await expect(status.locator(".status-ready")).toHaveCount(1);
   await expectForecastWindow(page, "2026-01-01", "2080-02-01", 649);
   const headerControls = await ribbon.locator(".context-disclosure > summary").all();
   const headerBoxes = await Promise.all(headerControls.map(control => control.boundingBox()));
@@ -75,8 +74,8 @@ test("shared context holistic forecast, navigation and person-owner journey", as
     await page.keyboard.press("Escape");
     await expect(editor).toHaveCount(0);
     await expect(trigger).toBeFocused();
-    await expect(status).toHaveAttribute("data-request-id", request!);
-    await expect(status).toHaveAttribute("data-fingerprint", fingerprint!);
+    expect(await status.getAttribute("data-request-id")).toBe(request);
+    expect(await status.getAttribute("data-fingerprint")).toBe(fingerprint);
   }
   await showActions(page);
   const forecastDetails = status.locator(".context-disclosure");
@@ -150,6 +149,11 @@ for (const width of [1440, 390]) {
         expect(await status.getAttribute("data-fingerprint")).toBe(fingerprint);
         await expect(status).toHaveAttribute("data-lifecycle", "idle");
       }
+      await expect(trigger).toHaveAccessibleName("Person / Household: Taylor");
+      await clickFinancialDestination(page, "Overview");
+      await expect(people.locator(".context-household")).toHaveText("Household");
+      expect(await status.getAttribute("data-request-id")).toBe(request);
+      expect(await status.getAttribute("data-fingerprint")).toBe(fingerprint);
     });
 
     test("forecast disclosure distinguishes requested coverage from imported setup", async ({ page }) => {
@@ -192,12 +196,16 @@ for (const width of [1440, 390]) {
       const salary = draft.objects.Income![0]!;
       // A one-year, salary-only source fixture avoids unrelated mortgage,
       // contribution and annual-tax setup in this disclosure regression.
-      await openBoundedSession(page, { ...draft, objects: {
+      const source: PersonalDraft = { ...draft, objects: {
         Household: draft.objects.Household!, Person: draft.objects.Person!.map(person => ({ ...person, residence_jurisdiction_periods: [] })),
         Account: [draft.objects.Account!.find(account => account.account_type === "checking")!],
         Income: [{ ...salary, growth_model_id: null, related_event_id: null, work_service_jurisdiction_allocations: [], frequency: "weekly" }],
         Scenario: [{ ...draft.objects.Scenario![0]!, assumption_ids: [], event_ids: [], end_date: "2027-01-01" }],
-      } });
+      } };
+      await openBoundedSession(page, source);
+      const actions = await showActions(page);
+      await actions.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(page.getByText("Canonical model saved to this browser", { exact: true })).toBeVisible();
       await navigateOwner(page, "Money", "Income");
       await page.getByRole("region", { name: "Income deposit routing", exact: true }).getByLabel("Income receiving account", { exact: true }).selectOption({ label: "Everyday checking" });
       await clickFinancialDestination(page, "Debt");
@@ -211,6 +219,7 @@ for (const width of [1440, 390]) {
       const status = statusFor(page);
       await expect(status).toHaveAttribute("data-lifecycle", "incomplete", { timeout: 30_000 });
       await expect(status).toHaveAttribute("data-pending", "false");
+      await expect(status.locator(".status-review")).toHaveCount(1);
       const details = status.locator(".context-disclosure");
       const summary = details.locator(":scope > summary");
       await showActions(page);
@@ -232,8 +241,8 @@ for (const width of [1440, 390]) {
         await expect(details).toHaveAttribute("open", "");
         await expect(repair).toBeVisible();
         await expect(repair).toBeFocused();
-        await expect(status).toHaveAttribute("data-request-id", request!);
-        await expect(status).toHaveAttribute("data-fingerprint", fingerprint!);
+        expect(await status.getAttribute("data-request-id")).toBe(request);
+        expect(await status.getAttribute("data-fingerprint")).toBe(fingerprint);
       }
       await page.keyboard.press("Escape");
       await expect(details).not.toHaveAttribute("open");
@@ -244,6 +253,20 @@ for (const width of [1440, 390]) {
       await page.keyboard.press("Escape");
       await expect(people).not.toHaveAttribute("open");
       await expect(people.locator(":scope > summary")).toBeFocused();
+      await showActions(page);
+      await summary.click();
+      await repair.click();
+      const editor = page.getByRole("dialog", { name: "Edit Income", exact: true });
+      await editor.getByLabel("Frequency", { exact: true }).selectOption("monthly");
+      await editor.getByRole("button", { name: "Save changes", exact: true }).click();
+      await expect(editor).toHaveCount(0);
+      await expect(status).not.toHaveAttribute("data-fingerprint", fingerprint!);
+      // Canonical editing invalidates the forecast but cannot persist it.
+      await navigateOwner(page, "Settings", "Import / Export");
+      const download = page.waitForEvent("download");
+      await page.getByRole("button", { name: "Export saved backup", exact: true }).click();
+      const backup = await download;
+      expect(await readFile((await backup.path())!, "utf8")).toBe(exportPersonalModelJson(source));
     });
 
     test("normal header keeps readable actions together and inside the viewport", async ({ page }) => {
@@ -341,7 +364,7 @@ const recordedPerson = memberDraft.objects.Person![0]!;
 for (const { name, members, labels } of [
   { name: "missing members", members: [], labels: [] },
   { name: "one member", members: [recordedPerson], labels: ["Taylor"] },
-  { name: "duplicate names", members: [recordedPerson, { ...recordedPerson, person_id: "94000000-0000-4000-8000-000000000244" }], labels: [`Taylor Example · ID ${recordedPerson.person_id}`, "Taylor Example · ID 94000000-0000-4000-8000-000000000244"] },
+  { name: "duplicate names", members: [recordedPerson, { ...recordedPerson, person_id: "94000000-0000-4000-8000-000000000244" }], labels: [`Taylor Example · ID ${String(recordedPerson.person_id).slice(-8)}`, "Taylor Example · ID 00000244"] },
   { name: "unnamed member", members: [{ ...recordedPerson, first_name: "", last_name: "" }], labels: ["Unnamed person"] },
 ]) test(`imported ${name} retain canonical identity and setup state`, async ({ page }) => {
   const imported: PersonalDraft = { ...memberDraft, objects: { ...memberDraft.objects, Household: [{ ...memberDraft.objects.Household![0]!, members: members.map(person => person.person_id!) }], Person: members } };
@@ -366,6 +389,136 @@ for (const { name, members, labels } of [
   }
   await page.keyboard.press("Escape");
   await expect(statusFor(page)).toHaveAttribute("data-lifecycle", "idle");
+});
+
+for (const width of [1440, 390]) for (const enlarged of [false, true]) {
+  test(`compact status/actions retain source meaning and order at ${width}px, enlarged ${enlarged}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await openBoundedSession(page);
+    if (enlarged) await page.addStyleTag({ content: "html { font-size: 200%; }" });
+    const actions = await showActions(page);
+    await expect(actions).toHaveCount(1);
+    const summaries = actions.locator(".context-disclosure > summary");
+    await expect(summaries).toHaveCount(2);
+    await expect(summaries.nth(0)).toHaveAccessibleName(/^Model: /);
+    await expect(summaries.nth(1)).toHaveAccessibleName("Forecast: Needs setup");
+    await expect(summaries.nth(1).locator(".status-idle")).toHaveCount(1);
+    await expect(actions.locator(".context-command-buttons > button")).toHaveText(["Update", "Save"]);
+    await expect(page.locator(".topbar .context-actions, .topbar .context-save, .topbar .context-forecast")).toHaveCount(0);
+    for (const control of [...await summaries.all(), ...await actions.locator(".context-command-buttons > button").all()]) {
+      const box = (await control.boundingBox())!;
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+    }
+    const modelBox = (await summaries.nth(0).boundingBox())!;
+    const forecastBox = (await summaries.nth(1).boundingBox())!;
+    const commands = (await actions.locator(".context-command-buttons").boundingBox())!;
+    expect(modelBox.y + modelBox.height).toBeLessThanOrEqual(forecastBox.y);
+    expect(forecastBox.y + forecastBox.height).toBeLessThanOrEqual(commands.y);
+    if (width === 1440) {
+      const rail = page.getByRole("navigation", { name: "Primary navigation", exact: true });
+      const links = (await rail.locator(".financial-nav-links").boundingBox())!;
+      expect(modelBox.y).toBeGreaterThanOrEqual(links.y + links.height);
+      expect(commands.y + commands.height).toBeLessThanOrEqual(900);
+    } else {
+      await expect(page.locator("#mobile-status-actions .context-actions")).toBeVisible();
+      await expect(page.locator(".primary-nav .context-actions")).toHaveCount(0);
+    }
+    await summaries.nth(0).click();
+    await expect(actions.locator(".context-model .context-popover")).toContainText("Current position:");
+    await expect(actions.locator(".context-model .context-popover")).toContainText("Model readiness is separate from forecast coverage");
+    await page.keyboard.press("Escape");
+    await expect(summaries.nth(0)).toBeFocused();
+    await summaries.nth(1).click();
+    await expect(statusFor(page)).toContainText("Requested coverage is not computed coverage");
+    await expect(statusFor(page)).toContainText("No observed account history is included");
+    await expect(statusFor(page)).toContainText("No supported forecast is available yet");
+    await page.keyboard.press("Escape");
+    await expect(summaries.nth(1)).toBeFocused();
+    // Both header menus must remain anchored with enlarged text too.
+    const more = page.getByRole("button", { name: "More", exact: true });
+    if (width === 390) await more.click();
+    for (const selector of [".context-people", ".context-plan"]) {
+      const menu = ribbonFor(page).locator(selector);
+      const trigger = menu.locator(":scope > summary");
+      await trigger.focus();
+      await page.keyboard.press("Space");
+      const box = (await trigger.boundingBox())!;
+      const popup = (await menu.locator(".context-popover").boundingBox())!;
+      expect(Math.abs(popup.y - box.y - box.height)).toBeLessThanOrEqual(2);
+      expect(Math.min(Math.abs(popup.x - box.x), Math.abs(popup.x + popup.width - box.x - box.width))).toBeLessThanOrEqual(2);
+      expect(popup.x).toBeGreaterThanOrEqual(0);
+      expect(popup.x + popup.width).toBeLessThanOrEqual(width);
+      await page.keyboard.press("ArrowDown");
+      await expect(menu.getByRole("button").first()).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(trigger).toBeFocused();
+      await page.keyboard.press("ArrowUp");
+      await expect(menu.getByRole("button").last()).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(trigger).toBeFocused();
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
+
+for (const kind of ["no root", "multiple roots", "what-if", "disabled root", "duplicate ID", "renamed root"]) {
+  test(`plan navigation preserves recorded execution authority: ${kind}`, async ({ page }) => {
+    const original = createGoldenHouseholdDraft();
+    const root = original.objects.Scenario![0]!;
+    const alternative = { ...root, scenario_id: "94000000-0000-4000-8000-000000000246", name: "Alternative plan", base_scenario_id: root.scenario_id! };
+    const scenarios = kind === "no root" ? [] : kind === "multiple roots" ? [root, { ...alternative, base_scenario_id: null }]
+      : kind === "what-if" ? [root, alternative] : kind === "disabled root" ? [{ ...root, enabled: false }]
+      : kind === "duplicate ID" ? [root, root] : [{ ...root, name: "Recorded renamed plan" }];
+    const draft = { ...original, objects: { ...original.objects, Scenario: scenarios } };
+    await openBoundedSession(page, draft);
+    const status = statusFor(page);
+    const request = await status.getAttribute("data-request-id");
+    const fingerprint = await status.getAttribute("data-fingerprint");
+    const menu = ribbonFor(page).locator(".context-plan");
+    const trigger = menu.locator(":scope > summary");
+    await expect(trigger).toHaveAccessibleName(kind === "no root" || kind === "disabled root" ? "Plan: Plan unavailable"
+      : kind === "multiple roots" || kind === "duplicate ID" ? "Plan: Choose plan"
+      : kind === "renamed root" ? "Plan: Recorded renamed plan (saved)" : /^Plan: .+ \(saved\)$/);
+    for (const section of ["Compare Plans", "Current Plan"]) {
+      await trigger.click();
+      await menu.getByRole("button", { name: section, exact: true }).click();
+      await expect(page.locator(".subnav").getByRole("button", { name: section, exact: true })).toHaveAttribute("aria-current", "page");
+      await expect(trigger).toBeFocused();
+      expect(await status.getAttribute("data-request-id")).toBe(request);
+      expect(await status.getAttribute("data-fingerprint")).toBe(fingerprint);
+      await expect(status).toHaveAttribute("data-lifecycle", "idle");
+    }
+    await navigateOwner(page, "Settings", "Import / Export");
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export current model", exact: true }).click();
+    const exported = await download;
+    expect(await readFile((await exported.path())!, "utf8")).toBe(exportPersonalModelJson(draft));
+  });
+}
+
+test("public/demo mode offers Export and accurate privacy instead of Save", async ({ page, baseURL }) => {
+  const local = new URL(baseURL!);
+  const demo = "http://pfm-demo.invalid";
+  await page.route(`${demo}/**`, async route => {
+    const url = new URL(route.request().url());
+    const response = await route.fetch({ url: new URL(url.pathname + url.search, local).href });
+    await route.fulfill({ response });
+  });
+  await openBoundedSession(page, createGoldenHouseholdDraft(), demo);
+  const actions = await showActions(page);
+  await expect(actions.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
+  await expect(actions.getByRole("button", { name: "Export", exact: true })).toBeVisible();
+  const download = page.waitForEvent("download");
+  await actions.getByRole("button", { name: "Export", exact: true }).click();
+  await download;
+  await navigateOwner(page, "Settings", "Import / Export");
+  await expect(page.getByText("Public/demo origin", { exact: true })).toBeVisible();
+  const privacy = page.locator(".calm-disclosure").filter({ has: page.locator("summary", { hasText: /^Storage & privacy$/ }) });
+  await privacy.locator(":scope > summary").click();
+  await expect(privacy).toContainText("does not store personal models");
+  await expect(privacy).toContainText("Do not enter real personal financial information");
 });
 
 for (const kind of ["unlinked person", "foreign pointer", "missing referenced person", "wrong household ID", "missing household link", "duplicate person ID", "missing person ID", "multiple households"]) test(`inconsistent ${kind} offers the canonical correction without false member links`, async ({ page }) => {

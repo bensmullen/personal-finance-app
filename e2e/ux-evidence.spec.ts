@@ -1,6 +1,6 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
-import { clickFinancialDestination, navigateOwner } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, showStatusActions } from "./navigation.js";
 import { addPersonalObject, createEmptyPersonalDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
 
 /**
@@ -89,6 +89,38 @@ async function recordState(page: Page, info: TestInfo, scenario: string) {
   await info.attach(`${scenario}-source-and-state-inventory`, { body: JSON.stringify(state, null, 2), contentType: "application/json" });
 }
 
+async function captureSharedShell(page: Page, info: TestInfo, width: number, scenario: string) {
+  const revision = process.env.GITHUB_SHA?.slice(0, 12) || "revision-unrecorded";
+  for (const enlarged of [false, true]) {
+    const style = enlarged ? await page.addStyleTag({ content: "html { font-size: 200%; }" }) : undefined;
+    const capture = async (state: string) => {
+      const name = `shell-${scenario}-${width}-${enlarged ? "200pct" : "normal"}-${state}-${revision}`;
+      const path = info.outputPath(`${name}.png`);
+      await page.screenshot({ path, animations: "disabled" });
+      await info.attach(name, { path, contentType: "image/png" });
+    };
+    try {
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await capture("first-screen");
+      for (const selector of [".context-people", ".context-plan"]) {
+        const menu = page.locator(`.shared-context ${selector}`);
+        await menu.locator(":scope > summary").click();
+        await capture(selector.slice(1));
+        await page.keyboard.press("Escape");
+      }
+      const actions = await showStatusActions(page);
+      await capture("status-actions");
+      for (const summary of await actions.locator(".context-disclosure > summary").all()) {
+        await summary.click();
+        await capture((await summary.getAttribute("aria-label"))?.startsWith("Model") ? "model-details" : "forecast-details");
+        await page.keyboard.press("Escape");
+      }
+      const more = page.getByRole("button", { name: "More", exact: true });
+      if (await more.isVisible() && await more.getAttribute("aria-expanded") === "true") await more.click();
+    } finally { if (style) await style.evaluate(node => node.remove()); }
+  }
+}
+
 async function captureExpandedOverview(page: Page, info: TestInfo, width: number, scenario: string) {
   const summaries = ["Chart controls and exact values", "Forecast range / Data coverage", "Forecast assumptions and supporting details", "How this is calculated / data coverage"];
   for (const title of summaries) {
@@ -155,6 +187,7 @@ test("synthetic H04 opening-only Overview first-screen evidence", async ({ page 
     await writeFile(report, `<!doctype html><html lang="en"><meta charset="utf-8"><title>H04 Overview comparison</title><style>body{font:16px system-ui;margin:24px}main{display:flex;gap:24px;align-items:start}figure{margin:0;flex:1;min-width:0}img{width:100%;border:1px solid #aaa}figcaption{margin:12px 0}</style><h1>H04 opening only · ${width} × ${height} · ${revision}</h1><p>Visual review pending. Production has only synthetic opening checking/savings balances and no Current Plan or forecast. The approved reference has fictional values and a trajectory; compare hierarchy and disclosure, not amounts or forecast coverage.</p><main><figure><figcaption>Current application: synthetic H04 opening-only subset, idle forecast.</figcaption><img alt="Production H04 Overview first screen" src="${productionName}"></figure><figure><figcaption>Approved Calm reference: fictional Barlow household.</figcaption><img alt="Approved Calm Overview first screen" src="${referenceName}"></figure></main></html>`);
     await testInfo.attach(`overview-h04-comparison-${width}-${revision}`, { path: report, contentType: "text/html" });
     await captureExpandedOverview(page, testInfo, width, "h04-opening-only");
+    await captureSharedShell(page, testInfo, width, "h04-opening-only");
     await captureCashEvidence(page, testInfo, width, "h04-opening-only");
   }
 });
@@ -215,6 +248,7 @@ test("synthetic account, income and forecast UX at desktop and narrow viewport",
     await writeFile(comparisonPath, `<!doctype html><html lang="en"><meta charset="utf-8"><title>Overview Calm review ${width}</title><style>body{font:16px system-ui;margin:24px}main{display:flex;align-items:start;gap:24px}figure{margin:0;min-width:0;flex:1}img{width:100%;border:1px solid #aaa}figcaption{margin:12px 0;line-height:1.5}</style><h1>Overview · ${width} × ${height} · ${revision}</h1><p>Visual review pending. Different synthetic examples: compare hierarchy, disclosures and presentation, not monetary values. Production status: ${await page.locator('.forecast-status[aria-label="Household forecast status"]').getAttribute("data-lifecycle")}.</p><main><figure><figcaption>Production: current application synthetic example at this checkout revision.</figcaption><img alt="Production Overview first screen" src="${productionName}"></figure><figure><figcaption>Approved Calm reference: fictional Barlow household from the checked-in prototype at the same revision. H04/H08 production fixture parity is not established.</figcaption><img alt="Approved Calm Overview first screen" src="${referenceName}"></figure></main></html>`);
     await testInfo.attach(`overview-comparison-${width}-${revision}`, { path: comparisonPath, contentType: "text/html" });
     await captureExpandedOverview(page, testInfo, width, "golden-supported");
+    await captureSharedShell(page, testInfo, width, "golden-supported");
     await captureCashEvidence(page, testInfo, width, "flagship");
 
     await navigate(page, "Money", "Income");

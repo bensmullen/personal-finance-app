@@ -19,7 +19,7 @@ export function ContextDisclosure({ title, children, className = "", accessibleL
     observer.observe(root);
     window.addEventListener("resize", measure);
     return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
-  }, [className]);
+  }, [className, expanded]);
   React.useEffect(() => {
     const close = (event: PointerEvent | KeyboardEvent) => {
       const root = ref.current;
@@ -40,13 +40,17 @@ export function ContextDisclosure({ title, children, className = "", accessibleL
     return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", close); };
   }, []);
   return <details ref={ref} onToggle={event => setExpanded(event.currentTarget.open)} className={`context-disclosure ${className}`} onKeyDown={event => {
+    if (!className.includes("context-people") && !className.includes("context-plan")) return;
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) || !(event.target instanceof Element) || !event.target.matches("summary, button")) return;
     const root = event.currentTarget;
     const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>(".context-popover button:not(:disabled)"));
     if (!buttons.length) return;
     event.preventDefault(); root.open = true;
     const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    buttons[event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length]?.focus();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
+      : index < 0 ? event.key === "ArrowUp" ? buttons.length - 1 : 0
+        : (index + (event.key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length;
+    buttons[next]?.focus();
   }}><summary aria-label={accessibleLabel} aria-expanded={expanded} aria-controls={id}>{title}</summary><div id={id} className="context-popover" onClick={event => {
     if (!(event.target as Element).closest("[data-context-route]")) return;
     if (ref.current) ref.current.open = false;
@@ -73,7 +77,7 @@ export function SharedContextRibbon({ people, membershipReview, plan, activePers
     action();
   };
   return <section className="shared-context" aria-label="Household & status">
-    <ContextDisclosure title={<><span className="context-household">{people.find(person => person.id === activePerson)?.shortLabel ?? "Household"}</span><span aria-hidden="true">⌄</span></>} className="context-people">
+    <ContextDisclosure accessibleLabel={`Person / Household: ${people.find(person => person.id === activePerson)?.shortLabel ?? "Household"}`} title={<><span className="context-household">{people.find(person => person.id === activePerson)?.shortLabel ?? "Household"}</span><span aria-hidden="true">⌄</span></>} className="context-people">
       <h2>Household &amp; People</h2>
       <p>People open recorded profiles. Financial results stay household-wide.</p>
       <button type="button" aria-pressed={!activePerson} onClick={event => choose(event, onHousehold)}>Household</button>
@@ -81,9 +85,9 @@ export function SharedContextRibbon({ people, membershipReview, plan, activePers
       {people.length ? people.map(person => <button key={person.id} type="button" aria-pressed={person.id === activePerson} onClick={event => choose(event, () => onPerson(person.id))}>{person.label}</button>) : <p>No verified household members.</p>}
       <button type="button" onClick={event => choose(event, onPeople)}>Add / edit household &amp; people</button>
     </ContextDisclosure>
-    <ContextDisclosure title={<>{plan}<span aria-hidden="true">⌄</span></>} className="context-plan">
-      <h2>Plan</h2><p>{plan}. Plan links open existing workflows; they do not switch execution.</p>
-      <button type="button" aria-pressed="true" onClick={event => choose(event, () => onPlan(false))}>Current Plan</button>
+    <ContextDisclosure accessibleLabel={`Plan: ${plan}`} title={<>{plan}<span aria-hidden="true">⌄</span></>} className="context-plan">
+      <h2>Plan</h2><p>{plan}. Saved means execution is not selected. Plan links open existing workflows; they do not switch execution.</p>
+      <button type="button" onClick={event => choose(event, () => onPlan(false))}>Current Plan</button>
       <button type="button" onClick={event => choose(event, () => onPlan(true))}>Compare Plans</button>
     </ContextDisclosure>
   </section>;

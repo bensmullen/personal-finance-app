@@ -290,11 +290,16 @@ export function PersonalFinanceApp() {
     if (!nav || !shell) return;
     // Enlarged labels can reflow the fixed mobile bar. Keep More above its
     // actual height rather than assuming a single line of navigation text.
-    const measure = () => shell.style.setProperty("--mobile-nav-height", `${nav.getBoundingClientRect().height}px`);
+    const header = shell.querySelector<HTMLElement>(".topbar");
+    const measure = () => {
+      shell.style.setProperty("--mobile-nav-height", `${nav.getBoundingClientRect().height}px`);
+      shell.style.setProperty("--shell-header-height", `${header?.getBoundingClientRect().height ?? 72}px`);
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(nav);
-    return () => { observer.disconnect(); shell.style.removeProperty("--mobile-nav-height"); };
+    if (header) observer.observe(header);
+    return () => { observer.disconnect(); shell.style.removeProperty("--mobile-nav-height"); shell.style.removeProperty("--shell-header-height"); };
   }, [Boolean(draft)]);
   const destination = financialDestination(primary, subnav);
   useEffect(() => {
@@ -898,8 +903,8 @@ export function PersonalFinanceApp() {
               {(!interactive.available || setupChangesPending || settingsProblem) && <button data-context-route onClick={() => settingsProblem ? openForecastDates() : openForecastSetup(setupMissing[0])}>{settingsProblem ? "Review forecast dates" : "Review setup"}</button>}
             </section>} /></div>
           <div className="context-command-buttons">
-            <button type="button" className="calm-action context-update" aria-label="Update forecast" title={interactive.available && !setupChangesPending ? "Update forecast" : settingsProblem || setupMissing[0]?.message || "Review and apply Forecast Setup before updating"} onClick={() => interactive.available && !setupChangesPending && !settingsProblem ? runHouseholdForecast() : openForecastSetup(setupMissing[0])}>Update</button>
-            <button className="context-save" type="button" title={persistenceError || notice || "Changes stay in memory until you save or export"} onClick={() => persistenceMode === "enabled" ? void saveToBrowser() : exportModel()}>{persistenceMode === "enabled" ? "Save" : "Export"}</button>
+            <button type="button" className="calm-action context-update" aria-label="Update forecast" title={interactive.available && !setupChangesPending && !settingsProblem ? "Update forecast" : settingsProblem || setupMissing[0]?.message || "Review and apply Forecast Setup before updating"} onClick={() => interactive.available && !setupChangesPending && !settingsProblem ? runHouseholdForecast() : settingsProblem ? openForecastDates() : openForecastSetup(setupMissing[0])}>Update</button>
+            <button className="context-save" type="button" title={persistenceError || `${notice ? `Last action: ${notice}. ` : ""}Changes stay in memory until explicitly saved or exported.`} onClick={() => persistenceMode === "enabled" ? void saveToBrowser() : exportModel()}>{persistenceMode === "enabled" ? "Save" : "Export"}</button>
           </div>
         </ResponsiveContextActions>
       </nav>
@@ -922,7 +927,7 @@ export function PersonalFinanceApp() {
               key={item}
               className={subnav === item ? "active" : ""}
               aria-current={subnav === item ? "page" : undefined}
-              onClick={() => setSubnav(item)}
+              onClick={() => { setActivePerson(undefined); setSubnav(item); }}
             >
               {item}
             </button>
@@ -1406,9 +1411,12 @@ export function sharedContextIdentity(draft: PersonalDraft, selectedRootScenario
       const shortLabel = labels[index]!;
       const full = objectLabel("Person", person).trim() || shortLabel;
       const duplicateFull = people.filter(other => objectLabel("Person", other).trim() === full).length > 1;
-      return { id: objectId("Person", person), shortLabel, label: labelCounts.get(shortLabel)! > 1 ? duplicateFull ? `${full} · ID ${objectId("Person", person)}` : full : shortLabel };
+      const id = objectId("Person", person);
+      const fragment = id.slice(-8);
+      const uniqueFragment = people.filter(other => objectId("Person", other).endsWith(fragment)).length === 1;
+      return { id, shortLabel, label: labelCounts.get(shortLabel)! > 1 ? duplicateFull ? `${full} · ID ${uniqueFragment ? fragment : id}` : full : shortLabel };
     }),
-    plan: selected ? objectLabel("Scenario", selected) : saved ? `${objectLabel("Scenario", saved)} · saved plan (execution not selected)` : roots.length > 1 ? "Choose plan" : "Plan unavailable",
+    plan: selected ? objectLabel("Scenario", selected).trim() || "Unnamed plan" : saved ? `${objectLabel("Scenario", saved).trim() || "Unnamed plan"} (saved)` : roots.length > 1 ? "Choose plan" : "Plan unavailable",
   };
 }
 

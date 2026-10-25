@@ -1,5 +1,15 @@
 import { expect, type Page } from "@playwright/test";
 
+/** Reveal the one authoritative action owner, never click hidden rail controls. */
+export async function showStatusActions(page: Page) {
+  const more = page.getByRole("button", { name: "More", exact: true });
+  if (await more.isVisible() && await more.getAttribute("aria-expanded") !== "true") await more.click();
+  const actions = page.getByRole("region", { name: "Status & Actions", exact: true });
+  await expect(actions).toBeVisible();
+  await expect(actions.getByRole("status", { name: "Household forecast status", exact: true })).toHaveCount(1);
+  return actions;
+}
+
 export async function openFinancialSection(page: Page, title: string) {
   // Attention text may follow the owned title. Never query an inaccessible
   // child region to find its collapsed parent.
@@ -10,6 +20,9 @@ export async function openFinancialSection(page: Page, title: string) {
 }
 
 export async function expectForecastWindow(page: Page, start: string, end: string, periods: number) {
+  const more = page.getByRole("button", { name: "More", exact: true });
+  const opened = await more.isVisible() && await more.getAttribute("aria-expanded") !== "true";
+  await showStatusActions(page);
   const status = page.getByRole("status", { name: "Household forecast status", exact: true });
   await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: 30_000 });
@@ -20,12 +33,13 @@ export async function expectForecastWindow(page: Page, start: string, end: strin
   const fingerprint = await status.getAttribute("data-fingerprint");
   expect(fingerprint).toBeTruthy();
   await expect(status).toHaveAttribute("data-result-fingerprint", fingerprint!);
+  if (opened) await more.click();
 }
 
 /** Follow the same visible destination/More navigation at both supported sizes. */
 export async function clickFinancialDestination(page: Page, label: string) {
   const more = page.getByRole("button", { name: "More", exact: true });
-  if (await more.isVisible() && await more.getAttribute("aria-expanded") === "true") await page.keyboard.press("Escape");
+  if (await more.isVisible() && await more.getAttribute("aria-expanded") === "true") await more.click();
   const destination = page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: label, exact: true });
   if (await destination.isVisible()) {
     await expect(destination).toBeEnabled();
@@ -59,7 +73,10 @@ export async function showReadiness(page: Page) {
 }
 
 export async function showForecastLimitations(page: Page) {
+  await showStatusActions(page);
   const status = page.getByRole("status", { name: "Household forecast status" });
+  const disclosure = status.locator(".context-disclosure");
+  if (await disclosure.getAttribute("open") === null) await disclosure.locator(":scope > summary").click();
   const guidance = status.locator(".forecast-guidance");
   if (await guidance.getAttribute("open") === null) await guidance.locator(":scope > summary").click();
   const more = guidance.getByText(/^Review \d+ more scoped limitations$/);

@@ -1,15 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { addPersonalObject, createEmptyPersonalDraft, createGoldenHouseholdExampleDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
-import { clickFinancialDestination, navigateOwner, openFinancialSection, expectForecastWindow as expectVisibleForecastWindow } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, openFinancialSection, expectForecastWindow, showStatusActions } from "./navigation.js";
 
-async function expectForecastWindow(page: Page, start: string, end: string, periods: number) {
-  const more = page.getByRole("button", { name: "More", exact: true });
-  const opened = await more.isVisible() && await more.getAttribute("aria-expanded") !== "true";
-  if (opened) await more.click();
-  await expectVisibleForecastWindow(page, start, end, periods);
-  if (opened) await page.keyboard.press("Escape");
-}
 import { selectForecastChartData, type ForecastChartValue } from "../src/application/forecastChartData.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";
@@ -180,6 +173,7 @@ async function runAppliedBaseline(page: Page) {
   await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
   const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   const priorRequest = await status.getAttribute("data-request-id");
+  await showStatusActions(page);
   await page.getByRole("button", { name: "Update forecast", exact: true }).click();
   await expect(status).not.toHaveAttribute("data-request-id", priorRequest ?? "");
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: 30_000 });

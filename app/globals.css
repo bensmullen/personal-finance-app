@@ -473,6 +473,7 @@ main#main-content { padding: 24px 32px 64px; }
 .context-popover h2 { font-size: 1.125rem; margin-top: 0; }
 .context-popover button, .calm-shell .context-popover button { color: var(--green-dark); background: white; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 4px 0; min-height: 44px; width: 100%; text-align: left; white-space: normal; }
 .context-popover button[aria-pressed="true"] { background: var(--mint); }
+.calm-shell .context-popover button:hover { background: var(--mint); color: var(--green-dark); }
 .context-actions { margin-top: auto; padding-top: 12px; border-top: 1px solid #879a913d; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .context-actions .context-forecast { display: block; padding: 0; margin: 0; border: 0; background: transparent; }
 .context-actions .context-disclosure > summary { min-height: 44px; font-size: .9375rem; }
@@ -492,7 +493,7 @@ main#main-content { padding: 24px 32px 64px; }
 .result-warning { color: #805022; font-size: .9375rem; line-height: 1.5; }
 .more-destinations[hidden] { display: none; }
 @media (min-width: 901px) {
-  .app-shell > .primary-nav, .app-shell.calm-shell > .primary-nav { grid-row: 2; position: sticky; top: 0; align-self: start; height: calc(100svh - 72px); padding: 20px 12px 12px; overflow: visible; }
+  .app-shell > .primary-nav, .app-shell.calm-shell > .primary-nav { grid-row: 2; position: sticky; top: 0; align-self: start; height: calc(100svh - var(--shell-header-height, 72px)); padding: 20px 12px 12px; overflow: visible; }
   .financial-nav-links { display: flex; flex-direction: column; gap: 4px; min-height: 0; overflow-y: auto; }
   .app-shell > .primary-nav { z-index: 5; }
   .context-actions { flex-shrink: 0; }
