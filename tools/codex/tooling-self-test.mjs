@@ -301,9 +301,11 @@ assert(
   "COMPLETE must be rejected until implementation is pushed/shared",
 );
 
-mustRun("git", ["update-ref", "refs/remotes/origin/codex/policy-self-test", implementationHead], { cwd: hookRepo });
-mustRun("git", ["config", "branch.codex/policy-self-test.remote", "origin"], { cwd: hookRepo });
-mustRun("git", ["config", "branch.codex/policy-self-test.merge", "refs/heads/codex/policy-self-test"], { cwd: hookRepo });
+// Publish to the actual local bare origin, not just a spoofed tracking ref.
+// Closed-task reauthorization must compare both refs with live origin.
+mustRun("git", ["push", "-u", "origin", "codex/policy-self-test"], { cwd: hookRepo });
+assert(mustRun("git", ["rev-parse", "@{u}"], { cwd: hookRepo }).stdout.trim() === implementationHead,
+  "self-test publication must leave real origin and tracking refs at the implementation head");
 
 const completeStop = hook("Stop", {
   last_assistant_message: "TASK_STATUS: COMPLETE\nACCEPTANCE_STATUS: SATISFIED",
