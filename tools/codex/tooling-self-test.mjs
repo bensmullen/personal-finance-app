@@ -391,6 +391,78 @@ const recoveryFixture = () => {
   return { repository, remote, git, invoke, start, dirty, snapshot, issue, assertNoUnsafeCommands };
 };
 
+// A PM answering a BLOCKED scope question is a new task authorization, NOT an
+// extension of the old turn. A different Codex chat may own the clean pushed
+// checkpoint after Stop, and its live issue must replace the old allowed paths.
+{
+  const f = recoveryFixture();
+  const stop = f.invoke("Stop", {
+    last_assistant_message: "TASK_STATUS: BLOCKED\\nBLOCKER: need three additional E2E paths",
+  });
+  assert(stop.continue === true, "clean BLOCKED must close the task without losing the checkpoint");
+  const priorReceipt = JSON.parse(fs.readFileSync(path.join(f.repository, ".codex/runtime/recovery-first.json")));
+  assert(priorReceipt.ACTIVE === false && !priorReceipt.ALLOWED_PATHS.includes("src/outside.ts"),
+    "blocked receipt should remain closed with its original scope");
+
+  const readOnly = f.invoke("UserPromptSubmit", {
+    session_id: "new-chat", turn_id: "preauth", prompt: "The PM updated the scope, please continue.",
+  });
+  assert(String(readOnly?.hookSpecificOutput?.additionalContext ?? "").includes("fresh Codex chat"),
+    "plain PM answer after BLOCKED must explain fresh authorization rather than imply editing is permitted");
+  const beforeGrant = f.invoke("PreToolUse", {
+    session_id: "new-chat", turn_id: "preauth", tool_name: "apply_patch",
+    tool_input: { command: "*** Begin Patch\\n*** Update File: src/outside.ts\\n*** End Patch" },
+  });
+  assert(beforeGrant?.hookSpecificOutput?.permissionDecision === "deny",
+    "no mutations may occur on a new chat before reauthorization");
+
+  fs.writeFileSync(f.issue, prompt.replace("- src/allowed.ts", "- src/allowed.ts\\n- src/outside.ts"));
+  const fresh = f.start({ session_id: "new-chat", turn_id: "authorized" });
+  const grant = String(fresh?.hookSpecificOutput?.additionalContext ?? "");
+  assert(grant.includes("Closed-task reauthorization") && grant.includes("src/outside.ts")
+    && grant.includes("NEW, live GitHub issue grant"),
+    "updated live issue paths must replace closed receipt with a visible new authorization");
+  const newReceipt = JSON.parse(fs.readFileSync(path.join(f.repository, ".codex/runtime/new-chat-authorized.json")));
+  assert(newReceipt.ACTIVE === true && newReceipt.ALLOWED_PATHS.includes("src/outside.ts")
+    && newReceipt.BASE_HEAD === f.git("rev-parse", "HEAD"),
+    "new chat must be active with widened paths and a checkpoint-based head");
+  const inScope = f.invoke("PreToolUse", {
+    session_id: "new-chat", turn_id: "authorized", tool_name: "apply_patch",
+    tool_input: { command: "*** Begin Patch\\n*** Update File: src/outside.ts\\n*** End Patch" },
+  });
+  assert(JSON.stringify(inScope) === "{}", "newly approved path should be writable only on new grant");
+  const oldSession = f.invoke("PreToolUse", {
+    session_id: "recovery", turn_id: "first", tool_name: "apply_patch",
+    tool_input: { command: "*** Begin Patch\\n*** Update File: src/allowed.ts\\n*** End Patch" },
+  });
+  assert(oldSession?.hookSpecificOutput?.permissionDecision === "deny",
+    "closed original session must not revive after another writer's new grant");
+  const outside = f.invoke("PreToolUse", {
+    session_id: "new-chat", turn_id: "authorized", tool_name: "apply_patch",
+    tool_input: { command: "*** Begin Patch\\n*** Update File: unauthorized.ts\\n*** End Patch" },
+  });
+  assert(outside?.hookSpecificOutput?.permissionDecision === "deny",
+    "new grant must remain strictly limited to authorized paths");
+  f.assertNoUnsafeCommands();
+}
+
+// Closed checkpoints cannot be reauthorized from an outdated tracking ref.
+{
+  const f = recoveryFixture();
+  const stopped = f.invoke("Stop", {
+    last_assistant_message: "TASK_STATUS: BLOCKED\\nBLOCKER: awaiting approved scope",
+  });
+  assert(stopped.continue === true, "BLOCKED stop must be successful before remote-race test");
+  const head = f.git("rev-parse", "HEAD");
+  const advanced = mustRun("git", ["-C", f.repository, "commit-tree", "HEAD^{tree}", "-p", head,
+    "-m", "remote advanced outside this worktree"]).stdout.trim();
+  mustRun("git", ["--git-dir", f.remote, "update-ref", "refs/heads/codex/policy-self-test", advanced]);
+  const rejected = f.start({ session_id: "second-writer", turn_id: "new" });
+  assert(rejected.decision === "block" && String(rejected.reason).includes("closed task checkpoint"),
+    "remote changed after closed Stop must block stale issue reauthorization");
+  f.assertNoUnsafeCommands();
+}
+
 {
   const f = recoveryFixture();
   f.dirty();
