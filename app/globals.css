@@ -493,8 +493,10 @@ main#main-content { padding: 24px 32px 64px; }
   .app-shell.calm-shell > .primary-nav { grid-row: 2; padding-top: 26px; }
   /* Keep the chart and all three current values in the opening desktop view
      without shrinking the plot, labels or touch targets. */
-  .calm-shell main#main-content { padding-top: 20px; }
-  .calm-page-header { margin-bottom: 18px; }
+  /* Reclaim space added by the shared ribbon so even no-forecast
+     Overview cards remain visible in the 1440x900 first screen. */
+  .calm-shell main#main-content { padding-top: 12px; }
+  .calm-page-header { margin-bottom: 12px; }
   .calm-overview { gap: 12px; }
   .calm-metrics { margin-top: 8px; }
 }
