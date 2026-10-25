@@ -17,11 +17,13 @@ export function ContextDisclosure({ title, children, className = "", accessibleL
         // Desktop details live beside the rail, never over its destinations.
         // Bound them below the header even after scrolling or enlarging text.
         const headerBottom = document.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0;
+        const railRight = root.closest(".primary-nav")?.getBoundingClientRect().right ?? box.right;
+        const left = Math.max(box.right, railRight) + 12;
         const bottom = Math.max(12, window.innerHeight - box.bottom);
-        root.style.setProperty("--status-panel-left", `${box.right + 12}px`);
+        root.style.setProperty("--status-panel-left", `${left}px`);
         root.style.setProperty("--status-panel-bottom", `${bottom}px`);
         root.style.setProperty("--status-panel-height", `${Math.max(0, window.innerHeight - bottom - Math.max(12, headerBottom + 12))}px`);
-        root.style.setProperty("--status-panel-width", `${Math.max(0, window.innerWidth - box.right - 24)}px`);
+        root.style.setProperty("--status-panel-width", `${Math.max(0, window.innerWidth - left - 12)}px`);
       }
     };
     measure();
