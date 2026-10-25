@@ -254,7 +254,10 @@ for (const width of [1440, 390]) {
       }
       await showActions(page);
       await summary.click();
-      const repair = details.getByRole("button", { name: "Review Frequency", exact: true });
+      // The leading warning and expanded limitations describe the same fact.
+      // Expanded detail must own the only visible repair; use its source scope.
+      const repair = details.locator(".forecast-guidance").getByRole("button", { name: "Review Frequency", exact: true });
+      await expect(details.getByRole("button", { name: "Review Frequency", exact: true })).toHaveCount(1);
       const request = await status.getAttribute("data-request-id");
       const fingerprint = await status.getAttribute("data-fingerprint");
       for (let visit = 0; visit < 2; visit++) {
@@ -553,9 +556,20 @@ test.describe("reachable public/demo origin", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
   test("public/demo mode offers Export and accurate privacy instead of Save", async ({ page, baseURL }) => {
     const demo = new URL(baseURL!);
-    demo.hostname = "pfm-demo.invalid";
+    demo.hostname = "pfm-demo.localhost";
     const draft = createGoldenHouseholdDraft();
+    const pageErrors: string[] = [];
+    page.on("pageerror", error => pageErrors.push(error.message));
+    await page.goto(demo.href);
+    // Secure browser APIs must be available even though this origin is not
+    // on the app's explicit persistent-storage allowlist.
+    expect(await page.evaluate(() => ({
+      secure: window.isSecureContext,
+      uuid: typeof crypto.randomUUID,
+      hostname: window.location.hostname,
+    }))).toEqual({ secure: true, uuid: "function", hostname: "pfm-demo.localhost" });
     await openBoundedSession(page, draft, demo.href, "Public/demo origin:");
+    expect(pageErrors).toEqual([]);
     expect(new URL(page.url()).origin).toBe(demo.origin);
     const actions = await showActions(page);
     await expect(actions.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
