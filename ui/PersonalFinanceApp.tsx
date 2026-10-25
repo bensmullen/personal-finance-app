@@ -1446,7 +1446,7 @@ function ForecastStatus({ label, state, compact = false, setupChanged = false, u
     data-modeled-periods={state.lastGoodResult && "points" in state.lastGoodResult ? state.lastGoodResult.points.length : undefined}
     data-reached-through={state.lastGoodResult && "reachedThrough" in state.lastGoodResult ? state.lastGoodResult.reachedThrough : undefined}>
     {ribbon ? <ContextDisclosure title={`Forecast: ${forecastContextLabel(state, setupChanged)}`}>{content}</ContextDisclosure> : content}
-    {ribbon && update && <CalmAction onClick={update}>Update forecast</CalmAction>}
+    {ribbon && update && <button type="button" className="calm-action context-update" aria-label="Update forecast" title="Update forecast" onClick={update}>Update</button>}
   </section>;
 }
 
