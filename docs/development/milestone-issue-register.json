@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "as_of": "2026-10-23",
+  "as_of": "2026-10-24",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
   "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120. D2 parallel reallocation 2026-10-17: #103's unimplemented retirement distribution/RMD scope is consolidated into #146; backend #146/#147/#148 may overlap U1 #120 after approved financial contracts and #149 shared interface freeze. #149 alone owns deferred cross-domain/UI seams and final D2-D acceptance. #114 is merged preparation, not D2 functionality. U1B-C #142 closed after PR #157 merged; U1B-D #161 newly allocated to its own stage, implementation sequential after merged registration PR, not blocked by final #120 UAT. U1B-E requires separate later authorization.",
   "stage_gates": {
@@ -59,14 +59,15 @@
       ]
     },
     "U1B_UX": {
-      "stage": "U1B UX technical Overview → projected-tax assumption → source-bound payroll execution → working flagship age-90/65 and low-input first run → Cash",
-      "blocking_transition": "Begin U1B-E Planning/V6 phase on fresh main; final integrated product UAT remains separately gated by D1_U1/#120",
+      "stage": "U1B UX foundation, flagship age-90 forecast, Calm Cash and shared household/status ribbon",
+      "blocking_transition": "Begin U1B-E Planning/V6 only after #171 Cash and #240 shared context ribbon independently audited, merged and visually accepted; final integrated product UAT remains D1_U1/#120",
       "required_issue_numbers": [
         170,
         189,
         101,
         181,
-        171
+        171,
+        240
       ]
     },
     "U1B_E": {
@@ -89,6 +90,14 @@
       "blocking_transition": "Declare #224 duration-balanced CI optimization implemented only after its framework PR is merged, exact-head selected CI is all-green, test-inventory equivalence and aggregate fail-closed behavior are verified, and critical-path/runner-minute evidence is compared. Independent of D1/U1/D2/R11 product release gates.",
       "required_issue_numbers": [
         224
+      ]
+    },
+    "FUTURE_CONDITIONAL": {
+      "stage": "Future optional spending-category and incremental-forecast capabilities; not alpha release blockers",
+      "blocking_transition": "Begin implementation of #235 or #238 only after independently approved architecture/product design, authorized V3 contracts and dependencies. Not a mandatory U1/D1, U1B or private-alpha readiness condition.",
+      "required_issue_numbers": [
+        235,
+        238
       ]
     }
   },
@@ -276,25 +285,6 @@
       "scope": "COMPLETED and closed: U1B-C Cash task links and selected-month partial source-backed V4, merged PR #157 (c8c41d835184871f31dbde587d1cf3c927017e0c), final branch-head CI successful and independently audited. Withholding remains outside scope (#101), final U1/D1 PM UAT #120 remains open. U1B-D follows serially."
     },
     {
-      "issue_number": 161,
-      "owner_stage": "U1B-D-real-estate-debt-V5-amortization",
-      "blocking_gate": "U1B_D",
-      "depends_on": [
-        142
-      ],
-      "spec_requirement_ids": [
-        "PFA-DET-008",
-        "PFA-DET-014",
-        "PFA-UX-015",
-        "PFA-UX-019",
-        "PFA-UX-020",
-        "PFA-UX-021",
-        "PFA-UX-022",
-        "PFA-UX-023"
-      ],
-      "scope": "New bounded Codex V3 task: Real Estate/Debt chart-first V5 actual *paid* mortgage interest/scheduled/extra principal, correctly scoped cumulative totals, selected-loan balance, read-only same-date property equity and original Debt/Asset writer; lazy bounded replay evidence and honest unavailable/stale. Only begins after this registration PR merges; U1B-E follows after D; overall PM owner UAT #120 separately gates D1_U1. D2-A/B/C modules remain disjoint."
-    },
-    {
       "issue_number": 146,
       "owner_stage": "D2-A-retirement-benefits",
       "blocking_gate": "D2",
@@ -361,45 +351,23 @@
       "scope": "Early S1-S8 shared finance contract freeze, one-writer compiler/ledger/scheduler/payroll/tax/read-model integration, explicit A-B-C and U1 #120/withholding #101/tax #138 seam ledger, later U1-authoring handshake, all-domain truth table and final accepted PM UAT. #120 dependency is for D2-D closeout, not early D2 module work."
     },
     {
-      "issue_number": 202,
-      "owner_stage": "D2-D-FSA-funded-reimbursement",
-      "blocking_gate": "D2",
+      "issue_number": 161,
+      "owner_stage": "U1B-D-real-estate-debt-V5-amortization",
+      "blocking_gate": "U1B_D",
       "depends_on": [
-        114
+        142
       ],
       "spec_requirement_ids": [
-        "PFA-DET-020",
-        "PFA-TAX-015",
-        "PFA-INS-013"
+        "PFA-DET-008",
+        "PFA-DET-014",
+        "PFA-UX-015",
+        "PFA-UX-019",
+        "PFA-UX-020",
+        "PFA-UX-021",
+        "PFA-UX-022",
+        "PFA-UX-023"
       ],
-      "scope": "D2-D #149 owned opt-in physical FSA paid expense and independently authenticated BANK reimbursement; existing C3 source plan and year-chain evaluator read-only. No payroll/tax, new state schema or finalized carryover; gated on registration/design PR and merged #199. Failing source/funding stays incomplete."
-    },
-    {
-      "issue_number": 203,
-      "owner_stage": "D2-D-issuer-card-funded-payment",
-      "blocking_gate": "D2",
-      "depends_on": [
-        114
-      ],
-      "spec_requirement_ids": [
-        "PFA-DET-019",
-        "PFA-TAX-015"
-      ],
-      "scope": "D2-D #149 owned opt-in physically funded issuer-quoted card interest and BANK repayment using existing B1 source and card cycle proofs; single household state writer, no generic guessed APR/minimum or shared state schema. Must wait for merged PR #200 and registration PR; late fees/future cycles remain incomplete."
-    },
-    {
-      "issue_number": 204,
-      "owner_stage": "D2-D-RMD-transaction-journal-architecture",
-      "blocking_gate": "D2",
-      "depends_on": [
-        114
-      ],
-      "spec_requirement_ids": [
-        "PFA-DET-017",
-        "PFA-TAX-015",
-        "PFA-DET-023"
-      ],
-      "scope": "Single-owner shared state and portable replay retirement transaction/RMD allocation journal architecture decision before physical funded RMD satisfaction. Design/PM approval only: no Codex implementation until approved design, merged PR #201 and nonoverlapping #101 paths; follow-on staged J1 state journal then J2 atomic cash-integrated settlement."
+      "scope": "New bounded Codex V3 task: Real Estate/Debt chart-first V5 actual *paid* mortgage interest/scheduled/extra principal, correctly scoped cumulative totals, selected-loan balance, read-only same-date property equity and original Debt/Asset writer; lazy bounded replay evidence and honest unavailable/stale. Only begins after this registration PR merges; U1B-E follows after D; overall PM owner UAT #120 separately gates D1_U1. D2-A/B/C modules remain disjoint."
     },
     {
       "issue_number": 170,
@@ -470,7 +438,8 @@
       "owner_stage": "U1B-E-planning-retirement-insight",
       "blocking_gate": "U1B_E",
       "depends_on": [
-        171
+        171,
+        240
       ],
       "spec_requirement_ids": [
         "PFA-UX-001",
@@ -485,7 +454,7 @@
         "PFA-UX-022",
         "PFA-UX-024"
       ],
-      "scope": "U1B-E Planning: source-backed by-period retirement income composition V6 when identifiable (no imagined streams), readable age90/65 selected-adult timeline, honest partial/tax/benefit bounds and meaningful Investing/Debt first-screen value/outlook or explicit source gap. After #171 Cash merge; exact high-stakes facts remain in existing writers and engine. 1440/390 functional+visual evidence and final integrated PM UAT under #120."
+      "scope": "U1B-E Planning: source-backed by-period retirement income composition V6 when identifiable (no imagined streams), readable age90/65 selected-adult timeline, honest partial/tax/benefit bounds and meaningful Investing/Debt first-screen value/outlook or explicit source gap. After #171 Cash and #240 shared ribbon merges and #240 PM visual UAT; exact high-stakes facts remain in existing writers and engine. 1440/390 functional+visual evidence and final integrated PM UAT under #120."
     },
     {
       "issue_number": 189,
@@ -501,6 +470,47 @@
         "PFA-UX-024"
       ],
       "scope": "PM-approved financial-completeness distinction: expressly selected projected-current-law rules may yield computed/completed scenario values with distinct law confidence, but any missing applicable tax/payroll/settlement support still blocks affected outputs. Version/fingerprint and summary/replay consistency; engine/compiler only. Independent prerequisite to #181, then #171/#187 and #120 final UAT."
+    },
+    {
+      "issue_number": 202,
+      "owner_stage": "D2-D-FSA-funded-reimbursement",
+      "blocking_gate": "D2",
+      "depends_on": [
+        114
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-020",
+        "PFA-TAX-015",
+        "PFA-INS-013"
+      ],
+      "scope": "D2-D #149 owned opt-in physical FSA paid expense and independently authenticated BANK reimbursement; existing C3 source plan and year-chain evaluator read-only. No payroll/tax, new state schema or finalized carryover; gated on registration/design PR and merged #199. Failing source/funding stays incomplete."
+    },
+    {
+      "issue_number": 203,
+      "owner_stage": "D2-D-issuer-card-funded-payment",
+      "blocking_gate": "D2",
+      "depends_on": [
+        114
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-019",
+        "PFA-TAX-015"
+      ],
+      "scope": "D2-D #149 owned opt-in physically funded issuer-quoted card interest and BANK repayment using existing B1 source and card cycle proofs; single household state writer, no generic guessed APR/minimum or shared state schema. Must wait for merged PR #200 and registration PR; late fees/future cycles remain incomplete."
+    },
+    {
+      "issue_number": 204,
+      "owner_stage": "D2-D-RMD-transaction-journal-architecture",
+      "blocking_gate": "D2",
+      "depends_on": [
+        114
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-017",
+        "PFA-TAX-015",
+        "PFA-DET-023"
+      ],
+      "scope": "Single-owner shared state and portable replay retirement transaction/RMD allocation journal architecture decision before physical funded RMD satisfaction. Design/PM approval only: no Codex implementation until approved design, merged PR #201 and nonoverlapping #101 paths; follow-on staged J1 state journal then J2 atomic cash-integrated settlement."
     },
     {
       "issue_number": 218,
@@ -539,6 +549,55 @@
         "PFA-UX-024"
       ],
       "scope": "Post-#218 urgent Python 3.8 bounded-preflight hook compatibility and directly affected import-path protection; fail-closed unauthorized tool safety, no discarded authorized WIP on optional preflight failure, safe BLOCKED checkpoint and negative-path tooling self-test. Framework-only prerequisite before resuming #181; #181 remains U1B product owner; candidates #134/#217 stay independent learning records."
+    },
+    {
+      "issue_number": 235,
+      "owner_stage": "future-incremental-forecast-optimization",
+      "blocking_gate": "FUTURE_CONDITIONAL",
+      "depends_on": [],
+      "spec_requirement_ids": [
+        "PFA-PERF-009",
+        "PFA-PERF-010",
+        "PFA-PERF-019",
+        "PFA-PERF-020",
+        "PFA-UX-020"
+      ],
+      "scope": "PM-requested post-PR #207 research for provenance-correct dependency-aware incremental forecast recalculation and unchanged chart renders, respecting cross-domain cash funding. Future architecture study only, no Codex authorization, not required for #120/U1B or private alpha without a subsequent PM decision."
+    },
+    {
+      "issue_number": 238,
+      "owner_stage": "future-category-specific-spending-growth-authoring",
+      "blocking_gate": "FUTURE_CONDITIONAL",
+      "depends_on": [
+        187
+      ],
+      "spec_requirement_ids": [
+        "PFA-UX-016",
+        "PFA-UX-017",
+        "PFA-UX-021",
+        "PFA-UX-024"
+      ],
+      "scope": "Optional effective-annual expense-category growth override with one canonical Assumption/P08 per proven scope, preserving explicit per-expense binding, shared default and scenario provenance. Architecture/precedence decisions and PM priority required before V3 Codex authorization; separate from #171/#240/#187 and not an automatic private-alpha/U1B release blocker."
+    },
+    {
+      "issue_number": 240,
+      "owner_stage": "U1B-shared-context-ribbon",
+      "blocking_gate": "U1B_UX",
+      "depends_on": [
+        171
+      ],
+      "spec_requirement_ids": [
+        "PFA-UX-001",
+        "PFA-UX-005",
+        "PFA-UX-009",
+        "PFA-UX-015",
+        "PFA-UX-018",
+        "PFA-UX-019",
+        "PFA-UX-020",
+        "PFA-UX-021",
+        "PFA-UX-024"
+      ],
+      "scope": "One canonical household and its recorded Person membership, actual selected executable plan, distinct Model/Forecast lifecycle and provenance, manual Save/Export and privacy in an accessible compact persistent header. After #171 Cash merge; 1440/390/200%-zoom CI, independent semantic/visual audit and PM visual UAT gate #187 Planning. Never invent multi-household switching, per-person forecast or duplicate financial source/worker payload."
     }
   ],
   "legacy_open_task_reconciliation": {

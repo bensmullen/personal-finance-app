@@ -49,7 +49,9 @@ describe("#203 independent source-qualified portable replay", () => {
       expect(worker.status, worker.stderr).toBe(0);
       expect(JSON.parse(worker.stdout)).toEqual({ rejected: true });
     } finally { rmSync(directory, { recursive: true, force: true }); }
-  });
+  // Four fresh vite-node child processes are part of the portable replay proof.
+  // Their startup time fluctuates on shared CI hosts; retain every assertion.
+  }, 20_000);
   it("rejects receipt/archive wire tampering and unavailable or changed independent issuer sources", () => {
     const f = fixture(13), result = runHouseholdKernel({ kernel: f.kernel, runContext: f.context });
     const artifact = createPortableHouseholdReplayArtifact(result);
