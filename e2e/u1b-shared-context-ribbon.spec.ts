@@ -252,8 +252,9 @@ for (const width of [1440, 390]) {
           if (style) await style.evaluate(element => element.remove());
         }
       }
-      await showActions(page);
-      await summary.click();
+      // Explicitly expand both the forecast and its nested limitations on
+      // desktop and mobile. The mobile More menu opens only the outer status.
+      await showForecastLimitations(page);
       // The leading warning and expanded limitations describe the same fact.
       // Expanded detail must own the only visible repair; use its source scope.
       const repair = details.locator(".forecast-guidance").getByRole("button", { name: "Review Frequency", exact: true });
@@ -286,8 +287,8 @@ for (const width of [1440, 390]) {
       await page.keyboard.press("Escape");
       await expect(people).not.toHaveAttribute("open");
       await expect(people.locator(":scope > summary")).toBeFocused();
-      await showActions(page);
-      await summary.click();
+      await showForecastLimitations(page);
+      await expect(repair).toBeVisible();
       await repair.click();
       const editor = page.getByRole("dialog", { name: "Edit Income", exact: true });
       await editor.getByLabel("Frequency", { exact: true }).selectOption("monthly");
