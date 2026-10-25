@@ -10,7 +10,7 @@ export function ContextDisclosure({ title, children, className = "" }: { title: 
       const root = ref.current;
       if (!root?.open) return;
       if (event instanceof KeyboardEvent) {
-        if (event.key !== "Escape" || !root.contains(document.activeElement)) return;
+        // Use the original key event target: a dialog may restore focus into this\n        // disclosure while its own Escape event bubbles to document.\n        if (event.key !== "Escape" || !root.contains(event.target as Node)) return;
         event.preventDefault();
         root.open = false;
         root.querySelector("summary")?.focus();
