@@ -204,7 +204,14 @@ export function proposeHelocPhaseServicing(input: PhaseServicingRequest): PhaseS
     : a.sequence - b.sequence || (a.postingId < b.postingId ? -1 : a.postingId > b.postingId ? 1 : 0));
   for (const [i, h] of history.entries()) {
     source(h.source, h.effectiveAt);
-    for (const id of [h.postingId, h.operationId, h.claimId, h.authorizationId, h.fundingId]) reserve(id);
+    reserve(h.postingId);
+    // The original draw producer uses accountingTransactionId(operationId),
+    // preserving the source operation string as its canonical journal ID. Only
+    // those two roles within this ONE draw occurrence may alias. Reserve the
+    // value once so every later occurrence/role still fails on reuse. This is
+    // conditional input compatibility, never verification of an actual posting.
+    if (!(h.kind === "draw" && h.evidenceKind === "canonical_posting" && h.operationId === h.postingId)) reserve(h.operationId);
+    for (const id of [h.claimId, h.authorizationId, h.fundingId]) reserve(id);
     const principal = cents(h.principal), interest = cents(h.interest), cash = cents(h.cash);
     if (h.evidenceKind !== "canonical_posting" || !dateOK(h.effectiveAt) || h.effectiveAt < c.originalAt || h.effectiveAt > c.closingAt
       || !Number.isSafeInteger(h.sequence) || h.sequence < 0
