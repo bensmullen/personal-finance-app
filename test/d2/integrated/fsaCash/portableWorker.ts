@@ -11,8 +11,10 @@ const mode = process.env.PFM_FSA_CASH_SOURCE;
 // Source is reconstructed independently from the fixed synthetic owner fixture,
 // not decoded from a caller receipt or from portable artifact economic inputs.
 const raw = source();
-registerFsaCashSourceProvider({ lookup: id => mode === "missing" || id !== raw.sourceId ? undefined
-  : mode === "amended" ? { ...raw, version: "amended" } : raw });
+if (mode !== "unregistered") registerFsaCashSourceProvider({ lookup: id => mode === "missing" || id !== raw.sourceId ? undefined
+  : mode === "amended" ? { ...raw, version: "amended" }
+  : mode === "original_changed" ? { ...raw, original: { ...raw.original, approvalId: "changed-original" } }
+  : mode === "timestamp_changed" ? { ...raw, deposit: { ...raw.deposit, knownAt: raw.original.knownAt } } : raw });
 const { artifact, selected } = JSON.parse(readFileSync(path, "utf8"));
 try {
   const result = replayHouseholdForecastWindow(restorePortableHouseholdReplayArtifact(artifact), selected);
