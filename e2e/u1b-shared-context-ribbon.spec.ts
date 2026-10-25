@@ -6,7 +6,7 @@ import { clickFinancialDestination, navigateOwner, expectForecastWindow, saveCur
 // Browser launch options are worker-scoped. Declare them at file scope:
 // a test.describe-local launchOptions override aborts all Playwright discovery.
 // Other tests do not navigate to the mapped demo hostname.
-test.use({ launchOptions: { args: ["--host-resolver-rules=MAP pfm-demo.invalid 127.0.0.1", "--no-proxy-server"] } });
+test.use({ launchOptions: { args: ["--host-resolver-rules=MAP pfm-demo.localhost 127.0.0.1", "--no-proxy-server"] } });
 
 // Only the holistic journey needs the flagship's 649-month worker setup.
 // Independent cases use one-year guided setup followed by unexecuted imports.
