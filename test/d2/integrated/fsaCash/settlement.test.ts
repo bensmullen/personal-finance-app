@@ -152,10 +152,17 @@ describe("#202 independently source-qualified FSA physical cash", () => {
       delete noOriginal.d2PostedTransactions![originalTransaction(s).id];
       requalifyD2SettlementReceiptHistory(noOriginal, f.context);
     }).toThrow();
-    // A compact v2 participant may not relabel a v1 receipt or silently rewrite
-    // old canonical source/journal identities in an existing state stream.
+    // A compact v2 participant cannot relabel a v1 receipt or rewrite an
+    // existing canonical journal. A prior untouched period may complete as a
+    // non-posting prefix before the legacy receipt is encountered; that later
+    // period must fail closed and preserve the entire original state.
     const mixed = runHouseholdKernel({ kernel: attachFsaCash(fixture(13, summary.state).kernel, input(s)), runContext: f.context });
-    expect(mixed.periods).toEqual([]); expect(mixed.state).toEqual(summary.state);
+    expect(mixed.status).toBe("incomplete");
+    expect(mixed.periods).toHaveLength(1);
+    expect(mixed.state).toEqual(summary.state);
+    expect(mixed.state.d2SettlementReceipts).toEqual(summary.state.d2SettlementReceipts);
+    expect(mixed.state.d2PostedTransactions).toEqual(summary.state.d2PostedTransactions);
+    expect(mixed.state.identities).toEqual(summary.state.identities);
 
     // Tamper only the legacy full-source receipt binding, and recompute outer
     // integrity: independent receipt requalification must still reject it.
