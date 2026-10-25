@@ -138,6 +138,22 @@ dirty paths and pushes them before permitting the stop. WIP checkpoints preserve
 work; they are not implementation acceptance, verified evidence, or merge-ready
 commits and cannot alone satisfy COMPLETE.
 
+**A normal BLOCKED response is terminal, not a paused interactive question.**
+Its Stop hook closes the task grant. When the PM answers a product or scope
+question and updates the same live issue, open a **fresh Codex chat** in the
+original clean, remote-synchronized feature worktree and submit
+`PFM_TASK_ISSUE: N` to obtain a *new* issue-hash-bound authorization. A mere
+"please continue" in the closed chat is read-only; do not retry stale turns or
+change receipt files. No new branch or worktree is needed when the existing one
+is verified clean and synced. The current issue may widen test-only scope, but
+the new turn must use its own receipt and all originally approved financial
+checks. If a hook blocks even the fresh issue submission, report its exact
+error plus read-only branch/HEAD/upstream/receipt evidence; do not bypass it.
+
+This differs from an **abnormal interruption without Stop**, where an
+existing *active* owning receipt may be recovered in the same session through
+the already guarded checkpoint continuation path.
+
 **Optional-preflight/hook failure preservation:** A rejected or crashed optional
 `limited-local-verification` request does **not** invalidate already authorized
 product edits. If ordinary authorized editing remains safe, continue the task
