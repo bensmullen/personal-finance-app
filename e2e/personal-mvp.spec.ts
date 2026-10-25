@@ -1480,6 +1480,7 @@ for (const width of [390, 1440]) {
     await expect(editor.locator("details").filter({ hasText: "Additional financial details" })).not.toHaveAttribute("open");
     await expect(editor.getByLabel("Source / name", { exact: true })).not.toBeFocused();
     await page.keyboard.press("Escape");
+    await expect(repair).toBeVisible();
     await expect(repair).toBeFocused();
     await repair.click();
     await expect(editor.getByLabel("Frequency", { exact: true })).toBeFocused();

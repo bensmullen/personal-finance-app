@@ -9,8 +9,12 @@ export function ContextDisclosure({ title, children, className = "" }: { title: 
     const close = (event: PointerEvent | KeyboardEvent) => {
       const root = ref.current;
       if (!root?.open) return;
+      // Owner dialogs are outside the ribbon DOM. Their keys and pointer
+      // interactions belong to the editor, including its dismissal event.
+      if (event.defaultPrevented || (event.target instanceof Element && event.target.closest('[role="dialog"], .drawer-backdrop'))) return;
       if (event instanceof KeyboardEvent) {
-        // Use the original key event target: a dialog may restore focus into this\n        // disclosure while its own Escape event bubbles to document.\n        if (event.key !== "Escape" || !root.contains(event.target as Node)) return;
+        // Focus can return to the opener before this event reaches document.
+        if (event.key !== "Escape" || !root.contains(event.target as Node)) return;
         event.preventDefault();
         root.open = false;
         root.querySelector("summary")?.focus();
@@ -34,8 +38,9 @@ export function forecastContextLabel(state: { pending: boolean; stale: boolean; 
   return ({ completed: "Ready", incomplete: "Partial", unsupported: "Unsupported", idle: "Needs setup" } as Record<string, string>)[state.lifecycle] ?? "Unavailable";
 }
 
-export function SharedContextRibbon({ household, people, plan, modelStatus, modelDetails, forecast, save, saveLabel, storage, onPerson, onPeople }: {
+export function SharedContextRibbon({ household, people, membershipReview, plan, modelStatus, modelDetails, forecast, save, saveLabel, storage, onPerson, onPeople }: {
   household: string; people: readonly { id: string; label: string }[]; plan: string;
+  membershipReview?: string;
   modelStatus: string; modelDetails: ReactNode; forecast: ReactNode;
   save: () => void; saveLabel: string; storage: string;
   onPerson: (id: string) => void; onPeople: () => void;
@@ -48,8 +53,9 @@ export function SharedContextRibbon({ household, people, plan, modelStatus, mode
   return <section className="shared-context" aria-label="Household & status">
     <ContextDisclosure title={<><span className="context-household">{household}</span><span className="context-menu-hint"> · People</span></>} className="context-people">
       <h2>Household &amp; People</h2>
-      <p>One household · member links open recorded people. Forecast scope stays household-wide.</p>
-      {people.length ? people.map(person => <button key={person.id} type="button" onClick={event => choose(event, () => onPerson(person.id))}>{person.label}</button>) : <p>No people recorded.</p>}
+      <p>Member links open recorded people. Forecast scope stays household-wide.</p>
+      {membershipReview && <p role="status">Needs review: {membershipReview} Use Add / edit household &amp; people to correct the recorded relationships.</p>}
+      {people.length ? people.map(person => <button key={person.id} type="button" onClick={event => choose(event, () => onPerson(person.id))}>{person.label}</button>) : <p>No verified household members.</p>}
       <button type="button" onClick={event => choose(event, onPeople)}>Add / edit household &amp; people</button>
     </ContextDisclosure>
     <div className="context-plan"><span>{plan}</span><small>Household forecast</small></div>

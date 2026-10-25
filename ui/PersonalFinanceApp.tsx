@@ -1,6 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { canonicalId, resolveHouseholdScope } from "../src/application/compiler/shared.js";
 import { CashChartDetails, CalmAction, CalmDisclosure, CalmMetric, CalmPageHeader, CalmPanel, ContextDisclosure, SharedContextRibbon, forecastContextLabel } from "./calm/CalmPresentation.js";
 import {
   Profiler,
@@ -825,6 +826,7 @@ export function PersonalFinanceApp() {
     );
   };
 
+  const contextIdentity = sharedContextIdentity(draft, effectiveHouseholdExecution?.selectedRootScenarioId);
   return (
     <FinancialFactEditors draft={draft} setDraft={updateCanonicalModel} openingReference={sessionSettings.asOf || sessionSettings.simulationStart}>
     <FinancialResultModels.Provider value={{ model: draft, baseline: interactive.baseline, comparison: interactive.comparison, explanations, setupChangesPending,
@@ -857,9 +859,9 @@ export function PersonalFinanceApp() {
           <span>Personal Finance</span>
         </button>
         <SharedContextRibbon
-          {...sharedContextIdentity(draft, effectiveHouseholdExecution?.selectedRootScenarioId)}
-          modelStatus={!position ? "Unavailable" : issues.length || position.status !== "complete" ? "Needs review" : "Ready"}
-          modelDetails={<><h2>Recorded model</h2><p>Current position: {position?.status ?? "unavailable"}. {issues.length} recorded fact issues.</p><p>As of {sessionSettings.asOf}; data cutoff {sessionSettings.dataCutoff}. Model readiness is separate from forecast coverage.</p><button data-context-route onClick={() => { const panel = document.querySelector<HTMLDetailsElement>(".task-readiness"); if (panel) { panel.open = true; focusRepair(panel); } }}>Review recorded facts</button></>}
+          {...contextIdentity}
+          modelStatus={!position ? "Unavailable" : contextIdentity.membershipReview || issues.length || position.status !== "complete" ? "Needs review" : "Ready"}
+          modelDetails={<><h2>Recorded model</h2><p>Current position: {position?.status ?? "unavailable"}. {issues.length} recorded fact issues.</p><p>As of {sessionSettings.asOf}; data cutoff {sessionSettings.dataCutoff}. Model readiness is separate from forecast coverage.</p>{contextIdentity.membershipReview && <><p>{contextIdentity.membershipReview}</p><button data-context-route onClick={() => navigate("Settings", "Household & People")}>Review household &amp; people</button></>}<button data-context-route onClick={() => { const panel = document.querySelector<HTMLDetailsElement>(".task-readiness"); if (panel) { panel.open = true; focusRepair(panel); } }}>Review recorded facts</button></>}
           forecast={<div className="context-forecast-region" role="region" aria-label="Requested and modeled coverage"><ForecastStatus label="Household forecast" state={interactive.baseline} ribbon setupChanged={setupChangesPending}
             update={interactive.available && !setupChangesPending ? runHouseholdForecast : undefined}
             coverage={<section className="forecast-coverage" data-requested-end={sessionSettings.simulationEnd} data-modeled-status={interactive.baseline.stale || interactive.baseline.pending ? "stale" : householdForecast?.status ?? "not_run"}>
@@ -1367,13 +1369,28 @@ function SetupWizard({
 }
 
 export function sharedContextIdentity(draft: PersonalDraft, selectedRootScenarioId?: string) {
-  const people = objectEntries(draft, "Person");
+  const households = objectEntries(draft, "Household");
+  const household = draft.objects.Household?.length === 1 && households.length === 1 && canonicalId(households[0]!, "household_id") ? households[0] : undefined;
+  // Reuse canonical validation and UUID normalization; never invent an execution
+  // scope when recorded membership is contradictory or identity is ambiguous.
+  const scope = resolveHouseholdScope(draft);
+  const people = scope.status === "compiled" ? scope.value.memberIds
+    .map(id => scope.value.peopleById.get(id)!)
+    .filter(person => canonicalId(person, "household_id") === scope.value.householdId) : [];
+  const membershipReview = !household
+    ? "A single household with a valid identity is required."
+    : scope.status !== "compiled" || people.length !== objectEntries(draft, "Person").length
+      ? "Some recorded member identities or household links are missing, invalid or inconsistent."
+      : undefined;
   const labels = people.map(person => objectLabel("Person", person).trim() || "Unnamed person");
+  const labelCounts = new Map<string, number>();
+  for (const label of labels) labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
   const selected = objectEntries(draft, "Scenario").find(item => objectId("Scenario", item) === selectedRootScenarioId && item.enabled === true && item.base_scenario_id == null);
   const saved = currentPlan(draft);
   return {
-    household: objectEntries(draft, "Household").map(item => typeof item.name === "string" && item.name.trim() ? item.name : "Unnamed household").join(" · ") || "Unnamed household",
-    people: people.map((person, index) => ({ id: objectId("Person", person), label: labels.filter(label => label === labels[index]).length > 1 ? `${labels[index]} · member ${index + 1}${person.date_of_birth ? ` · born ${person.date_of_birth}` : ""}` : labels[index]! })),
+    household: household ? typeof household.name === "string" && household.name.trim() ? household.name : "Unnamed household" : "Household unavailable",
+    ...(membershipReview ? { membershipReview } : {}),
+    people: people.map((person, index) => ({ id: objectId("Person", person), label: labelCounts.get(labels[index]!)! > 1 ? `${labels[index]} · ID ${objectId("Person", person)}${person.date_of_birth ? ` · born ${person.date_of_birth}` : ""}` : labels[index]! })),
     plan: selected ? objectLabel("Scenario", selected) : saved ? `${objectLabel("Scenario", saved)} · saved plan (execution not selected)` : "No active plan",
   };
 }

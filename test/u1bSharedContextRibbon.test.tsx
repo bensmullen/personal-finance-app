@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { SharedContextRibbon, forecastContextLabel } from "../ui/calm/CalmPresentation.js";
 import { sharedContextIdentity } from "../ui/PersonalFinanceApp.js";
-import { createEmptyPersonalDraft, createGoldenHouseholdDraft } from "../src/application/personalMvp.js";
+import { createEmptyPersonalDraft, createGoldenHouseholdDraft, type PersonalDraft } from "../src/application/personalMvp.js";
 
 describe("shared household context", () => {
   it.each([
@@ -23,18 +23,54 @@ describe("shared household context", () => {
 
   it("uses real canonical labels, distinct IDs for duplicate names, and explicit empty states", () => {
     const empty = createEmptyPersonalDraft("94000000-0000-4000-8000-000000000240");
-    expect(sharedContextIdentity(empty)).toEqual({ household: "Unnamed household", people: [], plan: "No active plan" });
+    expect(sharedContextIdentity(empty)).toMatchObject({ household: "Household unavailable", people: [], plan: "No active plan", membershipReview: expect.any(String) });
     const draft = createGoldenHouseholdDraft();
     const original = JSON.stringify(draft);
     const one = sharedContextIdentity(draft);
     expect(one.people).toHaveLength(1);
     expect(one.people[0]!.label).toBe("Taylor Example");
     const person = draft.objects.Person![0] as Record<string, any>;
-    const duplicates = { ...draft, objects: { ...draft.objects, Person: [person, { ...person, person_id: "94000000-0000-4000-8000-000000000241" }, { ...person, person_id: "94000000-0000-4000-8000-000000000242", first_name: "", last_name: "" }] } };
+    const members = [person, { ...person, person_id: "94000000-0000-4000-8000-000000000241" }, { ...person, person_id: "94000000-0000-4000-8000-000000000242", first_name: "", last_name: "" }];
+    const duplicates = { ...draft, objects: { ...draft.objects, Household: [{ ...draft.objects.Household![0]!, members: members.map(item => item.person_id) }], Person: members } };
     const identity = sharedContextIdentity(duplicates);
     expect(new Set(identity.people.map(item => item.id)).size).toBe(3);
-    expect(identity.people.map(item => item.label)).toEqual(["Taylor Example · member 1 · born 1990-01-01", "Taylor Example · member 2 · born 1990-01-01", "Unnamed person"]);
+    expect(identity.people.map(item => item.label)).toEqual([`Taylor Example · ID ${person.person_id} · born 1990-01-01`, "Taylor Example · ID 94000000-0000-4000-8000-000000000241 · born 1990-01-01", "Unnamed person"]);
+    expect(identity.membershipReview).toBeUndefined();
+    expect(sharedContextIdentity({ ...duplicates, objects: { ...duplicates.objects, Person: [...members].reverse() } }).people).toEqual(identity.people);
     expect(JSON.stringify(draft)).toBe(original);
+  });
+
+  it.each(["unlinked", "foreign", "missing person", "wrong household", "missing household link", "duplicate ID", "missing ID", "duplicate reference", "multiple households", "zero", "unnamed household"])("reconciles %s without inventing membership", kind => {
+    const draft = createGoldenHouseholdDraft();
+    const person = draft.objects.Person![0]!;
+    const household = draft.objects.Household![0]!;
+    const extraId = "94000000-0000-4000-8000-000000000244";
+    let changed: PersonalDraft = { ...draft, objects: { ...draft.objects } };
+    switch (kind) {
+      case "unlinked": changed = { ...changed, objects: { ...changed.objects, Person: [person, { ...person, person_id: extraId }] } }; break;
+      case "foreign": changed = { ...changed, objects: { ...changed.objects, Person: [person, { ...person, person_id: extraId, household_id: extraId }] } }; break;
+      case "missing person": changed = { ...changed, objects: { ...changed.objects, Person: [] } }; break;
+      case "wrong household": changed = { ...changed, objects: { ...changed.objects, Household: [{ ...household, household_id: extraId }] } }; break;
+      case "missing household link": changed = { ...changed, objects: { ...changed.objects, Person: [{ ...person, household_id: null }] } }; break;
+      case "duplicate ID": changed = { ...changed, objects: { ...changed.objects, Person: [person, person] } }; break;
+      case "missing ID": changed = { ...changed, objects: { ...changed.objects, Person: [{ ...person, person_id: null }] } }; break;
+      case "duplicate reference": changed = { ...changed, objects: { ...changed.objects, Household: [{ ...household, members: [person.person_id!, person.person_id!] }] } }; break;
+      case "multiple households": changed = { ...changed, objects: { ...changed.objects, Household: [household, { ...household, household_id: extraId, name: "Other household" }] } }; break;
+      case "zero": changed = { ...changed, objects: { ...changed.objects, Household: [{ ...household, members: [] }], Person: [] } }; break;
+      case "unnamed household": changed = { ...changed, objects: { ...changed.objects, Household: [{ ...household, name: "" }] } }; break;
+    }
+    const original = JSON.stringify(changed);
+    const identity = sharedContextIdentity(changed);
+    if (kind === "unnamed household") {
+      expect(identity.household).toBe("Unnamed household");
+      expect(identity.people).toHaveLength(1);
+      expect(identity.membershipReview).toBeUndefined();
+    } else {
+      expect(identity.membershipReview).toBeTruthy();
+      expect(identity.people.map(item => item.id)).toEqual(kind === "foreign" ? [person.person_id] : []);
+      if (kind === "multiple households") expect(identity.household).toBe("Household unavailable");
+    }
+    expect(JSON.stringify(changed)).toBe(original);
   });
 
   it("prefers the actual executable root over the saved plan and qualifies fallback", () => {
