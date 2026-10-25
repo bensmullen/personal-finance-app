@@ -5,6 +5,7 @@ import { registerRetirementDistributionSourceAuthority, retirementDistributionSo
   type AuthoritativeState, type D2SettlementSourceContext, type RetirementDistributionRecord, type RetirementSourceQualification } from "../../../../state/index.js";
 import { civilDate, instant, type Instant } from "../../../../time/index.js";
 import { Money, USD } from "../../../../values/index.js";
+import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
 import { canonicalSerialize } from "../../../run.js";
 import { evaluateWithdrawals } from "../../retirement/withdrawals/index.js";
@@ -14,6 +15,7 @@ import type { RetirementCashInput } from "./index.js";
 export interface RetirementSourceReference {
   readonly sourceId: string;
   readonly sourceVersion: string;
+  readonly contentDigest?: string;
 }
 /** Independently published raw inputs; no posted_funded flag or journal input. */
 export interface RetirementRawSource extends RetirementSourceReference {
@@ -38,6 +40,21 @@ const canonicalRaw = (value: unknown): unknown => {
   return value;
 };
 
+/** Full original evidence, including identity, cash, approvals and prior usage.
+ * Evidence arrays are sets; explicit ordering edges retain economic precedence.
+ * This version is a change witness, never publisher authentication. */
+export const retirementRawSourceDigest = (raw: RetirementRawSource): string =>
+  `retirement-raw/v2:sha256:${sha256(canonicalSerialize(canonicalRaw(raw)))}`;
+
+/** Regenerate old witnesses from the live original; never echo archived bytes. */
+export function qualifyRetirementRecordedSource(raw: RetirementRawSource, operationId: string,
+  context: D2SettlementSourceContext, ruleVersion: string): RetirementSourceQualification {
+  const legacy = canonicalSerialize(canonicalRaw(raw));
+  if (ruleVersion !== legacy && ruleVersion !== retirementRawSourceDigest(raw))
+    return { status: "incomplete", reason: "source_not_qualified" };
+  return qualifyRetirementRawSource(raw, operationId, context, ruleVersion === legacy);
+}
+
 /** Called by the embedding composition root, including in every restore process.
  * Portable configuration contains addresses, never the publisher callback. */
 export function registerRetirementRawSourcePort(port: RetirementRawSourcePort): void {
@@ -46,7 +63,7 @@ export function registerRetirementRawSourcePort(port: RetirementRawSourcePort): 
     try {
     const raw = readRetirementRawSource(source, context);
     const confirmation = raw?.cash.confirmations.find(q => q.source.id === source.sourceApprovalId);
-    const qualification = raw && confirmation && qualifyRetirementRawSource(raw, confirmation.operationId, context);
+    const qualification = raw && confirmation && qualifyRetirementRecordedSource(raw, confirmation.operationId, context, source.ruleVersion);
     return qualification?.status === "qualified" && same(qualification.distribution.source, source)
       ? qualification : { status: "incomplete", reason: "source_not_qualified" };
     } catch { return { status: "incomplete", reason: "source_not_qualified" }; }
@@ -57,7 +74,8 @@ export function registerRetirementRawSourcePort(port: RetirementRawSourcePort): 
 export function readRetirementRawSource(reference: RetirementSourceReference, context: D2SettlementSourceContext): RetirementRawSource | undefined {
   try {
     const raw = provider?.read(reference, context);
-    if (!raw || raw.sourceId !== reference.sourceId || raw.sourceVersion !== reference.sourceVersion) return undefined;
+    if (!raw || raw.sourceId !== reference.sourceId || raw.sourceVersion !== reference.sourceVersion
+      || (reference.contentDigest !== undefined && reference.contentDigest !== retirementRawSourceDigest(raw))) return undefined;
     return immutableConfiguration(raw);
   } catch { return undefined; }
 }
@@ -71,7 +89,7 @@ export function qualifyRetirementPriorHistory(raw: RetirementRawSource, state: A
     || !same([...raw.priorOperationIds].sort(), records.filter(d => !planned.has(d.operationId)).map(d => d.operationId).sort())) return false;
   for (const record of records) {
     const original = readRetirementRawSource(record.source, context);
-    const qualification = original && qualifyRetirementRawSource(original, record.operationId, context);
+    const qualification = original && qualifyRetirementRecordedSource(original, record.operationId, context, record.source.ruleVersion);
     if (qualification?.status !== "qualified" || !same(qualification.distribution, record)) return false;
     if (!planned.has(record.operationId) && (!raw.cash.withdrawals.usage.operationIds.includes(record.operationId)
       || !raw.cash.withdrawals.usage.withdrawalIds.includes(record.withdrawalId)
@@ -85,13 +103,13 @@ export function qualifyRetirementPriorHistory(raw: RetirementRawSource, state: A
 
 /** Rebuild from raw A4 inputs, never from the caller's record or bundle. */
 export function qualifyRetirementRawSource(raw: RetirementRawSource, operationId: string,
-  context: D2SettlementSourceContext): RetirementSourceQualification {
-  try { return rebuildRetirementDistribution(raw, operationId, context); }
+  context: D2SettlementSourceContext, legacy = false): RetirementSourceQualification {
+  try { return rebuildRetirementDistribution(raw, operationId, context, legacy); }
   catch { return { status: "incomplete", reason: "source_not_qualified" }; }
 }
 
 function rebuildRetirementDistribution(raw: RetirementRawSource, operationId: string,
-  context: D2SettlementSourceContext): RetirementSourceQualification {
+  context: D2SettlementSourceContext, legacy: boolean): RetirementSourceQualification {
   const incomplete = { status: "incomplete", reason: "source_not_qualified" } as const;
   const evaluation = evaluateWithdrawals(raw.cash.withdrawals), binding = evaluateWithdrawalRmd(raw.binding);
   if (!binding.bundle || evaluation.coverage !== "complete" || !same(raw.binding.withdrawals, raw.cash.withdrawals)
@@ -143,7 +161,7 @@ function rebuildRetirementDistribution(raw: RetirementRawSource, operationId: st
   };
   const source: RetirementDistributionRecord["source"] = { sourceId: raw.sourceId, sourceVersion: raw.sourceVersion,
     // Change witness only: publisher authentication always comes from read().
-    ruleVersion: canonicalSerialize(canonicalRaw(raw)), publishedAt: clock.publishedAt, knownAt: clock.knownAt,
+    ruleVersion: legacy ? canonicalSerialize(canonicalRaw(raw)) : retirementRawSourceDigest(raw), publishedAt: clock.publishedAt, knownAt: clock.knownAt,
     householdId: domainId("household", c.householdId), personId: domainId("person", c.actorId),
     sourceApprovalId: q.source.id, paymentApprovalId: q.ordering.source.id,
     executionOrder: { sequenceId: raw.sourceId, position: ancestors(c.operationId).size - 1 } };

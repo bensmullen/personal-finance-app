@@ -16,6 +16,7 @@ const { artifact, selected, fundedPlan, sourceMode = "present" } = JSON.parse(re
 // Reconstruct the synthetic independent publisher, never from artifact bytes.
 const f = fundedPlan ? fixture(fundedPlan.months) : undefined;
 const plan = f && funded(f, fundedPlan.label, fundedPlan.amounts);
+const newKernel = plan && attachRetirementCash(f!.kernel, plan.cash).kernel;
 let sourceEvidence;
 let newPosting;
 if (fundedPlan) {
@@ -28,7 +29,7 @@ if (fundedPlan) {
   if (sourceMode === "present" && (!raw || qualification?.status !== "qualified"))
     throw new Error("RETIREMENT_TEST_INDEPENDENT_PUBLISHER_NOT_QUALIFIED");
   if (sourceMode !== "present") {
-    const rejected = runHouseholdKernel({ kernel: attachRetirementCash(f!.kernel, plan!.cash).kernel, runContext: f!.context });
+    const rejected = runHouseholdKernel({ kernel: newKernel!, runContext: f!.context });
     newPosting = { periods: rejected.periods.length, state: canonicalSerialize(rejected.state) };
   }
 }

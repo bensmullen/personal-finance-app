@@ -84,8 +84,9 @@ describe("J2-A actual account-scoped RMD satisfaction", () => {
 
   it("requires the independent provider even when portable raw bytes and proofs are present", () => {
     const f = fixture(), p = funded(f, "missing-publisher");
+    const kernel = attachRetirementCash(f.kernel, p.cash).kernel;
     sources.delete(p.raw.sourceId);
-    const out = execute(p, f);
+    const out = runHouseholdKernel({ kernel, runContext: f.context, resultTier: "detail" });
     expect(out.periods).toEqual([]);
     expect(out.state).toEqual(f.state);
     expect(result(p, out.state).coverage).toBe("incomplete");
