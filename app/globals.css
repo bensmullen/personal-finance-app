@@ -477,6 +477,10 @@ main#main-content { padding: 24px 32px 64px; }
 .context-actions { margin-top: auto; padding-top: 12px; border-top: 1px solid #879a913d; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .context-actions .context-forecast { display: block; padding: 0; margin: 0; border: 0; background: transparent; }
 .context-actions .context-disclosure > summary { min-height: 44px; font-size: .9375rem; }
+/* The leading warning already exposes its repair when details are collapsed.
+   Once limitations expand, show that same repair only within the detailed
+   source evidence. Keep one visible action and retain both disclosure paths. */
+.context-forecast:has(.forecast-guidance[open]) .forecast-primary-guidance { display: none; }
 .context-actions .context-popover { top: auto; bottom: 100%; width: min(34rem, calc(100vw - 24px)); }
 .context-command-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
 .context-command-buttons > button, .calm-shell .context-command-buttons > button { flex: 1; min-height: 44px; margin: 0; padding: 10px; background: white; border: 1px solid var(--line); color: var(--green-dark); border-radius: 8px; text-align: center; font-size: .875rem; }
