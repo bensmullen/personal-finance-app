@@ -60,7 +60,7 @@
     },
     "U1B_UX": {
       "stage": "U1B UX foundation, flagship age-90 forecast, Calm Cash and shared household/status ribbon",
-      "blocking_transition": "Begin U1B-E Planning/V6 only after #171 Cash and #240 shared context ribbon independently audited, merged and visually accepted; final integrated product UAT remains D1_U1/#120",
+      "blocking_transition": "Finish #240 shared ribbon (desktop gear/tight mobile icon-only button) and PM visual UAT after #171; #252 shared chart polish then #187 Planning are serial U1B_E follow-ons; #120 final integrated UAT remains separate",
       "required_issue_numbers": [
         170,
         189,
@@ -217,7 +217,7 @@
         "PFA-UX-023",
         "PFA-UX-024"
       ],
-      "scope": "Sole final integrated U1/D1 and U1B owner-UAT gate. Do not treat technical Overview merge or passing screenshot workflow as visual acceptance. U1B chain #170 foundation -> #181 age90/65 + rich flagship/low manual entry -> #171 Cash -> #187 Planning V6/section insight; PM uncoached desktop/mobile checks meaningful chart story, source/coverage correctness, default/editability, no extra data entry and recovery, source ownership and old #94/#99 requirements."
+      "scope": "Sole integrated U1/D1 and U1B owner-UAT gate. All retained #94/#99 requirements plus #170 foundation, #181 flagship, #171 Cash, #240 shared-ribbon compact mobile header, #252 shared chart details/hover/Cash language and #187 source-backed Planning V6/Investing/Debt clarity must pass independent audit and PM uncoached 1440/390 checks. Missing actual net-after-tax funding never called Discretionary Income. Green CI/screenshot alone is not acceptance."
     },
     {
       "issue_number": 129,
@@ -457,7 +457,7 @@
         "PFA-UX-022",
         "PFA-UX-024"
       ],
-      "scope": "U1B-E Planning: source-backed by-period retirement income composition V6 when identifiable (no imagined streams), readable age90/65 selected-adult timeline, honest partial/tax/benefit bounds and meaningful Investing/Debt first-screen value/outlook or explicit source gap. After #171 Cash and #240 shared ribbon merges and #240 PM visual UAT; exact high-stakes facts remain in existing writers and engine. 1440/390 functional+visual evidence and final integrated PM UAT under #120."
+      "scope": "U1B-E Planning: source-backed by-period retirement income composition V6 when identifiable (no imagined streams), readable age90/65 selected-adult timeline, honest partial/tax/benefit bounds, and meaningful Investing/Debt first-screen values or explicit gaps. Starts only after #240 UAT/merge and #252 chart interaction/Cash polish merge, avoiding simultaneous ownership of shared JSX/CSS. PM acceptance in #120."
     },
     {
       "issue_number": 189,
@@ -600,7 +600,7 @@
         "PFA-UX-021",
         "PFA-UX-024"
       ],
-      "scope": "One canonical household and its recorded Person membership, actual selected executable plan, distinct Model/Forecast lifecycle and provenance, manual Save/Export and privacy in an accessible compact persistent header. After #171 Cash merge; 1440/390/200%-zoom CI, independent semantic/visual audit and PM visual UAT gate #187 Planning. Never invent multi-household switching, per-person forecast or duplicate financial source/worker payload."
+      "scope": "Shared centered person/plan top ribbon with desktop Settings gear sized 2× text and optically centered to Settings S; mobile 390px single-line header and icon-only accessible Settings button; bottom-sidebar/mobile More Model/Forecast/Update/Save/Export and truthful privacy/details, no duplicate financial source. #171 Cash already accepted; latest PR #241 CI passed at 22b889d before final PM UAT corrections. PM visual/CI/semantic review gates #252 and #187."
     },
     {
       "issue_number": 249,
