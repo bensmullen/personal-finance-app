@@ -322,12 +322,18 @@ for (const width of [1440, 390]) {
       const settings = page.locator(".topbar .settings-button");
       await expect(settings).toHaveAccessibleName("Settings");
       await expect(settings.locator(".settings-gear")).toBeVisible();
-      const gearRatio = await settings.evaluate(button => {
-        const gear = button.querySelector(".settings-gear")!;
-        const label = button.querySelector(".settings-label")!;
-        return parseFloat(getComputedStyle(gear).fontSize) / parseFloat(getComputedStyle(label).fontSize);
+      // The original gear glyph must not become a stretched SVG or scale with label size.
+      const gear = await settings.locator(".settings-gear").evaluate(element => {
+        const bounds = element.getBoundingClientRect();
+        return {
+          glyph: element.textContent,
+          width: bounds.width,
+          height: bounds.height,
+          fontSize: parseFloat(getComputedStyle(element).fontSize),
+        };
       });
-      expect(gearRatio).toBeCloseTo(2, 5);
+      expect(gear).toEqual({ glyph: "⚙", width: 20, height: 20, fontSize: 20 });
+      await expect(settings.locator("svg")).toHaveCount(0);
       await expect(settings.locator(".settings-label")).toBeVisible({ visible: width === 1440 });
       for (const control of [page.locator(".topbar .brand"), settings]) {
         const box = (await control.boundingBox())!;

@@ -874,10 +874,7 @@ export function PersonalFinanceApp() {
           onPerson={id => { navigate("Settings", "Household & People"); setActivePerson(id); setEntityRepair({ objectType: "Person", objectId: id, field: "", token: randomId() }); }}
         />
         <button className="secondary settings-button" aria-label="Settings" onClick={() => navigate("Settings")}>
-          <svg className="settings-gear" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
-            <path d="M10 1h4l.5 3 1.5.9 2.8-1.1L21.2 8l-2.3 2v4l2.3 2-2.4 4.2-2.8-1.1-1.5.9-.5 3h-4l-.5-3-1.5-.9-2.8 1.1L2.8 16l2.3-2v-4L2.8 8l2.4-4.2L8 4.9 9.5 4Z" />
-            <circle cx="12" cy="12" r="3.5" />
-          </svg><span className="settings-label">Settings</span>
+          <span className="settings-gear" aria-hidden="true">⚙</span><span className="settings-label">Settings</span>
         </button>
       </header>
       <nav className="primary-nav" aria-label="Primary navigation">

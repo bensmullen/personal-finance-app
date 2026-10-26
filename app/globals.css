@@ -460,8 +460,8 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-shell .topbar .brand { position: static; color: var(--ink); white-space: normal; }
 .topbar .brand { justify-self: start; }
 .topbar .settings-button { justify-self: end; display: flex; align-items: center; gap: 6px; }
-/* A font-independent 2× gear; lift its center to the label's capital height. */
-.topbar .settings-gear { flex: none; font-size: 2em; width: 1em; height: 1em; transform: translateY(-.06em); }
+/* Restore the original gear glyph in a fixed square, centered with the Settings label. */
+.topbar .settings-gear { box-sizing: border-box; display: inline-flex; flex: 0 0 20px; align-items: center; justify-content: center; width: 20px; height: 20px; font-size: 20px; line-height: 1; }
 .topbar .settings-label { line-height: 1; }
 .shared-context { display: flex; justify-content: center; align-items: center; gap: 8px; min-width: 0; }
 .shared-context > * { min-width: 0; }
@@ -517,7 +517,6 @@ main#main-content { padding: 24px 32px 64px; }
   .topbar .brand { min-width: 44px; padding: 6px; }
   .topbar .settings-button { min-width: 44px; padding: 7px; gap: 0; margin: 0; }
   .topbar .settings-label { display: none; }
-  .topbar .settings-gear { transform: none; }
   .shared-context { justify-self: center; width: 100%; max-width: 100%; gap: 4px; }
   .shared-context > .context-disclosure { flex: 0 1 auto; min-width: 44px; }
   .shared-context summary { font-size: .875rem; min-width: 44px; max-width: 100%; padding: 10px 6px; gap: 4px; }
