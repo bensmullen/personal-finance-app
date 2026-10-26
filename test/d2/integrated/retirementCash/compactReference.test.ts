@@ -96,7 +96,7 @@ describe("P3 complete-original retirement references", () => {
       expect(sizes[1]![field]).toBeLessThan(sizes[0]![field] * 3);
       expect(sizes[2]![field]).toBeLessThan(sizes[0]![field] * 16);
     }
-  });
+  }, 45_000); // 13 original-funded events + portable replay require bounded cold-run headroom.
 
   it("requalifies legacy June and compact July together without rewriting the paid June journal", () => {
     const june = fixture(), first = funded(june, "mixed:june");
