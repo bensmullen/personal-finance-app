@@ -2,6 +2,7 @@ import { accountingTransactionId, createAccountingLeg, createAccountingTransacti
 import { domainId } from "../../../../identity/index.js";
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../lineage/index.js";
+import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
 import { claimId, recognitionId, settlementId } from "../../../../semantics/identity.js";
 import { d2SettlementSourceFingerprint, registerD2SettlementSourceAuthority,
   type D2FsaSettlementReceipt, type D2FsaSourceBinding, type D2SettlementSourceContext,
@@ -56,7 +57,11 @@ export interface FsaCashSource {
   readonly provenance: readonly (FsaCashStamp & { readonly evidence: FsaSource })[];
   readonly yearChain?: FsaYearChainRequest;
 }
+/** expectedSource is a versioned full-content fingerprint, never an original
+ * document or publisher authentication. Only the v1 restore path accepts the
+ * historical complete serialization, after fresh independent source agreement. */
 export interface FsaCashReference { readonly sourceId: string; readonly expectedSource: string }
+export type FsaCashSourceFormat = "v1" | "v2";
 export interface FsaCashSourceProvider {
   /** Lookup raw independently owned facts. The caller's receipt is never supplied. */
   readonly lookup: (sourceId: string) => FsaCashSource | undefined;
@@ -70,7 +75,12 @@ export class FsaCashIncomplete extends ValidationError {
   }
 }
 export const same = (a: unknown, b: unknown): boolean => canonicalSerialize(a) === canonicalSerialize(b);
-export const fsaCashSourceFingerprint = (source: FsaCashSource): string => canonicalSerialize(source);
+export const fsaCashSourceFingerprint = (source: FsaCashSource): string =>
+  `fsa-cash-source/v2:sha256:${sha256(canonicalSerialize(source))}`;
+const fingerprintPattern = /^fsa-cash-source\/v2:sha256:[a-f0-9]{64}$/;
+const sourceVersion = (source: FsaCashSource, format: FsaCashSourceFormat): string => canonicalSerialize({
+  version: source.version, inputs: format === "v1" ? canonicalSerialize(source) : fsaCashSourceFingerprint(source),
+});
 const reject = (detail: string): never => { throw new FsaCashIncomplete("source_not_qualified", detail); };
 const text = (s: string): boolean => typeof s === "string" && s.trim().length > 0;
 const exact = (m: Money): boolean => m instanceof Money && m.currency.equals(USD) && !m.isNegative() && m.amount.fitsScale(2);
@@ -84,7 +94,13 @@ export function registerFsaCashSourceProvider(owner: FsaCashSourceProvider): voi
       if (binding.kind !== "fsa_paid_reimbursement") return { status: "incomplete", reason: "source_not_qualified" };
       try {
         const source = readFsaCashSource(binding.sourceId);
-        const receipt = qualifyFsaCashSource(source, context);
+        // Never decode the archived inline v1 evidence as a source. Reconstruct
+        // BOTH versions from the independently registered publisher; select v1
+        // only on exact agreement with its historical full-source binding.
+        const format = binding.sourceVersion === sourceVersion(source, "v2") ? "v2"
+          : binding.sourceVersion === sourceVersion(source, "v1") ? "v1" : undefined;
+        if (format === undefined) return { status: "incomplete", reason: "source_not_qualified" };
+        const receipt = qualifyFsaCashSource(source, context, format);
         return same(binding, receipt.source) ? { status: "qualified", receipt }
           : { status: "incomplete", reason: "source_not_qualified" };
       } catch (error) {
@@ -95,12 +111,15 @@ export function registerFsaCashSourceProvider(owner: FsaCashSourceProvider): voi
   });
   provider = Object.freeze({ lookup: owner.lookup });
 }
-export function readFsaCashSource(sourceId: string, expectedSource?: string): FsaCashSource {
+export function readFsaCashSource(sourceId: string, expectedSource?: string, format: FsaCashSourceFormat = "v2"): FsaCashSource {
+  if (!text(sourceId) || (expectedSource !== undefined && (typeof expectedSource !== "string"
+    || format === "v2" && !fingerprintPattern.test(expectedSource))))
+    reject("Invalid source reference fingerprint version or format");
   const value = provider?.lookup(sourceId);
   if (!value) throw new FsaCashIncomplete("source_unavailable", sourceId);
   const source = immutableConfiguration(value);
   if (source.sourceId !== sourceId || !text(source.version)
-    || (expectedSource !== undefined && fsaCashSourceFingerprint(source) !== expectedSource))
+    || (expectedSource !== undefined && (format === "v1" ? canonicalSerialize(source) : fsaCashSourceFingerprint(source)) !== expectedSource))
     reject("Source identity/version or pinned raw facts changed");
   return source;
 }
@@ -185,14 +204,14 @@ export function qualifyFsaCashOriginal(s: FsaCashSource, context: D2SettlementSo
   originalRegistration(s);
 }
 /** Re-evaluate the entire immutable raw history. Never accept a copied receipt callback. */
-export function qualifyFsaCashSource(s: FsaCashSource, context: D2SettlementSourceContext): D2FsaSettlementReceipt {
-  try { return deriveReceipt(s, context); }
+export function qualifyFsaCashSource(s: FsaCashSource, context: D2SettlementSourceContext, format: FsaCashSourceFormat = "v2"): D2FsaSettlementReceipt {
+  try { return deriveReceipt(s, context, format); }
   catch (error) {
     if (error instanceof FsaCashIncomplete) throw error;
     return reject(error instanceof Error ? error.message : "Malformed raw FSA source");
   }
 }
-function deriveReceipt(s: FsaCashSource, context: D2SettlementSourceContext): D2FsaSettlementReceipt {
+function deriveReceipt(s: FsaCashSource, context: D2SettlementSourceContext, format: FsaCashSourceFormat): D2FsaSettlementReceipt {
   qualifyFsaCashOriginal(s, context);
   const { request: raw, original: o, deposit: d } = s;
   stamp(d, d.settledAt, context); order(d.executionOrder);
@@ -246,7 +265,7 @@ function deriveReceipt(s: FsaCashSource, context: D2SettlementSourceContext): D2
   stamps.forEach(p => stamp(p, d.settledAt, context));
   const latest = (field: "publishedAt" | "knownAt") => stamps.reduce((a, p) => a > p[field] ? a : p[field], stamps[0]![field]);
   const source: D2FsaSourceBinding = { kind: "fsa_paid_reimbursement", sourceId: s.sourceId,
-    sourceVersion: canonicalSerialize({ version: s.version, inputs: fsaCashSourceFingerprint(s) }),
+    sourceVersion: sourceVersion(s, format),
     // Full-content change detection, never authentication of the publisher.
     ruleVersion: c.ruleSnapshotId, publishedAt: latest("publishedAt"), knownAt: latest("knownAt"),
     householdId: domainId("household", o.householdId), personId: domainId("person", o.personId),

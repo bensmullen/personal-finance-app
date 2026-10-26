@@ -7,6 +7,7 @@ import { createPrimitiveRuntimeStateStore } from "../../../../src/simulation/per
 import { canonicalSerialize, createRunContext, runId, scenarioId } from "../../../../src/simulation/run.js";
 import { fsaScopeId, type FsaPlan, type FsaReceipt, type FsaSource, type FsaRequest } from "../../../../src/simulation/d2/health/fsa/index.js";
 import { fsaCashSourceFingerprint, type FsaCashSource, type FsaCashInput } from "../../../../src/simulation/d2/integration/fsaCash/index.js";
+import { restoreHouseholdParticipant } from "../../../../src/simulation/r3/participantCodec.js";
 
 export const uuid = (n: number) => `202f0000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 export const ids = { household: domainId("household", uuid(1)), person: domainId("person", uuid(2)),
@@ -61,6 +62,12 @@ export function source(label = "one", amount = "1000", paid = "2026-01-10", sett
       bankCashBefore: money("500"), publishedAt: at(settled), knownAt: at(settled) } };
 }
 export const input = (...sources: FsaCashSource[]): FsaCashInput => ({ sources: sources.map(s => ({ sourceId: s.sourceId, expectedSource: fsaCashSourceFingerprint(s) })) });
+/** Exercise the historical public codec, never a mocked writer/receipt. Fresh
+ * source-owner lookup must agree before the old participant can be rebuilt. */
+export const legacyParticipant = (s: FsaCashSource, forecastEnd: string) => restoreHouseholdParticipant({
+  id: "d2_fsa_cash", version: "paid-expense-reimbursement/v1", codec: "d2-fsa-cash/v1",
+  economicInputs: { sources: [{ sourceId: s.sourceId, expectedSource: canonicalSerialize(s) }], forecastEnd },
+});
 export function fixture(months = 2, opening?: AuthoritativeState, month = "2026-01") {
   const start = instant(`${month}-01T00:00:00.000Z`);
   const state = opening ?? createAuthoritativeState({ accounts: {

@@ -270,6 +270,23 @@ work. Failed staging, commits, or pushes preserve data and give an actionable
 STATE_RECOVERY_REQUIRED reason. No automatic stash, reset, clean, branch switch,
 force push, amend, rebase, or history rewrite is permitted.
 
+**PM answer / scope-expansion continuation after BLOCKED (mandatory):**
+A successful terminal BLOCKED Stop sets the old grant inactive, even if its
+checkpoint was pushed and the chat remains open. This is **not** the interrupted
+active-receipt path above. After ChatGPT updates and re-reads the original live
+implementation issue, verify its current exact ALLOWED_PATHS, the open PR head,
+one-writer ownership and the local worktree's clean/live-remote-synchronized
+branch. Then the operator opens a **new Codex conversation bound to that same
+worktree**, submitting only `PFM_TASK_ISSUE: N`. The fresh
+`UserPromptSubmit` must fetch the new issue body, produce a new authorization
+ID/receipt and visibly confirm the current path set. Do **not** ask Codex to
+continue in the closed chat, repeatedly prompt it with the task pointer after
+it reports stale authorization, delete receipts, bypass hooks, or run an
+implementation bootstrap to repair provenance. If the new chat still cannot
+activate, stop for read-only exact hook/session/branch/receipt diagnosis.
+This keeps fail-closed scope/ownership enforcement; there is no implicit
+interactive task-grant widening or hidden PM approval within a Codex turn.
+
 **Preflight / hook fault handling (mandatory):** Treat optional preflight as
 non-essential to implementation authorization. A failed or unavailable
 preflight never authorizes a bypass of path/single-writer safeguards, but it
