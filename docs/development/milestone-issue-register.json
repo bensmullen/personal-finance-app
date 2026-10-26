@@ -80,10 +80,11 @@
     },
     "FRAMEWORK_RELIABILITY": {
       "stage": "Engineering development-framework reliability",
-      "blocking_transition": "Declare the bounded preflight, task receipts and their Python 3.8 compatibility/work-preservation safeguards implemented only after #218 and #231 are merged, with selected CI and negative hook self-tests passed. Independent of D1/U1/D2/R11 product acceptance.",
+      "blocking_transition": "The merged #218/#231 framework preflight and Python compatibility remain complete; require #249's separate closed-session and worktree-recovery hook self-tests and selected green CI before declaring FRAMEWORK_RELIABILITY complete. No U1/D1/D2/R11 product blocking edge.",
       "required_issue_numbers": [
         218,
-        231
+        231,
+        249
       ]
     },
     "CI_OPTIMIZATION": {
@@ -600,6 +601,20 @@
         "PFA-UX-024"
       ],
       "scope": "Shared centered person/plan top ribbon with desktop Settings gear sized 2× text and optically centered to Settings S; mobile 390px single-line header and icon-only accessible Settings button; bottom-sidebar/mobile More Model/Forecast/Update/Save/Export and truthful privacy/details, no duplicate financial source. #171 Cash already accepted; latest PR #241 CI passed at 22b889d before final PM UAT corrections. PM visual/CI/semantic review gates #252 and #187."
+    },
+    {
+      "issue_number": 249,
+      "owner_stage": "engineering-framework-reliability",
+      "blocking_gate": "FRAMEWORK_RELIABILITY",
+      "depends_on": [
+        218,
+        231
+      ],
+      "spec_requirement_ids": [
+        "PFA-PERF-019",
+        "PFA-UX-024"
+      ],
+      "scope": "PM-approved separate post-#218/#231 framework reliability correction after #146 original/amended provenance blocker and operator recovery loops: deny closed-task same-session reauthorization before writing receipts, bounded fail-closed transient per-worktree hook flock retry, bootstrap-to-Codex explicit correct worktree identity and operator preflight. Regression tests for new/old session, lock contention, wrong-worktree, clean/dirty history and Python 3.8 compatibility; no product #146/#149 blocking edge, no weakened scope/foreign-writer safeguards. Needs independent CI/hook safety audit and PM merge."
     },
     {
       "issue_number": 252,
