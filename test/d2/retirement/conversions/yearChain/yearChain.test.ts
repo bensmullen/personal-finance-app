@@ -178,6 +178,19 @@ describe("independently qualified original-only IRA basis year chain", () => {
     }
   });
 
+  it("rejects reused annual closeout and original filing identifiers across years", () => {
+    const { input, facts } = fixture();
+    const first = input.years[0]!.closeout!;
+    const reusedSource = replaceYear(input, 1, y => ({ ...y, closeout: {
+      ...y.closeout!, source: { ...y.closeout!.source, sourceId: first.source.sourceId }
+    } }));
+    denied(reusedSource, facts, 1, "DUPLICATE_CROSS_YEAR_FILING");
+    const reusedFiling = replaceYear(input, 1, y => ({ ...y, closeout: {
+      ...y.closeout!, originalReturn: { ...y.closeout!.originalReturn!, filingId: first.originalReturn!.filingId }
+    } }));
+    denied(reusedFiling, facts, 1, "DUPLICATE_CROSS_YEAR_FILING");
+  });
+
   it("preserves annual gates for complete closed/zero inventories, unsupported years and bad rules", () => {
     const { input, facts } = fixture();
     const changes: ((y: IraYearInput) => IraYearInput)[] = [
