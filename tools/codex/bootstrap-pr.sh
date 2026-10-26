@@ -126,20 +126,31 @@ prepare_target_path() {
 verify_ready() {
   local path="$1"
   local expected="$2"
-  local actual actual_branch dirty git_dir common_dir
+  local actual actual_branch dirty git_dir common_dir upstream expected_upstream expected_ref preflight
   actual="$(git -C "$path" rev-parse HEAD)"
   actual_branch="$(git -C "$path" branch --show-current)"
   dirty="$(git -C "$path" status --porcelain=v1 --untracked-files=normal)"
   git_dir="$(git -C "$path" rev-parse --git-dir)"
   common_dir="$(git -C "$path" rev-parse --git-common-dir)"
+  upstream="$(git -C "$path" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+  expected_upstream=""
+  expected_ref="origin/main"
+  if [ "$mode" = "resume" ]; then
+    expected_upstream="origin/$branch"
+    expected_ref="$expected_upstream"
+  fi
 
-  if [ "$actual" != "$expected" ] || [ "$actual_branch" != "$branch" ] || [ -n "$dirty" ] || [ "$git_dir" = "$common_dir" ]; then
+  if [ "$actual" != "$expected" ] || [ "$actual_branch" != "$branch" ] || [ -n "$dirty" ] || [ "$git_dir" = "$common_dir" ] || [ "$upstream" != "$expected_upstream" ]; then
     printf 'PR_BOOTSTRAP_FAIL postcondition path=%s branch=%s head=%s dirty=%s\n' \
       "$path" "${actual_branch:-DETACHED}" "$actual" "${dirty:+yes}" >&2
     exit 1
   fi
   printf 'PR_WORKTREE_READY mode=%s path=%s branch=%s head=%s origin_main=%s\n' \
     "$mode" "$path" "$actual_branch" "$actual" "$origin_main"
+  printf '\nOPEN THIS EXACT WORKTREE IN CODEX: %s\n' "$path"
+  printf 'Bootstrap does not change the folder selected in the Codex GUI. Run this read-only preflight from its terminal before submitting TARGET_BRANCH=%s:\n' "$branch"
+  preflight='test "$(pwd -P)" = "$(cd -- "$1" && pwd -P)" && test "$(git rev-parse --show-toplevel)" = "$(pwd -P)" && test "$(git branch --show-current)" = "$2" && test "$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null || true)" = "$3" && test "$(git rev-parse HEAD)" = "$(git rev-parse "$4")" && test -z "$(git status --porcelain=v1 --untracked-files=normal)" && printf "PREFLIGHT_OK path=%s branch=%s\n" "$(pwd -P)" "$2"'
+  printf 'bash -c %q -- %q %q %q %q\n' "$preflight" "$path" "$branch" "$expected_upstream" "$expected_ref"
 }
 
 if [ "$mode" = "new" ]; then
@@ -173,7 +184,8 @@ if [ "$mode" = "new" ]; then
   fi
 
   prepare_target_path
-  git worktree add -b "$branch" "$target_abs" "$origin_main"
+  # --no-track: default Git autoSetupMerge may otherwise bind a new task branch to origin/main.
+  git worktree add --no-track -b "$branch" "$target_abs" "$origin_main"
   verify_ready "$target_abs" "$origin_main"
   exit 0
 fi
