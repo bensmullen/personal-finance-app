@@ -977,6 +977,9 @@ mustRun("git", ["remote", "add", "origin", remote], { cwd: seed });
 mustRun("git", ["push", "-u", "origin", "main"], { cwd: seed });
 mustRun("git", ["--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main"], { cwd: bootstrapRoot });
 mustRun("git", ["clone", remote, source], { cwd: bootstrapRoot });
+// Explicitly exercise default Git remote-tracking behavior, including older installations.
+// A NEW Codex branch must not inherit origin/main as its upstream.
+mustRun("git", ["config", "branch.autoSetupMerge", "true"], { cwd: source });
 
 const bootstrapEnv = { PFM_BOOTSTRAP_TEST_ALLOW_ANY_ORIGIN: "1" };
 const assertHandoff = (result, mode, expectedPath, branch) => {
@@ -1000,6 +1003,9 @@ const firstBootstrap = mustRun(
 );
 assert(firstBootstrap.stdout.includes("PR_WORKTREE_READY mode=new"), "new bootstrap should return a ready receipt");
 assertHandoff(firstBootstrap, "new", targetOne, "codex/task-one");
+const firstUpstream = run("git", ["-C", targetOne, "rev-parse", "--abbrev-ref", "@{u}"]);
+assert(firstUpstream.status !== 0,
+  "new task branch must not track origin/main, even when branch.autoSetupMerge=true");
 
 // Suffix-colliding old/recovery folders must never be interchangeable in the GUI.
 const recoveryBranch = 'codex/task-one-recovery';
