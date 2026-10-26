@@ -182,7 +182,8 @@ function createInlineRetirementCashParticipant(configuration: RetirementCashInpu
           idempotencyKey("d2:retirement-withdrawal", c.claimId),
           ...r.withholding!.instructions.map(i => idempotencyKey("d2:authorization", i.authorizationId)),
           idempotencyKey("d2:retirement-cash-receipt", compact
-            ? canonicalSerialize({ source: reference, operationId: c.operationId })
+            ? canonicalSerialize({ source: { sourceId: reference!.sourceId, sourceVersion: reference!.sourceVersion,
+                contentDigest: (reference as PinnedRetirementSource).contentDigest }, operationId: c.operationId })
             : canonicalSerialize({ raw, members: input.members, confirmations: input.confirmations, operationId: c.operationId }))];
         const registry = opening.state.identities;
         const posted = postedIds.has(c.operationId);
