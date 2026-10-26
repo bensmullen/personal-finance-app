@@ -59,7 +59,7 @@ export interface IraYearChainInput {
   readonly years: readonly IraYearInput[];
 }
 export type IraChainReason = "INVALID_CHAIN_CONTEXT" | "NONCONSECUTIVE_OR_DUPLICATE_YEAR" |
-  "DEPENDENT_YEAR_INCOMPLETE" | "DUPLICATE_CROSS_YEAR_OPERATION" | "MISSING_ORIGINAL_PROVENANCE" |
+  "DEPENDENT_YEAR_INCOMPLETE" | "DUPLICATE_CROSS_YEAR_OPERATION" | "DUPLICATE_CROSS_YEAR_FILING" | "MISSING_ORIGINAL_PROVENANCE" |
   "MISSING_HISTORY_PROVIDER" | "HISTORY_LOOKUP_FAILED" | "UNQUALIFIED_HISTORY_AUTHORITY" |
   "INCOMPLETE_OR_STALE_REVISION_HISTORY" | "KNOWN_RETURN_REVISION" | "UNQUALIFIED_ORIGINAL_FILING" |
   "ORIGINAL_FILING_MISMATCH" | "BASIS_CONTINUITY_MISMATCH" | "ANNUAL_INCOMPLETE";
@@ -190,6 +190,7 @@ export function evaluateIraBasisYearChain(input: IraYearChainInput,
   const counts = new Map<number, number>();
   for (const y of sorted) counts.set(y.taxYear, (counts.get(y.taxYear) ?? 0) + 1);
   const operations = new Set<string>(), transactions = new Set<string>();
+  const closeoutSourceIds = new Set<string>(), originalFilingIds = new Set<string>();
   // Cache one independent lookup per person/year/cutoff; never copy documents to output.
   const filings = new Map<number, IraOriginalReturnProvenance>();
   const original = (year: number, p: IraOriginalReturnProvenance): IraOriginalReturnProvenance => {
@@ -221,6 +222,13 @@ export function evaluateIraBasisYearChain(input: IraYearChainInput,
         operations.add(op.operationId); transactions.add(op.transactionId);
       }
       need(Boolean(annual.openingBasis?.originalReturn && annual.closeout?.originalReturn), "MISSING_ORIGINAL_PROVENANCE");
+      // Every annual closeout and original filed return is a distinct year fact;
+      // reusing either identity across years may mask a copied tax return.
+      const closeoutId = annual.closeout!.source.sourceId;
+      const filingId = annual.closeout!.originalReturn!.filingId;
+      need(text(closeoutId) && text(filingId) && !closeoutSourceIds.has(closeoutId) &&
+        !originalFilingIds.has(filingId), "DUPLICATE_CROSS_YEAR_FILING");
+      closeoutSourceIds.add(closeoutId); originalFilingIds.add(filingId);
       prior = original(annual.taxYear - 1, annual.openingBasis!.originalReturn!);
       current = original(annual.taxYear, annual.closeout!.originalReturn!);
       need(annual.openingBasis!.priorTaxYear === annual.taxYear - 1 && prior.carryForwardBasis.equals(annual.openingBasis!.amount) &&
