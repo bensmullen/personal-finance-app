@@ -29,6 +29,22 @@ export interface IraRules {
   readonly allocation: "largest_remainder_operation_id";
 }
 export type IraFamily = "traditional_ira" | "sep_ira" | "simple_ira" | "roth_ira" | "workplace_plan";
+/** Attribution only; yearChain additionally requires independent history authority. */
+export interface IraOriginalReturnProvenance {
+  readonly personId: string;
+  readonly taxYear: number;
+  readonly filingId: string;
+  readonly filingVersion: string;
+  readonly filingKind: "original" | "amended" | "unknown";
+  readonly filingStatus: string;
+  readonly filedAt: CivilDate;
+  readonly publishedAt: CivilDate;
+  readonly knownAt: CivilDate;
+  readonly revisesFilingId: string | null;
+  readonly carryForwardBasis: Money;
+  readonly source: IraSource;
+  readonly legalSnapshot: IraRules;
+}
 export interface IraAccount {
   readonly accountId: string;
   readonly ownerId: string;
@@ -82,6 +98,7 @@ export interface IraYearInput {
     readonly priorTaxYear: number;
     readonly returnStatus: "verified_return" | "verified_no_prior_basis" | "unknown";
     readonly source: IraSource;
+    readonly originalReturn?: IraOriginalReturnProvenance;
   };
   readonly basisAdditions: readonly {
     readonly operationId: string;
@@ -94,6 +111,7 @@ export interface IraYearInput {
   }[];
   readonly closeout?: {
     readonly source: IraSource;
+    readonly originalReturn?: IraOriginalReturnProvenance;
     /** Includes closed accounts; attests all Traditional, SEP and SIMPLE IRAs. */
     readonly eligibleAccountIds: readonly string[];
     readonly distributionOperationIds: readonly string[];
@@ -207,7 +225,8 @@ export function evaluateIraConversionYear(input: IraYearInput): IraYearEvaluatio
     need(m.currency.equals(input.currency), "CURRENCY_MISMATCH", path);
     need(!m.isNegative() && m.amount.fitsScale(input.currency.minorUnitScale), "INVALID_EXACT_MONEY", path);
   };
-  const source = (s: IraSource, path: string, account: string | null, factYear = year): void => {
+  const source = (s: IraSource, path: string, account: string | null, factYear = year,
+    snapshotId = input.rules?.source.ruleSnapshotId): void => {
     need(Boolean(s), "MISSING_SOURCE", path, account);
     need([s.sourceId, s.sourcePublication, s.ruleSnapshotId].every(text), "MISSING_SOURCE_IDENTITY", path, account, s);
     refs.add(s.sourceId);
@@ -215,7 +234,35 @@ export function evaluateIraConversionYear(input: IraYearInput): IraYearEvaluatio
     date(s.asOf, path);
     need(s.verification === "verified" && s.projectionStatus === "observed" && s.asOf <= input.knownAt && s.asOf <= input.asOf,
       "UNVERIFIED_PROJECTED_OR_FUTURE_SOURCE", path, account, s);
-    need(s.ruleSnapshotId === input.rules?.source.ruleSnapshotId, "MIXED_RULE_SNAPSHOT", path, account, s);
+    need(s.ruleSnapshotId === snapshotId, "MIXED_RULE_SNAPSHOT", path, account, s);
+  };
+  const original = (p: IraOriginalReturnProvenance, s: IraSource, factYear: number, amount: Money, path: string): void => {
+    const rule = p.legalSnapshot;
+    need(Boolean(rule), "MISSING_ORIGINAL_RETURN_RULE", path);
+    source(p.source, path, null, factYear, rule.source.ruleSnapshotId);
+    source(rule.source, `${path}.legalSnapshot`, null, factYear, rule.source.ruleSnapshotId);
+    for (const d of [p.filedAt, p.publishedAt, p.knownAt, rule.effectivePeriod.start, rule.effectivePeriod.endExclusive]) date(d, path);
+    exact(p.carryForwardBasis, path);
+    need(p.personId === input.personId && p.taxYear === factYear && [p.filingId, p.filingVersion, p.filingStatus].every(text) &&
+      p.filingKind === "original" && p.revisesFilingId === null && p.carryForwardBasis.equals(amount) &&
+      p.filedAt >= `${factYear + 1}-01-01` && p.filedAt <= p.publishedAt && p.publishedAt <= p.knownAt &&
+      p.knownAt <= input.knownAt && p.publishedAt <= input.asOf && p.source.asOf >= p.publishedAt &&
+      p.source.sourceId === s.sourceId && p.source.sourcePublication === s.sourcePublication &&
+      p.source.asOf === s.asOf && p.source.ruleSnapshotId === s.ruleSnapshotId &&
+      rule.source.asOf <= p.filedAt && rule.filingStatus === p.filingStatus &&
+      rule.effectivePeriod.start <= `${factYear}-01-01` && rule.effectivePeriod.endExclusive >= `${factYear + 1}-01-01` &&
+      [rule.jurisdiction, rule.version].every(text) && rule.ruleFamily === "form_8606" &&
+      rule.model === "aggregate_basis_over_year_end_plus_distributions" && rule.ratio === "exact_capped_at_one" &&
+      rule.allocation === "largest_remainder_operation_id" && ["half_up", "half_even", "toward_zero"].includes(rule.annualRounding),
+      "UNQUALIFIED_ORIGINAL_RETURN", path, null, s);
+    if (factYear === year) {
+      const current = input.rules!;
+      need(rule.source.sourceId === current.source.sourceId && rule.source.sourcePublication === current.source.sourcePublication &&
+        rule.source.asOf === current.source.asOf && rule.source.ruleSnapshotId === current.source.ruleSnapshotId &&
+        rule.jurisdiction === current.jurisdiction && rule.version === current.version && rule.filingStatus === current.filingStatus &&
+        rule.effectivePeriod.start === current.effectivePeriod.start && rule.effectivePeriod.endExclusive === current.effectivePeriod.endExclusive &&
+        rule.annualRounding === current.annualRounding, "CONFLICTING_ORIGINAL_RETURN_RULE", path, null, s);
+    }
   };
   const matchIds = (attested: readonly string[], actual: readonly string[], path: string): void => {
     need(new Set(attested).size === attested.length && attested.length === actual.length && actual.every(id => attested.includes(id)),
@@ -291,7 +338,12 @@ export function evaluateIraConversionYear(input: IraYearInput): IraYearEvaluatio
     matchIds(close.basisAdditionOperationIds, input.basisAdditions.map(b => b.operationId), "closeout.basisAdditionOperationIds");
     const opening = input.openingBasis;
     if (!opening) throw new Incomplete("MISSING_PRIOR_RETURN_BASIS", "openingBasis", null);
-    source(opening.source, "openingBasis", null, year - 1); exact(opening.amount, "openingBasis");
+    // Legacy annual callers retain the reconciliation-snapshot convention.
+    // Explicit original filings MUST supply their own prior-year legal snapshot.
+    if (opening.originalReturn) original(opening.originalReturn, opening.source, year - 1, opening.amount, "openingBasis.originalReturn");
+    source(opening.source, "openingBasis", null, year - 1,
+      opening.originalReturn ? opening.originalReturn.legalSnapshot.source.ruleSnapshotId : rules.source.ruleSnapshotId);
+    exact(opening.amount, "openingBasis");
     need(opening.priorTaxYear === year - 1 && opening.returnStatus !== "unknown" && opening.source.asOf >= period.start &&
       (opening.returnStatus !== "verified_no_prior_basis" || opening.amount.isZero()), "UNQUALIFIED_PRIOR_RETURN_BASIS", "openingBasis", null, opening.source);
     let availableBasis = opening.amount, december31Value = Money.zero(input.currency), total = Money.zero(input.currency);
@@ -343,6 +395,10 @@ export function evaluateIraConversionYear(input: IraYearInput): IraYearEvaluatio
     }
     need(residual.isZero() && recovered.compare(availableBasis) <= 0 && allocations.every(a => a.basisRecovered.compare(a.gross) <= 0),
       "UNSUPPORTED_ROUNDING_RECONCILIATION", "annualBasis", null, rules.source);
+    if (close.originalReturn) {
+      original(close.originalReturn, close.source, year, availableBasis.minus(recovered), "closeout.originalReturn");
+      need(close.originalReturn.filingStatus === input.filingStatus, "MISSING_OR_MISMATCHED_FILING_CONTEXT", "closeout.originalReturn");
+    }
     const traceRefs = [...refs].sort();
     basisProposals = [{ seam: "S5", committed: false, postable: false, personId: input.personId, taxYear: year,
       ruleSnapshotId: rules.source.ruleSnapshotId, availableBasis, december31Value, annualDistributions: total, denominator,

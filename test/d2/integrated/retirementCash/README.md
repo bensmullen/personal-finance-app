@@ -45,6 +45,43 @@ reconstruct the synthetic publisher independently of the artifact in 13- and
 25-month processes, retain one physical posting and regenerate the last month
 twice. Missing future-year rules remain explicitly incomplete.
 
+P3 funded construction now emits `d2-retirement-cash/v3` for both a single plan
+and dated schedules. Its immutable inputs contain the full horizon, distinct
+ordered publisher references, a separately pinned annual reference and compact
+event descriptors (operation/date, explicit predecessors, account accesses and
+trace identities). Neither cash amounts/confirmations nor A4/RMD rule catalogs
+are serialized in these configurations. Documentary constructor arguments are
+transient; `createReferencedRetirementCashParticipant` also accepts the compact
+shape directly. Construction needs a publisher to pin the original. Every new
+posting reads it again under the actual run's asOf/dataCutoff and reuses unchanged
+A4 admission and the sole canonical state writer.
+
+The exact witness format is `retirement-raw/v2:sha256:<64 lowercase hex>` (89
+characters). It hashes canonical serialization of the **complete original**,
+including source ID/version, availability, cash, binding, approvals, explicit
+ordering and prior operation facts. Evidence arrays are normalized as sets;
+explicit dependency edges retain precedence. The same digest pins configuration
+references and new `retirement-distribution/v1` source rule versions. A digest
+detects change; only the separately installed publisher authenticates an original.
+No source callback or shadow financial plan crosses the portable boundary.
+
+Historical `d2-retirement-cash/v1` and `/v2` codec readers deliberately retain
+their original inline input format, full canonical source witnesses, posting
+proofs and receipt keys. Nonfunded cash-only construction also remains v1; this
+phase makes no claim that nonfunded inline inputs are compact. Historical source
+qualification regenerates the exact old witness and complete record from the live
+original, while new funded construction uses only the compact witness. Mixed
+annual histories requalify each format independently. Missing or amended sources
+revoke annual credit and new posting authority while preserving committed cash.
+Conflicting reuse of an old operation fails without rewriting its ledger.
+
+`compactReference.test.ts` supplies complete-original mutation negatives,
+1/2/13-transaction proportional configuration/journal/artifact bounds, absence
+of a large distinct synthetic source marker, mixed June/July legacy/new credit,
+and one bounded independent cold process for each historical funded codec.
+Existing 13/25-month retirement and joint HELOC replay suites exercise v3 by
+default. CI and independent semantic/size/replay review remain merge gates.
+
 The existing 55 preparation fixtures remain conditional. These tests are authored
 for GitHub CI; no local tests, typecheck, builds, validators, or browser execution
 are permitted in this implementation turn. Merge requires external CI and

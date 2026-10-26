@@ -106,13 +106,15 @@ describe("#149 S8-4 bounded joint HELOC portable history", () => {
     const largeResult = runHouseholdKernel({ kernel: large.kernel, runContext: large.context });
     expect(largeResult.periods, JSON.stringify(largeResult.diagnostics)).toHaveLength(25);
     const largeArtifact = createPortableHouseholdReplayArtifact(largeResult);
-    // Report the separate inherited retirement payload debt as bytes, never as
-    // proof that all D2 source transport is compact. Its migration is excluded
-    // from this repair and remains mandatory before D2 closeout.
-    const legacyRetirement = large.kernel.executable.participants!.find(p => p.id === "d2_retirement_cash")!.economicInputs;
-    const retirementBytes = new TextEncoder().encode(canonicalSerialize(legacyRetirement)).byteLength;
-    expect(canonicalSerialize(legacyRetirement)).toContain("withdrawals");
-    console.info("#149 outstanding retirement economicInputs bytes:", retirementBytes);
+    const retirement = large.kernel.executable.participants!.find(p => p.id === "d2_retirement_cash")!;
+    expect(retirement.portableCodec).toBe("d2-retirement-cash/v3");
+    expect(canonicalSerialize(retirement.economicInputs)).not.toContain("withdrawals");
+    expect(canonicalSerialize(retirement.economicInputs)).not.toContain("factors");
+    expect(largeArtifact.encoded).not.toContain("Synthetic evidence only; not statutory law");
+    for (const record of Object.values(largeResult.state.retirementDistributionAllocations!)) {
+      expect(record.source.ruleVersion).toMatch(/^retirement-raw\/v2:sha256:[a-f0-9]{64}$/);
+      expect(record.sourceEvidenceFingerprint).not.toContain("withdrawals");
+    }
     for (const [s, artifact] of [[small, smallArtifact], [large, largeArtifact]] as const) {
       const config = s.kernel.executable.participants!.find(p => p.id === "d2_heloc_servicing")!.economicInputs;
       expect(config).toEqual({ sourceIds: s.pairs.map(p => p.issuer.sourceId).sort() });

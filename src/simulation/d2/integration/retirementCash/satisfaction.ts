@@ -3,7 +3,7 @@ import { civilDate, type Instant, type Period } from "../../../../time/index.js"
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
 import { canonicalSerialize } from "../../../run.js";
 import { evaluateRmdObligations, type RmdDistribution, type RmdEvaluation } from "../../retirement/distributions/index.js";
-import { readRetirementRawSource, qualifyRetirementRawSource, type RetirementSourceReference } from "./source.js";
+import { readRetirementRawSource, qualifyRetirementRecordedSource, type RetirementSourceReference } from "./source.js";
 
 export interface FundedRmdResult {
   readonly coverage: "complete" | "incomplete";
@@ -48,7 +48,7 @@ function reconcile(reference: RetirementSourceReference & { readonly horizon: Pe
   const distributions: RmdDistribution[] = [];
   for (const d of records) {
     const historical = readRetirementRawSource(d.source, context);
-    const qualified = historical && qualifyRetirementRawSource(historical, d.operationId, context);
+    const qualified = historical && qualifyRetirementRecordedSource(historical, d.operationId, context, d.source.ruleVersion);
     const proof = state.d2PostedTransactions?.[d.originalPostingProofId];
     if (!qualified || qualified.status !== "qualified" || !same(qualified.distribution, d)
       || proof?.registration.kind !== "retirement_cash_distribution" || !same(proof.registration.distribution, d)
