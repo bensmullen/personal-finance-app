@@ -79,10 +79,11 @@
     },
     "FRAMEWORK_RELIABILITY": {
       "stage": "Engineering development-framework reliability",
-      "blocking_transition": "Declare the bounded preflight, task receipts and their Python 3.8 compatibility/work-preservation safeguards implemented only after #218 and #231 are merged, with selected CI and negative hook self-tests passed. Independent of D1/U1/D2/R11 product acceptance.",
+      "blocking_transition": "The merged #218/#231 framework preflight and Python compatibility remain complete; require #249's separate closed-session and worktree-recovery hook self-tests and selected green CI before declaring FRAMEWORK_RELIABILITY complete. No U1/D1/D2/R11 product blocking edge.",
       "required_issue_numbers": [
         218,
-        231
+        231,
+        249
       ]
     },
     "CI_OPTIMIZATION": {
