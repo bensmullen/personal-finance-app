@@ -318,6 +318,15 @@ for (const width of [1440, 390]) {
         expect(await control.evaluate(node => parseFloat(getComputedStyle(node).fontSize))).toBeGreaterThanOrEqual(14);
         boxes.push(box);
       }
+      // The Settings gear must be 1.5× its adjacent label at both desktop and
+      // mobile widths without changing the button's accessible name.
+      const gearRatio = await page.locator(".topbar .settings-button").evaluate(button => {
+        const gear = button.querySelector('span[aria-hidden="true"]');
+        return gear
+          ? parseFloat(getComputedStyle(gear).fontSize) / parseFloat(getComputedStyle(button).fontSize)
+          : 0;
+      });
+      expect(gearRatio).toBeCloseTo(1.5, 5);
       if (width === 1440) {
         // Controls must share a horizontal band, rather than pushing Save/privacy
         // to a second row. Allow differing text heights without fixed snapshots.
