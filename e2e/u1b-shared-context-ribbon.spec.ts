@@ -322,6 +322,8 @@ for (const width of [1440, 390]) {
       const settings = page.locator(".topbar .settings-button");
       await expect(settings).toHaveAccessibleName("Settings");
       await expect(settings.locator(".settings-gear")).toBeVisible();
+      // Keep the 30px gear square, but no space between that box and the label.
+      expect(await settings.evaluate(button => getComputedStyle(button).columnGap)).toBe("0px");
       // The original gear glyph must not become a stretched SVG or scale with label size.
       const gear = await settings.locator(".settings-gear").evaluate(element => {
         const bounds = element.getBoundingClientRect();
@@ -349,6 +351,12 @@ for (const width of [1440, 390]) {
       const ordered = [...boxes].sort((a, b) => a.x - b.x);
       for (let i = 1; i < ordered.length; i++) expect(ordered[i]!.x).toBeGreaterThanOrEqual(ordered[i - 1]!.x + ordered[i - 1]!.width);
       if (width === 1440) {
+        const labelGap = await settings.evaluate(button => {
+          const gear = button.querySelector(".settings-gear")!.getBoundingClientRect();
+          const label = button.querySelector(".settings-label")!.getBoundingClientRect();
+          return label.left - gear.right;
+        });
+        expect(Math.abs(labelGap)).toBeLessThanOrEqual(0.5);
         // Measure the capital S's ink center from the actual label font metrics.
         const opticalOffset = await settings.evaluate(button => {
           const label = button.querySelector(".settings-label")!;

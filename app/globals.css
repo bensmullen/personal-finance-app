@@ -459,7 +459,8 @@ main#main-content { padding: 24px 32px 64px; }
 .app-shell > .topbar, .app-shell.calm-shell > .topbar { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); height: auto; min-height: 72px; padding: 8px 20px; gap: 12px; position: relative; z-index: 6; }
 .calm-shell .topbar .brand { position: static; color: var(--ink); white-space: normal; }
 .topbar .brand { justify-self: start; }
-.topbar .settings-button { justify-self: end; display: flex; align-items: center; gap: 6px; }
+/* Zero spacing between the original gear's fixed square and the Settings label. */
+.topbar .settings-button { justify-self: end; display: flex; align-items: center; gap: 0; }
 /* Original gear glyph: fixed 30px square, lifted 2px relative to the Settings label. */
 .topbar .settings-gear { box-sizing: border-box; display: inline-flex; flex: 0 0 30px; align-items: center; justify-content: center; width: 30px; height: 30px; font-size: 30px; line-height: 1; transform: translateY(-2px); }
 .topbar .settings-label { line-height: 1; }
