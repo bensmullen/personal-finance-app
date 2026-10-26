@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "as_of": "2026-10-24",
+  "as_of": "2026-10-26",
   "authority": "Roadmap issue allocation only. Financial meaning remains in controlled specifications; GitHub is authoritative for current issue state.",
   "lifecycle": "Every new non-learning product, bug, milestone or framework issue must be registered at creation and linked to an owner stage and first mandatory closeout gate. Deferred means explicitly gated, not forgotten. Closing or moving an issue requires reconciliation here and in roadmap. U1 handoff completed: #94 is superseded by #120 after PR #98 merged; only #120 holds final U1/D1 owner acceptance. #94 technical closeout is not U1 UAT approval; all historical #94 dependency edges now point to #120. D2 parallel reallocation 2026-10-17: #103's unimplemented retirement distribution/RMD scope is consolidated into #146; backend #146/#147/#148 may overlap U1 #120 after approved financial contracts and #149 shared interface freeze. #149 alone owns deferred cross-domain/UI seams and final D2-D acceptance. #114 is merged preparation, not D2 functionality. U1B-C #142 closed after PR #157 merged; U1B-D #161 newly allocated to its own stage, implementation sequential after merged registration PR, not blocked by final #120 UAT. U1B-E requires separate later authorization.",
   "stage_gates": {
@@ -71,18 +71,20 @@
       ]
     },
     "U1B_E": {
-      "stage": "U1B-E Planning sourced retirement/V6 and remaining section insight integration",
-      "blocking_transition": "Declare U1B complete or request D1_U1/#120 integrated uncoached owner approval",
+      "stage": "U1B shared-chart polish and Planning sourced retirement/V6 integration",
+      "blocking_transition": "U1B complete / #120 PM acceptance requires #252 shared-chart disclosure/hover/Cash semantics after accepted #240, then #187 Planning and remaining chart outcome work, with independent CI, semantic review, and PM UAT",
       "required_issue_numbers": [
+        252,
         187
       ]
     },
     "FRAMEWORK_RELIABILITY": {
       "stage": "Engineering development-framework reliability",
-      "blocking_transition": "Declare the bounded preflight, task receipts and their Python 3.8 compatibility/work-preservation safeguards implemented only after #218 and #231 are merged, with selected CI and negative hook self-tests passed. Independent of D1/U1/D2/R11 product acceptance.",
+      "blocking_transition": "The merged #218/#231 framework preflight and Python compatibility remain complete; require #249's separate closed-session and worktree-recovery hook self-tests and selected green CI before declaring FRAMEWORK_RELIABILITY complete. No U1/D1/D2/R11 product blocking edge.",
       "required_issue_numbers": [
         218,
-        231
+        231,
+        249
       ]
     },
     "CI_OPTIMIZATION": {
@@ -439,7 +441,8 @@
       "blocking_gate": "U1B_E",
       "depends_on": [
         171,
-        240
+        240,
+        252
       ],
       "spec_requirement_ids": [
         "PFA-UX-001",
@@ -598,6 +601,41 @@
         "PFA-UX-024"
       ],
       "scope": "One canonical household and its recorded Person membership, actual selected executable plan, distinct Model/Forecast lifecycle and provenance, manual Save/Export and privacy in an accessible compact persistent header. After #171 Cash merge; 1440/390/200%-zoom CI, independent semantic/visual audit and PM visual UAT gate #187 Planning. Never invent multi-household switching, per-person forecast or duplicate financial source/worker payload."
+    },
+    {
+      "issue_number": 249,
+      "owner_stage": "engineering-framework-reliability",
+      "blocking_gate": "FRAMEWORK_RELIABILITY",
+      "depends_on": [
+        218,
+        231
+      ],
+      "spec_requirement_ids": [
+        "PFA-PERF-019",
+        "PFA-UX-024"
+      ],
+      "scope": "PM-approved separate post-#218/#231 framework reliability correction after #146 original/amended provenance blocker and operator recovery loops: deny closed-task same-session reauthorization before writing receipts, bounded fail-closed transient per-worktree hook flock retry, bootstrap-to-Codex explicit correct worktree identity and operator preflight. Regression tests for new/old session, lock contention, wrong-worktree, clean/dirty history and Python 3.8 compatibility; no product #146/#149 blocking edge, no weakened scope/foreign-writer safeguards. Needs independent CI/hook safety audit and PM merge."
+    },
+    {
+      "issue_number": 252,
+      "owner_stage": "U1B-shared-chart-interaction-polish",
+      "blocking_gate": "U1B_E",
+      "depends_on": [
+        240
+      ],
+      "spec_requirement_ids": [
+        "PFA-UX-001",
+        "PFA-UX-015",
+        "PFA-UX-016",
+        "PFA-UX-018",
+        "PFA-UX-019",
+        "PFA-UX-020",
+        "PFA-UX-021",
+        "PFA-UX-022",
+        "PFA-UX-023",
+        "PFA-UX-024"
+      ],
+      "scope": "All existing chart default content limited to series toggles/dropdowns + collapsed Chart Details; moved exact selected period into per-chart details, Period label, no line dots, in-chart compact crosshair visible-series tooltip, Cash Total Cash Balance/Change/subtitle. Financially verified Discretionary Income only, otherwise explicit unavailable and unreconciled remainder. #171 remains closed. After #240 merge/UAT, before #187; no duplicated forecast arrays, engine changes or invented income."
     }
   ],
   "legacy_open_task_reconciliation": {
