@@ -98,7 +98,7 @@ export function SharedContextRibbon({ people, membershipReview, plan, activePers
       {people.length ? people.map(person => <button key={person.id} type="button" aria-pressed={person.id === activePerson} onClick={event => choose(event, () => onPerson(person.id))}>{person.label}</button>) : <p>No verified household members.</p>}
       <button type="button" onClick={event => choose(event, onPeople)}>Add / edit household &amp; people</button>
     </ContextDisclosure>
-    <ContextDisclosure accessibleLabel={`Plan: ${plan}`} title={<>{plan}<span aria-hidden="true">⌄</span></>} className="context-plan">
+    <ContextDisclosure accessibleLabel={`Plan: ${plan}`} title={<><span className="context-plan-label">{plan}</span><span aria-hidden="true">⌄</span></>} className="context-plan">
       <h2>Plan</h2><p>{plan}. Saved means execution is not selected. Plan links open existing workflows; they do not switch execution.</p>
       <button type="button" onClick={event => choose(event, () => onPlan(false))}>Current Plan</button>
       <button type="button" onClick={event => choose(event, () => onPlan(true))}>Compare Plans</button>

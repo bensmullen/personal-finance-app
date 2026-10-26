@@ -460,8 +460,9 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-shell .topbar .brand { position: static; color: var(--ink); white-space: normal; }
 .topbar .brand { justify-self: start; }
 .topbar .settings-button { justify-self: end; display: flex; align-items: center; gap: 6px; }
-/* Keep Settings text unchanged; its gear is 1.5× the adjacent label's font size. */
-.topbar .settings-button > span[aria-hidden="true"] { font-size: 1.5em; line-height: 1; }
+/* A font-independent 2× gear; lift its center to the label's capital height. */
+.topbar .settings-gear { flex: none; font-size: 2em; width: 1em; height: 1em; transform: translateY(-.06em); }
+.topbar .settings-label { line-height: 1; }
 .shared-context { display: flex; justify-content: center; align-items: center; gap: 8px; min-width: 0; }
 .shared-context > * { min-width: 0; }
 .context-disclosure { position: relative; min-width: 0; }
@@ -512,14 +513,24 @@ main#main-content { padding: 24px 32px 64px; }
 }
 @media (max-width: 900px) {
   .financial-nav-links { display: contents; }
-  .app-shell > .topbar, .app-shell.calm-shell > .topbar { grid-template-columns: 1fr auto; padding: 8px 12px; gap: 4px 8px; }
-  .shared-context { grid-column: 1 / -1; grid-row: 2; justify-self: center; max-width: 100%; }
-  .shared-context summary { font-size: .875rem; max-width: calc((100vw - 32px) / 2); }
+  .app-shell > .topbar, .app-shell.calm-shell > .topbar { grid-template-columns: auto minmax(0, 1fr) auto; padding: 8px; gap: 4px; }
+  .topbar .brand { min-width: 44px; padding: 6px; }
+  .topbar .settings-button { min-width: 44px; padding: 7px; gap: 0; margin: 0; }
+  .topbar .settings-label { display: none; }
+  .topbar .settings-gear { transform: none; }
+  .shared-context { justify-self: center; width: 100%; max-width: 100%; gap: 4px; }
+  .shared-context > .context-disclosure { flex: 0 1 auto; min-width: 44px; }
+  .shared-context summary { font-size: .875rem; min-width: 44px; max-width: 100%; padding: 10px 6px; gap: 4px; }
+  .shared-context summary > span:not([aria-hidden]) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .shared-context summary > span[aria-hidden] { flex: none; }
   .shared-context .context-popover { width: min(18rem, calc(100vw - 24px)); }
   .more-destinations .context-actions::before { content: "Status & Actions"; font-weight: 650; }
   .more-destinations .context-actions { margin: 8px 0; color: var(--ink); }
   .more-destinations .context-popover { position: static; width: 100%; max-height: 42svh; box-shadow: none; }
   .context-command-buttons { flex-wrap: wrap; }
+}
+@media (min-width: 561px) and (max-width: 900px) {
+  .topbar .brand > span:last-child { display: none; }
 }
 /* Source-bound setup guidance remains readable in the existing Calm surfaces. */
 .starting-points, .forecast-coverage, .normalization-preview {

@@ -313,30 +313,56 @@ for (const width of [1440, 390]) {
         await expect(control).toBeVisible();
         const box = (await control.boundingBox())!;
         expect(box.height).toBeGreaterThanOrEqual(44);
+        expect(box.width).toBeGreaterThanOrEqual(44);
         expect(box.x).toBeGreaterThanOrEqual(0);
         expect(box.x + box.width).toBeLessThanOrEqual(width);
         expect(await control.evaluate(node => parseFloat(getComputedStyle(node).fontSize))).toBeGreaterThanOrEqual(14);
         boxes.push(box);
       }
-      // The Settings gear must be 1.5× its adjacent label at both desktop and
-      // mobile widths without changing the button's accessible name.
-      const gearRatio = await page.locator(".topbar .settings-button").evaluate(button => {
-        const gear = button.querySelector('span[aria-hidden="true"]');
-        return gear
-          ? parseFloat(getComputedStyle(gear).fontSize) / parseFloat(getComputedStyle(button).fontSize)
-          : 0;
+      const settings = page.locator(".topbar .settings-button");
+      await expect(settings).toHaveAccessibleName("Settings");
+      await expect(settings.locator(".settings-gear")).toBeVisible();
+      const gearRatio = await settings.evaluate(button => {
+        const gear = button.querySelector(".settings-gear")!;
+        const label = button.querySelector(".settings-label")!;
+        return parseFloat(getComputedStyle(gear).fontSize) / parseFloat(getComputedStyle(label).fontSize);
       });
-      expect(gearRatio).toBeCloseTo(1.5, 5);
+      expect(gearRatio).toBeCloseTo(2, 5);
+      await expect(settings.locator(".settings-label")).toBeVisible({ visible: width === 1440 });
+      for (const control of [page.locator(".topbar .brand"), settings]) {
+        const box = (await control.boundingBox())!;
+        expect(box.height).toBeGreaterThanOrEqual(44);
+        expect(box.width).toBeGreaterThanOrEqual(44);
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(width);
+        boxes.push(box);
+      }
+      // All four targets occupy one row, including the actual 390px viewport.
+      expect(Math.max(...boxes.map(box => box.y))).toBeLessThan(Math.min(...boxes.map(box => box.y + box.height)));
+      const ordered = [...boxes].sort((a, b) => a.x - b.x);
+      for (let i = 1; i < ordered.length; i++) expect(ordered[i]!.x).toBeGreaterThanOrEqual(ordered[i - 1]!.x + ordered[i - 1]!.width);
       if (width === 1440) {
-        // Controls must share a horizontal band, rather than pushing Save/privacy
-        // to a second row. Allow differing text heights without fixed snapshots.
-        expect(Math.max(...boxes.map(box => box.y))).toBeLessThan(Math.min(...boxes.map(box => box.y + box.height)));
-        const settings = (await page.locator(".topbar .settings-button").boundingBox())!;
-        expect(settings.x).toBeGreaterThanOrEqual(Math.max(...boxes.map(box => box.x + box.width)));
+        // Measure the capital S's ink center from the actual label font metrics.
+        const opticalOffset = await settings.evaluate(button => {
+          const label = button.querySelector(".settings-label")!;
+          const style = getComputedStyle(label);
+          const canvas = document.createElement("canvas").getContext("2d")!;
+          canvas.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+          const metrics = canvas.measureText("S");
+          const box = label.getBoundingClientRect();
+          const baseline = box.y + box.height / 2 + (metrics.fontBoundingBoxAscent - metrics.fontBoundingBoxDescent) / 2;
+          const capCenter = baseline + (metrics.actualBoundingBoxDescent - metrics.actualBoundingBoxAscent) / 2;
+          const gear = button.querySelector(".settings-gear")!.getBoundingClientRect();
+          return Math.abs(gear.y + gear.height / 2 - capCenter);
+        });
+        expect(opticalOffset).toBeLessThanOrEqual(2);
+        const center = (await ribbon.boundingBox())!;
+        expect(Math.abs(center.x + center.width / 2 - width / 2)).toBeLessThanOrEqual(1);
       }
       for (const selector of [".context-people", ".context-plan"]) {
         const menu = ribbon.locator(selector);
         const trigger = menu.locator(":scope > summary");
+        await expect(trigger.locator('span[aria-hidden="true"]')).toBeVisible();
         await trigger.click();
         const triggerBox = (await trigger.boundingBox())!;
         const popup = (await menu.locator(".context-popover").boundingBox())!;
@@ -348,25 +374,37 @@ for (const width of [1440, 390]) {
         await expect(trigger).toBeFocused();
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await settings.focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator(".subnav").getByRole("button", { name: "Household & People", exact: true })).toHaveAttribute("aria-current", "page");
     });
 
     test("enlarged text keeps controls and disclosures in bounds", async ({ page }) => {
       await openBoundedSession(page);
       await page.addStyleTag({ content: "html { font-size: 200%; }" });
       const ribbon = ribbonFor(page);
-      for (const control of await ribbon.locator(".context-disclosure > summary").all()) {
+      const controls = [...await ribbon.locator(".context-disclosure > summary").all(), page.locator(".topbar .brand"), page.locator(".topbar .settings-button")];
+      const boxes = [];
+      for (const control of controls) {
         await expect(control).toBeVisible();
         const box = await control.boundingBox();
         expect(box!.height).toBeGreaterThanOrEqual(44);
         expect(box!.x).toBeGreaterThanOrEqual(0);
         expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+        boxes.push(box!);
       }
+      const ordered = boxes.sort((a, b) => a.x - b.x);
+      for (let i = 1; i < ordered.length; i++) expect(ordered[i]!.x).toBeGreaterThanOrEqual(ordered[i - 1]!.x + ordered[i - 1]!.width);
       const people = ribbon.locator(".context-people");
       await people.locator(":scope > summary").click();
       await people.getByRole("button", { name: "Taylor", exact: true }).click();
       await expect(page.getByRole("dialog", { name: "Edit Person", exact: true })).toBeVisible();
       await page.keyboard.press("Escape");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      const settings = page.getByRole("button", { name: "Settings", exact: true });
+      await settings.focus();
+      await page.keyboard.press("Space");
+      await expect(page.locator(".subnav").getByRole("button", { name: "Household & People", exact: true })).toHaveAttribute("aria-current", "page");
     });
   });
 }

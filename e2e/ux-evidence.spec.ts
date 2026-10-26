@@ -91,6 +91,34 @@ async function recordState(page: Page, info: TestInfo, scenario: string) {
 
 async function captureSharedShell(page: Page, info: TestInfo, width: number, scenario: string) {
   const revision = process.env.GITHUB_SHA?.slice(0, 12) || "revision-unrecorded";
+  // Presentation-only reconstruction of the reviewer-observed 22b889db header.
+  // Label it explicitly: this is not a run of the old executable or financial code.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const comparison = `ribbon-${scenario}-${width}-${revision}`;
+  const beforeStyle = await page.addStyleTag({ content: `
+    .topbar .settings-gear { display: none; }
+    .topbar .settings-button::before { content: "⚙"; font-size: 1.5em; line-height: 1; }
+    .topbar .settings-label { display: inline; line-height: normal; }
+    @media (max-width: 900px) {
+      .app-shell > .topbar, .app-shell.calm-shell > .topbar { grid-template-columns: 1fr auto; padding: 8px 12px; gap: 4px 8px; }
+      .topbar .settings-button { padding: 10px 16px; gap: 6px; margin-left: auto; }
+      .shared-context { grid-column: 1 / -1; grid-row: 2; justify-self: center; width: auto; gap: 8px; }
+      .shared-context > .context-disclosure { flex: initial; }
+      .shared-context summary { padding: 10px 8px; gap: 8px; max-width: calc((100vw - 32px) / 2); }
+      .shared-context summary > span:not([aria-hidden]) { overflow: visible; white-space: normal; }
+    }
+  ` });
+  try {
+    const path = info.outputPath(`${comparison}-before-reconstructed.png`);
+    await page.screenshot({ path, animations: "disabled" });
+    await info.attach(`${comparison}-before-reconstructed`, { path, contentType: "image/png" });
+  } finally { await beforeStyle.evaluate(node => node.remove()); }
+  const after = info.outputPath(`${comparison}-after.png`);
+  await page.screenshot({ path: after, animations: "disabled" });
+  await info.attach(`${comparison}-after`, { path: after, contentType: "image/png" });
+  const report = info.outputPath(`${comparison}-comparison.html`);
+  await writeFile(report, `<!doctype html><html lang="en"><meta charset="utf-8"><title>Shared header repair</title><style>body{font:16px system-ui;margin:24px}main{display:flex;flex-wrap:wrap;gap:24px}figure{margin:0;flex:1;min-width:280px}img{width:100%;border:1px solid #aaa}</style><h1>Shared header · ${width}px · ${revision}</h1><p>Left: reconstructed pre-repair header presentation from 22b889db (1.5× Unicode gear and two mobile rows), on the same synthetic session. Right: current implementation. This comparison changes presentation only; it is not an execution of the baseline commit. Review the 2× gear and capital-S alignment on desktop, and one row with gear-only Settings at 390px. Financial behavior is covered separately. PM visual acceptance remains pending.</p><main><figure><figcaption>Before — reconstructed presentation</figcaption><img alt="Reconstructed previous header" src="${comparison}-before-reconstructed.png"></figure><figure><figcaption>After — current implementation</figcaption><img alt="Current shared header" src="${comparison}-after.png"></figure></main></html>`);
+  await info.attach(`${comparison}-comparison`, { path: report, contentType: "text/html" });
   for (const enlarged of [false, true]) {
     const style = enlarged ? await page.addStyleTag({ content: "html { font-size: 200%; }" }) : undefined;
     const capture = async (state: string) => {
