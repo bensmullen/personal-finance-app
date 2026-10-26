@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   evaluateIraConversionYear, type IraAccount, type IraConversionRequest,
-  type IraDistribution, type IraSource, type IraYearInput,
+  type IraDistribution, type IraOriginalReturnProvenance, type IraSource, type IraYearInput,
 } from "../../../../src/simulation/d2/retirement/conversions/index.js";
 import { civilDate } from "../../../../src/time/index.js";
 import { Currency, money, Money, USD } from "../../../../src/values/index.js";
@@ -57,6 +57,33 @@ const withRequests = (f: IraYearInput, rs: readonly IraConversionRequest[]): Ira
   distributions: rs.map(distribution), closeout: { ...f.closeout!, distributionOperationIds: rs.map(r => r.operationId) } });
 
 describe("source-qualified person/tax-year IRA pro-rata proposals (isolated A3-1)", () => {
+  it("keeps legacy arithmetic and admits an explicit original return's own verified prior-year law", () => {
+    const f = fixture(), priorSource = { ...f.openingBasis!.source, ruleSnapshotId: "synthetic:8606:2025:v1" };
+    const p: IraOriginalReturnProvenance = {
+      personId: "person", taxYear: 2025, filingId: "original:2025", filingVersion: "1", filingKind: "original",
+      filingStatus: f.filingStatus, filedAt: date("2026-04-01"), publishedAt: date("2026-04-01"), knownAt: date("2027-01-02"),
+      revisesFilingId: null, carryForwardBasis: money("200"), source: priorSource,
+      legalSnapshot: { ...f.rules!, source: { ...source("prior-law", null, "person", 2025), asOf: date("2025-01-01"), ruleSnapshotId: priorSource.ruleSnapshotId },
+        effectivePeriod: { start: date("2025-01-01"), endExclusive: date("2026-01-01") } },
+    };
+    const explicit = { ...f, openingBasis: { ...f.openingBasis!, source: priorSource, originalReturn: p } };
+    const legacy = evaluateIraConversionYear(f), result = evaluateIraConversionYear(explicit);
+    expect(legacy.yearStatus).toBe("FINAL"); expect(result.yearStatus).toBe("FINAL");
+    expect(result.proposals[0]!.taxable.equals(legacy.proposals[0]!.taxable)).toBe(true);
+    expect(result.basisProposals[0]!.carryForwardBasis.equals(money("180"))).toBe(true);
+    // Own-year law is allowed ONLY with explicit provenance, never by default.
+    denial({ ...f, openingBasis: { ...f.openingBasis!, source: priorSource } }, "MIXED_RULE_SNAPSHOT");
+    denial({ ...explicit, openingBasis: { ...explicit.openingBasis, originalReturn: { ...p,
+      legalSnapshot: undefined } as unknown as IraOriginalReturnProvenance } }, "MISSING_ORIGINAL_RETURN_RULE");
+    denial({ ...explicit, openingBasis: { ...explicit.openingBasis, originalReturn: { ...p,
+      legalSnapshot: { ...p.legalSnapshot, source: { ...p.legalSnapshot.source, verification: "unverified" } } } } }, "UNVERIFIED_PROJECTED_OR_FUTURE_SOURCE");
+    denial({ ...explicit, openingBasis: { ...explicit.openingBasis, originalReturn: { ...p, filingKind: "amended" } } }, "UNQUALIFIED_ORIGINAL_RETURN");
+    denial({ ...explicit, openingBasis: { ...explicit.openingBasis, originalReturn: { ...p, carryForwardBasis: money("199") } } }, "UNQUALIFIED_ORIGINAL_RETURN");
+    denial({ ...explicit, openingBasis: { ...explicit.openingBasis, originalReturn: { ...p,
+      legalSnapshot: { ...p.legalSnapshot, source: { ...p.legalSnapshot.source, asOf: date("2026-05-01") } } } } }, "UNQUALIFIED_ORIGINAL_RETURN");
+    denial({ ...explicit, requests: [{ ...f.requests[0]!, source: { ...f.requests[0]!.source, ruleSnapshotId: priorSource.ruleSnapshotId } }] }, "MIXED_RULE_SNAPSHOT");
+  });
+
   it("uses the explicit synthetic 20,000 / (90,000 + 10,000) cents annual rule", () => {
     const input = fixture(), before = JSON.stringify(input), result = evaluateIraConversionYear(input);
     expect(result.diagnostics).toEqual([]); expect(result.yearStatus).toBe("FINAL");
