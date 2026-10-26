@@ -1455,8 +1455,11 @@ def main():
                         "If contention persists, inspect the owning hook process before retrying; "
                         "lock contention alone is not receipt corruption."
                     )
-                    if payload.get('hook_event_name') == 'PreToolUse':
+                    if event == 'PreToolUse':
                         deny(reason)
+                    elif event == 'Stop':
+                        # Avoid another Stop loop if the current Stop was itself blocked.
+                        block_or_stop(payload, reason)
                     else:
                         emit({"decision": "block", "reason": reason})
                     return
