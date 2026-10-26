@@ -175,7 +175,7 @@ describe("#149 S8-3 funded account-scoped RMD in the real joint household", () =
         const before = canonicalSerialize(s.opening);
         expect(() => attachFundedRetirementCashSchedule(s.baseKernel, { ...s.schedule,
           plans: [{ ...bad.cash, fundedRmd: s.schedule.plans[0]!.fundedRmd }, s.schedule.plans[1]!] }))
-          .toThrow("Distinct source-qualified dated plans and a common full horizon are required");
+          .toThrow("Distinct dated events, full horizon and versioned complete-original pins required");
         expect(canonicalSerialize(s.opening)).toBe(before);
         return;
       }
