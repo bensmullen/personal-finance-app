@@ -330,9 +330,10 @@ for (const width of [1440, 390]) {
           width: bounds.width,
           height: bounds.height,
           fontSize: parseFloat(getComputedStyle(element).fontSize),
+          yOffset: new DOMMatrixReadOnly(getComputedStyle(element).transform).m42,
         };
       });
-      expect(gear).toEqual({ glyph: "⚙", width: 20, height: 20, fontSize: 20 });
+      expect(gear).toEqual({ glyph: "⚙", width: 30, height: 30, fontSize: 30, yOffset: -2 });
       await expect(settings.locator("svg")).toHaveCount(0);
       await expect(settings.locator(".settings-label")).toBeVisible({ visible: width === 1440 });
       for (const control of [page.locator(".topbar .brand"), settings]) {
@@ -361,7 +362,8 @@ for (const width of [1440, 390]) {
           const gear = button.querySelector(".settings-gear")!.getBoundingClientRect();
           return Math.abs(gear.y + gear.height / 2 - capCenter);
         });
-        expect(opticalOffset).toBeLessThanOrEqual(2);
+        // The 30px glyph is intentionally lifted 2px; tolerate small font-ink variation.
+        expect(opticalOffset).toBeLessThanOrEqual(4);
         const center = (await ribbon.boundingBox())!;
         expect(Math.abs(center.x + center.width / 2 - width / 2)).toBeLessThanOrEqual(1);
       }

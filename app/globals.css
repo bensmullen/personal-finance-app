@@ -460,8 +460,8 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-shell .topbar .brand { position: static; color: var(--ink); white-space: normal; }
 .topbar .brand { justify-self: start; }
 .topbar .settings-button { justify-self: end; display: flex; align-items: center; gap: 6px; }
-/* Restore the original gear glyph in a fixed square, centered with the Settings label. */
-.topbar .settings-gear { box-sizing: border-box; display: inline-flex; flex: 0 0 20px; align-items: center; justify-content: center; width: 20px; height: 20px; font-size: 20px; line-height: 1; }
+/* Original gear glyph: fixed 30px square, lifted 2px relative to the Settings label. */
+.topbar .settings-gear { box-sizing: border-box; display: inline-flex; flex: 0 0 30px; align-items: center; justify-content: center; width: 30px; height: 30px; font-size: 30px; line-height: 1; transform: translateY(-2px); }
 .topbar .settings-label { line-height: 1; }
 .shared-context { display: flex; justify-content: center; align-items: center; gap: 8px; min-width: 0; }
 .shared-context > * { min-width: 0; }
