@@ -93,7 +93,7 @@ mustRun("git", ["switch", "-c", "codex/policy-self-test"], { cwd: hookRepo });
 mustRun("git", ["push", "origin", "codex/policy-self-test"], { cwd: hookRepo });
 const baseHead = mustRun("git", ["rev-parse", "HEAD"], { cwd: hookRepo }).stdout.trim();
 
-const sessionId = "policy-self-test";
+let sessionId = "policy-self-test";
 const turnId = "turn-1";
 const hook = (event, extra = {}, env = {}) => {
   const payload = JSON.stringify({
@@ -328,7 +328,8 @@ const blockedStop = hook("Stop", {
 });
 assert(blockedStop?.continue === true, "explicit clean BLOCKED state should be allowed");
 
-hook("UserPromptSubmit", { prompt });
+sessionId = "policy-self-test-checkpoint";
+assert(hook("UserPromptSubmit", { prompt }).hookSpecificOutput, "checkpoint fixture needs a fresh session grant");
 fs.writeFileSync(path.join(hookRepo, "src", "allowed.ts"), "export const value = 3;\n");
 const dirtyBlocked = hook("Stop", {
   last_assistant_message: "TASK_STATUS: BLOCKED\nBLOCKER: external semantic decision required",
@@ -419,6 +420,20 @@ const recoveryFixture = () => {
     "no mutations may occur on a new chat before reauthorization");
 
   fs.writeFileSync(f.issue, prompt.replace("- src/allowed.ts", "- src/allowed.ts\n- src/outside.ts"));
+  const runtime = path.join(f.repository, ".codex/runtime");
+  const receiptBytes = () => Object.fromEntries(fs.readdirSync(runtime).filter((name) => name.endsWith('.json'))
+    .sort().map((name) => [name, fs.readFileSync(path.join(runtime, name), 'hex')]));
+  const closedBytes = receiptBytes();
+  const closedGit = f.snapshot();
+  for (const turn_id of ["first", "same-chat-new-turn"]) {
+    const refused = f.start({ turn_id });
+    assert(refused.decision === "block"
+      && refused.reason.includes("start a NEW Codex conversation in the verified worktree"),
+    "closed same session must be refused even with updated valid scope");
+    assert(JSON.stringify(receiptBytes()) === JSON.stringify(closedBytes)
+      && JSON.stringify(f.snapshot()) === JSON.stringify(closedGit),
+    "closed-session refusal must preserve pointer, hash, receipt bytes and Git without checkpointing");
+  }
   const fresh = f.start({ session_id: "new-chat", turn_id: "authorized" });
   const grant = String(fresh?.hookSpecificOutput?.additionalContext ?? "");
   assert(grant.includes("Closed-task reauthorization") && grant.includes("src/outside.ts")
@@ -619,7 +634,154 @@ rejectedRecovery("committed then reverted out-of-scope work", (f) => {
   assert(closed.continue === true, "clean blocked behavior remains unchanged");
   f.dirty();
   const response = f.start({ turn_id: "after-closed" });
-  assert(response.decision === "block" && response.reason.includes("provenance"), "closed old tasks cannot authorize fresh dirt");
+  assert(response.decision === "block" && response.reason.includes("start a NEW Codex conversation"), "closed old tasks cannot authorize fresh dirt");
+  f.assertNoUnsafeCommands();
+}
+
+// Real flock contention in isolated repositories. Pipes acknowledge an actual
+// failed acquisition before release, avoiding guessed sleeps/startup races.
+{
+  const f = recoveryFixture();
+  const result = mustRun("python3", ["-c", String.raw`
+import fcntl, importlib.util, json, os, pathlib, select, subprocess, sys, time, types
+policy, repository = sys.argv[1:]
+runtime = pathlib.Path(repository) / '.codex/runtime'
+lock_path = runtime / 'policy.lock'
+# A deterministic clock also proves the retry budget and absence of busy-spin;
+# the process cases below exercise the real OS lock and real elapsed timeout.
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location('deadline_under_test', policy)
+deadline_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(deadline_module)
+ticks, sleeps, attempts = [0.0], [], [0]
+def advance(seconds):
+    assert 0 < seconds <= 0.05
+    sleeps.append(seconds)
+    ticks[0] += seconds
+def collide(lock, operation):
+    attempts[0] += 1
+    raise BlockingIOError()
+deadline_module.time = types.SimpleNamespace(monotonic=lambda: ticks[0], sleep=advance)
+deadline_module.fcntl = types.SimpleNamespace(flock=collide, LOCK_EX=fcntl.LOCK_EX, LOCK_NB=fcntl.LOCK_NB)
+assert deadline_module.acquire_policy_lock(None) is False
+assert ticks[0] == 1.5 and 30 <= len(sleeps) <= 31 and attempts[0] == len(sleeps) + 1
+def eventually_free(lock, operation):
+    attempts[0] += 1
+    if attempts[0] <= 3:
+        raise BlockingIOError()
+ticks[0], attempts[0] = 0.0, 0
+sleeps.clear()
+deadline_module.fcntl.flock = eventually_free
+assert deadline_module.acquire_policy_lock(None) is True and attempts[0] == 4 and len(sleeps) == 3
+worker = r'''
+import fcntl, importlib.util, json, os, pathlib, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location('policy_under_test', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+original_flock = fcntl.flock
+notified = False
+def observed_flock(lock, operation):
+    global notified
+    try:
+        return original_flock(lock, operation)
+    except BlockingIOError:
+        if not notified:
+            os.write(int(sys.argv[2]), b'C')
+            notified = True
+        raise
+fcntl.flock = observed_flock
+def guarded(handler):
+    def invoke(payload, root):
+        with (root / '.codex/runtime/policy.lock').open('a') as probe:
+            try:
+                original_flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                pass
+            else:
+                raise AssertionError('handler ran without exclusive OS lock')
+        handler(payload, root)
+    return invoke
+for name in ('user_prompt', 'pre_tool', 'stop'):
+    setattr(module, name, guarded(getattr(module, name)))
+module.main()
+'''
+payloads = [
+    dict(hook_event_name='UserPromptSubmit', session_id='reader', prompt='read only'),
+    dict(hook_event_name='PreToolUse', session_id='recovery', turn_id='first', tool_name='apply_patch',
+         tool_input=dict(command='*** Begin Patch\n*** Update File: unauthorized.ts\n*** End Patch')),
+    dict(hook_event_name='Stop', session_id='no-task', last_assistant_message='TASK_STATUS: BLOCKED\nBLOCKER: done'),
+]
+def snapshot():
+    return {p.name: p.read_bytes() for p in runtime.glob('*.json')}
+before = snapshot()
+inode = lock_path.stat().st_ino
+def launch(payload):
+    read_fd, write_fd = os.pipe()
+    child = subprocess.Popen([sys.executable, '-c', worker, policy, str(write_fd)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        pass_fds=(write_fd,))
+    os.close(write_fd)
+    child.stdin.write(json.dumps(dict(cwd=repository, **payload)))
+    child.stdin.close()
+    child.stdin = None
+    return child, read_fd
+def finish(child):
+    out, err = child.communicate(timeout=10)
+    assert child.returncode == 0, err
+    return json.loads(out)
+def batch(items, prolonged=False):
+    children = []
+    with lock_path.open('a') as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        try:
+            for payload in items:
+                children.append(launch(payload))
+            for child, fd in children:
+                assert select.select([fd], [], [], 5)[0], 'no contention acknowledgment'
+                assert os.read(fd, 1) == b'C', 'worker exited before collision'
+            if prolonged:
+                started = time.monotonic()
+                responses = [finish(child) for child, fd in children]
+                assert time.monotonic() - started < 8, 'lock refusal exceeded bounded elapsed allowance'
+            else:
+                fcntl.flock(held, fcntl.LOCK_UN)
+                responses = [finish(child) for child, fd in children]
+            return responses
+        finally:
+            for child, fd in children:
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=5)
+                os.close(fd)
+def allowed(responses):
+    assert responses[0]['hookSpecificOutput']['hookEventName'] == 'UserPromptSubmit'
+    denial = responses[1]['hookSpecificOutput']
+    assert denial['permissionDecision'] == 'deny' and 'Out-of-scope' in denial['permissionDecisionReason']
+    assert responses[2]['continue'] is True
+for payload in payloads:
+    child, fd = launch(payload)
+    response = finish(child)
+    os.close(fd)
+    assert 'POLICY_LOCK_BUSY' not in json.dumps(response), response
+for repeat in range(2):
+    allowed(batch(payloads))
+for payload in payloads:
+    response = batch([payload], prolonged=True)[0]
+    event = payload['hook_event_name']
+    if event == 'PreToolUse':
+        assert response['hookSpecificOutput']['permissionDecision'] == 'deny'
+        reason = response['hookSpecificOutput']['permissionDecisionReason']
+    else:
+        assert response['decision'] == 'block'
+        reason = response['reason']
+    assert 'POLICY_LOCK_BUSY: ' + event in reason and 'STATE_RECOVERY_REQUIRED' not in reason
+    assert 'Preserve policy.lock and all receipts' in reason
+allowed(batch(payloads))
+assert snapshot() == before and lock_path.stat().st_ino == inode, 'lock handling changed receipt or lock identity'
+`, policy, f.repository], { cwd: f.repository,
+    env: { PFM_POLICY_TEST_ORIGIN: "https://github.com/bensmullen/personal-finance-app.git" } });
+  assert(result.status === 0, "bounded real-lock scenarios must succeed");
   f.assertNoUnsafeCommands();
 }
 
@@ -772,6 +934,7 @@ const attachmentDir = path.join(codexHome, "attachments", "generated");
 fs.mkdirSync(attachmentDir, { recursive: true });
 const attachment = path.join(attachmentDir, "writing-block.md");
 fs.writeFileSync(attachment, prompt);
+sessionId = "policy-self-test-attachment";
 const attachmentResult = hook(
   "UserPromptSubmit",
   { prompt: "Generated task transport: " + attachment },
@@ -806,6 +969,7 @@ mustRun("git", ["init", "-b", "main"], { cwd: seed });
 mustRun("git", ["config", "user.name", "PFM Test"], { cwd: seed });
 mustRun("git", ["config", "user.email", "pfm@example.test"], { cwd: seed });
 fs.writeFileSync(path.join(seed, "file.txt"), "one\n");
+fs.writeFileSync(path.join(seed, ".gitignore"), ".codex/runtime/\n");
 mustRun("git", ["add", "."], { cwd: seed });
 mustRun("git", ["commit", "-m", "one"], { cwd: seed });
 mustRun("git", ["init", "--bare", remote], { cwd: bootstrapRoot });
@@ -815,6 +979,19 @@ mustRun("git", ["--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main"],
 mustRun("git", ["clone", remote, source], { cwd: bootstrapRoot });
 
 const bootstrapEnv = { PFM_BOOTSTRAP_TEST_ALLOW_ANY_ORIGIN: "1" };
+const assertHandoff = (result, mode, expectedPath, branch) => {
+  const lines = result.stdout.split('\n');
+  assert(lines.filter((line) => line.startsWith('PR_WORKTREE_READY ')).length === 1
+    && lines.includes(`OPEN THIS EXACT WORKTREE IN CODEX: ${expectedPath}`)
+    && lines.some((line) => line.startsWith(`PR_WORKTREE_READY mode=${mode} path=${expectedPath} branch=${branch} `)),
+  "machine receipt and GUI handoff must identify the same exact worktree");
+  const command = lines.find((line) => line.startsWith('bash -c '));
+  assert(command, "bootstrap must supply executable read-only preflight");
+  const checked = mustRun('bash', ['-c', command], { cwd: expectedPath });
+  assert(checked.stdout.includes(`PREFLIGHT_OK path=${fs.realpathSync(expectedPath)} branch=${branch}`),
+    "operator preflight must check the reported path, branch, upstream and cleanliness");
+  return command;
+};
 const targetOne = path.join(bootstrapRoot, "task-one");
 const firstBootstrap = mustRun(
   "bash",
@@ -822,6 +999,40 @@ const firstBootstrap = mustRun(
   { cwd: source, env: bootstrapEnv },
 );
 assert(firstBootstrap.stdout.includes("PR_WORKTREE_READY mode=new"), "new bootstrap should return a ready receipt");
+assertHandoff(firstBootstrap, "new", targetOne, "codex/task-one");
+
+// Suffix-colliding old/recovery folders must never be interchangeable in the GUI.
+const recoveryBranch = 'codex/task-one-recovery';
+const recoveryTarget = targetOne + '-recovery';
+mustRun('git', ['push', 'origin', `HEAD:refs/heads/${recoveryBranch}`], { cwd: seed });
+const oldHead = mustRun('git', ['-C', targetOne, 'rev-parse', 'HEAD']).stdout;
+const wrongTarget = run('bash', [bootstrap, 'resume', recoveryBranch, targetOne], { cwd: source, env: bootstrapEnv });
+assert(wrongTarget.status !== 0 && wrongTarget.stderr.includes('existing target worktree owns branch')
+  && !wrongTarget.stdout.includes('PR_WORKTREE_READY') && !wrongTarget.stdout.includes('OPEN THIS EXACT'),
+"wrong-branch target cannot produce a false ready instruction");
+assert(mustRun('git', ['-C', targetOne, 'rev-parse', 'HEAD']).stdout === oldHead
+  && mustRun('git', ['-C', targetOne, 'branch', '--show-current']).stdout.trim() === 'codex/task-one',
+"wrong target refusal must preserve the old branch and commits");
+const recoveryBootstrap = mustRun('bash', [bootstrap, 'resume', recoveryBranch, recoveryTarget],
+  { cwd: source, env: bootstrapEnv });
+const recoveryPreflight = assertHandoff(recoveryBootstrap, 'resume', recoveryTarget, recoveryBranch);
+assert(run('bash', ['-c', recoveryPreflight], { cwd: targetOne }).status !== 0,
+  "operator preflight must refuse an old GUI cwd instead of changing folders for the operator");
+const wrongFolder = run('python3', [policy], { cwd: targetOne,
+  input: JSON.stringify({ cwd: targetOne, session_id: 'wrong-folder', turn_id: 'first',
+    hook_event_name: 'UserPromptSubmit', prompt: prompt.replace('codex/policy-self-test', recoveryBranch) }),
+  env: { PFM_POLICY_TEST_ORIGIN: 'https://github.com/bensmullen/personal-finance-app.git' } });
+assert(JSON.parse(wrongFolder.stdout).reason.includes('TASK_BRANCH_MISMATCH')
+  && !fs.existsSync(path.join(targetOne, '.codex/runtime/latest-task.json')),
+"old GUI folder must refuse recovery task without a receipt mutation");
+fs.writeFileSync(path.join(recoveryTarget, 'untracked.txt'), 'dirty\n');
+assert(run('bash', ['-c', recoveryPreflight], { cwd: recoveryTarget }).status !== 0,
+  "reported preflight must refuse newly dirty state");
+fs.rmSync(path.join(recoveryTarget, 'untracked.txt'));
+const reusedRecovery = mustRun('bash', [bootstrap, 'resume', recoveryBranch, recoveryTarget + '-unused'],
+  { cwd: source, env: bootstrapEnv });
+assertHandoff(reusedRecovery, 'resume', recoveryTarget, recoveryBranch);
+assert(!fs.existsSync(recoveryTarget + '-unused'), "resume must report actual existing owner, never the requested unused path");
 
 const linkedSessionPayload = JSON.stringify({
   session_id: "linked-worktree-session",
@@ -873,6 +1084,9 @@ mustRun("git", ["-C", targetTwo, "add", "feature.txt"]);
 mustRun("git", ["-C", targetTwo, "commit", "-m", "feature"]);
 mustRun("git", ["-C", targetTwo, "push", "-u", "origin", "codex/task-two"]);
 const remoteFeatureHead = mustRun("git", ["-C", targetTwo, "rev-parse", "HEAD"]).stdout.trim();
+const existingResume = mustRun('bash', [bootstrap, 'resume', 'codex/task-two', targetTwo + '-resumed'],
+  { cwd: source, env: bootstrapEnv });
+assertHandoff(existingResume, 'resume', targetTwo, 'codex/task-two');
 mustRun("git", ["-C", source, "worktree", "remove", targetTwo]);
 
 const resumed = path.join(bootstrapRoot, "task-two-resumed");
@@ -882,6 +1096,7 @@ const resumeResult = mustRun(
   { cwd: source, env: bootstrapEnv },
 );
 assert(resumeResult.stdout.includes("PR_WORKTREE_READY mode=resume"), "resume should return a ready receipt");
+assertHandoff(resumeResult, 'resume', resumed, 'codex/task-two');
 assert(
   mustRun("git", ["-C", resumed, "rev-parse", "HEAD"]).stdout.trim() === remoteFeatureHead,
   "resume must use the fetched remote feature head",
@@ -890,6 +1105,7 @@ assert(
 fs.writeFileSync(path.join(resumed, "local-only.txt"), "local\n");
 mustRun("git", ["-C", resumed, "add", "local-only.txt"]);
 mustRun("git", ["-C", resumed, "commit", "-m", "local only"]);
+const unpushedHead = mustRun('git', ['-C', resumed, 'rev-parse', 'HEAD']).stdout;
 const unsafeResume = run(
   "bash",
   [bootstrap, "resume", "codex/task-two", resumed],
@@ -899,6 +1115,9 @@ assert(
   unsafeResume.status !== 0 && unsafeResume.stderr.includes("unpushed local commits"),
   "resume must never overwrite unpushed local commits",
 );
+assert(!unsafeResume.stdout.includes('PR_WORKTREE_READY')
+  && mustRun('git', ['-C', resumed, 'rev-parse', 'HEAD']).stdout === unpushedHead,
+"failed resume must retain the unpublished commit and emit no ready receipt");
 
 const selfTarget = run(
   "bash",

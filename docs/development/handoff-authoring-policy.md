@@ -204,6 +204,16 @@ separate from #218's FRAMEWORK_RELIABILITY stage. No dependency on #218 is added
 to U1B #181 or D2. Keep AL-002 authority compact, end after one push without CI
 polling (AL-003), and retain independent E2E flows/all four shards (AL-004).
 
+UserPromptSubmit, PreToolUse and Stop serialize through one per-worktree OS
+`flock` on `policy.lock`. A collision retries every 50ms for at most 1.5 seconds
+using monotonic time. Persistent contention returns event-specific
+`POLICY_LOCK_BUSY` (PreToolUse denies; prompt/Stop block). Let the owning hook
+finish, then retry that event in its owning conversation. Repeated contention
+requires read-only inspection of the owning hook process; it does not establish
+receipt corruption. Preserve the lock file and receipts. This #249 implementation
+does not curate or close learning candidate #217 and adds no persistent owner,
+lease, receipt marker or bypass.
+
 
 ## UX design-ready handoff for substantial user-facing changes
 
@@ -240,7 +250,17 @@ The bootstrap receipt is the Git-state authority for task initialization.
 Because it fetches `origin` first, the handoff does not need an
 `EXPECTED_HEAD` field and does not depend on local `main` being current.
 
-After bootstrap, open the reported worktree path in Codex and submit the handoff
+Copy the path printed after **OPEN THIS EXACT WORKTREE IN CODEX**. Bootstrap
+does not switch the folder selected in the Codex GUI. Open that specific folder;
+similar old/recovery suffixes are different worktrees. `resume` can reuse an
+existing branch owner at a different path from the requested destination: use
+the reported path, not the requested one. Run the printed read-only preflight
+in the selected folder's terminal. It checks the repository cwd, exact branch,
+cleanliness, HEAD and upstream: `resume` requires `origin/TARGET_BRANCH` at
+HEAD; `new` starts at fetched `origin/main` with no feature upstream until the
+first push. A failed check requires operator diagnosis before task submission.
+
+After that preflight, submit the handoff
 whose `TARGET_BRANCH` matches the prepared branch. Once Codex is running in a
 clean linked feature worktree on that branch, bootstrap is satisfied for that
 turn. SessionStart and task instructions must say so rather than directing Codex
@@ -284,6 +304,15 @@ continue in the closed chat, repeatedly prompt it with the task pointer after
 it reports stale authorization, delete receipts, bypass hooks, or run an
 implementation bootstrap to repair provenance. If the new chat still cannot
 activate, stop for read-only exact hook/session/branch/receipt diagnosis.
+The new conversation must have a **new session ID**, not just a new turn in
+the old chat. Submitting valid revised authorization from the closed session
+is refused with "start a NEW Codex conversation in the verified worktree"
+before checkpointing, saving state or changing the hash-bound receipt. The
+same-session continuation path applies only to a still-active interrupted
+task with valid task/scope provenance. Before opening the new chat, copy the
+bootstrap-reported exact folder and run its cwd/branch/upstream/clean preflight;
+never repair a closed-session refusal by editing receipts or reusing the old GUI
+folder merely because its name resembles the recovery folder.
 This keeps fail-closed scope/ownership enforcement; there is no implicit
 interactive task-grant widening or hidden PM approval within a Codex turn.
 

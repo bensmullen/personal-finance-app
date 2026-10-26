@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -976,6 +977,13 @@ def user_prompt(payload, root):
     if receipt_exists and not owner:
         emit({"decision": "block", "reason": receipt_diagnostic(root, state) + " Missing valid prior provenance."})
         return
+    if owner is not None and owner.get("ACTIVE") is False and owner.get("SESSION_ID") == state["SESSION_ID"]:
+        emit({"decision": "block", "reason": (
+            "Closed PFM task session: start a NEW Codex conversation in the verified worktree "
+            "and submit the live task authorization. Preserve the closed receipt; "
+            "a new turn in this conversation does not create a new session."
+        )})
+        return
     if not receipt_exists:
         for path in (root / '.codex/runtime').glob('*.json'):
             try:
@@ -1393,6 +1401,21 @@ def stop(payload, root):
     emit({"continue": True})
 
 
+def acquire_policy_lock(lock):
+    # One OS lock per worktree. Retry at 50ms intervals for at most 1.5s;
+    # monotonic time bounds contention without wall-clock jumps or busy-spinning.
+    deadline = time.monotonic() + 1.5
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(0.05, remaining))
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -1423,10 +1446,15 @@ def main():
             directory = root / ".codex" / "runtime"
             directory.mkdir(parents=True, exist_ok=True)
             with (directory / "policy.lock").open("a") as lock:
-                try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    reason = "STATE_RECOVERY_REQUIRED: another task authorization/checkpoint is in progress"
+                if not acquire_policy_lock(lock):
+                    event = payload.get("hook_event_name")
+                    reason = (
+                        f"POLICY_LOCK_BUSY: {event} could not acquire the worktree policy lock within 1.5s. "
+                        "Another hook is authorizing/checkpointing; let it finish, then retry this event "
+                        "in the owning conversation. Preserve policy.lock and all receipts. "
+                        "If contention persists, inspect the owning hook process before retrying; "
+                        "lock contention alone is not receipt corruption."
+                    )
                     if payload.get('hook_event_name') == 'PreToolUse':
                         deny(reason)
                     else:
