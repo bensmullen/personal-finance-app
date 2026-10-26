@@ -777,6 +777,11 @@ for payload in payloads:
         reason = response['reason']
     assert 'POLICY_LOCK_BUSY: ' + event in reason and 'STATE_RECOVERY_REQUIRED' not in reason
     assert 'Preserve policy.lock and all receipts' in reason
+# An already-blocked Stop must not recurse indefinitely when lock remains held.
+recursive_stop = batch([dict(payloads[2], stop_hook_active=True)], prolonged=True)[0]
+assert recursive_stop.get('continue') is False
+assert 'TASK_INCOMPLETE: POLICY_LOCK_BUSY: Stop' in recursive_stop.get('stopReason', '')
+assert 'Preserve policy.lock and all receipts' in recursive_stop['stopReason']
 allowed(batch(payloads))
 assert snapshot() == before and lock_path.stat().st_ino == inode, 'lock handling changed receipt or lock identity'
 `, policy, f.repository], { cwd: f.repository,
