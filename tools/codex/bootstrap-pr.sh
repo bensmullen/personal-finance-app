@@ -184,7 +184,8 @@ if [ "$mode" = "new" ]; then
   fi
 
   prepare_target_path
-  git worktree add -b "$branch" "$target_abs" "$origin_main"
+  # --no-track: default Git autoSetupMerge may otherwise bind a new task branch to origin/main.
+  git worktree add --no-track -b "$branch" "$target_abs" "$origin_main"
   verify_ready "$target_abs" "$origin_main"
   exit 0
 fi
