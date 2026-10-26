@@ -1,6 +1,6 @@
 import { accountingTransactionId, createAccountingLeg, createAccountingTransaction } from "../../../../accounting/index.js";
 import { ValidationError } from "../../../../diagnostics/index.js";
-import { idempotencyKey } from "../../../../identity/index.js";
+import { domainId, idempotencyKey } from "../../../../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../lineage/index.js";
 import { applyAccountingTransactionAtomically, applyRetirementDistributionAtomically, registerAuthoritativeIdentity } from "../../../../state/index.js";
 import { civilDate, instant, type Period } from "../../../../time/index.js";
@@ -8,11 +8,12 @@ import { Money, USD } from "../../../../values/index.js";
 import { applyHouseholdExecutionOverlay, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
 import { immutableConfiguration } from "../../../r3/compiledHousehold.js";
 import { registerHouseholdParticipantCodec } from "../../../r3/participantCodec.js";
+import type { HouseholdWorkDescriptor } from "../../../intraperiodScheduler.js";
 import { SummaryOperationSink } from "../../../r3/summarySink.js";
 import { canonicalSerialize, type RunContext } from "../../../run.js";
 import { evaluateWithdrawals, type WithdrawalInput, type WithdrawalSource } from "../../retirement/withdrawals/index.js";
 import { evaluateWithdrawalRmd, type AuthorizationBundle, type WithdrawalRmdInput } from "../../retirement/withdrawalRmd/index.js";
-import { readRetirementRawSource, qualifyRetirementRawSource, qualifyRetirementPriorHistory, type RetirementSourceReference } from "./source.js";
+import { readRetirementRawSource, retirementRawSourceDigest, qualifyRetirementRawSource, qualifyRetirementPriorHistory, type RetirementSourceReference } from "./source.js";
 import { evaluateFundedRmdSatisfaction } from "./satisfaction.js";
 export { registerRetirementRawSourcePort, type RetirementRawSourcePort, type RetirementRawSource } from "./source.js";
 export { evaluateFundedRmdSatisfaction } from "./satisfaction.js";
@@ -46,6 +47,7 @@ export interface RetirementCashDiagnostic {
 }
 const participantId = "d2_retirement_cash";
 const same = (a: unknown, b: unknown): boolean => canonicalSerialize(a) === canonicalSerialize(b);
+const compareText = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
 const ordered = <T>(values: readonly T[]): readonly T[] => [...values].sort((a, b) => {
   const left = canonicalSerialize(a), right = canonicalSerialize(b);
   return left < right ? -1 : left > right ? 1 : 0;
@@ -95,6 +97,13 @@ function stamp(s: WithdrawalSource, householdId: string, personId: string, resou
 
 /** Opt-in physical CASH only. A4 remains the sole withdrawal admission evaluator. */
 export function createRetirementCashParticipant(configuration: RetirementCashInput): HouseholdKernelParticipant {
+  if (configuration.fundedRmd) return createFundedRetirementCashSchedule({ plans: [configuration],
+    annualSource: configuration.fundedRmd, horizon: configuration.fundedRmd.horizon });
+  return createInlineRetirementCashParticipant(configuration);
+}
+
+/** Historical v1/v2 readers only retain inline funded inputs and raw receipt keys. */
+function createInlineRetirementCashParticipant(configuration: RetirementCashInput, compact = false): HouseholdKernelParticipant {
   const input = snapshot(configuration);
   return Object.freeze({ id: participantId, version: input.fundedRmd ? "funded-account-rmd/v1" : "cash-zero-withholding/v1", portableCodec: "d2-retirement-cash/v1", economicInputs: input,
     prepare: (context, period, opening, work = [], tier = "detail") => {
@@ -172,7 +181,10 @@ export function createRetirementCashParticipant(configuration: RetirementCashInp
         const keys = [idempotencyKey("d2:source-operation", c.operationId), idempotencyKey("d2:authorization", c.authorizationId),
           idempotencyKey("d2:retirement-withdrawal", c.claimId),
           ...r.withholding!.instructions.map(i => idempotencyKey("d2:authorization", i.authorizationId)),
-          idempotencyKey("d2:retirement-cash-receipt", canonicalSerialize({ raw, members: input.members, confirmations: input.confirmations, operationId: c.operationId }))];
+          idempotencyKey("d2:retirement-cash-receipt", compact
+            ? canonicalSerialize({ source: { sourceId: reference!.sourceId, sourceVersion: reference!.sourceVersion,
+                contentDigest: (reference as PinnedRetirementSource).contentDigest }, operationId: c.operationId })
+            : canonicalSerialize({ raw, members: input.members, confirmations: input.confirmations, operationId: c.operationId }))];
         const registry = opening.state.identities;
         const posted = postedIds.has(c.operationId);
         if ((posted || keys.some(key => registry.externalIdempotencyKeys.includes(key)))
@@ -236,7 +248,7 @@ export function createRetirementCashParticipant(configuration: RetirementCashInp
             const { fundedRmd: _sourceFunded, rmd: _sourceRmd, ...sourceCash } = snapshot(currentSource.cash);
             if (!same(cash, sourceCash))
               fail("RETIREMENT_SOURCE_CHANGED", "Participant inputs must match the independently published cash plan");
-            const qualification = qualifyRetirementRawSource(currentSource, c.operationId, context);
+            const qualification = qualifyRetirementRawSource(currentSource, c.operationId, context, !compact);
             if (qualification.status !== "qualified")
               fail("RETIREMENT_AUTHORIZATION_INCOMPLETE", "Independent raw A4 source does not qualify this distribution");
             if (!qualifyRetirementPriorHistory(currentSource, candidate.state, context))
@@ -277,7 +289,7 @@ export function createRetirementCashParticipant(configuration: RetirementCashInp
     },
   } satisfies HouseholdKernelParticipant);
 }
-registerHouseholdParticipantCodec({ codec: "d2-retirement-cash/v1", restore: value => createRetirementCashParticipant(value as RetirementCashInput) });
+registerHouseholdParticipantCodec({ codec: "d2-retirement-cash/v1", restore: value => createInlineRetirementCashParticipant(value as RetirementCashInput) });
 
 /** A4 intentionally admits one account CASH snapshot per event date. Separate
  * dated plans preserve that contract instead of reusing a stale earlier balance. */
@@ -286,12 +298,12 @@ export interface FundedRetirementCashSchedule {
   readonly annualSource: RetirementSourceReference;
   readonly horizon: Period;
 }
-export function createFundedRetirementCashSchedule(configuration: FundedRetirementCashSchedule): HouseholdKernelParticipant {
+function createInlineFundedRetirementCashSchedule(configuration: FundedRetirementCashSchedule): HouseholdKernelParticipant {
   const input = immutableConfiguration(configuration);
   if (!input.plans.length || input.plans.some(p => !p.fundedRmd || !same(p.fundedRmd.horizon, input.horizon))
     || !unique(input.plans.flatMap(p => p.withdrawals.requests.map(r => r.operationId))))
     fail("RETIREMENT_IDENTITY_INVALID", "Distinct source-qualified dated plans and a common full horizon are required");
-  const participants = input.plans.map(createRetirementCashParticipant);
+  const participants = input.plans.map(p => createInlineRetirementCashParticipant(p));
   return Object.freeze({ id: participantId, version: "funded-account-rmd/v2", portableCodec: "d2-retirement-cash/v2", economicInputs: input,
     prepare: (context, period, opening, work, tier) => {
       const operations = participants.flatMap(p => p.prepare(context, period, opening, work, tier).operations)
@@ -314,7 +326,122 @@ export function createFundedRetirementCashSchedule(configuration: FundedRetireme
     observe: (descriptor, facts, runtime) => participants.reduce((next, p) => p.observe!(descriptor, facts, next), runtime),
   } satisfies HouseholdKernelParticipant);
 }
-registerHouseholdParticipantCodec({ codec: "d2-retirement-cash/v2", restore: value => createFundedRetirementCashSchedule(value as FundedRetirementCashSchedule) });
+registerHouseholdParticipantCodec({ codec: "d2-retirement-cash/v2", restore: value => createInlineFundedRetirementCashSchedule(value as FundedRetirementCashSchedule) });
+
+export interface PinnedRetirementSource extends RetirementSourceReference { readonly contentDigest: string; }
+export interface RetirementPlanReference extends PinnedRetirementSource {
+  /** Scheduling identity only; no amounts, approvals, rule tables or cash plan. */
+  readonly events: readonly HouseholdWorkDescriptor[];
+}
+export interface FundedRetirementCashReferences {
+  readonly horizon: Period;
+  readonly plans: readonly RetirementPlanReference[];
+  readonly annualSource: PinnedRetirementSource;
+}
+
+/** Convert documentary builder inputs once. Only refs survive in the participant.
+ * Construction reads do not grant admission: prepare and commit use the run clock. */
+export function createFundedRetirementCashSchedule(configuration: FundedRetirementCashSchedule): HouseholdKernelParticipant {
+  const { horizon } = configuration;
+  const context = { asOf: horizon.end, dataCutoff: horizon.end };
+  const pin = (reference: RetirementSourceReference): PinnedRetirementSource => {
+    const raw = readRetirementRawSource(reference, context);
+    if (!raw) fail("RETIREMENT_SOURCE_UNAVAILABLE", "Reference construction requires the independent full original");
+    return { sourceId: raw.sourceId, sourceVersion: raw.sourceVersion, contentDigest: retirementRawSourceDigest(raw) };
+  };
+  const plans = configuration.plans.map(p => {
+    if (!p.fundedRmd || !same(p.fundedRmd.horizon, horizon))
+      fail("RETIREMENT_HORIZON_INVALID", "All dated plans must bind the exact full horizon");
+    const reference = pin(p.fundedRmd);
+    const raw = readRetirementRawSource(reference, context)!;
+    const strip = ({ fundedRmd: _funded, rmd: _rmd, ...cash }: RetirementCashInput) => snapshot(cash);
+    if (!same(strip(p), strip(raw.cash))) fail("RETIREMENT_SOURCE_CHANGED", "Dated input differs from the publisher original");
+    const candidates = evaluateWithdrawals(raw.cash.withdrawals).candidates;
+    const events = raw.cash.withdrawals.requests.map(r => {
+      const q = raw.cash.confirmations.find(q => q.operationId === r.operationId);
+      const c = candidates.find(c => c.operationId === r.operationId);
+      const member = raw.cash.members.find(m => m.personId === r.personId);
+      return { id: r.operationId, domain: "investments", operationClass: "investment_transfer",
+        sequencingInstant: at(r.effectiveAt), dependsOn: ordered(q?.ordering.after ?? []),
+        resourceAccesses: [{ kind: "account_cash", accountId: domainId("account", r.sourceAccountId), mode: "consume" },
+          { kind: "account_cash", accountId: domainId("account", r.bank.id), mode: "produce" }],
+        traceRefs: [...new Set([...(c?.traceRefs ?? []), ...(q ? [q.source.id, q.bankSource.id, q.ordering.source.id,
+          ...q.reservations.map(p => p.source.id)] : []), ...(member ? [member.source.id] : []), r.operationId,
+          ...(r.authorization ? [r.authorization.id] : [])])].sort().map(id => calculationTraceRef(calculationTraceId(id))) } satisfies HouseholdWorkDescriptor;
+    }).sort((a, b) => compareText(a.sequencingInstant, b.sequencingInstant) || compareText(a.id, b.id));
+    return { ...reference, events };
+  }).sort((a, b) => compareText(a.events[0]?.sequencingInstant ?? "", b.events[0]?.sequencingInstant ?? "") || compareText(a.sourceId, b.sourceId));
+  return createReferencedRetirementCashParticipant({ horizon, plans, annualSource: pin(configuration.annualSource) });
+}
+
+/** Portable v3 restores scheduling references without consulting archived plans. */
+export function createReferencedRetirementCashParticipant(configuration: FundedRetirementCashReferences): HouseholdKernelParticipant {
+  const input = immutableConfiguration(configuration);
+  const refs = [...input.plans, input.annualSource];
+  instant(input.horizon.start); instant(input.horizon.end);
+  const only = (value: object, keys: readonly string[]) => Object.keys(value).every(key => keys.includes(key));
+  if (!input.plans.length || !unique(input.plans.map(p => p.sourceId))
+    || !unique(input.plans.flatMap(p => p.events.map(e => e.id)))
+    || refs.some(r => !r.sourceId.trim() || !r.sourceVersion.trim() || !/^retirement-raw\/v2:sha256:[a-f0-9]{64}$/.test(r.contentDigest))
+    || input.horizon.start >= input.horizon.end
+    || !only(input, ["horizon", "plans", "annualSource"]) || !only(input.horizon, ["start", "end"])
+    || !only(input.annualSource, ["sourceId", "sourceVersion", "contentDigest"])
+    || input.plans.some(p => !only(p, ["sourceId", "sourceVersion", "contentDigest", "events"])
+      || p.events.some(e => !only(e, ["id", "domain", "operationClass", "sequencingInstant", "dependsOn", "resourceAccesses", "traceRefs"])))
+    || input.plans.some(p => !p.events.length || p.events.some(e => e.sequencingInstant < input.horizon.start || e.sequencingInstant >= input.horizon.end))
+    || !same(input.plans, [...input.plans].sort((a, b) => compareText(a.events[0]!.sequencingInstant, b.events[0]!.sequencingInstant) || compareText(a.sourceId, b.sourceId))))
+    fail("RETIREMENT_IDENTITY_INVALID", "Distinct dated events, full horizon and versioned complete-original pins required");
+  return Object.freeze({ id: participantId, version: "funded-account-rmd/v3", portableCodec: "d2-retirement-cash/v3", economicInputs: input,
+    prepare: (context, period, opening, work = [], tier = "detail") => {
+      if (period.start < input.horizon.start || period.end > input.horizon.end)
+        fail("RETIREMENT_HORIZON_INVALID", "Period must lie inside the full bound horizon");
+      const operations: ReturnType<HouseholdKernelParticipant["prepare"]>["operations"][number][] = [];
+      const posted = (id: string) => opening.state.identities.postedTransactionIds.includes(accountingTransactionId(id));
+      for (const plan of input.plans) {
+        const active = plan.events.filter(e => e.sequencingInstant >= period.start && e.sequencingInstant < period.end);
+        const raw = readRetirementRawSource(plan, context);
+        if (raw && (raw.cash.withdrawals.requests.length !== plan.events.length
+          || raw.cash.withdrawals.requests.some(r => !plan.events.some(e => e.id === r.operationId && e.sequencingInstant === at(r.effectiveAt)))))
+          fail("RETIREMENT_SOURCE_CHANGED", "References must enumerate every original dated event exactly once");
+        if (raw && active.length) {
+          const participant = createInlineRetirementCashParticipant({ ...raw.cash, fundedRmd: {
+            sourceId: plan.sourceId, sourceVersion: plan.sourceVersion, contentDigest: plan.contentDigest, horizon: input.horizon } }, true);
+          const prepared = participant.prepare(context, period, opening, work, tier).operations
+            .filter(o => !o.descriptor.id.startsWith("d2:retirement-rmd:") && !o.descriptor.id.startsWith("d2:retirement-coverage:"));
+          for (const op of prepared) {
+            if (!active.some(e => same({ ...e, dependsOn: e.dependsOn.filter(id => !posted(id)) }, op.descriptor)))
+              fail("RETIREMENT_SOURCE_CHANGED", "Original event identities differ from pinned references");
+            operations.push(op);
+          }
+        } else for (const event of active.filter(e => !posted(e.id))) operations.push({
+          descriptor: { ...event, dependsOn: event.dependsOn.filter(id => !posted(id)) }, execute: () =>
+            fail("RETIREMENT_SOURCE_UNAVAILABLE", "New posting requires the pinned live publisher original") });
+      }
+      if (input.plans.some(p => p.events.some(e => e.sequencingInstant < period.end))) operations.push({
+        descriptor: { id: `d2:retirement-coverage:${period.start}`, domain: "retirement", operationClass: "retirement:coverage",
+          sequencingInstant: period.start, dependsOn: [], resourceAccesses: [], traceRefs: [] },
+        execute: candidate => ({ ...candidate, facts: fundedCoverageFacts() }) });
+      if (period.end === input.horizon.end) operations.push({
+        descriptor: { id: `d2:retirement-rmd:${period.end}`, domain: "retirement", operationClass: "retirement:coverage",
+          sequencingInstant: instant(new Date(Date.parse(period.end) - 1).toISOString()),
+          dependsOn: operations.filter(o => !o.descriptor.id.startsWith("d2:retirement-coverage:")).map(o => o.descriptor.id), resourceAccesses: [], traceRefs: [] },
+        execute: candidate => {
+          const result = evaluateFundedRmdSatisfaction({ ...input.annualSource, horizon: input.horizon }, candidate.state, context, period.end);
+          return { ...candidate, facts: { outputCapabilities: { rmdSatisfaction: {
+            dependency: "tax_independent", status: result.coverage, diagnostics: [] } } } };
+        } });
+      return { id: participantId, operations };
+    },
+    observe: (descriptor, _facts, runtime) => {
+      const events = input.plans.flatMap(p => p.events);
+      if (!events.some(e => e.id === descriptor.id) && events.some(e => e.sequencingInstant === descriptor.sequencingInstant
+        && e.resourceAccesses.some(a => descriptor.resourceAccesses.some(b => a.accountId === b.accountId))))
+        fail("HOUSEHOLD_CONTENTION_UNRESOLVED", "Unordered participant touched dated retirement/BANK cash");
+      return runtime;
+    },
+  } satisfies HouseholdKernelParticipant);
+}
+registerHouseholdParticipantCodec({ codec: "d2-retirement-cash/v3", restore: value => createReferencedRetirementCashParticipant(value as FundedRetirementCashReferences) });
 
 export function attachFundedRetirementCashSchedule(kernel: CompiledHouseholdKernel, input: FundedRetirementCashSchedule): CompiledHouseholdKernel {
   if (!same(input.horizon, { start: kernel.horizon.start, end: kernel.horizon.periods.at(-1)!.end }))
