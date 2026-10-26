@@ -460,6 +460,8 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-shell .topbar .brand { position: static; color: var(--ink); white-space: normal; }
 .topbar .brand { justify-self: start; }
 .topbar .settings-button { justify-self: end; display: flex; align-items: center; gap: 6px; }
+/* Keep Settings text unchanged; its gear is 1.5× the adjacent label's font size. */
+.topbar .settings-button > span[aria-hidden="true"] { font-size: 1.5em; line-height: 1; }
 .shared-context { display: flex; justify-content: center; align-items: center; gap: 8px; min-width: 0; }
 .shared-context > * { min-width: 0; }
 .context-disclosure { position: relative; min-width: 0; }
