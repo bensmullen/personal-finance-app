@@ -22,7 +22,7 @@ const screenRegions = [
   [".metrics / .metric", "CalmMetric / .calm-metrics", "Three exact current source values; mobile two columns then full-width net worth. Scope differs from fictional sample."],
   [".grid2 / .panel / .item", "calm-lower-grid / CalmPanel / calm-questions", "Three question-led existing routes; coverage and current-position details collapsed."],
   ["headerStatus() / .statusbox", "ForecastStatus / calm-blocker", "Adapted to true partial, stale, pending, error and setup state; one priority correction."],
-  ["graph-frame / chart-table", "FinancialChart / chart-control-details / HouseholdForecastVisual supporting content", "Existing chart economics and keyboard graph retained; controls, exact values, source dates and supporting results disclosed."],
+  ["graph-frame / chart-table", "FinancialChart / chart-control-details / HouseholdForecastVisual supporting content", "Period and legend remain visible below each plot. Selected exact values, source dates and supporting results belong to that chart’s collapsed Chart Details; compact hover includes only visible series."],
 ];
 
 async function captureCashEvidence(page: Page, info: TestInfo, width: number, scenario: "flagship" | "h04-opening-only") {
@@ -44,6 +44,19 @@ async function captureCashEvidence(page: Page, info: TestInfo, width: number, sc
   };
   await capture(page, `${production}-first-screen`, false);
   await capture(page, `${production}-full`, true);
+  if (scenario === "flagship") {
+    const chart = page.getByRole("figure", { name: "Total Cash Balance", exact: true });
+    for (const period of ["annual", "monthly"]) {
+      await chart.getByLabel("Period", { exact: true }).selectOption(period);
+      await chart.getByRole("application").focus();
+      await page.keyboard.press("ArrowRight");
+      await expect(chart.locator(".chart-compact-readout")).toBeVisible();
+      const path = info.outputPath(`${production}-${period}-compact-hover.png`);
+      await chart.screenshot({ path, animations: "disabled" });
+      await info.attach(`${production}-${period}-compact-hover`, { path, contentType: "image/png" });
+    }
+    await chart.getByLabel("Period", { exact: true }).selectOption("annual");
+  }
   const opened = [];
   for (const title of ["Chart Details", "Forecast range / Data coverage", "Forecast assumptions and supporting details", "Selected month dates and evidence", "Exact monthly comparison & receipts", "Recorded cash sources and limitations"]) {
     for (const summary of await page.getByText(title, { exact: true }).all()) {
@@ -298,7 +311,7 @@ test("synthetic account, income and forecast UX at desktop and narrow viewport",
     for (const label of ["Cash", "Real Estate", "Other Assets"]) {
       await clickFinancialDestination(page, label);
       if (label === "Cash") {
-        await expect(page.getByRole("figure", { name: "Total modeled cash (including cash in investment accounts)", exact: true }).locator("svg.recharts-surface")).toBeVisible();
+        await expect(page.getByRole("figure", { name: "Total Cash Balance", exact: true }).locator("svg.recharts-surface")).toBeVisible();
         await expect(page.getByRole("figure", { name: "Modeled statement income versus expenses", exact: true }).locator("svg.recharts-surface")).toBeVisible();
         await expect(page.getByRole("figure", { name: "Where modeled income goes comparison", exact: true })).toBeVisible();
       }

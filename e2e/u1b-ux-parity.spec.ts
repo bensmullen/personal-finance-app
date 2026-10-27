@@ -90,7 +90,7 @@ for (const width of [1440, 390]) {
     await expect(chart).toContainText("Forecast, not account history");
     await expect(chart).not.toContainText("Deterministic projection");
     await expect(page.locator(".chart-range")).not.toHaveAttribute("open");
-    await expect(chart.locator(".chart-control-details")).not.toHaveAttribute("open");
+    await expect(chart.locator(".cash-chart-details")).not.toHaveAttribute("open");
     await expect(page.getByText("Forecast assumptions and supporting details", { exact: true }).locator("..")).not.toHaveAttribute("open");
     await expect(page.locator(".task-readiness")).not.toHaveAttribute("open");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -278,7 +278,7 @@ for (const width of [1440, 390]) test(`Overview hierarchy, exact current sources
   await expect(forecastStatus(page)).toContainText("Old result");
   await expect(outlook.locator(".chart-freshness")).toContainText("Out of date");
   await expect(forecastRange).not.toHaveAttribute("open");
-  await outlook.locator(".chart-control-details > summary").click();
+  await outlook.locator(".cash-chart-details > summary").click();
   await forecastRange.locator(":scope > summary").focus();
   await page.keyboard.press("Enter");
   await expect(forecastRange).toHaveAttribute("open", "");

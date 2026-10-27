@@ -8,7 +8,7 @@ import { formatExactMoney, referenceLabel, objectEntries, objectId } from "../en
 import { FieldShell } from "../authoring/FieldShell.js";
 import { CashAllocation } from "./CashAllocation.js";
 import { useForecastEvidence } from "./useInteractiveForecast.js";
-import { CashDetailsContent, CashDetailsScope, CalmDisclosure } from "../calm/CalmPresentation.js";
+import { CashDetailsContent, CashDetailsScope, CalmDisclosure, ForecastProgress } from "../calm/CalmPresentation.js";
 
 export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setup, coverageSetup, selectedMonth, selectMonth }: {
   draft: PersonalDraft; forecast?: PersonalHouseholdForecastReadModel | undefined; current: boolean;
@@ -47,7 +47,7 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
       <p className="calm-caption">{monthLabel(point.periodStart)} · {mode === "paycheck" ? "Forecast income compared with uses posted in this month." : "Forecast payments and cash movements for this month."} {forecast?.status === "incomplete" && "Some forecast information is incomplete."}</p>
       <CalmDisclosure title="Selected month dates and evidence"><p>Household forecast · {point.periodStart} to {point.periodEnd} (exclusive). This monthly comparison does not establish annual funding coverage.</p><button type="button" onClick={inspect}>Refresh selected month</button></CalmDisclosure>
       </Evidence>
-      {!detail && !error && <p role="status">Loading this month’s breakdown…</p>}
+      <div aria-busy={!detail && !error}><ForecastProgress pending={!detail && !error} label="Loading this month’s breakdown…" /></div>
       {error && <><p role="alert">{error}</p><button type="button" onClick={inspect}>Retry selected month</button><button type="button" onClick={setup}>Review forecast setup</button></>}
       {detail && <>
         {mode === "paycheck" && <>

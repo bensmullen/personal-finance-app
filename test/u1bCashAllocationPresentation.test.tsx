@@ -251,6 +251,14 @@ describe("Cash signed bar presentation from selector evidence", () => {
 });
 
 describe("U1B-C partial cash comparison", () => {
+  it.each([undefined, "0", "20"])("does not treat withholding %s or a positive remainder as verified discretionary income", withholdingAmount => {
+    const detail = evidence({ withholdingAmount, withholding: withholdingAmount === undefined ? "not_modeled" : "posted" });
+    const html = render(detail);
+    expect(html).toContain("Discretionary Income unavailable — income/withholding/funding not fully reconciled");
+    expect(html).toContain("Unreconciled arithmetic difference");
+    expect(html).toContain("Not fully modeled · not disposable or unspent earnings");
+    expect(html).not.toContain("<strong>Discretionary Income</strong>");
+  });
   it("sorts exact amounts beyond binary precision, breaks ties by stable identity, and preserves input", () => {
     const detail = evidence({ currency: "KWD", denominator: "9007199254741000", totalUses: "9007199254740993.003", unallocated: "6.997",
       categories: [category("B", "0.001"), category("C", "9007199254740993.001"), category("A", "0.001"), category("Zero", "0")] });

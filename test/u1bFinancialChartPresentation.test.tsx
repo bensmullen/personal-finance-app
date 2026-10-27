@@ -43,15 +43,15 @@ describe("U1B exact chart presentation", () => {
     // lookup, even though the computed combobox name omits those options.
     const labels = [...html.matchAll(/<label for="([^"]+)">([^<]+)<\/label><select id="([^"]+)"/g)];
     expect(labels.map(match => match[2])).toEqual([
-      "Period grouping", "Selected projected period",
-      "Period grouping", "Monthly range starting", "Selected projected period",
+      "Period", "Selected projected period",
+      "Period", "Monthly range starting", "Selected projected period",
     ]);
     for (const match of labels) expect(match[1]).toBe(match[3]);
     expect(new Set(labels.map(match => match[1])).size).toBe(5);
   });
   it("separates all-account cash, signed changes and recognized statements", () => {
     const html = render(source());
-    expect(html).toContain("Total modeled cash (including cash in investment accounts)");
+    expect(html).toContain("Total Cash Balance");
     expect(html).toContain("Decrease · -9.999 USD");
     expect(html).toContain("-12.202 USD");
     expect(html).toContain("not bank receipts/disbursements or disposable wages");

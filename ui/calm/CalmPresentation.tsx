@@ -112,6 +112,11 @@ export function StatusIndicator({ name, status }: { name: string; status: string
   return <><span aria-hidden="true" className={`status-marker status-${tone}`}>{tone === "ready" ? "✓" : tone === "error" ? "!" : tone === "review" ? "!" : ""}</span>{name}</>;
 }
 
+/** Only real worker/evidence pending boundaries mount this shared indicator. */
+export function ForecastProgress({ pending, retained = false, label }: { pending: boolean; retained?: boolean; label?: string }) {
+  return pending ? <p className="forecast-progress" role="status" aria-live="polite"><span aria-hidden="true" className="status-marker status-pending" />{label ?? (retained ? "Updating · retained results are out of date" : "Calculating forecast…")}</p> : null;
+}
+
 /** One mounted action owner, relocated into More on small screens. */
 export function ResponsiveContextActions({ children }: { children: ReactNode }) {
   const [mobile, setMobile] = React.useState(false);
@@ -134,7 +139,7 @@ export function CashDetailsContent({ children }: { children: ReactNode }) {
 }
 
 export function CashChartDetails({ title, children }: { title: string; children: ReactNode }) {
-  return <details className="calm-disclosure cash-chart-details" aria-label={`${title} Chart Details`}><summary>Chart Details</summary><div>{children}</div></details>;
+  return <details className="calm-disclosure cash-chart-details chart-control-details" aria-label={`${title} Chart Details`}><summary>Chart Details</summary><div>{children}</div></details>;
 }
 
 /** Keep interspersed monthly evidence mounted once, even while collapsed. */

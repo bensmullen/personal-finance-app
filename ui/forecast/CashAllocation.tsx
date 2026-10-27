@@ -34,6 +34,7 @@ export function CashAllocation({ draft, detail, review, setup, controls }: {
     <p role="note"><strong>Incomplete allocation</strong> · {detail.withholdingAmount === undefined ? "Payroll withholding unknown · not modeled." : `Posted withholding ${amount(detail.withholdingAmount)}${detail.withholding === "partial" ? " · partial payroll coverage" : " · other taxes may be missing"}.`}
       {" "}<button type="button" onClick={setup}>Review tax coverage & setup</button></p>
     <CashDetailsContent><p>Income and posted uses for the same month · source-backed comparison. This does not identify which paycheck funded a payment. Savings, borrowing or sale proceeds may also support cash uses. Unreconciled money is not leftover pay. {withholdingDescription}.</p></CashDetailsContent>
+    <CashDetailsContent><p role="note">Discretionary Income unavailable — income/withholding/funding not fully reconciled</p></CashDetailsContent>
     {view?.overflow && <p className="cash-excess" role="status"><strong>Uses exceeding this income basis: {amount(detail.additionalFunding)}</strong><br />Additional funding not attributed. This amount is outside the income comparison; its funding source is not established.</p>}
     <ul className="paycheck-legend" aria-label="Known uses and comparison remainder">{categories.map((item, index) => <li key={item.id}>
       <span aria-hidden="true" className={`paycheck-key paycheck-${item.kind}`}>{index + 1}</span>
