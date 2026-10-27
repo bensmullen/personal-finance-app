@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { clickFinancialDestination, navigateOwner, expectForecastWindow, showStatusActions } from "./navigation.js";
 import { inspectLiabilityBalanceWindow, inspectMortgageWindow } from "../src/application/mortgageChartData.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
@@ -11,6 +11,13 @@ const outlook = (page: Page, property = false) => page.getByRole("region", { nam
 // Lifecycle/provenance stay observable while More is closed; interactions reveal it below.
 const status = (page: Page) => page.locator('.forecast-status[aria-label="Household forecast status"]');
 test.beforeEach(() => { test.setTimeout(120_000); });
+
+async function openChartDetails(chart: Locator) {
+  const details = chart.locator(":scope > .cash-chart-details");
+  if (await details.getAttribute("open") === null) await details.locator(":scope > summary").click();
+  await expect(details).toHaveAttribute("open", "");
+  return details;
+}
 
 async function observe(page: Page, missing = false) {
   await page.addInitScript(({ missing }) => {
@@ -41,7 +48,7 @@ async function run(page: Page) {
   await expectForecastWindow(page, "2026-01-01", "2026-03-01", 2);
 }
 async function setup(page: Page, width: number, denied = false) {
-  await page.setViewportSize({ width, height: 900 });
+  await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
   await page.goto("/");
   await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
   if (denied) {
@@ -99,13 +106,20 @@ async function appliedSource(page: Page) {
 }
 async function fits(page: Page, property = false) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  const figure = outlook(page, property).getByRole("region", { name: "Mortgage amortization", exact: true }).getByRole("figure");
+  const chart = outlook(page, property).getByRole("region", { name: "Mortgage amortization", exact: true });
+  const figure = chart.getByRole("figure");
   const box = await figure.boundingBox();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
-  const readout = await figure.locator(".mortgage-readout").boundingBox();
+  await figure.getByRole("button").first().focus();
+  const compact = figure.locator(".chart-compact-readout");
+  await expect(compact).toBeVisible();
+  await expect(compact).toContainText("projected");
+  const readout = await compact.boundingBox();
   expect(readout!.x).toBeGreaterThanOrEqual(box!.x);
   expect(readout!.x + readout!.width).toBeLessThanOrEqual(box!.x + box!.width + 1);
+  await openChartDetails(chart);
+  await expect(chart.locator(".mortgage-readout")).toBeVisible();
 }
 
 for (const width of [1440, 390]) {
@@ -123,6 +137,8 @@ for (const width of [1440, 390]) {
     const selected = chart.getByLabel("Selected liability month", { exact: true });
     await selected.focus(); await page.keyboard.press("Home"); await page.keyboard.press("ArrowDown"); await page.keyboard.press("Enter");
     await expect(selected).toHaveValue(expected.rows[1]!.start);
+    await expect(chart.locator(".cash-chart-details")).not.toHaveAttribute("open");
+    await openChartDetails(chart);
     await chart.getByText("Exact household liability balances", { exact: true }).click();
     const row = chart.getByRole("row").filter({ has: page.getByRole("rowheader", { name: "2026-02-01 → 2026-03-01", exact: true }) });
     const month = expected.rows[1]!;
@@ -134,7 +150,7 @@ for (const width of [1440, 390]) {
     expect(figure!.x + figure!.width).toBeLessThanOrEqual(width);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
-  test(`Debt paid bars and keyboard/table match real committed source at ${width}px`, async ({ page }) => {
+  test(`Debt paid bars and keyboard/table match real committed source at ${width}px`, async ({ page }, info) => {
     await observe(page); await setup(page, width);
     const source = await appliedSource(page), expected = inspectMortgageWindow(source.points, ids.mortgage);
     await clickFinancialDestination(page, "Debt");
@@ -142,7 +158,14 @@ for (const width of [1440, 390]) {
     const month = outlook(page).getByLabel("Selected mortgage month", { exact: true });
     await month.focus(); await page.keyboard.press("Home"); await page.keyboard.press("ArrowDown"); await page.keyboard.press("Enter");
     await expect(month).toHaveValue(expected.rows[1]!.start);
-    await outlook(page).getByText("Exact mortgage payments & sources", { exact: true }).click();
+    const amortization = outlook(page).getByRole("region", { name: "Mortgage amortization", exact: true });
+    await expect(amortization.locator(".cash-chart-details")).not.toHaveAttribute("open");
+    await expect(amortization.locator(".mortgage-readout")).not.toBeVisible();
+    await fits(page);
+    const path = info.outputPath(`mortgage-chart-keyboard-${width}.png`);
+    await amortization.screenshot({ path, animations: "disabled" });
+    await info.attach(`mortgage-chart-keyboard-${width}`, { path, contentType: "image/png" });
+    await amortization.getByText("Exact mortgage payments & sources", { exact: true }).click();
     const row = outlook(page).getByRole("region", { name: "Exact mortgage payment data", exact: true }).getByRole("row").filter({ has: page.getByRole("rowheader", { name: "2026-02-01 → 2026-03-01", exact: true }) });
     const values = expected.rows[1]!;
     await expect(row.getByRole("cell")).toHaveText([values.openingPrincipal, values.interestPaid, values.scheduledPrincipalPaid, values.extraPrincipalPaid, values.endingPrincipal, values.scheduledDue, values.interestAccrued]
@@ -178,6 +201,7 @@ for (const width of [1440, 390]) {
     await expect(segments).toHaveCount(3);
     for (const segment of await segments.all())
       await expect(segment).toHaveAttribute("style", "height: 0%;");
+    await openChartDetails(amortization);
     await amortization.getByText("Exact mortgage payments & sources", { exact: true }).click();
     const cells = amortization.getByRole("row").filter({ has: page.getByRole("rowheader", { name: /^2026-01-01/ }) }).getByRole("cell");
     for (const index of [1, 2, 3]) await expect(cells.nth(index)).toHaveText(formatExactMoney("0", expected.rows[0]!.currency));
