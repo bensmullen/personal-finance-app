@@ -99,7 +99,7 @@ describe("#149 S8-4 same-household original-source readiness (conditional only)"
     expect(entitlement.employeePayrollToDate.isZero()).toBe(true);
     expect(entitlement.employerPayrollToDate.isZero()).toBe(true);
     expect(s.ee!.request.lot.opening.redeemed).toBe(false);
-    expect(s.ee!.request.lot.opening.purchaseBasis.equals(money("100"))).toBe(true);
+    expect(s.ee!.request.lot.opening.purchaseBasis?.equals(money("100"))).toBe(true);
     // Existing signed journal facts stay $815 bank, $70 assets and $115 credits;
     // no FSA salary reduction, EE proceeds or IRA taxable amount is posted here.
     for (const tx of s.fsa.journals.values()) {
