@@ -1,7 +1,7 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { FINANCIAL_FIELDS, entityField } from "../ui/authoring/fieldContract.js";
 import { readFileSync } from "node:fs";
-import { navigateOwner, showReadiness, openFinancialSection } from "./navigation.js";
+import { navigateOwner, saveCurrentModel, showReadiness, openFinancialSection } from "./navigation.js";
 import { createGoldenHouseholdExampleDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.js";
 
@@ -58,7 +58,7 @@ const loadHistoricalMonthlyExample = async (page: Page) => {
   }
   await page.locator('[data-repair="lawScenario"]').check();
   await test.step("Historical monthly worker returns actual incomplete coverage for January–March", async () => {
-    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
     await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
     await expect(status).toHaveAttribute("data-lifecycle", "incomplete");
   });
@@ -124,8 +124,9 @@ test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   await loadHistoricalMonthlyExample(page);
   await test.step("Technical diagnostic provenance is deferred and remains accessible", async () => {
-    const status = page.getByRole("status", { name: "Household forecast status", exact: true });
+    const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
     await expect(status.locator("pre")).toHaveCount(0);
+    await status.locator(".context-disclosure > summary").click();
     await status.locator(".forecast-guidance > summary").click();
     const technical = status.locator("details").filter({ has: page.locator(":scope > summary", { hasText: /^Technical diagnostic details$/ }) });
     await technical.locator(":scope > summary").click();
@@ -185,7 +186,7 @@ test("U1 normal navigation, staged salary, direct repair, mortgage and horizon g
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
   await loadHistoricalMonthlyExample(page);
-  const status = page.getByRole("status", { name: "Household forecast status" });
+  const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   await expect(status).toHaveAttribute("data-lifecycle", "incomplete", { timeout: 30_000 });
   await expect(status).toContainText("New York");
   const messages = await status.locator("[data-diagnostic-root]").allTextContents();
@@ -363,7 +364,7 @@ test("Owner repair: historical scope and prior YTD save work in one session with
   const after = await save.boundingBox(); expect(Math.abs(after!.y - before!.y)).toBeLessThan(120);
   await expect(usage.getByRole("status").filter({ hasText: /Prior usage saved for 2026 before 2026-07-01/ })).toBeVisible();
   await open(usage, "Saved prior usage"); await expect(usage).toContainText("100 USD");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await saveCurrentModel(page);
   await expect(page.getByText(/Canonical model saved to this browser/)).toBeVisible();
   await page.reload(); await page.getByRole("button", { name: "Load saved model", exact: true }).click();
   await navigate(page, "Net Worth", "Investments & retirement"); await open(page, "Contributions already made this year");
@@ -433,7 +434,7 @@ test("U1 account actions choose the authoritative personal and workplace paths",
   await expect(payroll.getByText(/^Saved payroll: employer hsa to HSA-EMPLOYEE/)).toBeVisible();
   for (const width of [1440, 390]) { await page.setViewportSize({ width, height: 1000 }); await assertContractAndGeometry(page, width); }
   expect(await payroll.innerText()).not.toMatch(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b|\[object Object\]/i);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await saveCurrentModel(page);
   await expect(page.getByText(/Canonical model saved to this browser/)).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "Load saved model", exact: true }).click();

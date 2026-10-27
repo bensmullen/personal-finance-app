@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { clickFinancialDestination, navigateOwner, expectForecastWindow } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, expectForecastWindow, showStatusActions } from "./navigation.js";
 import { inspectLiabilityBalanceWindow, inspectMortgageWindow } from "../src/application/mortgageChartData.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";
@@ -8,7 +8,8 @@ import { GOLDEN_HOUSEHOLD_IDS as ids } from "../src/application/goldenHousehold.
 import { formatExactMoney } from "../ui/entityPresentation.js";
 
 const outlook = (page: Page, property = false) => page.getByRole("region", { name: property ? "Property mortgage outlook" : "Debt outlook", exact: true });
-const status = (page: Page) => page.getByRole("status", { name: "Household forecast status", exact: true });
+// Lifecycle/provenance stay observable while More is closed; interactions reveal it below.
+const status = (page: Page) => page.locator('.forecast-status[aria-label="Household forecast status"]');
 test.beforeEach(() => { test.setTimeout(120_000); });
 
 async function observe(page: Page, missing = false) {
@@ -32,6 +33,7 @@ async function observe(page: Page, missing = false) {
 async function run(page: Page) {
   await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
   const previous = await status(page).getAttribute("data-request-id");
+  await showStatusActions(page);
   await page.getByRole("button", { name: "Update forecast", exact: true }).click();
   await expect(status(page)).not.toHaveAttribute("data-request-id", previous ?? "");
   await expect(status(page)).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: 30_000 });

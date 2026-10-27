@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { clickFinancialDestination, navigateOwner, expectForecastWindow } from "./navigation.js";
 
+
 async function exportedModelBytes(page: Page) {
   await navigateOwner(page, "Settings", "Import / Export");
   const pending = page.waitForEvent("download");
@@ -19,7 +20,7 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
   page.on("pageerror", error => errors.push(error.message));
   await page.goto("/");
   await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
-  const status = page.getByRole("status", { name: "Household forecast status" });
+  const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   await expect(status).toHaveAttribute("data-pending", "false", { timeout: 30_000 });
   await expectForecastWindow(page, "2026-01-01", "2080-02-01", 649);
   await expect(status).toHaveAttribute("data-lifecycle", "completed");
@@ -29,7 +30,7 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
     const more = page.getByRole("button", { name: "More", exact: true });
     await more.click();
     const destinations = page.getByRole("navigation", { name: "More destinations" });
-    for (const label of ["Real Estate", "Other Assets", "Debt", "Household & People", "Save / Return", "Income", "Spending", "Accounts", "Life Events", "Technical Details"]) {
+    for (const label of ["Real Estate", "Other Assets", "Debt", "Household & People", "Save", "Income", "Spending", "Accounts", "Life Events", "Technical Details"]) {
       await expect(destinations.getByRole("button", { name: label, exact: true })).toBeVisible();
     }
     await page.keyboard.press("Escape");
@@ -39,7 +40,7 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
     await page.keyboard.press("Enter");
     await expect(destinations).toBeVisible();
     await expect(more).toHaveAttribute("aria-expanded", "true");
-    await page.getByRole("region", { name: "Household current summary" }).click();
+    await page.getByRole("region", { name: "Household & status", exact: true }).locator(".context-plan").click();
     await expect(destinations).toHaveCount(0);
     await expect(more).toHaveAttribute("aria-expanded", "false");
     await more.click();
@@ -52,9 +53,11 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
   for (const label of ["Overview", "Cash", "Investing", "Real Estate", "Other Assets", "Debt", "Planning"]) {
     await clickFinancialDestination(page, label);
     await expect(page.getByRole("heading", { name: headings[label], exact: true })).toBeVisible();
-    const summary = page.getByRole("region", { name: "Household current summary" });
+    const summary = page.getByRole("region", { name: "Household & status", exact: true });
     await expect(summary).toBeVisible();
-    await expect(summary).toContainText("as of 2026-01-01");
+    await expect(summary.locator(".context-household")).toHaveText("Household");
+    await expect(page.locator(".context-model")).toContainText("As of 2026-01-01");
+    await expect(page.locator("#main-content .household-summary, #main-content > .forecast-status, #main-content > .forecast-coverage")).toHaveCount(0);
     const box = await summary.boundingBox();
     expect(box!.y + box!.height).toBeLessThan(900);
     expect(box!.x + box!.width).toBeLessThanOrEqual(width);
@@ -102,12 +105,9 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
   const expected = structuredClone(before);
   expected.objects.Asset.find((item: { name: string }) => item.name === "Example home").name = "Reviewed example home";
   expect(after).toEqual(expected);
-  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeVisible();
-  if (width === 390) {
-    await page.getByRole("button", { name: "More", exact: true }).click();
-    await page.getByRole("navigation", { name: "More destinations" }).getByRole("button", { name: "Save / Return", exact: true }).click();
-    await expect(page.getByRole("button", { name: "More", exact: true })).toHaveAttribute("aria-expanded", "false");
-  } else await page.getByRole("button", { name: "Save", exact: true }).click();
+  if (width === 390) await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.locator(".context-actions").getByRole("button", { name: "Save", exact: true }).click();
+  if (width === 390) await page.keyboard.press("Escape");
   await expect(page.getByText("Canonical model saved to this browser", { exact: true })).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "Load saved model", exact: true }).click();

@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import { addPersonalObject, createEmptyPersonalDraft, createGoldenHouseholdExampleDraft, exportPersonalModelJson, getCurrentPosition, type PersonalDraft } from "../src/application/personalMvp.js";
 import { clickFinancialDestination, navigateOwner, openFinancialSection, expectForecastWindow } from "./navigation.js";
 
-const forecastStatus = (page: Page) => page.getByRole("status", { name: "Household forecast status", exact: true });
+
+const forecastStatus = (page: Page) => page.locator('.forecast-status[aria-label="Household forecast status"]');
 
 async function openImportWorkspace(page: Page) {
   await page.goto("/");

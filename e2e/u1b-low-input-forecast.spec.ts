@@ -8,10 +8,11 @@ import { formatExactMoney } from "../ui/entityPresentation.js";
 import { inspectMortgageWindow, householdEvidenceProof, householdEvidenceSelectionMeasurements, type ReplayRestoreMeasurement } from "../src/application/mortgageChartData.js";
 import { inspectMonthlyMoney } from "../src/application/monthlyMoney.js";
 import { GOLDEN_HOUSEHOLD_IDS } from "../src/application/goldenHousehold.js";
-import { clickFinancialDestination, navigateOwner } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, saveCurrentModel, showStatusActions } from "./navigation.js";
 import type { EvidenceWorkerResponse } from "../ui/forecast/protocol.js";
 
-const status = (page: Page) => page.getByRole("status", { name: "Household forecast status", exact: true });
+// Lifecycle/provenance stay observable while More is closed; interactions reveal it below.
+const status = (page: Page) => page.locator('.forecast-status[aria-label="Household forecast status"]');
 // The runner owns this bounded buffer, so a crashed renderer cannot erase the
 // last completed phase. Accept only enumerated metadata and numeric counters.
 const survivingEvidence = new WeakMap<Page, Record<string, string | number>[]>();
@@ -246,7 +247,14 @@ for (const width of [1440, 390]) {
     const selected = annual.points.find(point => point.periodStart.startsWith("2055-01"))!;
     await chart.getByLabel("Selected projected period", { exact: true }).selectOption(selected.periodStart);
     await expect(chart.locator(".chart-selected")).toContainText(formatExactMoney(selected.metrics.netWorth.amount!, selected.metrics.netWorth.currency));
+    await showStatusActions(page);
+    const coverageDetails = status(page).locator(".context-disclosure");
+    await coverageDetails.locator(":scope > summary").click();
     await expect(page.getByRole("region", { name: "Requested and modeled coverage" })).toContainText("2080-02-01");
+    await expect(coverageDetails).toContainText("Requested coverage is not computed coverage");
+    await page.keyboard.press("Escape");
+    const more = page.getByRole("button", { name: "More", exact: true });
+    if (await more.isVisible()) await more.click();
     await info.attach(`flagship-${width}-coverage`, { body: JSON.stringify({ status: result.status, requested: result.requestedHorizon, reachedThrough: result.reachedThrough, opening: result.openingSnapshot, retirement: result.retirementMilestones, selectedYear: selected }), contentType: "application/json" });
     await page.screenshot({ path: info.outputPath(`flagship-${width}.png`), fullPage: true });
     // Instrument the actual route transition, after the 649-month result has
@@ -259,9 +267,13 @@ for (const width of [1440, 390]) {
         }).observe({ entryTypes: ["longtask"] });
       }
     });
+    await showStatusActions(page);
     await page.getByRole("button", { name: "Update forecast", exact: true }).click();
     await expect(status(page)).toHaveAttribute("data-cache-state", "hit");
-    await expect(status(page)).toContainText("Current result reused");
+    const forecastDetails = status(page).locator(".context-disclosure");
+    if (await forecastDetails.getAttribute("open") === null) await forecastDetails.locator(":scope > summary").click();
+    await expect(forecastDetails.getByText("Current result reused", { exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
     const requestId = await status(page).getAttribute("data-request-id");
     const fingerprint = await status(page).getAttribute("data-fingerprint");
     const cashStarted = Date.now();
@@ -388,6 +400,7 @@ for (const width of [1440, 390]) {
     await expect(status(page)).toHaveAttribute("data-lifecycle", "completed", { timeout: 150_000 });
     const result = await actual(page);
     expect(result.points).toHaveLength(engineering ? 649 : 25);
+    await showStatusActions(page);
     await page.getByRole("button", { name: "Update forecast", exact: true }).click();
     await expect(status(page)).toHaveAttribute("data-cache-state", "hit");
     const selections = engineering ? [0, 324, 648] : [0, 12, 24];
@@ -432,7 +445,7 @@ for (const width of [1440, 390]) {
 test("saved flagship recovers durable requested dates and paycheck bank without reauthorizing session choices", async ({ page }) => {
   test.setTimeout(60_000);
   await start(page);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await saveCurrentModel(page);
   await page.reload();
   await page.getByRole("button", { name: "Load saved model", exact: true }).click();
   await expect(status(page)).toHaveAttribute("data-lifecycle", "idle");

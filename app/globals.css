@@ -431,13 +431,14 @@ main#main-content { padding: 24px 32px 64px; }
   .calm-outlook .chart { height: 260px; }
   .calm-status { gap: 4px 12px; }
 }
-.more-destinations { position: fixed; z-index: 8; bottom: 72px; left: 12px; right: 12px; max-height: 65vh; overflow: auto; background: white; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 12px; }
+.more-destinations { position: fixed; z-index: 8; bottom: calc(var(--mobile-nav-height, 60px) + 12px); left: 12px; right: 12px; max-height: min(65svh, calc(100svh - var(--mobile-nav-height, 60px) - 24px)); overflow: auto; background: white; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 12px; }
 .more-destinations button { display: block; width: 100%; padding: 12px; text-align: left; border: 0; border-radius: 6px; background: white; color: var(--green-dark); }
 @media (max-width: 900px) {
   .app-shell { grid-template-columns: minmax(0, 1fr); }
   .app-shell > .workspace { grid-column: 1; }
   .app-shell > .primary-nav { position: fixed; z-index: 7; bottom: 0; left: 0; right: 0; grid-column: auto; grid-row: auto; flex-direction: row; justify-content: space-around; gap: 0; padding: 7px 4px max(7px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: white; }
   .primary-nav button { text-align: center; padding: 12px 6px; font-size: 12px; }
+  .app-shell > .primary-nav button { flex: 1 1 0; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
   .primary-nav .desktop-destination { display: none; }
   .primary-nav .mobile-more { display: block; }
   .workspace > .subnav { overflow: visible; padding: 8px 12px; }
@@ -453,6 +454,83 @@ main#main-content { padding: 24px 32px 64px; }
   .forecast-status details { flex-basis: auto; }
   .workspace > .subnav button { padding: 8px; }
   .panel.outlook { padding: 16px; }
+}
+/* #240 PM UAT correction: two anchored navigation pickers, one action owner. */
+.app-shell > .topbar, .app-shell.calm-shell > .topbar { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); height: auto; min-height: 72px; padding: 8px 20px; gap: 12px; position: relative; z-index: 6; }
+.calm-shell .topbar .brand { position: static; color: var(--ink); white-space: normal; }
+.topbar .brand { justify-self: start; }
+/* Zero spacing between the original gear's fixed square and the Settings label. */
+.topbar .settings-button { justify-self: end; display: flex; align-items: center; gap: 0; }
+/* Original gear glyph: fixed 30px square, lifted 2px relative to the Settings label. */
+.topbar .settings-gear { box-sizing: border-box; display: inline-flex; flex: 0 0 30px; align-items: center; justify-content: center; width: 30px; height: 30px; font-size: 30px; line-height: 1; transform: translateY(-2px); }
+.topbar .settings-label { line-height: 1; }
+.shared-context { display: flex; justify-content: center; align-items: center; gap: 8px; min-width: 0; }
+.shared-context > * { min-width: 0; }
+.context-disclosure { position: relative; min-width: 0; }
+.context-disclosure > summary, .topbar button { min-height: 44px; font-size: .875rem; }
+.context-disclosure > summary { cursor: pointer; padding: 10px 8px; display: flex; align-items: center; gap: 8px; overflow-wrap: normal; word-break: normal; }
+.shared-context summary { border: 1px solid var(--line); border-radius: 8px; max-width: 18rem; }
+.context-household { font-weight: 650; }
+.context-popover { position: absolute; z-index: 12; top: 100%; left: 0; width: min(22rem, calc(100vw - 24px)); max-height: min(60svh, 36rem); overflow: auto; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: white; color: var(--ink); box-shadow: var(--shadow); font-size: 1rem; line-height: 1.5; overflow-wrap: break-word; }
+.context-plan .context-popover { left: auto; right: 0; }
+.shared-context .context-popover { max-width: var(--context-room, calc(100vw - 24px)); }
+.context-popover h2 { font-size: 1.125rem; margin-top: 0; }
+.context-popover button, .calm-shell .context-popover button { color: var(--green-dark); background: white; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 4px 0; min-height: 44px; width: 100%; text-align: left; white-space: normal; }
+.context-popover button[aria-pressed="true"] { background: var(--mint); }
+.calm-shell .context-popover button:hover { background: var(--mint); color: var(--green-dark); }
+.context-actions { margin-top: auto; padding-top: 12px; border-top: 1px solid #879a913d; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.context-actions .context-forecast { display: block; padding: 0; margin: 0; border: 0; background: transparent; }
+.context-actions .context-disclosure > summary { min-height: 44px; font-size: .9375rem; }
+/* The leading warning already exposes its repair when details are collapsed.
+   Once limitations expand, show that same repair only within the detailed
+   source evidence. Keep one visible action and retain both disclosure paths. */
+.context-forecast:has(.forecast-guidance[open]) .forecast-primary-guidance { display: none; }
+.context-actions .context-popover { top: auto; bottom: 100%; width: min(34rem, calc(100vw - 24px)); }
+.context-command-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.context-command-buttons > button, .calm-shell .context-command-buttons > button { flex: 1; min-height: 44px; margin: 0; padding: 10px; background: white; border: 1px solid var(--line); color: var(--green-dark); border-radius: 8px; text-align: center; font-size: .875rem; }
+.status-marker { flex: 0 0 14px; width: 14px; height: 14px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: white; font: bold 11px/1 system-ui; }
+.status-ready { background: #237650; }
+.status-review { background: #946000; }
+.status-error { background: #b32e32; }
+.status-idle { background: #77827c; }
+.status-pending { border: 2px solid #889d94; border-top-color: transparent; animation: context-spin .8s linear infinite; }
+@keyframes context-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .status-pending { animation: none; border-style: dashed; } }
+.page-footer { margin-top: 32px; }
+.page-footer button { background: none; border: 0; color: var(--muted); text-decoration: underline; font-size: .875rem; min-height: 44px; }
+.result-warning { color: #805022; font-size: .9375rem; line-height: 1.5; }
+.more-destinations[hidden] { display: none; }
+@media (min-width: 901px) {
+  .app-shell > .primary-nav, .app-shell.calm-shell > .primary-nav { grid-row: 2; position: sticky; top: 0; align-self: start; height: calc(100svh - var(--shell-header-height, 72px)); padding: 20px 12px 12px; overflow: visible; }
+  .financial-nav-links { display: flex; flex-direction: column; gap: 4px; min-height: 0; overflow-y: auto; }
+  .app-shell > .primary-nav { z-index: 5; }
+  .context-actions { flex-shrink: 0; }
+  .calm-shell .context-actions { color: #d9e8e3; }
+  .context-actions .context-popover { position: fixed; top: auto; bottom: var(--status-panel-bottom, 12px); left: var(--status-panel-left); width: min(34rem, var(--status-panel-width)); max-width: var(--status-panel-width); max-height: var(--status-panel-height); }
+  .calm-shell main#main-content { padding-top: 12px; }
+  .calm-page-header { margin-bottom: 12px; }
+  .calm-overview { gap: 12px; }
+  .calm-metrics { margin-top: 8px; }
+}
+@media (max-width: 900px) {
+  .financial-nav-links { display: contents; }
+  .app-shell > .topbar, .app-shell.calm-shell > .topbar { grid-template-columns: auto minmax(0, 1fr) auto; padding: 8px; gap: 4px; }
+  .topbar .brand { min-width: 44px; padding: 6px; }
+  .topbar .settings-button { min-width: 44px; padding: 7px; gap: 0; margin: 0; }
+  .topbar .settings-label { display: none; }
+  .shared-context { justify-self: center; width: 100%; max-width: 100%; gap: 4px; }
+  .shared-context > .context-disclosure { flex: 0 1 auto; min-width: 44px; }
+  .shared-context summary { font-size: .875rem; min-width: 44px; max-width: 100%; padding: 10px 6px; gap: 4px; }
+  .shared-context summary > span:not([aria-hidden]) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .shared-context summary > span[aria-hidden] { flex: none; }
+  .shared-context .context-popover { width: min(18rem, calc(100vw - 24px)); }
+  .more-destinations .context-actions::before { content: "Status & Actions"; font-weight: 650; }
+  .more-destinations .context-actions { margin: 8px 0; color: var(--ink); }
+  .more-destinations .context-popover { position: static; width: 100%; max-height: 42svh; box-shadow: none; }
+  .context-command-buttons { flex-wrap: wrap; }
+}
+@media (min-width: 561px) and (max-width: 900px) {
+  .topbar .brand > span:last-child { display: none; }
 }
 /* Source-bound setup guidance remains readable in the existing Calm surfaces. */
 .starting-points, .forecast-coverage, .normalization-preview {

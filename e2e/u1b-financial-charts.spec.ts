@@ -1,7 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { addPersonalObject, createEmptyPersonalDraft, createGoldenHouseholdExampleDraft, exportPersonalModelJson } from "../src/application/personalMvp.js";
-import { clickFinancialDestination, navigateOwner, openFinancialSection, expectForecastWindow } from "./navigation.js";
+import { clickFinancialDestination, navigateOwner, openFinancialSection, expectForecastWindow, showStatusActions } from "./navigation.js";
+
 import { selectForecastChartData, type ForecastChartValue } from "../src/application/forecastChartData.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";
@@ -170,8 +171,9 @@ async function openOverview(page: Page) {
 
 async function runAppliedBaseline(page: Page) {
   await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
-  const status = page.getByRole("status", { name: "Household forecast status" });
+  const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   const priorRequest = await status.getAttribute("data-request-id");
+  await showStatusActions(page);
   await page.getByRole("button", { name: "Update forecast", exact: true }).click();
   await expect(status).not.toHaveAttribute("data-request-id", priorRequest ?? "");
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: 30_000 });
@@ -578,7 +580,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("region", { name: "Investing outlook" })).toContainText("No investment holdings recorded");
     await clickFinancialDestination(page, "Overview");
     await expect(page.getByRole("figure", { name: "Household financial outlook chart" })).toHaveCount(0);
-    await expect(page.getByRole("status", { name: "Household forecast status", exact: true })).toHaveAttribute("data-lifecycle", "idle");
+    await expect(page.locator('.forecast-status[aria-label="Household forecast status"]')).toHaveAttribute("data-lifecycle", "idle");
     await expect(page.getByRole("region", { name: "Your money over time", exact: true }).getByText("Your forecast is not ready yet", { exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: "Your finances today", exact: true }).getByRole("article", { name: "Cash and savings", exact: true }).locator(".calm-metric-value")).toHaveText("$3750.00");
     const correction = page.getByRole("alert", { name: "Priority correction", exact: true });
