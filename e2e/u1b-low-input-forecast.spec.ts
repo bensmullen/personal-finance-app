@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { ForecastWorkerResponse } from "../src/application/interactiveForecast.js";
 import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import { createFlagshipHouseholdDraft, exportPersonalModelJson, importPersonalModelJson, type JsonObject, type PersonalDraft } from "../src/application/personalMvp.js";
@@ -13,6 +13,13 @@ import type { EvidenceWorkerResponse } from "../ui/forecast/protocol.js";
 
 // Lifecycle/provenance stay observable while More is closed; interactions reveal it below.
 const status = (page: Page) => page.locator('.forecast-status[aria-label="Household forecast status"]');
+async function openChartDetails(chart: Locator) {
+  const details = chart.locator(":scope > .cash-chart-details");
+  await expect(details).not.toHaveAttribute("open");
+  await details.locator(":scope > summary").click();
+  await expect(details).toHaveAttribute("open", "");
+  return details;
+}
 // The runner owns this bounded buffer, so a crashed renderer cannot erase the
 // last completed phase. Accept only enumerated metadata and numeric counters.
 const survivingEvidence = new WeakMap<Page, Record<string, string | number>[]>();
@@ -242,7 +249,7 @@ for (const width of [1440, 390]) {
     await expect(charts).toHaveAttribute("data-supported-months", "649");
     await page.screenshot({ path: info.outputPath(`flagship-first-screen-${width}.png`), fullPage: false });
     const chart = page.getByRole("figure", { name: "Household financial outlook chart", exact: true });
-    await chart.locator(".chart-control-details > summary").click();
+    await openChartDetails(chart);
     const annual = selectForecastChartData(result, { granularity: "annual" });
     const selected = annual.points.find(point => point.periodStart.startsWith("2055-01"))!;
     await chart.getByLabel("Selected projected period", { exact: true }).selectOption(selected.periodStart);
@@ -278,7 +285,7 @@ for (const width of [1440, 390]) {
     const fingerprint = await status(page).getAttribute("data-fingerprint");
     const cashStarted = Date.now();
     await clickFinancialDestination(page, "Cash");
-    const cash = page.getByRole("figure", { name: "Total modeled cash (including cash in investment accounts)", exact: true });
+    const cash = page.getByRole("figure", { name: "Total Cash Balance", exact: true });
     const statements = page.getByRole("figure", { name: "Modeled statement income versus expenses", exact: true });
     await expect(cash).toBeVisible();
     await expect(statements).toBeVisible();
@@ -287,10 +294,12 @@ for (const width of [1440, 390]) {
     await paycheck.getByLabel("paycheck forecast month", { exact: true }).selectOption("2026-02");
     await expect(paycheck.getByRole("button", { name: "Example salary", exact: true })).toBeVisible();
     expect(await page.evaluate(() => (window as ObservedWindow).__u1bFebruary)).toEqual(inspectMonthlyMoney(result.points[1]!, createFlagshipHouseholdDraft(), referenceObserver));
+    await openChartDetails(cash);
     await cash.getByLabel("Selected projected period", { exact: true }).selectOption(selected.periodStart);
     await expect(cash.locator(".chart-selected dd").first()).toContainText(formatExactMoney(selected.metrics.totalModeledCash.amount!, selected.metrics.totalModeledCash.currency));
     // Read actual modeled pay both before and after the accepted retirement,
     // rather than treating chart presence as financial acceptance.
+    await openChartDetails(statements);
     await statements.getByLabel("Monthly range starting", { exact: true }).selectOption(working.periodStart);
     for (const point of [working, retired]) {
       await statements.getByLabel("Selected projected period", { exact: true }).selectOption(point.periodStart);
@@ -304,12 +313,16 @@ for (const width of [1440, 390]) {
     const liabilities = page.getByRole("figure", { name: "Modeled household liability balances", exact: true });
     await expect(liabilities).toBeVisible();
     expect(Date.now() - debtStarted).toBeLessThan(10_000);
+    const liabilityChart = page.getByRole("region", { name: "Household liability balance outlook", exact: true });
+    const liabilityDetails = await openChartDetails(liabilityChart);
     await page.getByLabel("Selected liability month", { exact: true }).selectOption(result.points[0]!.periodStart);
-    await expect(liabilities.getByRole("status")).toContainText(formatExactMoney(result.points[0]!.totalLiabilities.amount, result.points[0]!.totalLiabilities.currency));
+    await expect(liabilityDetails.getByRole("status")).toContainText(formatExactMoney(result.points[0]!.totalLiabilities.amount, result.points[0]!.totalLiabilities.currency));
     const mortgage = page.getByRole("figure", { name: "Example mortgage monthly cash paid", exact: true });
     await expect(mortgage).toBeVisible({ timeout: 30_000 });
+    const mortgageChart = page.getByRole("region", { name: "Mortgage amortization", exact: true });
+    const mortgageDetails = await openChartDetails(mortgageChart);
     const paid = inspectMortgageWindow(result.points.slice(0, 12), GOLDEN_HOUSEHOLD_IDS.mortgage, referenceObserver).rows[0]!;
-    await expect(mortgage.getByRole("status")).toHaveText(`2026-01 · Interest paid ${formatExactMoney(paid.interestPaid, paid.currency)} · Scheduled principal paid ${formatExactMoney(paid.scheduledPrincipalPaid, paid.currency)} · Extra principal paid ${formatExactMoney(paid.extraPrincipalPaid, paid.currency)}`);
+    await expect(mortgageDetails.locator(".mortgage-readout")).toHaveText(`2026-01 · Interest paid ${formatExactMoney(paid.interestPaid, paid.currency)} · Scheduled principal paid ${formatExactMoney(paid.scheduledPrincipalPaid, paid.currency)} · Extra principal paid ${formatExactMoney(paid.extraPrincipalPaid, paid.currency)}`);
     // Real 649-point source: first, middle and final partial windows preserve
     // all paid/funding/principal and trace IDs, not just chart presence.
     for (const startIndex of [0, 324, 648]) {
