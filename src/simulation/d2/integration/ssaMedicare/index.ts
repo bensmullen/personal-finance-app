@@ -19,12 +19,15 @@ import { taxDiagnostic, taxOutputCapabilities } from "../../../tax/contracts.js"
 import { canonicalSerialize, type RunContext } from "../../../run.js";
 import { composeMedicareObligations, type MedicareCoordinationRequest } from "../../health/medicare/coordination/index.js";
 import { coordinateSocialSecurity, type CoordinatedPayableAward } from "../../retirement/benefits/coordination/index.js";
+import { reviewSsaMedicareOriginals, type SsaMedicareOriginalSources } from "./originalSources.js";
+export { registerSsaMedicareOriginalSources, type SsaMedicareOriginalAdapter, type SsaMedicareOriginalSources } from "./originalSources.js";
 
 /** Verified external source evidence is the trust boundary, as in A1/C2. These
  * inputs are immutable and portable; no publisher signature is inferred here.
  * A caller's complete flag or conditional proposal is never posting authority.
  */
 export interface ConfirmedSsaMedicarePayment {
+  readonly originalSources?: SsaMedicareOriginalSources;
   readonly a1: Parameters<typeof coordinateSocialSecurity>[0];
   readonly award: CoordinatedPayableAward;
   readonly c2: MedicareCoordinationRequest;
@@ -38,6 +41,8 @@ export interface ConfirmedSsaMedicarePayment {
 export interface SsaMedicareInput {
   readonly householdId: string;
   readonly personId: string;
+  /** Explicit additional recipients; each payment still has one owned BANK. */
+  readonly memberIds?: readonly string[];
   readonly payments: readonly ConfirmedSsaMedicarePayment[];
 }
 const id = "d2_ssa_medicare";
@@ -128,8 +133,14 @@ function qualifyPayment(q: ConfirmedSsaMedicarePayment, householdId: string, per
     rightSettlementId: settlementId(q.rightSettlementId), sourceInputs: orderedPayment(q) });
 }
 
-export function qualifySsaMedicarePayment(q: ConfirmedSsaMedicarePayment, householdId: string, personId: string): SsaMedicarePaymentInput {
-  try { return qualifyPayment(q, householdId, personId); }
+export function qualifySsaMedicarePayment(q: ConfirmedSsaMedicarePayment, householdId: string, personId: string, cutoff?: string): SsaMedicarePaymentInput {
+  try {
+    const frozen = immutableConfiguration(q);
+    const finish = reviewSsaMedicareOriginals(frozen, cutoff);
+    const qualified = qualifyPayment(frozen, householdId, personId);
+    finish();
+    return qualified;
+  }
   catch (error) {
     if (error instanceof ValidationError) throw error;
     return fail("SSA_MEDICARE_SOURCE_INCOMPLETE", "Valid complete source-owned A1/C2 and withholding evidence required");
@@ -137,6 +148,9 @@ export function qualifySsaMedicarePayment(q: ConfirmedSsaMedicarePayment, househ
 }
 
 export function createSsaMedicareParticipant(configuration: SsaMedicareInput): HouseholdKernelParticipant {
+  const members = configuration.memberIds ?? [configuration.personId];
+  if (!members.includes(configuration.personId) || new Set(members).size !== members.length)
+    fail("SSA_SOURCE_NOT_ADMITTED", "Every payment requires an explicitly admitted household recipient");
   const input = immutableConfiguration({ ...configuration, payments: configuration.payments.map(orderedPayment).sort((a, b) =>
     a.payable.paymentAt.localeCompare(b.payable.paymentAt) || a.payable.paymentId.localeCompare(b.payable.paymentId)) });
   return Object.freeze({ id, version: "ssa-medicare/v1", portableCodec: "d2-ssa-medicare/v1", economicInputs: input,
@@ -150,13 +164,14 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
         const prior = Object.values(opening.state.ssaMedicarePayments ?? {}).find(r => r.payable.paymentId === q.payable.paymentId);
         if (prior && !same(prior.sourceInputs, q)) fail("SSA_CHANGED_PAYMENT", "Committed payment source/amount/version/account cannot change");
         if (q.payable.paymentAt < period.start || q.payable.paymentAt >= period.end) continue;
-        const bound = qualifySsaMedicarePayment(q, input.householdId, input.personId);
+        if (!members.includes(q.payable.recipientId)) fail("SSA_SOURCE_NOT_ADMITTED", "Recipient absent from explicit household roster");
+        const bound = qualifySsaMedicarePayment(q, input.householdId, q.payable.recipientId, context.dataCutoff);
         if (!context.baseCurrency.equals(USD) || !knownBy(q, context.dataCutoff))
           fail("SSA_SOURCE_NOT_ADMITTED", "All source facts must be known by the run data cutoff");
         validateAuthoritativeState(opening.state);
         if (prior) continue;
         const bank = opening.state.accounts[q.bank.accountId];
-        if (!bank || bank.ownerId !== input.personId || !["checking", "savings"].includes(bank.kind) || !exact(bank.cash))
+        if (!bank || bank.ownerId !== q.payable.recipientId || !["checking", "savings"].includes(bank.kind) || !exact(bank.cash))
           fail("SSA_BANK_NOT_ADMITTED", "Existing exact recipient-owned checking/savings account required");
         const operationId = `ssa-medicare:${q.payable.paymentId}`;
         const traceRefs = [...new Set([...q.award.traceRefs, ...q.c2.inventories.flatMap(i => [i.source.ruleSnapshotId]),
@@ -207,7 +222,7 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
 }
 registerHouseholdParticipantCodec({ codec: "d2-ssa-medicare/v1", restore: value => {
   const input = value as SsaMedicareInput;
-  for (const q of input.payments) qualifySsaMedicarePayment(q, input.householdId, input.personId);
+  for (const q of input.payments) qualifySsaMedicarePayment(q, input.householdId, q.payable.recipientId);
   return createSsaMedicareParticipant(input);
 } });
 registerSsaMedicareSourceAuthority(value => {
@@ -224,8 +239,9 @@ export function attachSsaMedicare(kernel: CompiledHouseholdKernel, input: SsaMed
   // Generic income has no SSA lineage contract: overlapping recipient streams
   // cannot be proved exclusive, even when they use another BANK/date.
   for (const q of input.payments) {
+    if (q.originalSources !== undefined) qualifySsaMedicarePayment(q, input.householdId, q.payable.recipientId);
     const cash = kernel.executable.cashFlowInput;
-    if (cash?.incomes.some(s => (s.ownerId === input.personId || s.ownerId === input.householdId)
+    if (cash?.incomes.some(s => (s.ownerId === q.payable.recipientId || s.ownerId === input.householdId)
       && s.start <= q.payable.paymentAt && (!s.end || s.end > q.payable.paymentAt))
       || cash?.expenses.some(s => s.start <= q.payable.paymentAt && (!s.end || s.end > q.payable.paymentAt)
         && (s.sourceTraceRefs ?? []).some(ref => q.c2.premiums.coverages.some(c => ref.traceId === c.id || ref.traceId === c.quote.quoteId))))
@@ -242,7 +258,7 @@ export function validateSsaMedicareSourceHistory(state: AuthoritativeState, cuto
   for (const receipt of Object.values(state.ssaMedicarePayments ?? {})) {
     const q = receipt.sourceInputs as ConfirmedSsaMedicarePayment;
     if (cutoff !== undefined && !knownBy(q, cutoff)) fail("SSA_SOURCE_NOT_ADMITTED", "Committed payment contains facts after the run data cutoff");
-    const bound = qualifySsaMedicarePayment(q, receipt.payable.householdId, receipt.payable.recipientId);
+    const bound = qualifySsaMedicarePayment(q, receipt.payable.householdId, receipt.payable.recipientId, cutoff);
     if (!same(bound.payable, receipt.payable) || !same(bound.requests, receipt.requests) || !same(bound.right, receipt.right)
       || bound.bankAccountId !== receipt.bankAccountId || !bound.bankCashBefore.equals(receipt.bankCashBefore)
       || bound.rightSettlementId !== receipt.rightSettlementId)
