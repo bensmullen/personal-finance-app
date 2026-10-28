@@ -112,6 +112,18 @@ describe("#146 original pension provider boundary: synthetic S8 conditional evid
       expect(codes(bind(b))).toContain("REUSED_PAYMENT_IDENTITY");
     }
   });
+  it("retains independently retrieved conflict evidence when another provider is missing", () => {
+    const a = book(), b = book(2, false, ":B"), unrelated = book(2, false, ":C");
+    bankChange(a, { receiptId: b.bank.payload.confirmations[0]!.receiptId });
+    const books = [a, b, unrelated], p = ports(books);
+    const providers = p.providers.map(port => port.role !== "legal" ? port : {
+      ...port, readOriginals: (query: Parameters<typeof port.readOriginals>[0]) =>
+        query.entitlementId === a.plan.identity.entitlementId ? undefined : port.readOriginals(query),
+    });
+    const r = bindPensionOriginals(requestFor(books), providers);
+    expect(r.intents.map(i => i.actorId)).toEqual(["participant:C", "participant:C"]);
+    expect(codes(r)).toContain("CONFLICTING_HISTORY");
+  });
   it("rejects exhausted current claims even with different historic receipt IDs", () => {
     const b = book(1); b.history = { ...b.history, payload: { ...b.history.payload, installments: [{
       ...b.history.payload.installments[0]!, status: "exhausted", paymentId: "old", receiptId: "old-receipt" }] } };

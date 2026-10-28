@@ -60,6 +60,15 @@ function read(pin: PensionOriginalPin, claim: PensionOriginalClaim, request: Pen
   // Never pick a current version or hide an inactive competitor.
   need(h.originals.length === 1, "COMPETING_ORIGINALS");
   const o = h.originals[0]!;
+  // Bound source-owned arrays before hashing and before retaining partially
+  // retrieved books for symmetric conflict detection.
+  if (o.role === "bank") need(Array.isArray(o.payload.confirmations) &&
+    o.payload.confirmations.length <= 1200 && o.payload.confirmations.every(c => Boolean(c) && typeof c === "object"), "INVALID_ORIGINAL");
+  if (o.role === "history") need(Array.isArray(o.payload.installments) &&
+    o.payload.installments.length <= 1200 && o.payload.installments.every(row => Boolean(row) && typeof row === "object"), "INVALID_ORIGINAL");
+  if (o.role === "legal") need(Array.isArray(o.payload.instructions) && o.payload.instructions.length <= 1200, "INVALID_ORIGINAL");
+  if (o.role === "plan") need(Array.isArray(o.payload.award.cola?.changes) &&
+    o.payload.award.cola!.changes.length <= 1200, "INVALID_ORIGINAL");
   need(o.sourceId === pin.sourceId && o.version === pin.sourceVersion && o.originalId === pin.originalId &&
     pensionOriginalDigest(o) === pin.digest, "ORIGINAL_CHANGED");
   need(o.kind === "original" && o.revisesOriginalId === null && o.status === "active", "ORIGINAL_UNAVAILABLE");
