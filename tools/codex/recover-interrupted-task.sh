@@ -117,10 +117,11 @@ done
   echo "CRASH_RECOVERY_FAIL old worktree became dirty during recovery" >&2; exit 1
 }
 echo "CRASH_RECOVERY_PUBLISHED original=$old_branch recovery=$new_branch head=$head"
+helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 cd "$canonical"
 if [ -n "$target" ]; then
-  bash tools/codex/bootstrap-pr.sh resume "$new_branch" "$target"
+  bash "$helper_dir/bootstrap-pr.sh" resume "$new_branch" "$target"
 else
-  bash tools/codex/bootstrap-pr.sh resume "$new_branch"
+  bash "$helper_dir/bootstrap-pr.sh" resume "$new_branch"
 fi
 echo "CRASH_RECOVERY_NOTE verify the LIVE GitHub issue TARGET_BRANCH=$new_branch before submitting its PFM_TASK_ISSUE in a fresh Codex conversation; this helper never rewrites authorizations or old task receipts."
