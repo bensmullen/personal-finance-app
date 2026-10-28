@@ -358,9 +358,10 @@ cause/evidence, narrow authorized path, exact correction, observable acceptance
 and original tests/financial invariants preserved. It MUST NOT send a
 subset-of-failures patch while other known errors remain unaddressed; first
 resolve any missing scope or PM-owned decision, or declare **not Codex-ready**.
-Do not ask Codex to choose a root cause from ambiguous possibilities: finish
-reviewer-owned diagnosis or provide a narrow evidence-based decision tree whose
-outcomes and permitted correction are already decided. After the push,
+Do not ask Codex to choose among ambiguous root causes or investigate an
+open-ended failure: finish reviewer-owned diagnosis before the handoff. If
+necessary evidence is missing, the repair is **not Codex-ready** until the
+reviewer supplies that evidence and makes the decision. After the push,
 independently check the next complete exact-head CI and newly exposed failures.
 Review CI once per head rather than directing Codex to poll; no green-only
 patch, weakened assertions, extra blanket E2E runs, or autonomous scope
