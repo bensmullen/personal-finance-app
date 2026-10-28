@@ -59,3 +59,33 @@ preaccrual/partial-right rejection, forged histories, tampered deltas and BANK
 contention rollback. Source-owner installment boundaries are covered in the
 existing C2 coordination regression file. Codex does not run these tests locally;
 GitHub Actions, independent semantic audit and PM merge approval remain gates.
+
+## Optional original-source admission
+
+`originalSources.mode = "ssa-medicare-originals/v1"` requires a composition root
+to register one immutable `SsaMedicareOriginalAdapter`. Its independent SSA
+publisher/revision inventories feed `bindSsaOriginals`; its independent CMS/SSA
+and IRS inventories feed `proposeOriginalIrmaa`. No production provider or
+authentication is supplied here. Compact pins and hashes witness changes;
+they cannot authenticate client-authored awards, complete flags or returns.
+
+Original admission binds the exact consumed A1 recipient and installment, and
+C2 enrollment, rule, return or granted determination inputs. It also matches
+each original surcharge result to the actual composed obligation's member,
+coverage, plan, month, tier, determination and tax years. C1 base premium and
+exclusive SSA deduction authority still come from the existing composition.
+Nonzero IRMAA remains part of each premium, with no additional transaction.
+
+Every qualification freezes independent source reads and repeats them after
+financial computation. Attach, event preparation, atomic state admission,
+receipt history validation and portable codec restoration use that same path.
+Missing sources in a fresh process refuse import; raw original documents never
+become portable credentials. Existing source inputs carry only the additional
+compact original pins, queries and candidate digests. Legacy payments without
+this mode preserve v1 semantics and gain no original-source assurance.
+
+`originalSettlement.test.ts` and its separate synthetic provider book cover
+original-backed journals, nonzero and zero surcharges, two members, multi-month
+detail/summary and cold replay, source withdrawal/races and proportional
+1/12/24-month receipt and portable output sizes. These synthetic providers do
+not establish authentic SSA/CMS connectivity or complete SSA tax treatment.

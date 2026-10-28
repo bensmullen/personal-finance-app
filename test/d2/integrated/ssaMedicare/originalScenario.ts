@@ -41,20 +41,24 @@ const original = (person: string, gross = "1500"): SsaOriginalPublication => ({ 
 const doc = <T>(issuer: Original<T>["issuer"], value: T, sourceId: string): Original<T> => ({ issuer, value, sourceId,
   version: "synthetic-v1", claimId: `${issuer}:${sourceId}`, publishedAt: cutoff, knownAt: cutoff,
   publication: `Provider-held synthetic original ONLY ${"publisher-original-payload".repeat(100)}`, supersedes: [] });
+const surchargedRule = (rule: OriginalRule["rule"]): OriginalRule["rule"] => ({ ...rule,
+  tables: rule.tables.map(t => ({ ...t, tiers: t.tiers.map(tier => ({ ...tier,
+    partBMonthly: money("10"), partDMonthly: money("20") })) })) });
 const book = immutableConfiguration([ids.person as string, second.person].flatMap(person => [2026, 2027].map(year => {
   const q = forMember(payment(`${year}-06`), person), raw = q.c2.irmaa;
   return { person, year, ssa: original(person), zeroNetSsa: original(person, "200"), rule: doc<OriginalRule>("CMS", { rule: raw.rules[0]!, permittedLifeEvents: [] }, raw.rules[0]!.source.ruleSnapshotId),
+    surchargedRule: doc<OriginalRule>("CMS", { rule: surchargedRule(raw.rules[0]!), permittedLifeEvents: [] }, raw.rules[0]!.source.ruleSnapshotId),
     enrollments: raw.enrollments.map(enrollment => doc<OriginalEnrollment>("CMS", { enrollment,
       birthDate: civilDate("1950-01-01"), eligible: true, eligibility: { start: civilDate("2026-01-01"), endExclusive: civilDate("2028-01-01") } }, enrollment.source.ruleSnapshotId)),
     income: doc<OriginalReturn>("IRS", { income: raw.histories[0]!, filedAt: instant("2025-04-01T00:00:00.000Z"), status: "filed" }, raw.histories[0]!.source.ruleSnapshotId) };
 })));
 export const control: {
-  missing: boolean; zeroNet: boolean; calls: number; ssaCalls: number;
+  missing: boolean; zeroNet: boolean; surcharged: boolean; calls: number; ssaCalls: number;
   changeSsa?: (h: SsaOriginalHistory, call: number) => SsaOriginalHistory | undefined;
   changeInventory?: (kind: string, inv: OriginalInventory<unknown>, call: number) => OriginalInventory<unknown> | undefined;
-} = { missing: false, zeroNet: false, calls: 0, ssaCalls: 0 };
+} = { missing: false, zeroNet: false, surcharged: false, calls: 0, ssaCalls: 0 };
 export function resetSources(): void {
-  control.missing = false; control.zeroNet = false; control.calls = 0; control.ssaCalls = 0;
+  control.missing = false; control.zeroNet = false; control.surcharged = false; control.calls = 0; control.ssaCalls = 0;
   delete control.changeSsa; delete control.changeInventory;
 }
 const lookup = (q: OriginalQuery) => book.find(b => b.person === q.personId && b.year === q.premiumTaxYear)!;
@@ -74,7 +78,7 @@ export const providers = {
     return control.changeSsa ? control.changeSsa(h, control.ssaCalls) : h;
   } }],
   irmaa: {
-    rules: q => inv("rule", q, [lookup(q).rule]),
+    rules: q => inv("rule", q, [control.surcharged ? lookup(q).surchargedRule : lookup(q).rule]),
     enrollments: q => inv("enrollment", q, lookup(q).enrollments.filter(e => e.value.enrollment.part === q.part)),
     returns: q => inv("return", q, [lookup(q).income]),
     determinations: q => inv<OriginalDetermination>("determination", q, []),
@@ -83,7 +87,15 @@ export const providers = {
 };
 export const register = () => registerSsaMedicareOriginalSources(providers);
 export function originalPayment(month = "2026-06", cash = money("2000"), person = ids.person as string): ConfirmedSsaMedicarePayment {
-  const q = forMember(withGross(payment(month, cash), control.zeroNet ? "200" : "1500"), person);
+  let q = forMember(withGross(payment(month, cash), control.zeroNet ? "200" : "1500"), person);
+  if (control.surcharged) q = { ...q,
+    c2: { ...q.c2, irmaa: { ...q.c2.irmaa, rules: q.c2.irmaa.rules.map(surchargedRule) },
+      premiums: { ...q.c2.premiums, coverages: q.c2.premiums.coverages.map(c => ({ ...c,
+        quote: { ...c.quote, gross: money(c.medicare!.premiumFor === "part_b" ? "70" : "100"),
+          member: money(c.medicare!.premiumFor === "part_b" ? "70" : "100") } })) } },
+    deductions: q.deductions.map(d => ({ ...d, terms: { ...d.terms, premium: { ...d.terms.premium,
+      base: money(d.terms.premium.part === "part_b" ? "70" : "100"),
+      irmaa: money(d.terms.premium.part === "part_b" ? "10" : "20") } } })) };
   const entry = book.find(b => b.person === person)!, o = control.zeroNet ? entry.zeroNetSsa : entry.ssa;
   const r = o.recipient, unique = (s: readonly string[]) => [...new Set(s)].sort();
   const queries: OriginalQuery[] = q.c2.irmaa.enrollments.map(e => ({ householdId: ids.household, personId: person,

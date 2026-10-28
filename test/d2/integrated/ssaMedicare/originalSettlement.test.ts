@@ -89,6 +89,43 @@ describe("original-backed same-event physical settlement", () => {
     expect(() => qualifySsaMedicarePayment(q, ids.household, ids.person, instant("2025-12-31T00:00:00.000Z"))).toThrow();
   });
 
+  it("consumes original nonzero B/D surcharges exactly once within the existing premiums", () => {
+    control.surcharged = true;
+    const q = originalPayment(), out = execute(q);
+    expect(out.periods, JSON.stringify(out.diagnostics)).toHaveLength(1);
+    expect(out.periods[0]!.transactions).toHaveLength(1);
+    expect(out.state.accounts[ids.bank]!.cash.equals(money("3300"))).toBe(true);
+    const receipt = Object.values(out.state.ssaMedicarePayments!)[0]!;
+    expect(receipt.requests.map(r => [r.terms.premium.part, r.terms.premium.base.amount.toString(),
+      r.terms.premium.irmaa.amount.toString(), r.terms.amount.amount.toString()]))
+      .toEqual([["part_b", "70", "10", "80"], ["part_d", "100", "20", "120"]]);
+    expect(receipt.recognitions.map(r => r.amount.amount.toString())).toEqual(["1500", "80", "120"]);
+    expect(Object.values(out.state.obligations)).toHaveLength(3);
+    expect(out.periods[0]!.statements.expenses.equals(money("200"))).toBe(true);
+    expect(out.periods[0]!.outputCapabilities?.projectedTax?.status).not.toBe("complete");
+    // A pin recomputed from the original producer cannot bless altered raw C2.
+    const rawZero = payment().c2.irmaa;
+    expect(() => qualify({ ...q, c2: { ...q.c2, irmaa: rawZero } })).toThrow();
+    const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(out))));
+    expect(replayHouseholdForecastWindow(restored, out.periods[0]!.period).state).toEqual(out.state);
+  });
+
+  it("enforces the original cutoff on C1, BANK and withholding through the state source port", () => {
+    const q = originalPayment(), bound = qualify(q), late = instant("2026-02-01T00:00:00.000Z");
+    const candidates: ConfirmedSsaMedicarePayment[] = [
+      { ...q, bank: { ...q.bank, evidence: { ...q.bank.evidence, knownAt: late } } },
+      { ...q, payable: { ...q.payable, taxWithholding: { ...q.payable.taxWithholding,
+        source: { ...q.payable.taxWithholding.source, knownAt: late } } } },
+      { ...q, c2: { ...q.c2, premiums: { ...q.c2.premiums, coverages: q.c2.premiums.coverages.map(c => ({ ...c,
+        quote: { ...c.quote, source: { ...c.quote.source, asOf: "2026-02-01" as typeof c.quote.source.asOf } } })) } } },
+    ];
+    for (const sourceInputs of candidates) {
+      const state = fixture().state, before = canonicalSerialize(state);
+      expect(() => applySsaMedicarePaymentAtomically(state, { ...bound, sourceInputs })).toThrow();
+      expect(canonicalSerialize(state)).toBe(before);
+    }
+  });
+
   it.each(["missing", "withdrawn", "amended", "late", "incomplete", "expired", "race"])("refuses independent SSA %s evidence", mode => {
     const q = originalPayment();
     control.changeSsa = (h, call) => mode === "missing" ? undefined : mode === "incomplete" ? { ...h, completeness: "unknown" }
@@ -209,4 +246,36 @@ describe("original-backed same-event physical settlement", () => {
     }
     expect(sizes[2]!).toBeLessThan(25 * sizes[0]!);
   });
+
+  it("keeps 1/12/24-month receipts and portable output proportional without original documents", () => {
+    const sizes: { receipts: number; artifact: number }[] = [];
+    for (const months of [1, 12, 24]) {
+      resetSources();
+      const f = fixture(months, undefined, "2026-01");
+      let cash = money("2000");
+      const payments = Array.from({ length: months }, (_, n) => {
+        const q = originalPayment(`${2026 + Math.floor(n / 12)}-${String(n % 12 + 1).padStart(2, "0")}`, cash);
+        cash = cash.plus(money("1300")); return q;
+      });
+      const out = runHouseholdKernel({ kernel: attachSsaMedicare(f.kernel, input(payments)), runContext: f.context });
+      expect(out.periods, JSON.stringify(out.diagnostics)).toHaveLength(months);
+      const receipts = canonicalSerialize(out.state.ssaMedicarePayments);
+      const artifact = createPortableHouseholdReplayArtifact(out);
+      expect(receipts).not.toContain("publisher-original-payload");
+      expect(artifact.encoded).not.toContain("publisher-original-payload");
+      sizes.push({ receipts: receipts.length, artifact: artifact.encoded.length });
+      // History validation must physically consult the providers once per
+      // committed payment; no receipt becomes a cached publisher credential.
+      resetSources();
+      validateSsaMedicareSourceHistory(out.state, f.context.dataCutoff);
+      expect(control.ssaCalls).toBe(3 * months);
+      expect(control.calls).toBe(24 * months);
+      expect(out.state.accounts[ids.bank]!.cash.equals(cash)).toBe(true);
+    }
+    for (const key of ["receipts", "artifact"] as const) {
+      expect(sizes[1]![key]).toBeLessThan(14 * sizes[0]![key]);
+      expect(sizes[2]![key]).toBeLessThan(28 * sizes[0]![key]);
+      expect(sizes[2]![key]).toBeLessThan(2.5 * sizes[1]![key]);
+    }
+  }, 60_000);
 });

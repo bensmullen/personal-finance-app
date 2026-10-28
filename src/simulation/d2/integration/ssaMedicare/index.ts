@@ -76,7 +76,8 @@ const knownBy = (value: unknown, cutoff: string): boolean => {
 };
 
 /** Recalculate both source owners and bind the complete exact deduction set. */
-function qualifyPayment(q: ConfirmedSsaMedicarePayment, householdId: string, personId: string): SsaMedicarePaymentInput {
+function qualifyPayment(q: ConfirmedSsaMedicarePayment, householdId: string, personId: string,
+  reviewComposition: (value: ReturnType<typeof composeMedicareObligations>) => void): SsaMedicarePaymentInput {
   const p = q.payable, award = q.award;
   const result = coordinateSocialSecurity(q.a1);
   const matches = result.proposals.filter(a => a.claimId === award.claimId);
@@ -89,6 +90,7 @@ function qualifyPayment(q: ConfirmedSsaMedicarePayment, householdId: string, per
     || p.paymentAt !== at(award.effectiveAt) || !lineage(p.source, award.quotedAward.quote!.source))
     fail("SSA_SOURCE_NOT_ADMITTED", "Exact actual coordinated A1 recipient/worker/award/entitlement/installment and source required");
   const c = composeMedicareObligations(q.c2);
+  reviewComposition(c);
   if (q.c2.premiums.householdId !== householdId || q.c2.premiums.memberIds.length !== 1
     || q.c2.premiums.memberIds[0] !== personId || c.medicareTotalCoverage !== "complete"
     || q.c2.awards.length !== 1 || !same(q.c2.awards[0], award.quotedAward))
@@ -136,9 +138,11 @@ function qualifyPayment(q: ConfirmedSsaMedicarePayment, householdId: string, per
 export function qualifySsaMedicarePayment(q: ConfirmedSsaMedicarePayment, householdId: string, personId: string, cutoff?: string): SsaMedicarePaymentInput {
   try {
     const frozen = immutableConfiguration(q);
-    const finish = reviewSsaMedicareOriginals(frozen, cutoff);
-    const qualified = qualifyPayment(frozen, householdId, personId);
-    finish();
+    if (frozen.originalSources !== undefined && !knownBy(frozen, frozen.originalSources.dataCutoff))
+      fail("SSA_SOURCE_NOT_ADMITTED", "Every original-backed payment fact must be known by its forecast data cutoff");
+    const review = reviewSsaMedicareOriginals(frozen, cutoff);
+    const qualified = qualifyPayment(frozen, householdId, personId, review.composition);
+    review.finish();
     return qualified;
   }
   catch (error) {

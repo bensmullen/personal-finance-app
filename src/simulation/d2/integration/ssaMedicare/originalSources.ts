@@ -6,6 +6,7 @@ import { bindSsaOriginals, type SsaOriginalPin, type SsaOriginalProvider } from 
 import { irmaaOriginalDigest, proposeOriginalIrmaa, type IrmaaOriginals, type Original,
   type OriginalQuery, type SourcedIrmaaCandidate } from "../../health/medicare/originalBinding/index.js";
 import type { ConfirmedSsaMedicarePayment } from "./index.js";
+import type { composeMedicareObligations } from "../../health/medicare/coordination/index.js";
 
 /** Change commitments only. Authentication belongs to registered source owners. */
 export interface SsaMedicareOriginalSources {
@@ -35,9 +36,12 @@ function need(ok: boolean): asserts ok {
 }
 /** Freeze every independent read, then re-read after BOTH source and financial
  * computations. Never cache source admission across events or replay imports. */
-export function reviewSsaMedicareOriginals(q: ConfirmedSsaMedicarePayment, cutoff?: string): () => void {
+export function reviewSsaMedicareOriginals(q: ConfirmedSsaMedicarePayment, cutoff?: string): {
+  readonly composition: (value: ReturnType<typeof composeMedicareObligations>) => void;
+  readonly finish: () => void;
+} {
   const pins = q.originalSources;
-  if (pins === undefined) return () => {};
+  if (pins === undefined) return { composition: () => {}, finish: () => {} };
   need(pins.mode === "ssa-medicare-originals/v1" && adapter !== undefined);
   instant(pins.dataCutoff);
   const sources = adapter!;
@@ -104,8 +108,26 @@ export function reviewSsaMedicareOriginals(q: ConfirmedSsaMedicarePayment, cutof
       && same(raw.overrides ?? [], consumed<Record<string, unknown>>(c, "override").map(o =>
         ({ ...o, qualification: "verified_legal_determination" }))));
   }
-  return () => {
-    need(adapter === sources);
-    for (const record of reads.values()) need(irmaaOriginalDigest(record.read()) === record.digest);
+  return {
+    composition: value => {
+      // Match the original producer result to each actual composed obligation,
+      // including explicit zero surcharges, before any physical posting.
+      for (const c of result.candidates) {
+        const rows = value.obligations.filter(o => o.part === c.part);
+        const row = rows[0], effective = row?.irmaa;
+        need(rows.length === 1 && Boolean(row) && Boolean(effective));
+        need(row!.householdId === c.householdId && row!.personId === c.personId
+          && row!.coverageId === c.coverageId && row!.planId === c.planId && same(row!.period, c.period)
+          && row!.surcharge.equals(c.monthlySurcharge)
+          && effective!.taxYear === c.taxYear && effective!.incomeTaxYear === c.incomeTaxYear
+          && effective!.legalLookbackTaxYear === c.legalLookbackTaxYear
+          && effective!.determination === c.determination && effective!.tier.id === c.tierRef.tierId
+          && effective!.ruleSnapshotId === c.tierRef.ruleSnapshotId);
+      }
+    },
+    finish: () => {
+      need(adapter === sources);
+      for (const record of reads.values()) need(irmaaOriginalDigest(record.read()) === record.digest);
+    },
   };
 }
