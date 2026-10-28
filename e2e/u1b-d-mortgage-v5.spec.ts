@@ -107,15 +107,30 @@ async function appliedSource(page: Page) {
 async function fits(page: Page, property = false) {
   const horizontal = await page.evaluate(() => {
     const excess = document.documentElement.scrollWidth - innerWidth;
-    const offenders = excess <= 0 ? [] : Array.from(document.querySelectorAll<HTMLElement>("body *"))
+    // A wide <table> in an overflow-x:auto region is intentional. Report
+    // only elements that can contribute to document overflow, excluding
+    // descendants already contained by a scrolling/clipping ancestor.
+    const contained = (element: Element) => {
+      for (let parent = element.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+        if (/auto|scroll|hidden|clip/.test(getComputedStyle(parent).overflowX)) return true;
+      }
+      return false;
+    };
+    const positions = Array.from(document.querySelectorAll<HTMLElement>("body *"))
       .map(element => ({ element, rect: element.getBoundingClientRect() }))
-      .filter(({ rect }) => rect.width > 0 && (rect.right > innerWidth + 1 || rect.left < -1))
-      .slice(0, 12).map(({ element, rect }) => ({
+      .filter(({ element, rect }) => rect.width > 0 && !contained(element) && (rect.right > innerWidth + 0.2 || rect.left < -0.2))
+      .sort((a, b) => b.rect.right - a.rect.right).slice(0, 20)
+      .map(({ element, rect }) => ({
         tag: element.tagName, className: typeof element.className === "string" ? element.className.slice(0, 100) : "",
-        left: Math.round(rect.left), right: Math.round(rect.right),
-        width: Math.round(rect.width), minWidth: getComputedStyle(element).minWidth,
+        left: Math.round(rect.left * 10) / 10, right: Math.round(rect.right * 10) / 10,
+        width: Math.round(rect.width * 10) / 10, minWidth: getComputedStyle(element).minWidth,
+        overflowX: getComputedStyle(element).overflowX,
       }));
-    return { excess, offenders };
+    const roots = [document.documentElement, document.body, document.getElementById("main-content")].filter(Boolean).map(element => ({
+      name: element!.tagName, rectRight: element!.getBoundingClientRect().right,
+      clientWidth: element!.clientWidth, scrollWidth: element!.scrollWidth,
+    }));
+    return { excess, roots, positions };
   });
   expect(horizontal, JSON.stringify(horizontal)).toMatchObject({ excess: 0 });
   const chart = outlook(page, property).getByRole("region", { name: "Mortgage amortization", exact: true });
