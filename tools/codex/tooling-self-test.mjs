@@ -158,6 +158,27 @@ assert(
   "one-line task issue pointer should validate and inject the repository-owned contract",
 );
 
+// Regression: a human-readable UAT heading is not a PFM_TASK_V3 section.
+// Catch this reviewer authoring error before telling the PM to restart Codex.
+const invalidAcceptanceFixture = path.join(temp, "task-issue-invalid-acceptance.md");
+const invalidAcceptance = prompt.replace(
+  "\nACCEPTANCE:\n",
+  "\nACCEPTANCE — latest PM UAT corrections:\n",
+);
+assert(invalidAcceptance !== prompt, "invalid acceptance fixture must modify the actual required header");
+fs.writeFileSync(invalidAcceptanceFixture, invalidAcceptance);
+const invalidAcceptanceIssue = hook(
+  "UserPromptSubmit",
+  { prompt: "PFM_TASK_ISSUE: 49" },
+  { PFM_POLICY_TEST_ISSUE_BODY_FILE: invalidAcceptanceFixture },
+);
+assert(
+  invalidAcceptanceIssue.decision === "block"
+    && String(invalidAcceptanceIssue.reason).includes("TASK_ISSUE_INVALID")
+    && String(invalidAcceptanceIssue.reason).includes("missing/empty ACCEPTANCE"),
+  "descriptive ACCEPTANCE heading must be rejected as a missing required machine section",
+);
+
 const issueAmbiguous = hook(
   "UserPromptSubmit",
   { prompt: "PFM_TASK_ISSUE: 49 and PFM_TASK_ISSUE: 50" },
@@ -1139,6 +1160,64 @@ assert(
   selfTarget.status !== 0 && selfTarget.stderr.includes("current/source checkout"),
   "bootstrap must never replace its own source checkout",
 );
+
+// Crash recovery must preserve an ACTIVE foreign-session receipt and the
+// exact UNPUBLISHED local checkpoint, then build a distinct clean worktree.
+const crashHelper = path.join(root, 'tools', 'codex', 'recover-interrupted-task.sh');
+const crashed = path.join(bootstrapRoot, 'crashed-task');
+const recovered = path.join(bootstrapRoot, 'crashed-task-recovery');
+mustRun('bash', [bootstrap, 'new', 'codex/crashed-task', crashed], { cwd: source, env: bootstrapEnv });
+mustRun('git', ['-C', crashed, 'config', 'user.name', 'PFM Test']);
+mustRun('git', ['-C', crashed, 'config', 'user.email', 'pfm@example.test']);
+fs.writeFileSync(path.join(crashed, 'crashed-work.txt'), 'unpublished source work\\n');
+mustRun('git', ['-C', crashed, 'add', 'crashed-work.txt']);
+mustRun('git', ['-C', crashed, 'commit', '-m', 'WIP: crash checkpoint']);
+const crashHead = mustRun('git', ['-C', crashed, 'rev-parse', 'HEAD']).stdout.trim();
+const crashReceiptDir = path.join(crashed, '.codex', 'runtime');
+fs.mkdirSync(crashReceiptDir, { recursive: true });
+const crashReceipt = path.join(crashReceiptDir, 'latest-task.json');
+const originalReceiptBytes = '{"ACTIVE":true,"SESSION_ID":"interrupted"}\\n';
+fs.writeFileSync(crashReceipt, originalReceiptBytes);
+const crashArgs = [crashHelper, crashed, 'codex/crashed-task',
+  'codex/crashed-task-recovery', crashHead.slice(0, 10), recovered];
+const crashEnv = { ...bootstrapEnv, PFM_CRASH_RECOVERY_CONFIRMED: '1' };
+const deniedUnconfirmed = run('bash', crashArgs, { cwd: source, env: bootstrapEnv });
+assert(deniedUnconfirmed.status !== 0 && deniedUnconfirmed.stderr.includes('CONFIRMED'),
+  'crash helper requires explicit operator assurance writer stopped');
+const deniedSha = run('bash', crashArgs.map((s, i) => i === 4 ? 'abcdef0123456789' : s),
+  { cwd: source, env: crashEnv });
+assert(deniedSha.status !== 0 && deniedSha.stderr.includes('expected checkpoint SHA'),
+  'crash helper must reject an incorrect source checkpoint');
+fs.writeFileSync(path.join(crashed, 'unrelated-untracked.txt'), 'preserve\\n');
+const deniedDirty = run('bash', crashArgs, { cwd: source, env: crashEnv });
+assert(deniedDirty.status !== 0 && deniedDirty.stderr.includes('is dirty'),
+  'crash helper must not publish a dirty interrupted worktree');
+fs.rmSync(path.join(crashed, 'unrelated-untracked.txt'));
+// A different existing remote recovery branch must never be reused or
+// overwritten; refusal must occur BEFORE publishing the source branch.
+const collisionBranch = 'codex/crashed-task-collision';
+mustRun('git', ['-C', seed, 'push', 'origin', `HEAD:refs/heads/${collisionBranch}`]);
+const collisionArgs = crashArgs.map((value, index) => index === 3 ? collisionBranch : value);
+const refusedCollision = run('bash', collisionArgs, { cwd: source, env: crashEnv });
+assert(refusedCollision.status !== 0 && refusedCollision.stderr.includes('different remote history') &&
+  !refusedCollision.stdout.includes('CRASH_RECOVERY_PUBLISHED'),
+  'crash recovery must refuse conflicting existing remote branch before any writes');
+const rescued = mustRun('bash', crashArgs, { cwd: source, env: crashEnv });
+assert(rescued.stdout.includes('CRASH_RECOVERY_PUBLISHED') &&
+  rescued.stdout.includes('PR_WORKTREE_READY mode=resume'),
+  'exact preserved WIP checkpoint must publish to two remote branches and bootstrap recovery');
+assertHandoff(rescued, 'resume', recovered, 'codex/crashed-task-recovery');
+assert(fs.readFileSync(crashReceipt, 'utf8') === originalReceiptBytes &&
+  mustRun('git', ['-C', crashed, 'rev-parse', 'HEAD']).stdout.trim() === crashHead &&
+  !fs.existsSync(path.join(recovered, '.codex/runtime/latest-task.json')),
+  'crash workflow must not rewrite old active receipt or Git history and must create a receipt-free recovery worktree');
+assert(mustRun('git', ['-C', recovered, 'rev-parse', 'HEAD']).stdout.trim() === crashHead &&
+  mustRun('git', ['-C', recovered, 'rev-parse', '@{u}']).stdout.trim() === crashHead,
+  'recovery branch and tracking must start from the precise checkpoint, not origin/main');
+const repeatCrash = mustRun('bash', crashArgs, { cwd: source, env: crashEnv });
+assert(repeatCrash.stdout.includes('PR_WORKTREE_READY mode=resume') &&
+  fs.readFileSync(crashReceipt, 'utf8') === originalReceiptBytes,
+  'repeating an exact-SHA recovery is idempotent and preserves the old receipt');
 
 fs.rmSync(temp, { recursive: true, force: true });
 console.log(
