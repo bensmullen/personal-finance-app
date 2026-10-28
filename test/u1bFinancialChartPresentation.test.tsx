@@ -34,7 +34,7 @@ function source(options: { partial?: boolean; missing?: boolean; noInvestments?:
     points: options.empty ? [] : [point], contributionCapacities: [], contingentPositions: [], retirementMilestones: [], liquidityShortfalls: [], debtPayoffs: [], diagnostics: [],
   };
 }
-const render = (forecast: PersonalHouseholdForecastReadModel, cashFlowOnly = true, stale = false) => renderToStaticMarkup(React.createElement(HouseholdChart, { forecast, cashFlowOnly, stale }));
+const render = (forecast: PersonalHouseholdForecastReadModel, cashFlowOnly = true, stale = false, calm = false) => renderToStaticMarkup(React.createElement(HouseholdChart, { forecast, cashFlowOnly, stale, calm }));
 
 describe("U1B exact chart presentation", () => {
   it("gives each chart select its own exact external label and unique association", () => {
@@ -114,6 +114,9 @@ describe("U1B exact chart presentation", () => {
   it("handles unavailable source and refuses unsafe plotting coordinates while retaining exact strings", () => {
     const forecast = { status: "unavailable", scope: "household", message: "Needs setup", diagnostics: [] } as PersonalHouseholdForecastReadModel;
     expect(render(forecast)).toContain("Chart data unavailable");
+    const cashFallback = render(forecast, true, false, true);
+    expect(cashFallback).toContain('aria-label="Total Cash Balance Chart Details"');
+    expect(cashFallback).not.toContain("Total modeled cash Chart Details");
     const value: ForecastChartValue = { amount: "9007199254740993.01", currency: "USD", status: "incomplete", traceIds: [] };
     expect(chartCoordinate(value)).toBeNull();
     expect(exactChartValue(value)).toContain("9,007,199,254,740,993.01 USD · Incomplete");
