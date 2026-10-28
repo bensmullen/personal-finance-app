@@ -109,6 +109,20 @@ test.afterEach(async ({ page }, testInfo) => {
           visibility: getComputedStyle(readout.parentElement!).visibility };
       })), null, 2), contentType: "application/json",
     });
+    await testInfo.attach("chart-horizontal-overflow", {
+      body: JSON.stringify(await page.locator(".financial-charts").evaluateAll(containers => containers.flatMap(container =>
+        Array.from(container.querySelectorAll("*")).filter(element => {
+          const box = element.getBoundingClientRect();
+          // Table cells may extend within their own accessible scroll region.
+          return box.width > 0 && (box.right > innerWidth || box.left < 0) && !element.closest(".table-scroll");
+        }).slice(0, 24).map(element => ({
+          tag: element.tagName, class: element.getAttribute("class"),
+          bounds: element.getBoundingClientRect().toJSON(),
+          parent: element.parentElement?.getAttribute("class"),
+          parentBounds: element.parentElement?.getBoundingClientRect().toJSON(),
+          minWidth: getComputedStyle(element).minWidth, width: getComputedStyle(element).width,
+        })))), null, 2), contentType: "application/json",
+    });
     const charts = page.locator(".financial-charts");
     if (await charts.count() === 1) await testInfo.attach("chart-accessibility", {
       body: (await charts.ariaSnapshot()).slice(0, 12_000), contentType: "text/plain",
@@ -310,20 +324,35 @@ for (const width of [1440, 390]) {
     const status = await boundedGolden(page, width);
     const chart = wealthChart(page);
     const toggle = chart.getByRole("button", { name: "Total assets", exact: true });
-    await toggle.click();
-    for (const failure of [false, true]) {
+    // Each committed salary edit changes the economic fingerprint and starts
+    // real worker computation. Re-submitting unchanged setup can hit the cache.
+    for (const [index, failure] of [false, true, false].entries()) {
+      const priorRequest = await status.getAttribute("data-request-id");
+      const priorFingerprint = await status.getAttribute("data-fingerprint");
+      const retainedFingerprint = await chart.locator(".chart-basis code").textContent();
+      const retainedValues = await chart.locator(".chart-selected dd").allTextContents();
       await page.evaluate(fail => { const state = (window as unknown as { __chartDelivery: { hold: boolean; fail: boolean } }).__chartDelivery; state.hold = true; state.fail = fail; }, failure);
-      await showStatusActions(page);
-      await page.getByRole("button", { name: "Update forecast", exact: true }).click();
-      await page.keyboard.press("Escape");
+      await navigateOwner(page, "Money", "Income");
+      await page.getByRole("button", { name: /Example salary/ }).click();
+      const editor = page.getByRole("dialog", { name: "Edit Income", exact: true });
+      await editor.getByLabel("Amount", { exact: true }).fill(String(10000 + index * 1000));
+      await editor.getByRole("button", { name: "Save changes", exact: true }).click();
+      await expect(editor).toHaveCount(0);
+      await expect(status).toHaveAttribute("data-pending", "true");
+      await expect(status).not.toHaveAttribute("data-request-id", priorRequest!);
+      await expect(status).not.toHaveAttribute("data-fingerprint", priorFingerprint!);
+      await openOverview(page);
+      await toggle.click();
       await expect(chart).toHaveAttribute("aria-busy", "true");
+      await expect(chart.locator(".chart-basis code")).toHaveText(retainedFingerprint!);
+      await expect(chart.locator(".chart-selected dd")).toHaveText(retainedValues);
       await expect(chart.locator(".forecast-progress")).toHaveCount(1);
       await expect(chart.locator(".forecast-progress")).toContainText("retained results are out of date");
       await expect(chart.locator(".status-pending")).toHaveCSS("animation-name", "none");
       await expect(chart.locator("svg.recharts-surface")).toBeVisible();
-      const path = info.outputPath(`shared-charts-${failure ? "failure-pending" : "updating"}-${width}.png`);
+      const path = info.outputPath(`shared-charts-${index}-${failure ? "failure-pending" : "updating"}-${width}.png`);
       await chart.screenshot({ path, animations: "disabled" });
-      await info.attach(`shared-chart-pending-${failure}-${width}`, { path, contentType: "image/png" });
+      await info.attach(`shared-chart-pending-${index}-${failure}-${width}`, { path, contentType: "image/png" });
       await expect.poll(() => page.evaluate(() => (window as unknown as { __chartDelivery: { queued: unknown[] } }).__chartDelivery.queued.length)).toBeGreaterThan(0);
       await page.evaluate(() => { const state = (window as unknown as { __chartDelivery: { hold: boolean; queued: (() => void)[] } }).__chartDelivery; state.hold = false; state.queued.splice(0).forEach(deliver => deliver()); });
       await expect(status).toHaveAttribute("data-pending", "false");
@@ -333,7 +362,11 @@ for (const width of [1440, 390]) {
       if (failure) {
         await expect(status).toHaveAttribute("data-lifecycle", "error");
         await expect(chart).toContainText("out of date retained result");
-      } else await expect(chart.locator("figcaption")).not.toContainText("out of date");
+      } else {
+        await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
+        await expect(chart.locator("figcaption")).not.toContainText("out of date");
+        await expect(chart.locator(".chart-basis code")).toHaveText((await status.getAttribute("data-fingerprint"))!);
+      }
     }
   });
 

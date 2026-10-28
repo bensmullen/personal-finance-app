@@ -140,7 +140,7 @@ export function FinancialChart({ annual, monthly, kind, stale, pending = false, 
     </figcaption>
     {!points.length ? <p className={calmWealth ? "calm-empty" : undefined} role="status">{calmWealth ? "No future periods are available. The recorded opening position is separate from a projected path." : "No modeled periods available. The opening snapshot is not projected history."}</p> : <>
       {!plotted.length && <p role="status">All series hidden. Choose a legend item to show it again; exact values remain below.</p>}
-      {partial && <p className="chart-qualification">Incomplete forecast · dashed lines / faded bars are incomplete; gaps are unavailable. Partial years are not annualized.</p>}
+      {partial && <p className="chart-qualification">Incomplete forecast · gaps are unavailable.</p>}
       {precisionOmitted && <p role="note">Some amounts exceed chart display precision. Exact values remain in Chart Details.</p>}
       <div className="chart">
         <ResponsiveContainer width="100%" height="100%" minWidth={0}>
@@ -158,7 +158,9 @@ export function FinancialChart({ annual, monthly, kind, stale, pending = false, 
               ? <Bar key={`${item.key}_${status}`} className={`chart-bar-${item.key}-${status}`} dataKey={`${item.key}_${status}`} stackId={item.key} yAxisId="balance" fill={status === "incomplete" ? "#fff" : item.color} stroke={item.color} strokeWidth={2} strokeDasharray={status === "incomplete" ? "3 2" : undefined} isAnimationActive={false}>
                 {kind === "cash" && points.map(point => <Cell key={point.periodStart} {...cashChangeAppearance(point)} />)}
               </Bar>
-              : <Line key={`${item.key}_${status}`} dataKey={`${item.key}_${status}`} yAxisId="balance" type="linear" stroke={item.color} strokeWidth={2} strokeDasharray={status === "incomplete" ? `${item.dash ?? "6 2"} 1 3` : item.dash} dot={false} activeDot={false} connectNulls={false} isAnimationActive={false} />))}
+              // Recharts renders a fallback dot for a singleton even when dot=false.
+              // An empty renderer suppresses that glyph while retaining its tooltip payload.
+              : <Line key={`${item.key}_${status}`} dataKey={`${item.key}_${status}`} yAxisId="balance" type="linear" stroke={item.color} strokeWidth={2} strokeDasharray={status === "incomplete" ? `${item.dash ?? "6 2"} 1 3` : item.dash} dot={rows.length === 1 ? () => <g /> : false} activeDot={false} connectNulls={false} isAnimationActive={false} />))}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -166,6 +168,7 @@ export function FinancialChart({ annual, monthly, kind, stale, pending = false, 
     </>}
     <CashChartDetails title={title}><section aria-label={`${title} chart details`}>
       <p>Forecast, not account history · {source.currency}. Axis positions and compact hover amounts are approximate; tables and selected values retain exact source amounts.</p>
+      <p>Dashed lines and faded bars indicate incomplete values; gaps are unavailable. Partial years are not annualized.</p>
       <p>{kind === "statement" ? "Income and expenses when recognized; not bank receipts/disbursements or disposable wages." : "Balances are period-closing stocks."} {kind === "cash" && "Bars show signed change in the same all-account cash balance, not salary less expenses. Positive changes are green, negative changes are red, zero is neutral. Faded bars mark incomplete values or partial years; unavailable values leave gaps. Partial years are not annualized."}</p>
       {calmWealth && <p className="chart-axis-note">{granularity === "annual" ? "Annual" : "Monthly"} closing balances ({source.currency}). Axis labels and positions are approximate; readouts are exact.</p>}
       {children}

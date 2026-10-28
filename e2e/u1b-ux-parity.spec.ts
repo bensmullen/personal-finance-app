@@ -62,7 +62,7 @@ async function loadHistoricalOverview(page: Page) {
 // Independent first-screen checks: failures in the longer interaction journey
 // below must not prevent either the supported or recorded-only layout checks.
 for (const width of [1440, 390]) {
-  test(`Overview bounded historical plot first-screen layout at ${width}px`, async ({ page }) => {
+  test(`Overview bounded historical plot first-screen layout at ${width}px`, async ({ page }, info) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await loadHistoricalOverview(page);
@@ -71,6 +71,14 @@ for (const width of [1440, 390]) {
     const chart = page.getByRole("figure", { name: "Household financial outlook chart", exact: true });
     await expect(chart.locator(".recharts-responsive-container svg.recharts-surface")).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, 0));
+    const path = info.outputPath(`shared-chart-overview-first-screen-${width}.png`);
+    await page.screenshot({ path, animations: "disabled" });
+    await info.attach(`shared-chart-overview-first-screen-${width}`, { path, contentType: "image/png" });
+    await info.attach(`shared-chart-overview-layout-${width}`, {
+      body: JSON.stringify(await page.locator(".calm-outlook, .calm-outlook .chart, .calm-outlook .chart-controls, .calm-metric-value").evaluateAll(elements =>
+        elements.map(element => ({ class: element.className, bounds: element.getBoundingClientRect().toJSON() }))), null, 2),
+      contentType: "application/json",
+    });
     const plot = await chart.locator(".recharts-responsive-container svg.recharts-surface").boundingBox();
     expect(plot!.height).toBeGreaterThanOrEqual(width === 1440 ? 230 : 250);
     // Historical tax gaps leave the complete series empty. Require actual

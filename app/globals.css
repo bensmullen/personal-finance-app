@@ -53,7 +53,7 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .forecast-status details dl { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 4px 12px; }
 .forecast-status dd { margin: 0; overflow-wrap: anywhere; }
 .forecast-figure { margin: 18px 0; }
-.financial-charts { min-width: 0; }
+.financial-charts { min-width: 0; grid-template-columns: minmax(0, 1fr); }
 .financial-chart { min-width: 0; padding: 8px 0 20px; }
 .financial-chart + .financial-chart { border-top: 1px solid var(--line); margin-top: 28px; padding-top: 28px; }
 .financial-chart h3 { font-family: Georgia,serif; font-size: 24px; font-weight: 500; overflow-wrap: anywhere; }
@@ -62,10 +62,10 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .chart-control { display: flex; flex: 1 1 170px; min-width: 0; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 650; }
 .chart-controls select { min-width: 0; width: 100%; min-height: 44px; padding: 8px; border: 1px solid #bbc5bf; border-radius: 8px; color: var(--ink); background: white; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; }
-.chart-legend button { padding: 8px; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); font-size: 12px; text-align: left; }
+.chart-legend button { min-width: 0; max-width: 100%; overflow-wrap: anywhere; padding: 8px; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); font-size: 12px; text-align: left; }
 .chart-legend button[aria-pressed="false"] { text-decoration: line-through; background: #eef0ea; }
 .chart-selected { padding: 14px; background: #f1f6f2; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
-.chart-exact-values { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; margin: 12px 0 0; }
+.chart-exact-values { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,180px),1fr)); gap: 12px; margin: 12px 0 0; }
 .chart-exact-values dt { color: #52605b; font-size: 12px; }
 .chart-exact-values dd { margin: 5px 0 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .chart-opening,.chart-table,.chart-basis { margin: 12px 0; font-size: 13px; }
@@ -90,7 +90,7 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .mortgage-hover > span { display: block; }
 .chart-readout dl { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 5px 12px; }
 .chart-readout dd { margin: 0; overflow-wrap: anywhere; }
-.financial-chart .recharts-tooltip-wrapper { width: min(380px, 100%); }
+.financial-chart .recharts-tooltip-wrapper { width: max-content; max-width: 100%; }
 .financial-chart .chart-readout { max-width: 100%; overflow-wrap: anywhere; }
 /* Shared chart hierarchy; Cash composition remains scoped to its own surface. */
 :root { --chart-body: 1rem; --chart-control: .875rem; --chart-caption: .8125rem; --chart-heading: 1.375rem; }
@@ -114,6 +114,11 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .controls fieldset { min-width: 0; max-width: 100%; }
 .controls fieldset select, .controls fieldset input { max-width: 100%; margin: 6px 0; }
 .table-scroll { max-width: 100%; }
+/* Keep intrinsic table/option widths inside their owning chart. Tables retain
+   their full contents in a focusable horizontal scrolling region. */
+.financial-chart .cash-chart-details, .financial-chart .cash-chart-details > div,
+.financial-chart .chart-table, .financial-chart .table-scroll { min-width: 0; max-width: 100%; }
+.financial-chart .table-scroll { width: 100%; overflow-x: auto; }
 @media (max-width: 900px) {
   .topbar { height: auto; min-height: 64px; padding-block: 12px; flex-wrap: wrap; gap: 12px; }
   .avatar { margin-left: auto; }
@@ -319,6 +324,7 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-outlook .financial-chart > details > summary { min-height: 44px; font-size: 12px; color: var(--calm-accent); }
 .calm-outlook .chart { margin: 12px 0; border: 1px solid #edf1ee; border-radius: 12px; background: linear-gradient(#fff, #fbfdfb); }
 .calm-outlook .chart-legend { gap: 6px 12px; }
+.calm-outlook .chart-controls { margin: 8px 0 4px; gap: 8px; }
 /* Keep the existing exact-value hover readout legible and bounded instead of
    allowing long decimal strings to collapse labels into a one-letter column
    or extend the tooltip over the financial cards below the graph. */
@@ -336,7 +342,7 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-forecast-context .calm-blocker { margin-bottom: 0; }
 .calm-shell .task-readiness { margin-top: 24px; }
 .calm-shell .notice { margin-top: 16px; }
-.calm-outlook .chart { height: 240px; }
+.calm-outlook .chart { height: 240px; min-height: calc(144px + 6rem); }
 .calm-metric { padding: 22px; }
 .calm-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
 .calm-metric h3 { margin: 0 0 16px; font-size: 13px; color: var(--calm-muted); }
@@ -412,7 +418,7 @@ main#main-content { padding: 24px 32px 64px; }
 .cash-chart-details h3 { margin-block: 1rem .5rem; }
 .cash-chart-details :is(.chart-table, .chart-opening, .chart-basis) { font-size: var(--calm-body); }
 /* One-column rows prevent nested dl grids squeezing metric names to letters. */
-.calm-cash .financial-chart .recharts-tooltip-wrapper { width: min(24rem, 100%); max-width: 100%; z-index: 2; }
+.calm-cash .financial-chart .recharts-tooltip-wrapper { width: max-content; max-width: 100%; z-index: 2; }
 .calm-cash .financial-chart .chart-readout { width: 100%; padding: .75rem; font-size: var(--chart-control); line-height: 1.4; max-height: min(15rem, 40svh); overflow-y: auto; word-break: normal; overflow-wrap: break-word; }
 .calm-cash .chart-readout p { margin: 0 0 .25rem; }
 .calm-cash .chart-readout dl.chart-exact-values { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; margin: .5rem 0; }
@@ -521,6 +527,7 @@ main#main-content { padding: 24px 32px 64px; }
   .calm-shell main#main-content { padding-top: 12px; }
   .calm-page-header { margin-bottom: 12px; }
   .calm-overview { gap: 12px; }
+  .calm-outlook { padding-block: 16px; }
   .calm-metrics { margin-top: 8px; }
 }
 @media (max-width: 900px) {
