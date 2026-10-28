@@ -169,6 +169,51 @@ push and stops without CI monitoring (AL-003).
 The brief should be as short as the task allows. Complexity belongs in the
 semantic decisions themselves, not in mandatory envelope ceremony.
 
+### Computer crash and active-receipt recovery
+
+An abrupt laptop shutdown can leave a valid `ACTIVE:true` task receipt
+bound to the old Codex session, plus a clean but unpublished WIP commit.
+This is a **recoverable operator Git/session state**, not permission for
+ChatGPT/Codex to overwrite task receipts, to assume the prior writer is dead,
+or to tell Codex to restart on an empty feature branch.
+
+When a new session receives `STATE_RECOVERY_REQUIRED: Active foreign writer`
+after a reported computer crash, ChatGPT SHALL:
+
+1. Verify the live original GitHub issue, task branch, PR, and published SHA.
+   Distinguish an already-published exact checkpoint from a local-only one.
+   A self-reported checkpoint cannot establish the local Git state; require an
+   operator read-only branch, HEAD, cleanliness, upstream, origin, and
+   SHA-bound receipt inspection before publication.
+2. Resolve a **distinct recovery branch** using the existing open issue (never
+   an unrelated new implementation issue), retaining the current V3 acceptance
+   scope. Update its `TARGET_BRANCH` only after documenting the exact
+   checkpoint prerequisite. Mark the new authorization **not ready** until the
+   separate branch is published at the same verified checkpoint SHA. The old
+   branch and receipt remain untouched historical evidence.
+3. If the checkpoint is already on GitHub, ChatGPT may create its distinct
+   recovery branch from the immutable SHA. Otherwise the operator must prove
+   and non-force-publish the exact clean local commit first. Never force,
+   delete/replace receipts, reset, clean, stash, rebase, or infer that a lost
+   session permits rewriting active task ownership.
+4. Use the audited operator-only
+   `tools/codex/recover-interrupted-task.sh` when available, or its documented
+   equivalent exact-SHA/non-force push then `bootstrap-pr.sh resume` sequence.
+   Once the **recovery** branch's remote SHA, Git issue target and fresh
+   worktree are all verified, start a new Codex chat with the **same** issue
+   pointer. Codex must finish the original acceptance, including any
+   previously incomplete tests, and produce a fresh implementation commit;
+   a WIP checkpoint does not satisfy COMPLETE.
+5. Independently test the failure modes of this workflow: source/worktree
+   mismatch, dirty tree, unexpected checkpoint, conflicting remote, stale old
+   receipt, wrong GUI folder and default branch tracking. Keep only bounded
+   synthetic Git fixture checks in ordinary tooling CI.
+
+This preserves single-writer protection across a genuine crash while avoiding
+the common **no upstream → no PR → foreign receipt** dead-end. A normal
+same-session interruption retains the existing guarded continuation path;
+neither path silently relaxes scope, financial provenance or review gates.
+
 ### Live issue readiness gate before recommending Codex (mandatory)
 
 Immediately **before** telling the product manager to bootstrap, resume, restart, or submit `PFM_TASK_ISSUE: N` to Codex, ChatGPT SHALL:
