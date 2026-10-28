@@ -367,7 +367,9 @@ for (const width of [1440, 390]) {
     await expect(paycheck.getByLabel("paycheck forecast month", { exact: true })).toHaveValue("2026-02");
     await expect(paycheck).toHaveAttribute("data-evidence-state", "incomplete");
     const comparison = paycheck.getByRole("figure", { name: "Where modeled income goes comparison", exact: true });
-    await expect(comparison).toContainText("Zero modeled income");
+    // The 0-income qualification lives in a separate visible neutral status, not inside the bar frame.
+    await expect(paycheck.locator(".chart-status")).toContainText("Zero modeled income");
+    await expect(comparison).toContainText("not a 100%-income allocation");
     const february = inspectMonthlyMoney(result.points[1]!);
     await expect(paycheck.locator(".cash-excess")).toContainText(formatExactMoney(february.additionalFunding, february.currency));
     await expect(status(page)).toHaveAttribute("data-request-id", requestId!);
