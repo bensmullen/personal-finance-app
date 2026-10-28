@@ -146,8 +146,9 @@ workflow, it SHALL:
 4. **Prepare one complete, decision-closed patch:** cover **every currently
    known CI failure** plus identified downstream/sibling risks in the same
    coherent PR continuation. For each failure class, specify evidence, owning
-   paths, precise fix or deterministic diagnosis-and-fix decision tree,
-   observable expected behavior, preserved assertions and negative cases.
+   paths, **one resolved correction**, observable expected behavior,
+   preserved assertions and negative cases. Record a compact failure matrix
+   (test/gate → cause/evidence → masked checks → authorized fix → verification).
    Check required ALLOWED_PATHS, compatibility and financial meaning *before*
    instructing Codex. Do **not** dispatch a subset while other known errors
    remain outside the handoff; resolve missing authorization or product
