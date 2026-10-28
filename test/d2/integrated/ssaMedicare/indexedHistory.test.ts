@@ -157,6 +157,7 @@ describe("#149 trusted indexed SSA receipt lineage", () => {
   it("bounds real entire-run provider reads independently for 1/12/24 detail and summary", () => {
     const measurements = [];
     const detailResults = new Map<number, string>();
+    const readCounts: { tier: "detail" | "summary"; counts: ReturnType<typeof reads>[] }[] = [];
     for (const tier of ["detail", "summary"] as const) {
       const counts = [];
       for (const months of [1, 12, 24]) {
@@ -199,12 +200,14 @@ describe("#149 trusted indexed SSA receipt lineage", () => {
           }
         }
       }
-      for (const family of ["ssa", "inventory"] as const) {
-        expect(counts[2]![family]).toBeLessThan(30 * counts[0]![family]);
-        expect(counts[2]![family]).toBeLessThan(3 * counts[1]![family]);
-      }
+      readCounts.push({ tier, counts });
     }
-    // Bounded synthetic evidence in CI output, independent of older size guards.
-    console.info("SSA_MEDICARE_GROWTH", JSON.stringify(measurements));
+    // Emit source-call and checkpoint measurements even if a strict growth
+    // assertion fails, so independent CI can diagnose the precise boundary.
+    console.info("SSA_MEDICARE_GROWTH", JSON.stringify({ measurements, readCounts }));
+    for (const { tier, counts } of readCounts) for (const family of ["ssa", "inventory"] as const) {
+      expect(counts[2]![family], `${tier} ${family}: 24m vs 1m`).toBeLessThan(30 * counts[0]![family]);
+      expect(counts[2]![family], `${tier} ${family}: 24m vs 12m`).toBeLessThan(3 * counts[1]![family]);
+    }
   }, 25_000);
 });
