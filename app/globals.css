@@ -248,7 +248,9 @@ main#main-content { padding: 24px 32px 64px; }
 .liability-balance-outlook figure { margin: 20px 0; }
 .liability-balance-outlook summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; }
 @media (max-width: 560px) {
-  .mortgage-outlook { padding: 16px; }
+  /* Exact mortgage tables scroll in their own accessible regions. Never let
+     their large intrinsic widths leak a few pixels onto the mobile page. */
+  .mortgage-outlook { padding: 16px; overflow-x: clip; }
   .mortgage-columns { gap: 6px 1px; height: auto; grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .mortgage-month { min-height: 120px; }
   .mortgage-column { height: 85px; }
