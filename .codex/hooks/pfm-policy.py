@@ -133,7 +133,11 @@ def receipt_diagnostic(root, state=None):
             "git status --porcelain=v1, git rev-parse HEAD and git rev-parse '@{u}'. "
             "Do not delete/rewrite receipts or infer divergence. Stop the owning writer first; "
             "for ambiguous ownership use a fresh operator-bootstrap worktree and authorized task "
-            "only after preserving and proving clean/synchronized Git state.")
+            "only after preserving and proving clean/synchronized Git state. "
+            "If the old computer/session crashed, use the operator-only "
+            "tools/codex/recover-interrupted-task.sh from the canonical checkout "
+            "with a pinned clean checkpoint and a separately authorized recovery branch; "
+            "never run it inside an active Codex turn.")
 
 
 def preflight_patch(root, state):
