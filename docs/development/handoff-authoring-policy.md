@@ -169,6 +169,45 @@ push and stops without CI monitoring (AL-003).
 The brief should be as short as the task allows. Complexity belongs in the
 semantic decisions themselves, not in mandatory envelope ceremony.
 
+### Machine-contract preflight after every GitHub task-issue edit (mandatory)
+
+**A semantic brief that reads correctly is not necessarily valid PFM_TASK_V3.**
+Before asking the PM to start/resume/restart Codex, ChatGPT SHALL verify the
+**saved, live issue body**, not the planned text or a prior issue snapshot, with
+the exact task parser contract in `.codex/hooks/pfm-policy.py`:
+
+1. Fetch the newly saved, **open GitHub Issue** and its current target PR. The
+   body must start with `PFM_TASK_V3` and contain valid required scalar lines
+   (`TASK_KIND`, `TARGET_BRANCH`, `DEPENDENCY_POLICY`). The only required
+   machine-section headings are **exactly** `ALLOWED_PATHS:`, `OBJECTIVE:`,
+   and `ACCEPTANCE:` on their own lines, each with nonempty content; the paths
+   section must have at least one legal authorized write path. **Never append
+   descriptive text to these heading lines** (for example,
+   `ACCEPTANCE — UAT corrections:` is invalid). Put any subtitle on the
+   *following line* or in a separate Markdown heading.
+2. **Validate with the hook's actual `validate_task` semantics**, including
+   its `section()` matching and restricted paths. When a local reviewer runtime
+   is available, use the repository's parser directly. In a GitHub-connector
+   review, inspect the current hook implementation and apply the same exact
+   parsing to the freshly fetched body; **keyword presence or a subjective
+   "contract looks complete" inspection is not sufficient**. Explicitly
+   confirm the saved `ACCEPTANCE` and `OBJECTIVE` sections are nonempty and
+   `ALLOWED_PATHS` is parsed as authorized write paths.
+3. On *any* parser error, **repair the same GitHub Issue immediately**, re-fetch
+   and revalidate until it passes. Do not claim Codex readiness, publish
+   bootstrap/restart instructions, or shift this authoring problem to Codex.
+   If validation cannot be performed, state that handoff validation is
+   incomplete and do not authorize a new Codex turn.
+
+This check applies to **every** task-issue creation or amendment, particularly
+UAT/CI repair rewrites that replace an existing V3 envelope. It is a
+**ChatGPT-owned pre-handoff gate**, not a new Codex task field, CI-wide E2E
+requirement, task-hook retry, or PM manual validation step. The existing hook
+continues to reject invalid contracts; the purpose of this gate is to catch
+them *before* the PM spends another Codex turn on a preventable refusal.
+The tooling regression fixture must cover a descriptive `ACCEPTANCE` heading
+that would otherwise look valid to a human.
+
 ### Live issue readiness gate before recommending Codex (mandatory)
 
 Immediately **before** telling the product manager to bootstrap, resume, restart, or submit `PFM_TASK_ISSUE: N` to Codex, ChatGPT SHALL:
