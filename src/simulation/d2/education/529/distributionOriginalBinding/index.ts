@@ -202,9 +202,6 @@ export function bind529DistributionOriginals(input: readonly DistributionBinding
         originals[role] = { producerId: pin.producerId, sourceId: pin.sourceId, version: pin.version, digest: pin.digest };
       }
       const proposal = evaluated.proposals[0];
-      // A conditional result is only emitted when the underlying evaluator
-      // actually produced an admitted proposal. Diagnostics alone are not economics.
-      if (!proposal) throw new Refused("EVALUATION_INCOMPLETE");
       occurrences.push({ contractVersion: "529-distribution-original/v1",
         identity: { householdId: i.householdId, ownerId: i.ownerId, beneficiaryId: i.beneficiaryId, planId: i.planId,
           providerId: i.providerId, planAccountId: i.planAccountId, sourceAccountId: i.sourceAccountId,
@@ -217,6 +214,7 @@ export function bind529DistributionOriginals(input: readonly DistributionBinding
         taxLiability: "incomplete", penalty: "incomplete", economics: proposal ? compact(proposal) : null,
         coverage: evaluated.coverage.map(({ affectedOutput, coverage, diagnosticCode, ruleSnapshotId }) =>
           ({ affectedOutput, coverage, diagnosticCode, ruleSnapshotId })) });
+      if (!proposal) throw new Refused("EVALUATION_INCOMPLETE");
     } catch (error) {
       diagnostics.push({ eventId: b.event.eventId, operationId: b.event.operationId,
         code: error instanceof Refused ? error.code : "INVALID_BINDING", missingPort: error instanceof Refused ? error.port : null,
