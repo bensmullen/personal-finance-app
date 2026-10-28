@@ -166,6 +166,63 @@ solely because a tool/preflight failed. If the Stop hook cannot checkpoint,
 preserve the dirty checkout and report the precise recovery condition; no
 false clean/synchronized claim and no new session until ownership is verified.
 
+## Abnormal computer crash: operator-only checkpoint recovery
+
+A computer crash or forced termination can leave the last receipt `ACTIVE:true`
+even after no Codex process survives. This is not a product blocker and **must
+not** prompt deletion/rewriting of task receipts or blind reauthorization in the
+old worktree. The hook intentionally rejects a new session as an active foreign
+writer because it cannot prove the old writer has stopped.
+
+**ChatGPT/operator procedure** (outside Codex, with the old Codex writer stopped):
+
+1. Inspect the original task worktree's branch, exact `git rev-parse HEAD`,
+   `git status --porcelain=v1`, origin and `@{u}`, plus
+   `.codex/runtime/latest-task.json` and the SHA-bound state file read-only.
+   A reported clean WIP SHA is evidence only until verified on disk. A task
+   without upstream is **not lost** and must not be reset or replaced.
+2. Obtain a distinct `codex/...-recovery` branch name; ChatGPT must update the
+   **same open GitHub task issue** to use it, preserve its accepted contract and
+   explicitly mark old receipt/branch as archival. Do not authorize Codex until
+   its live issue and new branch match.
+3. From the canonical checkout, use the bounded, operator-only helper below.
+   The environment confirmation means **the human has closed/terminated the
+   interrupted Codex writer**. The script verifies the exact clean checkpoint,
+   origin and push destination, checks both remote refs against the pinned SHA
+   **before any push**, publishes the original and recovery branches without
+   force, and invokes the ordinary `bootstrap-pr.sh resume` for a fresh,
+   differently named worktree. It does not modify the old worktree's task receipt
+   or claim WIP implementation acceptance:
+
+   ```bash
+   PFM_CRASH_RECOVERY_CONFIRMED=1 \
+   bash tools/codex/recover-interrupted-task.sh \
+     "/absolute/path/to/interrupted-worktree" \
+     "codex/original-task-branch" \
+     "codex/original-task-branch-recovery" \
+     "reported-clean-checkpoint-sha"
+   ```
+
+4. Open the **new** `PR_WORKTREE_READY` path and run its printed read-only
+   preflight. Start a new Codex conversation with `PFM_TASK_ISSUE: N`. Require
+   an actual new implementation commit beyond WIP and full acceptance review
+   before COMPLETE. If either branch already contains a different remote commit,
+   the original path is dirty, or source SHA/issue is unverified, STOP for
+   operator diagnosis, no force/rebase/clean/receipt deletion. Node is optional.
+
+**Pre-merged compatibility:** If this helper is not yet installed in the
+canonical checkout, do not fabricate its availability. Use the same read-only
+verification and ordinary non-force `git push -u origin HEAD:refs/heads/<old>`,
+`git push origin HEAD:refs/heads/<recovery>`, then
+`bootstrap-pr.sh resume <recovery>`, but only when both remote refs are absent
+or proven equal to the local checkpoint.
+
+The source and recovery branches are separate by design; this prevents a stale
+session from becoming a writer again even when the original receipt remains
+active. A legitimate same-session continuation without crash still uses the
+existing guarded active-receipt path. This procedure does not grant two writers
+ownership of the same branch.
+
 ## Product-manager escalation
 
 Before escalating, inspect the narrow authoritative sources and state the actual
