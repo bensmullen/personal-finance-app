@@ -254,6 +254,7 @@ describe("original-backed same-event physical settlement", () => {
 
   it("keeps 1/12/24-month receipts and portable output proportional without original documents", () => {
     const sizes: { receipts: number; artifact: number }[] = [];
+    const runReads: { ssa: number; irmaa: number }[] = [];
     for (const months of [1, 12, 24]) {
       resetSources();
       const f = fixture(months, undefined, "2026-01");
@@ -264,6 +265,9 @@ describe("original-backed same-event physical settlement", () => {
       });
       const out = runHouseholdKernel({ kernel: attachSsaMedicare(f.kernel, input(payments)), runContext: f.context });
       expect(out.periods, JSON.stringify(out.diagnostics)).toHaveLength(months);
+      // Measure the FULL actual multi-period run, not just an isolated
+      // history-validation call: formerly each month reread all prior receipts.
+      runReads.push({ ssa: control.ssaCalls, irmaa: control.calls });
       const receipts = canonicalSerialize(out.state.ssaMedicarePayments);
       const artifact = createPortableHouseholdReplayArtifact(out);
       expect(receipts).not.toContain("publisher-original-payload");
@@ -276,6 +280,12 @@ describe("original-backed same-event physical settlement", () => {
       expect(control.ssaCalls).toBe(3 * months);
       expect(control.calls).toBe(24 * months);
       expect(out.state.accounts[ids.bank]!.cash.equals(cash)).toBe(true);
+    }
+    for (const key of ["ssa", "irmaa"] as const) {
+      // No O(months²) reauthentication of historical originals in the
+      // period scheduler; each new payment must still be independently read.
+      expect(runReads[2]![key]).toBeLessThan(30 * runReads[0]![key]);
+      expect(runReads[2]![key]).toBeLessThan(3 * runReads[1]![key]);
     }
     for (const key of ["receipts", "artifact"] as const) {
       expect(sizes[1]![key]).toBeLessThan(14 * sizes[0]![key]);
