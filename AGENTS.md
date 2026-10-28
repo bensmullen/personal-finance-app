@@ -94,6 +94,21 @@ Use `apply_patch` for repository content edits so the hook can reject an
 out-of-scope path before mutation. Post-tool scope checks also include untracked
 files, so alternate write mechanisms cannot silently broaden the diff.
 
+## ChatGPT operator terminal instructions
+
+For **every user-facing Bash/shell command block**, ChatGPT must put an
+explicit `cd` to the intended directory first, even when the previous block
+used the same directory. Use a verified absolute worktree path; never assume
+the user's terminal is in the right one. When the path is unknown, first
+`cd` to the established canonical repository checkout, discover the owning
+worktree for the **exact target branch** via `git worktree list --porcelain`,
+then `cd` to the unique resolved path. Before mutations, check the worktree
+root, exact branch, and task-relevant Git state. Bootstrap/recovery commands
+must likewise begin by `cd` to the canonical checkout. Do not use an
+unanchored `git rev-parse --show-toplevel` as a substitute: with concurrent
+worktrees it may resolve the wrong checkout. See
+`docs/development/handoff-authoring-policy.md` for the detailed rule.
+
 ## Git bootstrap and shared state
 
 GitHub remote state is authoritative for task initialization.
