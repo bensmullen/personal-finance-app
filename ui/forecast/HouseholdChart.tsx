@@ -45,7 +45,7 @@ export const HouseholdChart = memo(function HouseholdChart({ forecast, cashFlowO
       </>}</FinancialChart>
       {cashFlowOnly && <FinancialChart annual={annual} monthly={monthly} kind="statement" stale={stale} pending={pending} calm={calm} />}
     </>}
-    {annual.status === "unavailable" && (calm && cashFlowOnly ? <CashChartDetails title="Total modeled cash">{rangeDetails}{supporting}</CashChartDetails> : <>{rangeDetails}{supporting}</>)}
+    {annual.status === "unavailable" && (calm && cashFlowOnly ? <CashChartDetails title="Total Cash Balance">{rangeDetails}{supporting}</CashChartDetails> : <>{rangeDetails}{supporting}</>)}
   </div>;
 });
 
