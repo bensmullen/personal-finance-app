@@ -106,7 +106,10 @@ describe("original-backed same-event physical settlement", () => {
     // A pin recomputed from the original producer cannot bless altered raw C2.
     const rawZero = payment().c2.irmaa;
     expect(() => qualify({ ...q, c2: { ...q.c2, irmaa: rawZero } })).toThrow();
-    const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(out))));
+    const replayFixture = fixture();
+    const replaySummary = runHouseholdKernel({ kernel: attachSsaMedicare(replayFixture.kernel, input([q])), runContext: replayFixture.context });
+    expect(replaySummary.state).toEqual(out.state);
+    const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(replaySummary))));
     expect(replayHouseholdForecastWindow(restored, out.periods[0]!.period).state).toEqual(out.state);
   });
 
@@ -192,7 +195,9 @@ describe("original-backed same-event physical settlement", () => {
     expect(out.state.accounts[bank]!.cash.equals(money("4600"))).toBe(true);
     expect(Object.values(out.state.ssaMedicarePayments!)).toHaveLength(4);
     expect(Object.values(out.state.obligations)).toHaveLength(12);
-    const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(out))));
+    const replaySummary = runHouseholdKernel({ kernel, runContext: f.context });
+    expect(replaySummary.state).toEqual(out.state);
+    const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(createPortableHouseholdReplayArtifact(replaySummary))));
     expect(replayHouseholdForecastWindow(restored, out.periods[1]!.period).state).toEqual(out.state);
   });
 
@@ -274,8 +279,11 @@ describe("original-backed same-event physical settlement", () => {
     }
     for (const key of ["receipts", "artifact"] as const) {
       expect(sizes[1]![key]).toBeLessThan(14 * sizes[0]![key]);
-      expect(sizes[2]![key]).toBeLessThan(28 * sizes[0]![key]);
-      expect(sizes[2]![key]).toBeLessThan(2.5 * sizes[1]![key]);
+      // The shared replay format retains an additional 12-month sparse checkpoint:
+      // its fixed-size checkpoint metadata is not a repeated publisher original.
+      // Keep a tight 24-month upper bound while allowing the known stepwise checkpoint growth.
+      expect(sizes[2]![key]).toBeLessThan(30 * sizes[0]![key]);
+      expect(sizes[2]![key]).toBeLessThan(3 * sizes[1]![key]);
     }
   }, 60_000);
 });
