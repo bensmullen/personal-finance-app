@@ -254,7 +254,8 @@ describe("U1B-C partial cash comparison", () => {
   it.each([undefined, "0", "20"])("does not treat withholding %s or a positive remainder as verified discretionary income", withholdingAmount => {
     const detail = evidence({ withholdingAmount, withholding: withholdingAmount === undefined ? "not_modeled" : "posted" });
     const html = render(detail);
-    expect(html).toContain("Discretionary Income — unavailable: income, withholding and funding are not fully reconciled.");
+    expect(html).toContain("Discretionary Income — unavailable</p>");
+    expect(html).toContain("Income, withholding and funding are not fully reconciled");
     expect(html).toContain("Unverified remainder");
     expect(html).toContain("Unverified comparison remainder · not disposable income");
     expect(html).not.toContain("Unreconciled arithmetic difference");
