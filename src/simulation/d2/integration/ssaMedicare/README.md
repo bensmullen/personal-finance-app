@@ -106,10 +106,10 @@ summary runs and emits `SSA_MEDICARE_GROWTH` measurements for each source family
 receipt bytes, total encoded artifact bytes, checkpoint count/encoded bytes,
 checkpoint record/identity/runtime bytes, and source-binding identity bytes.
 Existing source, journal, portable-replay and size oracles remain unchanged.
-These new measurements still require CI execution: the local bounded preflight
-failed before typecheck/tests on log-directory permissions, and its retry was
-rejected because the reservation had no result. No measured improvement is
-claimed from static inspection alone.
+These measurements require exact-head CI execution. The current bounded local
+preflight failed before typecheck/tests because creating `.codex/logs` returned
+EPERM; it was not retried. No measured improvement is claimed from static
+inspection alone.
 
 Static producer → consumer → replay evidence for the remaining size decision:
 
@@ -131,11 +131,33 @@ Static producer → consumer → replay evidence for the remaining size decision
   `restoreCheckpointDeltas` restores the identities and receipt validator checks
   the exact existing key again. This is distinct from repeating raw originals.
 
-The historical approximately 245 KB → 1.15 MB observation is not a new
-measurement. The CI breakdown must quantify how much is recovery state versus
-redundant identity content. Compacting the persisted identity requires a
-separately approved compatibility contract for historical v1 keys; alternatively
-wire-level substring compression requires authorization for the currently
-read-only `src/simulation/r3/replayArtifact.ts`. Neither change is part of the
-approved indexed receipt-validation efficiency exception. No size threshold
-has been raised and no identity/receipt/wire contract has been changed here.
+The previous 24-month artifact measured 1,149,651 bytes, with a 679,524-byte
+checkpoint and 595,870 bytes in checkpoint identity additions. Issue #149 K
+now approves a source-specific v2 identity: new original-backed payments emit
+`ssa-medicare-payment/v2` and an `ssa-medicare:source-binding/v2` key containing
+`sha256:` plus the full SHA-256 of the exact historical normalized tuple.
+State reuses the synchronous FIPS-180 implementation in `contentIdentity.ts`.
+All other receipt fields, journal and identities retain their existing meaning.
+Validation selects the algorithm by the persisted receipt version. Historical
+original-backed and ordinary v1 receipts keep their exact long identities;
+neither source availability nor current admission mode can re-key them.
+
+The remaining repeated provider reads originated in participant preparation:
+`householdExecution.preparePeriod` passes a period-scoped context, so comparing
+`period.start` to `context.simulationStart` caused exhaustive history reads in
+every period. Preparation now uses authoritative state validation, which reuses
+only proven unchanged indexed receipt lineage, and explicitly checks historical
+source facts against the current cutoff. Independent new-event admission and
+final source rereads remain intact. The explicit portable source-history entry
+point and cold state import still requalify all originals.
+
+The bounded complete-run test keeps the strict per-family 1/12/24 source-read
+limits and emits receipt, persisted binding-key, checkpoint record/identity and
+overall artifact byte counts. It compares checkpoint identity bytes with the
+previous 595,870-byte observation and requires more than 90% elimination of
+that duplication. No wire encoding or existing threshold is relaxed.
+`versionedReceipt.test.ts` independently checks SHA-256 with Node crypto,
+historical v1 archive equality, plain v1 posting, mixed v1/v2 cold replay in a
+fresh process, malformed/copied keys, changed inputs, provider withdrawal and
+second-read source revision races. Neither digests nor portable integrity
+authenticate publishers. CI and independent audit remain required.

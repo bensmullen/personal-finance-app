@@ -16,6 +16,7 @@ import type { CalculationTraceId } from "../lineage/index.js";
 import { createRecognitionFact as createRecognitionFactWithHistory, type RecognitionFactDraft, type RecognitionFact } from "../semantics/recognition.js";
 import { Money, Quantity, decimal, type Currency, type Rate } from "../values/index.js";
 import { instant, type Instant } from "../time/index.js";
+import { sha256 } from "../rules/tax/t1b/contentIdentity.js";
 
 /** Source-owner lookup addresses; neither these values nor their fingerprint
  * authenticate the external source. Domain owners must independently qualify. */
@@ -332,7 +333,7 @@ export interface SsaMedicarePaymentInput {
   readonly sourceInputs: unknown;
 }
 export interface SsaMedicarePaymentRecord extends SsaMedicarePaymentInput {
-  readonly version: "ssa-medicare-payment/v1";
+  readonly version: "ssa-medicare-payment/v1" | "ssa-medicare-payment/v2";
   readonly id: string;
   readonly netBank: Money;
   readonly transaction: AccountingTransaction;
@@ -2250,11 +2251,19 @@ export const applyD2SettlementAtomically = (state: AuthoritativeState, input: D2
   return { status: "committed", receipt, ...d2RemainingReimbursement(receipt) };
 };
 
-const paymentConsumptionKeys = (input: SsaMedicarePaymentInput): readonly IdempotencyKey[] => [
+const newPaymentVersion = (input: SsaMedicarePaymentInput): SsaMedicarePaymentRecord["version"] =>
+  (input.sourceInputs as { readonly originalSources?: unknown } | null)?.originalSources === undefined
+    ? "ssa-medicare-payment/v1" : "ssa-medicare-payment/v2";
+const paymentSourceBinding = (input: SsaMedicarePaymentInput): string => paymentValue({ payable: input.payable, right: input.right,
+  requests: input.requests, bankAccountId: input.bankAccountId, bankCashBefore: input.bankCashBefore,
+  rightSettlementId: input.rightSettlementId, sourceInputs: input.sourceInputs });
+const paymentConsumptionKeys = (input: SsaMedicarePaymentInput, version: SsaMedicarePaymentRecord["version"]): readonly IdempotencyKey[] => [
   idempotencyKey("ssa-medicare:payment", input.payable.paymentId),
-  idempotencyKey("ssa-medicare:source-binding", paymentValue({ payable: input.payable, right: input.right,
-    requests: input.requests, bankAccountId: input.bankAccountId, bankCashBefore: input.bankCashBefore,
-    rightSettlementId: input.rightSettlementId, sourceInputs: input.sourceInputs })),
+  // v1 retains its exact tuple and normalization. A v2 digest witnesses
+  // identity only; validatePaymentSources independently authenticates sources.
+  version === "ssa-medicare-payment/v1"
+    ? idempotencyKey("ssa-medicare:source-binding", paymentSourceBinding(input))
+    : idempotencyKey("ssa-medicare:source-binding/v2", `sha256:${sha256(paymentSourceBinding(input))}`),
   ...input.requests.flatMap(r => [
     idempotencyKey("ssa-medicare:receipt", r.terms.receiptId),
     idempotencyKey("ssa-medicare:authorization", r.terms.authorizationId),
@@ -2300,7 +2309,9 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): ExecutionStateI
   let immutable = true;
   for (const [key, record] of entries) {
     immutable = immutable && frozenPaymentValues.has(record);
-    if (!record || record.version !== "ssa-medicare-payment/v1" || key !== record.id || key !== paymentKey(record.payable)
+    if (!record || !["ssa-medicare-payment/v1", "ssa-medicare-payment/v2"].includes(record.version)
+      || record.version === "ssa-medicare-payment/v2" && newPaymentVersion(record) !== record.version
+      || key !== record.id || key !== paymentKey(record.payable)
       || record.sourceInputs === undefined || !(record.bankCashBefore instanceof Money)
       || record.bankCashBefore.currency.code !== "USD" || !record.bankCashBefore.amount.fitsScale(2) || record.bankCashBefore.isNegative())
       paymentInvalid("Malformed versioned payment receipt");
@@ -2330,7 +2341,7 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): ExecutionStateI
         paymentInvalid("Only positive Part B/D same-event obligations are supported");
       settlementIds.set(sid, key); claimIds.set(original.id, key);
     }
-    for (const id of paymentConsumptionKeys(record)) {
+    for (const id of paymentConsumptionKeys(record, record.version)) {
       if (consumed.has(id) || !state.identities.externalIdempotencyKeys.includes(id)) paymentInvalid("Incomplete or duplicate source consumption inventory");
       consumed.set(id, key);
     }
@@ -2366,9 +2377,10 @@ export const applySsaMedicarePaymentAtomically = (state: AuthoritativeState, inp
     assertClaimInvariant(claim);
     candidate.obligations[claim.id] = claim;
   }
-  for (const id of paymentConsumptionKeys(input)) registerAuthoritativeIdentity(candidate.identities, "externalIdempotencyKeys", id);
+  const version = newPaymentVersion(input);
+  for (const id of paymentConsumptionKeys(input, version)) registerAuthoritativeIdentity(candidate.identities, "externalIdempotencyKeys", id);
   applyAccountingTransactionAtomically(candidate, transaction);
-  const record = freezePayment({ ...input, version: "ssa-medicare-payment/v1" as const, id: key,
+  const record = freezePayment({ ...input, version, id: key,
     netBank: input.payable.grossPayable.minus(input.requests.reduce((sum, r) => sum.plus(r.terms.amount), Money.zero(input.payable.grossPayable.currency))),
     transaction, recognitions: paymentRecognitions(input) });
   const receipts = candidate.ssaMedicarePayments ?? indexedRecord(new PersistentStringIndex<SsaMedicarePaymentRecord>(), false, undefined, freezePayment).record;

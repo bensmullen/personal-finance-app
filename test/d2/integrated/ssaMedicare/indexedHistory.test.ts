@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { domainId } from "../../../../src/identity/index.js";
 import { money, Currency } from "../../../../src/values/index.js";
+import { instant } from "../../../../src/time/index.js";
 import { applySsaMedicarePaymentAtomically, cloneAuthoritativeState, createAuthoritativeState,
   createIndexedExecutionState, snapshotAuthoritativeCheckpoint, validateAuthoritativeState,
   type AuthoritativeState } from "../../../../src/state/index.js";
@@ -148,10 +149,40 @@ describe("#149 trusted indexed SSA receipt lineage", () => {
     const state = opening();
     control.missing = true;
     const q = payment();
-    applySsaMedicarePaymentAtomically(state, qualifySsaMedicarePayment(q, ids.household, ids.person));
+    const receipt = applySsaMedicarePaymentAtomically(state, qualifySsaMedicarePayment(q, ids.household, ids.person));
+    expect(receipt.version).toBe("ssa-medicare-payment/v1");
     expect(state.accounts[ids.bank]!.cash.equals(money("3300"))).toBe(true);
     expect(() => validateAuthoritativeState(createAuthoritativeState(state))).not.toThrow();
     expect(reads()).toEqual({ ssa: 0, inventory: 0 });
+  });
+
+  it("period-scoped prepare reuses live lineage, while materialized outputs remain cold", () => {
+    const state = committed();
+    const f = fixture(2), q = originalPayment("2026-07", money("3300"));
+    const participant = attachSsaMedicare(f.kernel, input([q])).executable.participants![0]!;
+    const period = { start: instant("2026-07-01T00:00:00.000Z"), end: instant("2026-08-01T00:00:00.000Z") };
+    resetSources();
+    participant.prepare({ ...f.context, simulationStart: period.start, simulationEnd: period.end }, period,
+      { state, primitiveState: {} });
+    // Exactly the new July event; June does not incur another source read.
+    expect(reads()).toEqual({ ssa: 3, inventory: 24 });
+    expect(() => participant.prepare({ ...f.context, simulationStart: period.start, simulationEnd: period.end,
+      dataCutoff: instant("2026-01-02T00:00:00.000Z") }, period, { state, primitiveState: {} })).toThrow();
+    resetSources();
+    const output = createAuthoritativeState(state);
+    expect(control.ssaCalls).toBeGreaterThanOrEqual(3);
+    expect(control.calls).toBeGreaterThanOrEqual(24);
+    expect(canonicalSerialize(output)).toBe(canonicalSerialize(state));
+    // A later caller/import must authenticate again, even in the same process.
+    resetSources();
+    validateAuthoritativeState(output);
+    expect(reads()).toEqual({ ssa: 3, inventory: 24 });
+    control.missing = true;
+    expect(() => createIndexedExecutionState(output)).toThrow();
+    // The output and original are isolated candidates, including entity views.
+    resetSources();
+    output.accounts[ids.bank]!.cash = money("1");
+    expect(state.accounts[ids.bank]!.cash.equals(money("3300"))).toBe(true);
   });
 
   it("bounds real entire-run provider reads independently for 1/12/24 detail and summary", () => {
@@ -205,6 +236,13 @@ describe("#149 trusted indexed SSA receipt lineage", () => {
     // Emit source-call and checkpoint measurements even if a strict growth
     // assertion fails, so independent CI can diagnose the precise boundary.
     console.info("SSA_MEDICARE_GROWTH", JSON.stringify({ measurements, readCounts }));
+    for (const row of measurements) {
+      expect(row.sourceBindingIdentityBytes).toBe(row.months * measurements[0]!.sourceBindingIdentityBytes);
+      expect(row.sourceBindingIdentityBytes).toBeLessThan(160 * row.months);
+      // Previous 24m identity delta: 595,870B, dominated by full v1 tuples.
+      // Compare persisted checkpoint identities, not transport compression.
+      if (row.months === 24) expect(row.checkpoint.identities).toBeLessThan(595_870 / 10);
+    }
     for (const { tier, counts } of readCounts) for (const family of ["ssa", "inventory"] as const) {
       expect(counts[2]![family], `${tier} ${family}: 24m vs 1m`).toBeLessThan(30 * counts[0]![family]);
       expect(counts[2]![family], `${tier} ${family}: 24m vs 12m`).toBeLessThan(3 * counts[1]![family]);

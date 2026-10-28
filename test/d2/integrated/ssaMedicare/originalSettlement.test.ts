@@ -55,7 +55,7 @@ describe("original-backed same-event physical settlement", () => {
     expect(out.periods[0]!.transactions[0]!.legs.map(l => [l.posting, l.type, l.amount.amount.toString()]))
       .toEqual([["debit", "cash", "1300"], ["debit", "expense", "200"], ["credit", "income", "1500"]]);
     const receipt = Object.values(out.state.ssaMedicarePayments!)[0]!;
-    expect(receipt.version).toBe("ssa-medicare-payment/v1");
+    expect(receipt.version).toBe("ssa-medicare-payment/v2");
     expect(receipt.requests.map(r => [r.terms.premium.part, r.terms.amount.amount.toString()])).toEqual([["part_b", "80"], ["part_d", "120"]]);
     expect(receipt.recognitions).toHaveLength(3);
     expect(receipt.payable.taxWithholding.amount.isZero()).toBe(true);

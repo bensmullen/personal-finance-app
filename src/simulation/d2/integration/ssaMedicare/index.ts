@@ -161,12 +161,17 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
     prepare: (context, period, opening, work = [], tier = "detail") => {
       const seen = new Set<string>();
       const operations: ReturnType<HouseholdKernelParticipant["prepare"]>["operations"][number][] = [];
-      // Validate imported opening receipts at execution start. The shared
-      // state validator independently checks receipts during atomic posting,
-      // while portable replay requalifies the full imported source history.
-      // This avoids a redundant explicit full-history read in every period.
-      if (period.start === context.simulationStart)
-        validateSsaMedicareSourceHistory(opening.state, context.dataCutoff);
+      // The scheduler's context is period-scoped: simulationStart equals
+      // period.start on EVERY prepare, not just at run admission. Use state's
+      // fully validated indexed lineage for unchanged live receipts. Cold or
+      // untracked roots still authenticate every original through that validator.
+      // Replay's explicit source-history entry point remains exhaustive.
+      validateAuthoritativeState(opening.state);
+      for (const receipt of Object.values(opening.state.ssaMedicarePayments ?? {})) {
+        const q = receipt.sourceInputs as ConfirmedSsaMedicarePayment;
+        if (!knownBy(q, context.dataCutoff) || q.originalSources !== undefined && q.originalSources.dataCutoff !== context.dataCutoff)
+          fail("SSA_SOURCE_NOT_ADMITTED", "Committed payment source cutoff differs from the current run");
+      }
       for (const q of input.payments) {
         if (seen.has(q.payable.paymentId)) fail("SSA_DUPLICATE_PAYMENT", "Duplicate SSA payment identity in input");
         seen.add(q.payable.paymentId);
