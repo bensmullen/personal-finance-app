@@ -1,15 +1,15 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import * as React from "react";
 import { Bar, Cell, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { CashChartDetails } from "../../calm/CalmPresentation.js";
+import { CashChartDetails, ForecastProgress } from "../../calm/CalmPresentation.js";
 import type { ForecastChartData, ForecastChartMetric, ForecastChartPeriod, ForecastChartValue } from "../../../src/application/forecastChartData.js";
 import { formatExactMoney } from "../../entityPresentation.js";
 
 type Kind = "wealth" | "cash" | "statement";
 type Series = { key: ForecastChartMetric; label: string; color: string; dash?: string; bar?: boolean };
-const cashLabel = "Total modeled cash (including cash in investment accounts)";
+const cashLabel = "Total Cash Balance";
 const families: Record<Kind, { title: string; series: readonly Series[] }> = {
   wealth: { title: "Assets, liabilities and net worth", series: [
     { key: "netWorth", label: "Net worth", color: "#1e6756" },
@@ -18,7 +18,7 @@ const families: Record<Kind, { title: string; series: readonly Series[] }> = {
   ] },
   cash: { title: cashLabel, series: [
     { key: "totalModeledCash", label: cashLabel, color: "#1e6756" },
-    { key: "totalModeledCashChange", label: "Signed cash balance change", color: "#1e6756", bar: true },
+    { key: "totalModeledCashChange", label: "Cash Balance Change", color: "#1e6756", bar: true },
   ] },
   statement: { title: "Modeled statement income versus expenses", series: [
     { key: "modeledStatementIncome", label: "Recognized income", color: "#3e5f8a", bar: true },
@@ -47,11 +47,33 @@ export function cashChangeAppearance(point: ForecastChartPeriod) {
   const value = point.metrics.totalModeledCashChange;
   const direction = value.amount === null || value.status === "unavailable" ? "unavailable" : /^-?0(?:\.0+)?$/.test(value.amount) ? "zero" : value.amount.startsWith("-") ? "decrease" : "increase";
   const color = direction === "decrease" ? "#a43d3d" : direction === "increase" ? "#1e6756" : "#66726d";
-  return { fill: color, stroke: color, fillOpacity: point.coverage === "partial_year" || value.status === "incomplete" ? 0.4 : 1,
+  const opacity = point.coverage === "partial_year" || value.status === "incomplete" ? 0.5 : 1;
+  return { fill: color, stroke: color, fillOpacity: opacity, strokeOpacity: opacity,
     "data-direction": direction, "data-coverage": point.coverage,
     "aria-label": `${chartPeriodLabel(point)} · ${direction} · ${exactChartValue(value, true)}` };
 }
 const axisAmount = (value: number) => new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+
+/** Display-only runs share endpoints; missing amounts always break the path. */
+export function chartLineRuns(points: readonly ForecastChartPeriod[], key: ForecastChartMetric) {
+  const runs: { start: number; end: number; incomplete: boolean }[] = [];
+  for (let index = 0; index < points.length; index++) {
+    const point = points[index]!;
+    if (chartCoordinate(point.metrics[key]) === null) continue;
+    const previous = points[index - 1];
+    const incomplete = point.metrics[key].status === "incomplete" || point.coverage === "partial_year";
+    if (!previous || chartCoordinate(previous.metrics[key]) === null) {
+      runs.push({ start: index, end: index, incomplete });
+      continue;
+    }
+    const faded = incomplete || previous.metrics[key].status === "incomplete" || previous.coverage === "partial_year";
+    const last = runs.at(-1)!;
+    if (last.start === last.end || last.incomplete === faded) {
+      last.end = index; last.incomplete = faded;
+    } else runs.push({ start: index - 1, end: index, incomplete: faded });
+  }
+  return runs;
+}
 
 function readablePeriod(point: ForecastChartPeriod): string {
   const label = point.granularity === "annual" ? point.periodStart.slice(0, 4)
@@ -59,35 +81,80 @@ function readablePeriod(point: ForecastChartPeriod): string {
   return `${label}${point.coverage === "partial_year" ? ` · partial year, ${point.coveredMonthCount} covered months` : ""}`;
 }
 
-function ExactPeriod({ point, series, readable = false, compact = false }: { point: ForecastChartPeriod; series: readonly Series[]; readable?: boolean; compact?: boolean }) {
-  return <><strong>Projected {readable ? readablePeriod(point) : chartPeriodLabel(point)}</strong><dl className="chart-exact-values">{series.map(item => <div key={item.key}><dt>{compact && item.key === "totalModeledCash" ? "Cash balance" : compact && item.key === "totalModeledCashChange" ? "Signed change" : item.label}</dt><dd>{exactChartValue(point.metrics[item.key], item.key === "totalModeledCashChange")}</dd></div>)}</dl></>;
+function ExactPeriod({ point, series, readable = false }: { point: ForecastChartPeriod; series: readonly Series[]; readable?: boolean }) {
+  return <><strong>Projected {readable ? readablePeriod(point) : chartPeriodLabel(point)}</strong><dl className="chart-exact-values">{series.map(item => <div key={item.key}><dt>{item.label}</dt><dd>{exactChartValue(point.metrics[item.key], item.key === "totalModeledCashChange")}</dd></div>)}</dl></>;
 }
 
-function ChartDetails({ collapsed, children }: { collapsed: boolean; children: React.ReactNode }) {
-  return collapsed ? <details className="chart-control-details"><summary>Chart controls and exact values</summary>{children}</details> : <>{children}</>;
+/** Compact decimal-string formatting is display only, never financial arithmetic. */
+export function compactChartValue(value: ForecastChartValue, signed = false): string {
+  if (value.amount === null || value.status === "unavailable") return "Unavailable";
+  const negative = value.amount.startsWith("-");
+  const [whole = "0", fraction = ""] = value.amount.replace(/^-/, "").split(".");
+  const digits = whole.replace(/^0+(?=\d)/, "");
+  const power = digits.length > 9 ? 9 : digits.length > 6 ? 6 : digits.length > 3 ? 3 : 0;
+  const suffix = power === 9 ? "B" : power === 6 ? "M" : power === 3 ? "k" : "";
+  const raw = BigInt(`${digits}${fraction.padEnd(2, "0").slice(0, 2)}`);
+  const divisor = 10n ** BigInt(power);
+  const rounded = power ? (raw + divisor / 2n) / divisor : raw + ((fraction[2] ?? "0") >= "5" ? 1n : 0n);
+  const text = `${rounded / 100n}.${String(rounded % 100n).padStart(2, "0")}`.replace(/\.00$/, "");
+  const zero = !/[1-9]/.test(value.amount);
+  return `${negative && !zero ? "−" : signed && !zero ? "+" : ""}${value.currency === "USD" ? "$" : `${value.currency} `}${text}${suffix}${value.status === "incomplete" ? " · incomplete" : ""}`;
 }
 
-function EvidenceGroup({ cashPage, title, children }: { cashPage: boolean; title: string; children: React.ReactNode }) {
-  return cashPage ? <CashChartDetails title={title}><section aria-label={`${title} chart details`}>{children}</section></CashChartDetails> : <>{children}</>;
+export function CompactPeriod({ point, series, stale = false }: { point: ForecastChartPeriod; series: readonly Series[]; stale?: boolean }) {
+  return <div className="chart-compact-readout"><small>{point.periodStart.slice(0, point.granularity === "annual" ? 4 : 7)} · projected{point.coverage === "partial_year" ? " · partial" : ""}{stale ? " · out of date" : ""}</small>{series.map(item => <div key={item.key}>{item.key === "totalModeledCash" ? "Total" : item.key === "totalModeledCashChange" ? "Change" : item.label}: {compactChartValue(point.metrics[item.key], item.key === "totalModeledCashChange")}</div>)}</div>;
 }
 
-export function FinancialChart({ annual, monthly, kind, stale, calm = false, children }: { annual: ForecastChartData; monthly: ForecastChartData; kind: Kind; stale: boolean; calm?: boolean; children?: React.ReactNode }) {
+// Clamp the whole text box in a chart-wide layer at x=0, including enlarged text.
+function AnchoredPeriod({ x, ...props }: React.ComponentProps<typeof CompactPeriod> & { x: number }) {
+  return <div className="chart-readout-anchor" style={{ marginLeft: `clamp(0px, calc(${x}px - 7.5rem), max(0px, calc(100% - 15rem)))` }}><CompactPeriod {...props} /></div>;
+}
+
+/** Recharts supplies the active band for bars and a single x for lines. */
+function PeriodCrosshair({ points, width = 0, height = 0 }: { points?: readonly { x: number; y: number }[]; width?: number; height?: number }) {
+  const point = points?.[0];
+  const x = point ? point.x + (points?.[1] ? 0 : width / 2) : 0;
+  return point ? <line className="chart-crosshair" x1={x} x2={x} y1={point.y} y2={points?.[1]?.y ?? point.y + height} stroke="#66726d" strokeWidth={1} pointerEvents="none" /> : null;
+}
+
+export function FinancialChart({ annual, monthly, kind, stale, pending = false, calm = false, children }: { annual: ForecastChartData; monthly: ForecastChartData; kind: Kind; stale: boolean; pending?: boolean; calm?: boolean; children?: React.ReactNode }) {
   const id = useId();
   const { title, series } = families[kind];
   const [granularity, setGranularity] = useState<"annual" | "monthly">(kind === "statement" ? "monthly" : "annual");
   const [windowStart, setWindowStart] = useState("");
   const [selected, setSelected] = useState("");
   const [hidden, setHidden] = useState<readonly string[]>([]);
+  const chartRef = useRef<HTMLDivElement>(null);
+  const [chartWidth, setChartWidth] = useState(0);
+  const [interaction, setInteraction] = useState<"pointer" | "keyboard" | null>(null);
+  // Identity only: values are read from the source period, independent of payload eligibility.
+  const [keyboardPeriod, setKeyboardPeriod] = useState("");
+  useEffect(() => {
+    if (pending) { setInteraction(null); return; }
+    const chart = chartRef.current;
+    if (!chart) return;
+    const resize = new ResizeObserver(() => setChartWidth(chart.clientWidth));
+    resize.observe(chart);
+    const visibility = new IntersectionObserver(([entry]) => {
+      if (!entry?.isIntersecting) setInteraction(null);
+    });
+    visibility.observe(chart);
+    return () => { resize.disconnect(); visibility.disconnect(); };
+  }, [annual.points.length, monthly.points.length, pending]);
   const source = granularity === "annual" ? annual : monthly;
   const chosenStart = monthly.points.findIndex(point => point.periodStart === windowStart);
   const startIndex = chosenStart < 0 ? kind === "statement" ? Math.max(0, monthly.points.length - 12) : 0 : chosenStart;
   const points = granularity === "annual" ? source.points : source.points.slice(startIndex, startIndex + 12);
   const active = points.find(point => point.periodStart === selected) ?? points.at(-1);
   const plotted = series.filter(item => !hidden.includes(item.key));
-  const rows = points.map(point => Object.fromEntries([
+  const keyboardIndex = Math.max(0, points.findIndex(point => point.periodStart === keyboardPeriod));
+  const keyboardPoint = interaction === "keyboard" && plotted.length ? points[keyboardIndex] : undefined;
+  const keyboardX = (kind === "cash" ? 64 : 54) + (chartWidth - (kind === "cash" ? 72 : 70)) * (keyboardIndex + 0.5) / Math.max(1, points.length);
+  const rows = points.map((point, index) => Object.fromEntries([
+    ["index", index],
     ["label", granularity === "annual" ? point.periodStart.slice(0, 4) : point.periodStart.slice(0, 7)],
     ["source", point],
-    ...series.flatMap(item => ["complete", "incomplete"].map(status => [
+    ...plotted.flatMap(item => ["complete", "incomplete"].map(status => [
       `${item.key}_${status}`, point.metrics[item.key].status === status ? chartCoordinate(point.metrics[item.key]) : null,
     ])),
   ]));
@@ -95,71 +162,68 @@ export function FinancialChart({ annual, monthly, kind, stale, calm = false, chi
   const partial = points.some(point => series.some(item => point.metrics[item.key].status !== "complete"));
   const opening = source.opening;
   const calmWealth = calm && kind === "wealth";
-  const cashPage = calm && kind !== "wealth";
   const cashAxis: React.ComponentProps<typeof YAxis> = kind === "cash" ? { domain: [(min: number) => Math.min(0, min), (max: number) => Math.max(0, max)], label: { value: source.currency ?? "Currency", angle: -90, position: "insideLeft" } } : {};
   const legend = <div className="chart-legend" role="group" aria-label={`${title} legend`}>{series.map((item, index) => <button key={item.key} type="button" aria-pressed={!hidden.includes(item.key)} onClick={() => setHidden(current => current.includes(item.key) ? current.filter(key => key !== item.key) : [...current, item.key])}><span aria-hidden="true" style={{ color: item.color }}>{item.bar ? "▥" : index === 0 ? "━━" : index === 1 ? "┄┄" : "···"}</span> {item.label}</button>)}</div>;
   const openingDetails = opening && kind !== "statement" && <details className="chart-opening"><summary>Opening position · {date(opening.at)} · snapshot, separate from projected periods</summary><dl className="chart-exact-values">{series.filter(item => !item.bar).map(item => <div key={item.key}><dt>{item.label}</dt><dd>{exactChartValue(opening.metrics[item.key])}</dd></div>)}</dl></details>;
   const controls = <div className="chart-controls">
-    <div className="chart-control"><label htmlFor={`${id}-grouping`}>Period grouping</label><select id={`${id}-grouping`} value={granularity} onChange={event => { setGranularity(event.target.value as "annual" | "monthly"); setSelected(""); }}><option value="annual">Annual · supported horizon</option><option value="monthly">Monthly · up to 12 months</option></select></div>
+    <div className="chart-control"><label htmlFor={`${id}-grouping`}>Period</label><select id={`${id}-grouping`} value={granularity} onChange={event => { setGranularity(event.target.value as "annual" | "monthly"); setSelected(""); }}><option value="annual">Annual · supported horizon</option><option value="monthly">Monthly · up to 12 months</option></select></div>
     {granularity === "monthly" && <div className="chart-control"><label htmlFor={`${id}-range`}>Monthly range starting</label><select id={`${id}-range`} value={monthly.points[startIndex]?.periodStart ?? ""} onChange={event => { setWindowStart(event.target.value); setSelected(""); }}>{monthly.points.map(point => <option key={point.periodStart} value={point.periodStart}>{point.periodStart.slice(0, 7)}</option>)}</select></div>}
     <div className="chart-control"><label htmlFor={`${id}-period`}>Selected projected period</label><select id={`${id}-period`} value={active?.periodStart ?? ""} onChange={event => setSelected(event.target.value)}>{points.map(point => <option key={point.periodStart} value={point.periodStart}>{calm && kind !== "wealth" ? readablePeriod(point) : chartPeriodLabel(point)}</option>)}</select></div>
   </div>;
-  return <figure className="forecast-figure financial-chart" aria-label={kind === "wealth" ? "Household financial outlook chart" : title}>
-    <figcaption><h3 id={`${id}-title`}>{title}</h3>
-      {!cashPage && <p className="muted">{calm && kind === "wealth" ? `How your assets, debts and net worth may change. Forecast, not account history · ${source.currency}${stale ? " · out of date" : ""}.` : <>Household · {source.currency} · Forecast, not account history{stale ? " · out of date" : ""}.</>}</p>}
-    </figcaption>
-    {!calmWealth && !cashPage && openingDetails}
-    {!points.length ? <p className={calmWealth ? "calm-empty" : undefined} role="status">{calmWealth ? "No future periods are available. The recorded opening position is separate from a projected path." : "No modeled periods available. The opening snapshot is not projected history."}</p> : <>
-      {!calmWealth && !cashPage && controls}
-      {!cashPage && legend}
-      {!plotted.length && <p role="status">All series hidden. Choose a legend item to show it again; exact values remain below.</p>}
-      {partial && !cashPage && <p className="chart-qualification">{cashPage ? "Incomplete forecast · gaps are unavailable. Faded or outlined bars / dotted lines: incomplete values; partial years are not annualized." : calmWealth ? "Dotted lines mark incomplete values; gaps mean unavailable. Tax and other limits remain unresolved." : "Incomplete values use dotted lines with markers or outlined bars. Unavailable values leave gaps. Tax and other capability limits remain unresolved; exact values below retain each metric’s status."}</p>}
-      {!calmWealth && !cashPage && <p className="chart-axis-note">{granularity === "annual" ? "Annual" : "Monthly"} {kind === "statement" ? "recognized period totals" : "closing balances"} ({source.currency}). Axis positions are approximate; readouts are exact.</p>}
-      {precisionOmitted && !cashPage && <p role="note">Some amounts exceed chart display precision and are omitted from the graph. Exact values remain available below.</p>}
-      <div className="chart">
+  return <figure className="forecast-figure financial-chart" aria-label={kind === "wealth" ? "Household financial outlook chart" : title} aria-busy={pending}>
+    <figcaption><h3 id={`${id}-title`}>{title}</h3></figcaption>
+    {pending ? <div className="chart chart-pending" aria-busy="true"><ForecastProgress pending label="Calculating Forecast" /></div> : !points.length ? <p className={calmWealth ? "calm-empty" : undefined} role="status">{calmWealth ? "No future periods are available. The recorded opening position is separate from a projected path." : "No modeled periods available. The opening snapshot is not projected history."}</p> : <>
+      <div className="chart" ref={chartRef}
+        onPointerMove={() => setInteraction("pointer")} onPointerDown={() => setInteraction("pointer")} onPointerLeave={() => setInteraction(null)}
+        onClick={() => setInteraction("pointer")}
+        onTouchEnd={event => { const box = event.currentTarget.getBoundingClientRect(); setInteraction(box.bottom > 0 && box.top < innerHeight ? "pointer" : null); }}
+        onFocusCapture={event => { if (event.target.getAttribute("role") === "application") setInteraction("keyboard"); }}
+        onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setInteraction(null); }}
+        onKeyDownCapture={event => {
+          if (event.target instanceof Element && event.target.getAttribute("role") === "application" && ["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) {
+            event.preventDefault(); event.stopPropagation();
+            const index = event.key === "Home" ? 0 : event.key === "End" ? points.length - 1
+              : Math.max(0, Math.min(points.length - 1, keyboardIndex + (event.key === "ArrowRight" ? 1 : -1)));
+            setKeyboardPeriod(points[index]?.periodStart ?? ""); setInteraction("keyboard");
+          }
+        }}>
         <ResponsiveContainer width="100%" height="100%" minWidth={0}>
           <ComposedChart data={rows} accessibilityLayer stackOffset="sign" barCategoryGap="10%" barGap={2} margin={{ top: 12, right: kind === "cash" ? 8 : 16, bottom: 8, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="label" minTickGap={28} tickMargin={10} />
             <YAxis yAxisId="balance" width={kind === "cash" ? 64 : 54} tickFormatter={axisAmount} {...cashAxis} />
             <ReferenceLine yAxisId="balance" y={0} stroke="#66726d" />
-            {/* Bound x and wrapper width together so cursor offsets cannot
-                push exact readouts beyond a narrow chart. */}
-            <Tooltip position={cashPage ? { x: 0, y: 0 } : { x: 0 }} allowEscapeViewBox={{ x: false, y: false }} content={({ active: hovering, payload }) => {
+            {keyboardPoint && <ReferenceLine x={keyboardPoint.periodStart.slice(0, granularity === "annual" ? 4 : 7)} yAxisId="balance" stroke="#66726d" strokeWidth={1} shape={props => <line className="chart-crosshair" x1={props.x1} x2={props.x2} y1={props.y1} y2={props.y2} stroke="#66726d" strokeWidth={1} pointerEvents="none" />} />}
+            <Tooltip active={interaction === "pointer"} filterNull={false} cursor={<PeriodCrosshair />} offset={0} position={{ x: 0, y: 0 }} wrapperStyle={{ width: "100%", height: "100%", pointerEvents: "none" }} allowEscapeViewBox={{ x: false, y: false }} content={({ active: hovering, payload, coordinate }) => {
               const point = payload?.[0]?.payload?.source as ForecastChartPeriod | undefined;
-              return hovering && point ? <div className="chart-readout"><p>{point.granularity === "annual" ? "Annual" : "Monthly"} modeled period [start, end)</p><ExactPeriod point={point} series={series} compact={cashPage} /><p>{point.coveredMonthCount} covered {point.coveredMonthCount === 1 ? "source month" : "source months"}.</p></div> : null;
+              return interaction === "pointer" && hovering && point && plotted.length ? <AnchoredPeriod x={coordinate?.x ?? 0} point={point} series={plotted} stale={stale || pending} /> : null;
             }} />
-            {plotted.flatMap(item => ["complete", "incomplete"].map(status => item.bar
-              ? <Bar key={`${item.key}_${status}`} className={`chart-bar-${item.key}-${status}`} dataKey={`${item.key}_${status}`} stackId={item.key} yAxisId="balance" fill={status === "incomplete" ? "#fff" : item.color} stroke={item.color} strokeWidth={2} strokeDasharray={status === "incomplete" ? "3 2" : undefined} isAnimationActive={false}>
+            {plotted.flatMap(item => item.bar ? ["complete", "incomplete"].map(status =>
+              <Bar key={`${item.key}_${status}`} className={`chart-bar-${item.key}-${status}`} dataKey={`${item.key}_${status}`} stackId={item.key} yAxisId="balance" fill={item.color} stroke={item.color} strokeWidth={2} fillOpacity={status === "incomplete" ? 0.5 : 1} strokeOpacity={status === "incomplete" ? 0.5 : 1} isAnimationActive={false}>
                 {kind === "cash" && points.map(point => <Cell key={point.periodStart} {...cashChangeAppearance(point)} />)}
               </Bar>
-              : <Line key={`${item.key}_${status}`} dataKey={`${item.key}_${status}`} yAxisId="balance" type="linear" stroke={item.color} strokeWidth={2} strokeDasharray={status === "incomplete" ? `${item.dash ?? "6 2"} 1 3` : item.dash} dot={{ r: status === "incomplete" ? 3 : 2 }} connectNulls={false} isAnimationActive={false} />))}
+            ) : chartLineRuns(points, item.key).map((run, index) =>
+              <Line key={`${item.key}_${index}`} className={`chart-line-${item.key}-${run.incomplete ? "incomplete" : "complete"}`} dataKey={(row: { index: number; source: ForecastChartPeriod }) => row.index >= run.start && row.index <= run.end ? chartCoordinate(row.source.metrics[item.key]) : null} yAxisId="balance" type="linear" stroke={item.color} strokeWidth={2} strokeOpacity={run.incomplete ? 0.5 : 1} strokeDasharray={item.dash} dot={() => <g />} activeDot={false} connectNulls={false} isAnimationActive={false} />))}
           </ComposedChart>
         </ResponsiveContainer>
+        {keyboardPoint && <div className="chart-keyboard-readout" role="status"><AnchoredPeriod x={keyboardX} point={keyboardPoint} series={plotted} stale={stale || pending} /></div>}
       </div>
-      {/* Keep financially material coverage warnings visible but do not put
-          multi-line text between the chart title and its plotted graphic. */}
-      {cashPage && partial && <p className="chart-qualification">Incomplete forecast · gaps are unavailable. Faded or outlined bars / dotted lines: incomplete values; partial years are not annualized.</p>}
-      {cashPage && precisionOmitted && <p role="note">Some amounts exceed chart display precision and are omitted from the graph. Exact values remain available below.</p>}
-      {cashPage && legend}
-      {cashPage && <><p className="chart-axis-note">{kind === "cash" ? `Balance and signed change · one ${source.currency} axis. Green + / red −; faded means incomplete. Small changes share the balance scale; use monthly zoom or exact values.` : "Recognized flows · not bank receipts/disbursements or disposable wages."}</p>{controls}
-        {active && <div className="chart-selected" role="status" aria-label={`${title} exact selected period`}><ExactPeriod point={active} series={series} readable compact /></div>}
-      </>}
     </>}
-    <EvidenceGroup cashPage={cashPage} title={title}>
-    {cashPage && <h3>{title} · details</h3>}
-    <ChartDetails collapsed={calmWealth}>
+    {points.length > 0 && <>{legend}{controls}</>}
+    {!pending && <div className="chart-status">{!plotted.length && <p role="status">All series hidden. Choose a legend item to show it again; exact values remain below.</p>}{partial && <p role="note">Partial coverage · gaps are unavailable.</p>}{stale && <p role="status">Out of date retained result</p>}{precisionOmitted && <p role="note">Some amounts exceed chart display precision. Exact values remain in Chart Details.</p>}</div>}
+    <CashChartDetails title={title}><section aria-label={`${title} chart details`}>
+      <p>Forecast, not account history · {source.currency}. Axis positions and compact hover amounts are approximate; tables and selected values retain exact source amounts.</p>
+      {kind === "cash" && <p>(Including cash in investment accounts)</p>}
+      <p>Faded lines and bars indicate partial coverage; gaps are unavailable. A line segment touching an incomplete endpoint is faded. Partial years are not annualized.</p>
       <p>{kind === "statement" ? "Income and expenses when recognized; not bank receipts/disbursements or disposable wages." : "Balances are period-closing stocks."} {kind === "cash" && "Bars show signed change in the same all-account cash balance, not salary less expenses. Positive changes are green, negative changes are red, zero is neutral. Faded bars mark incomplete values or partial years; unavailable values leave gaps. Partial years are not annualized."}</p>
       {calmWealth && <p className="chart-axis-note">{granularity === "annual" ? "Annual" : "Monthly"} closing balances ({source.currency}). Axis labels and positions are approximate; readouts are exact.</p>}
       {children}
-      {calmWealth && points.length > 0 && controls}
-      {!cashPage && active && <div className="chart-selected" role="status" aria-label={`${title} exact selected period`}><ExactPeriod point={active} series={series} readable={calm && kind !== "wealth"} /></div>}
+      {active && <div className="chart-selected" role="status" aria-label={`${title} exact selected period`}><ExactPeriod point={active} series={series} readable={calm && kind !== "wealth"} /></div>}
       {points.length > 0 && <details className="chart-table"><summary>Show exact chart data · {points.length} {granularity === "annual" ? points.length === 1 ? "year" : "years" : points.length === 1 ? "month" : "months"}</summary>
         <div className="table-scroll" role="region" aria-label={`${title} exact data`} tabIndex={0}><table><caption>{title} · {stale ? "out of date retained result" : "modeled projection"} · current displayed range</caption><thead><tr><th scope="col">Projected period [start, end)</th>{series.map(item => <th scope="col" key={item.key}>{item.label}</th>)}</tr></thead><tbody>{points.map(point => <tr key={point.periodStart}><th scope="row">{chartPeriodLabel(point)}</th>{series.map(item => <td key={item.key}>{exactChartValue(point.metrics[item.key], item.key === "totalModeledCashChange")}</td>)}</tr>)}</tbody></table></div>
       </details>}
-    {(calmWealth || cashPage) && openingDetails}
+    {openingDetails}
     <details className="chart-basis"><summary>Chart sources &amp; basis</summary><p>Source: reconciled household forecast via the exact chart selector. Stock values use the last supported close; period totals sum only covered months. Partial years are not annualized.</p>{source.boundaries && <p>As of {source.boundaries.asOf}; data cutoff {source.boundaries.dataCutoff}. Actual/forecast boundary {source.boundaries.actualForecastBoundary}; all displayed periods are modeled, with no observed performance history.</p>}<p>Bank-only spendable cash, disposable payroll, investment attribution and retirement income by source are unavailable in these charts.</p>{source.sourceFingerprint && <p>Result fingerprint: <code>{source.sourceFingerprint}</code></p>}</details>
-    </ChartDetails>
-    </EvidenceGroup>
+    </section></CashChartDetails>
   </figure>;
 }

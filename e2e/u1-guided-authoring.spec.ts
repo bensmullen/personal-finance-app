@@ -139,12 +139,12 @@ test("Owner monthly evidence: paycheck coverage, matching Debt and Spending, and
   await navigate(page, "Money", "Cash Flow");
   const pay = page.getByRole("region", { name: "Your Paycheck", exact: true });
   await expect(pay.getByRole("button", { name: "Review selected month" })).toHaveCount(0);
-  await expect(pay).toContainText("Incomplete allocation");
-  await expect(pay).toContainText("not disposable or unspent earnings");
+  await expect(pay).toContainText("Partial coverage");
+  await expect(pay).toContainText("Not verified leftover income");
   const cashDetails = pay.locator("details.cash-chart-details");
   await expect(cashDetails).not.toHaveAttribute("open");
   await cashDetails.locator(":scope > summary").click();
-  await expect(cashDetails).toContainText("not leftover pay");
+  await expect(cashDetails).toContainText("not verified leftover income");
   await expect(pay.getByRole("img")).toHaveAttribute("aria-label", /Mortgage payment.*total income basis.*taxes withheld not modeled/i);
   await pay.getByLabel("paycheck forecast month").selectOption("2026-02");
   await expect(cashDetails.locator(".calm-caption")).toHaveText(/February 2026/);

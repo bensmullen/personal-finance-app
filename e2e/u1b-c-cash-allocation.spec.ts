@@ -126,7 +126,7 @@ for (const width of [1440, 390]) {
     const charts = page.locator(".calm-cash-charts");
     const chartDetails = page.locator(".cash-chart-details");
     await expect(chartDetails).toHaveCount(3);
-    await expect(chartDetails.nth(0)).toHaveAttribute("aria-label", "Total modeled cash (including cash in investment accounts) Chart Details");
+    await expect(chartDetails.nth(0)).toHaveAttribute("aria-label", "Total Cash Balance Chart Details");
     await expect(chartDetails.nth(1)).toHaveAttribute("aria-label", "Modeled statement income versus expenses Chart Details");
     await expect(chartDetails.nth(2)).toHaveAttribute("aria-label", "Where modeled income goes Chart Details");
     for (const details of await chartDetails.all()) await expect(details).not.toHaveAttribute("open");
@@ -134,7 +134,7 @@ for (const width of [1440, 390]) {
     // and rendered geometry. No shared end-of-page evidence container remains.
     const stack = charts.locator(".financial-chart > figcaption h3, .cash-chart-details > summary, .monthly-money > .panel-head h2");
     await expect(stack).toHaveText([
-      "Total modeled cash (including cash in investment accounts)", "Chart Details",
+      "Total Cash Balance", "Chart Details",
       "Modeled statement income versus expenses", "Chart Details",
       "Explain this month’s income", "Chart Details",
     ]);
@@ -160,11 +160,11 @@ for (const width of [1440, 390]) {
       const title = await figure.locator("figcaption").boundingBox();
       const graphic = await figure.locator(".chart").boundingBox();
       const controls = await figure.locator(".chart-controls").boundingBox();
-      expect(graphic!.y - (title!.y + title!.height)).toBeLessThan(100);
+      expect(graphic!.y - (title!.y + title!.height)).toBeLessThanOrEqual(16);
       expect(controls!.y).toBeGreaterThanOrEqual(graphic!.y + graphic!.height);
-      const selected = await figure.locator(".chart-selected").boundingBox();
+      await expect(figure.locator(".chart-selected")).not.toBeVisible();
       const summary = await figure.locator(".cash-chart-details > summary").boundingBox();
-      expect(summary!.y).toBeGreaterThanOrEqual(selected!.y + selected!.height);
+      expect(summary!.y).toBeGreaterThanOrEqual(controls!.y + controls!.height);
       await expect(figure.locator(".cash-chart-details .chart-table")).toHaveCount(1);
       await expect(figure.getByText("Exact monthly comparison & receipts", { exact: true })).toHaveCount(0);
       const select = figure.getByRole("combobox").first();
@@ -218,6 +218,10 @@ for (const width of [1440, 390]) {
     expect(decimal(expected.withholdingAmount!).isPositive()).toBe(true);
     expect(expected.categories.some(item => item.label === "Employee retirement")).toBe(false);
     await expect(details).toContainText(`${formatExactMoney(expected.withholdingAmount!, expected.currency)} · posted elections only`);
+    await expect(panel(page).getByText("Discretionary Income — unavailable", { exact: true })).toBeVisible();
+    await expect(details).toContainText("Income, withholding and funding are not fully reconciled");
+    await expect(details).toContainText("Unverified comparison remainder · not disposable income");
+    await expect(panel(page)).not.toContainText("Unreconciled arithmetic difference");
     await expect(panel(page)).not.toContainText("Unknown · not modeled");
     await expect(panel(page)).not.toContainText("excludes unmodeled withholding");
     await details.getByText("Exact monthly comparison & receipts", { exact: true }).click();
@@ -283,15 +287,21 @@ for (const width of [1440, 390]) {
     }
     await expect(table.getByRole("row", { name: /Total known uses/ }).getByRole("cell")).toHaveText(exact(expected.totalUses));
     await expect(table.getByRole("row", { name: /^Payroll withholding/ }).getByRole("cell")).toHaveText("Unknown · not modeled");
+    await expect(panel(page).getByText("Discretionary Income — unavailable", { exact: true })).toBeVisible();
+    await expect(details).toContainText("Income, withholding and funding are not fully reconciled");
+    await expect(details).toContainText("Unverified comparison remainder · not disposable income");
     const comparison = panel(page).getByRole("figure", { name: "Where modeled income goes comparison", exact: true });
     expect(expected.denominator).toBe("0");
-    await expect(comparison).toContainText("Zero modeled income");
-    await expect(comparison).toContainText("not a paycheck-funded allocation");
+    const zeroIncomeStatus = panel(page).locator(".chart-status").filter({ hasText: "Zero modeled income" });
+    await expect(zeroIncomeStatus).toHaveCount(1);
+    await expect(zeroIncomeStatus).toContainText("Zero modeled income");
+    await expect(zeroIncomeStatus).toContainText("not a paycheck-funded allocation");
+    await expect(panel(page).getByText("Discretionary Income — unavailable", { exact: true })).toBeVisible();
     await expect(comparison.locator(".cash-income-reference")).toHaveCount(0);
     await expect(comparison.locator(".paycheck-unallocated")).toHaveCount(0);
     await expect(comparison.locator(".paycheck-bar > span")).toHaveCount(expected.categories.length);
     const v3 = page.getByRole("figure", { name: "Modeled statement income versus expenses", exact: true });
-    const v2 = page.getByRole("figure", { name: "Total modeled cash (including cash in investment accounts)", exact: true });
+    const v2 = page.getByRole("figure", { name: "Total Cash Balance", exact: true });
     const v2Box = await v2.boundingBox(), v3Box = await v3.boundingBox(), v4Box = await comparison.boundingBox();
     expect(v2Box!.y).toBeLessThan(v3Box!.y);
     expect(v3Box!.y).toBeLessThan(v4Box!.y);

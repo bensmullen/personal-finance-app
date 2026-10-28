@@ -63,6 +63,10 @@ for (const width of [1440, 390]) test(`Calm destinations, source repair and Canc
     expect(box!.x + box!.width).toBeLessThanOrEqual(width);
     await expect(page.locator(".task-readiness")).not.toHaveAttribute("open");
     await expect(status.locator("[data-diagnostic-root]:visible")).toHaveCount(0);
+    for (const chart of await page.locator(".financial-chart:not([aria-busy=true])").all()) {
+      await expect(chart.locator("figcaption > p")).toHaveCount(0);
+      await expect(chart.locator(".chart-pending")).toHaveCount(0);
+    }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   }
 

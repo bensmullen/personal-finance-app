@@ -68,10 +68,11 @@ const loadExample = async (page: import("@playwright/test").Page, model = create
 
 // Overview keeps exact requested boundaries available through deliberate disclosure.
 const expectOverviewRange = async (page: import("@playwright/test").Page, end: string) => {
-  const controls = page.locator(".chart-control-details");
+  const chart = page.getByRole("figure", { name: "Household financial outlook chart", exact: true });
+  const controls = chart.locator(":scope > .cash-chart-details");
   const controlsWereOpen = await controls.getAttribute("open") !== null;
   if (!controlsWereOpen) await controls.locator(":scope > summary").click();
-  const range = page.locator(".chart-range");
+  const range = controls.locator(".chart-range");
   const wasOpen = await range.getAttribute("open") !== null;
   if (!wasOpen) await range.locator(":scope > summary").click();
   await expect(range.getByText("Requested start (inclusive)", { exact: true }).locator("xpath=following-sibling::dd[1]")).toHaveText(/^2026-01-01(?:T.*)?$/);
@@ -249,10 +250,12 @@ test("D1-B normal investment controls persist a bank-funded operation without co
 const showHouseholdDetails = async (page: import("@playwright/test").Page, channel: "baseline" | "comparison" = "baseline", forecastBudget = 15_000) => {
   const status = page.getByRole("status", { name: channel === "baseline" ? "Household forecast status" : "Household comparison status" });
   await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/, { timeout: forecastBudget });
-  const controls = page.locator(".chart-control-details");
+  // Supporting forecast evidence belongs to the wealth or cash-balance chart,
+  // never the statement/allocation sibling disclosures on the Cash surface.
+  const controls = page.locator(".financial-chart > .cash-chart-details").filter({
+    has: page.getByText("Forecast assumptions and supporting details", { exact: true }),
+  });
   if (await controls.count() && await controls.getAttribute("open") === null) await controls.locator(":scope > summary").click();
-  const cashDetails = page.locator(".financial-chart details.cash-chart-details").first();
-  if (await cashDetails.count() && await cashDetails.getAttribute("open") === null) await cashDetails.locator(":scope > summary").click();
   const supporting = page.getByText("Forecast assumptions and supporting details", { exact: true });
   if (await supporting.count() && await supporting.locator("..").getAttribute("open") === null) await supporting.click();
   const details = page.getByRole("button", { name: channel === "baseline" ? "Show forecast details" : /Show .* comparison details/ });
@@ -1416,11 +1419,11 @@ test("R4 empty relationship collections show actionable state instead of a Choos
 // Separate viewport assertions so a mobile failure cannot hide desktop
 // keyboard/repair regressions; each scenario starts from a fresh example.
 for (const width of [390, 1440]) {
-  test(`R4 responsive status, chart and keyboard editor controls at ${width}px`, async ({ page }) => {
+  test(`R4 responsive status, chart and keyboard editor controls at ${width}px`, async ({ page }, info) => {
     test.setTimeout(60_000);
     await loadExample(page);
     await useShortHorizon(page);
-    await page.setViewportSize({ width, height: 900 });
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await clickFinancialDestination(page, "Overview");
     const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
     await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
@@ -1431,18 +1434,48 @@ for (const width of [390, 1440]) {
     await expect(chart).toBeVisible();
     await expect(chart).toContainText("USD");
     await expect(chart).toContainText("Forecast, not account history");
+    await expect(chart.locator("figcaption")).toHaveText("Assets, liabilities and net worth");
+    await expect(chart.locator(".chart-status")).toContainText("Partial coverage");
+    await expect(chart).not.toContainText("Incomplete forecast");
     expect(await page.locator("#main-content").innerText()).not.toMatch(rawUuid);
     const request = await status.getAttribute("data-request-id");
     await chart.locator(".chart-control-details > summary").click();
     const plot = chart.locator('[role="application"]');
     await plot.focus();
     await page.keyboard.press("ArrowRight");
-    await expect(chart.locator(".chart-readout")).toBeVisible();
-    await expect(chart.locator(".chart-readout")).toContainText("Annual modeled period [start, end)");
-    await expect(chart.locator(".chart-readout")).toContainText("Projected 2026-01-01 → 2026-04-01 (exclusive) · partial year, 3 months");
-    await expect(chart.locator(".chart-readout dd")).toHaveText(
-      await chart.getByRole("status", { name: "Assets, liabilities and net worth exact selected period", exact: true }).locator("dd").allTextContents(),
-    );
+    const readout = chart.locator(".chart-compact-readout");
+    await expect(readout).toBeVisible();
+    await expect(readout.locator("small")).toHaveText("2026 · projected · partial");
+    await expect(readout.locator(":scope > div")).toHaveText([/^Net worth: .+/, /^Total assets: .+/, /^Total liabilities: .+/]);
+    // A vertical SVG line has a zero-width DOM rectangle. Assert its painted
+    // geometry instead of Playwright's rectangular-element visibility rule.
+    const crosshair = chart.locator("line.chart-crosshair");
+    await expect(crosshair).toHaveCount(1);
+    expect(await crosshair.evaluate(element => {
+      const line = element as SVGLineElement;
+      const { x1, x2, y1, y2 } = line;
+      const style = getComputedStyle(line);
+      const bounds = line.closest("svg")!.getBoundingClientRect();
+      const matrix = line.getScreenCTM()!;
+      const start = new DOMPoint(x1.baseVal.value, y1.baseVal.value).matrixTransform(matrix);
+      const end = new DOMPoint(x2.baseVal.value, y2.baseVal.value).matrixTransform(matrix);
+      return { finite: [start.x, start.y, end.x, end.y].every(Number.isFinite),
+        vertical: x1.baseVal.value === x2.baseVal.value, length: Math.abs(end.y - start.y),
+        inside: start.x >= bounds.left && start.x <= bounds.right && Math.min(start.y, end.y) >= bounds.top && Math.max(start.y, end.y) <= bounds.bottom,
+        painted: style.stroke !== "none" && style.stroke !== "transparent" && style.stroke !== "rgba(0, 0, 0, 0)" && parseFloat(style.strokeWidth) > 0 && Number(style.opacity) > 0 && Number(style.strokeOpacity) > 0,
+        owner: line.closest("figure")?.getAttribute("aria-label") };
+    })).toMatchObject({ finite: true, vertical: true, length: expect.any(Number), inside: true, painted: true, owner: "Household financial outlook chart" });
+    expect(await crosshair.evaluate(line => Math.abs(Number(line.getAttribute("y2")) - Number(line.getAttribute("y1"))))).toBeGreaterThan(0);
+    await info.attach(`r4-keyboard-crosshair-${width}`, { body: await chart.screenshot({ animations: "disabled" }), contentType: "image/png" });
+    const selected = chart.getByRole("status", { name: "Assets, liabilities and net worth exact selected period", exact: true });
+    await expect(selected).toContainText("Projected 2026-01-01 → 2026-04-01 (exclusive) · partial year, 3 months");
+    await chart.locator(".chart-table > summary").click();
+    const exactTable = chart.getByRole("table", { name: /Assets, liabilities and net worth/ });
+    await expect(exactTable.locator("tbody th")).toHaveText("2026-01-01 → 2026-04-01 (exclusive) · partial year, 3 months");
+    await expect(exactTable.locator("tbody td")).toHaveText(await selected.locator("dd").allTextContents());
+    await chart.locator(".chart-basis > summary").click();
+    await expect(chart.locator(".chart-basis")).toContainText("Source: reconciled household forecast via the exact chart selector");
+    await expect(chart.locator(".chart-basis")).toContainText("Result fingerprint:");
     await expect(status).toHaveAttribute("data-request-id", request!);
     await page.getByText("Forecast assumptions and supporting details", { exact: true }).click();
     const reveal = page.getByRole("button", { name: "Show forecast details", exact: true });

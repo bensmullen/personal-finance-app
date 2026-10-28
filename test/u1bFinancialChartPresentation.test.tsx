@@ -34,7 +34,7 @@ function source(options: { partial?: boolean; missing?: boolean; noInvestments?:
     points: options.empty ? [] : [point], contributionCapacities: [], contingentPositions: [], retirementMilestones: [], liquidityShortfalls: [], debtPayoffs: [], diagnostics: [],
   };
 }
-const render = (forecast: PersonalHouseholdForecastReadModel, cashFlowOnly = true, stale = false) => renderToStaticMarkup(React.createElement(HouseholdChart, { forecast, cashFlowOnly, stale }));
+const render = (forecast: PersonalHouseholdForecastReadModel, cashFlowOnly = true, stale = false, calm = false) => renderToStaticMarkup(React.createElement(HouseholdChart, { forecast, cashFlowOnly, stale, calm }));
 
 describe("U1B exact chart presentation", () => {
   it("gives each chart select its own exact external label and unique association", () => {
@@ -43,15 +43,15 @@ describe("U1B exact chart presentation", () => {
     // lookup, even though the computed combobox name omits those options.
     const labels = [...html.matchAll(/<label for="([^"]+)">([^<]+)<\/label><select id="([^"]+)"/g)];
     expect(labels.map(match => match[2])).toEqual([
-      "Period grouping", "Selected projected period",
-      "Period grouping", "Monthly range starting", "Selected projected period",
+      "Period", "Selected projected period",
+      "Period", "Monthly range starting", "Selected projected period",
     ]);
     for (const match of labels) expect(match[1]).toBe(match[3]);
     expect(new Set(labels.map(match => match[1])).size).toBe(5);
   });
   it("separates all-account cash, signed changes and recognized statements", () => {
     const html = render(source());
-    expect(html).toContain("Total modeled cash (including cash in investment accounts)");
+    expect(html).toContain("Total Cash Balance");
     expect(html).toContain("Decrease · -9.999 USD");
     expect(html).toContain("-12.202 USD");
     expect(html).toContain("not bank receipts/disbursements or disposable wages");
@@ -90,6 +90,17 @@ describe("U1B exact chart presentation", () => {
     expect(html).toContain("Incomplete");
     expect(html).toContain("No observed history loaded");
     expect(html).not.toContain("2026-03-01");
+    expect(html).toContain("Partial coverage · gaps are unavailable.");
+    expect(html).not.toContain("Incomplete forecast");
+    expect(html).not.toContain("Projected · USD");
+  });
+  it("keeps the cash account qualification only in its own collapsed details", () => {
+    const html = render(source());
+    const title = html.indexOf("<figcaption>");
+    const details = html.indexOf('<details class="calm-disclosure cash-chart-details');
+    expect(html.slice(title, details)).not.toContain("(Including cash in investment accounts)");
+    expect(html.slice(details)).toContain("(Including cash in investment accounts)");
+    expect(html.slice(title, html.indexOf('class="chart"', title))).not.toContain("<p");
   });
   it("shows unavailable metric values without substituting zero or hiding supported income", () => {
     const html = render(source({ missing: true }));
@@ -114,6 +125,9 @@ describe("U1B exact chart presentation", () => {
   it("handles unavailable source and refuses unsafe plotting coordinates while retaining exact strings", () => {
     const forecast = { status: "unavailable", scope: "household", message: "Needs setup", diagnostics: [] } as PersonalHouseholdForecastReadModel;
     expect(render(forecast)).toContain("Chart data unavailable");
+    const cashFallback = render(forecast, true, false, true);
+    expect(cashFallback).toContain('aria-label="Total Cash Balance Chart Details"');
+    expect(cashFallback).not.toContain("Total modeled cash Chart Details");
     const value: ForecastChartValue = { amount: "9007199254740993.01", currency: "USD", status: "incomplete", traceIds: [] };
     expect(chartCoordinate(value)).toBeNull();
     expect(exactChartValue(value)).toContain("9,007,199,254,740,993.01 USD · Incomplete");
