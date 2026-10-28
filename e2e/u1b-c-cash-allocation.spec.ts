@@ -160,7 +160,7 @@ for (const width of [1440, 390]) {
       const title = await figure.locator("figcaption").boundingBox();
       const graphic = await figure.locator(".chart").boundingBox();
       const controls = await figure.locator(".chart-controls").boundingBox();
-      expect(graphic!.y - (title!.y + title!.height)).toBeLessThan(100);
+      expect(graphic!.y - (title!.y + title!.height)).toBeLessThanOrEqual(16);
       expect(controls!.y).toBeGreaterThanOrEqual(graphic!.y + graphic!.height);
       await expect(figure.locator(".chart-selected")).not.toBeVisible();
       const summary = await figure.locator(".cash-chart-details > summary").boundingBox();
@@ -218,7 +218,9 @@ for (const width of [1440, 390]) {
     expect(decimal(expected.withholdingAmount!).isPositive()).toBe(true);
     expect(expected.categories.some(item => item.label === "Employee retirement")).toBe(false);
     await expect(details).toContainText(`${formatExactMoney(expected.withholdingAmount!, expected.currency)} · posted elections only`);
-    await expect(details).toContainText("Discretionary Income unavailable — income/withholding/funding not fully reconciled");
+    await expect(details).toContainText("Discretionary Income — unavailable: income, withholding and funding are not fully reconciled.");
+    await expect(details).toContainText("Unverified comparison remainder · not disposable income");
+    await expect(panel(page)).not.toContainText("Unreconciled arithmetic difference");
     await expect(panel(page)).not.toContainText("Unknown · not modeled");
     await expect(panel(page)).not.toContainText("excludes unmodeled withholding");
     await details.getByText("Exact monthly comparison & receipts", { exact: true }).click();
@@ -284,11 +286,12 @@ for (const width of [1440, 390]) {
     }
     await expect(table.getByRole("row", { name: /Total known uses/ }).getByRole("cell")).toHaveText(exact(expected.totalUses));
     await expect(table.getByRole("row", { name: /^Payroll withholding/ }).getByRole("cell")).toHaveText("Unknown · not modeled");
-    await expect(details).toContainText("Discretionary Income unavailable — income/withholding/funding not fully reconciled");
+    await expect(details).toContainText("Discretionary Income — unavailable: income, withholding and funding are not fully reconciled.");
+    await expect(details).toContainText("Unverified comparison remainder · not disposable income");
     const comparison = panel(page).getByRole("figure", { name: "Where modeled income goes comparison", exact: true });
     expect(expected.denominator).toBe("0");
-    await expect(comparison).toContainText("Zero modeled income");
-    await expect(comparison).toContainText("not a paycheck-funded allocation");
+    await expect(panel(page).locator(".chart-status")).toContainText("Zero modeled income");
+    await expect(panel(page).locator(".chart-status")).toContainText("not a paycheck-funded allocation");
     await expect(comparison.locator(".cash-income-reference")).toHaveCount(0);
     await expect(comparison.locator(".paycheck-unallocated")).toHaveCount(0);
     await expect(comparison.locator(".paycheck-bar > span")).toHaveCount(expected.categories.length);

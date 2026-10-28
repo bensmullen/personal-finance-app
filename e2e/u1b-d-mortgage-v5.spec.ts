@@ -108,6 +108,8 @@ async function fits(page: Page, property = false) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   const chart = outlook(page, property).getByRole("region", { name: "Mortgage amortization", exact: true });
   const figure = chart.getByRole("figure");
+  await expect(figure.locator("figcaption")).toHaveCount(0);
+  await expect(figure.locator(".mortgage-columns")).toHaveCSS("padding-top", "0px");
   const box = await figure.boundingBox();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
@@ -118,6 +120,14 @@ async function fits(page: Page, property = false) {
   const readout = await compact.boundingBox();
   expect(readout!.x).toBeGreaterThanOrEqual(box!.x);
   expect(readout!.x + readout!.width).toBeLessThanOrEqual(box!.x + box!.width + 1);
+  expect(readout!.y).toBeGreaterThanOrEqual(box!.y);
+  expect(readout!.y + readout!.height).toBeLessThanOrEqual(box!.y + box!.height + 1);
+  await figure.getByRole("button").last().focus();
+  await expect(compact).toBeVisible();
+  expect(await compact.evaluate(element => {
+    const overlay = element.getBoundingClientRect(), frame = element.closest(".mortgage-columns")!.getBoundingClientRect();
+    return overlay.left >= frame.left && overlay.right <= frame.right && overlay.top >= frame.top && overlay.bottom <= frame.bottom && element.scrollWidth <= element.clientWidth;
+  })).toBe(true);
   await openChartDetails(chart);
   await expect(chart.locator(".mortgage-readout")).toBeVisible();
 }
@@ -162,6 +172,9 @@ for (const width of [1440, 390]) {
     await expect(amortization.locator(".cash-chart-details")).not.toHaveAttribute("open");
     await expect(amortization.locator(".mortgage-readout")).not.toBeVisible();
     await fits(page);
+    const enlarged = await page.addStyleTag({ content: "html { font-size: 200%; }" });
+    await fits(page);
+    await enlarged.evaluate(node => node.remove());
     const path = info.outputPath(`mortgage-chart-keyboard-${width}.png`);
     await amortization.screenshot({ path, animations: "disabled" });
     await info.attach(`mortgage-chart-keyboard-${width}`, { path, contentType: "image/png" });

@@ -117,6 +117,11 @@ export function ForecastProgress({ pending, retained = false, label }: { pending
   return pending ? <p className="forecast-progress" role="status" aria-live="polite"><span aria-hidden="true" className="status-marker status-pending" />{label ?? (retained ? "Updating · retained results are out of date" : "Calculating forecast…")}</p> : null;
 }
 
+/** Replaces a plot only at an actual forecast/evidence pending boundary. */
+export function ForecastChartPending({ title }: { title: string }) {
+  return <figure className="forecast-figure financial-chart" aria-label={title} aria-busy="true"><figcaption><h3>{title}</h3></figcaption><div className="chart chart-pending"><ForecastProgress pending label="Calculating Forecast" /></div></figure>;
+}
+
 /** One mounted action owner, relocated into More on small screens. */
 export function ResponsiveContextActions({ children }: { children: ReactNode }) {
   const [mobile, setMobile] = React.useState(false);

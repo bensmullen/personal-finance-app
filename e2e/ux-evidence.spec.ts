@@ -46,6 +46,9 @@ async function captureCashEvidence(page: Page, info: TestInfo, width: number, sc
   await capture(page, `${production}-full`, true);
   if (scenario === "flagship") {
     const chart = page.getByRole("figure", { name: "Total Cash Balance", exact: true });
+    await expect(chart.locator("figcaption")).toHaveText("Total Cash Balance");
+    await expect(chart.locator(".chart-subtitle, .chart-pending")).toHaveCount(0);
+    await expect(chart.locator(".cash-chart-details")).toContainText("(Including cash in investment accounts)");
     for (const period of ["annual", "monthly"]) {
       await chart.getByLabel("Period", { exact: true }).selectOption(period);
       await chart.getByRole("application").focus();

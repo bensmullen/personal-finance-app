@@ -277,6 +277,7 @@ for (const width of [1440, 390]) {
     await showStatusActions(page);
     await page.getByRole("button", { name: "Update forecast", exact: true }).click();
     await expect(status(page)).toHaveAttribute("data-cache-state", "hit");
+    await expect(page.locator(".calm-outlook .chart-pending")).toHaveCount(0);
     const forecastDetails = status(page).locator(".context-disclosure");
     if (await forecastDetails.getAttribute("open") === null) await forecastDetails.locator(":scope > summary").click();
     await expect(forecastDetails.getByText("Current result reused", { exact: true })).toBeVisible();
@@ -289,6 +290,9 @@ for (const width of [1440, 390]) {
     const statements = page.getByRole("figure", { name: "Modeled statement income versus expenses", exact: true });
     await expect(cash).toBeVisible();
     await expect(statements).toBeVisible();
+    await expect(cash.locator("figcaption")).toHaveText("Total Cash Balance");
+    await expect(cash.locator(".chart-subtitle, .chart-pending")).toHaveCount(0);
+    await expect(cash.locator(".cash-chart-details")).toContainText("(Including cash in investment accounts)");
     expect(Date.now() - cashStarted).toBeLessThan(10_000);
     const paycheck = page.getByRole("region", { name: "Your Paycheck", exact: true });
     await paycheck.getByLabel("paycheck forecast month", { exact: true }).selectOption("2026-02");

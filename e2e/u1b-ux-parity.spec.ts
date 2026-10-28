@@ -81,6 +81,16 @@ for (const width of [1440, 390]) {
     });
     const plot = await chart.locator(".recharts-responsive-container svg.recharts-surface").boundingBox();
     expect(plot!.height).toBeGreaterThanOrEqual(width === 1440 ? 230 : 250);
+    await expect(chart.locator("figcaption")).toHaveText("Assets, liabilities and net worth");
+    const clip = chart.locator("svg > defs > clipPath > rect").first();
+    expect(Number(await clip.getAttribute("y"))).toBeGreaterThanOrEqual(8);
+    expect(Number(await clip.getAttribute("y"))).toBeLessThanOrEqual(16);
+    await expect(chart.locator(".chart-status")).toContainText("Partial coverage");
+    for (const path of await chart.locator('.chart-line-netWorth-incomplete path.recharts-line-curve').all()) {
+      await expect(path).toHaveAttribute("stroke", "#1e6756");
+      await expect(path).toHaveAttribute("stroke-opacity", "0.5");
+      await expect(path).not.toHaveAttribute("stroke-dasharray");
+    }
     // Historical tax gaps leave the complete series empty. Require actual
     // partial-series geometry, not merely a chart container or legend.
     await expect(chart.locator('.recharts-line path.recharts-line-curve[d^="M"]').first()).toBeVisible();
@@ -120,6 +130,7 @@ for (const width of [1440, 390]) {
     await clickFinancialDestination(page, "Overview");
     await expect(forecastStatus(page)).toHaveAttribute("data-lifecycle", "idle");
     const current = page.getByRole("region", { name: "Your finances today", exact: true });
+    await expect(page.locator(".chart-pending, .calm-outlook svg.recharts-surface")).toHaveCount(0);
     const correction = page.getByRole("alert", { name: "Priority correction", exact: true });
     await expect(current.getByRole("article")).toHaveCount(3);
     const position = getCurrentPosition(draft, { asOf: "2026-01-01", baseCurrency: "USD" });

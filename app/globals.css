@@ -80,21 +80,23 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .chart-compact-readout { max-width: min(15rem, calc(100vw - 72px)); padding: .25rem .5rem; background: rgb(255 255 255 / 95%); border-radius: 4px; font-size: .75rem; line-height: 1.35; overflow-wrap: anywhere; pointer-events: none; }
 .chart-compact-readout small { display: block; color: #505b56; font-size: .6875rem; }
 .chart-subtitle { margin: -.25rem 0 .5rem; font-size: .875rem; color: #454d49; }
-.forecast-progress { display: flex; align-items: center; gap: .5rem; font-size: .875rem; color: #505b56; animation: progress-reveal .15s steps(1, end) both; }
-@keyframes progress-reveal { from { opacity: 0; } to { opacity: 1; } }
+.forecast-progress { display: flex; align-items: center; gap: .5rem; font-size: .875rem; color: #505b56; }
 @media (prefers-reduced-motion: reduce) { .forecast-progress { animation: none; } }
-.financial-chart .chart { min-height: calc(160px + 6rem); }
-.forecast-progress .status-marker { flex-shrink: 0; animation-delay: .15s; }
-.mortgage-columns { position: relative; padding-top: 6rem; }
-.mortgage-hover { display: block; position: absolute; top: 0; left: 0; text-align: left; z-index: 1; }
+.financial-chart .chart { min-height: 260px; }
+.chart-pending { display: grid; place-items: center; }
+.chart-pending .forecast-progress { margin: 0; text-align: center; }
+.forecast-progress .status-marker { flex-shrink: 0; }
+.chart-status { color: #52605b; font-size: .8125rem; }
+.mortgage-columns { position: relative; }
+.mortgage-hover { display: block; position: absolute; top: 0; left: 0; box-sizing: border-box; width: min(15rem, 100%); max-width: 100%; max-height: 100%; overflow-y: auto; text-align: left; z-index: 1; }
 .mortgage-hover > span { display: block; }
 .chart-readout dl { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 5px 12px; }
 .chart-readout dd { margin: 0; overflow-wrap: anywhere; }
 .financial-chart .chart { position: relative; }
 .financial-chart .recharts-tooltip-wrapper { width: 100%; max-width: 100%; }
-.chart-readout-anchor { width: min(15rem, 100%); }
+.chart-readout-anchor { width: min(15rem, 100%); max-height: 100%; overflow-y: auto; }
 .chart-readout-anchor .chart-compact-readout { box-sizing: border-box; max-width: 100%; }
-.chart-keyboard-readout { position: absolute; inset: 0 0 auto; pointer-events: none; }
+.chart-keyboard-readout { position: absolute; inset: 0; pointer-events: none; }
 .financial-chart .chart-readout { max-width: 100%; overflow-wrap: anywhere; }
 /* Shared chart hierarchy; Cash composition remains scoped to its own surface. */
 :root { --chart-body: 1rem; --chart-control: .875rem; --chart-caption: .8125rem; --chart-heading: 1.375rem; }
@@ -227,10 +229,10 @@ main#main-content { padding: 24px 32px 64px; }
 .mortgage-series-0 { background: #a36c49; }
 .mortgage-series-1 { background: var(--green); }
 .mortgage-series-2 { background: repeating-linear-gradient(135deg, #d8e8dc, #d8e8dc 3px, #315b48 3px, #315b48 5px); outline: 1px solid #315b48; outline-offset: -1px; }
-.mortgage-columns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); align-items: end; gap: 3px; height: 290px; padding: 6rem 0 8px; border-bottom: 1px solid var(--line); }
+.mortgage-columns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); align-items: end; gap: 3px; height: 290px; padding: 0 0 8px; border-bottom: 1px solid var(--line); }
 .mortgage-month { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; height: 100%; width: 100%; min-width: 0; padding: 4px 1px; border: 1px solid transparent; border-radius: 5px; color: var(--ink); background: transparent; font-size: 11px; }
 .mortgage-month[aria-pressed="true"] { border-color: var(--green); background: var(--mint); }
-.mortgage-column { display: flex; flex-direction: column-reverse; justify-content: flex-start; width: 72%; height: 155px; }
+.mortgage-column { display: flex; flex-direction: column-reverse; justify-content: flex-start; width: 72%; flex: 1; min-height: 0; }
 .mortgage-column > span { display: block; width: 100%; flex-shrink: 0; }
 .mortgage-readout { padding: 12px; background: #f0f3ee; border-radius: 8px; font-size: 13px; line-height: 1.6; }
 .mortgage-summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 16px; }
@@ -346,7 +348,7 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-forecast-context .calm-blocker { margin-bottom: 0; }
 .calm-shell .task-readiness { margin-top: 24px; }
 .calm-shell .notice { margin-top: 16px; }
-.calm-outlook .chart { height: 240px; min-height: calc(144px + 6rem); }
+.calm-outlook .chart { height: 240px; min-height: 240px; }
 .calm-metric { padding: 22px; }
 .calm-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
 .calm-metric h3 { margin: 0 0 16px; font-size: 13px; color: var(--calm-muted); }
@@ -391,7 +393,7 @@ main#main-content { padding: 24px 32px 64px; }
 .calm-cash .cash-allocation figure { margin: 0 0 .5rem; }
 .calm-cash .cash-allocation figcaption, .calm-cash .chart-axis-note { font-size: var(--chart-caption); margin: .5rem 0; line-height: 1.5; }
 .calm-cash .cash-allocation > p, .calm-cash .calm-caption, .calm-cash .chart-qualification, .calm-cash .chart-selected { font-size: var(--calm-body); line-height: 1.5; }
-.calm-cash .chart-qualification { margin: .5rem 0; color: #805022; }
+.calm-cash .chart-qualification { margin: .5rem 0; color: #52605b; }
 .calm-cash .chart-legend { margin: .5rem 0; gap: .25rem .75rem; }
 .calm-cash .chart-legend button { padding: .25rem; }
 .calm-cash .chart-controls { margin: .5rem 0; gap: .5rem; }

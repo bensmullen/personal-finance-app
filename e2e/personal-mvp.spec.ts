@@ -1434,6 +1434,9 @@ for (const width of [390, 1440]) {
     await expect(chart).toBeVisible();
     await expect(chart).toContainText("USD");
     await expect(chart).toContainText("Forecast, not account history");
+    await expect(chart.locator("figcaption")).toHaveText("Assets, liabilities and net worth");
+    await expect(chart.locator(".chart-status")).toContainText("Partial coverage");
+    await expect(chart).not.toContainText("Incomplete forecast");
     expect(await page.locator("#main-content").innerText()).not.toMatch(rawUuid);
     const request = await status.getAttribute("data-request-id");
     await chart.locator(".chart-control-details > summary").click();

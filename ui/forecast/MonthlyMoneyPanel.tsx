@@ -8,10 +8,11 @@ import { formatExactMoney, referenceLabel, objectEntries, objectId } from "../en
 import { FieldShell } from "../authoring/FieldShell.js";
 import { CashAllocation } from "./CashAllocation.js";
 import { useForecastEvidence } from "./useInteractiveForecast.js";
-import { CashDetailsContent, CashDetailsScope, CalmDisclosure, ForecastProgress } from "../calm/CalmPresentation.js";
+import { CashDetailsContent, CashDetailsScope, CalmDisclosure, ForecastChartPending } from "../calm/CalmPresentation.js";
 
-export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setup, coverageSetup, selectedMonth, selectMonth }: {
+export function MonthlyMoneyPanel({ draft, forecast, current, pending = false, mode, review, setup, coverageSetup, selectedMonth, selectMonth }: {
   draft: PersonalDraft; forecast?: PersonalHouseholdForecastReadModel | undefined; current: boolean;
+  pending?: boolean;
   mode: "paycheck" | "debt" | "spending";
   review: (type: "Income" | "Investment" | "Liability" | "Account" | "Expense" | "Insurance", id: string) => void;
   setup: () => void;
@@ -39,7 +40,7 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
     <div className="panel-head"><h2>{mode === "paycheck" ? "Explain this month’s income" : mode === "debt" ? "Monthly mortgage payments" : "Housing payments & transfers"}</h2>
       {mode !== "paycheck" && monthPicker}
     </div>
-    {!current || !point ? <><p role="status">{!point ? "Monthly evidence unavailable. This breakdown needs a supported household forecast." : "Out of date · retained forecast. Monthly evidence needs an update before it can be presented as current."}</p>
+    {pending ? <ForecastChartPending title={mode === "paycheck" ? "Where modeled income goes" : "Monthly cash uses"} /> : !current || !point ? <><p role="status">{!point ? "Monthly evidence unavailable. This breakdown needs a supported household forecast." : "Out of date · retained forecast. Monthly evidence needs an update before it can be presented as current."}</p>
       {mode !== "paycheck" && objectEntries(draft, "Liability").filter(value => value.liability_type === "mortgage").map(value => <p key={objectId("Liability", value)}>{referenceLabel(draft, "Liability", objectId("Liability", value))} · Payment not available. Review contractual terms and payment funding in Forecast setup.</p>)}
       <button type="button" onClick={setup}>Review forecast setup</button></> : <>
       <Evidence>
@@ -47,7 +48,7 @@ export function MonthlyMoneyPanel({ draft, forecast, current, mode, review, setu
       <p className="calm-caption">{monthLabel(point.periodStart)} · {mode === "paycheck" ? "Forecast income compared with uses posted in this month." : "Forecast payments and cash movements for this month."} {forecast?.status === "incomplete" && "Some forecast information is incomplete."}</p>
       <CalmDisclosure title="Selected month dates and evidence"><p>Household forecast · {point.periodStart} to {point.periodEnd} (exclusive). This monthly comparison does not establish annual funding coverage.</p><button type="button" onClick={inspect}>Refresh selected month</button></CalmDisclosure>
       </Evidence>
-      <div aria-busy={!detail && !error}><ForecastProgress pending={!detail && !error} label="Loading this month’s breakdown…" /></div>
+      {!detail && !error && <ForecastChartPending title={mode === "paycheck" ? "Where modeled income goes" : "Monthly cash uses"} />}
       {error && <><p role="alert">{error}</p><button type="button" onClick={inspect}>Retry selected month</button><button type="button" onClick={setup}>Review forecast setup</button></>}
       {detail && <>
         {mode === "paycheck" && <>

@@ -90,6 +90,17 @@ describe("U1B exact chart presentation", () => {
     expect(html).toContain("Incomplete");
     expect(html).toContain("No observed history loaded");
     expect(html).not.toContain("2026-03-01");
+    expect(html).toContain("Partial coverage · gaps are unavailable.");
+    expect(html).not.toContain("Incomplete forecast");
+    expect(html).not.toContain("Projected · USD");
+  });
+  it("keeps the cash account qualification only in its own collapsed details", () => {
+    const html = render(source());
+    const title = html.indexOf("<figcaption>");
+    const details = html.indexOf('<details class="calm-disclosure cash-chart-details');
+    expect(html.slice(title, details)).not.toContain("(Including cash in investment accounts)");
+    expect(html.slice(details)).toContain("(Including cash in investment accounts)");
+    expect(html.slice(title, html.indexOf('class="chart"', title))).not.toContain("<p");
   });
   it("shows unavailable metric values without substituting zero or hiding supported income", () => {
     const html = render(source({ missing: true }));

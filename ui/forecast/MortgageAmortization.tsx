@@ -14,7 +14,6 @@ export function LiabilityBalanceOutlook({ data, selectedStart, selectMonth }: {
   return <section className="liability-balance-outlook" aria-label="Household liability balance outlook" data-evidence-state={data.status}>
     <h2>Household liability balance outlook</h2>
     <figure aria-label="Modeled household liability balances">
-      <figcaption>Ending liability balances · {data.rows[0]!.start.slice(0, 10)} to {data.rows.at(-1)!.end.slice(0, 10)} (exclusive)</figcaption>
       <div className="mortgage-columns">{data.rows.map((row, index) => <button key={row.start} type="button" className="mortgage-month" aria-pressed={row.start === selected.start}
         aria-label={`${row.start.slice(0, 7)}: ${row.supported ? `ending household liabilities ${formatExactMoney(row.amount, row.currency)}` : "liability forecast incomplete"}`} onClick={() => { selectMonth(row.start); setPreview(row.start); }}
         onPointerEnter={event => { if (event.pointerType !== "touch") setPreview(row.start); }} onPointerLeave={() => setPreview(null)} onFocus={() => setPreview(row.start)} onBlur={() => setPreview(null)}>
@@ -27,6 +26,7 @@ export function LiabilityBalanceOutlook({ data, selectedStart, selectMonth }: {
       {data.rows.map(row => <option key={row.start} value={row.start}>{row.start.slice(0, 10)} → {row.end.slice(0, 10)} (exclusive)</option>)}
     </select></label>
     <CashChartDetails title="Household liability balance outlook">
+    <p>Ending liability balances · {data.rows[0]!.start.slice(0, 10)} to {data.rows.at(-1)!.end.slice(0, 10)} (exclusive)</p>
     <p>Reconciled household forecast · all modeled liabilities, including supported nonmortgage balances. Unsupported debt is not projected from mortgage paydown.</p>
     <p>Modeled opening balance at {data.opening.at.slice(0, 10)}: {data.opening.supported ? formatExactMoney(data.opening.amount, data.opening.currency) : "Unavailable · incomplete source coverage"}.</p>
     <p role="status">{selected.supported ? `Ending modeled household liabilities at ${selected.end.slice(0, 10)}: ${formatExactMoney(selected.amount, selected.currency)}.` : "Selected liability balance is incomplete; no supported balance bar is shown."}</p>
@@ -48,9 +48,7 @@ export function MortgageAmortization({ window, selectedStart, selectMonth, loanN
   const [preview, setPreview] = React.useState<string | null>(null);
   return <section className="mortgage-amortization" aria-label="Mortgage amortization" data-evidence-state={window.status}>
     <h2>{loanName} · mortgage paydown</h2>
-    {window.rows.some(row => /unfunded|deferred|contract_default|partially_satisfied/.test(`${row.funding} ${row.extraFunding}`)) && <p role="status">Funding limits · some modeled payments in this window were not fully funded. Review exact payment sources in Chart Details.</p>}
     <figure aria-label={`${loanName} monthly cash paid`}>
-      <figcaption>Cash actually paid in the modeled forecast · {window.start.slice(0, 10)} to {window.end.slice(0, 10)} (exclusive)</figcaption>
       <div className="mortgage-columns">{window.rows.map((row, index) => <button key={row.start} type="button" className="mortgage-month" aria-pressed={row.start === selected.start}
         aria-label={`${row.start.slice(0, 7)}: ${[row.interestPaid, row.scheduledPrincipalPaid, row.extraPrincipalPaid].flatMap((value, index) => hidden.includes(index) ? [] : [`${series[index]} ${formatExactMoney(value, row.currency)}`]).join(", ") || "All series hidden"}`}
         onClick={() => { selectMonth(row.start); setPreview(row.start); }} onPointerEnter={event => { if (event.pointerType !== "touch") setPreview(row.start); }} onPointerLeave={() => setPreview(null)} onFocus={() => setPreview(row.start)} onBlur={() => setPreview(null)}>
@@ -59,6 +57,7 @@ export function MortgageAmortization({ window, selectedStart, selectMonth, loanN
         {preview === row.start && hidden.length < series.length && <span className="chart-compact-readout mortgage-hover" aria-hidden="true">{row.start.slice(0, 7)} · projected{!row.reconciled && " · partial"}{[row.interestPaid, row.scheduledPrincipalPaid, row.extraPrincipalPaid].map((value, category) => !hidden.includes(category) && <span key={category}>{series[category]}: {compactChartValue({ amount: value, currency: row.currency, status: "complete", traceIds: [] })}</span>)}</span>}
       </button>)}</div>
     </figure>
+    {window.rows.some(row => /unfunded|deferred|contract_default|partially_satisfied/.test(`${row.funding} ${row.extraFunding}`)) && <p role="status">Funding limits · some modeled payments in this window were not fully funded. Review exact payment sources in Chart Details.</p>}
     <div className="chart-legend" role="group" aria-label="Mortgage cash paid legend">{series.map((label, index) => <button type="button" key={label} aria-pressed={!hidden.includes(index)} onClick={() => setHidden(current => current.includes(index) ? current.filter(value => value !== index) : [...current, index])}><span className={`mortgage-series-${index}`} aria-hidden="true" />{label}</button>)}</div>
     {hidden.length === series.length && <p role="status">All series hidden. Exact payments remain in Chart Details.</p>}
     <label>Selected mortgage month<select aria-label="Selected mortgage month" value={selected.start} onChange={event => selectMonth(event.target.value)}>
@@ -66,6 +65,7 @@ export function MortgageAmortization({ window, selectedStart, selectMonth, loanN
     </select></label>
     {!selected.reconciled && <p role="status">Partial principal coverage · a payoff, replacement or unmatched principal movement prevents a paid-only principal reconciliation. Totals across this boundary are unavailable.</p>}
     <CashChartDetails title={`${loanName} mortgage paydown`}>
+    <p>Cash actually paid in the modeled forecast · {window.start.slice(0, 10)} to {window.end.slice(0, 10)} (exclusive)</p>
     <p>Modeled cash paid · {selected.currency}. Principal repays debt; interest is expense.</p>
     <p className="mortgage-readout" role="status">{selected.start.slice(0, 7)} · Interest paid {amount(selected.interestPaid)} · Scheduled principal paid {amount(selected.scheduledPrincipalPaid)} · Extra principal paid {amount(selected.extraPrincipalPaid)}</p>
     <dl className="mortgage-summary">
