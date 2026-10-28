@@ -239,7 +239,7 @@ describe("Cash signed bar presentation from selector evidence", () => {
       const annual = selectForecastChartData(source, { granularity: "annual" }).points[0]!;
       expect(annual.metrics.totalModeledCashChange.amount).toBe(decimal(change).times(decimal(String(count))).toString());
       expect(annual.metrics.totalModeledCashChange.status).toBe(count === 12 ? "complete" : "incomplete");
-      expect(cashChangeAppearance(annual)).toMatchObject({ fill: color, stroke: color, fillOpacity: count === 12 ? 1 : 0.4, "data-direction": direction });
+      expect(cashChangeAppearance(annual)).toMatchObject({ fill: color, stroke: color, fillOpacity: count === 12 ? 1 : 0.5, strokeOpacity: count === 12 ? 1 : 0.5, "data-direction": direction });
       expect(cashChangeAppearance(annual)["aria-label"]).toContain(count === 12 ? "2027-01-01" : "partial year, 3 months");
       const monthly = selectForecastChartData(source).points[0]!;
       expect(cashChangeAppearance(monthly)).toMatchObject({ fill: color, fillOpacity: 1, "data-direction": direction });
@@ -251,6 +251,17 @@ describe("Cash signed bar presentation from selector evidence", () => {
 });
 
 describe("U1B-C partial cash comparison", () => {
+  it.each([undefined, "0", "20"])("does not treat withholding %s or a positive remainder as verified discretionary income", withholdingAmount => {
+    const detail = evidence({ withholdingAmount, withholding: withholdingAmount === undefined ? "not_modeled" : "posted" });
+    const html = render(detail);
+    expect(html).toContain("Discretionary Income — unavailable</p>");
+    expect(html).toContain("Income, withholding and funding are not fully reconciled");
+    expect(html).toContain("Unverified remainder");
+    expect(html).toContain("Unverified comparison remainder · not disposable income");
+    expect(html).not.toContain("Unreconciled arithmetic difference");
+    expect(html).toContain("Not verified leftover income");
+    expect(html).not.toContain("<strong>Discretionary Income</strong>");
+  });
   it("sorts exact amounts beyond binary precision, breaks ties by stable identity, and preserves input", () => {
     const detail = evidence({ currency: "KWD", denominator: "9007199254741000", totalUses: "9007199254740993.003", unallocated: "6.997",
       categories: [category("B", "0.001"), category("C", "9007199254740993.001"), category("A", "0.001"), category("Zero", "0")] });
@@ -266,8 +277,8 @@ describe("U1B-C partial cash comparison", () => {
   it("keeps the larger unreconciled difference after all known categories and unknown withholding unquantified", () => {
     const html = render();
     expect(html.indexOf('title="Large:')).toBeLessThan(html.indexOf('title="Small:'));
-    expect(html.indexOf('title="Small:')).toBeLessThan(html.indexOf('title="Unreconciled arithmetic difference:'));
-    expect(html).toContain("not disposable or unspent earnings");
+    expect(html.indexOf('title="Small:')).toBeLessThan(html.indexOf('title="Unverified remainder:'));
+    expect(html).toContain("not verified leftover income");
     expect(html).toContain("<th scope=\"row\">Payroll withholding</th><td>Unknown · not modeled</td>");
     expect(html).not.toContain("paycheck-tax");
     expect(html).toContain("Review tax coverage &amp; setup");

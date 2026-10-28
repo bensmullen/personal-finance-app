@@ -9,7 +9,7 @@ import type { ForecastWorkerResponse } from "../src/application/interactiveForec
 import { Money, USD } from "../src/values/index.js";
 import { formatExactMoney } from "../ui/entityPresentation.js";
 
-const cashTitle = "Total modeled cash (including cash in investment accounts)";
+const cashTitle = "Total Cash Balance";
 const wealthTitle = "Household financial outlook chart";
 const statementTitle = "Modeled statement income versus expenses";
 const pageErrors = new WeakMap<Page, string[]>();
@@ -101,13 +101,41 @@ test.afterEach(async ({ page }, testInfo) => {
     })));
     await testInfo.attach("chart-control-dom", { body: JSON.stringify(dom, null, 2), contentType: "application/json" });
     await testInfo.attach("chart-tooltip-containment", {
-      body: JSON.stringify(await page.locator(".financial-chart .chart-readout").evaluateAll(readouts => readouts.map(readout => {
+      body: JSON.stringify(await page.locator(".financial-chart .chart-compact-readout").evaluateAll(readouts => readouts.map(readout => {
         const bounds = (element: Element | null) => element?.getBoundingClientRect().toJSON();
         return { readout: bounds(readout), wrapper: bounds(readout.parentElement),
           chart: bounds(readout.closest(".chart")), viewport: innerWidth,
           documentWidth: document.documentElement.scrollWidth,
           visibility: getComputedStyle(readout.parentElement!).visibility };
       })), null, 2), contentType: "application/json",
+    });
+    await testInfo.attach("chart-keyboard-selection", {
+      body: JSON.stringify(await page.locator(".financial-chart").evaluateAll(charts => charts.map(chart => ({
+        focused: chart.contains(document.activeElement) ? document.activeElement?.getAttribute("role") ?? document.activeElement?.tagName : null,
+        period: chart.querySelector<HTMLSelectElement>('select[id$="-period"]')?.value,
+        readout: chart.querySelector(".chart-compact-readout")?.textContent ?? null,
+        tooltipVisibility: chart.querySelector(".recharts-tooltip-wrapper") ? getComputedStyle(chart.querySelector(".recharts-tooltip-wrapper")!).visibility : null,
+        series: Array.from(chart.querySelectorAll(".chart-legend button")).map(button => ({ label: button.textContent, pressed: button.getAttribute("aria-pressed") })),
+        lines: Array.from(chart.querySelectorAll(".recharts-line")).map(line => line.getAttribute("class")),
+        bars: Array.from(chart.querySelectorAll(".recharts-bar")).map(bar => bar.getAttribute("class")),
+      }))), null, 2), contentType: "application/json",
+    });
+    await testInfo.attach("chart-keyboard-events", {
+      body: JSON.stringify(await page.evaluate(() => (window as unknown as { __chartKeys?: unknown[] }).__chartKeys ?? []), null, 2), contentType: "application/json",
+    });
+    await testInfo.attach("chart-horizontal-overflow", {
+      body: JSON.stringify(await page.locator(".financial-charts").evaluateAll(containers => containers.flatMap(container =>
+        Array.from(container.querySelectorAll("*")).filter(element => {
+          const box = element.getBoundingClientRect();
+          // Table cells may extend within their own accessible scroll region.
+          return box.width > 0 && (box.right > innerWidth || box.left < 0) && !element.closest(".table-scroll");
+        }).slice(0, 24).map(element => ({
+          tag: element.tagName, class: element.getAttribute("class"),
+          bounds: element.getBoundingClientRect().toJSON(),
+          parent: element.parentElement?.getAttribute("class"),
+          parentBounds: element.parentElement?.getBoundingClientRect().toJSON(),
+          minWidth: getComputedStyle(element).minWidth, width: getComputedStyle(element).width,
+        })))), null, 2), contentType: "application/json",
     });
     const charts = page.locator(".financial-charts");
     if (await charts.count() === 1) await testInfo.attach("chart-accessibility", {
@@ -117,8 +145,68 @@ test.afterEach(async ({ page }, testInfo) => {
   expect(pageErrors.get(page)).toEqual([]);
 });
 
-const grouping = (chart: Locator) => chart.getByRole("combobox", { name: "Period grouping", exact: true });
+const grouping = (chart: Locator) => chart.getByRole("combobox", { name: "Period", exact: true });
 const wealthChart = (page: Page) => page.getByRole("figure", { name: wealthTitle, exact: true });
+
+test.describe("Shared charts with touch and enlarged text", () => {
+  test.use({ hasTouch: true });
+  for (const width of [390, 1440]) for (const period of ["annual", "monthly"]) test(`Cash compact tap selection and local exact details at ${width}px with 200% text · ${period}`, async ({ page }, info) => {
+    await boundedGolden(page, width);
+    await clickFinancialDestination(page, "Cash");
+    await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
+    const cash = page.getByRole("figure", { name: cashTitle, exact: true });
+    const details = cash.locator(".cash-chart-details");
+    await expect(details).not.toHaveAttribute("open");
+    await grouping(cash).selectOption(period);
+    const graph = cash.getByRole("application");
+    await graph.scrollIntoViewIfNeeded();
+    const box = await graph.boundingBox();
+    const readout = cash.locator(".chart-compact-readout");
+    const assertContained = async () => {
+      await expect(readout).toBeVisible();
+      expect(await readout.evaluate(element => {
+        const box = element.getBoundingClientRect();
+        const chart = element.closest(".chart")!.getBoundingClientRect();
+        const wrapper = element.closest(".chart-keyboard-readout, .recharts-tooltip-wrapper")!.getBoundingClientRect();
+        return box.left >= chart.left && box.right <= chart.right && box.left >= 0 && box.right <= innerWidth
+          && box.top >= chart.top && box.bottom <= chart.bottom
+          && wrapper.left >= chart.left && wrapper.right <= chart.right && element.scrollWidth <= element.clientWidth;
+      })).toBe(true);
+    };
+    const axis = await cash.locator(".recharts-xAxis .recharts-cartesian-axis-line").boundingBox();
+    for (const fraction of [0.01, 0.99]) {
+      await page.touchscreen.tap(axis!.x + axis!.width * fraction, box!.y + box!.height / 2);
+      await assertContained();
+    }
+    await info.attach(`shared-chart-touch-${width}-${period}-200-percent`, { body: await graph.screenshot({ animations: "disabled" }), contentType: "image/png" });
+    await expect(cash.locator(".recharts-line-dots circle, .recharts-active-dot")).toHaveCount(0);
+    await details.locator(":scope > summary").tap();
+    await expect(cash.locator(".chart-selected")).toBeVisible();
+    await cash.locator(".chart-table > summary").tap();
+    await expect(cash.getByRole("table")).toBeVisible();
+    await cash.locator(".chart-table").scrollIntoViewIfNeeded();
+    await expect(readout).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await graph.scrollIntoViewIfNeeded();
+    const reentered = await graph.boundingBox();
+    const reenteredAxis = await cash.locator(".recharts-xAxis .recharts-cartesian-axis-line").boundingBox();
+    for (const fraction of [0.01, 0.99]) {
+      await graph.hover({ position: { x: reenteredAxis!.x - reentered!.x + reenteredAxis!.width * fraction, y: reentered!.height / 2 } });
+      await assertContained();
+    }
+    await page.mouse.move(0, 0);
+    await expect(readout).toHaveCount(0);
+    await graph.focus(); await page.keyboard.press("Home");
+    await assertContained();
+    await page.keyboard.press("End"); await assertContained();
+    await grouping(cash).focus();
+    await expect(readout).toHaveCount(0);
+    await cash.locator(".chart-table > summary").tap();
+    await cash.locator(".chart-table > summary").tap();
+    await expect(cash.getByRole("table")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+});
 
 // Observe real Worker responses without delaying, replacing or modifying them.
 // Match both identities on a miss. An explicit cache hit reuses a previous
@@ -160,17 +248,27 @@ const expectedValue = (value: ForecastChartValue, signed = false) => {
   return `${signed ? direction < 0 ? "Decrease · " : direction > 0 ? "Increase · +" : "No change · " : ""}${formatExactMoney(value.amount, value.currency)}${value.status === "incomplete" ? " · Incomplete" : ""}${value.closingAt ? ` · closing ${value.closingAt.slice(0, 10)}` : ""}`;
 };
 
+const expectedCompact = (value: ForecastChartValue, signed = false) => {
+  if (value.amount === null || value.status === "unavailable") return "Unavailable";
+  const number = Number(value.amount); // Display expectation only; exact source assertions remain below.
+  const magnitude = Math.abs(number);
+  const scale = magnitude >= 1e9 ? 1e9 : magnitude >= 1e6 ? 1e6 : magnitude >= 1e3 ? 1e3 : 1;
+  const suffix = scale === 1e9 ? "B" : scale === 1e6 ? "M" : scale === 1e3 ? "k" : "";
+  return `${number < 0 ? "−" : signed && number > 0 ? "+" : ""}$${(magnitude / scale).toFixed(2).replace(/\.00$/, "")}${suffix}${value.status === "incomplete" ? " · incomplete" : ""}`;
+};
+
 async function openOverview(page: Page) {
   await clickFinancialDestination(page, "Overview");
   await expect(page.getByRole("heading", { name: "Know where you stand.", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Overview", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(wealthChart(page)).toBeVisible();
-  const controls = wealthChart(page).locator(".chart-control-details");
+  const controls = wealthChart(page).locator(".cash-chart-details");
   if (await controls.getAttribute("open") === null) await controls.locator(":scope > summary").click();
 }
 
-async function runAppliedBaseline(page: Page) {
+async function runAppliedBaseline(page: Page, onPending?: () => Promise<void>) {
   await page.getByRole("button", { name: "Apply setup & run forecast", exact: true }).click();
+  await onPending?.();
   const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
   const priorRequest = await status.getAttribute("data-request-id");
   await showStatusActions(page);
@@ -182,8 +280,8 @@ async function runAppliedBaseline(page: Page) {
   return status;
 }
 
-async function boundedGolden(page: Page, width: number, monthlySpending?: string) {
-  await page.setViewportSize({ width, height: 900 });
+async function boundedGolden(page: Page, width: number, monthlySpending?: string, onPending?: () => Promise<void>) {
+  await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
   await page.goto("/");
   await page.getByRole("button", { name: "Use synthetic example", exact: true }).click();
   // Geometry and signed-cash regressions retain the original short NY fixture.
@@ -225,7 +323,7 @@ async function boundedGolden(page: Page, width: number, monthlySpending?: string
   }
   for (const checkbox of await taxes.getByRole("checkbox").all()) await checkbox.check();
   await page.locator('[data-repair="lawScenario"]').check();
-  const status = await runAppliedBaseline(page);
+  const status = await runAppliedBaseline(page, onPending);
   await openOverview(page);
   const charts = page.locator(".financial-charts");
   await expect(charts).toBeVisible();
@@ -249,6 +347,97 @@ async function exportedBytes(page: Page) {
 }
 
 for (const width of [1440, 390]) {
+  test(`Shared chart pending, completion and worker failure at ${width}px`, async ({ page }, info) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.addInitScript(() => {
+      const control = { hold: true, queued: [] as (() => void)[], fail: false };
+      Object.assign(window, { __chartDelivery: control });
+      const NativeWorker = window.Worker;
+      window.Worker = class extends NativeWorker {
+        constructor(url: string | URL, options?: WorkerOptions) {
+          super(url, options);
+          this.addEventListener("message", (event: MessageEvent<ForecastWorkerResponse>) => {
+            if (!control.hold || event.data.operation !== "baseline_forecast" || event.data.outcome !== "result") return;
+            event.stopImmediatePropagation();
+            // Hold delivery by reference, leaving the real controller pending.
+            control.queued.push(() => control.fail
+              ? this.dispatchEvent(new ErrorEvent("error", { message: "Controlled worker transport failure", cancelable: true }))
+              : this.dispatchEvent(new MessageEvent("message", { data: event.data })));
+          });
+        }
+      };
+    });
+    const status = await boundedGolden(page, width, undefined, async () => {
+      const sourceStatus = page.locator('.forecast-status[aria-label="Household forecast status"]');
+      await expect(sourceStatus).toHaveAttribute("data-pending", "true");
+      for (const destination of ["Overview", "Cash", "Debt"] as const) {
+        await clickFinancialDestination(page, destination);
+        // Count the currently selected chart owner, not hidden or sibling page frames.
+        const frames = destination === "Debt"
+          ? page.getByRole("region", { name: "Debt outlook", exact: true }).locator(".chart-pending")
+          : page.locator("#main-content .chart-pending");
+        await expect(frames).toHaveCount(destination === "Overview" ? 1 : destination === "Cash" ? 3 : 2);
+        for (const frame of await frames.all()) {
+          await expect(frame).toHaveText("Calculating Forecast");
+          await expect(frame.locator(".status-pending")).toHaveCount(1);
+          await expect(frame.locator("svg, .chart-compact-readout")).toHaveCount(0);
+        }
+      }
+      await page.evaluate(() => { const state = (window as unknown as { __chartDelivery: { hold: boolean; queued: (() => void)[] } }).__chartDelivery; state.hold = false; state.queued.splice(0).forEach(deliver => deliver()); });
+    });
+    const chart = wealthChart(page);
+    const toggle = chart.getByRole("button", { name: "Total assets", exact: true });
+    // Each committed salary edit changes the economic fingerprint and starts
+    // real worker computation. Re-submitting unchanged setup can hit the cache.
+    for (const [index, failure] of [false, true, false].entries()) {
+      const priorRequest = await status.getAttribute("data-request-id");
+      const priorFingerprint = await status.getAttribute("data-fingerprint");
+      const retainedFingerprint = await chart.locator(".chart-basis code").textContent();
+      const retainedValues = await chart.locator(".chart-selected dd").allTextContents();
+      await page.evaluate(fail => { const state = (window as unknown as { __chartDelivery: { hold: boolean; fail: boolean } }).__chartDelivery; state.hold = true; state.fail = fail; }, failure);
+      await navigateOwner(page, "Money", "Income");
+      await page.getByRole("button", { name: /Example salary/ }).click();
+      const editor = page.getByRole("dialog", { name: "Edit Income", exact: true });
+      await editor.getByLabel("Amount", { exact: true }).fill(String(10000 + index * 1000));
+      await editor.getByRole("button", { name: "Save changes", exact: true }).click();
+      await expect(editor).toHaveCount(0);
+      await expect(status).toHaveAttribute("data-pending", "true");
+      await expect(status).not.toHaveAttribute("data-request-id", priorRequest!);
+      await expect(status).not.toHaveAttribute("data-fingerprint", priorFingerprint!);
+      await openOverview(page);
+      await toggle.click();
+      await expect(chart).toHaveAttribute("aria-busy", "true");
+      await expect(chart.locator(".chart-basis code")).toHaveText(retainedFingerprint!);
+      await expect(chart.locator(".chart-selected dd")).toHaveText(retainedValues);
+      await expect(chart.locator(".forecast-progress")).toHaveCount(1);
+      await expect(chart.locator(".chart > .forecast-progress")).toHaveText("Calculating Forecast");
+      await expect(chart.locator(".status-pending")).toHaveCSS("animation-name", "none");
+      await expect(chart.locator("svg.recharts-surface, .chart-crosshair, .chart-compact-readout")).toHaveCount(0);
+      const frame = await chart.locator(".chart").boundingBox();
+      const progress = await chart.locator(".forecast-progress").boundingBox();
+      expect(Math.abs(progress!.x + progress!.width / 2 - frame!.x - frame!.width / 2)).toBeLessThan(2);
+      expect(Math.abs(progress!.y + progress!.height / 2 - frame!.y - frame!.height / 2)).toBeLessThan(2);
+      const path = info.outputPath(`shared-charts-${index}-${failure ? "failure-pending" : "updating"}-${width}.png`);
+      await chart.screenshot({ path, animations: "disabled" });
+      await info.attach(`shared-chart-pending-${index}-${failure}-${width}`, { path, contentType: "image/png" });
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __chartDelivery: { queued: unknown[] } }).__chartDelivery.queued.length)).toBeGreaterThan(0);
+      await page.evaluate(() => { const state = (window as unknown as { __chartDelivery: { hold: boolean; queued: (() => void)[] } }).__chartDelivery; state.hold = false; state.queued.splice(0).forEach(deliver => deliver()); });
+      await expect(status).toHaveAttribute("data-pending", "false");
+      await expect(chart).toHaveAttribute("aria-busy", "false");
+      await expect(chart.locator(".forecast-progress")).toHaveCount(0);
+      await expect(chart.locator("svg.recharts-surface")).toBeVisible();
+      await expect(toggle).toHaveAttribute("aria-pressed", "false");
+      if (failure) {
+        await expect(status).toHaveAttribute("data-lifecycle", "error");
+        await expect(chart.locator(".chart-status")).toContainText("Out of date retained result");
+      } else {
+        await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
+        await expect(chart.locator("figcaption")).not.toContainText("out of date");
+        await expect(chart.locator(".chart-basis code")).toHaveText((await status.getAttribute("data-fingerprint"))!);
+      }
+    }
+  });
+
   test(`Cash exact tooltips stay inside the chart on hover and keyboard at ${width}px`, async ({ page }) => {
     await observeBaseline(page);
     const status = await boundedGolden(page, width);
@@ -256,33 +445,27 @@ for (const width of [1440, 390]) {
     await clickFinancialDestination(page, "Cash");
     const cash = page.getByRole("figure", { name: cashTitle, exact: true });
     const graph = cash.getByRole("application");
-    const readout = cash.locator(".chart-readout");
+    const readout = cash.locator(".chart-compact-readout");
     for (const granularity of ["annual", "monthly"] as const) {
       await grouping(cash).selectOption(granularity);
       const points = selectForecastChartData(source, { granularity }).points;
       const assertReadout = async () => {
         await expect(readout).toBeVisible();
-        await expect(readout).toContainText(`${granularity === "annual" ? "Annual" : "Monthly"} modeled period [start, end)`);
-        const label = await readout.locator("strong").textContent();
-        const point = points.find(point => label === `Projected ${point.periodStart.slice(0, 10)} → ${point.periodEnd.slice(0, 10)} (exclusive)${point.coverage === "partial_year" ? ` · partial year, ${point.coveredMonthCount} ${point.coveredMonthCount === 1 ? "month" : "months"}` : ""}`);
+        const label = await readout.locator("small").textContent();
+        const point = points.find(point => label?.startsWith(point.periodStart.slice(0, granularity === "annual" ? 4 : 7)));
         expect(point, "Tooltip must identify a real period with its coverage qualification").toBeDefined();
         if (!point) throw new Error("Tooltip period missing from the applied source");
-        await expect(readout.locator("dd")).toHaveText([
-          expectedValue(point.metrics.totalModeledCash), expectedValue(point.metrics.totalModeledCashChange, true),
+        await expect(readout.locator(":scope > div")).toHaveText([
+          `Total: ${expectedCompact(point.metrics.totalModeledCash)}`, `Change: ${expectedCompact(point.metrics.totalModeledCashChange, true)}`,
         ]);
-        await expect(readout).toContainText(`${point.coveredMonthCount} covered ${point.coveredMonthCount === 1 ? "source month" : "source months"}.`);
-        await expect(readout.locator("dt")).toHaveText(["Cash balance", "Signed change"]);
-        for (const label of await readout.locator("dt").all()) {
-          expect((await label.boundingBox())!.width).toBeGreaterThan(100);
-          expect(await label.evaluate(element => getComputedStyle(element).wordBreak)).toBe("normal");
-          expect(await label.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
-        }
+        if (point.coverage === "partial_year") await expect(readout).toContainText("partial");
+        await expect(cash.locator(".recharts-line-dots circle, .recharts-active-dot")).toHaveCount(0);
         // Exact containment is the product requirement. Keep page overflow
         // strict and also detect clipped text inside an otherwise fitting box.
         expect(await readout.evaluate(element => {
           const box = element.getBoundingClientRect();
           const chart = element.closest(".chart")!.getBoundingClientRect();
-          return { insideChart: box.left >= chart.left && box.right <= chart.right,
+          return { insideChart: box.left >= chart.left && box.right <= chart.right && box.top >= chart.top && box.bottom <= chart.bottom,
             insideViewport: box.left >= 0 && box.right <= innerWidth,
             contentFits: element.scrollWidth <= element.clientWidth,
             pageFits: document.documentElement.scrollWidth <= innerWidth };
@@ -306,6 +489,94 @@ for (const width of [1440, 390]) {
     }
   });
 
+  for (const granularity of ["annual", "monthly"] as const) test(`Cash keyboard selection survives series toggles · ${granularity} at ${width}px`, async ({ page }, info) => {
+    await observeBaseline(page);
+    const status = await boundedGolden(page, width);
+    const source = await appliedSource(page, status);
+    const points = selectForecastChartData(source, { granularity }).points;
+    await clickFinancialDestination(page, "Cash");
+    const cash = page.getByRole("figure", { name: cashTitle, exact: true });
+    await grouping(cash).selectOption(granularity);
+    const graph = cash.getByRole("application");
+    const change = cash.getByRole("button", { name: "Cash Balance Change", exact: true });
+    const total = cash.getByRole("button", { name: "Total Cash Balance", exact: true });
+    const readout = cash.locator(".chart-compact-readout");
+    const assertSelection = async (withChange: boolean) => {
+      await expect(graph).toBeFocused();
+      await expect(readout).toBeVisible(); // Absence cannot satisfy hidden-series assertions.
+      const label = await readout.locator("small").textContent();
+      const point = points.find(point => label?.startsWith(point.periodStart.slice(0, granularity === "annual" ? 4 : 7)));
+      if (!point) throw new Error(`Keyboard selected a period absent from the applied source: ${label}`);
+      await expect(readout.locator("small")).toHaveText(`${point.periodStart.slice(0, granularity === "annual" ? 4 : 7)} · projected${point.coverage === "partial_year" ? " · partial" : ""}`);
+      await expect(readout.locator(":scope > div")).toHaveText([
+        `Total: ${expectedCompact(point.metrics.totalModeledCash)}`,
+        ...(withChange ? [`Change: ${expectedCompact(point.metrics.totalModeledCashChange, true)}`] : []),
+      ]);
+      await expect(total).toHaveAttribute("aria-pressed", "true");
+      await expect(change).toHaveAttribute("aria-pressed", String(withChange));
+      // Recharts propagates this series class to its group AND individual SVG
+      // rectangles. The old substring selector counted 2 groups + 1 annual
+      // rectangle (or +3 monthly rectangles), not 2 distinct series.
+      const changeGroups = cash.locator(
+        ".recharts-bar.chart-bar-totalModeledCashChange-complete, " +
+        ".recharts-bar.chart-bar-totalModeledCashChange-incomplete",
+      );
+      await expect(changeGroups).toHaveCount(withChange ? 2 : 0);
+      const geometry = await barGeometry(cash);
+      const renderedChangeBars = geometry.bars.filter(bar =>
+        bar.series.split(" ").some(name => name.startsWith("chart-bar-totalModeledCashChange-")));
+      // Count only actual nonzero, source-supported bar geometry: hidden series
+      // must lose its bars, while toggling it back restores every sourced bar.
+      const expectedBars = points.filter(point => {
+        const value = point.metrics.totalModeledCashChange;
+        return (value.status === "complete" || value.status === "incomplete") &&
+          value.amount !== null && Money.parse(value.amount, USD).compare(Money.zero(USD)) !== 0;
+      }).length;
+      expect(renderedChangeBars).toHaveLength(withChange ? expectedBars : 0);
+      for (const capability of ["complete", "incomplete"] as const) {
+        const supported = points.filter(point => {
+          const value = point.metrics.totalModeledCashChange;
+          return value.status === capability && value.amount !== null &&
+            Money.parse(value.amount, USD).compare(Money.zero(USD)) !== 0;
+        }).length;
+        expect(renderedChangeBars.filter(bar =>
+          bar.series.split(" ").includes(`chart-bar-totalModeledCashChange-${capability}`)))
+          .toHaveLength(withChange ? supported : 0);
+      }
+      await expect(cash.locator(".recharts-line-dots circle, .recharts-active-dot")).toHaveCount(0);
+    };
+    await page.evaluate(() => {
+      const state = window as unknown as { __chartKeys: unknown[] };
+      state.__chartKeys = [];
+      for (const type of ["focusin", "keydown"]) document.addEventListener(type, event => {
+        const target = event.target as Element | null;
+        const chart = target?.closest(".financial-chart");
+        if (!chart) return;
+        state.__chartKeys.push({ type, key: event instanceof KeyboardEvent ? event.key : null,
+          role: target?.getAttribute("role"), readout: chart.querySelector(".chart-compact-readout")?.textContent ?? null,
+          pressed: Array.from(chart.querySelectorAll(".chart-legend button")).map(button => button.getAttribute("aria-pressed")) });
+        state.__chartKeys = state.__chartKeys.slice(-16);
+      }, true);
+    });
+    // No preceding hover: focus, singleton payloads and legend changes stand alone.
+    await graph.scrollIntoViewIfNeeded();
+    await graph.focus(); await page.keyboard.press("ArrowRight");
+    await assertSelection(true);
+    await change.click();
+    await graph.scrollIntoViewIfNeeded();
+    await graph.focus(); await page.keyboard.press("ArrowRight");
+    await assertSelection(false);
+    await info.attach(`cash-keyboard-total-only-${granularity}-${width}`, { body: await graph.screenshot({ animations: "disabled" }), contentType: "image/png" });
+    await change.click();
+    await graph.scrollIntoViewIfNeeded();
+    await graph.focus(); await page.keyboard.press("ArrowLeft");
+    await assertSelection(true);
+    await page.keyboard.press("Home");
+    await expect(readout.locator("small")).toContainText(points[0]!.periodStart.slice(0, granularity === "annual" ? 4 : 7));
+    await page.keyboard.press("End");
+    await expect(readout.locator("small")).toContainText(points.at(-1)!.periodStart.slice(0, granularity === "annual" ? 4 : 7));
+  });
+
   // Each journey owns a fresh three-month run; a V1 control failure cannot
   // prevent Cash, export/stale recovery or H04 coverage from executing in CI.
   test(`Overview V1 visible controls, keyboard and exact periods at ${width}px`, async ({ page }) => {
@@ -313,7 +584,7 @@ for (const width of [1440, 390]) {
     const wealth = wealthChart(page);
     await expect(grouping(wealth)).toBeVisible();
     await expect(grouping(wealth)).toHaveValue("annual");
-    await expect(wealth.getByLabel("Period grouping", { exact: true })).toHaveValue("annual");
+    await expect(wealth.getByLabel("Period", { exact: true })).toHaveValue("annual");
     await grouping(wealth).focus();
     await expect(grouping(wealth)).toBeFocused();
     await expect(wealth.getByRole("group", { name: "Assets, liabilities and net worth legend" }).getByRole("button")).toHaveCount(3);
@@ -325,9 +596,9 @@ for (const width of [1440, 390]) {
     await graph.focus();
     await expect(graph).toBeFocused();
     await page.keyboard.press("ArrowRight");
-    await expect(wealth.locator(".chart-readout")).toContainText("Annual modeled period [start, end)");
-    await expect(wealth.locator(".chart-readout")).toContainText("Projected 2026-01-01 → 2026-04-01 (exclusive) · partial year, 3 months");
-    await expect(wealth.locator(".chart-readout")).not.toContainText("Month starting");
+    await expect(wealth.locator(".chart-compact-readout")).toContainText("2026 · projected · partial");
+    await expect(wealth.locator(".chart-selected")).toContainText("Projected 2026-01-01 → 2026-04-01 (exclusive) · partial year, 3 months");
+    await expect(wealth.locator(".chart-compact-readout")).not.toContainText("Month starting");
     const request = await status.getAttribute("data-request-id");
     await grouping(wealth).selectOption("monthly");
     const range = wealth.getByRole("combobox", { name: "Monthly range starting", exact: true });
@@ -348,7 +619,7 @@ for (const width of [1440, 390]) {
     await expect(readout).toContainText(`Projected ${selectedLabel}`);
     await graph.focus();
     await page.keyboard.press("ArrowRight");
-    await expect(wealth.locator(".chart-readout")).toContainText("Monthly modeled period [start, end)");
+    await expect(wealth.locator(".chart-compact-readout")).toContainText("projected");
     const legend = wealth.getByRole("button", { name: "Total assets", exact: true });
     await legend.focus(); await page.keyboard.press("Enter");
     await expect(legend).toHaveAttribute("aria-pressed", "false");
@@ -392,7 +663,10 @@ for (const width of [1440, 390]) {
     await expect(statements).toBeVisible();
     await expect(page.getByText(/No past account history is included/)).toHaveCount(1);
     await expect(grouping(cash)).toHaveValue("annual");
-    await expect(cash).toContainText("one USD axis");
+    await expect(cash.locator(".chart-subtitle")).toHaveCount(0);
+    await expect(cash.locator(".cash-chart-details")).toContainText("(Including cash in investment accounts)");
+    await expect(cash.locator("figcaption")).toHaveText(cashTitle);
+    await expect(cash.locator(".chart-status")).toContainText("Partial coverage");
     await expect(grouping(statements)).toHaveValue("monthly");
     await expect(statements).toContainText("not bank receipts/disbursements or disposable wages");
     await expect(cash.locator(".recharts-yAxis")).toHaveCount(1);
@@ -446,6 +720,13 @@ for (const width of [1440, 390]) {
           const positive = Money.parse(values[index]!.amount!, USD).compare(Money.zero(USD)) > 0;
           expectBarAtZero(box, statementGeometry.zero.start, positive);
         }
+        const bars = statements.locator(`.chart-bar-${key}-${capability} .recharts-rectangle`);
+        for (const bar of await bars.all()) {
+          await expect(bar).toHaveAttribute("fill", key === "modeledStatementIncome" ? "#3e5f8a" : "#9b5b2d");
+          await expect(bar).toHaveAttribute("fill-opacity", capability === "incomplete" ? "0.5" : "1");
+          await expect(bar).toHaveAttribute("stroke-opacity", capability === "incomplete" ? "0.5" : "1");
+          await expect(bar).not.toHaveAttribute("stroke-dasharray");
+        }
       }
     }
     expect(expectedBars).toBeGreaterThan(0);
@@ -481,17 +762,21 @@ for (const width of [1440, 390]) {
     const changeBars = cash.locator(".recharts-bar-rectangle .recharts-rectangle");
     for (const bar of await changeBars.all()) {
       await expect(bar).toHaveAttribute("fill", changeDirection < 0 ? "#a43d3d" : changeDirection > 0 ? "#1e6756" : "#66726d");
-      await expect(bar).toHaveAttribute("fill-opacity", "0.4");
+      await expect(bar).toHaveAttribute("fill-opacity", "0.5");
+      await expect(bar).toHaveAttribute("stroke-opacity", "0.5");
       await expect(bar).toHaveAttribute("aria-label", /partial year, 3 months/);
     }
     expect(cashGeometry.bars).toHaveLength(changeDirection === 0 ? 0 : 1);
-    const cashLegend = cash.getByRole("button", { name: "Signed cash balance change", exact: true });
+    const cashLegend = cash.getByRole("button", { name: "Cash Balance Change", exact: true });
     await cashLegend.focus(); await page.keyboard.press("Enter");
     await expect(cashLegend).toHaveAttribute("aria-pressed", "false");
     await page.keyboard.press("Enter");
     await expect(cashLegend).toHaveAttribute("aria-pressed", "true");
     await cash.getByRole("application").focus(); await page.keyboard.press("ArrowRight");
-    await expect(cash.locator(".chart-readout dd")).toHaveText(cashValues);
+    await expect(cash.locator(".chart-compact-readout > div")).toHaveText([
+      `Total: ${expectedCompact(annual.points[0]!.metrics.totalModeledCash)}`,
+      `Change: ${expectedCompact(annual.points[0]!.metrics.totalModeledCashChange, true)}`,
+    ]);
     await grouping(statements).selectOption("annual");
     await expect(statementEvidence.getByRole("table").locator("tbody tr")).toHaveCount(1);
     await expect(statementEvidence.getByRole("table")).toContainText("partial year, 3 months");
@@ -521,8 +806,8 @@ for (const width of [1440, 390]) {
     const cash = page.getByRole("figure", { name: cashTitle, exact: true });
     await expect(cash).toBeVisible();
     await grouping(cash).selectOption("monthly");
-    await cash.getByRole("button", { name: "Signed cash balance change", exact: true }).click();
-    await expect(cash.getByRole("button", { name: "Signed cash balance change", exact: true })).toHaveAttribute("aria-pressed", "false");
+    await cash.getByRole("button", { name: "Cash Balance Change", exact: true }).click();
+    await expect(cash.getByRole("button", { name: "Cash Balance Change", exact: true })).toHaveAttribute("aria-pressed", "false");
     expect(await exportedBytes(page)).toBe(before);
 
     // Block a replacement run with an invalid window, then commit a real income

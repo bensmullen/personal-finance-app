@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { canonicalId, resolveHouseholdScope } from "../src/application/compiler/shared.js";
-import { CashChartDetails, CalmAction, CalmDisclosure, CalmMetric, CalmPageHeader, CalmPanel, ContextDisclosure, SharedContextRibbon, ResponsiveContextActions, StatusIndicator, forecastContextLabel } from "./calm/CalmPresentation.js";
+import { CashChartDetails, CalmAction, CalmDisclosure, CalmMetric, CalmPageHeader, CalmPanel, ContextDisclosure, SharedContextRibbon, ResponsiveContextActions, StatusIndicator, forecastContextLabel, ForecastChartPending } from "./calm/CalmPresentation.js";
 import {
   Profiler,
   createContext,
@@ -120,6 +120,7 @@ import { InsuranceSection, InsuredLifeEvents } from "./authoring/InsuranceSectio
 import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, groupDiagnostics, isCashFlowPaymentAccount, belongsToNetWorthSection, entitySummary, formatExactMoney, percentageToRate, rateToPercentage, type NetWorthSection } from "./entityPresentation.js";
 import { calculationFingerprint } from "../src/application/interactiveForecast.js";
 import { HouseholdChart } from "./forecast/HouseholdChart.js";
+import { ForecastProgress } from "./calm/CalmPresentation.js";
 import { MonthlyMoneyPanel } from "./forecast/MonthlyMoneyPanel.js";
 import { LiabilityBalanceOutlook, MortgageAmortization } from "./forecast/MortgageAmortization.js";
 import { inspectLiabilityBalanceWindow } from "../src/application/mortgageChartData.js";
@@ -1432,7 +1433,7 @@ function ForecastStatus({ label, state, compact = false, setupChanged = false, u
   const summary = firstDiagnostic && diagnosticSummary(firstDiagnostic, diagnosticModel);
   const content = <>
     <strong>{label} · {state.pending ? "Running" : state.lifecycle === "error" ? "Failed" : state.stale || setupChanged ? "Update needed" : state.lifecycle === "completed" ? "Ready" : state.lifecycle === "incomplete" ? "Partially modeled" : state.lifecycle === "unsupported" ? "Unsupported" : state.lifecycle === "idle" ? "Needs setup" : forecastContextLabel(state)}</strong>
-    {state.pending && <span>{state.lastGoodResult ? "Recalculating" : "Running"} {compact ? "your forecast" : "deterministic forecast"}…</span>}
+    {state.pending && (ribbon ? <span>{state.lastGoodResult ? "Recalculating" : "Running"} {compact ? "your forecast" : "deterministic forecast"}…</span> : <ForecastProgress pending retained={!!state.lastGoodResult} />)}
     {(state.stale || setupChanged) && <span>Old result — inputs changed; these numbers are not current.</span>}
     {!state.pending && !state.stale && !setupChanged && state.cacheState === "hit" && <span>Current result reused</span>}
     {!compact && !state.pending && !state.stale && !setupChanged && state.lifecycle === "completed" && state.cacheState !== "hit" && <span>Current result</span>}
@@ -1464,7 +1465,7 @@ function ForecastStatus({ label, state, compact = false, setupChanged = false, u
     {coverage}
     {!ribbon && update && <CalmAction onClick={update}>Update forecast</CalmAction>}
   </>;
-  return <section className={`forecast-status ${state.stale || setupChanged ? "stale" : ""} ${compact ? "calm-status" : ""} ${ribbon ? "context-forecast" : ""}`} role="status" aria-live={ribbon ? "off" : undefined} aria-label={`${label} status`}
+  return <section className={`forecast-status ${state.stale || setupChanged ? "stale" : ""} ${compact ? "calm-status" : ""} ${ribbon ? "context-forecast" : ""}`} role="status" aria-busy={state.pending} aria-live={ribbon ? "off" : undefined} aria-label={`${label} status`}
     data-lifecycle={state.lifecycle} data-pending={state.pending} data-fingerprint={state.fingerprint} data-request-id={state.requestId}
     data-result-fingerprint={state.resultFingerprint} data-cache-state={state.cacheState}
     data-requested-start={state.resultRequest?.compiler.cashFlow?.simulationStart} data-requested-end={state.resultRequest?.compiler.cashFlow?.simulationEnd}
@@ -1494,7 +1495,7 @@ function MortgageOutlook({ draft, forecast, property = false, currency, selected
   const active = useForecastEvidence(forecast, draft, current && !!liabilityId, { operation: "mortgage_evidence", startIndex, liabilityId });
   const review = (id: string) => models.reviewTarget?.({ id, type: "Liability", objectType: "Liability", label: referenceLabel(draft, "Liability", id), editable: false });
   const setup = () => models.reviewTarget?.({ id: "", type: "Forecast setup", label: "Forecast setup", editable: false });
-  return <section className="panel section-outlook mortgage-outlook" aria-label={property ? "Property mortgage outlook" : "Debt outlook"}
+  return <section className="panel section-outlook mortgage-outlook" aria-label={property ? "Property mortgage outlook" : "Debt outlook"} aria-busy={!!models.baseline?.pending || (current && !!liabilityId && !!points.length && !active.window && !active.error)}
     data-evidence-state={!loans.length ? "unavailable" : models.baseline?.pending ? "pending" : models.baseline?.lifecycle === "error" ? "error" : models.baseline?.lifecycle === "unsupported" ? "unsupported" : !forecast ? "unavailable" : !current ? "stale" : !points.length ? "unavailable" : active?.error ? "error" : active?.window?.status ?? "loading"}>
     <p className="eyebrow">{property ? "Real Estate" : "Debt"}</p><h1>{property ? "Your property" : "Your borrowing"}</h1>
     <details aria-label="Evidence phase timings"><summary>Evidence loading details</summary>
@@ -1510,14 +1511,14 @@ function MortgageOutlook({ draft, forecast, property = false, currency, selected
         <button disabled={startIndex + 12 >= points.length} onClick={() => selectMonth(points[startIndex + 12]!.periodStart)}>Next liability months</button>
       </div>
     </> : <section aria-label="Household liability balance outlook" data-evidence-state={models.baseline?.pending ? "pending" : models.baseline?.lifecycle === "error" ? "error" : !forecast || forecast.status === "unavailable" || current && !points.length ? "unavailable" : "stale"}>
-      <h2>Household liability balance outlook</h2><p role="status">{models.baseline?.pending ? "Updating forecast · liability balances pending." : models.baseline?.lifecycle === "error" ? "Forecast failed · liability balances unavailable." : !current ? "Update the forecast to view current modeled household liabilities." : "Liability forecast unavailable for the current source coverage."}</p><button onClick={setup}>Review liability forecast setup</button>
+      {models.baseline?.pending ? <ForecastChartPending title="Household liability balance outlook" /> : <><h2>Household liability balance outlook</h2><p role="status">{models.baseline?.lifecycle === "error" ? "Forecast failed · liability balances unavailable." : !current ? "Update the forecast to view current modeled household liabilities." : "Liability forecast unavailable for the current source coverage."}</p><button onClick={setup}>Review liability forecast setup</button></>}
     </section>)}
     <p>See how funded payments reduce one named mortgage. Recorded current balances and modeled future principal have different dates.</p>
     {!!loans.length && <label>Mortgage<select aria-label="Mortgage" value={liabilityId} onChange={event => selectLoan(event.target.value)}>{loans.map(loan => <option key={objectId("Liability", loan)} value={objectId("Liability", loan)}>{objectLabel("Liability", loan)}</option>)}</select></label>}
     {!loans.length ? <p>No mortgage recorded. Add a mortgage through Net Worth → Debt; other debt is listed separately.</p> : <>
       <p>{objectLabel("Liability", selected!)} · recorded current principal: {typeof selected!.current_balance === "string" ? formatExactMoney(selected!.current_balance, currency) : "Not recorded"}. Balance observation date not supplied here. Source: Net Worth → Debt.</p>
       <button type="button" onClick={() => review(liabilityId)}>Review mortgage source</button>
-      {!current || !points.length ? <><p role="status">{models.baseline?.pending ? "Updating forecast · mortgage evidence is pending." : models.baseline?.lifecycle === "error" ? "Forecast failed · update needed before mortgage evidence can be shown." : models.baseline?.lifecycle === "unsupported" ? "Mortgage forecast unsupported · review the forecast setup and source guidance." : !forecast || current && !points.length ? "Mortgage evidence unavailable · no successfully modeled months. Review forecast limitations and setup." : "Out of date · update needed before retained mortgage evidence can be shown."}</p><button onClick={setup}>Review forecast setup</button></>
+      {models.baseline?.pending ? <ForecastChartPending title={`${objectLabel("Liability", selected!)} · mortgage paydown`} /> : !current || !points.length ? <><p role="status">{models.baseline?.lifecycle === "error" ? "Forecast failed · update needed before mortgage evidence can be shown." : models.baseline?.lifecycle === "unsupported" ? "Mortgage forecast unsupported · review the forecast setup and source guidance." : !forecast || current && !points.length ? "Mortgage evidence unavailable · no successfully modeled months. Review forecast limitations and setup." : "Out of date · update needed before retained mortgage evidence can be shown."}</p><button onClick={setup}>Review forecast setup</button></>
         : <><div className="mortgage-window-controls" aria-label="Mortgage chart window">
           <button disabled={startIndex === 0} onClick={() => selectMonth(points[Math.max(0, startIndex - 12)]!.periodStart)}>Previous 12 months</button>
           <span>{points[startIndex]?.periodStart.slice(0, 10)} → {points[Math.min(points.length - 1, startIndex + 11)]?.periodEnd.slice(0, 10)} (exclusive)</span>
@@ -1527,7 +1528,7 @@ function MortgageOutlook({ draft, forecast, property = false, currency, selected
         {selectedMonth && !points.some(point => point.periodStart === selectedMonth) && <p>The previously selected month is outside this forecast. Showing the first supported month.</p>}
         {points.slice(startIndex, startIndex + 12).length < 12 && <p>Partial window at the forecast boundary · no months beyond the supported result are assumed.</p>}
         {active?.error ? <><p role="alert">{active.error}</p><button onClick={active.refresh}>Retry mortgage evidence</button><button onClick={setup}>Review forecast setup</button></>
-          : active?.window ? <MortgageAmortization window={active.window} loanName={objectLabel("Liability", selected!)} selectedStart={selectedStart} selectMonth={selectMonth} /> : <p role="status">Loading bounded mortgage evidence…</p>}
+          : active?.window ? <MortgageAmortization window={active.window} loanName={objectLabel("Liability", selected!)} selectedStart={selectedStart} selectMonth={selectMonth} /> : <ForecastChartPending title={`${objectLabel("Liability", selected!)} · mortgage paydown`} />}
         </>}
       {property && <p>{selected?.collateral_id && objectEntries(draft, "Asset").some(asset => asset.asset_id === selected.collateral_id && asset.asset_type === "real_estate")
         ? `Linked property: ${referenceLabel(draft, "Asset", String(selected.collateral_id))}.` : "No matching property collateral is recorded for this mortgage."} Current equity cannot be reconciled without a compatible current valuation and all linked liens at the same date and currency.</p>}
@@ -1604,8 +1605,8 @@ function Overview({
   return (
     <div className="calm-overview">
       <CalmPanel title="Your money over time" className="calm-outlook">
-        {supported ? <HouseholdForecastVisual forecast={forecast} draft={draft} calm /> : (
-          <div className="calm-empty">
+        {supported ? <HouseholdForecastVisual forecast={forecast} draft={draft} calm /> : forecastState.pending ? <ForecastChartPending title="Assets, liabilities and net worth" /> : (
+          <div className="calm-empty" aria-busy={forecastState.pending}>
             <strong>{forecastState.pending ? "Calculating your forecast…" : forecastState.lifecycle === "error" ? "Your forecast could not be calculated" : forecast?.status === "unavailable" ? "Your forecast is unavailable" : "Your forecast is not ready yet"}</strong>
             <p>No future path has been calculated. Your recorded finances are still available below.</p>
             {correction || status}
@@ -1644,7 +1645,7 @@ function Overview({
 function MonthlyEvidence({ draft, forecast, mode, selectedMonth, selectMonth }: { draft: PersonalDraft; forecast?: PersonalHouseholdForecastReadModel | undefined; mode: "paycheck" | "debt" | "spending"; selectedMonth?: string | undefined; selectMonth?: ((month: string) => void) | undefined }) {
   const models = useContext(FinancialResultModels);
   const current = !!models.baseline && models.baseline.lastGoodResult === forecast && models.baseline.resultModel === draft && !models.baseline.pending && !models.baseline.stale && !models.setupChangesPending;
-  return <MonthlyMoneyPanel draft={models.baseline?.resultModel ?? draft} forecast={forecast} current={current} mode={mode} selectedMonth={selectedMonth} selectMonth={selectMonth}
+  return <MonthlyMoneyPanel draft={models.baseline?.resultModel ?? draft} forecast={forecast} current={current} pending={!!models.baseline?.pending} mode={mode} selectedMonth={selectedMonth} selectMonth={selectMonth}
     setup={() => models.reviewTarget?.({ id: "", type: "Forecast setup", label: "Forecast setup", editable: false })}
     coverageSetup={() => models.reviewTarget?.({ id: "", type: "Forecast setup", label: "Tax coverage & setup", field: "taxSetup", editable: false })}
     review={(type, id) => {
@@ -1713,13 +1714,13 @@ function CashFlow({
             calm
             cashSources={cashSources}
           />
-        ) : forecast?.status === "unavailable" ? (
+        ) : pending ? <><ForecastChartPending title="Total Cash Balance" /><ForecastChartPending title="Modeled statement income versus expenses" /><CashChartDetails title="Total Cash Balance">{cashSources}</CashChartDetails></> : forecast?.status === "unavailable" ? (
           <><p className="calm-empty" role="status">No supported cash trajectory is available. Recorded balances are shown above.</p><CashChartDetails title="Total modeled cash"><CalmDisclosure title="Why this forecast is unavailable"><DiagnosticList
             diagnostics={forecast.diagnostics}
             fallback={forecast.message}
           /></CalmDisclosure>{cashSources}</CashChartDetails></>
         ) : (
-          <><Empty text="No supported cash forecast yet. Run the household forecast to see its cash trend; no deposits or spending are inferred." /><CashChartDetails title="Total modeled cash">{cashSources}</CashChartDetails></>
+          <div aria-busy={pending}><ForecastProgress pending={pending} /><Empty text="No supported cash forecast yet. Run the household forecast to see its cash trend; no deposits or spending are inferred." /><CashChartDetails title="Total Cash Balance">{cashSources}</CashChartDetails></div>
         )}
       <MonthlyEvidence draft={draft} forecast={forecast} mode="paycheck" selectedMonth={selectedMonth} selectMonth={selectMonth} />
       </section>
@@ -1816,8 +1817,8 @@ function NetWorthOverview({
   );
 }
 function StandaloneStatus({ view, cancel }: { view: import("./forecast/controller.js").StandaloneView; cancel: () => void }) {
-  return <section aria-label="Standalone calculation status" data-state={view.pending ? "running" : view.error ? "error" : view.cancelled ? "cancelled" : view.stale ? "stale" : view.result?.status ?? "idle"}>
-    {view.pending && <><p role="status">Calculating standalone forecast in a worker…</p><button onClick={cancel}>Cancel standalone forecast</button></>}
+  return <section aria-label="Standalone calculation status" aria-busy={view.pending} data-state={view.pending ? "running" : view.error ? "error" : view.cancelled ? "cancelled" : view.stale ? "stale" : view.result?.status ?? "idle"}>
+    {view.pending && <><ForecastProgress pending label="Calculating standalone forecast in a worker…" /><button onClick={cancel}>Cancel standalone forecast</button></>}
     {view.stale && <p role="status">The retained standalone result is out of date. Run the forecast to refresh it.</p>}
     {view.cancelled && <p role="status">Standalone forecast cancelled. Run the forecast to try again.</p>}
     {view.error && <p role="alert">{view.error}</p>}
@@ -3782,7 +3783,7 @@ function HouseholdForecastVisual({
     {!calm && forecast.stoppedAt && <ForecastCutoff forecast={forecast} draft={financialModel} />}
     <Profiler id="forecast-chart" onRender={(_id, _phase, duration) => {
       if (scope?.active) recordBrowserDuration("ui.chart_render", duration, scope.context);
-    }}><HouseholdChart forecast={forecast} cashFlowOnly={cashFlowOnly} calm={calm}
+    }}><HouseholdChart forecast={forecast} cashFlowOnly={cashFlowOnly} calm={calm} pending={!!models.baseline?.pending}
       stale={!models.baseline || models.baseline.lastGoodResult !== forecast || models.baseline.resultModel !== draft || models.baseline.pending || models.baseline.stale || !!models.setupChangesPending}
       sourceFingerprint={models.baseline?.lastGoodResult === forecast ? models.baseline.resultFingerprint : undefined}
       supporting={calm ? <>{cashSources}<CalmDisclosure title="Forecast assumptions and supporting details">{supporting}</CalmDisclosure></> : undefined} /></Profiler>
@@ -4029,18 +4030,21 @@ function ForecastVisual({ forecast, draft }: { forecast: PersonalForecastReadMod
             <Line
               type="monotone"
               dataKey="income"
+              dot={false} activeDot={false}
               stroke="#26755f"
               strokeWidth={3}
             />
             <Line
               type="monotone"
               dataKey="spending"
+              dot={false} activeDot={false}
               stroke="#c07845"
               strokeWidth={3}
             />
             <Line
               type="monotone"
               dataKey="net"
+              dot={false} activeDot={false}
               stroke="#3e5f8a"
               strokeWidth={2}
             />

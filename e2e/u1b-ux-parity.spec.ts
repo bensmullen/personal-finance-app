@@ -62,7 +62,7 @@ async function loadHistoricalOverview(page: Page) {
 // Independent first-screen checks: failures in the longer interaction journey
 // below must not prevent either the supported or recorded-only layout checks.
 for (const width of [1440, 390]) {
-  test(`Overview bounded historical plot first-screen layout at ${width}px`, async ({ page }) => {
+  test(`Overview bounded historical plot first-screen layout at ${width}px`, async ({ page }, info) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await loadHistoricalOverview(page);
@@ -71,8 +71,26 @@ for (const width of [1440, 390]) {
     const chart = page.getByRole("figure", { name: "Household financial outlook chart", exact: true });
     await expect(chart.locator(".recharts-responsive-container svg.recharts-surface")).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, 0));
+    const path = info.outputPath(`shared-chart-overview-first-screen-${width}.png`);
+    await page.screenshot({ path, animations: "disabled" });
+    await info.attach(`shared-chart-overview-first-screen-${width}`, { path, contentType: "image/png" });
+    await info.attach(`shared-chart-overview-layout-${width}`, {
+      body: JSON.stringify(await page.locator(".calm-outlook, .calm-outlook .chart, .calm-outlook .chart-controls, .calm-metric-value").evaluateAll(elements =>
+        elements.map(element => ({ class: element.className, bounds: element.getBoundingClientRect().toJSON() }))), null, 2),
+      contentType: "application/json",
+    });
     const plot = await chart.locator(".recharts-responsive-container svg.recharts-surface").boundingBox();
     expect(plot!.height).toBeGreaterThanOrEqual(width === 1440 ? 230 : 250);
+    await expect(chart.locator("figcaption")).toHaveText("Assets, liabilities and net worth");
+    const clip = chart.locator("svg > defs > clipPath > rect").first();
+    expect(Number(await clip.getAttribute("y"))).toBeGreaterThanOrEqual(8);
+    expect(Number(await clip.getAttribute("y"))).toBeLessThanOrEqual(16);
+    await expect(chart.locator(".chart-status")).toContainText("Partial coverage");
+    for (const path of await chart.locator('.chart-line-netWorth-incomplete path.recharts-line-curve').all()) {
+      await expect(path).toHaveAttribute("stroke", "#1e6756");
+      await expect(path).toHaveAttribute("stroke-opacity", "0.5");
+      await expect(path).not.toHaveAttribute("stroke-dasharray");
+    }
     // Historical tax gaps leave the complete series empty. Require actual
     // partial-series geometry, not merely a chart container or legend.
     await expect(chart.locator('.recharts-line path.recharts-line-curve[d^="M"]').first()).toBeVisible();
@@ -90,7 +108,7 @@ for (const width of [1440, 390]) {
     await expect(chart).toContainText("Forecast, not account history");
     await expect(chart).not.toContainText("Deterministic projection");
     await expect(page.locator(".chart-range")).not.toHaveAttribute("open");
-    await expect(chart.locator(".chart-control-details")).not.toHaveAttribute("open");
+    await expect(chart.locator(".cash-chart-details")).not.toHaveAttribute("open");
     await expect(page.getByText("Forecast assumptions and supporting details", { exact: true }).locator("..")).not.toHaveAttribute("open");
     await expect(page.locator(".task-readiness")).not.toHaveAttribute("open");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -112,6 +130,7 @@ for (const width of [1440, 390]) {
     await clickFinancialDestination(page, "Overview");
     await expect(forecastStatus(page)).toHaveAttribute("data-lifecycle", "idle");
     const current = page.getByRole("region", { name: "Your finances today", exact: true });
+    await expect(page.locator(".chart-pending, .calm-outlook svg.recharts-surface")).toHaveCount(0);
     const correction = page.getByRole("alert", { name: "Priority correction", exact: true });
     await expect(current.getByRole("article")).toHaveCount(3);
     const position = getCurrentPosition(draft, { asOf: "2026-01-01", baseCurrency: "USD" });
@@ -278,7 +297,7 @@ for (const width of [1440, 390]) test(`Overview hierarchy, exact current sources
   await expect(forecastStatus(page)).toContainText("Old result");
   await expect(outlook.locator(".chart-freshness")).toContainText("Out of date");
   await expect(forecastRange).not.toHaveAttribute("open");
-  await outlook.locator(".chart-control-details > summary").click();
+  await outlook.locator(".cash-chart-details > summary").click();
   await forecastRange.locator(":scope > summary").focus();
   await page.keyboard.press("Enter");
   await expect(forecastRange).toHaveAttribute("open", "");
