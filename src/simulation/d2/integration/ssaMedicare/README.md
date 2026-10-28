@@ -89,3 +89,53 @@ original-backed journals, nonzero and zero surcharges, two members, multi-month
 detail/summary and cold replay, source withdrawal/races and proportional
 1/12/24-month receipt and portable output sizes. These synthetic providers do
 not establish authentic SSA/CMS connectivity or complete SSA tax treatment.
+
+## Issue #149 indexed-history repair and checkpoint audit
+
+Continuous indexed execution carries a private validated receipt-index root,
+append-only consumption/transaction/claim/settlement indexes and exact account,
+claim and identity roots. Only identical inherited immutable receipts can reuse
+qualification. New receipts still pass the independent source authority at
+atomic admission and receipt validation. Changed ownership/currency, changed
+claims, untracked containers or identities require full validation; historical
+receipt replacement/removal rejects. Checkpoint snapshots do not convey this
+live-execution authority. Lineage is published only after whole-state validation.
+
+The separate `indexedHistory.test.ts` exercises real 1/12/24-month detail and
+summary runs and emits `SSA_MEDICARE_GROWTH` measurements for each source family,
+receipt bytes, total encoded artifact bytes, checkpoint count/encoded bytes,
+checkpoint record/identity/runtime bytes, and source-binding identity bytes.
+Existing source, journal, portable-replay and size oracles remain unchanged.
+These new measurements still require CI execution: the local bounded preflight
+failed before typecheck/tests on log-directory permissions, and its retry was
+rejected because the reservation had no result. No measured improvement is
+claimed from static inspection alone.
+
+Static producer → consumer → replay evidence for the remaining size decision:
+
+- `src/state/index.ts` `paymentConsumptionKeys` embeds `paymentValue` of the
+  complete payable/right/requests/BANK/source-input tuple in the
+  `ssa-medicare:source-binding` identity. `src/identity/index.ts` `idempotencyKey`
+  length-prefixes that string; it does not hash it. This is existing v1 history.
+- Atomic posting registers that key in `externalIdempotencyKeys`; receipt
+  validation recomputes the identical key. The receipt separately retains its
+  source inputs. Raw publisher-held original documents remain excluded.
+- `src/simulation/householdExecution.ts` retains the first nonterminal recovery
+  checkpoint after month 12, while a terminal 12-month run has no checkpoint.
+  `src/state/index.ts` `authoritativeCheckpointDelta` includes the checkpoint's
+  receipt records and identity additions. The first delta starts from empty
+  state, as required by the existing v3 replay writer/reader.
+- `src/simulation/r3/replayArtifact.ts` `checkpointDeltas` and `encodeValue`
+  serialize those full string identities alongside the receipt records.
+  Object-content sharing cannot replace embedded substrings inside identities.
+  `restoreCheckpointDeltas` restores the identities and receipt validator checks
+  the exact existing key again. This is distinct from repeating raw originals.
+
+The historical approximately 245 KB → 1.15 MB observation is not a new
+measurement. The CI breakdown must quantify how much is recovery state versus
+redundant identity content. Compacting the persisted identity requires a
+separately approved compatibility contract for historical v1 keys; alternatively
+wire-level substring compression requires authorization for the currently
+read-only `src/simulation/r3/replayArtifact.ts`. Neither change is part of the
+approved indexed receipt-validation efficiency exception. No size threshold
+has been raised and no identity/receipt/wire contract has been changed here.
