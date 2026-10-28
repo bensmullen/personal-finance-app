@@ -105,7 +105,19 @@ async function appliedSource(page: Page) {
   return result;
 }
 async function fits(page: Page, property = false) {
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const horizontal = await page.evaluate(() => {
+    const excess = document.documentElement.scrollWidth - innerWidth;
+    const offenders = excess <= 0 ? [] : Array.from(document.querySelectorAll<HTMLElement>("body *"))
+      .map(element => ({ element, rect: element.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.width > 0 && (rect.right > innerWidth + 1 || rect.left < -1))
+      .slice(0, 12).map(({ element, rect }) => ({
+        tag: element.tagName, className: typeof element.className === "string" ? element.className.slice(0, 100) : "",
+        left: Math.round(rect.left), right: Math.round(rect.right),
+        width: Math.round(rect.width), minWidth: getComputedStyle(element).minWidth,
+      }));
+    return { excess, offenders };
+  });
+  expect(horizontal, JSON.stringify(horizontal)).toMatchObject({ excess: 0 });
   const chart = outlook(page, property).getByRole("region", { name: "Mortgage amortization", exact: true });
   const figure = chart.getByRole("figure");
   await expect(figure.locator("figcaption")).toHaveCount(0);
