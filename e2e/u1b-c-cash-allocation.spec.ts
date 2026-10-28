@@ -292,8 +292,11 @@ for (const width of [1440, 390]) {
     await expect(details).toContainText("Unverified comparison remainder · not disposable income");
     const comparison = panel(page).getByRole("figure", { name: "Where modeled income goes comparison", exact: true });
     expect(expected.denominator).toBe("0");
-    await expect(panel(page).locator(".chart-status")).toContainText("Zero modeled income");
-    await expect(panel(page).locator(".chart-status")).toContainText("not a paycheck-funded allocation");
+    const zeroIncomeStatus = panel(page).locator(".chart-status").filter({ hasText: "Zero modeled income" });
+    await expect(zeroIncomeStatus).toHaveCount(1);
+    await expect(zeroIncomeStatus).toContainText("Zero modeled income");
+    await expect(zeroIncomeStatus).toContainText("not a paycheck-funded allocation");
+    await expect(panel(page).getByText("Discretionary Income — unavailable", { exact: true })).toBeVisible();
     await expect(comparison.locator(".cash-income-reference")).toHaveCount(0);
     await expect(comparison.locator(".paycheck-unallocated")).toHaveCount(0);
     await expect(comparison.locator(".paycheck-bar > span")).toHaveCount(expected.categories.length);
