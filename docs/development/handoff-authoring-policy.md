@@ -121,6 +121,51 @@ addresses the complete failure class rather than only the first failing
 assertion. Do not use extra required task-envelope fields or a blanket E2E
 execution requirement for this preview.
 
+### Evidence-complete UI CI repair handoff (mandatory)
+
+For every CI-red UI/interaction PR, **ChatGPT owns the full audit before
+authorizing another Codex patch**. Using the exact PR head and selected CI
+workflow, it SHALL:
+
+1. **Inventory all errors:** inspect every failed/cancelled/timed-out selected
+   gate, every failing E2E case across all shards and retries, plus diagnostics
+   and relevant evidence. Count *failed tests*, not just red shards. Compare the
+   previous head to distinguish newly failing, recurring and resolved cases.
+2. **Audit the entire affected journey for every failing case:** read its full
+   setup, sequence and assertions **after the first failure**, including
+   unreachable branches, recovery, source/financial checks and the relevant
+   desktop/mobile, touch, keyboard, loading/stale/error variants. Inspect
+   related tests and changed UI ownership to anticipate failures hidden by an
+   early assertion. Distinguish passed evidence from **not executed**.
+3. **Prove the cause before delegating:** classify each error as a production
+   defect, invalid expectation, fixture/timing issue or CI environment failure.
+   Trace it to the narrow owning code and artifact. Use logs/reports alone for
+   obvious cases; escalate ambiguous behavior to screenshots, traces and DOM
+   measurements *in the reviewer workflow*, not open-ended Codex diagnosis.
+   Mark any unproven mechanism as unresolved, never as a confirmed cause.
+4. **Prepare one complete, decision-closed patch:** cover **every currently
+   known CI failure** plus identified downstream/sibling risks in the same
+   coherent PR continuation. For each failure class, specify evidence, owning
+   paths, **one resolved correction**, observable expected behavior,
+   preserved assertions and negative cases. Record a compact failure matrix
+   (test/gate → cause/evidence → masked checks → authorized fix → verification).
+   Check required ALLOWED_PATHS, compatibility and financial meaning *before*
+   instructing Codex. Do **not** dispatch a subset while other known errors
+   remain outside the handoff; resolve missing authorization or product
+   decisions first, or declare the handoff **not Codex-ready**.
+5. **Verify completeness externally:** after Codex publishes, independently
+   inspect the next exact-head full selected CI, every originally failed case,
+   newly unmasked assertions and semantic/UX behavior before another handoff.
+   No green-only patch or claim of guaranteed future CI success.
+
+This is **reviewer-owned**, not a new Codex envelope field, local Playwright
+permission, mandatory trace download, or additional CI job. Reuse available
+diagnostic artifacts and cite compact evidence in the existing implementation
+issue. If distinct independent work genuinely needs separate authorization,
+resolve that ownership with the PM **before** a partial handoff; never silently
+exclude a known failed gate. Codex still performs one scoped implementation
+push and stops without CI monitoring (AL-003).
+
 The brief should be as short as the task allows. Complexity belongs in the
 semantic decisions themselves, not in mandatory envelope ceremony.
 
