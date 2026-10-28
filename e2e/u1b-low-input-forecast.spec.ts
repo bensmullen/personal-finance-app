@@ -368,7 +368,7 @@ for (const width of [1440, 390]) {
     await expect(paycheck).toHaveAttribute("data-evidence-state", "incomplete");
     const comparison = paycheck.getByRole("figure", { name: "Where modeled income goes comparison", exact: true });
     // The 0-income qualification lives in a separate visible neutral status, not inside the bar frame.
-    await expect(paycheck.locator(".chart-status")).toContainText("Zero modeled income");
+    await expect(paycheck.locator(".chart-status").filter({ hasText: "Zero modeled income" })).toContainText("Zero modeled income");
     await expect(comparison).toContainText("not a 100%-income allocation");
     const february = inspectMonthlyMoney(result.points[1]!);
     await expect(paycheck.locator(".cash-excess")).toContainText(formatExactMoney(february.additionalFunding, february.currency));
