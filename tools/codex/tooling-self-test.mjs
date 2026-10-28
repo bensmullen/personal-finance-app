@@ -1172,6 +1172,15 @@ const deniedDirty = run('bash', crashArgs, { cwd: source, env: crashEnv });
 assert(deniedDirty.status !== 0 && deniedDirty.stderr.includes('is dirty'),
   'crash helper must not publish a dirty interrupted worktree');
 fs.rmSync(path.join(crashed, 'unrelated-untracked.txt'));
+// A different existing remote recovery branch must never be reused or
+// overwritten; refusal must occur BEFORE publishing the source branch.
+const collisionBranch = 'codex/crashed-task-collision';
+mustRun('git', ['-C', seed, 'push', 'origin', `HEAD:refs/heads/${collisionBranch}`]);
+const collisionArgs = crashArgs.map((value, index) => index === 3 ? collisionBranch : value);
+const refusedCollision = run('bash', collisionArgs, { cwd: source, env: crashEnv });
+assert(refusedCollision.status !== 0 && refusedCollision.stderr.includes('different remote history') &&
+  !refusedCollision.stdout.includes('CRASH_RECOVERY_PUBLISHED'),
+  'crash recovery must refuse conflicting existing remote branch before any writes');
 const rescued = mustRun('bash', crashArgs, { cwd: source, env: crashEnv });
 assert(rescued.stdout.includes('CRASH_RECOVERY_PUBLISHED') &&
   rescued.stdout.includes('PR_WORKTREE_READY mode=resume'),
