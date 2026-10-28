@@ -16,6 +16,12 @@
 .field-shell .field-error { margin: 0; line-height: 1.4; }
 .field-invalid > input, .field-invalid > select { border: 2px solid var(--danger); }
 .field-help, .drawer .field-help { position: relative; border: 0; padding: 0; margin: 0; flex: 0 0 auto; }
+@media (max-width: 560px) {
+  /* At 200% text size the inline help trigger can protrude 3px beyond the
+     heading grid's right edge. Preserve its 24px hit target and its anchored
+     content, but keep both inside the viewport instead of clipping the page. */
+  .field-heading > .field-help { margin-inline-end: 4px; }
+}
 .field-help > summary { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 1px solid #aebbb5; border-radius: 50%; font-size: .8rem; list-style: none; }
 .field-help > summary::-webkit-details-marker { display: none; }
 .field-help > div { position: absolute; z-index: 5; top: 28px; right: 0; width: min(280px, 75vw); padding: 12px; background: white; border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); font-size: .8rem; font-weight: 400; line-height: 1.5; }
