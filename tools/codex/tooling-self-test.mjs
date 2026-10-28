@@ -158,6 +158,27 @@ assert(
   "one-line task issue pointer should validate and inject the repository-owned contract",
 );
 
+// Regression: a human-readable UAT heading is not a PFM_TASK_V3 section.
+// Catch this reviewer authoring error before telling the PM to restart Codex.
+const invalidAcceptanceFixture = path.join(temp, "task-issue-invalid-acceptance.md");
+const invalidAcceptance = prompt.replace(
+  "\nACCEPTANCE:\n",
+  "\nACCEPTANCE — latest PM UAT corrections:\n",
+);
+assert(invalidAcceptance !== prompt, "invalid acceptance fixture must modify the actual required header");
+fs.writeFileSync(invalidAcceptanceFixture, invalidAcceptance);
+const invalidAcceptanceIssue = hook(
+  "UserPromptSubmit",
+  { prompt: "PFM_TASK_ISSUE: 49" },
+  { PFM_POLICY_TEST_ISSUE_BODY_FILE: invalidAcceptanceFixture },
+);
+assert(
+  invalidAcceptanceIssue.decision === "block"
+    && String(invalidAcceptanceIssue.reason).includes("TASK_ISSUE_INVALID")
+    && String(invalidAcceptanceIssue.reason).includes("missing/empty ACCEPTANCE"),
+  "descriptive ACCEPTANCE heading must be rejected as a missing required machine section",
+);
+
 const issueAmbiguous = hook(
   "UserPromptSubmit",
   { prompt: "PFM_TASK_ISSUE: 49 and PFM_TASK_ISSUE: 50" },
