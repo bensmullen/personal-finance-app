@@ -352,6 +352,33 @@ Visual evidence and interaction diagnosis are collected outside Codex implementa
 
 Parallel UX research and backend/D2 work are encouraged when owned paths and stable interfaces do not overlap; explicitly identify prerequisites, shared seam ownership and merge order. Stop repeated cross-journey patch cycles after two failed same-cause repair rounds and return to focused design review rather than widening an implementation issue.
 
+### ChatGPT operator Bash directory anchoring (mandatory)
+
+Every **user-facing Bash/shell command block** ChatGPT supplies for this project
+MUST start with an explicit `cd` command to the known intended directory.
+Treat each separate command block as independently runnable: never rely on the
+terminal's prior working directory, a previous code block, or whichever of
+several Codex worktrees happens to be open. Put `cd` before variables, Git
+commands, shell subshells, preflight checks or any other executable step.
+
+For a worktree operation, use its **verified absolute worktree path**, not an
+inferred branch-name suffix. If that path has not been verified, first `cd` to
+the established absolute canonical checkout, locate the *named* branch's
+worktree with `git worktree list --porcelain`, reject missing or ambiguous
+matches, then `cd` into the resolved absolute path. Before any Git
+mutation, verify the current directory resolves to the chosen worktree root,
+the exact expected branch and (when relevant) clean/staged state, parent SHA,
+upstream and live remote SHA. For canonical bootstrap/recovery operations,
+explicitly `cd` to the canonical checkout instead. Do not use
+`cd "$(git rev-parse --show-toplevel)"` from an unspecified starting
+directory as the only anchor; that merely selects whichever worktree the
+terminal already happened to use.
+
+This is a ChatGPT response/handoff requirement, not an additional Codex
+task-hook gate. Never invent or silently assume a local path. If the exact
+path cannot be established, give an anchored read-only discovery block before
+a separate anchored mutation block.
+
 ## 6. Git handoff lifecycle
 
 Git bootstrap is an **external operator action performed before the Codex
