@@ -1419,11 +1419,11 @@ test("R4 empty relationship collections show actionable state instead of a Choos
 // Separate viewport assertions so a mobile failure cannot hide desktop
 // keyboard/repair regressions; each scenario starts from a fresh example.
 for (const width of [390, 1440]) {
-  test(`R4 responsive status, chart and keyboard editor controls at ${width}px`, async ({ page }) => {
+  test(`R4 responsive status, chart and keyboard editor controls at ${width}px`, async ({ page }, info) => {
     test.setTimeout(60_000);
     await loadExample(page);
     await useShortHorizon(page);
-    await page.setViewportSize({ width, height: 900 });
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await clickFinancialDestination(page, "Overview");
     const status = page.locator('.forecast-status[aria-label="Household forecast status"]');
     await expect(status).toHaveAttribute("data-lifecycle", /^(completed|incomplete)$/);
@@ -1444,7 +1444,26 @@ for (const width of [390, 1440]) {
     await expect(readout).toBeVisible();
     await expect(readout.locator("small")).toHaveText("2026 · projected · partial");
     await expect(readout.locator(":scope > div")).toHaveText([/^Net worth: .+/, /^Total assets: .+/, /^Total liabilities: .+/]);
-    await expect(chart.locator(".chart-crosshair")).toBeVisible();
+    // A vertical SVG line has a zero-width DOM rectangle. Assert its painted
+    // geometry instead of Playwright's rectangular-element visibility rule.
+    const crosshair = chart.locator("line.chart-crosshair");
+    await expect(crosshair).toHaveCount(1);
+    expect(await crosshair.evaluate(element => {
+      const line = element as SVGLineElement;
+      const { x1, x2, y1, y2 } = line;
+      const style = getComputedStyle(line);
+      const bounds = line.closest("svg")!.getBoundingClientRect();
+      const matrix = line.getScreenCTM()!;
+      const start = new DOMPoint(x1.baseVal.value, y1.baseVal.value).matrixTransform(matrix);
+      const end = new DOMPoint(x2.baseVal.value, y2.baseVal.value).matrixTransform(matrix);
+      return { finite: [start.x, start.y, end.x, end.y].every(Number.isFinite),
+        vertical: x1.baseVal.value === x2.baseVal.value, length: Math.abs(end.y - start.y),
+        inside: start.x >= bounds.left && start.x <= bounds.right && Math.min(start.y, end.y) >= bounds.top && Math.max(start.y, end.y) <= bounds.bottom,
+        painted: style.stroke !== "none" && style.stroke !== "transparent" && style.stroke !== "rgba(0, 0, 0, 0)" && parseFloat(style.strokeWidth) > 0 && Number(style.opacity) > 0 && Number(style.strokeOpacity) > 0,
+        owner: line.closest("figure")?.getAttribute("aria-label") };
+    })).toMatchObject({ finite: true, vertical: true, length: expect.any(Number), inside: true, painted: true, owner: "Household financial outlook chart" });
+    expect(await crosshair.evaluate(line => Math.abs(Number(line.getAttribute("y2")) - Number(line.getAttribute("y1"))))).toBeGreaterThan(0);
+    await info.attach(`r4-keyboard-crosshair-${width}`, { body: await chart.screenshot({ animations: "disabled" }), contentType: "image/png" });
     const selected = chart.getByRole("status", { name: "Assets, liabilities and net worth exact selected period", exact: true });
     await expect(selected).toContainText("Projected 2026-01-01 → 2026-04-01 (exclusive) · partial year, 3 months");
     await chart.locator(".chart-table > summary").click();

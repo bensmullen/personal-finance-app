@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import * as React from "react";
 import { Bar, Cell, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { CashChartDetails, ForecastProgress } from "../../calm/CalmPresentation.js";
@@ -83,6 +83,11 @@ export function CompactPeriod({ point, series, stale = false }: { point: Forecas
   return <div className="chart-compact-readout"><small>{point.periodStart.slice(0, point.granularity === "annual" ? 4 : 7)} · projected{point.coverage === "partial_year" ? " · partial" : ""}{stale ? " · out of date" : ""}</small>{series.map(item => <div key={item.key}>{item.key === "totalModeledCash" ? "Total" : item.key === "totalModeledCashChange" ? "Change" : item.label}: {compactChartValue(point.metrics[item.key], item.key === "totalModeledCashChange")}</div>)}</div>;
 }
 
+// Clamp the whole text box in a chart-wide layer at x=0, including enlarged text.
+function AnchoredPeriod({ x, ...props }: React.ComponentProps<typeof CompactPeriod> & { x: number }) {
+  return <div className="chart-readout-anchor" style={{ marginLeft: `clamp(0px, calc(${x}px - 7.5rem), max(0px, calc(100% - 15rem)))` }}><CompactPeriod {...props} /></div>;
+}
+
 /** Recharts supplies the active band for bars and a single x for lines. */
 function PeriodCrosshair({ points, width = 0, height = 0 }: { points?: readonly { x: number; y: number }[]; width?: number; height?: number }) {
   const point = points?.[0];
@@ -98,6 +103,11 @@ export function FinancialChart({ annual, monthly, kind, stale, pending = false, 
   const [selected, setSelected] = useState("");
   const [hidden, setHidden] = useState<readonly string[]>([]);
   const [readoutRoom, setReadoutRoom] = useState(88);
+  const chartRef = useRef<HTMLDivElement>(null);
+  const [chartWidth, setChartWidth] = useState(0);
+  const [interaction, setInteraction] = useState<"pointer" | "keyboard" | null>(null);
+  // Identity only: values are read from the source period, independent of payload eligibility.
+  const [keyboardPeriod, setKeyboardPeriod] = useState("");
   useEffect(() => {
     // Reserve scaled text space above the plot, including browser text enlargement.
     const update = () => setReadoutRoom(Math.ceil(parseFloat(getComputedStyle(document.documentElement).fontSize) * 5.5));
@@ -107,12 +117,26 @@ export function FinancialChart({ annual, monthly, kind, stale, pending = false, 
     window.addEventListener("resize", update);
     return () => { observer.disconnect(); window.removeEventListener("resize", update); };
   }, []);
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const resize = new ResizeObserver(() => setChartWidth(chart.clientWidth));
+    resize.observe(chart);
+    const visibility = new IntersectionObserver(([entry]) => {
+      if (!entry?.isIntersecting) setInteraction(null);
+    });
+    visibility.observe(chart);
+    return () => { resize.disconnect(); visibility.disconnect(); };
+  }, [annual.points.length, monthly.points.length]);
   const source = granularity === "annual" ? annual : monthly;
   const chosenStart = monthly.points.findIndex(point => point.periodStart === windowStart);
   const startIndex = chosenStart < 0 ? kind === "statement" ? Math.max(0, monthly.points.length - 12) : 0 : chosenStart;
   const points = granularity === "annual" ? source.points : source.points.slice(startIndex, startIndex + 12);
   const active = points.find(point => point.periodStart === selected) ?? points.at(-1);
   const plotted = series.filter(item => !hidden.includes(item.key));
+  const keyboardIndex = Math.max(0, points.findIndex(point => point.periodStart === keyboardPeriod));
+  const keyboardPoint = interaction === "keyboard" && plotted.length ? points[keyboardIndex] : undefined;
+  const keyboardX = (kind === "cash" ? 64 : 54) + (chartWidth - (kind === "cash" ? 72 : 70)) * (keyboardIndex + 0.5) / Math.max(1, points.length);
   const rows = points.map(point => Object.fromEntries([
     ["label", granularity === "annual" ? point.periodStart.slice(0, 4) : point.periodStart.slice(0, 7)],
     ["source", point],
@@ -142,17 +166,30 @@ export function FinancialChart({ annual, monthly, kind, stale, pending = false, 
       {!plotted.length && <p role="status">All series hidden. Choose a legend item to show it again; exact values remain below.</p>}
       {partial && <p className="chart-qualification">Incomplete forecast · gaps are unavailable.</p>}
       {precisionOmitted && <p role="note">Some amounts exceed chart display precision. Exact values remain in Chart Details.</p>}
-      <div className="chart">
+      <div className="chart" ref={chartRef}
+        onPointerMove={() => setInteraction("pointer")} onPointerDown={() => setInteraction("pointer")} onPointerLeave={() => setInteraction(null)}
+        onClick={() => setInteraction("pointer")}
+        onTouchEnd={event => { const box = event.currentTarget.getBoundingClientRect(); setInteraction(box.bottom > 0 && box.top < innerHeight ? "pointer" : null); }}
+        onFocusCapture={event => { if (event.target.getAttribute("role") === "application") setInteraction("keyboard"); }}
+        onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setInteraction(null); }}
+        onKeyDownCapture={event => {
+          if (event.target instanceof Element && event.target.getAttribute("role") === "application" && ["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) {
+            event.preventDefault(); event.stopPropagation();
+            const index = event.key === "Home" ? 0 : event.key === "End" ? points.length - 1
+              : Math.max(0, Math.min(points.length - 1, keyboardIndex + (event.key === "ArrowRight" ? 1 : -1)));
+            setKeyboardPeriod(points[index]?.periodStart ?? ""); setInteraction("keyboard");
+          }
+        }}>
         <ResponsiveContainer width="100%" height="100%" minWidth={0}>
           <ComposedChart data={rows} accessibilityLayer stackOffset="sign" barCategoryGap="10%" barGap={2} margin={{ top: readoutRoom, right: kind === "cash" ? 8 : 16, bottom: 8, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="label" minTickGap={28} tickMargin={10} />
             <YAxis yAxisId="balance" width={kind === "cash" ? 64 : 54} tickFormatter={axisAmount} {...cashAxis} />
             <ReferenceLine yAxisId="balance" y={0} stroke="#66726d" />
-            {/* Reserve space above the plot; Recharts bounds horizontal placement. */}
-            <Tooltip filterNull={false} cursor={<PeriodCrosshair />} offset={4} position={{ y: 0 }} allowEscapeViewBox={{ x: false, y: false }} content={({ active: hovering, payload }) => {
+            {keyboardPoint && <ReferenceLine x={keyboardPoint.periodStart.slice(0, granularity === "annual" ? 4 : 7)} yAxisId="balance" stroke="#66726d" strokeWidth={1} shape={props => <line className="chart-crosshair" x1={props.x1} x2={props.x2} y1={props.y1} y2={props.y2} stroke="#66726d" strokeWidth={1} pointerEvents="none" />} />}
+            <Tooltip active={interaction === "pointer"} filterNull={false} cursor={<PeriodCrosshair />} offset={0} position={{ x: 0, y: 0 }} wrapperStyle={{ width: "100%" }} allowEscapeViewBox={{ x: false, y: false }} content={({ active: hovering, payload, coordinate }) => {
               const point = payload?.[0]?.payload?.source as ForecastChartPeriod | undefined;
-              return hovering && point && plotted.length ? <CompactPeriod point={point} series={plotted} stale={stale || pending} /> : null;
+              return interaction === "pointer" && hovering && point && plotted.length ? <AnchoredPeriod x={coordinate?.x ?? 0} point={point} series={plotted} stale={stale || pending} /> : null;
             }} />
             {plotted.flatMap(item => ["complete", "incomplete"].map(status => item.bar
               ? <Bar key={`${item.key}_${status}`} className={`chart-bar-${item.key}-${status}`} dataKey={`${item.key}_${status}`} stackId={item.key} yAxisId="balance" fill={status === "incomplete" ? "#fff" : item.color} stroke={item.color} strokeWidth={2} strokeDasharray={status === "incomplete" ? "3 2" : undefined} isAnimationActive={false}>
@@ -163,6 +200,7 @@ export function FinancialChart({ annual, monthly, kind, stale, pending = false, 
               : <Line key={`${item.key}_${status}`} dataKey={`${item.key}_${status}`} yAxisId="balance" type="linear" stroke={item.color} strokeWidth={2} strokeDasharray={status === "incomplete" ? `${item.dash ?? "6 2"} 1 3` : item.dash} dot={rows.length === 1 ? () => <g /> : false} activeDot={false} connectNulls={false} isAnimationActive={false} />))}
           </ComposedChart>
         </ResponsiveContainer>
+        {keyboardPoint && <div className="chart-keyboard-readout" role="status"><AnchoredPeriod x={keyboardX} point={keyboardPoint} series={plotted} stale={stale || pending} /></div>}
       </div>
       {legend}{controls}
     </>}

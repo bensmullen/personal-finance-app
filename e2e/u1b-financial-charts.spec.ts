@@ -109,6 +109,20 @@ test.afterEach(async ({ page }, testInfo) => {
           visibility: getComputedStyle(readout.parentElement!).visibility };
       })), null, 2), contentType: "application/json",
     });
+    await testInfo.attach("chart-keyboard-selection", {
+      body: JSON.stringify(await page.locator(".financial-chart").evaluateAll(charts => charts.map(chart => ({
+        focused: chart.contains(document.activeElement) ? document.activeElement?.getAttribute("role") ?? document.activeElement?.tagName : null,
+        period: chart.querySelector<HTMLSelectElement>('select[id$="-period"]')?.value,
+        readout: chart.querySelector(".chart-compact-readout")?.textContent ?? null,
+        tooltipVisibility: chart.querySelector(".recharts-tooltip-wrapper") ? getComputedStyle(chart.querySelector(".recharts-tooltip-wrapper")!).visibility : null,
+        series: Array.from(chart.querySelectorAll(".chart-legend button")).map(button => ({ label: button.textContent, pressed: button.getAttribute("aria-pressed") })),
+        lines: Array.from(chart.querySelectorAll(".recharts-line")).map(line => line.getAttribute("class")),
+        bars: Array.from(chart.querySelectorAll(".recharts-bar")).map(bar => bar.getAttribute("class")),
+      }))), null, 2), contentType: "application/json",
+    });
+    await testInfo.attach("chart-keyboard-events", {
+      body: JSON.stringify(await page.evaluate(() => (window as unknown as { __chartKeys?: unknown[] }).__chartKeys ?? []), null, 2), contentType: "application/json",
+    });
     await testInfo.attach("chart-horizontal-overflow", {
       body: JSON.stringify(await page.locator(".financial-charts").evaluateAll(containers => containers.flatMap(container =>
         Array.from(container.querySelectorAll("*")).filter(element => {
@@ -136,30 +150,60 @@ const wealthChart = (page: Page) => page.getByRole("figure", { name: wealthTitle
 
 test.describe("Shared charts with touch and enlarged text", () => {
   test.use({ hasTouch: true });
-  test("Cash compact tap selection and local exact details at 390×844 with 200% text", async ({ page }, info) => {
-    await boundedGolden(page, 390);
+  for (const width of [390, 1440]) for (const period of ["annual", "monthly"]) test(`Cash compact tap selection and local exact details at ${width}px with 200% text · ${period}`, async ({ page }, info) => {
+    await boundedGolden(page, width);
     await clickFinancialDestination(page, "Cash");
     await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; });
     const cash = page.getByRole("figure", { name: cashTitle, exact: true });
     const details = cash.locator(".cash-chart-details");
     await expect(details).not.toHaveAttribute("open");
-    await grouping(cash).selectOption("monthly");
+    await grouping(cash).selectOption(period);
     const graph = cash.getByRole("application");
     await graph.scrollIntoViewIfNeeded();
     const box = await graph.boundingBox();
-    await page.touchscreen.tap(box!.x + box!.width / 2, box!.y + box!.height / 2);
     const readout = cash.locator(".chart-compact-readout");
-    await expect(readout).toBeVisible();
-    expect(await readout.evaluate(element => element.getBoundingClientRect().right <= innerWidth && element.scrollWidth <= element.clientWidth)).toBe(true);
+    const assertContained = async () => {
+      await expect(readout).toBeVisible();
+      expect(await readout.evaluate(element => {
+        const box = element.getBoundingClientRect();
+        const chart = element.closest(".chart")!.getBoundingClientRect();
+        const wrapper = element.closest(".chart-keyboard-readout, .recharts-tooltip-wrapper")!.getBoundingClientRect();
+        return box.left >= chart.left && box.right <= chart.right && box.left >= 0 && box.right <= innerWidth
+          && wrapper.left >= chart.left && wrapper.right <= chart.right && element.scrollWidth <= element.clientWidth;
+      })).toBe(true);
+    };
+    const axis = await cash.locator(".recharts-xAxis .recharts-cartesian-axis-line").boundingBox();
+    for (const fraction of [0.01, 0.99]) {
+      await page.touchscreen.tap(axis!.x + axis!.width * fraction, box!.y + box!.height / 2);
+      await assertContained();
+    }
+    await info.attach(`shared-chart-touch-${width}-${period}-200-percent`, { body: await graph.screenshot({ animations: "disabled" }), contentType: "image/png" });
     await expect(cash.locator(".recharts-line-dots circle, .recharts-active-dot")).toHaveCount(0);
     await details.locator(":scope > summary").tap();
     await expect(cash.locator(".chart-selected")).toBeVisible();
     await cash.locator(".chart-table > summary").tap();
     await expect(cash.getByRole("table")).toBeVisible();
+    await cash.locator(".chart-table").scrollIntoViewIfNeeded();
+    await expect(readout).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    const path = info.outputPath("shared-chart-touch-390-200-percent.png");
-    await cash.screenshot({ path, animations: "disabled" });
-    await info.attach("shared-chart-touch-390-200-percent", { path, contentType: "image/png" });
+    await graph.scrollIntoViewIfNeeded();
+    const reentered = await graph.boundingBox();
+    const reenteredAxis = await cash.locator(".recharts-xAxis .recharts-cartesian-axis-line").boundingBox();
+    for (const fraction of [0.01, 0.99]) {
+      await graph.hover({ position: { x: reenteredAxis!.x - reentered!.x + reenteredAxis!.width * fraction, y: reentered!.height / 2 } });
+      await assertContained();
+    }
+    await page.mouse.move(0, 0);
+    await expect(readout).toHaveCount(0);
+    await graph.focus(); await page.keyboard.press("Home");
+    await assertContained();
+    await page.keyboard.press("End"); await assertContained();
+    await grouping(cash).focus();
+    await expect(readout).toHaveCount(0);
+    await cash.locator(".chart-table > summary").tap();
+    await cash.locator(".chart-table > summary").tap();
+    await expect(cash.getByRole("table")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 });
 
@@ -418,12 +462,67 @@ for (const width of [1440, 390]) {
       await expect(graph).toBeFocused();
       await page.keyboard.press("ArrowRight");
       await assertReadout();
-      const change = cash.getByRole("button", { name: "Cash Balance Change", exact: true });
-      await change.click();
-      await graph.focus(); await page.keyboard.press("ArrowRight");
-      await expect(readout).not.toContainText("Change:");
-      await change.click();
     }
+  });
+
+  for (const granularity of ["annual", "monthly"] as const) test(`Cash keyboard selection survives series toggles · ${granularity} at ${width}px`, async ({ page }, info) => {
+    await observeBaseline(page);
+    const status = await boundedGolden(page, width);
+    const source = await appliedSource(page, status);
+    const points = selectForecastChartData(source, { granularity }).points;
+    await clickFinancialDestination(page, "Cash");
+    const cash = page.getByRole("figure", { name: cashTitle, exact: true });
+    await grouping(cash).selectOption(granularity);
+    const graph = cash.getByRole("application");
+    const change = cash.getByRole("button", { name: "Cash Balance Change", exact: true });
+    const total = cash.getByRole("button", { name: "Total Cash Balance", exact: true });
+    const readout = cash.locator(".chart-compact-readout");
+    const assertSelection = async (withChange: boolean) => {
+      await expect(graph).toBeFocused();
+      await expect(readout).toBeVisible(); // Absence cannot satisfy hidden-series assertions.
+      const label = await readout.locator("small").textContent();
+      const point = points.find(point => label?.startsWith(point.periodStart.slice(0, granularity === "annual" ? 4 : 7)));
+      if (!point) throw new Error(`Keyboard selected a period absent from the applied source: ${label}`);
+      await expect(readout.locator("small")).toHaveText(`${point.periodStart.slice(0, granularity === "annual" ? 4 : 7)} · projected${point.coverage === "partial_year" ? " · partial" : ""}`);
+      await expect(readout.locator(":scope > div")).toHaveText([
+        `Total: ${expectedCompact(point.metrics.totalModeledCash)}`,
+        ...(withChange ? [`Change: ${expectedCompact(point.metrics.totalModeledCashChange, true)}`] : []),
+      ]);
+      await expect(total).toHaveAttribute("aria-pressed", "true");
+      await expect(change).toHaveAttribute("aria-pressed", String(withChange));
+      await expect(cash.locator('[class*="chart-bar-totalModeledCashChange"]')).toHaveCount(withChange ? 2 : 0);
+      await expect(cash.locator(".recharts-line-dots circle, .recharts-active-dot")).toHaveCount(0);
+    };
+    await page.evaluate(() => {
+      const state = window as unknown as { __chartKeys: unknown[] };
+      state.__chartKeys = [];
+      for (const type of ["focusin", "keydown"]) document.addEventListener(type, event => {
+        const target = event.target as Element | null;
+        const chart = target?.closest(".financial-chart");
+        if (!chart) return;
+        state.__chartKeys.push({ type, key: event instanceof KeyboardEvent ? event.key : null,
+          role: target?.getAttribute("role"), readout: chart.querySelector(".chart-compact-readout")?.textContent ?? null,
+          pressed: Array.from(chart.querySelectorAll(".chart-legend button")).map(button => button.getAttribute("aria-pressed")) });
+        state.__chartKeys = state.__chartKeys.slice(-16);
+      }, true);
+    });
+    // No preceding hover: focus, singleton payloads and legend changes stand alone.
+    await graph.scrollIntoViewIfNeeded();
+    await graph.focus(); await page.keyboard.press("ArrowRight");
+    await assertSelection(true);
+    await change.click();
+    await graph.scrollIntoViewIfNeeded();
+    await graph.focus(); await page.keyboard.press("ArrowRight");
+    await assertSelection(false);
+    await info.attach(`cash-keyboard-total-only-${granularity}-${width}`, { body: await graph.screenshot({ animations: "disabled" }), contentType: "image/png" });
+    await change.click();
+    await graph.scrollIntoViewIfNeeded();
+    await graph.focus(); await page.keyboard.press("ArrowLeft");
+    await assertSelection(true);
+    await page.keyboard.press("Home");
+    await expect(readout.locator("small")).toContainText(points[0]!.periodStart.slice(0, granularity === "annual" ? 4 : 7));
+    await page.keyboard.press("End");
+    await expect(readout.locator("small")).toContainText(points.at(-1)!.periodStart.slice(0, granularity === "annual" ? 4 : 7));
   });
 
   // Each journey owns a fresh three-month run; a V1 control failure cannot

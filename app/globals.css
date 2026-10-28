@@ -90,7 +90,11 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .mortgage-hover > span { display: block; }
 .chart-readout dl { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 5px 12px; }
 .chart-readout dd { margin: 0; overflow-wrap: anywhere; }
-.financial-chart .recharts-tooltip-wrapper { width: max-content; max-width: 100%; }
+.financial-chart .chart { position: relative; }
+.financial-chart .recharts-tooltip-wrapper { width: 100%; max-width: 100%; }
+.chart-readout-anchor { width: min(15rem, 100%); }
+.chart-readout-anchor .chart-compact-readout { box-sizing: border-box; max-width: 100%; }
+.chart-keyboard-readout { position: absolute; inset: 0 0 auto; pointer-events: none; }
 .financial-chart .chart-readout { max-width: 100%; overflow-wrap: anywhere; }
 /* Shared chart hierarchy; Cash composition remains scoped to its own surface. */
 :root { --chart-body: 1rem; --chart-control: .875rem; --chart-caption: .8125rem; --chart-heading: 1.375rem; }
@@ -418,7 +422,7 @@ main#main-content { padding: 24px 32px 64px; }
 .cash-chart-details h3 { margin-block: 1rem .5rem; }
 .cash-chart-details :is(.chart-table, .chart-opening, .chart-basis) { font-size: var(--calm-body); }
 /* One-column rows prevent nested dl grids squeezing metric names to letters. */
-.calm-cash .financial-chart .recharts-tooltip-wrapper { width: max-content; max-width: 100%; z-index: 2; }
+.calm-cash .financial-chart .recharts-tooltip-wrapper { width: 100%; max-width: 100%; z-index: 2; }
 .calm-cash .financial-chart .chart-readout { width: 100%; padding: .75rem; font-size: var(--chart-control); line-height: 1.4; max-height: min(15rem, 40svh); overflow-y: auto; word-break: normal; overflow-wrap: break-word; }
 .calm-cash .chart-readout p { margin: 0 0 .25rem; }
 .calm-cash .chart-readout dl.chart-exact-values { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; margin: .5rem 0; }
