@@ -110,18 +110,22 @@ async function fits(page: Page, property = false) {
   const figure = chart.getByRole("figure");
   await expect(figure.locator("figcaption")).toHaveCount(0);
   await expect(figure.locator(".mortgage-columns")).toHaveCSS("padding-top", "0px");
+  await figure.getByRole("button").first().focus();
+  // Browser focus can scroll this chart into view; capture its frame afterward.
   const box = await figure.boundingBox();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
-  await figure.getByRole("button").first().focus();
   const compact = figure.locator(".chart-compact-readout");
   await expect(compact).toBeVisible();
   await expect(compact).toContainText("projected");
-  const readout = await compact.boundingBox();
-  expect(readout!.x).toBeGreaterThanOrEqual(box!.x);
-  expect(readout!.x + readout!.width).toBeLessThanOrEqual(box!.x + box!.width + 1);
-  expect(readout!.y).toBeGreaterThanOrEqual(box!.y);
-  expect(readout!.y + readout!.height).toBeLessThanOrEqual(box!.y + box!.height + 1);
+  // Measure the overlay and containing frame in a single DOM state; do not
+  // compare geometry sampled before vs. after a browser-initiated scroll.
+  expect(await compact.evaluate(element => {
+    const overlay = element.getBoundingClientRect();
+    const frame = element.closest("figure")!.getBoundingClientRect();
+    return overlay.left >= frame.left - 1 && overlay.right <= frame.right + 1
+      && overlay.top >= frame.top - 1 && overlay.bottom <= frame.bottom + 1;
+  })).toBe(true);
   await figure.getByRole("button").last().focus();
   await expect(compact).toBeVisible();
   expect(await compact.evaluate(element => {
