@@ -161,7 +161,13 @@ export function createSsaMedicareParticipant(configuration: SsaMedicareInput): H
     prepare: (context, period, opening, work = [], tier = "detail") => {
       const seen = new Set<string>();
       const operations: ReturnType<HouseholdKernelParticipant["prepare"]>["operations"][number][] = [];
-      validateSsaMedicareSourceHistory(opening.state, context.dataCutoff);
+      // Validate any imported opening receipts once per execution, not once
+      // per period. Every NEW payment is requalified independently at the
+      // current event and again by the atomic state source-authority port;
+      // replay restore explicitly validates the entire committed history.
+      // Rechecking every historical original in every month is quadratic.
+      if (period.start === context.simulationStart)
+        validateSsaMedicareSourceHistory(opening.state, context.dataCutoff);
       for (const q of input.payments) {
         if (seen.has(q.payable.paymentId)) fail("SSA_DUPLICATE_PAYMENT", "Duplicate SSA payment identity in input");
         seen.add(q.payable.paymentId);
