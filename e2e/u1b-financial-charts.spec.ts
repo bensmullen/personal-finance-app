@@ -490,7 +490,35 @@ for (const width of [1440, 390]) {
       ]);
       await expect(total).toHaveAttribute("aria-pressed", "true");
       await expect(change).toHaveAttribute("aria-pressed", String(withChange));
-      await expect(cash.locator('[class*="chart-bar-totalModeledCashChange"]')).toHaveCount(withChange ? 2 : 0);
+      // Recharts propagates this series class to its group AND individual SVG
+      // rectangles. The old substring selector counted 2 groups + 1 annual
+      // rectangle (or +3 monthly rectangles), not 2 distinct series.
+      const changeGroups = cash.locator(
+        ".recharts-bar.chart-bar-totalModeledCashChange-complete, " +
+        ".recharts-bar.chart-bar-totalModeledCashChange-incomplete",
+      );
+      await expect(changeGroups).toHaveCount(withChange ? 2 : 0);
+      const geometry = await barGeometry(cash);
+      const renderedChangeBars = geometry.bars.filter(bar =>
+        bar.series.split(" ").some(name => name.startsWith("chart-bar-totalModeledCashChange-")));
+      // Count only actual nonzero, source-supported bar geometry: hidden series
+      // must lose its bars, while toggling it back restores every sourced bar.
+      const expectedBars = points.filter(point => {
+        const value = point.metrics.totalModeledCashChange;
+        return (value.status === "complete" || value.status === "incomplete") &&
+          value.amount !== null && Money.parse(value.amount, USD).compare(Money.zero(USD)) !== 0;
+      }).length;
+      expect(renderedChangeBars).toHaveLength(withChange ? expectedBars : 0);
+      for (const capability of ["complete", "incomplete"] as const) {
+        const supported = points.filter(point => {
+          const value = point.metrics.totalModeledCashChange;
+          return value.status === capability && value.amount !== null &&
+            Money.parse(value.amount, USD).compare(Money.zero(USD)) !== 0;
+        }).length;
+        expect(renderedChangeBars.filter(bar =>
+          bar.series.split(" ").includes(`chart-bar-totalModeledCashChange-${capability}`)))
+          .toHaveLength(withChange ? supported : 0);
+      }
       await expect(cash.locator(".recharts-line-dots circle, .recharts-active-dot")).toHaveCount(0);
     };
     await page.evaluate(() => {
