@@ -372,7 +372,10 @@ for (const width of [1440, 390]) {
       await expect(sourceStatus).toHaveAttribute("data-pending", "true");
       for (const destination of ["Overview", "Cash", "Debt"] as const) {
         await clickFinancialDestination(page, destination);
-        const frames = page.locator("#main-content .chart-pending");
+        // Count the currently selected chart owner, not hidden or sibling page frames.
+        const frames = destination === "Debt"
+          ? page.getByRole("region", { name: "Debt outlook", exact: true }).locator(".chart-pending")
+          : page.locator("#main-content .chart-pending");
         await expect(frames).toHaveCount(destination === "Overview" ? 1 : destination === "Cash" ? 3 : 2);
         for (const frame of await frames.all()) {
           await expect(frame).toHaveText("Calculating Forecast");
