@@ -219,5 +219,13 @@ export function bindSsaOriginals(request: {
       coverage.push(...rows);
     } catch (e) { fail(pin, e instanceof Refused ? e.code : "INVALID_ORIGINAL"); }
   }
+  // Publication order is not economic order. Sort the derived, locally-owned
+  // rows by their economic dates so a later-known survivor original cannot
+  // appear ahead of an earlier payable retirement installment. Tie-break by
+  // identity, never by provider enumeration or forecast horizon.
+  installments.sort((a, b) => compare(a.effectiveAt, b.effectiveAt)
+    || compare(a.recipientPersonId, b.recipientPersonId) || compare(a.claimId, b.claimId));
+  coverage.sort((a, b) => compare(a.period.start, b.period.start)
+    || compare(a.recipientPersonId, b.recipientPersonId) || compare(a.sourceId, b.sourceId));
   return immutableConfiguration({ contract: "ssa-original-binding/v1", originals, installments, coverage });
 }
