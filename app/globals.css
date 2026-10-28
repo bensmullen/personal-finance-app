@@ -20,7 +20,7 @@
   /* At 200% text size the inline help trigger can protrude 3px beyond the
      heading grid's right edge. Preserve its 24px hit target and its anchored
      content, but keep both inside the viewport instead of clipping the page. */
-  .field-heading > .field-help { margin-inline-end: 4px; }
+  .field-heading > .field-help { margin-inline-end: 4px; inset-inline-end: 5px; }
 }
 .field-help > summary { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 1px solid #aebbb5; border-radius: 50%; font-size: .8rem; list-style: none; }
 .field-help > summary::-webkit-details-marker { display: none; }
