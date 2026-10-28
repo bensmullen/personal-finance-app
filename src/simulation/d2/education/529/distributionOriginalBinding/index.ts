@@ -109,15 +109,17 @@ export function bind529DistributionOriginals(input: readonly DistributionBinding
       unique(funding.entries.map(f => f.operationId), "FUNDING_NOT_RECONCILED");
       unique(funding.entries.map(f => f.lotId), "FUNDING_NOT_RECONCILED");
       need(funding.entries.length === p.contributions.length && plan.lots.length === p.contributions.length, "FUNDING_NOT_RECONCILED");
+      const contributionsByLot = new Map(p.contributions.map(c => [c.lotId, c]));
+      const fundingByLot = new Map(funding.entries.map(f => [f.lotId, f]));
       const exact = (m: Money): boolean => m.currency.equals(e.gross.currency) && !m.isNegative() && m.amount.fitsScale(2);
       let basis = Money.zero(e.gross.currency), earnings = Money.zero(e.gross.currency);
       for (const lot of plan.lots) {
-        need(p.contributions.some(c => c.lotId === lot.lotId && c.basisId === lot.basisId) && exact(lot.basis) && exact(lot.earnings), "FUNDING_NOT_RECONCILED");
+        need(contributionsByLot.get(lot.lotId)?.basisId === lot.basisId && exact(lot.basis) && exact(lot.earnings), "FUNDING_NOT_RECONCILED");
         basis = basis.plus(lot.basis); earnings = earnings.plus(lot.earnings);
       }
       need(Boolean(p.snapshot.contributionBasis?.equals(basis) && p.snapshot.earnings?.equals(earnings)), "FUNDING_NOT_RECONCILED");
       for (const c of p.contributions) {
-        const f = funding.entries.find(entry => entry.lotId === c.lotId);
+        const f = fundingByLot.get(c.lotId);
         need(Boolean(f && f.basisId === c.basisId && f.operationId === c.fundingOperationId && f.fundedAt === c.fundedAt &&
           f.householdId === p.householdId && f.ownerId === p.ownerId && id(f.bankAccountId) &&
           ![p.accountId, p.cashAccountId].includes(f.bankAccountId) && f.accountKind === "BANK" &&
@@ -148,10 +150,12 @@ export function bind529DistributionOriginals(input: readonly DistributionBinding
         unique(payment.entries.map(t => t.economicExpenseId), "TUITION_NOT_RECONCILED");
         unique(payment.entries.flatMap(t => t.payment ? [t.payment.operationId] : []), "TUITION_NOT_RECONCILED");
         unique(payment.entries.flatMap(t => t.unpaidClaim ? [t.unpaidClaim.claimId] : []), "TUITION_NOT_RECONCILED");
+        const adjustmentsByExpense = new Map(adjustments.entries.map(a => [a.paidExpenseId, a]));
+        const paymentsByExpense = new Map(payment.entries.map(paid => [paid.paidExpenseId, paid]));
         // Validate the entire receipt/payment inventory, not just the selected bill.
         for (const bill of tuition.bills) {
-          const a = adjustments.entries.find(t => t.paidExpenseId === bill.paidExpenseId);
-          const paid = payment.entries.find(t => t.paidExpenseId === bill.paidExpenseId);
+          const a = adjustmentsByExpense.get(bill.paidExpenseId);
+          const paid = paymentsByExpense.get(bill.paidExpenseId);
           if (!a || !paid) throw new Refused("TUITION_NOT_RECONCILED");
           need(paid.studentId === bill.studentId && paid.institutionId === bill.institutionId && paid.payeeId === bill.payeeId &&
             paid.termId === bill.termId && paid.economicExpenseId === paid.recognition.economicExpenseId, "TUITION_NOT_RECONCILED");

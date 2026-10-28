@@ -71,6 +71,28 @@ describe("synthetic original distribution economics — PFA-DET §5.7/§5.11", (
     expect(p.expense!.amount.equals(money("2000.09"))).toBe(true);
     expect(p.bankReceiptCharacter).toBe("not_applicable");
   });
+  it.each([false, true])("preserves prior expense recognition for institution route %s", direct => {
+    const f = fixture("000", "qualified_distribution", direct);
+    replace(f, "payment", o => ({ ...o, payload: { ...o.payload, entries: o.payload.entries.map(entry => ({
+      ...entry, recognition: { ...entry.recognition, status: "already_recognized" as const },
+    })) } }));
+    const p = economics(f);
+    expect(p.expense!.recognize).toBe(false);
+    expect(p.expense!.economicExpenseId).toBe("economic-expense-000");
+    expect(p.expense!.amount.equals(money("2000.09"))).toBe(true);
+    expect(p.movementNetWorthDelta.isZero()).toBe(true);
+  });
+  it("retains separate recognition of a paid but unrecognized expense without calling the distribution income", () => {
+    const f = fixture();
+    replace(f, "payment", o => ({ ...o, payload: { ...o.payload, entries: o.payload.entries.map(entry => ({
+      ...entry, recognition: { ...entry.recognition, status: "unrecognized" as const },
+    })) } }));
+    const p = economics(f);
+    expect(p.expense!.recognize).toBe(true);
+    expect(p.expense!.economicExpenseId).toBe("economic-expense-000");
+    expect(p.bankReceiptCharacter).toBe("owned_transfer");
+    expect(p.planAssetDelta.plus(p.ownedBankCashDelta).isZero()).toBe(true);
+  });
   it("uses independent scholarship/credit/other-529 adjustments and prior cross-provider use, down to the last cent", () => {
     const f = fixture();
     replace(f, "adjustments", o => ({ ...o, payload: { ...o.payload, entries: [{ ...o.payload.entries[0]!, adjustedEligible: money("1400.03"),
@@ -204,6 +226,42 @@ describe("source re-read, replay and unrelated members", () => {
     f.ports = { ...f.ports, [role]: () => ++reads === 1 ? f.originals[role] : { ...f.originals[role], version: "v2" } };
     expect(refused(f, "ORIGINAL_CHANGED").occurrences).toEqual([]);
   });
+  it.each(["penny", "basis", "beneficiary", "school", "eligibility", "later-known"] as const)(
+    "rejects second-read %s amendment even when the source ID and version remain unchanged", change => {
+      const f = fixture();
+      const amended = (() => {
+        switch (change) {
+          case "penny": return { ...f.originals.payment, payload: { ...f.originals.payment.payload,
+            entries: f.originals.payment.payload.entries.map(entry => ({ ...entry,
+              payment: { ...entry.payment!, amount: money("2000.08") } })) } };
+          case "basis": return { ...f.originals.plan, payload: { ...f.originals.plan.payload,
+            lots: f.originals.plan.payload.lots.map(lot => ({ ...lot, basis: money("5999.99") })) } };
+          case "beneficiary": return { ...f.originals.plan, payload: { ...f.originals.plan.payload,
+            plan: { ...f.originals.plan.payload.plan, beneficiaryId: "other-child" } } };
+          case "school": return { ...f.originals.tuition, payload: { ...f.originals.tuition.payload,
+            bills: f.originals.tuition.payload.bills.map(bill => ({ ...bill, institutionId: "other-school" })) } };
+          case "eligibility": return { ...f.originals.law, payload: { ...f.originals.law.payload,
+            qualification: { ...f.originals.law.payload.qualification!, categoryEligible: "no" as const } } };
+          case "later-known": return { ...f.originals.law, knownAt: civilDate("2026-01-16") };
+        }
+      })();
+      let reads = 0;
+      // Change a producer-owned original during evaluation; the adapter must
+      // inspect content again rather than trusting an unchanged version token.
+      vi.spyOn(evaluator, "propose529Distribution").mockImplementationOnce(() => {
+        const role = amended.role;
+        const originalPort = f.ports[role]!;
+        Object.assign(f.ports, { [role]: (p: Parameters<typeof originalPort>[0], cutoff: typeof at) => {
+          originalPort(p, cutoff); reads++;
+          return amended;
+        } });
+        return { proposals: [], coverage: [] };
+      });
+      const result = refused(f, "ORIGINAL_CHANGED");
+      expect(result.occurrences).toEqual([]);
+      expect(reads).toBe(1);
+      for (const role of allRoles) expect(f.counts.get(role)).toBe(2);
+    });
   it("re-reads every source even when the evaluator rejects the expense", () => {
     const f = fixture(); replace(f, "law", o => ({ ...o, payload: { ...o.payload, qualification: null } }));
     refused(f, "EVALUATION_INCOMPLETE");
