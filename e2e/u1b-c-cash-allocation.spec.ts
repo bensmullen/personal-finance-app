@@ -218,7 +218,8 @@ for (const width of [1440, 390]) {
     expect(decimal(expected.withholdingAmount!).isPositive()).toBe(true);
     expect(expected.categories.some(item => item.label === "Employee retirement")).toBe(false);
     await expect(details).toContainText(`${formatExactMoney(expected.withholdingAmount!, expected.currency)} · posted elections only`);
-    await expect(details).toContainText("Discretionary Income — unavailable: income, withholding and funding are not fully reconciled.");
+    await expect(panel(page).getByText("Discretionary Income — unavailable", { exact: true })).toBeVisible();
+    await expect(details).toContainText("Income, withholding and funding are not fully reconciled");
     await expect(details).toContainText("Unverified comparison remainder · not disposable income");
     await expect(panel(page)).not.toContainText("Unreconciled arithmetic difference");
     await expect(panel(page)).not.toContainText("Unknown · not modeled");
@@ -286,7 +287,8 @@ for (const width of [1440, 390]) {
     }
     await expect(table.getByRole("row", { name: /Total known uses/ }).getByRole("cell")).toHaveText(exact(expected.totalUses));
     await expect(table.getByRole("row", { name: /^Payroll withholding/ }).getByRole("cell")).toHaveText("Unknown · not modeled");
-    await expect(details).toContainText("Discretionary Income — unavailable: income, withholding and funding are not fully reconciled.");
+    await expect(panel(page).getByText("Discretionary Income — unavailable", { exact: true })).toBeVisible();
+    await expect(details).toContainText("Income, withholding and funding are not fully reconciled");
     await expect(details).toContainText("Unverified comparison remainder · not disposable income");
     const comparison = panel(page).getByRole("figure", { name: "Where modeled income goes comparison", exact: true });
     expect(expected.denominator).toBe("0");
