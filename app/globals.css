@@ -246,7 +246,7 @@ main#main-content { padding: 24px 32px 64px; }
 .liability-balance-outlook summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; }
 @media (max-width: 560px) {
   .mortgage-outlook { padding: 16px; }
-  .mortgage-columns { gap: 6px 1px; height: auto; grid-auto-flow: row; grid-template-columns: repeat(6, minmax(44px, 1fr)); }
+  .mortgage-columns { gap: 6px 1px; height: auto; grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .mortgage-month { min-height: 120px; }
   .mortgage-column { height: 85px; }
   .mortgage-summary { grid-template-columns: minmax(0, 1fr); gap: 5px; }
