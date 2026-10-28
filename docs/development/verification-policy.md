@@ -341,15 +341,32 @@ state. Never delete latest-task.json, force-push, reset or rebase as recovery.
 
 Initial implementation is followed by GitHub CI and ChatGPT review.
 
-When CI or semantic audit finds a defect, ChatGPT first classifies the
-root cause (product regression, invalid/obsolete test expectation, fragile
-locator or fixture, or environment/CI policy), checks sibling assertions and
-selected downstream scenarios for the **same cause**, and then issues a focused
-repair handoff containing the exact failure evidence, authorized edit scope,
-and acceptance criteria. Review completed CI once per head rather than asking
-Codex to poll, and distinguish blocked downstream assertions from tests actually
-executed. Never replace a valid acceptance contract with a green-only patch. Codex does not autonomously broaden the repair or redefine
-acceptance.
+When CI or semantic audit finds a defect, ChatGPT first inventories **all
+failed selected gates and failing test cases across every CI shard/retry** for
+the exact head. For each UI E2E failure it reviews the **entire affected
+journey**, including setup, branches, every assertion blocked by the first
+failure, recovery, related desktop/mobile and keyboard/touch variants, and
+shared financial/source semantics. Classify causes with relevant Playwright
+reports, traces, screenshots or DOM evidence as needed, distinguishing
+confirmed defects, unproven hypotheses, invalid/obsolete expectations,
+fixtures/timing and environment/CI failures. A red shard is not a failed-test
+count; an unexecuted downstream check is not a pass.
+
+ChatGPT's **single Codex repair handoff MUST cover every currently known CI
+failure and identified related latent assertion** in the coherent PR scope:
+cause/evidence, narrow authorized path, exact correction, observable acceptance
+and original tests/financial invariants preserved. It MUST NOT send a
+subset-of-failures patch while other known errors remain unaddressed; first
+resolve any missing scope or PM-owned decision, or declare **not Codex-ready**.
+Do not ask Codex to choose among ambiguous root causes or investigate an
+open-ended failure: finish reviewer-owned diagnosis before the handoff. If
+necessary evidence is missing, the repair is **not Codex-ready** until the
+reviewer supplies that evidence and makes the decision. After the push,
+independently check the next complete exact-head CI and newly exposed failures.
+Review CI once per head rather than directing Codex to poll; no green-only
+patch, weakened assertions, extra blanket E2E runs, or autonomous scope
+expansion. See the evidence-complete UI CI repair handoff in
+`docs/development/handoff-authoring-policy.md`.
 
 The task hook does not require a numeric repair-round field. Repair sequencing
 is a planning/audit concern; safety continues to come from branch state,
