@@ -87,6 +87,8 @@ export function fixture(suffix = "000", kind: DistributionEvent["kind"] = "quali
 export type Fixture = ReturnType<typeof fixture>;
 /** Re-pin a changed original to test its facts, rather than only a digest mismatch. */
 export function replace<K extends OriginalRole>(f: Fixture, role: K, change: (o: DistributionOriginal<K>) => DistributionOriginal<K>): void {
-  f.originals = { ...f.originals, [role]: change(f.originals[role]) };
+  // Preserve the original provider-book object captured by the independently
+  // addressable port closures; replacing the whole object would leave stale reads.
+  Object.assign(f.originals, { [role]: change(f.originals[role]) });
   f.binding = { ...f.binding, originals: { ...f.binding.originals, [role]: pin(f.originals[role]) } };
 }
