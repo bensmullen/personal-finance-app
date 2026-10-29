@@ -16,6 +16,7 @@ import type { CalculationTraceId } from "../lineage/index.js";
 import { createRecognitionFact as createRecognitionFactWithHistory, type RecognitionFactDraft, type RecognitionFact } from "../semantics/recognition.js";
 import { Money, Quantity, decimal, type Currency, type Rate } from "../values/index.js";
 import { instant, type Instant } from "../time/index.js";
+import { sha256 } from "../rules/tax/t1b/contentIdentity.js";
 
 /** Source-owner lookup addresses; neither these values nor their fingerprint
  * authenticate the external source. Domain owners must independently qualify. */
@@ -332,7 +333,7 @@ export interface SsaMedicarePaymentInput {
   readonly sourceInputs: unknown;
 }
 export interface SsaMedicarePaymentRecord extends SsaMedicarePaymentInput {
-  readonly version: "ssa-medicare-payment/v1";
+  readonly version: "ssa-medicare-payment/v1" | "ssa-medicare-payment/v2";
   readonly id: string;
   readonly netBank: Money;
   readonly transaction: AccountingTransaction;
@@ -903,6 +904,10 @@ interface ExecutionStateIndex {
     readonly accounts: PersistentStringIndex<object>;
     readonly claims: PersistentStringIndex<object>;
     readonly identities: AuthoritativeIdentityRegistry;
+    readonly consumed: PersistentStringIndex<string>;
+    readonly transactions: PersistentStringIndex<string>;
+    readonly claimIds: PersistentStringIndex<string>;
+    readonly settlementIds: PersistentStringIndex<string>;
   };
 }
 const executionStateIndexes = new WeakMap<AuthoritativeState, ExecutionStateIndex>();
@@ -972,6 +977,9 @@ const claimGroup = (category: string, balanceEntityId?: string): string => `${ca
 export const createIndexedExecutionState = (opening: AuthoritativeState, suppliedHistoryMeter?: SettlementHistoryMeter): AuthoritativeState => {
   const existing = executionStateIndexes.get(opening);
   if (existing === undefined) validateAuthoritativeState(opening);
+  // Check exposed history before normalization can reconstruct an identity
+  // array from its private index and accidentally repair caller tampering.
+  else if (existing.validatedSsa !== undefined) validateSsaMedicarePayments(opening);
   const recognitionClaims = existing?.recognitionClaims.fork() ?? new PersistentStringIndex<string>();
   const settlementClaims = existing?.settlementClaims.fork() ?? new PersistentStringIndex<string>();
   const activeClaims = existing?.activeClaims.fork() ?? new PersistentStringIndex<PersistentStringIndex<ObligationOrRight>>();
@@ -1043,7 +1051,7 @@ export const createIndexedExecutionState = (opening: AuthoritativeState, supplie
   if (existing === undefined) { pendingClaimIds.clear(); pendingSettlementIds.clear(); }
   executionStateIndexes.set(state, { recognitionClaims, settlementClaims, activeClaims, pendingClaimIds, pendingSettlementIds,
     ...(existing?.validatedResources === undefined ? {} : { validatedResources: existing.validatedResources }),
-    ...(existing?.validatedSsa === undefined ? {} : { validatedSsa: existing.validatedSsa }),
+    ...(existing?.validatedSsa === undefined || checkpointSnapshots.has(opening) ? {} : { validatedSsa: existing.validatedSsa }),
     ...(historyMeter === undefined ? {} : { historyMeter }) });
   return state;
 };
@@ -1195,7 +1203,7 @@ export const validateAuthoritativeState = (state: AuthoritativeState, transactio
   validateD2PostedTransactions(state);
   validateRetirementDistributions(state);
   validateD2SettlementReceipts(state);
-  validateSsaMedicarePayments(state);
+  const validatedSsa = validateSsaMedicarePayments(state);
   const execution = executionStateIndexes.get(state), priorResources = execution?.validatedResources;
   const resourceRoots = Object.fromEntries((["accounts", "positions", "contributions", "contingentPositions"] as const)
     .map(key => [key, checkpointIndex(state, key)])) as NonNullable<ExecutionStateIndex["validatedResources"]>;
@@ -1299,7 +1307,12 @@ export const validateAuthoritativeState = (state: AuthoritativeState, transactio
     }
   }
   for (const record of [state.accounts, state.positions, state.liabilities, state.obligations]) indexedRecords.get(record)?.dirty.clear();
-  if (execution !== undefined) execution.validatedResources = resourceRoots;
+  if (execution !== undefined) {
+    execution.validatedResources = resourceRoots;
+    // Qualification lineage belongs only to a completely validated live root.
+    if (validatedSsa === undefined) delete execution.validatedSsa;
+    else execution.validatedSsa = validatedSsa;
+  }
 };
 
 const reconcileClaimIdentityHistory = (state: AuthoritativeState): void => {
@@ -2238,11 +2251,19 @@ export const applyD2SettlementAtomically = (state: AuthoritativeState, input: D2
   return { status: "committed", receipt, ...d2RemainingReimbursement(receipt) };
 };
 
-const paymentConsumptionKeys = (input: SsaMedicarePaymentInput): readonly IdempotencyKey[] => [
+const newPaymentVersion = (input: SsaMedicarePaymentInput): SsaMedicarePaymentRecord["version"] =>
+  (input.sourceInputs as { readonly originalSources?: unknown } | null)?.originalSources === undefined
+    ? "ssa-medicare-payment/v1" : "ssa-medicare-payment/v2";
+const paymentSourceBinding = (input: SsaMedicarePaymentInput): string => paymentValue({ payable: input.payable, right: input.right,
+  requests: input.requests, bankAccountId: input.bankAccountId, bankCashBefore: input.bankCashBefore,
+  rightSettlementId: input.rightSettlementId, sourceInputs: input.sourceInputs });
+const paymentConsumptionKeys = (input: SsaMedicarePaymentInput, version: SsaMedicarePaymentRecord["version"]): readonly IdempotencyKey[] => [
   idempotencyKey("ssa-medicare:payment", input.payable.paymentId),
-  idempotencyKey("ssa-medicare:source-binding", paymentValue({ payable: input.payable, right: input.right,
-    requests: input.requests, bankAccountId: input.bankAccountId, bankCashBefore: input.bankCashBefore,
-    rightSettlementId: input.rightSettlementId, sourceInputs: input.sourceInputs })),
+  // v1 retains its exact tuple and normalization. A v2 digest witnesses
+  // identity only; validatePaymentSources independently authenticates sources.
+  version === "ssa-medicare-payment/v1"
+    ? idempotencyKey("ssa-medicare:source-binding", paymentSourceBinding(input))
+    : idempotencyKey("ssa-medicare:source-binding/v2", `sha256:${sha256(paymentSourceBinding(input))}`),
   ...input.requests.flatMap(r => [
     idempotencyKey("ssa-medicare:receipt", r.terms.receiptId),
     idempotencyKey("ssa-medicare:authorization", r.terms.authorizationId),
@@ -2256,30 +2277,41 @@ const paymentRecognitions = (input: SsaMedicarePaymentInput): readonly Recogniti
   createRecognitionFactWithHistory({ id: c.originatingRecognitionId, category: c.kind === "right" ? "ssa_gross_income" : "medicare_expense",
     amount: c.originalAmount, recognizedAt: input.payable.paymentAt }));
 
-const validateSsaMedicarePayments = (state: AuthoritativeState): void => {
-  const execution = executionStateIndexes.get(state), prior = execution?.validatedSsa;
+const validateSsaMedicarePayments = (state: AuthoritativeState): ExecutionStateIndex["validatedSsa"] => {
+  const execution = executionStateIndexes.get(state);
+  const prior = checkpointSnapshots.has(state) ? undefined : execution?.validatedSsa;
   const payments = checkpointIndex(state, "ssaMedicarePayments"), accounts = checkpointIndex(state, "accounts"), claims = checkpointIndex(state, "obligations");
   const priorIds = prior === undefined ? undefined : identityIndexes.get(prior.identities), ids = identityIndexes.get(state.identities);
-  const unchanged = prior !== undefined && ids !== undefined && priorIds !== undefined &&
+  const tracked = ids !== undefined &&
     [state.accounts, state.obligations].every(record => indexedRecords.has(record)) &&
     (state.ssaMedicarePayments === undefined || indexedRecords.has(state.ssaMedicarePayments)) &&
-    payments.changesSince(prior.payments).changes.length === 0 &&
+    identityKinds.every(kind => {
+      const exposed = identityArrays.get(state.identities[kind]);
+      return exposed !== undefined && exposed.changesSince(ids[kind]).changes.length === 0;
+    });
+  const delta = payments.changesSince(prior?.payments ?? new PersistentStringIndex<object>()).changes;
+  // Exact immutable inherited values, not a digest or source credential. A
+  // replacement/removal must never make a previously committed receipt vanish.
+  if (prior !== undefined && delta.some(c => c.before !== undefined))
+    paymentInvalid("Committed SSA/Medicare payment history replaced or removed");
+  const appendOnly = prior !== undefined && tracked && priorIds !== undefined &&
     accounts.changesSince(prior.accounts).changes.every(c => {
       const a = c.before as AccountState | undefined, b = c.after as AccountState | undefined;
       return a === undefined || b !== undefined && a.kind === b.kind && a.ownerId === b.ownerId && a.cash.currency.equals(b.cash.currency);
     }) && claims.changesSince(prior.claims).changes.every(c => c.before === undefined) &&
-    identityKinds.every(kind => {
-      const exposed = identityArrays.get(state.identities[kind]);
-      return exposed !== undefined && exposed.changesSince(ids[kind]).changes.length === 0 &&
-        ids[kind].changesSince(priorIds[kind]).changes.every(c => c.after !== undefined);
-    });
-  if (unchanged) {
-    execution!.validatedSsa = { payments, accounts, claims, identities: indexedIdentityRegistry(state.identities) };
-    return;
-  }
-  const consumed = new Set<string>(), transactions = new Set<string>(), claimIds = new Set<string>(), settlementIds = new Set<string>();
-  for (const [key, record] of Object.entries(state.ssaMedicarePayments ?? {})) {
-    if (!record || record.version !== "ssa-medicare-payment/v1" || key !== record.id || key !== paymentKey(record.payable)
+    identityKinds.every(kind => ids![kind].changesSince(priorIds[kind]).changes.every(c => c.after !== undefined));
+  const consumed = appendOnly ? prior!.consumed.fork() : new PersistentStringIndex<string>();
+  const transactions = appendOnly ? prior!.transactions.fork() : new PersistentStringIndex<string>();
+  const claimIds = appendOnly ? prior!.claimIds.fork() : new PersistentStringIndex<string>();
+  const settlementIds = appendOnly ? prior!.settlementIds.fork() : new PersistentStringIndex<string>();
+  const entries = appendOnly ? delta.map(c => [c.key, c.after as SsaMedicarePaymentRecord] as const)
+    : Object.entries(state.ssaMedicarePayments ?? {});
+  let immutable = true;
+  for (const [key, record] of entries) {
+    immutable = immutable && frozenPaymentValues.has(record);
+    if (!record || !["ssa-medicare-payment/v1", "ssa-medicare-payment/v2"].includes(record.version)
+      || record.version === "ssa-medicare-payment/v2" && newPaymentVersion(record) !== record.version
+      || key !== record.id || key !== paymentKey(record.payable)
       || record.sourceInputs === undefined || !(record.bankCashBefore instanceof Money)
       || record.bankCashBefore.currency.code !== "USD" || !record.bankCashBefore.amount.fitsScale(2) || record.bankCashBefore.isNegative())
       paymentInvalid("Malformed versioned payment receipt");
@@ -2293,7 +2325,7 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): void => {
       || !state.identities.postedTransactionIds.includes(expected.id) || transactions.has(expected.id)
       || paymentValue(record.recognitions) !== paymentValue(paymentRecognitions(record)))
       paymentInvalid("Receipt must match owned BANK and the actually posted gross/expense/net journal");
-    transactions.add(expected.id);
+    transactions.set(expected.id, key);
     const claims = paymentClaims(record), ids = [record.rightSettlementId, ...record.requests.map(r => r.draft.id)];
     for (const [index, original] of claims.entries()) {
       const sid = ids[index]!, claim = state.obligations[original.id];
@@ -2307,16 +2339,18 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): void => {
       assertClaimInvariant(claim ?? paymentInvalid("Missing committed claim after settlement-history validation"));
       if (index > 0 && !["part_b", "part_d"].includes(record.requests[index - 1]!.terms.premium.part))
         paymentInvalid("Only positive Part B/D same-event obligations are supported");
-      settlementIds.add(sid); claimIds.add(original.id);
+      settlementIds.set(sid, key); claimIds.set(original.id, key);
     }
-    for (const id of paymentConsumptionKeys(record)) {
+    for (const id of paymentConsumptionKeys(record, record.version)) {
       if (consumed.has(id) || !state.identities.externalIdempotencyKeys.includes(id)) paymentInvalid("Incomplete or duplicate source consumption inventory");
-      consumed.add(id);
+      consumed.set(id, key);
     }
   }
-  // This is structural validation provenance only. The simulation boundary
-  // still independently requalifies original SSA/Medicare sources on import.
-  if (execution !== undefined) execution.validatedSsa = { payments, accounts, claims, identities: indexedIdentityRegistry(state.identities) };
+  // Only a live indexed execution may carry qualification across unchanged
+  // receipt history. Untracked/mutable inputs and checkpoint restores cannot.
+  return execution !== undefined && !checkpointSnapshots.has(state) && tracked && immutable
+    ? { payments, accounts, claims, identities: indexedIdentityRegistry(state.identities), consumed, transactions, claimIds, settlementIds }
+    : undefined;
 };
 
 /** Narrowly privileged same-event SSA/Medicare candidate transition. The domain
@@ -2343,13 +2377,18 @@ export const applySsaMedicarePaymentAtomically = (state: AuthoritativeState, inp
     assertClaimInvariant(claim);
     candidate.obligations[claim.id] = claim;
   }
-  for (const id of paymentConsumptionKeys(input)) registerAuthoritativeIdentity(candidate.identities, "externalIdempotencyKeys", id);
+  const version = newPaymentVersion(input);
+  for (const id of paymentConsumptionKeys(input, version)) registerAuthoritativeIdentity(candidate.identities, "externalIdempotencyKeys", id);
   applyAccountingTransactionAtomically(candidate, transaction);
-  const record = freezePayment({ ...input, version: "ssa-medicare-payment/v1" as const, id: key,
+  const record = freezePayment({ ...input, version, id: key,
     netBank: input.payable.grossPayable.minus(input.requests.reduce((sum, r) => sum.plus(r.terms.amount), Money.zero(input.payable.grossPayable.currency))),
     transaction, recognitions: paymentRecognitions(input) });
-  candidate.ssaMedicarePayments = { ...candidate.ssaMedicarePayments, [key]: record };
-  reconcileClaimIdentityHistory(candidate);
+  const receipts = candidate.ssaMedicarePayments ?? indexedRecord(new PersistentStringIndex<SsaMedicarePaymentRecord>(), false, undefined, freezePayment).record;
+  receipts[key] = record;
+  candidate.ssaMedicarePayments = receipts;
+  // Indexed insertion already registered each recognition/settlement above.
+  // Rebuilding the registry here discards its persistent append-only proof.
+  if (!executionStateIndexes.has(candidate)) reconcileClaimIdentityHistory(candidate);
   validateAuthoritativeState(candidate);
   commitCandidate(state, candidate);
   return record;
