@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { addPersonalObject, createEmptyPersonalDraft, createGoldenHouseholdExampleDraft } from "../src/application/personalMvp.js";
 import { selectRetirementIncomeChartData } from "../src/application/retirementIncomeChartData.js";
+import { objects } from "../src/application/compiler/shared.js";
+import type { PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 
 describe("retirement source capability boundary", () => {
   it("does not attribute aggregate income or investment balances to retirement streams", () => {
@@ -15,6 +17,24 @@ describe("retirement source capability boundary", () => {
     expect(data.adults.some(adult => adult.confirmed.length > 0)).toBe(true);
     expect(JSON.stringify(model)).toBe(before);
     expect(selectRetirementIncomeChartData(model, "2026-01-01", [])).toEqual(data);
+  });
+  it("only labels payoffs as mortgages when the modeled loan has a mortgage source type", () => {
+    const base = createGoldenHouseholdExampleDraft();
+    const mortgage = objects(base, "Liability").find(loan => loan.liability_type === "mortgage");
+    expect(mortgage).toBeDefined();
+    const autoId = "b1870000-0000-4000-8000-000000000098";
+    const model = addPersonalObject(base, "Liability", autoId, { name: "Auto loan", liability_type: "auto" });
+    const forecast = {
+      status: "completed", retirementMilestones: [],
+      debtPayoffs: [
+        { loanId: String(mortgage!.liability_id), scheduledAt: "2030-01-01" },
+        { loanId: autoId, scheduledAt: "2031-01-01" },
+        { loanId: "b1870000-0000-4000-8000-000000000099", scheduledAt: "2032-01-01" },
+      ],
+    } as unknown as PersonalHouseholdForecastReadModel;
+    expect(selectRetirementIncomeChartData(model, "2026-01-01", [], forecast).mortgagePayoffs).toEqual([
+      { loanId: String(mortgage!.liability_id), scheduledAt: "2030-01-01", name: String(mortgage!.name ?? "Mortgage") },
+    ]);
   });
   it("uses the existing later-of-90 calendar rule and keeps missing DOB unknown", () => {
     const id = (n: number) => `b1870000-0000-4000-8000-${String(n).padStart(12, "0")}`;
