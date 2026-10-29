@@ -311,6 +311,22 @@ test("synthetic account, income and forecast UX at desktop and narrow viewport",
 
     await navigate(page, "Plan", "Current Plan");
     await capture("06-current-plan", width);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const planningProduction = `planning-production-${width}-${revision}.png`;
+    const planningReference = `planning-calm-reference-${width}-${revision}.png`;
+    await page.screenshot({ path: testInfo.outputPath(planningProduction), animations: "disabled" });
+    await testInfo.attach(planningProduction, { path: testInfo.outputPath(planningProduction), contentType: "image/png" });
+    const planningPrototype = await page.context().newPage();
+    try {
+      await planningPrototype.setViewportSize({ width, height });
+      await planningPrototype.setContent(await readFile("docs/alpha/prototypes/level4-h04-h08-pilot.html", "utf8"));
+      await planningPrototype.locator(`${width === 390 ? "#mobileNav" : "#navLeft"} [data-nav="plan"]`).click();
+      await planningPrototype.screenshot({ path: testInfo.outputPath(planningReference), animations: "disabled" });
+      await testInfo.attach(planningReference, { path: testInfo.outputPath(planningReference), contentType: "image/png" });
+    } finally { await planningPrototype.close(); }
+    const planningComparison = testInfo.outputPath(`planning-comparison-${width}-${revision}.html`);
+    await writeFile(planningComparison, `<!doctype html><html lang="en"><meta charset="utf-8"><title>Planning comparison</title><style>body{font:16px system-ui;margin:24px}main{display:flex;gap:24px}figure{flex:1;min-width:0;margin:0}img{width:100%}</style><h1>Planning · ${width} × ${height} · ${revision}</h1><p>Visual review pending. Reference amounts and stacks are fictional. Production intentionally shows the missing V6 stream-source capability. Compare first-screen hierarchy, readable gaps, timeline and owner actions.</p><p>Uncoached PM UAT for #120: What changes at retirement? Find each adult’s planned retirement date, explain which dates are suggestions, find the requested cutoff and where supported results stop, inspect one projected investment balance, and explain what is missing before judging retirement income sufficiency. Record completion, confusion and PM disposition of the V6 gap; CI is not UX signoff.</p><main><figure><figcaption>Production</figcaption><img alt="Production Planning" src="${planningProduction}"></figure><figure><figcaption>Approved Calm reference · fictional data</figcaption><img alt="Calm Planning reference" src="${planningReference}"></figure></main></html>`);
+    await testInfo.attach(`planning-comparison-${width}-${revision}`, { path: planningComparison, contentType: "text/html" });
     for (const label of ["Cash", "Real Estate", "Other Assets"]) {
       await clickFinancialDestination(page, label);
       if (label === "Cash") {

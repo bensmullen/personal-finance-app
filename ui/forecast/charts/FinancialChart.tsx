@@ -7,10 +7,13 @@ import { CashChartDetails, ForecastProgress } from "../../calm/CalmPresentation.
 import type { ForecastChartData, ForecastChartMetric, ForecastChartPeriod, ForecastChartValue } from "../../../src/application/forecastChartData.js";
 import { formatExactMoney } from "../../entityPresentation.js";
 
-type Kind = "wealth" | "cash" | "statement";
+type Kind = "wealth" | "cash" | "statement" | "investing";
 type Series = { key: ForecastChartMetric; label: string; color: string; dash?: string; bar?: boolean };
 const cashLabel = "Total Cash Balance";
 const families: Record<Kind, { title: string; series: readonly Series[] }> = {
+  investing: { title: "Total investment balance", series: [
+    { key: "totalInvestmentValue", label: "Investment value", color: "#1e6756" },
+  ] },
   wealth: { title: "Assets, liabilities and net worth", series: [
     { key: "netWorth", label: "Net worth", color: "#1e6756" },
     { key: "totalAssets", label: "Total assets", color: "#3e5f8a", dash: "8 3" },
@@ -214,6 +217,7 @@ export function FinancialChart({ annual, monthly, kind, stale, pending = false, 
     <CashChartDetails title={title}><section aria-label={`${title} chart details`}>
       <p>Forecast, not account history · {source.currency}. Axis positions and compact hover amounts are approximate; tables and selected values retain exact source amounts.</p>
       {kind === "cash" && <p>(Including cash in investment accounts)</p>}
+      {kind === "investing" && <p>Household-wide modeled holdings value, excluding account cash. This balance is not earnings, realized return, spendable retirement income or per-account performance.</p>}
       <p>Faded lines and bars indicate partial coverage; gaps are unavailable. A line segment touching an incomplete endpoint is faded. Partial years are not annualized.</p>
       <p>{kind === "statement" ? "Income and expenses when recognized; not bank receipts/disbursements or disposable wages." : "Balances are period-closing stocks."} {kind === "cash" && "Bars show signed change in the same all-account cash balance, not salary less expenses. Positive changes are green, negative changes are red, zero is neutral. Faded bars mark incomplete values or partial years; unavailable values leave gaps. Partial years are not annualized."}</p>
       {calmWealth && <p className="chart-axis-note">{granularity === "annual" ? "Annual" : "Monthly"} closing balances ({source.currency}). Axis labels and positions are approximate; readouts are exact.</p>}
