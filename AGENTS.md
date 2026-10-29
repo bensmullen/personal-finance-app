@@ -109,6 +109,21 @@ unanchored `git rev-parse --show-toplevel` as a substitute: with concurrent
 worktrees it may resolve the wrong checkout. See
 `docs/development/handoff-authoring-policy.md` for the detailed rule.
 
+## First-blocker prevention and reviewer handoff
+
+After the first `TASK_STATUS: BLOCKED` or `LOOKUP_REQUIRED` on a task,
+ChatGPT SHALL audit the complete reachable implementation contract before
+reauthorizing Codex, not just patch the reported `ALLOWED_PATHS` omission.
+Trace original evaluators and source authorities through adapters, state
+validation, archived receipts, cold replay, tests, versioning, and sibling
+routes; preemptively resolve all **confirmed** blockers in the **same**
+GitHub issue. Re-fetch and parser-validate the saved contract and check
+branch/receipt readiness before recommending another turn. Keep unrelated
+capabilities outside scope and report remaining unknowns; static review is
+not a promise of zero runtime or external-provider blockers. Follow
+`docs/development/handoff-authoring-policy.md`, “First implementation
+blocker: reachable-contract closure audit.” Never bypass Codex's stop hooks.
+
 ## Git bootstrap and shared state
 
 GitHub remote state is authoritative for task initialization.

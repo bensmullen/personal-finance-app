@@ -121,6 +121,54 @@ addresses the complete failure class rather than only the first failing
 assertion. Do not use extra required task-envelope fields or a blanket E2E
 execution requirement for this preview.
 
+### First implementation blocker: reachable-contract closure audit (mandatory)
+
+On the **first Codex BLOCKED/LOOKUP_REQUIRED for an implementation task**, ChatGPT
+owns a proactive, **whole-task semantic closure audit before another Codex
+authorization**. Do not merely authorize the named file and send Codex back.
+This also applies to unblocked portions of that task, known sibling failures,
+and the already approved product scope; no separate user request is needed.
+
+1. **Classify and preserve** the reported blocker, original task/issue, latest
+   Git branch/PR, receipts and clean/upstream status. Do not override a Codex
+   stop, invent external original-source authority, reset a worktree, or restart
+   while the old writer is active.
+2. **Trace all acceptance paths end-to-end:** enumerate each relevant entry
+   point, public contract/type, original-source evaluator, publisher/provider
+   and revision/completeness boundary, adapters, state/write/archive validator,
+   checkpoint/cold replay, downstream UI/output, and tests. Inspect adjacent
+   branches/negative paths and direct callers, not just the first failing line.
+   For every required step, map *path + symbol + invariant + write permission +
+   available evidence*; separately mark independent out-of-scope capabilities.
+   Where repository search is incomplete, explicitly state the coverage gap.
+3. **Resolve decisions and access up front:** reconcile authoritative
+   specifications, versions/migrations, legacy behavior, typed interfaces,
+   source-of-truth identity, route permissions, currency/funding, time/ordering,
+   idempotency, provenance, source races, and data-size growth. Confirm every
+   required write target is legal in `ALLOWED_PATHS`; account for transitive
+   tests/fixtures and concurrent branch ownership. Do not widen to unrelated
+   modules merely because they contain similar checks.
+4. **Repair the existing GitHub issue in one cohesive pass:** authorize every
+   confirmed mandatory path, make additive version/migration choices and
+   negative-space exclusions explicit, align tests/acceptance with original
+   scope, and move superseded checkpoints to linked issue comments. If any
+   mandatory decision or required path cannot safely be resolved, mark the
+   handoff **not Codex-ready** and escalate the complete gap instead of
+   dispatching a partial patch.
+5. **Independently recheck before dispatch:** re-fetch the saved issue and
+   relevant live PR/branch, run the exact V3 parser/readiness/contradiction
+   checks, reread changed interfaces and one-pass producer→consumer→archive
+   contract closure, and state the residual risks. Share a concise
+   path-by-capability closure matrix and precise next action; only then ask
+   the PM for a fresh Codex turn. New blockers trigger another delta audit
+   plus reassessment of why the previous review missed them.
+
+The goal is **preventable-blocker reduction and fewer wasted Codex turns**,
+not an unsupported promise that static review guarantees no runtime, external
+source, integration, or CI blocker. This is a ChatGPT-owned review gate; it
+does not create extra Codex envelope fields, require Codex to run a broad
+scan, weaken the hook, or authorize framework-control files in a product task.
+
 ### Evidence-complete UI CI repair handoff (mandatory)
 
 For every CI-red UI/interaction PR, **ChatGPT owns the full audit before
