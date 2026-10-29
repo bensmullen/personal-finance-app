@@ -138,6 +138,15 @@ and the already approved product scope; no separate user request is needed.
    and revision/completeness boundary, adapters, state/write/archive validator,
    checkpoint/cold replay, downstream UI/output, and tests. Inspect adjacent
    branches/negative paths and direct callers, not just the first failing line.
+   **Trace every required authorization datum upstream to its real producing caller**:
+   household/person identity, run `asOf`, `dataCutoff`, event instant, original
+   publisher and completeness, plus every type/interface by which it reaches the
+   validator. Verify the *actual invocation supplies the values*; an interface
+   or registered provider alone does not prove that run context is available.
+   If a required caller is outside `ALLOWED_PATHS` or expressly forbidden by the
+   issue, resolve that contradiction before restarting. Never substitute event
+   time, a provider-selected cutoff, or a consumer-asserted flag for missing
+   original run context.
    For every required step, map *path + symbol + invariant + write permission +
    available evidence*; separately mark independent out-of-scope capabilities.
    Where repository search is incomplete, explicitly state the coverage gap.
