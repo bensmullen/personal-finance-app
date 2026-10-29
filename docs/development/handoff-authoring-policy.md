@@ -189,6 +189,18 @@ and the already approved product scope; no separate user request is needed.
    the PM for a fresh Codex turn. New blockers trigger another delta audit
    plus reassessment of why the previous review missed them.
 
+**Repeated no-progress STOP escalation:** If the same task has **two or more
+immediate BLOCKED returns without code changes after a claimed full closure
+review**, do not recommend another one-line scope amendment or Codex restart.
+Instead identify the reviewer-planning failure explicitly, re-evaluate task
+size and immutable shared interfaces, and replace contradictory line-level
+constraints with a bounded whole-behavior contract plus executable-path
+matrix. Reconcile missing proof serialization, conditional paths and original
+sources. If unresolved, keep the task not start-ready or split a truly stable,
+independent prerequisite; never send Codex an unresolved architectural choice.
+This escalation is reviewer-only and requires no automatic full-repo scan,
+new hook schema, local test loop or product-manager ceremony.
+
 The goal is **preventable-blocker reduction and fewer wasted Codex turns**,
 not an unsupported promise that static review guarantees no runtime, external
 source, integration, or CI blocker. This is a ChatGPT-owned review gate; it
