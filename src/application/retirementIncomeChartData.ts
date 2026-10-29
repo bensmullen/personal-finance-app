@@ -44,10 +44,16 @@ export function selectRetirementIncomeChartData(model: PersonalDraft, asOf: stri
     });
   }));
   const result = forecast && forecast.status !== "unavailable" ? forecast : undefined;
+  // The read model reports all debt payoffs; only a sourced mortgage may be labeled as one.
+  const mortgageNames = new Map(objects(model, "Liability")
+    .filter(loan => loan.liability_type === "mortgage")
+    .map(loan => [String(loan.liability_id), String(loan.name ?? "Mortgage")]));
   const horizon = age90Horizon(model, personIds, asOf);
   return Object.freeze({ incomeSources, adults,
     age90: horizon ? Object.freeze({ ...horizon, targets: Object.freeze(horizon.targets.map(target => Object.freeze({ ...target }))) }) : undefined,
     modeledRetirements: Object.freeze((result?.retirementMilestones ?? []).map(item => Object.freeze({ ...item }))),
-    mortgagePayoffs: Object.freeze((result?.debtPayoffs ?? []).map(item => Object.freeze({ ...item, name: String(objects(model, "Liability").find(loan => loan.liability_id === item.loanId)?.name ?? "Mortgage") }))),
+    mortgagePayoffs: Object.freeze((result?.debtPayoffs ?? [])
+      .filter(item => mortgageNames.has(item.loanId))
+      .map(item => Object.freeze({ ...item, name: mortgageNames.get(item.loanId)! }))),
   });
 }
