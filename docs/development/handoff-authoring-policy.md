@@ -93,7 +93,14 @@ Before emitting an implementation/repair handoff, ChatGPT SHALL:
 9. keep expensive representative/stress/scaling/convergence/provider evidence
    outside ordinary CI unless the repository verification policy explicitly
    assigns a bounded correctness workload to CI;
-10. perform a contradiction/negative-space review before handing off.
+10. perform a contradiction/negative-space review before handing off, including all
+    material control-flow branches for cross-cutting or source-qualified financial
+    work. Use a compact path-closure matrix (entry/branch, source/cutoff,
+    original evaluator, actual posting, archive/replay, allowed file, test)
+    before finalizing ALLOWED_PATHS. Never assume a call site covers an adjacent
+    no-option/no-election branch; require actual posted proof for each accepted
+    path. Apply this targeted check at the ORIGINAL handoff, not only after a
+    blocker; do not require repo-wide call-graph scans for unrelated tasks.
 11. preview how the proposed edits affect selected GitHub CI gates and
     existing test expectations, including type/build, accessible selectors,
     state transitions, fixtures, viewports, integration boundaries, and
@@ -136,8 +143,18 @@ and the already approved product scope; no separate user request is needed.
 2. **Trace all acceptance paths end-to-end:** enumerate each relevant entry
    point, public contract/type, original-source evaluator, publisher/provider
    and revision/completeness boundary, adapters, state/write/archive validator,
-   checkpoint/cold replay, downstream UI/output, and tests. Inspect adjacent
-   branches/negative paths and direct callers, not just the first failing line.
+   checkpoint/cold replay, downstream UI/output, and tests. For **each required
+   observable behavior**, enumerate all executable alternatives selected by
+   guards, optional inputs, empty inventories, fallbacks, early returns, and
+   direct-versus-adapter posting. A passing path does not prove its sibling
+   path works. Trace EVERY applicable path from entry/context through actual
+   committed journal and replay; a source check in an unexecuted branch does
+   not satisfy the requirement. Map each path to specific authorized write
+   files and at least one positive/negative regression; inspect all sibling
+   branches, not just the first reported failing line. Resolve any issue prose
+   that prohibits modification of a path required by its own acceptance.
+   Do not issue repeated one-caller-only permissions when the requirement
+   spans several entrypoints.
    **Trace every required authorization datum upstream to its real producing caller**:
    household/person identity, run `asOf`, `dataCutoff`, event instant, original
    publisher and completeness, plus every type/interface by which it reaches the
