@@ -69,11 +69,11 @@ export function scenario(routes: readonly Route[] = five, eventCount = 1) {
   const people = [...new Set(members.map(m => m.personId))].map(personId => ({ personId,
     sponsorIds: [...new Set([...members.filter(m => m.personId === personId).map(m => m.sponsorId), "previous-employer"])],
     families: [...allFamilies] }));
-  function publication<R extends OriginalRole>(role: R, payload: OriginalPublication<R>["payload"]): OriginalPublication<R> {
+  function publication<R extends OriginalRole>(role: R, payload: OriginalPublication<R>["payload"]): OriginalPublication {
     return { role, householdId: "synthetic-household", taxYear: 2026, publisherId: `simulation:${role}-publisher`,
       sourceId: `simulation:${role}-source`, originalId: `simulation:${role}-original`, version: "v1",
       jurisdiction: "US:synthetic", publishedAt: civilDate("2026-01-31"), knownAt: civilDate("2026-01-31"),
-      effective: annual, status: "active", revisesOriginalId: null, payload } as OriginalPublication<R>;
+      effective: annual, status: "active", revisesOriginalId: null, payload } as OriginalPublication<R> as OriginalPublication;
   }
   let originals: OriginalPublication[] = [publication("plan", { members }), publication("funding", { authorizations }),
     publication("legal", { permissions, capacities: [...caps.values()] }), publication("history", { people, capacities: histories, operations })];

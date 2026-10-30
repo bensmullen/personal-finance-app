@@ -80,7 +80,7 @@ describe("source qualification and hostile originals", () => {
   it("requires an explicit authenticated zero declaration for unused capacities", () => {
     const s = scenario();
     s.edit("history", o => ({ ...o, payload: { ...o.payload, capacities: o.payload.capacities.map(c =>
-      c.evidence === "confirmed_zero" ? { ...c, evidence: "itemized_consumption" } : c) } }));
+      c.evidence === "confirmed_zero" ? { ...c, evidence: "itemized_consumption" as const } : c) } }));
     rejected(s.run(), "INCOMPLETE_HISTORY");
   });
   it.each(["operationId", "claimId", "sourceReferenceId"] as const)("rejects historical %s replay across plan identities", field => {

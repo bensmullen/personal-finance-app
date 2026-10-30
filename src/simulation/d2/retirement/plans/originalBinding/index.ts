@@ -22,7 +22,7 @@ function period(p: PlanPeriod): void {
 }
 const inside = (d: string, p: PlanPeriod): boolean => d >= p.start && d < p.endExclusive;
 const identity = (m: MemberIdentity): string => key([m.personId, m.sponsorId, m.planId, m.family, m.destinationAccountId]);
-const permissionKey = (p: Pick<Permission, "payer" | "taxBucket" | "contributionType">): string =>
+const permissionKey = (p: Pick<ContributionRequest, "payer" | "taxBucket" | "contributionType">): string =>
   key([p.payer, p.taxBucket, p.contributionType]);
 const scopeKey = (p: { personId: string; limitScope: { kind: string; aggregationId: string } }): string =>
   key([p.personId, p.limitScope.kind, p.limitScope.aggregationId]);
