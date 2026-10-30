@@ -120,6 +120,7 @@ import { InsuranceSection, InsuredLifeEvents } from "./authoring/InsuranceSectio
 import { objectEntries, objectId, objectLabel, referenceLabel, friendlyText, forecastDiagnosticMessage, groupDiagnostics, isCashFlowPaymentAccount, belongsToNetWorthSection, entitySummary, formatExactMoney, percentageToRate, rateToPercentage, type NetWorthSection } from "./entityPresentation.js";
 import { calculationFingerprint } from "../src/application/interactiveForecast.js";
 import { HouseholdChart } from "./forecast/HouseholdChart.js";
+import { RetirementIncomeChart } from "./forecast/RetirementIncomeChart.js";
 import { ForecastProgress } from "./calm/CalmPresentation.js";
 import { MonthlyMoneyPanel } from "./forecast/MonthlyMoneyPanel.js";
 import { LiabilityBalanceOutlook, MortgageAmortization } from "./forecast/MortgageAmortization.js";
@@ -1013,7 +1014,9 @@ export function PersonalFinanceApp() {
           )}
           {primary === "Net Worth" && subnav === "Real Estate" && <MortgageOutlook draft={draft} forecast={householdForecast} property currency={sessionSettings.baseCurrency} asOf={sessionSettings.asOf} selectedMonth={mortgageMonth} selectMonth={setMortgageMonth} selectedLoan={mortgageLoan} selectLoan={setMortgageLoan} />}
           {primary === "Net Worth" && (subnav === "Real Estate" || subnav === "Other Assets") && <AssetSection draft={draft} property={subnav === "Real Estate"} edit={(type, id) => setEntityRepair({ objectType: type, objectId: id, field: "", token: randomId() })} />}
-          {primary === "Net Worth" && subnav === "Investments & retirement" && <section className="panel section-outlook" aria-label="Investing outlook"><p className="eyebrow">Investing</p><h1>Your investments</h1><p>{objectEntries(draft, "Investment").length ? "Recorded holdings are listed by account below. Performance attribution is not available in this view." : "No investment holdings recorded. Add only accounts and holdings you own; no returns or contributions are assumed."}</p><p className="chart-placeholder">Account outlook · no supported attribution chart yet</p><a href="#investment-sources">Review investment sources</a></section>}
+          {primary === "Net Worth" && subnav === "Investments & retirement" && <section className="panel section-outlook" aria-label="Investing outlook"><p className="eyebrow">Investing</p><h1>Your investments</h1><p>{objectEntries(draft, "Investment").length ? "See how your household’s modeled investment balance changes over time. This is holdings value, not earnings or retirement spending income." : "No investment holdings recorded. Add only accounts and holdings you own; no returns or contributions are assumed."}</p>
+            {householdForecast && (objectEntries(draft, "Investment").length > 0) ? <HouseholdChart forecast={householdForecast} cashFlowOnly={false} investing calm pending={interactive.baseline.pending} stale={interactive.baseline.stale || interactive.baseline.resultModel !== draft || setupChangesPending || interactive.baseline.pending} /> : <p role="status">{interactive.baseline.pending ? "Calculating forecast…" : "No supported investment trend yet. Review holdings and forecast setup."}</p>}
+            <a href="#investment-sources">Review investment sources</a></section>}
           {primary === "Net Worth" && subnav === "Debt" && <MortgageOutlook draft={draft} forecast={householdForecast} currency={sessionSettings.baseCurrency} asOf={sessionSettings.asOf} selectedMonth={mortgageMonth} selectMonth={setMortgageMonth} selectedLoan={mortgageLoan} selectLoan={setMortgageLoan} />}
           {primary === "Money" && subnav === "Cash Flow" && (
             <CashFlow
@@ -1063,7 +1066,9 @@ export function PersonalFinanceApp() {
           )}
           {primary === "Plan" && subnav === "Current Plan" && (
             <>
-              <section className="panel section-outlook" aria-label="Planning outlook"><p className="eyebrow">Planning</p><h1>Your current plan</h1><p>Projection dates: {String(currentPlan(draft)?.start_date ?? "Not recorded")} → {String(currentPlan(draft)?.end_date ?? "Not recorded")} (exclusive end). Source: Current Plan.</p><p className="chart-placeholder">Retirement income composition · chart not yet available; no benefits or withdrawals assumed</p><a href="#forecast-setup">Review forecast setup</a></section>
+              <RetirementIncomeChart draft={draft} forecast={householdForecast} asOf={sessionSettings.asOf} start={sessionSettings.simulationStart} end={sessionSettings.simulationEnd}
+                pending={interactive.baseline.pending} lifecycle={interactive.baseline.lifecycle} stale={interactive.baseline.stale || interactive.baseline.resultModel !== draft || setupChangesPending || interactive.baseline.pending}
+                onEvents={() => navigate("Plan", "Life Events")} onCash={() => navigate("Money", "Cash Flow")} />
               <HouseholdPlan
                 draft={draft}
                 readiness={readiness}
@@ -1513,7 +1518,7 @@ function MortgageOutlook({ draft, forecast, property = false, currency, selected
     </> : <section aria-label="Household liability balance outlook" data-evidence-state={models.baseline?.pending ? "pending" : models.baseline?.lifecycle === "error" ? "error" : !forecast || forecast.status === "unavailable" || current && !points.length ? "unavailable" : "stale"}>
       {models.baseline?.pending ? <ForecastChartPending title="Household liability balance outlook" /> : <><h2>Household liability balance outlook</h2><p role="status">{models.baseline?.lifecycle === "error" ? "Forecast failed · liability balances unavailable." : !current ? "Update the forecast to view current modeled household liabilities." : "Liability forecast unavailable for the current source coverage."}</p><button onClick={setup}>Review liability forecast setup</button></>}
     </section>)}
-    <p>See how funded payments reduce one named mortgage. Recorded current balances and modeled future principal have different dates.</p>
+    <p>{property ? "See how funded payments reduce one named mortgage." : "Your household liability trend shows supported future borrowing balances; select a mortgage below to understand its funded payments and principal."} Recorded current balances and modeled future principal have different dates.</p>
     {!!loans.length && <label>Mortgage<select aria-label="Mortgage" value={liabilityId} onChange={event => selectLoan(event.target.value)}>{loans.map(loan => <option key={objectId("Liability", loan)} value={objectId("Liability", loan)}>{objectLabel("Liability", loan)}</option>)}</select></label>}
     {!loans.length ? <p>No mortgage recorded. Add a mortgage through Net Worth → Debt; other debt is listed separately.</p> : <>
       <p>{objectLabel("Liability", selected!)} · recorded current principal: {typeof selected!.current_balance === "string" ? formatExactMoney(selected!.current_balance, currency) : "Not recorded"}. Balance observation date not supplied here. Source: Net Worth → Debt.</p>

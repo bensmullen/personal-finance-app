@@ -150,6 +150,22 @@ const wealthChart = (page: Page) => page.getByRole("figure", { name: wealthTitle
 
 test.describe("Shared charts with touch and enlarged text", () => {
   test.use({ hasTouch: true });
+  test("Investing touch selection keeps the shared compact readout in the mobile viewport", async ({ page }) => {
+    await boundedGolden(page, 390);
+    await clickFinancialDestination(page, "Investing");
+    const chart = page.getByRole("figure", { name: "Total investment balance", exact: true });
+    const plot = chart.locator(".chart");
+    await plot.scrollIntoViewIfNeeded();
+    const box = await plot.boundingBox();
+    if (!box) throw new Error("Investment chart has no touch target");
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    const readout = chart.locator(".recharts-tooltip-wrapper .chart-compact-readout");
+    await expect(readout).toBeVisible();
+    await expect(readout).toContainText("Investment value:");
+    const bounds = await readout.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  });
   for (const width of [390, 1440]) for (const period of ["annual", "monthly"]) test(`Cash compact tap selection and local exact details at ${width}px with 200% text · ${period}`, async ({ page }, info) => {
     await boundedGolden(page, width);
     await clickFinancialDestination(page, "Cash");
@@ -347,6 +363,30 @@ async function exportedBytes(page: Page) {
 }
 
 for (const width of [1440, 390]) {
+  test(`Investing exact sourced balance and bounded period selection at ${width}px`, async ({ page }) => {
+    await observeBaseline(page);
+    const status = await boundedGolden(page, width);
+    const source = await appliedSource(page, status);
+    const annual = selectForecastChartData(source, { granularity: "annual" });
+    await clickFinancialDestination(page, "Investing");
+    const chart = page.getByRole("figure", { name: "Total investment balance", exact: true });
+    await expect(chart).toBeVisible();
+    await chart.locator('.cash-chart-details > summary').click();
+    await expect(chart.getByRole("status", { name: "Total investment balance exact selected period" }).locator("dd")).toHaveText([expectedValue(annual.points.at(-1)!.metrics.totalInvestmentValue)]);
+    await expect(chart).toContainText("not earnings, realized return");
+    await grouping(chart).selectOption("monthly");
+    const monthly = selectForecastChartData(source);
+    await chart.getByRole("combobox", { name: "Selected projected period", exact: true }).selectOption(monthly.points[0]!.periodStart);
+    await expect(chart.getByRole("status", { name: "Total investment balance exact selected period" }).locator("dd")).toHaveText([expectedValue(monthly.points[0]!.metrics.totalInvestmentValue)]);
+    await chart.getByRole("application").focus();
+    await page.keyboard.press("Home");
+    await expect(chart.locator(".chart-compact-readout")).toContainText(expectedCompact(monthly.points[0]!.metrics.totalInvestmentValue));
+    const legend = chart.getByRole("button", { name: "Investment value", exact: true });
+    await legend.click();
+    await expect(chart.getByText(/All series hidden/)).toBeVisible();
+    await legend.click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
   test(`Shared chart pending, completion and worker failure at ${width}px`, async ({ page }, info) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.addInitScript(() => {
@@ -863,6 +903,7 @@ for (const width of [1440, 390]) {
     await page.getByRole("button", { name: "Import into session", exact: true }).click();
     await clickFinancialDestination(page, "Investing");
     await expect(page.getByRole("region", { name: "Investing outlook" })).toContainText("No investment holdings recorded");
+    await expect(page.getByRole("figure", { name: "Total investment balance", exact: true })).toHaveCount(0);
     await clickFinancialDestination(page, "Overview");
     await expect(page.getByRole("figure", { name: "Household financial outlook chart" })).toHaveCount(0);
     await expect(page.locator('.forecast-status[aria-label="Household forecast status"]')).toHaveAttribute("data-lifecycle", "idle");

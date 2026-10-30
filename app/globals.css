@@ -598,3 +598,14 @@ main#main-content { padding: 24px 32px 64px; }
   .guided-fields, .guided-fields > *, .field-shell, .field-heading,
   .field-shell > input, .field-shell > select { min-width: 0; max-width: 100%; }
 }
+/* Planning reuses the chart controls and bounded disclosures on every viewport. */
+.planning-outlook { min-width: 0; }
+.planning-insight { max-width: 65ch; }
+.retirement-source-gap { margin: 1.25rem 0; padding: clamp(1rem, 3vw, 2rem); min-height: 15rem; border: 1px solid #c7d8d0; border-radius: 16px; background: #f3f7f4; display: flex; flex-direction: column; justify-content: center; gap: .65rem; }
+.retirement-source-gap p { max-width: 68ch; margin: 0; }
+.planning-timeline > ul { padding-left: 1.25rem; border-left: 3px solid #bdd5c9; }
+.planning-timeline li { margin-block: .75rem; overflow-wrap: anywhere; }
+.planning-timeline fieldset { display: flex; flex-wrap: wrap; gap: 1rem; }
+.planning-timeline label { display: flex; align-items: center; gap: .5rem; min-height: 44px; }
+.planning-timeline input[type="checkbox"] { width: auto; }
+.planning-outlook .financial-charts { min-width: 0; }

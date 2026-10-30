@@ -7,6 +7,8 @@ import { selectForecastChartData } from "../src/application/forecastChartData.js
 import type { ForecastChartValue } from "../src/application/forecastChartData.js";
 import type { HouseholdForecastPoint, PersonalHouseholdForecastReadModel } from "../src/application/householdProjection.js";
 import { taxDiagnostic, taxOutputCapabilities } from "../src/simulation/tax/contracts.js";
+import { selectRetirementIncomeChartData } from "../src/application/retirementIncomeChartData.js";
+import { createGoldenHouseholdExampleDraft } from "../src/application/personalMvp.js";
 
 type Available = Extract<PersonalHouseholdForecastReadModel, { status: "completed" | "incomplete" }>;
 const money = (amount: string) => ({ amount, currency: "USD" });
@@ -37,6 +39,45 @@ function source(options: { partial?: boolean; missing?: boolean; noInvestments?:
 const render = (forecast: PersonalHouseholdForecastReadModel, cashFlowOnly = true, stale = false, calm = false) => renderToStaticMarkup(React.createElement(HouseholdChart, { forecast, cashFlowOnly, stale, calm }));
 
 describe("U1B exact chart presentation", () => {
+  it("never derives retirement stream amounts from aggregate statements or investment changes", () => {
+    const forecast = source();
+    const model = createGoldenHouseholdExampleDraft();
+    const baseline = selectRetirementIncomeChartData(model, "2026-01-01", [], forecast);
+    const changed = { ...forecast, points: forecast.points.map(point => ({ ...point, statementIncome: money("999999.999"), investmentValue: money("1") })) };
+    expect(selectRetirementIncomeChartData(model, "2026-01-01", [], changed).incomeSources).toBe(baseline.incomeSources);
+    expect(baseline.incomeSources.series).toEqual([]);
+  });
+  it("uses sourced investment closes with exact values and shared disclosures", () => {
+    const forecast = source({ partial: true });
+    const html = renderToStaticMarkup(React.createElement(HouseholdChart, { forecast, cashFlowOnly: false, investing: true, calm: true, stale: true }));
+    expect(html).toContain('aria-label="Total investment balance"');
+    expect(html).toContain("30 USD · Incomplete · closing 2026-02-01");
+    expect(html).toContain("snapshot, separate from projected periods");
+    expect(html).toContain("Out of date");
+    expect(html).toContain("Chart Details");
+    expect(html).toContain("not earnings, realized return");
+    expect(html).not.toContain('aria-label="Household financial outlook chart"');
+    expect(html).not.toContain('aria-label="Modeled statement income versus expenses"');
+  });
+  it("retains the full supported investment horizon beyond forty years in annual view", () => {
+    const forecast = source();
+    const count = 55 * 12;
+    const points = Array.from({ length: count }, (_, index) => ({ ...forecast.points[0]!, periodStart: at(index), periodEnd: at(index + 1) }));
+    const long = { ...forecast, requestedHorizon: { start: at(0), end: at(count) }, reachedThrough: at(count), simulationEnd: at(count), points };
+    const html = renderToStaticMarkup(React.createElement(HouseholdChart, { forecast: long, cashFlowOnly: false, investing: true, calm: true }));
+    expect(html).toContain("Show exact chart data · 55 years");
+    expect(html).toContain("2080-01-01 → 2081-01-01");
+    expect(html).toContain("closing 2081-01-01");
+  });
+  it("distinguishes supported zero investment value from unavailable investment capability", () => {
+    const forecast = source({ noInvestments: true });
+    const zero = renderToStaticMarkup(React.createElement(HouseholdChart, { forecast, cashFlowOnly: false, investing: true }));
+    expect(zero).toContain("0 USD · Incomplete");
+    const missing = { ...forecast, points: forecast.points.map(point => ({ ...point, outputCapabilities: {} })) };
+    const html = renderToStaticMarkup(React.createElement(HouseholdChart, { forecast: missing, cashFlowOnly: false, investing: true }));
+    expect(html).toContain("Unavailable");
+    expect(html).not.toContain("0 USD · Incomplete");
+  });
   it("gives each chart select its own exact external label and unique association", () => {
     const html = render(source());
     // Wrapping a select in a label includes all option text in exact label
