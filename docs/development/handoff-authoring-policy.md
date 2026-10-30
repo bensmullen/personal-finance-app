@@ -93,7 +93,14 @@ Before emitting an implementation/repair handoff, ChatGPT SHALL:
 9. keep expensive representative/stress/scaling/convergence/provider evidence
    outside ordinary CI unless the repository verification policy explicitly
    assigns a bounded correctness workload to CI;
-10. perform a contradiction/negative-space review before handing off.
+10. perform a contradiction/negative-space review before handing off, including all
+    material control-flow branches for cross-cutting or source-qualified financial
+    work. Use a compact path-closure matrix (entry/branch, source/cutoff,
+    original evaluator, actual posting, archive/replay, allowed file, test)
+    before finalizing ALLOWED_PATHS. Never assume a call site covers an adjacent
+    no-option/no-election branch; require actual posted proof for each accepted
+    path. Apply this targeted check at the ORIGINAL handoff, not only after a
+    blocker; do not require repo-wide call-graph scans for unrelated tasks.
 11. preview how the proposed edits affect selected GitHub CI gates and
     existing test expectations, including type/build, accessible selectors,
     state transitions, fixtures, viewports, integration boundaries, and
@@ -120,6 +127,85 @@ sibling or downstream tests vulnerable to the same issue, so that a patch
 addresses the complete failure class rather than only the first failing
 assertion. Do not use extra required task-envelope fields or a blanket E2E
 execution requirement for this preview.
+
+### First implementation blocker: reachable-contract closure audit (mandatory)
+
+On the **first Codex BLOCKED/LOOKUP_REQUIRED for an implementation task**, ChatGPT
+owns a proactive, **whole-task semantic closure audit before another Codex
+authorization**. Do not merely authorize the named file and send Codex back.
+This also applies to unblocked portions of that task, known sibling failures,
+and the already approved product scope; no separate user request is needed.
+
+1. **Classify and preserve** the reported blocker, original task/issue, latest
+   Git branch/PR, receipts and clean/upstream status. Do not override a Codex
+   stop, invent external original-source authority, reset a worktree, or restart
+   while the old writer is active.
+2. **Trace all acceptance paths end-to-end:** enumerate each relevant entry
+   point, public contract/type, original-source evaluator, publisher/provider
+   and revision/completeness boundary, adapters, state/write/archive validator,
+   checkpoint/cold replay, downstream UI/output, and tests. For **each required
+   observable behavior**, enumerate all executable alternatives selected by
+   guards, optional inputs, empty inventories, fallbacks, early returns, and
+   direct-versus-adapter posting. A passing path does not prove its sibling
+   path works. Trace EVERY applicable path from entry/context through actual
+   committed journal and replay; a source check in an unexecuted branch does
+   not satisfy the requirement. Map each path to specific authorized write
+   files and at least one positive/negative regression; inspect all sibling
+   branches, not just the first reported failing line. Resolve any issue prose
+   that prohibits modification of a path required by its own acceptance.
+   Do not issue repeated one-caller-only permissions when the requirement
+   spans several entrypoints.
+   **Trace every required authorization datum upstream to its real producing caller**:
+   household/person identity, run `asOf`, `dataCutoff`, event instant, original
+   publisher and completeness, plus every type/interface by which it reaches the
+   validator. Verify the *actual invocation supplies the values*; an interface
+   or registered provider alone does not prove that run context is available.
+   If a required caller is outside `ALLOWED_PATHS` or expressly forbidden by the
+   issue, resolve that contradiction before restarting. Never substitute event
+   time, a provider-selected cutoff, or a consumer-asserted flag for missing
+   original run context.
+   For every required step, map *path + symbol + invariant + write permission +
+   available evidence*; separately mark independent out-of-scope capabilities.
+   Where repository search is incomplete, explicitly state the coverage gap.
+3. **Resolve decisions and access up front:** reconcile authoritative
+   specifications, versions/migrations, legacy behavior, typed interfaces,
+   source-of-truth identity, route permissions, currency/funding, time/ordering,
+   idempotency, provenance, source races, and data-size growth. Confirm every
+   required write target is legal in `ALLOWED_PATHS`; account for transitive
+   tests/fixtures and concurrent branch ownership. Do not widen to unrelated
+   modules merely because they contain similar checks.
+4. **Repair the existing GitHub issue in one cohesive pass:** authorize every
+   confirmed mandatory path, make additive version/migration choices and
+   negative-space exclusions explicit, align tests/acceptance with original
+   scope, and move superseded checkpoints to linked issue comments. If any
+   mandatory decision or required path cannot safely be resolved, mark the
+   handoff **not Codex-ready** and escalate the complete gap instead of
+   dispatching a partial patch.
+5. **Independently recheck before dispatch:** re-fetch the saved issue and
+   relevant live PR/branch, run the exact V3 parser/readiness/contradiction
+   checks, reread changed interfaces and one-pass producer→consumer→archive
+   contract closure, and state the residual risks. Share a concise
+   path-by-capability closure matrix and precise next action; only then ask
+   the PM for a fresh Codex turn. New blockers trigger another delta audit
+   plus reassessment of why the previous review missed them.
+
+**Repeated no-progress STOP escalation:** If the same task has **two or more
+immediate BLOCKED returns without code changes after a claimed full closure
+review**, do not recommend another one-line scope amendment or Codex restart.
+Instead identify the reviewer-planning failure explicitly, re-evaluate task
+size and immutable shared interfaces, and replace contradictory line-level
+constraints with a bounded whole-behavior contract plus executable-path
+matrix. Reconcile missing proof serialization, conditional paths and original
+sources. If unresolved, keep the task not start-ready or split a truly stable,
+independent prerequisite; never send Codex an unresolved architectural choice.
+This escalation is reviewer-only and requires no automatic full-repo scan,
+new hook schema, local test loop or product-manager ceremony.
+
+The goal is **preventable-blocker reduction and fewer wasted Codex turns**,
+not an unsupported promise that static review guarantees no runtime, external
+source, integration, or CI blocker. This is a ChatGPT-owned review gate; it
+does not create extra Codex envelope fields, require Codex to run a broad
+scan, weaken the hook, or authorize framework-control files in a product task.
 
 ### Evidence-complete UI CI repair handoff (mandatory)
 
