@@ -912,7 +912,10 @@ const runVerticalSlice2Prepared = (request: VerticalSlice2RunInput): VerticalSli
   validateInput(request, periods);
   const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end });
   const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({ runContext: request.runContext, openingState: request.openingState, model: request.input, assumptions: { months } }));
-  let committedState = cloneAuthoritativeState(request.openingState);
+  // Keep S1 source/identity archive ancestry indexed across short prepared
+  // horizons too; reindexing every month would reread every older original
+  // and turn an O(events) source admission into O(events²).
+  let committedState = createIndexedExecutionState(cloneAuthoritativeState(request.openingState));
   let committedPrimitiveState = createPrimitiveRuntimeStateStore(request.primitiveState);
   const committedPeriods: VerticalSlice2PeriodResult[] = [];
   const runDiagnostics: ValidationIssue[] = [];
