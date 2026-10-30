@@ -710,7 +710,7 @@
         "PFA-DET-023",
         "PFA-TAX-015"
       ],
-      "scope": "S4 new versioned authentic payroll-health BANK route sharing one S2 wage transaction proof; original FSA expense debit and distinct reimbursement credit with approved member routes. Requires merged S1 #276, native #285 and VS2 #286 #276, native #285, VS2 #286 and S2 #277; serially revisit S2's VS2/payrollContributions for typed health source passthrough because built-in income stream/candidate call does not forward it, then separate FSA original routes. No concurrent S2/S4 writer; disjoint from S3/S5."
+      "scope": "S4 new versioned authentic payroll-health BANK route sharing one S2 wage transaction proof; original FSA expense debit and distinct reimbursement credit with approved member routes. Requires merged #276, #285, #286 and #277; serially revisit S2's VS2/payrollContributions for typed health source passthrough because built-in income stream/candidate call does not forward it, then separate FSA original routes. No concurrent S2/S4 writer; disjoint from S3/S5."
     },
     {
       "issue_number": 280,
