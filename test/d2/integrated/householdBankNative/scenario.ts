@@ -88,6 +88,7 @@ export const journal = (family: Family, n: number, role: "original" | "settlemen
     createAccountingLeg({ type: "cash", posting: "debit", amount: r.netBank, accountId: ids.bank, cashFlowClass: "investing" }),
     createAccountingLeg({ type: "cash", posting: "credit", amount: r.gross, accountId: ids.ira, cashFlowClass: "investing" }),
   ] });
+  if (!("payable" in r) || r.payable === undefined) throw new Error("Native SSA fixture lacks original payable");
   const net = r.payable.grossPayable.minus(money("200"));
   return createAccountingTransaction({ id: accountingTransactionId(`ssa-medicare:${r.payable.paymentId}`), type: "ssa_medicare_same_event", date: r.payable.paymentAt,
     legs: [...(net.isZero() ? [] : [createAccountingLeg({ type: "cash", posting: "debit", amount: net, accountId: ids.bank, cashFlowClass: "operating" })]),
