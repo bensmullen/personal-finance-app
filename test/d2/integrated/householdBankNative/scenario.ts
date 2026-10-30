@@ -23,7 +23,7 @@ export const control = { bankReads: 0, economicReads: 0, nativeReads: 0, bankFai
   revoked: false, withdrawn: false, missingNative: false, deniedBob: false };
 export const reset = () => Object.assign(control, { bankReads: 0, economicReads: 0, nativeReads: 0,
   bankFailAt: 0, economicFailAt: 0, nativeFailAt: 0, revoked: false, withdrawn: false, missingNative: false, deniedBob: false });
-export const opening = (cash = "1500", owner = ids.household as string) => createAuthoritativeState({ accounts: {
+export const opening = (cash = "1500", owner: typeof ids.household | typeof ids.person = ids.household) => createAuthoritativeState({ accounts: {
   [ids.bank]: { id: ids.bank, ownerId: owner, kind: "checking", cash: money(cash) },
   [ids.ira]: { id: ids.ira, ownerId: ids.person, kind: "retirement", cash: money("20000") },
 }, liabilities: { [ids.liability]: { id: ids.liability, balance: money("1000") } } });
@@ -83,7 +83,7 @@ function raw(family: Family, n: number) {
 }
 export const journal = (family: Family, n: number, role: "original" | "settlement" = "original"): AccountingTransaction => {
   const r = raw(family, n);
-  if ("originalTransaction" in r) return role === "original" ? r.originalTransaction : r.paymentTransaction;
+  if ("originalTransaction" in r) return role === "original" ? r.originalTransaction! : r.paymentTransaction!;
   if ("gross" in r) return createAccountingTransaction({ id: r.transactionId, type: "retirement_cash_transfer", date: r.effectiveAt, legs: [
     createAccountingLeg({ type: "cash", posting: "debit", amount: r.netBank, accountId: ids.bank, cashFlowClass: "investing" }),
     createAccountingLeg({ type: "cash", posting: "credit", amount: r.gross, accountId: ids.ira, cashFlowClass: "investing" }),
