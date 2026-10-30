@@ -84,7 +84,7 @@ function raw(family: Family, n: number) {
 export const journal = (family: Family, n: number, role: "original" | "settlement" = "original"): AccountingTransaction => {
   const r = raw(family, n);
   if ("originalTransaction" in r) return role === "original" ? r.originalTransaction! : r.paymentTransaction!;
-  if ("gross" in r) return createAccountingTransaction({ id: r.transactionId, type: "retirement_cash_transfer", date: r.effectiveAt, legs: [
+  if ("gross" in r && r.gross && r.netBank && r.transactionId && r.effectiveAt) return createAccountingTransaction({ id: r.transactionId, type: "retirement_cash_transfer", date: r.effectiveAt, legs: [
     createAccountingLeg({ type: "cash", posting: "debit", amount: r.netBank, accountId: ids.bank, cashFlowClass: "investing" }),
     createAccountingLeg({ type: "cash", posting: "credit", amount: r.gross, accountId: ids.ira, cashFlowClass: "investing" }),
   ] });
