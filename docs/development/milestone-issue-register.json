@@ -6,14 +6,14 @@
   "stage_gates": {
     "D1_U1": {
       "stage": "U1 / D1 final acceptance",
-      "blocking_transition": "Declare U1/D1 product accepted or begin D1-gated integrated work only after all U1B UX/E phases and #120 final uncoached owner UAT",
+      "blocking_transition": "Declare D1/U1B UI product accepted only after #120 uncoached PM UAT proves user journeys and financial forecast semantics end-to-end for integrated D1 and supported D2, with source handshakes owned by D2-D #149. Technical checkpoint merges do not imply acceptance.",
       "required_issue_numbers": [
         120
       ]
     },
     "D2": {
       "stage": "D2-A/B/C parallel backend; D2-D shared integration and final acceptance",
-      "blocking_transition": "Declare D2 accepted or start stochastic R5; D2 backend development itself does not wait on final U1 owner UAT",
+      "blocking_transition": "D2-D #149 retains source, posting, tax, replay and combined household verification; integrated UI/forecast coverage and uncoached D1+D2 PM UAT also required in #120 before final D2 acceptance or stochastic R5. Domain backend tasks may continue independently.",
       "required_issue_numbers": [
         114,
         146,
@@ -77,7 +77,7 @@
     },
     "U1B_E": {
       "stage": "U1B shared-chart polish and Planning sourced retirement/V6 integration",
-      "blocking_transition": "U1B complete / #120 PM acceptance requires #252 shared-chart disclosure/hover/Cash semantics after accepted #240, then #187 Planning and remaining chart outcome work, with independent CI, semantic review, and PM UAT",
+      "blocking_transition": "PR #269 / #187 may merge as a technical checkpoint after exact-head CI and audit, without closing final UX acceptance. Five-stage design-first review, production parity, D2 source/UI handshakes and final D1+D2 PM UAT remain under #120.",
       "required_issue_numbers": [
         252,
         187
@@ -120,7 +120,7 @@
         "PFA-DET-013",
         "PFA-UX-019"
       ],
-      "scope": "Both standing reinvest-dividends with authoritative basis/tax semantics AND consolidated #104 flexible recurring personally funded IRA/brokerage scheduling; both required before private alpha."
+      "scope": "R11 pre-alpha existing standing dividend reinvestment and flexible funded contribution scheduling (#104 consolidated), with conflict-priority repair. Separate architecture inventory of investment purchases, sales, transfers, retirement withdrawals, realized gains, basis, tax and forecast scenarios must map #100, D1 and D2-A #146/#149 owners before any additional code task; no actual trade execution in app."
     },
     {
       "issue_number": 101,
@@ -222,7 +222,7 @@
         "PFA-UX-023",
         "PFA-UX-024"
       ],
-      "scope": "Sole integrated U1/D1 and U1B owner-UAT gate. All retained #94/#99 requirements plus #170 foundation, #181 flagship, #171 Cash, #240 shared-ribbon compact mobile header, #252 shared chart details/hover/Cash language and #187 source-backed Planning V6/Investing/Debt clarity must pass independent audit and PM uncoached 1440/390 checks. Missing actual net-after-tax funding never called Discretionary Income. Green CI/screenshot alone is not acceptance."
+      "scope": "Sole final U1B/D1 and supported D2 UI/forecast PM UAT owner. Use PM-approved five-stage process (journey inventory, source-grounded design, bounded Codex implementation, independent actual-render visual/semantic QA, uncoached PM UAT). Every substantive page must meet hierarchy, density, typography, layout, language, navigation, lifecycle states and mobile/desktop accessibility. PR #269/#187 is a technical checkpoint only; final lifetime journeys, Calm parity and D2 integrations depend on #149 source identity and tax/bank proof. No green-CI/screenshot-only completion."
     },
     {
       "issue_number": 129,
@@ -360,7 +360,7 @@
         "PFA-DET-021",
         "PFA-DET-022"
       ],
-      "scope": "D2-D coordination and final closeout owner, NOT an active Codex V3: S1 #276 independent BANK/member source authority, state posting/archive/cold replay; S2 #277 both VS2 wage branches and SSA exclusivity; S3 #278 retirement/standalone Medicare; S4 #279 payroll health/FSA; S5 #280 card/aftertax premiums. After audited/merged children and domain owners #146/#147/#148, integrate S8-5 combined household truth table, #101/tax/UI #120 source and authoring handshakes, and PM UAT. No R5 unlock from a child PR."
+      "scope": "D2-D coordination and final closeout owner, NOT an active Codex V3: S1 #276 independent BANK/member source authority, state posting/archive/cold replay; S2 #277 both VS2 wage branches and SSA exclusivity; S3 #278 retirement/standalone Medicare; S4 #279 payroll health/FSA; S5 #280 card/aftertax premiums. After audited/merged children and domain owners #146/#147/#148, integrate S8-5 combined household truth table, #101/tax/UI #120 source and authoring handshakes, and PM UAT. No R5 unlock from a child PR. Final integrated end-user D2 authoring/forecast read-model handshakes and UAT coordinate with U1B #120, without shared JSX/CSS writers before approved U1B source-meaning interface; D2 engine closeout remains independent and is not replaced by UI UAT."
     },
     {
       "issue_number": 161,
@@ -467,7 +467,7 @@
         "PFA-UX-022",
         "PFA-UX-024"
       ],
-      "scope": "U1B-E Planning: source-backed by-period retirement income composition V6 when identifiable (no imagined streams), readable age90/65 selected-adult timeline, honest partial/tax/benefit bounds, and meaningful Investing/Debt first-screen values or explicit gaps. Starts only after #240 UAT/merge and #252 chart interaction/Cash polish merge, avoiding simultaneous ownership of shared JSX/CSS. PM acceptance in #120."
+      "scope": "PR #269 technical checkpoint: source-honest retirement proposals/milestones and investment balance, debt view, V6 unavailable provenance. PM explicitly defers visual parity and full lifetime planning UI to #120's five-stage redesign and D2 integration; #187 not a standalone U1B user-acceptance closeout."
     },
     {
       "issue_number": 189,
