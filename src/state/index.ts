@@ -148,7 +148,81 @@ export type D2PostingRegistration = D2PostingRegistrationBase & (
     readonly chargeId: string; readonly liabilityId: LiabilityId }
   | { readonly kind: "retirement_cash_distribution"; readonly distribution: RetirementDistributionRecord }
   | { readonly kind: "heloc_phase_service"; readonly service: D2HelocSettlementReceipt }
+  | { readonly kind: "household_domain"; readonly evidence: HouseholdDomainPostingEvidence }
   | { readonly kind: "payroll_health_deduction"; readonly deduction: PayrollHealthDeductionEvidence });
+
+/** Opt-in source/state seam. Composition registers publishers; generic state
+ * never imports an integration, invents a cutoff, or authenticates tags. */
+export interface HouseholdBankEventContext extends D2SettlementSourceContext {
+  readonly runId: string;
+  readonly eventId: string;
+  readonly eventAt: Instant;
+  readonly householdId: DomainId<"household">;
+  readonly personId: DomainId<"person">;
+  readonly bankAccountId: AccountId;
+  readonly direction: "credit" | "debit";
+}
+export interface HouseholdBankRoutePin {
+  readonly version: "household-bank-route/v1";
+  readonly accountKind: "checking" | "savings";
+  readonly publisherId: string;
+  readonly sourceId: string;
+  readonly revisionId: string;
+  readonly digest: string;
+}
+export type HouseholdEconomicFamily = "wage" | "payroll_health" | "ssa" | "pension" | "retirement"
+  | "fsa" | "card" | "heloc" | "medicare" | "health_premium" | "education" | "fixed_income";
+export interface HouseholdEconomicOriginalReference {
+  readonly version: "household-economic-original/v1";
+  readonly family: HouseholdEconomicFamily;
+  readonly publisherId: string;
+  readonly sourceId: string;
+  readonly revisionId: string;
+  readonly digest: string;
+}
+export type HouseholdEconomicParty = { readonly kind: "person"; readonly id: DomainId<"person"> }
+  | { readonly kind: "household"; readonly id: DomainId<"household"> }
+  | { readonly kind: "organization"; readonly id: string }
+  | { readonly kind: "account"; readonly id: AccountId };
+export interface HouseholdEconomicWitness {
+  readonly original: HouseholdEconomicOriginalReference;
+  readonly source: HouseholdEconomicParty;
+  readonly payer: HouseholdEconomicParty;
+  readonly beneficiary: DomainId<"person">;
+}
+export interface HouseholdDomainPostingEvidence {
+  readonly version: "household-domain-posting/v1";
+  readonly context: HouseholdBankEventContext;
+  readonly route: HouseholdBankRoutePin;
+  /** One combined proof/journal, including wage + payroll-health where needed.
+   * Each publisher independently confirms the complete family set. */
+  readonly originals: readonly HouseholdEconomicWitness[];
+}
+export interface HouseholdBankRouteAuthority {
+  readonly qualify: (pin: HouseholdBankRoutePin, context: HouseholdBankEventContext) => boolean;
+}
+export interface HouseholdEconomicOriginalAuthority {
+  /** Reconstruct from independently owned originals, including amendments and
+   * withdrawals. Existing family ports may be explicitly rebound by owners. */
+  readonly qualify: (reference: HouseholdEconomicOriginalReference, context: HouseholdBankEventContext) => {
+    readonly witness: HouseholdEconomicWitness;
+    readonly transaction: AccountingTransaction;
+    readonly context: HouseholdBankEventContext;
+    readonly requiredFamilies: readonly HouseholdEconomicFamily[];
+  } | undefined;
+}
+let householdBankRouteAuthority: HouseholdBankRouteAuthority | undefined;
+const householdEconomicAuthorities = new Map<string, HouseholdEconomicOriginalAuthority>();
+export const registerHouseholdBankRouteAuthority = (authority: HouseholdBankRouteAuthority): void => {
+  if (householdBankRouteAuthority) throw new Error("HOUSEHOLD_BANK_AUTHORITY_DUPLICATE");
+  householdBankRouteAuthority = Object.freeze({ qualify: authority.qualify.bind(authority) });
+};
+export const registerHouseholdEconomicOriginalAuthority = (family: HouseholdEconomicFamily, publisherId: string,
+  authority: HouseholdEconomicOriginalAuthority): void => {
+  const key = JSON.stringify([family, publisherId]);
+  if (!publisherId.trim() || householdEconomicAuthorities.has(key)) throw new Error("HOUSEHOLD_ECONOMIC_AUTHORITY_DUPLICATE");
+  householdEconomicAuthorities.set(key, Object.freeze({ qualify: authority.qualify.bind(authority) }));
+};
 
 export interface PayrollHealthSourceBinding {
   readonly version: "payroll-health-source/v1";
@@ -1730,6 +1804,61 @@ export const applyPayrollHealthTransactionAtomically = (state: AuthoritativeStat
   applyAccountingTransactionAtomically(state, transaction, registration);
 };
 const d2PostingCurrencyChecks = new WeakMap<Currency, PersistentStringIndex<object>>();
+const approvedHouseholdRegistrations = new WeakSet<D2PostingRegistration>();
+const householdFamilies: readonly HouseholdEconomicFamily[] = ["wage", "payroll_health", "ssa", "pension", "retirement",
+  "fsa", "card", "heloc", "medicare", "health_premium", "education", "fixed_income"];
+const householdToken = (s: string): boolean => typeof s === "string" && s.trim().length > 0 && s.length <= 256;
+const compactHouseholdEvidence = (e: HouseholdDomainPostingEvidence): HouseholdDomainPostingEvidence => ({
+  version: e.version,
+  context: { runId: e.context.runId, eventId: e.context.eventId, eventAt: e.context.eventAt, asOf: e.context.asOf,
+    dataCutoff: e.context.dataCutoff, householdId: e.context.householdId, personId: e.context.personId,
+    bankAccountId: e.context.bankAccountId, direction: e.context.direction },
+  route: { version: e.route.version, accountKind: e.route.accountKind, publisherId: e.route.publisherId,
+    sourceId: e.route.sourceId, revisionId: e.route.revisionId, digest: e.route.digest },
+  originals: e.originals.map(w => ({ original: { version: w.original.version, family: w.original.family,
+    publisherId: w.original.publisherId, sourceId: w.original.sourceId, revisionId: w.original.revisionId, digest: w.original.digest },
+    source: { kind: w.source.kind, id: w.source.id } as HouseholdEconomicParty,
+    payer: { kind: w.payer.kind, id: w.payer.id } as HouseholdEconomicParty, beneficiary: w.beneficiary })),
+});
+const qualifyHouseholdPosting = (transaction: AccountingTransaction, evidence: HouseholdDomainPostingEvidence): void => {
+  const { context: c, route, originals } = freezePayment(evidence);
+  if (originals.length > 8 || paymentValue(evidence) !== paymentValue(compactHouseholdEvidence(evidence)))
+    d2Invalid("Household evidence permits only bounded typed references and event context");
+  instant(c.asOf); instant(c.dataCutoff); instant(c.eventAt);
+  if (evidence.version !== "household-domain-posting/v1" || route.version !== "household-bank-route/v1" ||
+      ![c.runId, c.eventId, c.householdId, c.personId, c.bankAccountId, route.publisherId, route.sourceId, route.revisionId, route.digest].every(householdToken) ||
+      c.dataCutoff > c.asOf || transaction.date !== c.eventAt || !["credit", "debit"].includes(c.direction) ||
+      !householdBankRouteAuthority?.qualify(route, c)) d2Invalid("Household BANK route original unavailable or changed");
+  if (originals.length < 1 || originals.length > 8 || new Set(originals.map(o => o.original.family)).size !== originals.length)
+    d2Invalid("Household posting requires distinct economic ORIGINAL families");
+  const families = originals.map(o => o.original.family).sort();
+  for (const witness of originals) {
+    const ref = witness.original;
+    if (ref.version !== "household-economic-original/v1" || !householdFamilies.includes(ref.family) ||
+        ![ref.publisherId, ref.sourceId, ref.revisionId, ref.digest, witness.source.id, witness.payer.id, witness.beneficiary].every(householdToken) ||
+        !["person", "household", "organization", "account"].includes(witness.source.kind) ||
+        !["person", "household", "organization", "account"].includes(witness.payer.kind)) d2Invalid("Invalid economic original reference");
+    const qualified = householdEconomicAuthorities.get(JSON.stringify([ref.family, ref.publisherId]))?.qualify(ref, c);
+    if (!qualified || paymentValue(qualified.witness) !== paymentValue(witness) ||
+        paymentValue(qualified.context) !== paymentValue(c) || paymentValue(qualified.transaction) !== paymentValue(transaction) ||
+        paymentValue([...qualified.requiredFamilies].sort()) !== paymentValue(families))
+      d2Invalid("Independent economic ORIGINAL missing, amended, withdrawn or journal changed");
+  }
+};
+/** Authenticate twice around the sole writer on an isolated candidate. A late
+ * source failure leaves cash, proofs and all identities untouched. */
+export const applyHouseholdDomainTransactionAtomically = (state: AuthoritativeState, transaction: AccountingTransaction,
+  evidence: HouseholdDomainPostingEvidence): void => {
+  const tx = freezePayment(transaction), e = freezePayment(evidence), c = e.context;
+  qualifyHouseholdPosting(tx, e);
+  const registration: D2PostingRegistration = { kind: "household_domain", role: "original", operationId: c.eventId,
+    householdId: c.householdId, personId: c.personId, bankAccountId: c.bankAccountId, evidence: e };
+  const candidate = cloneAuthoritativeState(state);
+  approvedHouseholdRegistrations.add(registration);
+  applyAccountingTransactionAtomically(candidate, tx, registration);
+  qualifyHouseholdPosting(tx, e);
+  commitCandidate(state, candidate);
+};
 export const assertD2PostedTransactionHistoryPreserved = (before: AuthoritativeState, after: AuthoritativeState): void => {
   const prior = d2PostingHistories.get(before)?.index ?? d2PostingIndex(before.d2PostedTransactions);
   for (const change of d2PostingIndex(after.d2PostedTransactions).changesSince(prior).changes)
@@ -1748,22 +1877,37 @@ const validateD2Posting = (state: AuthoritativeState, key: string, proof: D2Post
   const { registration: r, transaction: tx } = proof;
   if (proof.schemaVersion !== "d2-shared/posted-transaction/v1" || proof.writer !== "applyAccountingTransactionAtomically/v1" ||
       key !== tx.id || !["original", "settlement"].includes(r.role) ||
-      !["fsa_paid_reimbursement", "card_interest_payment", "retirement_cash_distribution", "heloc_phase_service", "payroll_health_deduction"].includes(r.kind)) d2Invalid("Invalid posting proof schema, writer or identity");
+      !["fsa_paid_reimbursement", "card_interest_payment", "retirement_cash_distribution", "heloc_phase_service", "payroll_health_deduction", "household_domain"].includes(r.kind)) d2Invalid("Invalid posting proof schema, writer or identity");
   const strings = [r.operationId, r.householdId, r.personId, r.bankAccountId, tx.id, tx.type,
     ...(r.kind === "fsa_paid_reimbursement" ? [r.planId, r.planYearId, r.memberId, r.payeeId, r.medicalReceiptId, r.expensePaymentId]
       : r.kind === "card_interest_payment" ? [r.issuerId, r.statementId, r.chargeId, r.liabilityId]
       : r.kind === "retirement_cash_distribution" ? [r.distribution.withdrawalId, r.distribution.authorizationId, r.distribution.sourceAccountId]
       : r.kind === "heloc_phase_service" ? [r.service.source.lineId, r.service.source.documentId, r.service.liabilityId]
+      : r.kind === "household_domain" ? [r.evidence.context.runId, r.evidence.context.eventId]
       : [r.deduction.source.incomeId, r.deduction.source.occurrenceId, r.deduction.source.claimId])];
   if (strings.some(s => typeof s !== "string" || !s.trim())) d2Invalid("Missing posting proof source/operation identity");
   instant(tx.date); assertBalanced(tx);
   const bank = state.accounts[r.bankAccountId];
-  if (!bank || bank.ownerId !== r.personId || !["checking", "savings"].includes(bank.kind)) d2Invalid("Posting proof BANK/owner missing");
-  if (tx.legs.some(leg => !leg.amount.currency.equals(bank!.cash.currency))) d2Invalid("Posting proof currency mismatch");
+  if (!bank) return d2Invalid("Posting proof BANK/owner missing");
+  if (bank.ownerId !== (r.kind === "household_domain" ? r.householdId : r.personId) || !["checking", "savings"].includes(bank.kind)) d2Invalid("Posting proof BANK/owner missing");
+  if (tx.legs.some(leg => !leg.amount.currency.equals(bank.cash.currency))) d2Invalid("Posting proof currency mismatch");
   const amount = tx.legs[0]!.amount;
   const cash = (posting: "debit" | "credit") => createAccountingLeg({ type: "cash", posting, amount, accountId: r.bankAccountId, cashFlowClass: "operating" });
   let expected: AccountingTransaction["legs"];
-  if (r.kind === "fsa_paid_reimbursement") expected = r.role === "original"
+  if (r.kind === "household_domain") {
+    const c = r.evidence.context;
+    if (bank.id !== r.bankAccountId || bank.kind !== r.evidence.route.accountKind) d2Invalid("Household BANK identity/kind differs from original");
+    if (r.role !== "original" || r.operationId !== c.eventId || r.personId !== c.personId ||
+        r.householdId !== c.householdId || r.bankAccountId !== c.bankAccountId) d2Invalid("Household route context differs");
+    const cashLegs = tx.legs.filter(leg => leg.type === "cash");
+    if (tx.legs.some(leg => !(leg.amount instanceof Money) || leg.amount.isNegative() ||
+        !leg.amount.amount.fitsScale(bank.cash.currency.minorUnitScale))) d2Invalid("Household journal requires exact currency units");
+    if (cashLegs.length !== 1 || cashLegs[0]!.accountId !== r.bankAccountId ||
+        cashLegs[0]!.posting !== (c.direction === "credit" ? "debit" : "credit") || !cashLegs[0]!.amount.isPositive())
+      d2Invalid("Household route does not match actual BANK direction");
+    qualifyHouseholdPosting(tx, r.evidence);
+    expected = tx.legs.map(({ traceRefs: _trace, ...leg }) => leg) as AccountingTransaction["legs"];
+  } else if (r.kind === "fsa_paid_reimbursement") expected = r.role === "original"
     ? [createAccountingLeg({ type: "expense", posting: "debit", amount }), cash("credit")]
     : [cash("debit"), createAccountingLeg({ type: "expense", posting: "credit", amount })];
   else if (r.kind === "card_interest_payment") {
@@ -1813,7 +1957,12 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
     }
     const proof = state.d2PostedTransactions?.[accountingTransactionId(change.key)] ?? d2Invalid("Missing posting proof");
     validateD2Posting(state, change.key, proof); checkIds(proof);
-    if (proof.registration.kind === "heloc_phase_service" || proof.registration.kind === "payroll_health_deduction")
+    // A cold archive has no trusted structural ancestry. Re-read independently
+    // before accepting its first roots; warm appends use the writer's final
+    // source check instead of scanning previously committed events.
+    if (previous === undefined && proof.registration.kind === "household_domain")
+      qualifyHouseholdPosting(proof.transaction, proof.registration.evidence);
+    if (proof.registration.kind === "heloc_phase_service" || proof.registration.kind === "payroll_health_deduction" || proof.registration.kind === "household_domain")
       sourceProofs.set(proof.transaction.id, proof);
     inventory.set(d2PostingKey(proof), proof.transaction.id);
     const r = proof.registration, bankKey = `bank:${r.bankAccountId}`, priorBank = bindings.get(bankKey);
@@ -1823,6 +1972,7 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
       : r.kind === "retirement_cash_distribution" ? [JSON.stringify([r.kind, r.distribution.withdrawalId]), JSON.stringify([r.kind, r.distribution.authorizationId])]
       : r.kind === "heloc_phase_service" ? [JSON.stringify([r.kind, r.service.source.issuerId, r.service.source.lineId, r.service.source.periodStart, r.service.source.periodEnd]),
         JSON.stringify([r.kind, "approval", r.service.source.sourceApprovalId]), JSON.stringify([r.kind, "debit", r.service.source.bankDebitId])]
+      : r.kind === "household_domain" ? [JSON.stringify([r.kind, r.householdId, r.operationId])]
       : [JSON.stringify([r.kind, "wage", r.deduction.source.incomeId, r.deduction.source.occurrenceId]),
         JSON.stringify([r.kind, "claim", r.deduction.source.claimId])];
     for (const sourceKey of sourceKeys) {
@@ -1835,7 +1985,9 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
       if (sources.has(`${sourceKey}:${r.role}`)) d2Invalid("Original source or settlement posting reused");
       sources.set(sourceKey, r); sources.set(`${sourceKey}:${r.role}`, r);
     }
-    if (priorBank !== undefined && (priorBank.personId !== r.personId || priorBank.householdId !== r.householdId ||
+    if (priorBank !== undefined && ((priorBank.kind === "household_domain") !== (r.kind === "household_domain") ||
+        (r.kind !== "household_domain" && priorBank.personId !== r.personId) || priorBank.householdId !== r.householdId ||
+        (r.kind === "household_domain" && priorBank.kind === "household_domain" && priorBank.evidence.route.accountKind !== r.evidence.route.accountKind) ||
         !priorBank.currency.equals(proof.transaction.legs[0]!.amount.currency)))
       d2Invalid("Archived BANK owner/household rebound");
     bindings.set(bankKey, { ...r, currency: proof.transaction.legs[0]!.amount.currency });
@@ -1874,7 +2026,10 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
   const changedKeys = (record: object): Iterable<string> => indexedRecords.get(record)?.dirty ?? Object.keys(record);
   for (const key of changedKeys(state.accounts)) {
     const r = bindings.get(`bank:${key}`), bank = state.accounts[key];
-    if (r !== undefined && (!bank || bank.ownerId !== r.personId || !["checking", "savings"].includes(bank.kind) || !bank.cash.currency.equals(r.currency))) d2Invalid("Archived BANK reference changed");
+    if (r !== undefined && (!bank || bank.ownerId !== (r.kind === "household_domain" ? r.householdId : r.personId) ||
+        !["checking", "savings"].includes(bank.kind) || (r.kind === "household_domain" && bank.kind !== r.evidence.route.accountKind) ||
+        (r.kind === "household_domain" && bank.id !== r.bankAccountId) ||
+        !bank.cash.currency.equals(r.currency))) d2Invalid("Archived BANK reference changed");
   }
   for (const key of changedKeys(state.liabilities)) {
     const r = bindings.get(`liability:${key}`);
@@ -2165,6 +2320,10 @@ export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, c
   validateD2PostedTransactions(state);
   validateD2SettlementReceipts(state);
   for (const [, proof] of d2PostingHistories.get(state)!.sourceProofs.entries()) {
+    if (proof.registration.kind === "household_domain") {
+      const e = proof.registration.evidence;
+      qualifyHouseholdPosting(proof.transaction, { ...e, context: { ...e.context, asOf: context.asOf, dataCutoff: context.dataCutoff } });
+    }
     if (proof.registration.kind === "payroll_health_deduction") requalifyPayrollHealthPosting(proof, context);
     if (proof.registration.kind === "heloc_phase_service" && state.d2SettlementReceipts?.[proof.registration.service.id] === undefined) {
       const result = qualifyD2Receipt(proof.registration.service, context);
@@ -2436,6 +2595,8 @@ export const applyAccountingTransactionAtomically = (
   transaction: AccountingTransaction,
   proofRegistration?: D2PostingRegistration,
 ): void => {
+  if (proofRegistration?.kind === "household_domain" && !approvedHouseholdRegistrations.delete(proofRegistration))
+    d2Invalid("Household posting requires independently qualified route AND economic originals");
   if (proofRegistration?.kind === "retirement_cash_distribution" && !approvedRetirementRegistrations.delete(proofRegistration))
     d2Invalid("Retirement posting requires the independently qualified single-writer transition");
   if (proofRegistration?.kind === "payroll_health_deduction" && !approvedPayrollHealthRegistrations.delete(proofRegistration))
