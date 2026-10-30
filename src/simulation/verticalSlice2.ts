@@ -31,6 +31,7 @@ import {
 } from "../semantics/index.js";
 import {
   applyAccountingTransactionAtomically,
+  applyHouseholdDomainTransactionAtomically,
   assertAuthoritativeStateCurrency,
   cloneAuthoritativeState,
   createIndexedExecutionState,
@@ -61,6 +62,7 @@ import {
 } from "../values/index.js";
 import {
   assertRunContext,
+  canonicalSerialize,
   createInputFingerprint,
   createRunMetadata,
   type RunContext,
@@ -76,6 +78,7 @@ import {
 import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
 import { payrollContributionCandidate, type PayrollContributionAllocation } from "./payrollContributions.js";
 import type { PayrollWithholdingElection, PayrollWithholdingEvidence } from "./tax/contracts.js";
+import { qualifyHouseholdExpense, type HouseholdExpenseSourceRef } from "./d2/integration/householdBank/expenses.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -126,6 +129,8 @@ export interface RecurringIncomeStream extends MonthlyStreamBase<IncomeId> {
 }
 
 export interface RecurringExpenseStream extends MonthlyStreamBase<ExpenseId> {
+  /** Opt-in independent economic original and household BANK route addresses. */
+  readonly householdExpenseSource?: HouseholdExpenseSourceRef;
   readonly paymentAccountId: AccountId;
   readonly payableLiabilityId: LiabilityId;
   readonly fundingPolicy: FundingPolicy;
@@ -716,6 +721,29 @@ function executeCashFlowPeriodCandidate(
           const traceRefs = freezeTraceRefs([...recurrenceTraces, ...eventEligibility.traceRefs])!;
           const provenance = generatedProvenance(stream.primitiveIds.recurrence, occurrence.scheduledAt, occurrence.occurrenceId);
           actions.push({ scheduledAt: occurrence.scheduledAt, kind: "expense", priority: stream.settlementPriority ?? Number.MAX_SAFE_INTEGER, id: `${stream.id}:${occurrence.occurrenceId}`, execute: () => {
+            const source = stream.householdExpenseSource;
+            // Qualified expenses support a single, fully funded BANK debit.
+            // Reject unsupported partial/multi-account policies before claims.
+            if (source !== undefined && (stream.ownerId === request.input.householdId ||
+                state.accounts[stream.paymentAccountId]?.ownerId !== request.input.householdId ||
+                !["checking", "savings"].includes(state.accounts[stream.paymentAccountId]?.kind ?? "") ||
+                stream.fundingPolicy.allowPartial || stream.fundingPolicy.orderedSources.length !== 1 ||
+                stream.fundingPolicy.orderedSources[0]!.accountId !== stream.paymentAccountId))
+              invalidInput("Source-qualified expenses require a Person payer and one non-partial BANK source", `expenses.${stream.id}.householdExpenseSource`);
+            const recognitionTransaction = transaction(`tx:recognition:recognition:expense:${stream.id}:${occurrence.scheduledAt}`, occurrence.scheduledAt, "expense_recognition", [{ posting: "debit", type: "expense", amount }, { posting: "credit", type: "liability", amount, entityId: stream.payableLiabilityId }], traceRefs);
+            const expectedClaimId = `obligation:recognition:expense:${stream.id}:${occurrence.scheduledAt}`;
+            const expectedSettlementId = `settlement:${expectedClaimId}`;
+            const expectedSettlement = source === undefined ? undefined : transaction(`tx:${expectedSettlementId}`, occurrence.scheduledAt, "expense_settlement", [{ posting: "debit", type: "liability", amount, entityId: stream.payableLiabilityId }, { posting: "credit", type: "cash", amount, accountId: stream.paymentAccountId, cashFlowClass: "operating" }], traceRefs);
+            // Even UNFUNDED recognition must have a genuine original. This
+            // read grants no cash/proof and consumes no publisher identity.
+            const qualifyExpense = () => source === undefined ? undefined : qualifyHouseholdExpense(source, {
+              runId: request.runContext.runId, asOf: request.runContext.asOf, dataCutoff: request.runContext.dataCutoff,
+              householdId: request.input.householdId, personId: domainId("person", stream.ownerId),
+              bankAccountId: stream.paymentAccountId, direction: "debit", eventAt: occurrence.scheduledAt,
+              eventId: expectedSettlementId,
+            }, { expenseId: stream.id, occurrenceId: occurrence.occurrenceId, claimId: expectedClaimId,
+              period: targetPeriod, recognition: recognitionTransaction, settlement: expectedSettlement! });
+            const householdEvidence = qualifyExpense();
             registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", occurrence.occurrenceId);
             const recognition = createRecognitionFact({ id: recognitionId(`recognition:expense:${stream.id}:${occurrence.scheduledAt}`), category: "recurring_expense", amount, recognizedAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, provenance, traceRefs }, state.identities.recognitionIds);
             registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
@@ -724,7 +752,7 @@ function executeCashFlowPeriodCandidate(
             state.obligations[obligation.id] = obligation;
             effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "recurring_expense", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, provenance, traceRefs }));
             effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${obligation.id}`), kind: "claim", category: "recurring_expense", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, claimId: obligation.id, provenance, traceRefs }));
-            applyTransaction(transaction(`tx:recognition:${recognition.id}`, occurrence.scheduledAt, "expense_recognition", [{ posting: "debit", type: "expense", amount }, { posting: "credit", type: "liability", amount, entityId: stream.payableLiabilityId }], traceRefs));
+            applyTransaction(recognitionTransaction);
             const proposal = createSettlementProposal({ id: settlementProposalId(`proposal:${obligation.id}`), claimId: obligation.id, requestedAmount: amount, requestedAt: occurrence.scheduledAt, fundingPolicyId: stream.fundingPolicy.id, provenance, traceRefs }, obligation);
             proposals.push(proposal);
             const funding = resolveFunding(proposal, obligation, stream.fundingPolicy, Object.fromEntries(Object.entries(state.accounts).map(([id, account]) => [id, account.cash])), occurrence.scheduledAt);
@@ -735,8 +763,19 @@ function executeCashFlowPeriodCandidate(
               registerAuthoritativeIdentity(state.identities, "settlementIds", accepted.id); settlements.push(accepted);
               state.obligations[obligation.id] = applySettlement(obligation, accepted) as Obligation;
               effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${accepted.id}`), kind: "settlement", category: "recurring_expense", amount: accepted.amount, occurredAt: accepted.settledAt, claimId: accepted.claimId, settlementId: accepted.id, provenance, traceRefs }));
-              applyTransaction(transaction(`tx:${accepted.id}`, accepted.settledAt, "expense_settlement", [{ posting: "debit", type: "liability", amount: accepted.amount, entityId: stream.payableLiabilityId }, ...accepted.fundingAllocations.map((allocation): AccountingLegDraft => ({ posting: "credit", type: "cash", amount: allocation.amount, accountId: allocation.accountId, cashFlowClass: "operating" }))], traceRefs));
+              const settlementTransaction = transaction(`tx:${accepted.id}`, accepted.settledAt, "expense_settlement", [{ posting: "debit", type: "liability", amount: accepted.amount, entityId: stream.payableLiabilityId }, ...accepted.fundingAllocations.map((allocation): AccountingLegDraft => ({ posting: "credit", type: "cash", amount: allocation.amount, accountId: allocation.accountId, cashFlowClass: "operating" }))], traceRefs);
+              if (householdEvidence === undefined) applyTransaction(settlementTransaction);
+              else {
+                if (!accepted.amount.equals(amount) || canonicalSerialize(settlementTransaction) !== canonicalSerialize(expectedSettlement!))
+                  invalidInput("Source-qualified expense settlement differs from its complete original", `expenses.${stream.id}`);
+                applyHouseholdDomainTransactionAtomically(state, settlementTransaction, householdEvidence);
+                transactions.push(settlementTransaction);
+              }
               expenseSettlement = expenseSettlement.plus(accepted.amount);
+            } else if (householdEvidence !== undefined && canonicalSerialize(qualifyExpense()) !== canonicalSerialize(householdEvidence)) {
+              // No settlement proof exists for an unpaid claim. Still re-read
+              // its source before committing the recognized obligation.
+              invalidInput("Unfunded expense source changed before recognition commit", `expenses.${stream.id}`);
             }
             recognizedExpense = recognizedExpense.plus(amount);
             expenseOccurrences.push(Object.freeze({ streamId: stream.id, occurrenceId: occurrence.occurrenceId, scheduledAt: occurrence.scheduledAt, amount, provenance, traceRefs }));

@@ -62,3 +62,52 @@ commit/rejection, two members, both directions, economic-vs-BANK provenance,
 source revisions/cutoffs/races, combined families, legacy proof preservation,
 full import/checkpoint delta, fresh-process registration and 1/12/24 growth.
 CI and independent semantic/legacy/replay/growth audit remain merge gates.
+
+## VS2 expense source port (S1c, #286)
+
+`expenses.ts` exports `HouseholdExpenseSourceRef` and
+`registerHouseholdExpenseOriginalProvider`. A composition root registers a
+separate economic publisher and the existing independent BANK publisher before
+execution or cold restore. A producer opts in with
+`RecurringExpenseStream.householdExpenseSource`: a versioned economic original
+address, beneficiary Person, and BANK publisher/source address. No provider,
+roster, quote inventory, verified flag or permission trace travels on the stream.
+
+For each active occurrence the economic publisher receives only the pinned
+original reference and authentic settlement context. It must independently
+reconstruct the expense ID, occurrence ID, monthly period, claim ID, Person
+payer/beneficiary, complete observation boundary, exact `expense_recognition`
+journal (expense to payable) and `expense_settlement` journal (payable to BANK),
+including their existing IDs, cents and trace metadata. It must reject changed
+revisions, unavailable publications, withdrawn obligations, and unsupported
+events from its own source archive. Returning the candidate's journal or merely
+confirming a permitted BANK route does not satisfy this port.
+
+VS2 builds the context from the actual request household/run/asOf/dataCutoff,
+stream Person payer, and scheduled settlement instant/identity. The qualified
+route requires a household-owned checking/savings account and a single
+non-partial funding policy targeting that account. Unsupported partial or split
+funding is diagnosed. Recognition stays separate from payment. Insufficient
+liquidity preserves the whole unpaid claim with the existing availability
+diagnostics, no cash debit, no settlement identity and no posting proof; the
+original and route are reread before retaining that recognition. A funded event
+posts its actual unchanged settlement through S1's atomic writer, which rereads
+both sources around commit and archives exactly one witness/proof. Replay uses
+the same registered economic publisher to reconstruct the settlement again.
+No per-event source cache or full-history lookup is introduced.
+
+Handoff to **#278 standalone Medicare** and **#280 after-tax premiums**: their
+real source owners must install this port, reconstruct the two ordinary VS2
+journals from their genuine originals, and supply the new stream binding.
+Their adapters retain their current Person-account guards until those separately
+owned tasks qualify household routes. Omitting the binding never authorizes a
+source-specific household premium. Ordinary historical streams retain their
+existing generic path; this bridge does not infer a domain from account owner,
+household roster or trace markers. No further VS2 change should be necessary.
+S1b's native state contract must be reconciled by the independent audit before
+these dependent integrations launch. This is not #149/D2 financial closeout.
+
+`test/d2/integrated/householdBankExpenses/expenses.test.ts` exercises direct VS2,
+compiled detail/summary, funded/unfunded recognition, two Person payers, source
+rejections/races, same-instant ordering, legacy journal equality, cold portable
+restore and 1/12/24 bounded proof growth using generic synthetic originals.
