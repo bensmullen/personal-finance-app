@@ -8,9 +8,10 @@ import { FinancialChart } from "./charts/FinancialChart.js";
 import { CashChartDetails } from "../calm/CalmPresentation.js";
 
 /** Only the application selector groups periods or derives financial values. */
-export const HouseholdChart = memo(function HouseholdChart({ forecast, cashFlowOnly, stale = false, pending = false, sourceFingerprint, calm = false, supporting }: {
+export const HouseholdChart = memo(function HouseholdChart({ forecast, cashFlowOnly, investing = false, stale = false, pending = false, sourceFingerprint, calm = false, supporting }: {
   forecast: PersonalHouseholdForecastReadModel;
   cashFlowOnly: boolean;
+  investing?: boolean;
   stale?: boolean;
   pending?: boolean;
   sourceFingerprint?: string;
@@ -39,7 +40,7 @@ export const HouseholdChart = memo(function HouseholdChart({ forecast, cashFlowO
         : "No supported forecast periods are available yet."} {annual.horizonCoverage === "partial" && <strong>Partial horizon · results stop before the requested end. No projection beyond the available boundary. </strong>}No past account history is included.</p>
     </> : <p className="chart-coverage">Requested {annual.boundaries.requestedHorizon.start.slice(0, 10)} → {annual.boundaries.requestedHorizon.end.slice(0, 10)} (exclusive). Modeled through {(annual.boundaries.reachedThrough ?? annual.boundaries.requestedHorizon.start).slice(0, 10)} (exclusive). {annual.horizonCoverage === "partial" && <strong>Partial horizon · no projection beyond this boundary. </strong>}No observed history loaded.</p>)}
     {annual.status === "unavailable" && !pending ? <p className={calm ? "calm-empty" : undefined} role="status">Chart data unavailable. Review forecast diagnostics and source setup; no values have been substituted.</p> : <>
-      <FinancialChart key={cashFlowOnly ? "cash" : "wealth"} annual={annual} monthly={monthly} kind={cashFlowOnly ? "cash" : "wealth"} stale={stale} pending={pending} calm={calm}>{calm && <>
+      <FinancialChart key={investing ? "investing" : cashFlowOnly ? "cash" : "wealth"} annual={annual} monthly={monthly} kind={investing ? "investing" : cashFlowOnly ? "cash" : "wealth"} stale={stale} pending={pending} calm={calm}>{calm && <>
         {cashFlowOnly && annual.boundaries && <p className="chart-coverage">{annual.boundaries.reachedThrough && annual.points.length > 0 ? `Forecast starts ${coverageDate(annual.boundaries.requestedHorizon.start)}; available results end before ${coverageDate(annual.boundaries.reachedThrough)}.` : "No supported forecast periods are available yet."} No past account history is included.</p>}
         {rangeDetails}{supporting}
       </>}</FinancialChart>

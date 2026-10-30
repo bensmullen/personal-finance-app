@@ -121,7 +121,7 @@ describe("source-backed mortgage chart data", () => {
     }
     const throwingObserver = { now: () => { throw new Error("unavailable clock"); }, record: () => { throw new Error("unavailable sink"); }, phase: () => { throw new Error("unavailable phase sink"); } };
     expect(restorePortableHouseholdReplayArtifact(proof, throwingObserver)).toBe(canonical);
-  });
+  }, 15_000); // Full 25-month forecast and multiple replay-integrity probes can exceed Vitest's 5s default on CI.
   it("reconciles paid leg amounts and principal against the same real integrated replay", () => {
     const result = source(extra(createGoldenHouseholdDraft(), "100"));
     const before = JSON.stringify(result), window = inspectMortgageWindow(result.points, ids.mortgage);
