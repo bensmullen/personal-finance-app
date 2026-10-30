@@ -116,8 +116,11 @@ ChatGPT SHALL audit the complete reachable implementation contract before
 reauthorizing Codex, not just patch the reported `ALLOWED_PATHS` omission.
 Trace original evaluators and source authorities through adapters, state
 validation, archived receipts, cold replay, tests, versioning, and sibling
-routes; preemptively resolve all **confirmed** blockers in the **same**
-GitHub issue. Re-fetch and parser-validate the saved contract and check
+routes. For source-qualified financial tasks, audit **all behavioral branches**
+(including no-option/no-election paths and direct-vs-adapter writes), not merely
+the first call site. Prove every required branch has authentic context,
+precommit authority, posted proof, replay coverage and allowed-file ownership;
+preemptively resolve all **confirmed** blockers in the **same** GitHub issue. Re-fetch and parser-validate the saved contract and check
 branch/receipt readiness before recommending another turn. Keep unrelated
 capabilities outside scope and report remaining unknowns; static review is
 not a promise of zero runtime or external-provider blockers. Follow
