@@ -8,7 +8,7 @@ import {
   type PositionId,
 } from "../accounting/index.js";
 import { failValidation, issueCodes } from "../diagnostics/index.js";
-import { idempotencyKey, type DomainId, type GeneratedOccurrenceKey, type IdempotencyKey } from "../identity/index.js";
+import { domainId, idempotencyKey, type DomainId, type GeneratedOccurrenceKey, type IdempotencyKey } from "../identity/index.js";
 import { assertClaimInvariant, normalizeExecutionClaim, materializeClaimLifecycle, settlementIdentityAppendsSince, type SettlementHistoryMeter, type ObligationOrRight } from "../semantics/claim.js";
 import { prepareSsaMedicareDeductionProposals, type SsaPayableEvidence, type SsaDeductionRequest } from "../semantics/settlement.js";
 import type { ClaimId, RecognitionId, SettlementId } from "../semantics/identity.js";
@@ -54,7 +54,11 @@ export interface D2CardSourceBinding extends D2SourceBinding {
   readonly minimum: Money;
 }
 interface D2ReceiptBase {
-  readonly schemaVersion: "d2-shared/settlement-receipt/v1";
+  readonly schemaVersion: "d2-shared/settlement-receipt/v1" | "d2-shared/settlement-receipt/v2";
+  readonly nativeHousehold?: {
+    readonly original: NativeHouseholdPostingAttachment;
+    readonly settlement: NativeHouseholdPostingAttachment;
+  };
   readonly id: string;
   readonly operationId: string;
   readonly authorizationId: string;
@@ -135,6 +139,7 @@ export type D2SettlementReceipt = D2FsaSettlementReceipt | D2CardSettlementRecei
 /** Requested only at first canonical posting. Original evidence registration
  * does not require a future payment approval or assert reimbursement eligibility. */
 interface D2PostingRegistrationBase {
+  readonly nativeHousehold?: NativeHouseholdPostingAttachment;
   readonly role: "original" | "settlement";
   readonly operationId: string;
   readonly householdId: DomainId<"household">;
@@ -149,6 +154,7 @@ export type D2PostingRegistration = D2PostingRegistrationBase & (
   | { readonly kind: "retirement_cash_distribution"; readonly distribution: RetirementDistributionRecord }
   | { readonly kind: "heloc_phase_service"; readonly service: D2HelocSettlementReceipt }
   | { readonly kind: "household_domain"; readonly evidence: HouseholdDomainPostingEvidence }
+  | { readonly kind: "ssa_medicare_payment"; readonly paymentKey: string }
   | { readonly kind: "payroll_health_deduction"; readonly deduction: PayrollHealthDeductionEvidence });
 
 /** Opt-in source/state seam. Composition registers publishers; generic state
@@ -198,6 +204,17 @@ export interface HouseholdDomainPostingEvidence {
    * Each publisher independently confirms the complete family set. */
   readonly originals: readonly HouseholdEconomicWitness[];
 }
+/** A native journal attachment authenticates source identity, never a second
+ * ledger. NONBANK is reserved for an issuer card original without cash. */
+export interface NativeHouseholdPostingAttachment {
+  readonly version: "native-household-posting/v1";
+  readonly transactionId: AccountingTransactionId;
+  readonly family: "ssa" | "retirement" | "fsa" | "card";
+  readonly cashRole: "bank" | "nonbank";
+  readonly context: HouseholdBankEventContext;
+  readonly route?: HouseholdBankRoutePin;
+  readonly originals: readonly HouseholdEconomicWitness[];
+}
 export interface HouseholdBankRouteAuthority {
   readonly qualify: (pin: HouseholdBankRoutePin, context: HouseholdBankEventContext) => boolean;
 }
@@ -209,8 +226,16 @@ export interface HouseholdEconomicOriginalAuthority {
     readonly transaction: AccountingTransaction;
     readonly context: HouseholdBankEventContext;
     readonly requiredFamilies: readonly HouseholdEconomicFamily[];
+    /** Native FSA/issuer originals also authenticate their compact legal source
+     * identity before a later settlement receipt exists. Generic S1 ignores it. */
+    readonly nativeSource?: NativeHouseholdOriginalSource;
   } | undefined;
 }
+export type NativeHouseholdOriginalSource =
+  Pick<Extract<D2PostingRegistration, { readonly kind: "fsa_paid_reimbursement" }>,
+    "kind" | "planId" | "planYearId" | "memberId" | "payeeId" | "medicalReceiptId" | "expensePaymentId">
+  | Pick<Extract<D2PostingRegistration, { readonly kind: "card_interest_payment" }>,
+    "kind" | "issuerId" | "statementId" | "chargeId" | "liabilityId">;
 let householdBankRouteAuthority: HouseholdBankRouteAuthority | undefined;
 const householdEconomicAuthorities = new Map<string, HouseholdEconomicOriginalAuthority>();
 export const registerHouseholdBankRouteAuthority = (authority: HouseholdBankRouteAuthority): void => {
@@ -318,7 +343,8 @@ export interface RetirementAllocationEvidence {
   };
 }
 export interface RetirementDistributionRecord {
-  readonly version: "retirement-distribution/v1";
+  readonly version: "retirement-distribution/v1" | "retirement-distribution/v2";
+  readonly nativeHousehold?: NativeHouseholdPostingAttachment;
   readonly transactionId: AccountingTransactionId;
   readonly originalPostingProofId: AccountingTransactionId;
   readonly operationId: string;
@@ -366,7 +392,8 @@ export interface D2PostedTransactionProof {
  * Earlier originals can construct D2PostingRegistration directly at posting. */
 export const d2SettlementPostingRegistration = (r: D2SettlementReceipt, role: D2PostingRegistration["role"]): D2PostingRegistration => {
   const base = { role, operationId: r.operationId, householdId: r.source.householdId,
-    personId: r.source.personId, bankAccountId: r.bankAccountId };
+    personId: r.source.personId, bankAccountId: r.bankAccountId,
+    ...(r.nativeHousehold === undefined ? {} : { nativeHousehold: r.nativeHousehold[role] }) };
   if (r.kind === "heloc_phase_service") return { ...base,
     role: r.originalProof === "principal_only" ? "settlement" : role, kind: r.kind, service: r };
   return r.kind === "fsa_paid_reimbursement"
@@ -398,6 +425,7 @@ export const registerD2SettlementSourceAuthority = (kind: D2SettlementReceipt["k
  * detects changes; neither this record nor an artifact authenticates publishers.
  */
 export interface SsaMedicarePaymentInput {
+  readonly nativeHousehold?: NativeHouseholdPostingAttachment;
   readonly payable: SsaPayableEvidence;
   readonly right: ObligationOrRight;
   readonly requests: readonly SsaDeductionRequest[];
@@ -407,7 +435,7 @@ export interface SsaMedicarePaymentInput {
   readonly sourceInputs: unknown;
 }
 export interface SsaMedicarePaymentRecord extends SsaMedicarePaymentInput {
-  readonly version: "ssa-medicare-payment/v1" | "ssa-medicare-payment/v2";
+  readonly version: "ssa-medicare-payment/v1" | "ssa-medicare-payment/v2" | "ssa-medicare-payment/v3";
   readonly id: string;
   readonly netBank: Money;
   readonly transaction: AccountingTransaction;
@@ -449,7 +477,8 @@ const validatePaymentSources = (input: SsaMedicarePaymentInput): void => {
   if (ssaMedicareSourceAuthority === undefined) paymentInvalid("A1/C2 source owner unavailable for this receipt");
   const qualified = ssaMedicareSourceAuthority!(input.sourceInputs);
   const values = (v: SsaMedicarePaymentInput) => ({ payable: v.payable, right: v.right, requests: v.requests,
-    bankAccountId: v.bankAccountId, bankCashBefore: v.bankCashBefore, rightSettlementId: v.rightSettlementId, sourceInputs: v.sourceInputs });
+    bankAccountId: v.bankAccountId, bankCashBefore: v.bankCashBefore, rightSettlementId: v.rightSettlementId, sourceInputs: v.sourceInputs,
+    ...(v.nativeHousehold === undefined ? {} : { nativeHousehold: v.nativeHousehold }) });
   if (paymentValue(values(input)) !== paymentValue(values(qualified))) paymentInvalid("Payment differs from requalified A1/C2 source authority");
 };
 const paymentJournal = (input: SsaMedicarePaymentInput): AccountingTransaction => {
@@ -796,6 +825,7 @@ export const authoritativeCheckpointDelta = (state: AuthoritativeState, before: 
 /** Provenance of immutable, structurally validated roots, not source authority
  * and not a second history store. Cold imports still requalify their sources. */
 const checkpointSnapshots = new WeakSet<AuthoritativeState>();
+const nativeCheckpointImports = new WeakSet<AuthoritativeState>();
 export const isAuthoritativeCheckpointSnapshot = (state: AuthoritativeState): boolean => checkpointSnapshots.has(state);
 export const snapshotAuthoritativeCheckpoint = (state: AuthoritativeState, before?: AuthoritativeState,
   observe?: (visited: number, changed: number) => void, observeMaterialization?: () => void): AuthoritativeState => {
@@ -912,7 +942,9 @@ export const restoreAuthoritativeCheckpointDelta = (before: AuthoritativeState, 
     assertClaimInvariant(claim);
     if (!state.identities.recognitionIds.includes(claim.originatingRecognitionId) || claim.settlementIds.some(s => !state.identities.settlementIds.includes(s))) return invalid();
   }
-  validateAuthoritativeState(state);
+  nativeCheckpointImports.add(state);
+  try { validateAuthoritativeState(state); }
+  finally { nativeCheckpointImports.delete(state); }
   executionStateIndexes.get(state)!.pendingClaimIds.clear();
   executionStateIndexes.get(state)!.pendingSettlementIds.clear();
   return snapshotAuthoritativeCheckpoint(state, before, observe);
@@ -1533,7 +1565,7 @@ const retirementKeys = (d: RetirementDistributionRecord): readonly IdempotencyKe
 ];
 const validateRetirementDistribution = (state: AuthoritativeState, key: string, d: RetirementDistributionRecord): void => {
   const s = d.source, source = state.accounts[d.sourceAccountId], bank = state.accounts[d.destinationAccountId];
-  if (d.version !== "retirement-distribution/v1" || key !== d.transactionId || d.originalPostingProofId !== d.transactionId ||
+  if ((d.nativeHousehold === undefined ? d.version !== "retirement-distribution/v1" : d.version !== "retirement-distribution/v2") || key !== d.transactionId || d.originalPostingProofId !== d.transactionId ||
       ![d.transactionId, d.operationId, d.withdrawalId, d.authorizationId, d.householdId, d.personId,
         d.sourceAccountId, d.destinationAccountId, s.sourceId, s.sourceVersion, s.ruleVersion, s.sourceApprovalId, s.paymentApprovalId]
         .every(v => typeof v === "string" && v.trim().length > 0) ||
@@ -1548,9 +1580,13 @@ const validateRetirementDistribution = (state: AuthoritativeState, key: string, 
       !Array.isArray(d.traceIds) || d.traceIds.length === 0 || new Set(d.traceIds).size !== d.traceIds.length ||
       d.traceIds.some(id => typeof id !== "string" || !id.trim()) || !Array.isArray(d.allocations) ||
       !source || source.id !== d.sourceAccountId || source.kind !== "retirement" || source.ownerId !== d.personId ||
-      !bank || bank.id !== d.destinationAccountId || !["checking", "savings"].includes(bank.kind) || bank.ownerId !== d.personId ||
+      !bank || bank.id !== d.destinationAccountId || !["checking", "savings"].includes(bank.kind) || bank.ownerId !== (d.nativeHousehold ? d.householdId : d.personId) ||
       !retirementExact(source.cash) || !retirementExact(bank.cash)) d2Invalid("Invalid ordinary pretax retirement CASH distribution evidence");
   instant(d.effectiveAt); instant(s.publishedAt); instant(s.knownAt);
+  if (d.nativeHousehold) {
+    if (bank!.kind !== d.nativeHousehold.route?.accountKind) d2Invalid("Retirement destination BANK kind changed");
+    qualifyNativePosting(retirementTransaction(d), d.nativeHousehold, "retirement", d.householdId, d.personId, d.destinationAccountId, "credit");
+  }
   if (s.executionOrder !== undefined && (!s.executionOrder.sequenceId.trim() || !Number.isSafeInteger(s.executionOrder.position) || s.executionOrder.position < 0))
     d2Invalid("Retirement execution order must have a source sequence and nonnegative integer position");
   let total = Money.zero(d.gross.currency);
@@ -1686,7 +1722,15 @@ const qualifyRetirement = (d: RetirementDistributionRecord, context: D2Settlemen
  * Neither structural restoration nor requalification grants J1 RMD credit. */
 export const requalifyRetirementDistributionHistory = (state: AuthoritativeState, context: D2SettlementSourceContext): void => {
   validateRetirementDistributions(state);
-  for (const d of Object.values(state.retirementDistributionAllocations ?? {})) qualifyRetirement(d, context);
+  for (const d of Object.values(state.retirementDistributionAllocations ?? {})) {
+    const result = qualifyRetirement(d, context);
+    if (d.nativeHousehold) {
+      if (result.status === "incomplete") d2Invalid("Native retirement original unavailable on replay");
+      qualifyNativePosting(retirementTransaction(d), { ...d.nativeHousehold,
+        context: { ...d.nativeHousehold.context, asOf: context.asOf, dataCutoff: context.dataCutoff } }, "retirement", d.householdId, d.personId,
+        d.destinationAccountId, "credit");
+    }
+  }
 };
 const approvedRetirementRegistrations = new WeakSet<D2PostingRegistration>();
 export const applyRetirementDistributionAtomically = (state: AuthoritativeState, input: RetirementDistributionRecord,
@@ -1696,13 +1740,17 @@ export const applyRetirementDistributionAtomically = (state: AuthoritativeState,
   const qualification = qualifyRetirement(d, context);
   if (qualification.status === "incomplete") return qualification;
   const registration: D2PostingRegistration = { role: "original", kind: "retirement_cash_distribution", operationId: d.operationId,
-    householdId: d.householdId, personId: d.personId, bankAccountId: d.destinationAccountId, distribution: d };
+    householdId: d.householdId, personId: d.personId, bankAccountId: d.destinationAccountId, distribution: d,
+    ...(d.nativeHousehold === undefined ? {} : { nativeHousehold: d.nativeHousehold }) };
+  qualifyNativeRegistration(retirementTransaction(d), registration, context);
+  if (d.nativeHousehold) approvedNativeRegistrations.add(registration);
   approvedRetirementRegistrations.add(registration);
   // All posting, journal and one-time inventories commit on this candidate.
   const candidate = cloneAuthoritativeState(state);
   applyAccountingTransactionAtomically(candidate, retirementTransaction(d), registration);
   const late = qualifyRetirement(d, context);
   if (late.status === "incomplete") return late;
+  qualifyNativeRegistration(retirementTransaction(d), registration, context);
   commitCandidate(state, candidate);
   return { status: "qualified", distribution: d };
 };
@@ -1831,6 +1879,12 @@ const qualifyHouseholdPosting = (transaction: AccountingTransaction, evidence: H
       !householdBankRouteAuthority?.qualify(route, c)) d2Invalid("Household BANK route original unavailable or changed");
   if (originals.length < 1 || originals.length > 8 || new Set(originals.map(o => o.original.family)).size !== originals.length)
     d2Invalid("Household posting requires distinct economic ORIGINAL families");
+  qualifyHouseholdOriginals(transaction, c, originals);
+};
+const qualifyHouseholdOriginals = (transaction: AccountingTransaction, c: HouseholdBankEventContext,
+  originals: readonly HouseholdEconomicWitness[], nativeSource?: NativeHouseholdOriginalSource): void => {
+  if (originals.length < 1 || originals.length > 8 || new Set(originals.map(o => o.original.family)).size !== originals.length)
+    d2Invalid("Household posting requires distinct economic ORIGINAL families");
   const families = originals.map(o => o.original.family).sort();
   for (const witness of originals) {
     const ref = witness.original;
@@ -1843,7 +1897,83 @@ const qualifyHouseholdPosting = (transaction: AccountingTransaction, evidence: H
         paymentValue(qualified.context) !== paymentValue(c) || paymentValue(qualified.transaction) !== paymentValue(transaction) ||
         paymentValue([...qualified.requiredFamilies].sort()) !== paymentValue(families))
       d2Invalid("Independent economic ORIGINAL missing, amended, withdrawn or journal changed");
+    if (nativeSource !== undefined && paymentValue(qualified!.nativeSource) !== paymentValue(nativeSource))
+      d2Invalid("Independent native plan/member or issuer/liability source identity changed");
   }
+};
+const nativeFamily = (r: D2PostingRegistration): NativeHouseholdPostingAttachment["family"] | undefined =>
+  r.kind === "ssa_medicare_payment" ? "ssa" : r.kind === "retirement_cash_distribution" ? "retirement"
+    : r.kind === "fsa_paid_reimbursement" ? "fsa" : r.kind === "card_interest_payment" ? "card" : undefined;
+const householdRoute = (r: D2PostingRegistration): boolean => r.kind === "household_domain" || r.nativeHousehold !== undefined;
+const bankRouteKind = (r: D2PostingRegistration): string | undefined =>
+  r.kind === "household_domain" ? r.evidence.route.accountKind : r.nativeHousehold?.route?.accountKind;
+const qualifyNativePosting = (tx: AccountingTransaction, a: NativeHouseholdPostingAttachment,
+  family: NativeHouseholdPostingAttachment["family"], householdId: string, personId: string, bankAccountId: string,
+  direction: "credit" | "debit", nonbank = false, context?: D2SettlementSourceContext,
+  nativeSource?: NativeHouseholdOriginalSource): void => {
+  a = freezePayment(a);
+  const c = a.context;
+  instant(c.asOf); instant(c.dataCutoff); instant(c.eventAt);
+  // Reuse S1's compact canonical projection, including bounded original refs.
+  const compact = compactHouseholdEvidence({ version: "household-domain-posting/v1", context: c,
+    route: a.route ?? { version: "household-bank-route/v1", accountKind: "checking", publisherId: "unused",
+      sourceId: "unused", revisionId: "unused", digest: "unused" }, originals: a.originals });
+  const projected = { version: a.version, transactionId: a.transactionId, family: a.family, cashRole: a.cashRole,
+    context: compact.context, ...(a.route === undefined ? {} : { route: compact.route }), originals: compact.originals };
+  if (paymentValue(a) !== paymentValue(projected) || a.version !== "native-household-posting/v1" ||
+      a.transactionId !== tx.id || a.family !== family || a.cashRole !== (nonbank ? "nonbank" : "bank") ||
+      c.householdId !== householdId || c.personId !== personId || c.bankAccountId !== bankAccountId ||
+      c.direction !== direction || c.eventAt !== tx.date || c.dataCutoff > c.asOf ||
+      ![c.runId, c.eventId, c.householdId, c.personId, c.bankAccountId].every(householdToken) ||
+      context !== undefined && (context.asOf !== c.asOf || context.dataCutoff !== c.dataCutoff) ||
+      !a.originals.some(w => w.original.family === family) || a.originals.some(w => w.beneficiary !== personId ||
+        (w.original.family !== family && !(family === "ssa" && w.original.family === "medicare"))))
+    d2Invalid("Native household attachment differs from actual native event, actor or source family");
+  const cash = tx.legs.filter(l => l.type === "cash" && l.accountId === bankAccountId);
+  if (nonbank) {
+    if (a.route !== undefined || tx.legs.some(l => l.type === "cash")) d2Invalid("Issuer original must remain NONBANK");
+  } else {
+    const route = a.route;
+    const zeroNetSsa = family === "ssa" && tx.legs.every(l => l.type !== "cash");
+    if (!route || route.version !== "household-bank-route/v1" || !["checking", "savings"].includes(route.accountKind) ||
+        ![route.publisherId, route.sourceId, route.revisionId, route.digest].every(householdToken) ||
+        !householdBankRouteAuthority?.qualify(route, c) || !zeroNetSsa && (cash.length !== 1 ||
+        cash[0]!.posting !== (direction === "credit" ? "debit" : "credit") || !cash[0]!.amount.isPositive()))
+      d2Invalid("Native BANK direction or independently qualified route missing");
+  }
+  if (tx.legs.some(l => !(l.amount instanceof Money) || l.amount.isNegative() || !l.amount.amount.fitsScale(l.amount.currency.minorUnitScale)))
+    d2Invalid("Native household journal requires exact money");
+  qualifyHouseholdOriginals(tx, c, a.originals, nativeSource);
+};
+const qualifyNativeRegistration = (tx: AccountingTransaction, r: D2PostingRegistration, context?: D2SettlementSourceContext): void => {
+  if (r.nativeHousehold === undefined) return;
+  const family = nativeFamily(r) ?? d2Invalid("Unsupported native household family");
+  const w = r.nativeHousehold.originals.find(o => o.original.family === family);
+  if (!w || r.kind === "card_interest_payment" && (w.source.kind !== "organization" || w.source.id !== r.issuerId) ||
+      r.kind === "fsa_paid_reimbursement" && (w.source.kind !== "organization" || w.source.id !== r.planId) ||
+      r.kind === "retirement_cash_distribution" && (w.source.kind !== "account" || w.source.id !== r.distribution.sourceAccountId))
+    d2Invalid("Native source party differs from original plan, issuer or retirement account");
+  qualifyNativePosting(tx, r.nativeHousehold, family, r.householdId, r.personId, r.bankAccountId,
+    family === "ssa" || family === "retirement" || family === "fsa" && r.role === "settlement" ? "credit" : "debit",
+    family === "card" && r.role === "original", context, r.kind === "fsa_paid_reimbursement"
+      ? { kind: r.kind, planId: r.planId, planYearId: r.planYearId, memberId: r.memberId, payeeId: r.payeeId,
+        medicalReceiptId: r.medicalReceiptId, expensePaymentId: r.expensePaymentId }
+      : r.kind === "card_interest_payment" ? { kind: r.kind, issuerId: r.issuerId, statementId: r.statementId, chargeId: r.chargeId, liabilityId: r.liabilityId } : undefined);
+};
+const approvedNativeRegistrations = new WeakSet<D2PostingRegistration>();
+/** Original-only port for future FSA/issuer producers. Independent originals
+ * must already exist; this helper never installs or echoes a publisher. */
+export const applyNativeHouseholdOriginalAtomically = (state: AuthoritativeState, transaction: AccountingTransaction,
+  registration: D2PostingRegistration, context: D2SettlementSourceContext): void => {
+  const tx = freezePayment(transaction), r = freezePayment(registration);
+  if (r.role !== "original" || !r.nativeHousehold || !["fsa_paid_reimbursement", "card_interest_payment"].includes(r.kind))
+    d2Invalid("Native original port supports only original paid FSA and issuer card journals");
+  qualifyNativeRegistration(tx, r, context);
+  const candidate = cloneAuthoritativeState(state);
+  approvedNativeRegistrations.add(r);
+  applyAccountingTransactionAtomically(candidate, tx, r);
+  qualifyNativeRegistration(tx, r, context);
+  commitCandidate(state, candidate);
 };
 /** Authenticate twice around the sole writer on an isolated candidate. A late
  * source failure leaves cash, proofs and all identities untouched. */
@@ -1877,19 +2007,24 @@ const validateD2Posting = (state: AuthoritativeState, key: string, proof: D2Post
   const { registration: r, transaction: tx } = proof;
   if (proof.schemaVersion !== "d2-shared/posted-transaction/v1" || proof.writer !== "applyAccountingTransactionAtomically/v1" ||
       key !== tx.id || !["original", "settlement"].includes(r.role) ||
-      !["fsa_paid_reimbursement", "card_interest_payment", "retirement_cash_distribution", "heloc_phase_service", "payroll_health_deduction", "household_domain"].includes(r.kind)) d2Invalid("Invalid posting proof schema, writer or identity");
+      !["fsa_paid_reimbursement", "card_interest_payment", "retirement_cash_distribution", "heloc_phase_service", "payroll_health_deduction", "household_domain", "ssa_medicare_payment"].includes(r.kind)) d2Invalid("Invalid posting proof schema, writer or identity");
   const strings = [r.operationId, r.householdId, r.personId, r.bankAccountId, tx.id, tx.type,
     ...(r.kind === "fsa_paid_reimbursement" ? [r.planId, r.planYearId, r.memberId, r.payeeId, r.medicalReceiptId, r.expensePaymentId]
       : r.kind === "card_interest_payment" ? [r.issuerId, r.statementId, r.chargeId, r.liabilityId]
       : r.kind === "retirement_cash_distribution" ? [r.distribution.withdrawalId, r.distribution.authorizationId, r.distribution.sourceAccountId]
       : r.kind === "heloc_phase_service" ? [r.service.source.lineId, r.service.source.documentId, r.service.liabilityId]
       : r.kind === "household_domain" ? [r.evidence.context.runId, r.evidence.context.eventId]
+      : r.kind === "ssa_medicare_payment" ? [r.paymentKey]
       : [r.deduction.source.incomeId, r.deduction.source.occurrenceId, r.deduction.source.claimId])];
   if (strings.some(s => typeof s !== "string" || !s.trim())) d2Invalid("Missing posting proof source/operation identity");
   instant(tx.date); assertBalanced(tx);
   const bank = state.accounts[r.bankAccountId];
   if (!bank) return d2Invalid("Posting proof BANK/owner missing");
-  if (bank.ownerId !== (r.kind === "household_domain" ? r.householdId : r.personId) || !["checking", "savings"].includes(bank.kind)) d2Invalid("Posting proof BANK/owner missing");
+  if (bank.ownerId !== (householdRoute(r) ? r.householdId : r.personId) || !["checking", "savings"].includes(bank.kind)) d2Invalid("Posting proof BANK/owner missing");
+  if (r.nativeHousehold) {
+    if (bank.id !== r.bankAccountId || (bankRouteKind(r) !== undefined && bank.kind !== bankRouteKind(r))) d2Invalid("Native BANK identity/kind changed");
+    qualifyNativeRegistration(tx, r);
+  }
   if (tx.legs.some(leg => !leg.amount.currency.equals(bank.cash.currency))) d2Invalid("Posting proof currency mismatch");
   const amount = tx.legs[0]!.amount;
   const cash = (posting: "debit" | "credit") => createAccountingLeg({ type: "cash", posting, amount, accountId: r.bankAccountId, cashFlowClass: "operating" });
@@ -1906,6 +2041,14 @@ const validateD2Posting = (state: AuthoritativeState, key: string, proof: D2Post
         cashLegs[0]!.posting !== (c.direction === "credit" ? "debit" : "credit") || !cashLegs[0]!.amount.isPositive())
       d2Invalid("Household route does not match actual BANK direction");
     qualifyHouseholdPosting(tx, r.evidence);
+    expected = tx.legs.map(({ traceRefs: _trace, ...leg }) => leg) as AccountingTransaction["legs"];
+  } else if (r.kind === "ssa_medicare_payment") {
+    const payment = state.ssaMedicarePayments?.[r.paymentKey];
+    if (!r.nativeHousehold || r.role !== "original" || r.operationId !== r.nativeHousehold.context.eventId ||
+        !payment || payment.version !== "ssa-medicare-payment/v3" || paymentKey(payment.payable) !== r.paymentKey ||
+        paymentValue(payment.nativeHousehold) !== paymentValue(r.nativeHousehold) ||
+        paymentValue(payment.transaction) !== paymentValue(tx) || tx.type !== "ssa_medicare_same_event")
+      d2Invalid("Native SSA posting must bind its actual payment");
     expected = tx.legs.map(({ traceRefs: _trace, ...leg }) => leg) as AccountingTransaction["legs"];
   } else if (r.kind === "fsa_paid_reimbursement") expected = r.role === "original"
     ? [createAccountingLeg({ type: "expense", posting: "debit", amount }), cash("credit")]
@@ -1929,6 +2072,7 @@ const validateD2Posting = (state: AuthoritativeState, key: string, proof: D2Post
   } else {
     const d = r.distribution;
     validateRetirementDistribution(state, key, d);
+    if (paymentValue(r.nativeHousehold) !== paymentValue(d.nativeHousehold)) d2Invalid("Retirement native route differs");
     if (r.role !== "original" || r.operationId !== d.operationId || r.householdId !== d.householdId ||
         r.personId !== d.personId || r.bankAccountId !== d.destinationAccountId || tx.date !== d.effectiveAt ||
         tx.type !== "retirement_cash_transfer" || !amount.equals(d.gross)) d2Invalid("Retirement posting registration differs from distribution");
@@ -1960,9 +2104,19 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
     // A cold archive has no trusted structural ancestry. Re-read independently
     // before accepting its first roots; warm appends use the writer's final
     // source check instead of scanning previously committed events.
-    if (previous === undefined && proof.registration.kind === "household_domain")
-      qualifyHouseholdPosting(proof.transaction, proof.registration.evidence);
-    if (proof.registration.kind === "heloc_phase_service" || proof.registration.kind === "payroll_health_deduction" || proof.registration.kind === "household_domain")
+    if (previous === undefined || nativeCheckpointImports.has(state)) {
+      if (previous === undefined && proof.registration.kind === "household_domain") qualifyHouseholdPosting(proof.transaction, proof.registration.evidence);
+      if (proof.registration.nativeHousehold) {
+        if (proof.registration.kind === "retirement_cash_distribution" &&
+            qualifyRetirement(proof.registration.distribution, proof.registration.nativeHousehold.context).status !== "qualified")
+          d2Invalid("Native retirement source unavailable on cold import");
+        qualifyNativeRegistration(proof.transaction, proof.registration);
+        if (proof.registration.kind === "retirement_cash_distribution" &&
+            qualifyRetirement(proof.registration.distribution, proof.registration.nativeHousehold.context).status !== "qualified")
+          d2Invalid("Native retirement source unavailable on cold import");
+      }
+    }
+    if (proof.registration.nativeHousehold || proof.registration.kind === "heloc_phase_service" || proof.registration.kind === "payroll_health_deduction" || proof.registration.kind === "household_domain")
       sourceProofs.set(proof.transaction.id, proof);
     inventory.set(d2PostingKey(proof), proof.transaction.id);
     const r = proof.registration, bankKey = `bank:${r.bankAccountId}`, priorBank = bindings.get(bankKey);
@@ -1973,24 +2127,27 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
       : r.kind === "heloc_phase_service" ? [JSON.stringify([r.kind, r.service.source.issuerId, r.service.source.lineId, r.service.source.periodStart, r.service.source.periodEnd]),
         JSON.stringify([r.kind, "approval", r.service.source.sourceApprovalId]), JSON.stringify([r.kind, "debit", r.service.source.bankDebitId])]
       : r.kind === "household_domain" ? [JSON.stringify([r.kind, r.householdId, r.operationId])]
+      : r.kind === "ssa_medicare_payment" ? [JSON.stringify([r.kind, r.paymentKey])]
       : [JSON.stringify([r.kind, "wage", r.deduction.source.incomeId, r.deduction.source.occurrenceId]),
         JSON.stringify([r.kind, "claim", r.deduction.source.claimId])];
     for (const sourceKey of sourceKeys) {
       const prior = sources.get(sourceKey);
-      const { role: _role, operationId: _operation, ...binding } = r;
+      const { role: _role, operationId: _operation, nativeHousehold: attachment, ...binding } = r;
       if (prior !== undefined) {
-        const { role: _priorRole, operationId: _priorOperation, ...priorBinding } = prior;
-        if (paymentValue(binding) !== paymentValue(priorBinding)) d2Invalid("Archived original/settlement source rebound");
+        const { role: _priorRole, operationId: _priorOperation, nativeHousehold: priorAttachment, ...priorBinding } = prior;
+        if ((attachment === undefined) !== (priorAttachment === undefined) || paymentValue(binding) !== paymentValue(priorBinding)) d2Invalid("Archived original/settlement source rebound");
       }
       if (sources.has(`${sourceKey}:${r.role}`)) d2Invalid("Original source or settlement posting reused");
       sources.set(sourceKey, r); sources.set(`${sourceKey}:${r.role}`, r);
     }
-    if (priorBank !== undefined && ((priorBank.kind === "household_domain") !== (r.kind === "household_domain") ||
-        (r.kind !== "household_domain" && priorBank.personId !== r.personId) || priorBank.householdId !== r.householdId ||
-        (r.kind === "household_domain" && priorBank.kind === "household_domain" && priorBank.evidence.route.accountKind !== r.evidence.route.accountKind) ||
+    if (priorBank !== undefined && (householdRoute(priorBank) !== householdRoute(r) ||
+        (!householdRoute(r) && priorBank.personId !== r.personId) || priorBank.householdId !== r.householdId ||
+        (bankRouteKind(r) !== undefined && bankRouteKind(priorBank) !== undefined && bankRouteKind(priorBank) !== bankRouteKind(r)) ||
         !priorBank.currency.equals(proof.transaction.legs[0]!.amount.currency)))
       d2Invalid("Archived BANK owner/household rebound");
-    bindings.set(bankKey, { ...r, currency: proof.transaction.legs[0]!.amount.currency });
+    // A NONBANK issuer journal cannot erase an already authenticated BANK kind.
+    if (!priorBank || r.nativeHousehold?.cashRole !== "nonbank")
+      bindings.set(bankKey, { ...r, currency: proof.transaction.legs[0]!.amount.currency });
     if (r.kind === "card_interest_payment" || r.kind === "heloc_phase_service") {
       const liabilityId = r.kind === "card_interest_payment" ? r.liabilityId : r.service.liabilityId;
       const issuerId = r.kind === "card_interest_payment" ? r.issuerId : r.service.source.issuerId;
@@ -2026,9 +2183,9 @@ export const validateD2PostedTransactions = (state: AuthoritativeState): void =>
   const changedKeys = (record: object): Iterable<string> => indexedRecords.get(record)?.dirty ?? Object.keys(record);
   for (const key of changedKeys(state.accounts)) {
     const r = bindings.get(`bank:${key}`), bank = state.accounts[key];
-    if (r !== undefined && (!bank || bank.ownerId !== (r.kind === "household_domain" ? r.householdId : r.personId) ||
-        !["checking", "savings"].includes(bank.kind) || (r.kind === "household_domain" && bank.kind !== r.evidence.route.accountKind) ||
-        (r.kind === "household_domain" && bank.id !== r.bankAccountId) ||
+    if (r !== undefined && (!bank || bank.ownerId !== (householdRoute(r) ? r.householdId : r.personId) ||
+        !["checking", "savings"].includes(bank.kind) || (bankRouteKind(r) !== undefined && bank.kind !== bankRouteKind(r)) ||
+        (householdRoute(r) && bank.id !== r.bankAccountId) ||
         !bank.cash.currency.equals(r.currency))) d2Invalid("Archived BANK reference changed");
   }
   for (const key of changedKeys(state.liabilities)) {
@@ -2053,7 +2210,7 @@ interface D2ReceiptHistory {
   readonly index: PersistentStringIndex<object>;
   readonly consumed: PersistentStringIndex<string>;
   readonly eventOrder: PersistentStringIndex<D2SettlementReceipt>;
-  readonly banks: PersistentStringIndex<{ readonly personId: string; readonly currency: Currency }>;
+  readonly banks: PersistentStringIndex<{ readonly personId: string; readonly ownerId: string; readonly household: boolean; readonly currency: Currency }>;
   readonly liabilities: PersistentStringIndex<{ readonly currency: Currency; readonly issuerId: string; readonly personId: string; readonly householdId: string }>;
   readonly identities: AuthoritativeIdentityRegistry;
 }
@@ -2104,7 +2261,9 @@ const d2ConsumptionKeys = (r: D2SettlementReceipt): readonly IdempotencyKey[] =>
   return r.kind === "heloc_phase_service" && r.originalProof === "principal_only" ? [...new Set(keys)] : keys;
 };
 const validateD2Receipt = (state: AuthoritativeState, key: string, r: D2SettlementReceipt): void => {
-  if (!r || r.schemaVersion !== (r.kind === "heloc_phase_service" ? "d2-shared/heloc-settlement/v1" : "d2-shared/settlement-receipt/v1") || key !== r.id ||
+  if (!r || r.schemaVersion !== (r.kind === "heloc_phase_service" ? "d2-shared/heloc-settlement/v1"
+      : r.nativeHousehold === undefined ? "d2-shared/settlement-receipt/v1" : "d2-shared/settlement-receipt/v2") ||
+      r.kind === "heloc_phase_service" && r.nativeHousehold !== undefined || key !== r.id ||
       !["fsa_paid_reimbursement", "card_interest_payment", "heloc_phase_service"].includes(r.kind) || r.kind !== r.source.kind)
     d2Invalid("Unknown or malformed receipt schema/family");
   const strings = [r.id, r.operationId, r.authorizationId, r.claimId, r.paymentId, r.recognitionId, r.settlementId,
@@ -2124,8 +2283,15 @@ const validateD2Receipt = (state: AuthoritativeState, key: string, r: D2Settleme
       (r.originalTransaction.id === r.paymentTransaction.id && !(r.kind === "heloc_phase_service" && r.originalProof === "principal_only")))
     d2Invalid("Source and economic event ordering mismatch");
   const bank = state.accounts[r.bankAccountId];
-  if (!bank || !["checking", "savings"].includes(bank.kind) || bank.ownerId !== r.source.personId)
+  if (!bank || !["checking", "savings"].includes(bank.kind) || bank.ownerId !== (r.nativeHousehold ? r.source.householdId : r.source.personId))
     d2Invalid("Receipt requires an independently source-bound owned BANK");
+  if (r.nativeHousehold) {
+    for (const role of ["original", "settlement"] as const) {
+      const a = r.nativeHousehold[role];
+      if (!a) d2Invalid("Both actual native original and settlement attachments are required");
+      qualifyNativeRegistration(role === "original" ? r.originalTransaction : r.paymentTransaction, d2SettlementPostingRegistration(r, role));
+    }
+  }
   for (const amount of d2ReceiptAmounts(r))
     if (!(amount instanceof Money) || amount.isNegative() || !amount.currency.equals(bank!.cash.currency) ||
         !amount.amount.fitsScale(amount.currency.minorUnitScale)) d2Invalid("Nonnegative exact same-currency money required");
@@ -2193,7 +2359,7 @@ export const validateD2SettlementReceipts = (state: AuthoritativeState): void =>
   const delta = index.changesSince(previous?.index ?? new PersistentStringIndex<object>()).changes;
   const consumed = previous?.consumed.fork() ?? new PersistentStringIndex<string>();
   const eventOrder = previous?.eventOrder.fork() ?? new PersistentStringIndex<D2SettlementReceipt>();
-  const banks = previous?.banks.fork() ?? new PersistentStringIndex<{ readonly personId: string; readonly currency: Currency }>();
+  const banks = previous?.banks.fork() ?? new PersistentStringIndex<{ readonly personId: string; readonly ownerId: string; readonly household: boolean; readonly currency: Currency }>();
   const liabilities = previous?.liabilities.fork() ?? new PersistentStringIndex<{
     readonly currency: Currency; readonly issuerId: string; readonly personId: string; readonly householdId: string }>();
   const priorIds = previous === undefined ? undefined : identityIndexes.get(previous.identities);
@@ -2212,7 +2378,11 @@ export const validateD2SettlementReceipts = (state: AuthoritativeState): void =>
       d2Invalid("Committed receipt cannot be removed or rewritten");
     if (change.before !== undefined) continue;
     const r = state.d2SettlementReceipts?.[change.key] ?? d2Invalid("Missing receipt");
+    if ((previous === undefined || nativeCheckpointImports.has(state)) && r.nativeHousehold && qualifyD2Receipt(r, r.nativeHousehold.settlement.context).status !== "qualified")
+      d2Invalid("Native receipt original source unavailable on cold import");
     validateD2Receipt(state, change.key, r);
+    if ((previous === undefined || nativeCheckpointImports.has(state)) && r.nativeHousehold && qualifyD2Receipt(r, r.nativeHousehold.settlement.context).status !== "qualified")
+      d2Invalid("Native receipt original source unavailable on cold import");
     if (!matchD2PostedTransaction(state, r, "original") || !matchD2PostedTransaction(state, r, "settlement"))
       d2Invalid("Committed receipt lacks actual archived canonical postings");
     admitD2EventOrder(eventOrder, r);
@@ -2221,8 +2391,9 @@ export const validateD2SettlementReceipts = (state: AuthoritativeState): void =>
       consumed.set(id, r.id);
     }
     const boundBank = banks.get(r.bankAccountId);
-    if (boundBank !== undefined && boundBank.personId !== r.source.personId) d2Invalid("BANK ownership binding changed");
-    banks.set(r.bankAccountId, { personId: r.source.personId, currency: r.amount.currency });
+    const ownerId = r.nativeHousehold ? r.source.householdId : r.source.personId;
+    if (boundBank !== undefined && (boundBank.ownerId !== ownerId || boundBank.household !== !!r.nativeHousehold)) d2Invalid("BANK ownership binding changed");
+    banks.set(r.bankAccountId, { personId: r.source.personId, ownerId, household: !!r.nativeHousehold, currency: r.amount.currency });
     if (r.kind === "card_interest_payment" || r.kind === "heloc_phase_service") {
       const prior = liabilities.get(r.liabilityId);
       if (prior !== undefined && (prior.issuerId !== r.source.issuerId || prior.personId !== r.source.personId || prior.householdId !== r.source.householdId))
@@ -2241,7 +2412,7 @@ export const validateD2SettlementReceipts = (state: AuthoritativeState): void =>
   const changedKeys = (record: object): Iterable<string> => indexedRecords.get(record)?.dirty ?? Object.keys(record);
   for (const key of changedKeys(state.accounts)) {
     const binding = banks.get(key), bank = state.accounts[key];
-    if (binding !== undefined && (!bank || bank.ownerId !== binding.personId || !["checking", "savings"].includes(bank.kind) ||
+    if (binding !== undefined && (!bank || bank.ownerId !== binding.ownerId || !["checking", "savings"].includes(bank.kind) ||
         !bank.cash.currency.equals(binding.currency))) d2Invalid("Historical BANK reference changed");
   }
   for (const key of changedKeys(state.liabilities)) {
@@ -2267,6 +2438,9 @@ export const validateD2SettlementReceipts = (state: AuthoritativeState): void =>
 };
 const qualifyD2Receipt = (receipt: D2SettlementReceipt, context: D2SettlementSourceContext): D2SourceQualification => {
   instant(context.asOf); instant(context.dataCutoff);
+  if (receipt.nativeHousehold) for (const role of ["original", "settlement"] as const)
+    qualifyNativeRegistration(role === "original" ? receipt.originalTransaction : receipt.paymentTransaction,
+      d2SettlementPostingRegistration(receipt, role));
   if (receipt.source.knownAt > context.dataCutoff || receipt.source.publishedAt > context.asOf)
     return { status: "incomplete", reason: "source_not_qualified" };
   const authority = d2SourceAuthorities.get(receipt.kind);
@@ -2279,6 +2453,7 @@ const qualifyD2Receipt = (receipt: D2SettlementReceipt, context: D2SettlementSou
 const approvedHelocRegistrations = new WeakSet<D2PostingRegistration>();
 const postD2Journal = (state: AuthoritativeState, receipt: D2SettlementReceipt, role: "original" | "settlement"): void => {
   const registration = d2SettlementPostingRegistration(receipt, role);
+  if (registration.nativeHousehold) approvedNativeRegistrations.add(registration);
   if (registration.kind === "heloc_phase_service") approvedHelocRegistrations.add(registration);
   applyAccountingTransactionAtomically(state, role === "original" ? receipt.originalTransaction : receipt.paymentTransaction, registration);
 };
@@ -2320,6 +2495,20 @@ export const requalifyD2SettlementReceiptHistory = (state: AuthoritativeState, c
   validateD2PostedTransactions(state);
   validateD2SettlementReceipts(state);
   for (const [, proof] of d2PostingHistories.get(state)!.sourceProofs.entries()) {
+    if (proof.registration.nativeHousehold) {
+      const requalifyNativeRecord = (): void => {
+        const r = proof.registration;
+        if (r.kind === "ssa_medicare_payment") validatePaymentSources(state.ssaMedicarePayments?.[r.paymentKey]
+          ?? d2Invalid("Native SSA posting lost its payment record"));
+        if (r.kind === "retirement_cash_distribution" && qualifyRetirement(r.distribution, context).status !== "qualified")
+          d2Invalid("Native retirement original unavailable on replay");
+      };
+      requalifyNativeRecord();
+      const a = proof.registration.nativeHousehold;
+      qualifyNativeRegistration(proof.transaction, { ...proof.registration,
+        nativeHousehold: { ...a, context: { ...a.context, asOf: context.asOf, dataCutoff: context.dataCutoff } } });
+      requalifyNativeRecord();
+    }
     if (proof.registration.kind === "household_domain") {
       const e = proof.registration.evidence;
       qualifyHouseholdPosting(proof.transaction, { ...e, context: { ...e.context, asOf: context.asOf, dataCutoff: context.dataCutoff } });
@@ -2353,6 +2542,8 @@ export const applyD2SettlementAtomically = (state: AuthoritativeState, input: D2
   context: D2SettlementSourceContext): D2SettlementCommitResult => {
   validateD2PostedTransactions(state);
   const receipt = freezePayment(input);
+  if (receipt.nativeHousehold) qualifyNativeRegistration(receipt.paymentTransaction,
+    d2SettlementPostingRegistration(receipt, "settlement"), context);
   validateD2Receipt(state, receipt.id, receipt);
   const qualification = qualifyD2Receipt(receipt, context);
   if (qualification.status === "incomplete") return qualification;
@@ -2411,11 +2602,12 @@ export const applyD2SettlementAtomically = (state: AuthoritativeState, input: D2
 };
 
 const newPaymentVersion = (input: SsaMedicarePaymentInput): SsaMedicarePaymentRecord["version"] =>
-  (input.sourceInputs as { readonly originalSources?: unknown } | null)?.originalSources === undefined
+  input.nativeHousehold !== undefined ? "ssa-medicare-payment/v3" : (input.sourceInputs as { readonly originalSources?: unknown } | null)?.originalSources === undefined
     ? "ssa-medicare-payment/v1" : "ssa-medicare-payment/v2";
 const paymentSourceBinding = (input: SsaMedicarePaymentInput): string => paymentValue({ payable: input.payable, right: input.right,
   requests: input.requests, bankAccountId: input.bankAccountId, bankCashBefore: input.bankCashBefore,
-  rightSettlementId: input.rightSettlementId, sourceInputs: input.sourceInputs });
+  rightSettlementId: input.rightSettlementId, sourceInputs: input.sourceInputs,
+  ...(input.nativeHousehold === undefined ? {} : { nativeHousehold: input.nativeHousehold }) });
 const paymentConsumptionKeys = (input: SsaMedicarePaymentInput, version: SsaMedicarePaymentRecord["version"]): readonly IdempotencyKey[] => [
   idempotencyKey("ssa-medicare:payment", input.payable.paymentId),
   // v1 retains its exact tuple and normalization. A v2 digest witnesses
@@ -2468,8 +2660,8 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): ExecutionStateI
   let immutable = true;
   for (const [key, record] of entries) {
     immutable = immutable && frozenPaymentValues.has(record);
-    if (!record || !["ssa-medicare-payment/v1", "ssa-medicare-payment/v2"].includes(record.version)
-      || record.version === "ssa-medicare-payment/v2" && newPaymentVersion(record) !== record.version
+    if (!record || !["ssa-medicare-payment/v1", "ssa-medicare-payment/v2", "ssa-medicare-payment/v3"].includes(record.version)
+      || (record.nativeHousehold !== undefined || record.version !== "ssa-medicare-payment/v1") && newPaymentVersion(record) !== record.version
       || key !== record.id || key !== paymentKey(record.payable)
       || record.sourceInputs === undefined || !(record.bankCashBefore instanceof Money)
       || record.bankCashBefore.currency.code !== "USD" || !record.bankCashBefore.amount.fitsScale(2) || record.bankCashBefore.isNegative())
@@ -2478,12 +2670,23 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): ExecutionStateI
     const batch = prepareSsaMedicareDeductionProposals(record.payable, record.right, record.requests);
     const bank = state.accounts[record.bankAccountId];
     const expected = paymentJournal(record);
-    if (!bank || !["checking", "savings"].includes(bank.kind) || bank.ownerId !== record.payable.recipientId
+    if (!bank || !["checking", "savings"].includes(bank.kind) || bank.ownerId !== (record.nativeHousehold ? record.payable.householdId : record.payable.recipientId)
       || bank.cash.currency.code !== "USD" || !record.netBank.equals(batch.conditionalNetPayable)
       || paymentValue(record.transaction) !== paymentValue(expected)
       || !state.identities.postedTransactionIds.includes(expected.id) || transactions.has(expected.id)
       || paymentValue(record.recognitions) !== paymentValue(paymentRecognitions(record)))
       paymentInvalid("Receipt must match owned BANK and the actually posted gross/expense/net journal");
+    if (record.nativeHousehold) {
+      const proof = state.d2PostedTransactions?.[expected.id];
+      if (!proof || proof.registration.kind !== "ssa_medicare_payment" || proof.registration.paymentKey !== key ||
+          paymentValue(proof.transaction) !== paymentValue(expected) || paymentValue(proof.registration.nativeHousehold) !== paymentValue(record.nativeHousehold) ||
+          bank!.id !== record.bankAccountId || bank!.kind !== record.nativeHousehold.route?.accountKind ||
+          (record.sourceInputs as { readonly originalSources?: unknown } | null)?.originalSources === undefined)
+        paymentInvalid("Native SSA requires its one canonical proof and original-source v2 semantics");
+      qualifyNativePosting(expected, record.nativeHousehold, "ssa", record.payable.householdId, record.payable.recipientId, record.bankAccountId, "credit");
+      if (record.requests.length > 0 && !record.nativeHousehold.originals.some(w => w.original.family === "medicare"))
+        paymentInvalid("Native SSA deductions require an independent Medicare original");
+    }
     transactions.set(expected.id, key);
     const claims = paymentClaims(record), ids = [record.rightSettlementId, ...record.requests.map(r => r.draft.id)];
     for (const [index, original] of claims.entries()) {
@@ -2518,7 +2721,10 @@ const validateSsaMedicarePayments = (state: AuthoritativeState): ExecutionStateI
  * receipt here is generated only after actual canonical journal application.
  */
 export const applySsaMedicarePaymentAtomically = (state: AuthoritativeState, input: SsaMedicarePaymentInput): SsaMedicarePaymentRecord => {
+  input = freezePayment(input);
   validatePaymentSources(input);
+  if (input.nativeHousehold) qualifyNativePosting(paymentJournal(input), input.nativeHousehold, "ssa", input.payable.householdId,
+    input.payable.recipientId, input.bankAccountId, "credit");
   const candidate = cloneAuthoritativeState(state);
   const key = paymentKey(input.payable);
   if (candidate.ssaMedicarePayments?.[key]) paymentInvalid("Payment already committed; duplicate execution rejected");
@@ -2538,17 +2744,31 @@ export const applySsaMedicarePaymentAtomically = (state: AuthoritativeState, inp
   }
   const version = newPaymentVersion(input);
   for (const id of paymentConsumptionKeys(input, version)) registerAuthoritativeIdentity(candidate.identities, "externalIdempotencyKeys", id);
-  applyAccountingTransactionAtomically(candidate, transaction);
   const record = freezePayment({ ...input, version, id: key,
     netBank: input.payable.grossPayable.minus(input.requests.reduce((sum, r) => sum.plus(r.terms.amount), Money.zero(input.payable.grossPayable.currency))),
     transaction, recognitions: paymentRecognitions(input) });
-  const receipts = candidate.ssaMedicarePayments ?? indexedRecord(new PersistentStringIndex<SsaMedicarePaymentRecord>(), false, undefined, freezePayment).record;
-  receipts[key] = record;
-  candidate.ssaMedicarePayments = receipts;
+  if (input.nativeHousehold) {
+    const a = input.nativeHousehold;
+    const r: D2PostingRegistration = { kind: "ssa_medicare_payment", role: "original", operationId: a.context.eventId,
+      householdId: domainId("household", input.payable.householdId), personId: domainId("person", input.payable.recipientId), bankAccountId: input.bankAccountId,
+      paymentKey: key, nativeHousehold: a };
+    approvedNativeRegistrations.add(r);
+    stagedNativeSsaPayments.set(r, record);
+    applyAccountingTransactionAtomically(candidate, transaction, r);
+  } else {
+    applyAccountingTransactionAtomically(candidate, transaction);
+    const receipts = candidate.ssaMedicarePayments ?? indexedRecord(new PersistentStringIndex<SsaMedicarePaymentRecord>(), false, undefined, freezePayment).record;
+    receipts[key] = record;
+    candidate.ssaMedicarePayments = receipts;
+  }
   // Indexed insertion already registered each recognition/settlement above.
   // Rebuilding the registry here discards its persistent append-only proof.
   if (!executionStateIndexes.has(candidate)) reconcileClaimIdentityHistory(candidate);
   validateAuthoritativeState(candidate);
+  if (input.nativeHousehold) {
+    validatePaymentSources(input);
+    qualifyNativePosting(transaction, input.nativeHousehold, "ssa", input.payable.householdId, input.payable.recipientId, input.bankAccountId, "credit");
+  }
   commitCandidate(state, candidate);
   return record;
 };
@@ -2590,11 +2810,16 @@ export const applyPositionValuationAtomically = (state: AuthoritativeState, inpu
  * commits only after all invariants pass. Optional D2 proof registration is
  * first-posting-only; it cannot backfill an existing transaction ID. In a
  * household candidate it remains staged until that period is committed. */
+const stagedNativeSsaPayments = new WeakMap<D2PostingRegistration, SsaMedicarePaymentRecord>();
 export const applyAccountingTransactionAtomically = (
   state: AuthoritativeState,
   transaction: AccountingTransaction,
   proofRegistration?: D2PostingRegistration,
 ): void => {
+  if (proofRegistration?.nativeHousehold && !approvedNativeRegistrations.delete(proofRegistration))
+    d2Invalid("Native posting requires the independently qualified native transition");
+  if (proofRegistration?.kind === "ssa_medicare_payment" && !proofRegistration.nativeHousehold)
+    d2Invalid("SSA posting registration is native opt-in only");
   if (proofRegistration?.kind === "household_domain" && !approvedHouseholdRegistrations.delete(proofRegistration))
     d2Invalid("Household posting requires independently qualified route AND economic originals");
   if (proofRegistration?.kind === "retirement_cash_distribution" && !approvedRetirementRegistrations.delete(proofRegistration))
@@ -2638,6 +2863,13 @@ export const applyAccountingTransactionAtomically = (
   }
 
   if (proofRegistration !== undefined) {
+    if (proofRegistration.kind === "ssa_medicare_payment") {
+      const record = stagedNativeSsaPayments.get(proofRegistration) ?? d2Invalid("Native SSA record must be staged by its claim writer");
+      stagedNativeSsaPayments.delete(proofRegistration);
+      const receipts = candidate.ssaMedicarePayments ?? indexedRecord(new PersistentStringIndex<SsaMedicarePaymentRecord>(), false, undefined, freezePayment).record;
+      receipts[record.id] = record;
+      candidate.ssaMedicarePayments = receipts;
+    }
     const proof = freezePayment<D2PostedTransactionProof>({ schemaVersion: "d2-shared/posted-transaction/v1",
       writer: "applyAccountingTransactionAtomically/v1", registration: proofRegistration, transaction });
     validateD2Posting(candidate, transaction.id, proof);
