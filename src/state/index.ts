@@ -1888,8 +1888,9 @@ const validateD2Posting = (state: AuthoritativeState, key: string, proof: D2Post
   if (strings.some(s => typeof s !== "string" || !s.trim())) d2Invalid("Missing posting proof source/operation identity");
   instant(tx.date); assertBalanced(tx);
   const bank = state.accounts[r.bankAccountId];
-  if (!bank || bank.ownerId !== (r.kind === "household_domain" ? r.householdId : r.personId) || !["checking", "savings"].includes(bank.kind)) d2Invalid("Posting proof BANK/owner missing");
-  if (tx.legs.some(leg => !leg.amount.currency.equals(bank!.cash.currency))) d2Invalid("Posting proof currency mismatch");
+  if (!bank) return d2Invalid("Posting proof BANK/owner missing");
+  if (bank.ownerId !== (r.kind === "household_domain" ? r.householdId : r.personId) || !["checking", "savings"].includes(bank.kind)) d2Invalid("Posting proof BANK/owner missing");
+  if (tx.legs.some(leg => !leg.amount.currency.equals(bank.cash.currency))) d2Invalid("Posting proof currency mismatch");
   const amount = tx.legs[0]!.amount;
   const cash = (posting: "debit" | "credit") => createAccountingLeg({ type: "cash", posting, amount, accountId: r.bankAccountId, cashFlowClass: "operating" });
   let expected: AccountingTransaction["legs"];
