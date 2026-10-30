@@ -1,6 +1,6 @@
 # Post-PR21 Implementation Roadmap
 
-**Version:** 0.6.24-draft
+**Version:** 0.6.25-draft
 **Status:** Controlled implementation plan
 **Requirement policy:** none
 
@@ -144,6 +144,8 @@ For the currently planned lanes, ownership is:
 This coordination contract controls implementation sequencing only. It does not move financial authority out of the canonical schema, executable financial semantics, or capability specifications.
 
 **2026-10-26 PM-approved U1B refinement (CURRENT for ribbon/chart implementation):** #171 Cash is closed. Complete [#240](https://github.com/bensmullen/personal-finance-app/issues/240) / PR #241 final 2× vertically centered desktop Settings gear and single-line 390px mobile ribbon with icon-only Settings, then [#252](https://github.com/bensmullen/personal-finance-app/issues/252) shared chart presentation (local Chart Details, compact visible-series crosshair, Period label, no line dots, Cash Balance/Change names, truthful discretionary-money coverage), then [#187](https://github.com/bensmullen/personal-finance-app/issues/187) Planning V6 and remaining chart outcomes, then [#120](https://github.com/bensmullen/personal-finance-app/issues/120) final U1B owner UAT. This newer sequence supersedes historical #171→#187 references below. #252 is registered at the first mandatory U1B_E gate and must not start until #240 merged. #249 framework registration is independently owned by existing [PR #250](https://github.com/bensmullen/personal-finance-app/pull/250); do not duplicate those edits here.
+
+**2026-10-30 PM-approved U1B lifetime UX design governance (merged PR #282):** The [five-stage workflow](../../alpha/u1b-five-stage-design-gate.md) is the mandatory substantial-UI progression: comprehensive user-goal/journey inventory and capability mapping → PM-reviewed one-journey-at-a-time visual contract covering hierarchy/density/typography/layout/language/navigation/states/responsiveness at 1440×900 and 390×844 → bounded V3 Codex implementation → independent exact-head real-render visual/semantic QA → uncoached PM UAT. Existing [#187/PR #269](https://github.com/bensmullen/personal-finance-app/pull/269) is a source-bounded technical checkpoint, NOT final UX approval. Parent [#120](https://github.com/bensmullen/personal-finance-app/issues/120) remains OPEN and exclusively owns final integrated D1 + supported D2 normal-user UI/forecast acceptance. [#149](https://github.com/bensmullen/personal-finance-app/issues/149) continues to own D2 shared source/funding/tax/replay/read-model integration and its independent deterministic closeout. The investment purchase/sale/transfer/withdrawal/tax architecture review reuses existing [#100](https://github.com/bensmullen/personal-finance-app/issues/100), [#146](https://github.com/bensmullen/personal-finance-app/issues/146) and #149; it grants no securities execution, new source capability or implementation authorization. Keep current approved seven-route UX contract until the PM explicitly approves a revised goal-based information architecture; existing implementation-stage dependencies remain unchanged. The 2026-10-26 ribbon/chart sequence above is historical task ordering where already completed, not authority to bypass this new design gate for further major UX changes.
 
 ### 2.2 Issue-backed milestone and private-alpha gates
 

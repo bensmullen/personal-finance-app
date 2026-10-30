@@ -1,6 +1,6 @@
 # Application UX & Financial Comprehension
 
-**Version:** 0.1.13-draft
+**Version:** 0.1.14-draft
 **Status:** Post-PR21 capability outline
 **Requirement prefix:** PFA-UX
 
@@ -86,6 +86,8 @@ An editor that appears to accept a value which the canonical model silently refu
 
 ### PFA-UX-015 — Calm, high-information presentation
 
+**Substantial-design gate (PM approved 2026-10-30):** Before implementing a major normal-user UI change, inventory lifetime user goals and complete everyday, occasional and advanced journeys; ground the proposed first-screen insight and action in real supported source semantics. Obtain PM approval of a coherent visual direction before issue authorization. Every page/journey design SHALL cover visual hierarchy, information density, typography, layout, language, navigation, lifecycle states and responsive behavior. Prefer one focused, meaningful first-screen answer with relevant progressive disclosure, not technical status clutter or a large placeholder chart. See the approved [five-stage workflow](../../alpha/u1b-five-stage-design-gate.md); it does not authorize unsourced economic models or modify the fact-ownership registry.
+
 Normal-user screens SHALL be clean, scannable, visually consistent, and detailed **without being verbose or crowded**. The first view of an account, plan, or forecast SHALL foreground a small set of meaningful values, status, future activity, and next actions. Secondary financial detail SHALL be revealed through clearly named expandable sections, drill-downs, or contextual help; technical details SHALL remain opt-in.
 
 The UI SHALL NOT make the user scan long instructional paragraphs, repeated field explanations, raw diagnostics, or every canonical field to complete a common task. Collapse is not permission to hide essential actions, blocking problems, financial qualifications, or important assumptions. Default expanded/collapsed states SHALL reflect user goals and severity, not implementation object structure. Visual hierarchy, spacing, grouping, alignment, and consistent input sizing SHALL communicate structure without excessive decoration or competing emphasis.
@@ -116,6 +118,8 @@ One semantic cause SHALL produce one primary user-facing diagnosis and remedy, w
 
 ### PFA-UX-019 — Task-first financial navigation and guided setup
 
+A substantial navigation or lifetime-planning journey redesign SHALL first map user intentions to destination, actual source/edit owner, independently completable task, prerequisite, return path and missing capability. Start from the approved seven U1B display destinations and justify any addition, consolidation or relocation by the user job—not by internal engine taxonomy. Treat proposed new navigation as a PM decision rather than an implementation authorization; keep linked editors single-owned.
+
 Normal financial tasks SHALL begin from financially recognizable objects and intentions, not internal model entities. The account/holding view SHALL make existing future contributions and a contextual contribution action discoverable; personal IRA/brokerage flows SHALL route to the authoritative bank-funded authoring contract, while 401(k)/HSA workplace flows SHALL route to the authoritative payroll contract. Mortgage editing SHALL distinguish contractual maturity from projected payoff.
 
 Forecast Setup SHALL group required data by understandable purpose, visibly list missing prerequisites, link/focus each required control, and offer one prominent apply/run or update action. Where valid configuration exists, the existing automatic deterministic refresh behavior SHALL remain. Source-of-funds, account-owner, tax settlement, and projected-law limitations SHALL be presented in user terms with advanced financial detail available as needed.
@@ -135,6 +139,8 @@ For a working planning adult without a sourced retirement decision, offer **age 
 This chart-first layout SHALL respect existing bounded-detail rendering, partial capability/provenance, responsive/mobile and keyboard/touch requirements. For >40-year requested horizons or unsupported tax/benefit periods, display gaps/coverage rather than fictional completed results. Client graph drawing SHALL NOT invent ledger postings, withholding, gross-to-net reconciliation, mortgage cash payment facts, home equity, Social Security claiming or asset performance attribution.
 
 ### PFA-UX-020 — Uncoached UAT and responsive interaction proof
+
+For substantial visual changes, the pre-implementation visual contract SHALL include a source-truthful 1440×900 desktop and 390×844 mobile target, 200% text and keyboard/touch access, and distinct current, loading, stale, partial, unsupported, empty and error states. After exact-head CI, an independent reviewer SHALL inspect the *actual running production UI*, comparable reference and meaningful user interactions against the approved target before requesting PM UAT. Screenshot capture, successful build and green CI do not by themselves demonstrate visual/comprehension acceptance; material gaps remain on the original task/parent #120 until corrected. Small isolated fixes MAY use bounded existing evidence without new prototypes. Preserve the full integrated D1 and supported D2 final owner UAT in #120 and D2 source/integration owner in #149.
 
 U1 acceptance SHALL require product-owner task-based UAT without a technical click-by-click instruction script. Representative goals SHALL include authoring personal and payroll contributions, editing income and assumptions, configuring mortgage and horizon, setting up/running a forecast, fixing an invalid input, and interpreting a partially modeled tax result.
 

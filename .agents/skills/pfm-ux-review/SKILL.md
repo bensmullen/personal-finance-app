@@ -7,6 +7,10 @@ description: Scope and review PFM user journeys, interaction contracts, visual e
 
 Use for substantial normal-user navigation, onboarding, authoring, diagnostic, or forecast-presentation changes. Read only the affected UX sections of `docs/specs/capabilities/application-ux.md` (especially PFA-UX-015–023), the 62-family ownership registry when financial inputs are affected, and the relevant journeys. This skill complements, never overrides, canonical financial semantics, V3 authorization, and the existing CI/UAT gates.
 
+## PM-approved substantial-UI design and review gate
+
+Before major UI implementation apply [five-stage U1B design protocol](../../../docs/alpha/u1b-five-stage-design-gate.md): (1) comprehensive everyday/occasional/advanced lifetime journeys, supported capability and prerequisite mapping; (2) one coherent PM-reviewed page/journey design at a time addressing visual hierarchy, information density, typography, layout, language, navigation, lifecycle states and responsive behavior, with 1440×900 and 390×844 targets; (3) bounded decision-closed Codex V3 implementation; (4) independent exact-head *running-app* visual/semantic review, including 200% text, touch, keyboard and financial provenance; (5) uncoached PM outcome UAT. Preserve the approved seven-page navigation and one fact-write owner unless a separate PM design decision changes them. #187/PR #269 is only a technical checkpoint; #120 owns integrated D1/supported D2 UI approval, #149 owns D2 source integration. A small isolated fix does not require new whole-page designs.
+
 ## Review modes
 
 **Before implementation (design-ready):**
