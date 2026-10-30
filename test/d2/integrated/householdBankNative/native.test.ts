@@ -82,7 +82,8 @@ describe("#285 native records retain the sole actual accounting journal", () => 
   it.each(["fsa", "card"] as const)("%s original and later settlement retain their actual proof roles and receipt", family => {
     const state = start(family), r = receipt(family), registration = d2SettlementPostingRegistration(r, "original");
     applyNativeHouseholdOriginalAtomically(state, r.originalTransaction, registration, context);
-    expect(state.identities.postedTransactionIds).toEqual([r.originalTransaction.id]);
+    expect(state.identities.postedTransactionIds).toHaveLength(1);
+    expect(state.identities.postedTransactionIds[0]).toBe(r.originalTransaction.id);
     expect(state.accounts[ids.bank]!.cash.equals(money("500"))).toBe(true);
     if (family === "card") {
       expect(r.nativeHousehold!.original.cashRole).toBe("nonbank");
