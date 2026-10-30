@@ -103,7 +103,7 @@ export function scenario(routes: readonly Route[] = five, eventCount = 1) {
   return { providers, publishers, readCounts, authCounts, request, sourceChanges, transportChanges,
     get originals() { return originals; },
     edit<R extends OriginalRole>(role: R, change: (o: OriginalPublication<R>) => OriginalPublication<R>) {
-      originals = originals.map(o => o.role === role ? change(o as OriginalPublication<R>) : o);
+      originals = originals.map(o => o.role === role ? change(o as OriginalPublication<R>) as OriginalPublication : o);
     },
     run(input: BindingRequest = request(), ports: readonly OriginalProvider[] = providers) {
       return bindPlanContributionOriginals(input, ports);
