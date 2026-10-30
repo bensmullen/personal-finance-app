@@ -95,8 +95,8 @@ describe("#285 native records retain the sole actual accounting journal", () => 
     expect(Object.keys(state.d2PostedTransactions!)).toHaveLength(2);
     expect(state.accounts[ids.bank]!.cash.equals(money(family === "fsa" ? "1500" : "300"))).toBe(true);
     if (family === "card") expect(state.liabilities[ids.liability]!.balance.equals(money("820"))).toBe(true);
-    expect(state.identities.recognitionIds).toEqual([r.recognitionId]);
-    expect(state.identities.settlementIds).toEqual([r.settlementId]);
+    expect([...state.identities.recognitionIds]).toEqual([r.recognitionId]);
+    expect([...state.identities.settlementIds]).toEqual([r.settlementId]);
     const before = canonicalSerialize(state);
     expect(applyD2SettlementAtomically(state, r, context).status).toBe("already_committed");
     expect(canonicalSerialize(state)).toBe(before);
@@ -197,9 +197,12 @@ describe("source-controlled fail-closed native admission", () => {
     expect(() => createAuthoritativeState(state)).toThrow();
     reset();
     const badContext = { ...context, dataCutoff: instant("2025-01-01T00:00:00.000Z") }, clean = start(family);
-    unchanged(clean, () => {
+    if (family === "retirement") {
+      const before = canonicalSerialize(clean);
+      expect(applyRetirementDistributionAtomically(clean, retirement(), badContext)).toEqual({ status: "incomplete", reason: "source_not_qualified" });
+      expect(canonicalSerialize(clean)).toBe(before);
+    } else unchanged(clean, () => {
       if (family === "ssa") return applySsaMedicarePaymentAtomically(clean, { ...ssa(), nativeHousehold: { ...attachment("ssa"), context: { ...attachment("ssa").context, ...badContext } } });
-      if (family === "retirement") return applyRetirementDistributionAtomically(clean, retirement(), badContext);
       return applyD2SettlementAtomically(clean, receipt(family), badContext);
     });
   });
