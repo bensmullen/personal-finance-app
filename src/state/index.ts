@@ -8,7 +8,7 @@ import {
   type PositionId,
 } from "../accounting/index.js";
 import { failValidation, issueCodes } from "../diagnostics/index.js";
-import { idempotencyKey, type DomainId, type GeneratedOccurrenceKey, type IdempotencyKey } from "../identity/index.js";
+import { domainId, idempotencyKey, type DomainId, type GeneratedOccurrenceKey, type IdempotencyKey } from "../identity/index.js";
 import { assertClaimInvariant, normalizeExecutionClaim, materializeClaimLifecycle, settlementIdentityAppendsSince, type SettlementHistoryMeter, type ObligationOrRight } from "../semantics/claim.js";
 import { prepareSsaMedicareDeductionProposals, type SsaPayableEvidence, type SsaDeductionRequest } from "../semantics/settlement.js";
 import type { ClaimId, RecognitionId, SettlementId } from "../semantics/identity.js";
@@ -2750,7 +2750,7 @@ export const applySsaMedicarePaymentAtomically = (state: AuthoritativeState, inp
   if (input.nativeHousehold) {
     const a = input.nativeHousehold;
     const r: D2PostingRegistration = { kind: "ssa_medicare_payment", role: "original", operationId: a.context.eventId,
-      householdId: input.payable.householdId, personId: input.payable.recipientId, bankAccountId: input.bankAccountId,
+      householdId: domainId("household", input.payable.householdId), personId: domainId("person", input.payable.recipientId), bankAccountId: input.bankAccountId,
       paymentKey: key, nativeHousehold: a };
     approvedNativeRegistrations.add(r);
     stagedNativeSsaPayments.set(r, record);
