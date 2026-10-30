@@ -27,7 +27,9 @@
         277,
         278,
         279,
-        280
+        280,
+        285,
+        286
       ]
     },
     "R11": {
@@ -346,7 +348,9 @@
         277,
         278,
         279,
-        280
+        280,
+        285,
+        286
       ],
       "spec_requirement_ids": [
         "PFA-DET-015",
@@ -360,7 +364,7 @@
         "PFA-DET-021",
         "PFA-DET-022"
       ],
-      "scope": "D2-D coordination and final closeout owner, NOT an active Codex V3: S1 #276 independent BANK/member source authority, state posting/archive/cold replay; S2 #277 both VS2 wage branches and SSA exclusivity; S3 #278 retirement/standalone Medicare; S4 #279 payroll health/FSA; S5 #280 card/aftertax premiums. After audited/merged children and domain owners #146/#147/#148, integrate S8-5 combined household truth table, #101/tax/UI #120 source and authoring handshakes, and PM UAT. No R5 unlock from a child PR. Final integrated end-user D2 authoring/forecast read-model handshakes and UAT coordinate with U1B #120, without shared JSX/CSS writers before approved U1B source-meaning interface; D2 engine closeout remains independent and is not replaced by UI UAT."
+      "scope": "D2-D coordination and final closeout owner, NOT an active Codex V3: S1 #276 independent BANK/member source authority, state posting/archive/cold replay (merged PR #284); S1b #285 native state receipts/proofs and S1c #286 source-qualified VS2 expense settlement run in parallel after registration; S2 #277 (after #285/#286) both VS2 wage branches and SSA exclusivity; S3 #278 retirement/standalone Medicare; S4 #279 payroll health/FSA; S5 #280 card/aftertax premiums. After audited/merged children and domain owners #146/#147/#148, integrate S8-5 combined household truth table, #101/tax/UI #120 source and authoring handshakes, and PM UAT. No R5 unlock from a child PR. Final integrated end-user D2 authoring/forecast read-model handshakes and UAT coordinate with U1B #120, without shared JSX/CSS writers before approved U1B source-meaning interface; D2 engine closeout remains independent and is not replaced by UI UAT."
     },
     {
       "issue_number": 161,
@@ -664,21 +668,25 @@
       "owner_stage": "D2-D-S2-wages-ssa-source-exclusivity",
       "blocking_gate": "D2",
       "depends_on": [
-        276
+        276,
+        285,
+        286
       ],
       "spec_requirement_ids": [
         "PFA-DET-016",
         "PFA-DET-023",
         "PFA-TAX-015"
       ],
-      "scope": "S2 BOTH VS2 source-backed wage cash branches (withholding/elections and no-election direct income), actual employer/member source with true run cutoff, SSA earned-wage overlap/exclusivity and canonical one-time posting. S1 must merge first; payroll-health shared transaction variant remains S4."
+      "scope": "S2 BOTH VS2 source-backed wage cash branches (withholding/elections and no-election direct income), actual employer/member source with true run cutoff, SSA earned-wage overlap/exclusivity and canonical one-time posting. S1 #276 AND native #285 AND VS2 #286 must merge first; payroll-health shared transaction variant remains S4."
     },
     {
       "issue_number": 278,
       "owner_stage": "D2-D-S3-retirement-Medicare-bank",
       "blocking_gate": "D2",
       "depends_on": [
-        276
+        276,
+        285,
+        286
       ],
       "spec_requirement_ids": [
         "PFA-DET-017",
@@ -693,28 +701,65 @@
       "blocking_gate": "D2",
       "depends_on": [
         276,
-        277
+        277,
+        285,
+        286
       ],
       "spec_requirement_ids": [
         "PFA-DET-020",
         "PFA-DET-023",
         "PFA-TAX-015"
       ],
-      "scope": "S4 new versioned authentic payroll-health BANK route sharing one S2 wage transaction proof; original FSA expense debit and distinct reimbursement credit with approved member routes. Requires merged S1+S2; serially revisit S2's VS2/payrollContributions for typed health source passthrough because built-in income stream/candidate call does not forward it, then separate FSA original routes. No concurrent S2/S4 writer; disjoint from S3/S5."
+      "scope": "S4 new versioned authentic payroll-health BANK route sharing one S2 wage transaction proof; original FSA expense debit and distinct reimbursement credit with approved member routes. Requires merged #276, #285, #286 and #277; serially revisit S2's VS2/payrollContributions for typed health source passthrough because built-in income stream/candidate call does not forward it, then separate FSA original routes. No concurrent S2/S4 writer; disjoint from S3/S5."
     },
     {
       "issue_number": 280,
       "owner_stage": "D2-D-S5-card-aftertax-bank",
       "blocking_gate": "D2",
       "depends_on": [
-        276
+        276,
+        285,
+        286
       ],
       "spec_requirement_ids": [
         "PFA-DET-019",
         "PFA-DET-020",
         "PFA-DET-023"
       ],
-      "scope": "S5 independently original-qualified issuer card principal/interest payment and after-tax health premium expenses from true household BANK member DEBIT, preserving legacy person routes and cold replay. Requires merged S1; can parallel S2/S3."
+      "scope": "S5 independently original-qualified issuer card principal/interest payment and after-tax health premium expenses from true household BANK member DEBIT, preserving legacy person routes and cold replay. Requires merged S1 #276, native #285 and VS2 #286; can parallel S2/S3."
+    },
+    {
+      "issue_number": 285,
+      "owner_stage": "D2-D-S1b-native-household-BANK-state-bridge",
+      "blocking_gate": "D2",
+      "depends_on": [
+        276
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-015",
+        "PFA-DET-016",
+        "PFA-DET-017",
+        "PFA-DET-019",
+        "PFA-DET-020",
+        "PFA-DET-023",
+        "PFA-TAX-015"
+      ],
+      "scope": "S1b shared-native state compatibility: opt-in household BANK original source+person payer routes retaining native SSA v3 gross right/Medicare claims, retirement/RMD allocations, FSA paid/receipt and card issuer original/settlement proof. No second journal, legacy proof rewrite or non-state production paths; can start alongside #286 after governance registration merges."
+    },
+    {
+      "issue_number": 286,
+      "owner_stage": "D2-D-S1c-VS2-household-BANK-expense-settlement",
+      "blocking_gate": "D2",
+      "depends_on": [
+        276
+      ],
+      "spec_requirement_ids": [
+        "PFA-DET-015",
+        "PFA-DET-020",
+        "PFA-DET-023",
+        "PFA-TAX-015"
+      ],
+      "scope": "S1c shared VS2 recurring-expense executed household BANK DEBIT with original expense/claim and source-qualified funded settlement, real run cutoff and one S1 generic proof, preserving person-owned legacy; used later by non-SSA Medicare and aftertax premiums #278/#280. Disjoint from #285 shared state writes; both may start after governance registration merges."
     }
   ],
   "legacy_open_task_reconciliation": {
