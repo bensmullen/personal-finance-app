@@ -10,6 +10,9 @@ import { decideContribution, recordContribution, employerContributionCandidate, 
 import { contributionPolicyAt, projectedContributionDiagnostics } from "./contributionProjection.js";
 import { taxBalanceIds, type TaxCapabilityDiagnostic, type PayrollWithholdingElection, type PayrollWithholdingEvidence } from "./tax/contracts.js";
 import { canonicalSerialize } from "./run.js";
+import { applyHouseholdDomainTransactionAtomically, type HouseholdBankEventContext } from "../state/index.js";
+import { qualifyHouseholdWage, type HouseholdWageSourceRef, type WageStreamOriginal } from "./d2/integration/householdWages/index.js";
+import type { Period } from "../time/index.js";
 
 export interface PayrollContributionAllocation {
   readonly id: string;
@@ -36,7 +39,10 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   readonly withholding?: readonly PayrollWithholdingElection[];
   readonly taxCreditAccountId?: AccountId;
   readonly healthPremium?: { readonly source: PayrollHealthSourceBinding; readonly context: D2SettlementSourceContext };
+  readonly householdWage?: { readonly source: HouseholdWageSourceRef; readonly stream: WageStreamOriginal; readonly context: HouseholdBankEventContext; readonly period: Period };
 }) => {
+  if (input.householdWage !== undefined && (input.healthPremium !== undefined ||
+    opening.d2PostedTransactions?.[input.id]?.registration.kind === "payroll_health_deduction")) return invalid("HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
   const healthQualification = input.healthPremium === undefined ? undefined : qualifyPayrollHealthSource(input.healthPremium.source, input.healthPremium.context);
   if (healthQualification?.status === "incomplete") return invalid(`Payroll health source incomplete: ${healthQualification.reason}`);
   const health = healthQualification?.deduction;
@@ -81,7 +87,7 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   const elections = (input.withholding ?? []).filter(item => item.start <= input.at && (item.end === undefined || input.at < item.end));
   const creditUnit = Unit.of("usd_tax_credit");
   const bank = candidate.accounts[input.depositAccountId];
-  if (elections.length && (!input.ownerId || !input.occurrenceId || !bank || bank.ownerId !== input.ownerId || !["cash", "checking", "savings"].includes(bank.kind) || input.gross.currency.code !== "USD")) return invalid("Withholding requires a source-owned USD receiving bank and occurrence identity");
+  if (elections.length && (!input.ownerId || !input.occurrenceId || !bank || bank.ownerId !== (input.householdWage?.context.householdId ?? input.ownerId) || !["cash", "checking", "savings"].includes(bank.kind) || input.gross.currency.code !== "USD")) return invalid("Withholding requires a source-owned USD receiving bank and occurrence identity");
   if (new Set(elections.map(item => item.jurisdiction)).size !== elections.length) return invalid("Conflicting active withholding elections");
   const creditAccountId = input.taxCreditAccountId ?? input.depositAccountId;
   if (elections.length && (!candidate.accounts[creditAccountId] || input.taxCreditAccountId === undefined && Object.values(candidate.accounts).filter(account => ["cash", "checking", "savings"].includes(account.kind)).length > 1)) return invalid("Multiple receiving banks require the shared tax credit account binding");
@@ -121,7 +127,14 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
     ...(net.isPositive() ? [{ type: "cash" as const, posting: "debit" as const, amount: net, accountId: input.depositAccountId, cashFlowClass: "operating" as const }] : []),
     { type: "income" as const, posting: "credit" as const, amount: input.gross },
   ].map(createAccountingLeg) });
-  if (health === undefined) applyAccountingTransactionAtomically(candidate, transaction);
+  if (input.householdWage !== undefined) {
+    const { source, context, period } = input.householdWage;
+    if (context.personId !== input.ownerId || context.bankAccountId !== input.depositAccountId || context.eventAt !== input.at || context.eventId !== input.id || !input.occurrenceId)
+      return invalid("Household wage context differs from the actual paycheck");
+    const evidence = qualifyHouseholdWage(source, context, { stream: input.householdWage.stream, incomeId: input.incomeId, occurrenceId: input.occurrenceId, period, gross: input.gross, transaction });
+    applyHouseholdDomainTransactionAtomically(candidate, transaction, evidence);
+  }
+  else if (health === undefined) applyAccountingTransactionAtomically(candidate, transaction);
   else applyPayrollHealthTransactionAtomically(candidate, transaction, health, input.healthPremium!.context);
   const transactions = [transaction];
   for (const allocation of employers) {
