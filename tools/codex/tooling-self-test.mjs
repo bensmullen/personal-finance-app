@@ -1116,7 +1116,8 @@ assert(agentsPolicy.includes('copy-and-paste') &&
 const handoffPolicy = fs.readFileSync(path.join(root, "docs/development/handoff-authoring-policy.md"), "utf8");
 assert(handoffPolicy.includes('Copy-and-paste bootstrap and recovery output (mandatory)') &&
   handoffPolicy.includes('PFM_TASK_ISSUE: <number>') &&
-  handoffPolicy.includes('Every') === false || true,
+  handoffPolicy.includes('Each shell command block begins with') &&
+  handoffPolicy.includes('every') === false,
   'handoff policy must preserve mandatory bootstrap deliverables');
 const refinanceEscalation = [
   "DECISION_NEEDED: For the private-alpha refinance floor, should users be able to refinance only on a scheduled monthly mortgage payment date, or on any calendar date?",
