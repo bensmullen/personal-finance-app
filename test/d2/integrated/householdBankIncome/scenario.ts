@@ -1,5 +1,5 @@
 import { accountingTransactionId, createAccountingLeg, createAccountingTransaction } from "../../../../src/accounting/index.js";
-import { domainId, generatedOccurrenceKey } from "../../../../src/identity/index.js";
+import { domainId, generatedOccurrenceKey, type DomainId } from "../../../../src/identity/index.js";
 import { calculationTraceId, calculationTraceRef, freezeTraceRefs } from "../../../../src/lineage/index.js";
 import { createAuthoritativeState } from "../../../../src/state/index.js";
 import { createRunContext, runId, scenarioId } from "../../../../src/simulation/run.js";
@@ -20,7 +20,7 @@ export const context = (months = 1) => createRunContext({ runId: runId(uuid(6)),
 export const bareStream = (n = 0): RecurringIncomeStream => ({ id: domainId("income", uuid(10 + n)), ownerId: n === 0 ? ids.alice : ids.bob,
   depositAccountId: ids.bank, baseMonthlyAmount: money("125.37"), start,
   recurrence: { kind: "utc_monthly", anchor: instant(`2026-01-${n === 0 ? "15" : "20"}T00:00:00.000Z`), invalidDayPolicy: "skip" },
-  growthBaseAt: start, growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
+  growthBaseAt: instant(`2026-01-${n === 0 ? "15" : "20"}T00:00:00.000Z`), growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
   primitiveIds: { growth: domainId("primitive-instance", uuid(20 + n * 2)), recurrence: domainId("primitive-instance", uuid(21 + n * 2)) } });
 export function document(n = 0, month = 0): HouseholdWageOriginal {
   const s = bareStream(n);
@@ -55,7 +55,7 @@ const withholding = (n: number) => ({ payrollWithholding: [{ id: `election:${n}`
 export const stream = (n = 0): RecurringIncomeStream => ({ ...bareStream(n), householdWageSource: source(n), ...(control.payroll ? withholding(n) : {}) });
 export const input = (incomes = [stream()]): VerticalSlice2Input => ({ householdId: ids.household, ownerId: ids.alice,
   cashAccountId: ids.bank, expensePayableLiabilityId: ids.payable, baseCurrency: USD, incomes, expenses: [], events: [] });
-export const opening = (owner = ids.household as string) => createAuthoritativeState({ accounts: { [ids.bank]: {
+export const opening = (owner: DomainId<string> = ids.household) => createAuthoritativeState({ accounts: { [ids.bank]: {
   id: ids.bank, ownerId: owner, kind: "checking", cash: money("100") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } });
 export const control = { reads: 0, missing: false, withdrawAt: 0, rebound: false, payroll: false, revision: "" };
 export const reset = () => Object.assign(control, { reads: 0, missing: false, withdrawAt: 0, rebound: false, payroll: false, revision: "" });
