@@ -87,7 +87,7 @@ Hard guarantees:
 - Codex may edit only `ALLOWED_PATHS`.
 - Product/repair tasks may not authorize framework-control paths.
 - Locked dependency declarations may not change.
-- Local verification/package installation remains prohibited.
+- Only the audited, optional bounded verifier may run locally; all other verification and package installation remain prohibited.
 - The current branch must already equal `TARGET_BRANCH` before implementation.
 
 Use `apply_patch` for repository content edits so the hook can reject an
@@ -104,7 +104,12 @@ the user's terminal is in the right one. When the path is unknown, first
 worktree for the **exact target branch** via `git worktree list --porcelain`,
 then `cd` to the unique resolved path. Before mutations, check the worktree
 root, exact branch, and task-relevant Git state. Bootstrap/recovery commands
-must likewise begin by `cd` to the canonical checkout. Do not use an
+must likewise begin by `cd` to the canonical checkout. **When a user needs
+bootstrap, resume, or recovery, ChatGPT SHALL include a complete copy-and-paste
+Bash command block for every affected branch in the SAME response**, not
+merely reference the helper. Supply exact existing branch names, ordered
+commands, the printed worktree selection instruction and issue pointers.
+Never defer commands to a later turn or invent an unverified path. Do not use an
 unanchored `git rev-parse --show-toplevel` as a substitute: with concurrent
 worktrees it may resolve the wrong checkout. See
 `docs/development/handoff-authoring-policy.md` for the detailed rule.
@@ -153,6 +158,11 @@ bash tools/codex/bootstrap-pr.sh resume codex/<branch> [worktree-path]
 Resume uses the fetched remote feature branch as the shared source of truth. It
 may fast-forward a clean local branch, but it never discards unpushed or
 divergent local commits. Dirty worktrees fail clearly instead of being replaced.
+A fresh Codex task authorization may also automatically reconcile an existing
+hash-verified **closed** checkpoint in a clean linked worktree with the correct
+branch/upstream by fetching and fast-forwarding a proven descendant origin
+branch. Active writers, dirty or diverged branches and ambiguous receipts must
+still use operator-owned diagnosis/bootstrap; no automatic reset or force push.
 
 Do not create/switch branches inside an active implementation turn. Branch and
 worktree lifecycle belongs to bootstrap; hooks enforce that the task remains on
@@ -176,16 +186,27 @@ report `LOOKUP_REQUIRED: <exact missing fact>` rather than inventing it.
 
 Subagents are disabled by default.
 
-## No local verification in Codex implementation turns
+## Optional bounded local verification (no execution prerequisite)
 
-Codex implementation/repair turns do not run tests, typecheck, builds,
-architecture/spec validators, Playwright, benchmarks, performance captures,
-stochastic convergence runs, onboarding dry runs, or dev servers.
+Codex implementation/repair turns may invoke only the audited optional helper
+`node tools/codex/limited-local-verification.mjs [test/affected.test.ts]`
+on a directly affected tracked test. It runs complete typecheck (60 seconds
+maximum) and at most one selected unit file (30 seconds maximum), with at most
+one correction retry after a recorded FAIL on a changed patch. A failed launch
+without a result may receive one same-patch retry. Missing Node, dependencies,
+sandbox log permissions, execution errors and timeouts are SKIP, not FAIL.
+No attempted local verification is required to publish. A real, recorded FAIL
+from an executed typecheck/unit test must be corrected and followed by a
+permitted PASS or genuine SKIP before ordinary push/COMPLETE; do not
+deliberately circumvent a failed test. Unfixable/out-of-scope FAIL requires an
+explicit BLOCKED handoff and preserves WIP through the checkpoint path.
 
-Codex does not install dependencies or switch package managers during the agent
-phase. GitHub Actions owns ordinary verification. Separate manually triggered
-engineering-validation workflows own expensive performance, stochastic,
-onboarding, and provider evidence.
+All other local tests, builds, architecture/spec validators, Playwright,
+benchmarks, performance captures, stochastic convergence, onboarding dry runs,
+dev servers, installers, package-manager changes and CI polling are prohibited.
+Codex does not install dependencies or switch package managers. GitHub Actions
+owns ordinary verification and remains authoritative. Separate manually
+triggered engineering-validation workflows own expensive evidence.
 
 ## Completion contract
 

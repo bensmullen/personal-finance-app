@@ -128,6 +128,24 @@ addresses the complete failure class rather than only the first failing
 assertion. Do not use extra required task-envelope fields or a blanket E2E
 execution requirement for this preview.
 
+### Copy-and-paste bootstrap and recovery output (mandatory)
+
+Whenever the product manager needs to bootstrap, resume or recover one or more
+Codex tasks, the same response **must** give executable, copy-and-paste-ready
+Bash commands for **every** affected task. Each shell command block begins with
+an explicit `cd` to the previously verified absolute canonical repository
+checkout; use `bash tools/codex/bootstrap-pr.sh new|resume <exact-branch>`
+and include the exact GitHub `PFM_TASK_ISSUE: <number>` pointers and instruction
+to open the helper's reported worktree in a **new** Codex GUI conversation.
+For safe routine resumes, consolidate independent commands under a single
+initial `cd` in one block; do not burden the PM with redundant manual Git
+checks. On dirty/divergent/ambiguous paths, stop and supply a narrow read-only
+diagnostic command or the verified operator-owned recovery sequence rather than
+inventing or running reset/clean/stash/force actions. Do not merely promise
+bootstrap commands, refer to a past response, or require the PM to infer them
+from framework documentation. If the path is not established, say so and
+give a safe repository/worktree discovery command before any mutation.
+
 ### First implementation blocker: reachable-contract closure audit (mandatory)
 
 On the **first Codex BLOCKED/LOOKUP_REQUIRED for an implementation task**, ChatGPT
