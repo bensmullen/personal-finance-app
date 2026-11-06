@@ -554,6 +554,42 @@ const recoveryFixture = () => {
     'dirty refusal preserves local work and branch head');
 }
 
+// A linked closed receipt with unpublished/divergent commits stays blocked.
+{
+  const f = recoveryFixture();
+  f.git('switch', '-c', 'codex/secondary-diverged-owner');
+  const linked = path.join(path.dirname(f.repository), 'linked-diverged-checkpoint');
+  f.git('worktree', 'add', linked, 'codex/policy-self-test');
+  const invoke = (event, extra = {}) => JSON.parse(mustRun('python3', [policy], {
+    cwd: linked,
+    input: JSON.stringify({ cwd: linked, session_id: 'diverged-old', turn_id: 'first',
+      hook_event_name: event, ...extra }),
+    env: { PFM_POLICY_TEST_ORIGIN: 'https://github.com/bensmullen/personal-finance-app.git',
+      PFM_POLICY_TEST_ISSUE_BODY_FILE: f.issue },
+  }).stdout);
+  assert(invoke('UserPromptSubmit', { prompt: 'PFM_TASK_ISSUE: 85' }).hookSpecificOutput,
+    'divergence fixture starts with a valid receipt');
+  assert(invoke('Stop', {
+    last_assistant_message: 'TASK_STATUS: BLOCKED\nBLOCKER: previous owner finished',
+  }).continue === true, 'divergence fixture closes first');
+  const base = mustRun('git', ['-C', linked, 'rev-parse', 'HEAD']).stdout.trim();
+  fs.appendFileSync(path.join(linked, 'src/allowed.ts'), '// unpublished local work\n');
+  mustRun('git', ['-C', linked, 'add', 'src/allowed.ts']);
+  mustRun('git', ['-C', linked, 'commit', '-m', 'unpublished local work']);
+  const local = mustRun('git', ['-C', linked, 'rev-parse', 'HEAD']).stdout.trim();
+  const remote = mustRun('git', ['-C', linked, 'commit-tree', base + '^{tree}',
+    '-p', base, '-m', 'external independent change']).stdout.trim();
+  mustRun('git', ['-C', linked, 'push', 'origin',
+    remote + ':refs/heads/codex/policy-self-test']);
+  const rejected = invoke('UserPromptSubmit', {
+    prompt: 'PFM_TASK_ISSUE: 85', session_id: 'diverged-new', turn_id: 'new',
+  });
+  assert(rejected.decision === 'block' && String(rejected.reason).includes('closed task checkpoint'),
+    'auto reconciliation must reject divergence even when the worktree is clean');
+  assert(mustRun('git', ['-C', linked, 'rev-parse', 'HEAD']).stdout.trim() === local,
+    'divergent refusal must preserve unpublished local commits');
+}
+
 // Closed checkpoints cannot be reauthorized from an outdated tracking ref.
 {
   const f = recoveryFixture();
