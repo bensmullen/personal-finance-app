@@ -190,10 +190,40 @@ def limited_preflight(command, root, state):
         try:
             receipt = json.loads(receipt_path.read_text())
         except Exception:
-            return "Preflight already reserved; missing result cannot authorize retry"
-        if used.get('count', 0) >= 2 or receipt.get('status') != 'FAIL' or receipt.get('patch') != used.get('patch') or fingerprint == used.get('patch') or test != used.get('test'):
-            return "Only one correction retry after FAIL on a changed patch and the same test is permitted"
+            # The helper could not start or persist its result (e.g. sandbox
+            # EPERM). Allow one bounded re-attempt, never a third invocation.
+            if used.get('count', 0) >= 2 or fingerprint != used.get('patch') or test != used.get('test'):
+                return "Only one same-patch retry after an unrecorded preflight is permitted"
+        else:
+            if used.get('count', 0) >= 2 or receipt.get('status') != 'FAIL' or receipt.get('patch') != used.get('patch') or fingerprint == used.get('patch') or test != used.get('test'):
+                return "Only one correction retry after FAIL on a changed patch and the same test is permitted"
     state['PREFLIGHT'] = {'count': used.get('count', 0) + 1, 'patch': fingerprint, 'test': test}
+    return None
+
+
+def actionable_preflight_failure(root, state):
+    """Only an actual, persisted FAIL blocks ordinary publication.
+
+    A missing receipt means the bounded verifier never proved an assertion
+    failure; absent tools, permissions, and interrupted launches are not gates.
+    A corrected patch must be rechecked once, not silently pushed past FAIL.
+    """
+    used = state.get("PREFLIGHT")
+    if not used:
+        return None
+    receipt_path = root / ".codex" / "logs" / f"preflight-{state['AUTHORIZATION_ID']}.json"
+    try:
+        receipt = json.loads(receipt_path.read_text())
+    except (OSError, ValueError):
+        return None
+    if (receipt.get("status") == "FAIL" and
+            receipt.get("attempt") == used.get("count") and
+            receipt.get("patch") == used.get("patch")):
+        return ("LOCAL_PREFLIGHT_FAILED: bounded verification executed and failed; "
+                "correct the authorized patch and use the permitted bounded retry. "
+                "Do not silently skip a known failure. If the failure is outside "
+                "authorized scope, report TASK_STATUS: BLOCKED with evidence; "
+                "the checkpoint mechanism preserves partial work.")
     return None
 
 
@@ -332,6 +362,59 @@ def checkpoint(root, state, incoming=None):
             git_value(["status", "--porcelain=v1", "--untracked-files=all"], root)):
         return "STATE_RECOVERY_REQUIRED: checkpoint post-push clean/tracking/remote verification failed; work preserved"
     return None
+
+
+def clean_closed_checkpoint(root, target):
+    """Prove a closed receipt's branch is synchronized; ff-only self-heal when safe.
+
+    Never repair an active owner, untrusted branch, dirty worktree, missing
+    receipt, unexpected upstream, Git operation, or divergence.
+    """
+    if current_branch(root) != target:
+        return False
+    if git_value(["status", "--porcelain=v1", "--untracked-files=all"], root):
+        return False
+    if git_paths(["ls-files", "-u", "-z"], root):
+        return False
+    for marker in ("MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD",
+                   "REVERT_HEAD", "sequencer", "BISECT_LOG", "AUTO_MERGE"):
+        location = git_value(["rev-parse", "--git-path", marker], root)
+        if not location:
+            return False
+        marker_path = Path(location)
+        if (marker_path if marker_path.is_absolute() else root / marker_path).exists():
+            return False
+    ok, _ = safe_push(f"git push origin {target}", root, target)
+    if not ok:
+        return False
+    upstream = git_value(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], root)
+    if upstream != f"origin/{target}":
+        return False
+    head = git_value(["rev-parse", "HEAD"], root)
+    live = run_git(["ls-remote", "--exit-code", "origin", f"refs/heads/{target}"], root)
+    if live.returncode or live.stdout.split() != [live.stdout.split()[0], f"refs/heads/{target}"]:
+        return False
+    remote_head = live.stdout.split()[0]
+    if head != remote_head or git_value(["rev-parse", "@{u}"], root) != head:
+        # Existing bootstraps do this manually. Only a linked, clean, closed
+        # task worktree may take the exact same non-destructive path in-hook.
+        if not is_linked_worktree(root):
+            return False
+        fetched = run_git(["fetch", "--no-tags", "origin",
+                           f"refs/heads/{target}:refs/remotes/origin/{target}"], root)
+        if fetched.returncode or git_value(["rev-parse", "@{u}"], root) != remote_head:
+            return False
+        if run_git(["merge-base", "--is-ancestor", head, remote_head], root).returncode:
+            return False
+        if run_git(["merge", "--ff-only", f"refs/remotes/origin/{target}"], root).returncode:
+            return False
+    final = run_git(["ls-remote", "--exit-code", "origin", f"refs/heads/{target}"], root)
+    return (current_branch(root) == target and
+            not git_value(["status", "--porcelain=v1", "--untracked-files=all"], root) and
+            git_value(["rev-parse", "HEAD"], root) == remote_head and
+            git_value(["rev-parse", "@{u}"], root) == remote_head and
+            final.returncode == 0 and
+            final.stdout.split() == [remote_head, f"refs/heads/{target}"])
 
 
 def scalar(prompt, key):
@@ -1005,12 +1088,7 @@ def user_prompt(payload, root):
     # clean checkpoint; never inherit a stale local tracking ref as provenance.
     closed_owner = owner is not None and not owner.get("ACTIVE") and owner.get("TARGET_BRANCH") == target
     if closed_owner and not dirty:
-        head = git_value(["rev-parse", "HEAD"], root)
-        upstream = git_value(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], root)
-        tracked_head = git_value(["rev-parse", "@{u}"], root)
-        remote = run_git(["ls-remote", "--exit-code", "origin", f"refs/heads/{target}"], root)
-        if (upstream != f"origin/{target}" or not head or tracked_head != head or
-                remote.returncode or remote.stdout.split() != [head, f"refs/heads/{target}"]):
+        if not clean_closed_checkpoint(root, target):
             emit({"decision": "block", "reason": (
                 "STATE_RECOVERY_REQUIRED: closed task checkpoint is not proven clean and "
                 "synchronized with the live origin branch. Preserve receipts and work; "
@@ -1153,6 +1231,10 @@ def pre_tool(payload, root):
             deny("Repository file edits must use apply_patch so ALLOWED_PATHS can be enforced before mutation.")
             return
         if re.search(r"(^|\s)git\s+push(\s|$)", command):
+            failure = actionable_preflight_failure(root, state)
+            if failure:
+                deny(failure)
+                return
             ok, reason = safe_push(command, root, state["TARGET_BRANCH"])
             if not ok:
                 deny("Unsafe git push blocked: " + reason)
@@ -1216,6 +1298,10 @@ def permission_request(payload, root):
         else safe_pr_create(command, root, state["TARGET_BRANCH"])
     )
     label = "push" if is_push else "PR creation"
+    if is_push:
+        failure = actionable_preflight_failure(root, state)
+        if failure:
+            ok, reason = False, failure
     latest = prior_state(root)
     if not state.get('ACTIVE') or not latest or latest.get('AUTHORIZATION_ID') != state.get('AUTHORIZATION_ID'):
         ok, reason = False, receipt_diagnostic(root, state)
@@ -1278,6 +1364,9 @@ def post_tool(payload, root):
 
 def completion_problems(root, state):
     problems = []
+    failure = actionable_preflight_failure(root, state)
+    if failure:
+        problems.append(failure)
     branch = current_branch(root) or "DETACHED"
     head = git_value(["rev-parse", "HEAD"], root)
 
