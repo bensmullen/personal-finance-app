@@ -9,7 +9,7 @@ import { attachRetirementCash, evaluateFundedRmdSatisfaction } from "../../../..
 import { qualifyRetirementRawSource, retirementRawSourceDigest } from "../../../../src/simulation/d2/integration/retirementCash/source.js";
 import { attachMedicareBank } from "../../../../src/simulation/d2/integration/medicareBank/index.js";
 import { evaluateWithdrawals } from "../../../../src/simulation/d2/retirement/withdrawals/index.js";
-import { instant } from "../../../../src/time/index.js";
+import { civilDate, instant } from "../../../../src/time/index.js";
 import { money } from "../../../../src/values/index.js";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
@@ -268,7 +268,7 @@ describe("two members sharing BANK, replay and references", () => {
       let kernel = f.kernel;
       for (let n = 0; n < months; n++) {
         const month = new Date(Date.UTC(2026, 5 + n, 1)).toISOString().slice(0, 7), r = request(month);
-        const a = attachMedicareBank({ kernel, request: r, confirmed: premiums(month), asOf: r.premiums.period.start, representations: [] });
+        const a = attachMedicareBank({ kernel, request: r, confirmed: premiums(month), asOf: civilDate(f.context.asOf.slice(0, 10)), representations: [] });
         expect(a.netCashCoverage, JSON.stringify(a.diagnostics)).toBe("complete");
         kernel = a.kernel;
       }
