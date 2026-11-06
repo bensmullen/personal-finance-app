@@ -1,7 +1,7 @@
-import { accountingTransactionId } from "../../../../accounting/index.js";
+import { accountingTransactionId, createAccountingLeg, createAccountingTransaction } from "../../../../accounting/index.js";
 import { domainId } from "../../../../identity/index.js";
 import { calculationTraceId } from "../../../../lineage/index.js";
-import { registerRetirementDistributionSourceAuthority, retirementDistributionSourceFingerprint,
+import { registerHouseholdEconomicOriginalAuthority, registerRetirementDistributionSourceAuthority, retirementDistributionSourceFingerprint,
   type AuthoritativeState, type D2SettlementSourceContext, type RetirementDistributionRecord, type RetirementSourceQualification } from "../../../../state/index.js";
 import { civilDate, instant, type Instant } from "../../../../time/index.js";
 import { Money, USD } from "../../../../values/index.js";
@@ -11,6 +11,7 @@ import { canonicalSerialize } from "../../../run.js";
 import { evaluateWithdrawals } from "../../retirement/withdrawals/index.js";
 import { evaluateWithdrawalRmd, type WithdrawalRmdInput } from "../../retirement/withdrawalRmd/index.js";
 import type { RetirementCashInput } from "./index.js";
+import { qualifyHouseholdBankRoute } from "../householdBank/index.js";
 
 export interface RetirementSourceReference {
   readonly sourceId: string;
@@ -69,6 +70,20 @@ export function registerRetirementRawSourcePort(port: RetirementRawSourcePort): 
     } catch { return { status: "incomplete", reason: "source_not_qualified" }; }
   } });
   provider = Object.freeze({ read: port.read });
+  registerHouseholdEconomicOriginalAuthority("retirement", "d2-retirement-original", { qualify: (ref, context) => {
+    try {
+      const raw = readRetirementRawSource({ sourceId: ref.sourceId, sourceVersion: ref.revisionId,
+        contentDigest: ref.digest }, context);
+      const result = raw && qualifyRetirementRawSource(raw, context.eventId, context);
+      if (!result || result.status !== "qualified") return undefined;
+      const d = result.distribution, attachment = d.nativeHousehold;
+      if (!attachment || !same(attachment.context, context) || !same(attachment.originals[0]!.original, ref)) return undefined;
+      return { witness: attachment.originals[0]!, context, requiredFamilies: ["retirement"],
+        transaction: createAccountingTransaction({ id: d.transactionId, type: "retirement_cash_transfer", date: d.effectiveAt,
+          legs: [createAccountingLeg({ type: "cash", posting: "debit", amount: d.netBank, accountId: d.destinationAccountId, cashFlowClass: "investing" }),
+            createAccountingLeg({ type: "cash", posting: "credit", amount: d.gross, accountId: d.sourceAccountId, cashFlowClass: "investing" })] }) };
+    } catch { return undefined; }
+  } });
 }
 
 export function readRetirementRawSource(reference: RetirementSourceReference, context: D2SettlementSourceContext): RetirementRawSource | undefined {
@@ -112,7 +127,12 @@ function rebuildRetirementDistribution(raw: RetirementRawSource, operationId: st
   context: D2SettlementSourceContext, legacy: boolean): RetirementSourceQualification {
   const incomplete = { status: "incomplete", reason: "source_not_qualified" } as const;
   const evaluation = evaluateWithdrawals(raw.cash.withdrawals), binding = evaluateWithdrawalRmd(raw.binding);
-  if (!binding.bundle || evaluation.coverage !== "complete" || !same(raw.binding.withdrawals, raw.cash.withdrawals)
+  // Plain household transfers still use the native journal, with no invented RMD rows.
+  const plainHousehold = raw.cash.withdrawals.requests.every(r => r.bank.householdDestination)
+    && raw.binding.allocations.length === 0 && raw.binding.rmd.requests.length === 0;
+  if ((!plainHousehold && !binding.bundle) || evaluation.coverage !== "complete" || !same(raw.binding.withdrawals, raw.cash.withdrawals)
+    || raw.cash.withdrawals.knownAt > context.dataCutoff.slice(0, 10) || raw.cash.withdrawals.knownAt > context.asOf.slice(0, 10)
+    || !plainHousehold && (raw.binding.rmd.knownAt > context.dataCutoff.slice(0, 10) || raw.binding.rmd.knownAt > context.asOf.slice(0, 10))
     || raw.binding.rmd.requests.some(r => r.aggregation || r.accounts.length !== 1)) return incomplete;
   const c = evaluation.candidates.find(c => c.operationId === operationId);
   const q = raw.cash.confirmations.find(q => q.operationId === operationId);
@@ -141,7 +161,7 @@ function rebuildRetirementDistribution(raw: RetirementRawSource, operationId: st
     || new Set(q.reservations.map(r => r.id)).size !== q.reservations.length) return incomplete;
   const reserved = q.reservations.reduce((sum, r) => sum.plus(r.amount), Money.zero(USD));
   if (q.sourceCashBefore.minus(reserved).compare(c.grossAmount) < 0) return incomplete;
-  const rows = binding.bundle.allocations.filter(a => a.withdrawalId === c.claimId);
+  const rows = plainHousehold ? [] : binding.bundle!.allocations.filter(a => a.withdrawalId === c.claimId);
   const allocations: RetirementDistributionRecord["allocations"] = rows.map(row => {
     const o = binding.rmd.obligations.find(o => o.id === row.rmdObligationId)!;
     const r = raw.binding.rmd.requests.find(r => r.personId === o.personId && r.taxYear === o.taxYear
@@ -165,7 +185,21 @@ function rebuildRetirementDistribution(raw: RetirementRawSource, operationId: st
     householdId: domainId("household", c.householdId), personId: domainId("person", c.actorId),
     sourceApprovalId: q.source.id, paymentApprovalId: q.ordering.source.id,
     executionOrder: { sequenceId: raw.sourceId, position: ancestors(c.operationId).size - 1 } };
-  return { status: "qualified", distribution: immutableConfiguration<RetirementDistributionRecord>({ version: "retirement-distribution/v1",
+  const request = raw.cash.withdrawals.requests.find(r => r.operationId === operationId)!;
+  const household = request.bank.householdDestination;
+  const bank = raw.cash.householdBank;
+  if (household && (!bank || legacy)) return incomplete;
+  const eventContext = { asOf: context.asOf, dataCutoff: context.dataCutoff, runId: q.runId, eventId: operationId, eventAt: at(c.effectiveAt),
+    householdId: source.householdId, personId: source.personId, bankAccountId: domainId("account", c.destinationAccountId), direction: "credit" as const };
+  const nativeHousehold: RetirementDistributionRecord["nativeHousehold"] = household ? {
+    version: "native-household-posting/v1", transactionId: accountingTransactionId(operationId), family: "retirement", cashRole: "bank",
+    context: eventContext, route: qualifyHouseholdBankRoute(bank!.publisherId, bank!.sourceId, eventContext),
+    originals: [{ original: { version: "household-economic-original/v1", family: "retirement", publisherId: "d2-retirement-original",
+      sourceId: raw.sourceId, revisionId: raw.sourceVersion, digest: retirementRawSourceDigest(raw) },
+      source: { kind: "account", id: domainId("account", c.sourceAccountId) }, payer: { kind: "person", id: source.personId }, beneficiary: source.personId }],
+  } : undefined;
+  return { status: "qualified", distribution: immutableConfiguration<RetirementDistributionRecord>({ version: household ? "retirement-distribution/v2" : "retirement-distribution/v1",
+    ...(nativeHousehold ? { nativeHousehold } : {}),
     transactionId: accountingTransactionId(operationId), originalPostingProofId: accountingTransactionId(operationId),
     operationId, withdrawalId: c.claimId, authorizationId: c.authorizationId, householdId: source.householdId, personId: source.personId,
     sourceAccountId: domainId("account", c.sourceAccountId), destinationAccountId: domainId("account", c.destinationAccountId),

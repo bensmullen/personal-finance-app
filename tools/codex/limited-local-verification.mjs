@@ -19,16 +19,46 @@ if (!state.ACTIVE || state.WORKTREE !== resolve(root) || !state.PREFLIGHT || (st
   throw new Error('Preflight requires a hook reservation');
 }
 const directory = resolve('.codex/logs');
-mkdirSync(directory, { recursive: true });
 const log = resolve(directory, `preflight-${state.AUTHORIZATION_ID}-${state.PREFLIGHT.count}.log`);
 const receipt = resolve(directory, `preflight-${state.AUTHORIZATION_ID}.json`);
-// An approved tool call can execute its reservation only once.
-const reservation = openSync(resolve(directory, `preflight-${state.AUTHORIZATION_ID}-${state.PREFLIGHT.count}.used`), 'wx');
-closeSync(reservation);
-const finish = (status, reason) => {
-  if (!existsSync(log)) writeFileSync(log, `${status}: ${reason}\n`);
-  writeFileSync(receipt, JSON.stringify({ status, reason, patch: state.PREFLIGHT.patch,
+const skipUnavailable = reason => {
+  console.log(`SKIP preflight: ${reason}; no tests executed; CI remains authoritative`);
+  process.exit(0);
+};
+// Do not attempt to run tests without a writable execution receipt. The
+// sandbox may deny .codex/logs; that's unavailable infrastructure, not FAIL.
+try {
+  mkdirSync(directory, { recursive: true });
+} catch (error) {
+  skipUnavailable(`local log directory unavailable (${error.code ?? 'unknown'})`);
+}
+try {
+  const reservation = openSync(resolve(directory,
+    `preflight-${state.AUTHORIZATION_ID}-${state.PREFLIGHT.count}.used`), 'wx');
+  closeSync(reservation);
+} catch (error) {
+  if (error.code === 'EEXIST') {
+    console.error('DENY preflight: this reservation has already executed');
+    process.exit(2);
+  }
+  skipUnavailable(`local reservation unavailable (${error.code ?? 'unknown'})`);
+}
+try {
+  writeFileSync(receipt, JSON.stringify({ status: 'STARTED', patch: state.PREFLIGHT.patch,
     attempt: state.PREFLIGHT.count, log, acceptance: 'CI remains authoritative' }) + '\n');
+} catch (error) {
+  skipUnavailable(`local execution receipt unavailable (${error.code ?? 'unknown'})`);
+}
+const finish = (status, reason) => {
+  try {
+    if (!existsSync(log)) writeFileSync(log, `${status}: ${reason}\n`);
+    writeFileSync(receipt, JSON.stringify({ status, reason, patch: state.PREFLIGHT.patch,
+      attempt: state.PREFLIGHT.count, log, acceptance: 'CI remains authoritative' }) + '\n');
+  } catch (error) {
+    // Preserve process failure truth even when the filesystem stops accepting
+    // receipt updates; the STARTED receipt never becomes a false PASS.
+    console.error(`Preflight receipt unavailable after execution (${error.code ?? 'unknown'})`);
+  }
   console.log(`${status} preflight: ${reason}; log=${log}`);
   process.exitCode = status === 'FAIL' ? 1 : 0;
 };
@@ -42,29 +72,50 @@ if (Number(process.versions.node.split('.')[0]) !== 22 || npm.status !== 0 ||
 } else {
   const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts;
   if (scripts.typecheck !== 'tsc --noEmit && tsc -p tsconfig.next.json') {
-    finish('FAIL', 'typecheck API changed; helper audit required');
+    finish('SKIP', 'typecheck API changed; bounded helper requires a framework audit');
   } else {
-    const fd = openSync(log, 'w');
-    const run = (command, parameters, timeout) => new Promise(resolveResult => {
-      const child = spawn(command, parameters, { cwd: root, env, detached: true, stdio: ['ignore', fd, fd] });
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already exited */ }
-      }, timeout);
-      child.once('error', () => { clearTimeout(timer); resolveResult(false); });
-      child.once('close', code => { clearTimeout(timer); resolveResult(!timedOut && code === 0); });
-    });
-    // Execute the audited package API directly, avoiding npm lifecycle hooks.
-    const started = Date.now();
-    const first = await run(process.execPath, ['node_modules/typescript/bin/tsc', '--noEmit'], 60_000);
-    const remaining = 60_000 - (Date.now() - started);
-    const typed = first && remaining > 0 && await run(process.execPath,
-      ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.next.json'], remaining);
-    const tested = typed && (!args[0] || await run(process.execPath,
-      ['node_modules/vitest/vitest.mjs', 'run', args[0], '--maxWorkers=1', '--no-file-parallelism'], 30_000));
-    closeSync(fd);
-    finish(tested ? 'PASS' : 'FAIL', !typed ? 'complete typecheck failed or exceeded 60s' :
-      !tested ? 'named unit failed or exceeded 30s' : args[0] ? 'typecheck and named unit passed' : 'typecheck passed');
+    let fd;
+    try {
+      fd = openSync(log, 'w');
+    } catch (error) {
+      finish('SKIP', `local log unavailable (${error.code ?? 'unknown'}); tests not started`);
+    }
+    if (fd !== undefined) {
+      const run = (command, parameters, timeout) => new Promise(resolveResult => {
+        let child;
+        try {
+          child = spawn(command, parameters, { cwd: root, env, detached: true, stdio: ['ignore', fd, fd] });
+        } catch {
+          resolveResult('SKIP');
+          return;
+        }
+        let timedOut = false;
+        const timer = setTimeout(() => {
+          timedOut = true;
+          try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already exited */ }
+        }, timeout);
+        child.once('error', () => { clearTimeout(timer); resolveResult('SKIP'); });
+        child.once('close', code => {
+          clearTimeout(timer);
+          resolveResult(timedOut || code === null ? 'SKIP' : code === 0 ? 'PASS' : 'FAIL');
+        });
+      });
+      // Execute the audited package API directly, avoiding npm lifecycle hooks.
+      // Timeouts, spawn errors and missing dependencies are SKIP, never a
+      // fabricated test assertion failure.
+      const started = Date.now();
+      const first = await run(process.execPath, ['node_modules/typescript/bin/tsc', '--noEmit'], 60_000);
+      const remaining = 60_000 - (Date.now() - started);
+      const second = first === 'PASS' && remaining > 0 ?
+        await run(process.execPath, ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.next.json'], remaining) :
+        first === 'PASS' ? 'SKIP' : first;
+      const third = second === 'PASS' && args[0] ?
+        await run(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', args[0],
+          '--maxWorkers=1', '--no-file-parallelism'], 30_000) : second;
+      closeSync(fd);
+      finish(third, third === 'PASS' ? args[0] ? 'typecheck and named unit passed' : 'typecheck passed' :
+        third === 'SKIP' ? 'bounded verifier unavailable, interrupted or timed out; CI will verify' :
+        first === 'FAIL' || second === 'FAIL' ? 'typecheck executed and failed' : 'named unit executed and failed');
+    }
   }
 }

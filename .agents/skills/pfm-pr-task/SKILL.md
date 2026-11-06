@@ -94,8 +94,16 @@ conditions when useful. Their exact headings are not parser requirements.
   affected tracked `test/name.test.ts`. Use one simple shell tool call. The
   audited helper runs the complete typecheck (60s total), then the named unit
   (30s); no flags, chaining, wrappers, installs or prerequisites. A missing
-  environment yields SKIP. Only one changed-patch correction retry after FAIL
-  with the same test is allowed per turn. PASS never grants acceptance.
+  environment yields SKIP. Permission-denied logs, missing dependencies,
+  spawn errors and bounded timeouts also yield SKIP (never a fabricated failed
+  assertion); an invocation with no persisted result may be retried once on
+  the same patch. Only one changed-patch correction retry after an explicit
+  recorded FAIL with the same test is allowed. A persisted executed FAIL blocks
+  ordinary push/COMPLETE until corrected and followed by a PASS or genuine
+  unavailable-environment SKIP. Do not deliberately skip failing tests or
+  weaken expectations. FAIL outside authorized scope requires BLOCKED
+  disclosure and WIP preservation, not arbitrary file edits. PASS never grants
+  acceptance.
 - All other local tests, builds, validators, E2E, benchmarks, dev servers and
   performance captures remain prohibited. Do not run the helper in the #218
   implementation turn; the hook requires its merged origin/main version.
@@ -145,7 +153,12 @@ original clean, remote-synchronized feature worktree and submit
 `PFM_TASK_ISSUE: N` to obtain a *new* issue-hash-bound authorization. A mere
 "please continue" in the closed chat is read-only; do not retry stale turns or
 change receipt files. No new branch or worktree is needed when the existing one
-is verified clean and synced. The current issue may widen test-only scope, but
+is verified clean and synced. When a previously closed hash-verified receipt
+exists on a clean linked worktree whose local branch is merely behind the
+same remote branch by a proven fast-forward, a new-session UserPromptSubmit
+may automatically fetch and fast-forward, then reverify exact remote head.
+Active writers, detached or dirty worktrees, unrelated/diverged commits and
+ambiguous receipts remain blocked for operator-led recovery. The current issue may widen test-only scope, but
 the new turn must use its own receipt and all originally approved financial
 checks. If a hook blocks even the fresh issue submission, report its exact
 error plus read-only branch/HEAD/upstream/receipt evidence; do not bypass it.

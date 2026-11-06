@@ -6,8 +6,11 @@ import { claimId, recognitionId, settlementId } from "../../../../semantics/iden
 import { applyAccountingTransactionAtomically, applyD2SettlementAtomically, d2SettlementPostingRegistration,
   d2SettlementSourceFingerprint, registerD2SettlementSourceAuthority, requalifyD2SettlementReceiptHistory,
   registerAuthoritativeIdentity,
+  applyNativeHouseholdOriginalAtomically, registerHouseholdEconomicOriginalAuthority,
   type AuthoritativeState, type D2CardSettlementReceipt, type D2PostingRegistration,
-  type D2SettlementSourceContext } from "../../../../state/index.js";
+  type D2SettlementSourceContext, type NativeHouseholdPostingAttachment } from "../../../../state/index.js";
+import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
+import { qualifyHouseholdBankRoute } from "../householdBank/index.js";
 import { instant, type Instant } from "../../../../time/index.js";
 import { Money } from "../../../../values/index.js";
 import { applyHouseholdExecutionOverlay, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
@@ -28,6 +31,9 @@ export interface CardSourceInstant {
   readonly knownAt: Instant;
 }
 export interface CardBankDocument {
+  /** Source-owned run binding; original documents remain with the publisher. */
+  readonly householdBank?: { readonly runId: string;
+    readonly bank: { readonly publisherId: string; readonly sourceId: string } };
   readonly sourceId: string;
   readonly version: string;
   readonly statementId: string;
@@ -63,6 +69,7 @@ export interface CardBankDocument {
   readonly continuityProvenance?: { readonly publishedAt: Instant; readonly knownAt: Instant };
 }
 export interface CardBankSourcePort {
+  readonly householdPublisherId?: string;
   /** Read independently authenticated raw issuer/payer documents. Must not echo
    * portable inputs, copied receipts, observed balances or a supplied hash. */
   readonly read: (sourceId: string) => CardBankDocument | undefined;
@@ -86,13 +93,27 @@ const total = (split: PaymentSplit): Money => split.principal.plus(split.interes
  * portable participant codec cannot install this source qualification port. */
 export function registerCardBankSourcePort(port: CardBankSourcePort): void {
   if (sourcePort !== undefined) throw new Error("CARD_BANK_SOURCE_PORT_DUPLICATE");
+  if (port.householdPublisherId !== undefined) registerHouseholdEconomicOriginalAuthority("card", port.householdPublisherId, {
+    qualify: (ref, context) => {
+      const q = qualifyCardBankSource(ref.sourceId, context);
+      if (q.status !== "qualified") return undefined;
+      const r = q.receipt;
+      const role = (["original", "settlement"] as const).find(role =>
+        same(r.nativeHousehold?.[role].originals[0]?.original, ref) && same(r.nativeHousehold?.[role].context, context));
+      if (!role || !r.nativeHousehold) return undefined;
+      return { witness: r.nativeHousehold[role].originals[0]!, context: r.nativeHousehold[role].context,
+        transaction: role === "original" ? r.originalTransaction : r.paymentTransaction, requiredFamilies: ["card"],
+        nativeSource: { kind: r.kind, issuerId: r.source.issuerId, statementId: r.source.statementId,
+          chargeId: r.source.chargeId, liabilityId: r.liabilityId } };
+    },
+  });
   registerD2SettlementSourceAuthority("card_interest_payment", { qualify: (binding, context) => {
     if (binding.kind !== "card_interest_payment") return { status: "incomplete", reason: "source_not_qualified" };
     const q = qualifyCardBankSource(binding.sourceId, context);
     return q.status === "qualified" ? { status: "qualified", receipt: q.receipt }
       : { status: "incomplete", reason: q.reason === "source_unavailable" ? "source_unavailable" : "source_not_qualified" };
   } });
-  sourcePort = Object.freeze({ read: port.read });
+  sourcePort = Object.freeze({ ...port, read: port.read.bind(port) });
 }
 
 /** The complete raw B1 request is re-evaluated; a receipt is never an input. */
@@ -198,7 +219,31 @@ export function qualifyCardBankSource(sourceId: string, context: D2SettlementSou
       sourceApprovalId: d.sourceApprovalId, paymentApprovalId: a.approvalId,
       issuerId: c.issuerId, statementId: c.statementId, chargeId: d.charge.evidenceId, quoteId: d.quoteId,
       minimum: p.requiredService, ...(order === undefined ? {} : { executionOrder: order }) };
-    const receipt: D2CardSettlementReceipt = { schemaVersion: "d2-shared/settlement-receipt/v1", kind: "card_interest_payment",
+    let nativeHousehold: D2CardSettlementReceipt["nativeHousehold"];
+    if (d.householdBank) {
+      const publisherId = sourcePort?.householdPublisherId;
+      if (!publisherId || !text(d.householdBank.runId) || c.payment.payerId !== c.personId)
+        return incomplete("source_not_qualified");
+      const cutoff = context;
+      const attachment = (role: "original" | "settlement"): NativeHouseholdPostingAttachment => {
+        const tx = role === "original" ? originalTransaction : paymentTransaction;
+        const eventContext = { asOf: cutoff.asOf, dataCutoff: cutoff.dataCutoff,
+          runId: d.householdBank!.runId, eventId: tx.id, eventAt: tx.date,
+          householdId: source.householdId, personId: source.personId, bankAccountId, direction: "debit" as const };
+        const issuer = { kind: "organization" as const, id: c.issuerId };
+        return { version: "native-household-posting/v1", transactionId: tx.id, family: "card",
+          cashRole: role === "original" ? "nonbank" : "bank", context: eventContext,
+          ...(role === "original" ? {} : { route: qualifyHouseholdBankRoute(d.householdBank!.bank.publisherId,
+            d.householdBank!.bank.sourceId, eventContext) }),
+          originals: [{ original: { version: "household-economic-original/v1", family: "card", publisherId,
+            sourceId, revisionId: d.version, digest: `sha256:${sha256(canonicalSerialize([d, role]))}` },
+            source: issuer, payer: role === "original" ? issuer : { kind: "person", id: source.personId },
+            beneficiary: source.personId }] };
+      };
+      nativeHousehold = { original: attachment("original"), settlement: attachment("settlement") };
+    }
+    const receipt: D2CardSettlementReceipt = { schemaVersion: nativeHousehold ? "d2-shared/settlement-receipt/v2" : "d2-shared/settlement-receipt/v1",
+      ...(nativeHousehold === undefined ? {} : { nativeHousehold }), kind: "card_interest_payment",
       id: `card-bank:${a.paymentId}`, operationId: c.payment.operationId, authorizationId: a.authorizationId,
       claimId: claimId(p.claim.claimId), paymentId: a.paymentId, recognitionId: recognitionId(d.charge.operationId),
       settlementId: settlementId(a.settlementId), effectiveAt: a.effectiveAt, bankAccountId,
@@ -212,7 +257,7 @@ export function qualifyCardBankSource(sourceId: string, context: D2SettlementSou
 
 function assertResources(state: AuthoritativeState, r: D2CardSettlementReceipt): void {
   const bank = state.accounts[r.bankAccountId], card = state.liabilities[r.liabilityId];
-  if (!bank || bank.id !== r.bankAccountId || bank.ownerId !== r.source.personId || !["checking", "savings"].includes(bank.kind) ||
+  if (!bank || bank.id !== r.bankAccountId || bank.ownerId !== (r.nativeHousehold ? r.source.householdId : r.source.personId) || !["checking", "savings"].includes(bank.kind) ||
     !card || card.id !== r.liabilityId || !bank.cash.currency.equals(r.amount.currency) || !card.balance.currency.equals(r.amount.currency))
     fail("Exact issuer liability and owned checking/savings BANK required");
 }
@@ -265,6 +310,8 @@ export function createCardBankParticipant(configuration: CardBankInput): Househo
       }
       const used = new Set<string>();
       for (const { receipt: r } of qualified) {
+        if (r.nativeHousehold && r.nativeHousehold.original.context.runId !== context.runId)
+          fail("Issuer run binding differs from actual execution context");
         for (const prior of Object.values(opening.state.d2SettlementReceipts ?? {})) {
           if (prior.kind === "card_interest_payment" && prior.id !== r.id && prior.source.issuerId === r.source.issuerId &&
             (prior.source.quoteId === r.source.quoteId || prior.source.chargeId === r.source.chargeId || prior.source.statementId === r.source.statementId))
@@ -327,7 +374,8 @@ export function createCardBankParticipant(configuration: CardBankInput): Househo
               return { ...candidate, facts: warning("original_journal_unavailable") };
             if (!candidate.state.liabilities[r.liabilityId]!.balance.equals(r.liabilityBefore)) fail("Issuer opening liability differs from canonical state");
             if (candidate.state.identities.recognitionIds.includes(r.recognitionId)) fail("Recognition identity already consumed without the canonical charge journal");
-            applyAccountingTransactionAtomically(candidate.state, tx, registration(r));
+            if (r.nativeHousehold) applyNativeHouseholdOriginalAtomically(candidate.state, tx, registration(r), context);
+            else applyAccountingTransactionAtomically(candidate.state, tx, registration(r));
             registerAuthoritativeIdentity(candidate.state.identities, "recognitionIds", r.recognitionId);
             return { ...candidate, facts: journalFacts(tx, tier, context.baseCurrency) };
           }
