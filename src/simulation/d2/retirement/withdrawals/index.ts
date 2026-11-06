@@ -59,6 +59,8 @@ export interface WithdrawalRequest {
     readonly householdId: string;
     readonly kind: "checking" | "savings" | "other";
     readonly source: WithdrawalSource;
+    /** Conditional membership evidence only; physical BANK authority is external. */
+    readonly householdDestination?: { readonly personId: string; readonly source: WithdrawalSource };
   };
   readonly withholding?: {
     readonly id: string;
@@ -234,7 +236,12 @@ export function evaluateWithdrawals(input: WithdrawalInput): WithdrawalEvaluatio
       const total = requests.filter(x => x.sourceAccountId === a.accountId).reduce((sum, x) => { exact(x.grossAmount); return sum.plus(x.grossAmount); }, Money.zero(USD));
       need(cash.available.amount.compare(total.amount) >= 0, "liquidity", "aggregate_source_capacity");
       const b = r.bank; stamp(b.source, b.id);
-      need(text(b.id) && b.id !== a.accountId && b.ownerId === r.personId && b.householdId === r.householdId, "identity", "owned_destination");
+      if (b.householdDestination) {
+        stamp(b.householdDestination.source, r.personId);
+        need(b.householdDestination.personId === r.personId && b.ownerId === r.householdId, "identity", "household_destination_member");
+      }
+      need(text(b.id) && b.id !== a.accountId && b.ownerId === (b.householdDestination ? r.householdId : r.personId)
+        && b.householdId === r.householdId, "identity", "owned_destination");
       need(b.kind === "checking" || b.kind === "savings", "routing", "checking_or_savings");
       const w = r.withholding;
       if (!w) throw new Missing("withholding", "explicit_complete_withholding_including_zero");
