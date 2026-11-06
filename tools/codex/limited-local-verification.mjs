@@ -29,13 +29,25 @@ const skipUnavailable = reason => {
 // sandbox may deny .codex/logs; that's unavailable infrastructure, not FAIL.
 try {
   mkdirSync(directory, { recursive: true });
+} catch (error) {
+  skipUnavailable(`local log directory unavailable (${error.code ?? 'unknown'})`);
+}
+try {
   const reservation = openSync(resolve(directory,
     `preflight-${state.AUTHORIZATION_ID}-${state.PREFLIGHT.count}.used`), 'wx');
   closeSync(reservation);
+} catch (error) {
+  if (error.code === 'EEXIST') {
+    console.error('DENY preflight: this reservation has already executed');
+    process.exit(2);
+  }
+  skipUnavailable(`local reservation unavailable (${error.code ?? 'unknown'})`);
+}
+try {
   writeFileSync(receipt, JSON.stringify({ status: 'STARTED', patch: state.PREFLIGHT.patch,
     attempt: state.PREFLIGHT.count, log, acceptance: 'CI remains authoritative' }) + '\n');
 } catch (error) {
-  skipUnavailable(`local log/reservation unavailable (${error.code ?? 'unknown'})`);
+  skipUnavailable(`local execution receipt unavailable (${error.code ?? 'unknown'})`);
 }
 const finish = (status, reason) => {
   try {
