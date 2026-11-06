@@ -130,7 +130,7 @@ describe("source-qualified ordinary retirement transfers", () => {
     const legacy = execute({ ...base, state: opening, kernel: attachRetirementCash(kernel, { ...raw.cash, fundedRmd: reference }).kernel });
     expect(legacy.periods).toHaveLength(1);
     const identities = Object.fromEntries(Object.entries(native.state.identities).map(([key, values]) =>
-      [key, [...new Set([...values, ...legacy.state.identities[key as keyof typeof legacy.state.identities]])]])) as typeof native.state.identities;
+      [key, [...new Set([...values, ...legacy.state.identities[key as keyof typeof legacy.state.identities]])]])) as unknown as typeof native.state.identities;
     const imported = createAuthoritativeState({ accounts: { ...native.state.accounts, ...legacy.state.accounts }, identities,
       retirementDistributionAllocations: { ...native.state.retirementDistributionAllocations, ...legacy.state.retirementDistributionAllocations },
       d2PostedTransactions: { ...native.state.d2PostedTransactions, ...legacy.state.d2PostedTransactions } });
