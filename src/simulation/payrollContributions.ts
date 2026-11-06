@@ -42,7 +42,7 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   readonly householdWage?: { readonly source: HouseholdWageSourceRef; readonly stream: WageStreamOriginal; readonly context: HouseholdBankEventContext; readonly period: Period };
 }) => {
   if (input.householdWage !== undefined && (input.healthPremium !== undefined ||
-    opening.d2PostedTransactions?.[input.id]?.registration.kind === "payroll_health_deduction")) return invalid("HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
+    opening.d2PostedTransactions?.[accountingTransactionId(input.id)]?.registration.kind === "payroll_health_deduction")) return invalid("HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
   const healthQualification = input.healthPremium === undefined ? undefined : qualifyPayrollHealthSource(input.healthPremium.source, input.healthPremium.context);
   if (healthQualification?.status === "incomplete") return invalid(`Payroll health source incomplete: ${healthQualification.reason}`);
   const health = healthQualification?.deduction;
