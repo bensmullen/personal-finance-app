@@ -41,6 +41,10 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   readonly healthPremium?: { readonly source: PayrollHealthSourceBinding; readonly context: D2SettlementSourceContext };
   readonly householdWage?: { readonly source: HouseholdWageSourceRef; readonly stream: WageStreamOriginal; readonly context: HouseholdBankEventContext; readonly period: Period };
 }) => {
+  // Contribution-only paychecks obey the same recipient boundary as withholding.
+  if (input.householdWage === undefined && input.ownerId !== undefined &&
+    opening.accounts[input.depositAccountId]?.ownerId !== input.ownerId)
+    return invalid(input.healthPremium === undefined ? "HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL" : "HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
   if (input.householdWage !== undefined && (input.healthPremium !== undefined ||
     opening.d2PostedTransactions?.[accountingTransactionId(input.id)]?.registration.kind === "payroll_health_deduction")) return invalid("HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
   const healthQualification = input.healthPremium === undefined ? undefined : qualifyPayrollHealthSource(input.healthPremium.source, input.healthPremium.context);

@@ -684,6 +684,8 @@ function executeCashFlowPeriodCandidate(
           const provenance = generatedProvenance(stream.primitiveIds.recurrence, occurrence.scheduledAt, occurrence.occurrenceId);
           actions.push({ scheduledAt: occurrence.scheduledAt, kind: "income", priority: payrollPriority(stream) ?? Number.MAX_SAFE_INTEGER, id: `${stream.id}:${occurrence.occurrenceId}`, execute: () => {
             const wageSource = stream.householdWageSource;
+            if (state.accounts[stream.depositAccountId]?.ownerId === request.input.householdId && wageSource === undefined)
+              invalidInput("HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL: unsupported income without an independent wage source", `incomes.${stream.id}.householdWageSource`);
             if (wageSource !== undefined && (stream.ownerId === request.input.householdId || state.accounts[stream.depositAccountId]?.ownerId !== request.input.householdId))
               invalidInput("Household wages require a Person recipient and household BANK", `incomes.${stream.id}.householdWageSource`);
             const householdWage = wageSource === undefined ? undefined : { source: wageSource, stream: wageStreamOriginal(stream), period: targetPeriod, context: {

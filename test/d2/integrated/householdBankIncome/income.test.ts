@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { executeVerticalSlice2PeriodCandidate } from "../../../../src/simulation/verticalSlice2.js";
+import { payrollContributionCandidate } from "../../../../src/simulation/payrollContributions.js";
 import { canonicalSerialize } from "../../../../src/simulation/run.js";
 import { createAuthoritativeState, authoritativeCheckpointDelta, restoreAuthoritativeCheckpointDelta, requalifyD2SettlementReceiptHistory } from "../../../../src/state/index.js";
 import { decimal, money } from "../../../../src/values/index.js";
@@ -19,12 +20,22 @@ const execute = (incomes = [stream()]) => {
     utcMonthlyPeriods(start, 1)[0]!, state, {});
 };
 describe("source-owned household wage posting", () => {
-  it("requires fresh publishers on portable state/checkpoint import", () => {
+  it("rejects a source-free payroll candidate even without withholding", () => {
+    const state = opening(), before = canonicalSerialize(state), original = document();
+    expect(() => payrollContributionCandidate(state, {
+      id: original.transaction.id, incomeId: original.incomeId, ownerId: ids.alice,
+      occurrenceId: original.occurrenceId, at: original.transaction.date,
+      gross: original.gross, depositAccountId: ids.bank, allocations: [],
+    })).toThrow("HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL");
+    expect(canonicalSerialize(state)).toBe(before);
+  });
+  it.each([false, true])("requires fresh publishers on portable state/checkpoint import with elections=%s", payroll => {
+    control.payroll = payroll;
     const state = execute().state, delta = authoritativeCheckpointDelta(state, createAuthoritativeState(), (a, b) => canonicalSerialize(a) === canonicalSerialize(b));
     const directory = mkdtempSync(join(tmpdir(), "pfm-wage-source-")), path = join(directory, "synthetic.json");
     try {
       for (const sources of [true, false]) {
-        writeFileSync(path, JSON.stringify({ state, delta, sources }));
+        writeFileSync(path, JSON.stringify({ state, delta, sources, payroll }));
         const child = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
           fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], { encoding: "utf8", timeout: 10_000,
           env: { ...process.env, PFM_WAGE_PAYLOAD: path } });
@@ -67,17 +78,23 @@ describe("source-owned household wage posting", () => {
     expect(result.state.accounts[ids.bank]!.cash.equals(money("350.74"))).toBe(true);
     expect(Object.values(result.state.d2PostedTransactions!).map(p => p.registration.personId).sort()).toEqual([ids.alice, ids.bob].sort());
   });
-  it.each(["missing", "race", "owner", "gross", "occurrence", "withdrawn", "late", "mismatch", "duplicate"])("rejects %s without changing opening state", kind => {
+  describe.each([false, true])("rejected household income with elections=%s", payroll => {
+  it.each(["unbound", "wrong-source", "missing", "race", "owner", "gross", "occurrence", "withdrawn", "late", "mismatch", "duplicate"])("rejects %s without changing opening state", kind => {
+    control.payroll = payroll;
     const state = opening(), before = canonicalSerialize(state), s = stream();
     if (kind === "missing") control.missing = true;
     if (kind === "race") control.withdrawAt = 2;
     if (kind === "owner") control.rebound = true;
     if (["withdrawn", "late", "mismatch", "duplicate"].includes(kind)) control.revision = kind;
-    const changed = kind === "gross" ? { ...s, baseMonthlyAmount: money("125.38") }
+    const { householdWageSource: _source, ...unbound } = s;
+    const changed = kind === "unbound" ? unbound
+      : kind === "wrong-source" ? { ...s, householdWageSource: stream(1).householdWageSource }
+      : kind === "gross" ? { ...s, baseMonthlyAmount: money("125.38") }
       : kind === "occurrence" ? { ...s, primitiveIds: { ...s.primitiveIds, recurrence: bareStream(1).primitiveIds.recurrence } } : s;
     expect(() => executeVerticalSlice2PeriodCandidate({ runContext: context(), openingState: state, input: input([changed]) },
       utcMonthlyPeriods(start, 1)[0]!, state, {})).toThrow();
     expect(canonicalSerialize(state)).toBe(before);
+  });
   });
   it("rejects an unqualified withholding change rather than posting a zero substitute", () => {
     control.payroll = true;

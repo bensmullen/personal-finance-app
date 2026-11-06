@@ -2,14 +2,15 @@ import { readFileSync } from "node:fs";
 import { createAuthoritativeState, restoreAuthoritativeCheckpointDelta, requalifyD2SettlementReceiptHistory,
   type AuthoritativeStateDraft, type AuthoritativeCheckpointDelta } from "../../../../src/state/index.js";
 import { Money, Currency } from "../../../../src/values/index.js";
-import { context, install } from "./scenario.js";
+import { context, control, install } from "./scenario.js";
 const path = process.env.PFM_WAGE_PAYLOAD;
 if (!path) throw new Error("MISSING_SYNTHETIC_PAYLOAD");
 const payload = JSON.parse(readFileSync(path, "utf8"), (_key, value: unknown) => {
   if (value && typeof value === "object" && "amount" in value && "currency" in value &&
       typeof value.amount === "string" && typeof value.currency === "string") return Money.parse(value.amount, Currency.of(value.currency));
   return value;
-}) as { sources: boolean; state: AuthoritativeStateDraft; delta: AuthoritativeCheckpointDelta };
+}) as { sources: boolean; payroll: boolean; state: AuthoritativeStateDraft; delta: AuthoritativeCheckpointDelta };
+control.payroll = payload.payroll;
 if (payload.sources) install();
 try {
   const imported = createAuthoritativeState(payload.state);
