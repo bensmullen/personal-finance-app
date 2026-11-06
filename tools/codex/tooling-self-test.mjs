@@ -1117,7 +1117,7 @@ const handoffPolicy = fs.readFileSync(path.join(root, "docs/development/handoff-
 assert(handoffPolicy.includes('Copy-and-paste bootstrap and recovery output (mandatory)') &&
   handoffPolicy.includes('PFM_TASK_ISSUE: <number>') &&
   handoffPolicy.includes('Each shell command block begins with') &&
-  handoffPolicy.includes('every') === false,
+  handoffPolicy.includes('Bash commands for **every** affected task.'),
   'handoff policy must preserve mandatory bootstrap deliverables');
 const refinanceEscalation = [
   "DECISION_NEEDED: For the private-alpha refinance floor, should users be able to refinance only on a scheduled monthly mortgage payment date, or on any calendar date?",
