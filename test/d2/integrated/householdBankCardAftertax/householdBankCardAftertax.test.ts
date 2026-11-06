@@ -175,7 +175,8 @@ describe("#280 authentic issuer and elected aftertax premium household BANK debi
     expect(again.kernel).toBe(f.kernel);
   });
   it("reauthenticates cold portable replay and rejects missing or changed sources", () => {
-    const r = run(), artifact = createPortableHouseholdReplayArtifact(r);
+    const f = fixture(), r = runHouseholdKernel({ kernel: f.kernel, runContext: f.context, resultTier: "detail" }),
+      artifact = createPortableHouseholdReplayArtifact(runHouseholdKernel({ kernel: f.kernel, runContext: f.context }));
     expect(() => restorePortableHouseholdReplayArtifact(artifact)).not.toThrow();
     const dir = mkdtempSync(join(tmpdir(), "pfm-stage-e-")), path = join(dir, "payload.json");
     try {
