@@ -88,7 +88,7 @@ describe("source-owned household wage posting", () => {
     if (["withdrawn", "late", "mismatch", "duplicate"].includes(kind)) control.revision = kind;
     const { householdWageSource: _source, ...unbound } = s;
     const changed = kind === "unbound" ? unbound
-      : kind === "wrong-source" ? { ...s, householdWageSource: stream(1).householdWageSource }
+      : kind === "wrong-source" ? { ...s, householdWageSource: stream(1).householdWageSource! }
       : kind === "gross" ? { ...s, baseMonthlyAmount: money("125.38") }
       : kind === "occurrence" ? { ...s, primitiveIds: { ...s.primitiveIds, recurrence: bareStream(1).primitiveIds.recurrence } } : s;
     expect(() => executeVerticalSlice2PeriodCandidate({ runContext: context(), openingState: state, input: input([changed]) },
