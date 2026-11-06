@@ -60,7 +60,7 @@ const payment = (): ConfirmedSsaMedicarePayment => {
 const wage: RecurringIncomeStream = { id: domainId("income", "27700000-0000-4000-8000-000000000100"), ownerId: domainId("person", ids.person),
   depositAccountId: ids.bank, baseMonthlyAmount: money("100"), start: observed.simulationStart,
   recurrence: { kind: "utc_monthly", anchor: instant("2026-06-20T00:00:00.000Z"), invalidDayPolicy: "skip" },
-  growthBaseAt: observed.simulationStart, growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
+  growthBaseAt: instant("2026-06-20T00:00:00.000Z"), growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()),
   primitiveIds: { growth: domainId("primitive-instance", "27700000-0000-4000-8000-000000000101"),
     recurrence: domainId("primitive-instance", "27700000-0000-4000-8000-000000000102") } };
 function wageOriginal(): HouseholdWageOriginal {
