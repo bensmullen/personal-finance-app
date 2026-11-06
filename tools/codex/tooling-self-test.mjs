@@ -484,6 +484,76 @@ const recoveryFixture = () => {
   f.assertNoUnsafeCommands();
 }
 
+// A fresh closed checkpoint on a clean LINKED worktree self-heals after a
+// remote fast-forward, without deleting receipts or asking the PM to bootstrap.
+{
+  const f = recoveryFixture();
+  f.git('switch', '-c', 'codex/secondary-worktree-owner');
+  const linked = path.join(path.dirname(f.repository), 'linked-clean-checkpoint');
+  f.git('worktree', 'add', linked, 'codex/policy-self-test');
+  const linkedGit = (...args) => mustRun('git', args, { cwd: linked }).stdout.trim();
+  const invokeLinked = (event, extra = {}) => JSON.parse(mustRun('python3', [policy], {
+    cwd: linked,
+    input: JSON.stringify({ cwd: linked, session_id: 'linked-old', turn_id: 'first',
+      hook_event_name: event, ...extra }),
+    env: { PFM_POLICY_TEST_ORIGIN: 'https://github.com/bensmullen/personal-finance-app.git',
+      PFM_POLICY_TEST_ISSUE_BODY_FILE: f.issue },
+  }).stdout);
+  const start = invokeLinked('UserPromptSubmit', { prompt: 'PFM_TASK_ISSUE: 85' });
+  assert(start.hookSpecificOutput?.additionalContext.includes('authorization accepted'),
+    'linked clean worktree must begin with a valid task receipt');
+  const closed = invokeLinked('Stop', {
+    last_assistant_message: 'TASK_STATUS: BLOCKED\nBLOCKER: previous writer finished',
+  });
+  assert(closed.continue === true, 'linked previous task closes');
+  const oldReceipt = path.join(linked, '.codex/runtime/linked-old-first.json');
+  const oldBytes = fs.readFileSync(oldReceipt, 'utf8');
+  const head = linkedGit('rev-parse', 'HEAD');
+  const advanced = mustRun('git', ['-C', linked, 'commit-tree', 'HEAD^{tree}',
+    '-p', head, '-m', 'remote ChatGPT patch']).stdout.trim();
+  mustRun('git', ['-C', linked, 'push', 'origin',
+    advanced + ':refs/heads/codex/policy-self-test']);
+  const resumed = invokeLinked('UserPromptSubmit', {
+    prompt: 'PFM_TASK_ISSUE: 85', session_id: 'linked-new', turn_id: 'second',
+  });
+  assert(resumed.hookSpecificOutput?.additionalContext.includes('authorization accepted'),
+    'safe external ff must be automatically reconciled for closed linked checkpoint');
+  assert(linkedGit('rev-parse', 'HEAD') === advanced &&
+    linkedGit('rev-parse', '@{u}') === advanced &&
+    linkedGit('status', '--porcelain=v1') === '',
+    'auto reconciliation must leave clean exact-head tracking and live origin');
+  assert(fs.readFileSync(oldReceipt, 'utf8') === oldBytes,
+    'safe reauthorization must not erase or rewrite closed historical receipts');
+}
+{
+  const f = recoveryFixture();
+  f.git('switch', '-c', 'codex/secondary-dirty-owner');
+  const linked = path.join(path.dirname(f.repository), 'linked-dirty-checkpoint');
+  f.git('worktree', 'add', linked, 'codex/policy-self-test');
+  const invoke = (event, extra = {}) => JSON.parse(mustRun('python3', [policy], {
+    cwd: linked,
+    input: JSON.stringify({ cwd: linked, session_id: 'dirty-linked-old', turn_id: 'first',
+      hook_event_name: event, ...extra }),
+    env: { PFM_POLICY_TEST_ORIGIN: 'https://github.com/bensmullen/personal-finance-app.git',
+      PFM_POLICY_TEST_ISSUE_BODY_FILE: f.issue },
+  }).stdout);
+  assert(invoke('UserPromptSubmit', { prompt: 'PFM_TASK_ISSUE: 85' }).hookSpecificOutput,
+    'dirty fixture must start with valid receipt');
+  assert(invoke('Stop', {
+    last_assistant_message: 'TASK_STATUS: BLOCKED\nBLOCKER: previous writer closed',
+  }).continue === true, 'dirty fixture closes');
+  fs.appendFileSync(path.join(linked, 'src/allowed.ts'), '// local uncommitted work\n');
+  const before = mustRun('git', ['-C', linked, 'rev-parse', 'HEAD']).stdout.trim();
+  const rejected = invoke('UserPromptSubmit', {
+    prompt: 'PFM_TASK_ISSUE: 85', session_id: 'dirty-linked-new', turn_id: 'new',
+  });
+  assert(rejected.decision === 'block' && String(rejected.reason).includes('STATE_DIRTY'),
+    'dirty closed linked worktree must never be auto-reconciled');
+  assert(mustRun('git', ['-C', linked, 'rev-parse', 'HEAD']).stdout.trim() === before &&
+    fs.readFileSync(path.join(linked, 'src/allowed.ts'), 'utf8').includes('local uncommitted work'),
+    'dirty refusal preserves local work and branch head');
+}
+
 // Closed checkpoints cannot be reauthorized from an outdated tracking ref.
 {
   const f = recoveryFixture();
@@ -846,6 +916,24 @@ for (const failure of ['none', 'typecheck', 'unit']) {
     'test/affected.test.ts'], { cwd: directory });
   assert(repeated.status !== 0, 'one reservation cannot execute twice');
 }
+// Unwritable log-directory infrastructure is SKIP, not an executed test FAIL.
+{
+  const directory = path.join(temp, 'bounded-helper-logging-unavailable');
+  fs.mkdirSync(path.join(directory, '.codex/runtime'), { recursive: true });
+  fs.writeFileSync(path.join(directory, '.codex/logs'), 'a file, not a writable directory');
+  const data = JSON.stringify({ ACTIVE: true, WORKTREE: directory, AUTHORIZATION_ID: 'log-unavailable',
+    PREFLIGHT: { count: 1, test: 'test/affected.test.ts', patch: 'fixture' } });
+  fs.writeFileSync(path.join(directory, '.codex/runtime/owner.json'), data);
+  fs.writeFileSync(path.join(directory, '.codex/runtime/latest-task.json'), JSON.stringify({
+    path: 'owner.json', sha256: createHash('sha256').update(data).digest('hex'),
+  }));
+  const result = run(process.execPath, [path.join(root, 'tools/codex/limited-local-verification.mjs'),
+    'test/affected.test.ts'], { cwd: directory });
+  assert(result.status === 0 && result.stdout.includes('SKIP preflight:') &&
+    result.stdout.includes('no tests executed'),
+    'sandbox EPERM or invalid log path must skip without false fail or blocked publication');
+}
+
 // A foreign active session is never assumed interrupted, even with clean Git.
 for (const dirty of [false, true]) {
   const f = recoveryFixture();
@@ -916,7 +1004,52 @@ for (const dirty of [false, true]) {
   assert(preflight(command).hookSpecificOutput?.permissionDecisionReason.includes('merged origin/main'), 'unmerged helper refused');
 }
 {
-  // An unavailable optional preflight must not cost an authorized implementation
+  // Ordinary publication denies explicit local FAIL, never missing or SKIP results.
+// A failed task's Stop checkpoint remains an authorized preservation mechanism.
+{
+  const f = recoveryFixture();
+  const pointer = path.join(f.repository, '.codex/runtime/latest-task.json');
+  const latest = JSON.parse(fs.readFileSync(pointer, 'utf8'));
+  const receiptPath = path.join(f.repository, '.codex/runtime', latest.path);
+  const state = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+  state.PREFLIGHT = { count: 1, patch: 'synthetic-verified-patch', test: 'test/affected.test.ts' };
+  const serialized = JSON.stringify(state);
+  fs.writeFileSync(receiptPath, serialized);
+  fs.writeFileSync(pointer, JSON.stringify({
+    path: latest.path, sha256: createHash('sha256').update(serialized).digest('hex'),
+  }));
+  const command = 'git push origin codex/policy-self-test';
+  const push = () => f.invoke('PreToolUse', { tool_name: 'Bash', tool_input: { command } });
+  const permission = () => f.invoke('PermissionRequest', {
+    tool_name: 'Bash', tool_input: { command },
+  });
+  const logs = path.join(f.repository, '.codex/logs');
+  fs.mkdirSync(logs, { recursive: true });
+  const receipt = path.join(logs, 'preflight-' + state.AUTHORIZATION_ID + '.json');
+  fs.writeFileSync(receipt, JSON.stringify({
+    status: 'FAIL', patch: state.PREFLIGHT.patch, attempt: 1,
+    reason: 'named unit actually executed and failed',
+  }));
+  assert(push().hookSpecificOutput?.permissionDecisionReason.includes('LOCAL_PREFLIGHT_FAILED'),
+    'executed test failure must prevent ordinary git push');
+  assert(permission().hookSpecificOutput?.decision?.behavior === 'deny',
+    'GitHub push permission must also honor a recorded failing test');
+  const stop = f.invoke('Stop', {
+    last_assistant_message: 'TASK_STATUS: COMPLETE\nACCEPTANCE_STATUS: SATISFIED',
+  });
+  assert(stop.decision === 'block' && String(stop.reason).includes('LOCAL_PREFLIGHT_FAILED'),
+    'COMPLETE cannot bypass a known failure even when CI has not run');
+  fs.writeFileSync(receipt, JSON.stringify({
+    status: 'SKIP', patch: state.PREFLIGHT.patch, attempt: 1,
+    reason: 'new execution could not start',
+  }));
+  assert(JSON.stringify(push()) === '{}' && permission().hookSpecificOutput?.decision?.behavior === 'allow',
+    'genuine nonexecuting SKIP does not block publication');
+  fs.rmSync(receipt);
+  assert(JSON.stringify(push()) === '{}', 'missing execution receipt is not an invented test failure');
+}
+
+// An unavailable optional preflight must not cost an authorized implementation
   // patch. A clean BLOCKED Stop checkpoints/pushes the pending work unchanged.
   const f = recoveryFixture();
   f.dirty();
