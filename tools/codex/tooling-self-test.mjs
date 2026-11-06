@@ -1314,6 +1314,35 @@ assert(
   "resume must use the fetched remote feature head",
 );
 
+// Reproduce the previously silent macOS failure: the target worktree occurs
+// near the start of a large porcelain stream. With pipefail an awk 'exit' on
+// the matching branch can SIGPIPE its git producer and end bootstrap after
+// PR_BOOTSTRAP_FETCH, with neither FAIL nor READY.
+{
+  const bin = path.join(bootstrapRoot, 'git-porcelain-stress');
+  fs.mkdirSync(bin);
+  const realGitPath = mustRun('sh', ['-c', 'command -v git']).stdout.trim();
+  fs.writeFileSync(path.join(bin, 'git'), String.raw`#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "list" ] && [ "$3" = "--porcelain" ]; then
+  "$PFM_REAL_GIT" "$@" || exit
+  i=0
+  while [ "$i" -lt 20000 ]; do
+    printf "worktree /tmp/pfm-unused-%s\\nHEAD 0123456789012345678901234567890123456789\\nbranch refs/heads/codex/unused-%s\\n\\n" "$i" "$i"
+    i=$((i+1))
+  done
+  exit 0
+fi
+exec "$PFM_REAL_GIT" "$@"
+`, { mode: 0o755 });
+  const stressed = run('bash', [bootstrap, 'resume', 'codex/task-two'],
+    { cwd: source, env: { ...bootstrapEnv, PFM_REAL_GIT: realGitPath,
+      PATH: bin + path.delimiter + process.env.PATH } });
+  assert(stressed.status === 0 && stressed.stdout.includes('PR_WORKTREE_READY mode=resume') &&
+    stressed.stdout.includes(`path=${resumed}`),
+    'early-matching owner must drain porcelain output without SIGPIPE / silent exit');
+  assertHandoff(stressed, 'resume', resumed, 'codex/task-two');
+}
+
 fs.writeFileSync(path.join(resumed, "local-only.txt"), "local\n");
 mustRun("git", ["-C", resumed, "add", "local-only.txt"]);
 mustRun("git", ["-C", resumed, "commit", "-m", "local only"]);
