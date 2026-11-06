@@ -392,9 +392,11 @@ def clean_closed_checkpoint(root, target):
         return False
     head = git_value(["rev-parse", "HEAD"], root)
     live = run_git(["ls-remote", "--exit-code", "origin", f"refs/heads/{target}"], root)
-    if live.returncode or live.stdout.split() != [live.stdout.split()[0], f"refs/heads/{target}"]:
+    remote_fields = live.stdout.split()
+    if (live.returncode or len(remote_fields) != 2 or
+            remote_fields[1] != f"refs/heads/{target}"):
         return False
-    remote_head = live.stdout.split()[0]
+    remote_head = remote_fields[0]
     if head != remote_head or git_value(["rev-parse", "@{u}"], root) != head:
         # Existing bootstraps do this manually. Only a linked, clean, closed
         # task worktree may take the exact same non-destructive path in-hook.
