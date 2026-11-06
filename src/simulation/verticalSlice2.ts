@@ -79,6 +79,7 @@ import type { HouseholdWorkDescriptor } from "./intraperiodScheduler.js";
 import { payrollContributionCandidate, type PayrollContributionAllocation } from "./payrollContributions.js";
 import type { PayrollWithholdingElection, PayrollWithholdingEvidence } from "./tax/contracts.js";
 import { qualifyHouseholdExpense, type HouseholdExpenseSourceRef } from "./d2/integration/householdBank/expenses.js";
+import { qualifyHouseholdWage, wageStreamOriginal, type HouseholdWageSourceRef } from "./d2/integration/householdWages/index.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -114,6 +115,7 @@ interface MonthlyStreamBase<Id extends IncomeId | ExpenseId> {
 }
 
 export interface RecurringIncomeStream extends MonthlyStreamBase<IncomeId> {
+  readonly householdWageSource?: HouseholdWageSourceRef;
   readonly payrollTaxCreditAccountId?: AccountId;
   readonly payrollWithholding?: readonly PayrollWithholdingElection[];
   readonly payrollContributions?: readonly PayrollContributionAllocation[];
@@ -681,18 +683,37 @@ function executeCashFlowPeriodCandidate(
           const traceRefs = freezeTraceRefs([...recurrenceTraces, ...eventEligibility.traceRefs])!;
           const provenance = generatedProvenance(stream.primitiveIds.recurrence, occurrence.scheduledAt, occurrence.occurrenceId);
           actions.push({ scheduledAt: occurrence.scheduledAt, kind: "income", priority: payrollPriority(stream) ?? Number.MAX_SAFE_INTEGER, id: `${stream.id}:${occurrence.occurrenceId}`, execute: () => {
+            const wageSource = stream.householdWageSource;
+            if (state.accounts[stream.depositAccountId]?.ownerId === request.input.householdId && wageSource === undefined)
+              invalidInput("HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL: unsupported income without an independent wage source", `incomes.${stream.id}.householdWageSource`);
+            if (wageSource !== undefined && (stream.ownerId === request.input.householdId || state.accounts[stream.depositAccountId]?.ownerId !== request.input.householdId))
+              invalidInput("Household wages require a Person recipient and household BANK", `incomes.${stream.id}.householdWageSource`);
+            const householdWage = wageSource === undefined ? undefined : { source: wageSource, stream: wageStreamOriginal(stream), period: targetPeriod, context: {
+              runId: request.runContext.runId, asOf: request.runContext.asOf, dataCutoff: request.runContext.dataCutoff,
+              householdId: request.input.householdId, personId: domainId("person", stream.ownerId), bankAccountId: stream.depositAccountId,
+              direction: "credit" as const, eventAt: occurrence.scheduledAt, eventId: `tx:recognition:income:${stream.id}:${occurrence.scheduledAt}`,
+            } };
             registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", occurrence.occurrenceId);
             const recognition = createRecognitionFact({ id: recognitionId(`recognition:income:${stream.id}:${occurrence.scheduledAt}`), category: "recurring_income", amount, recognizedAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, provenance, traceRefs }, state.identities.recognitionIds);
             registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
             recognitions.push(recognition);
             effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "recurring_income", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, provenance, traceRefs }));
             if (stream.payrollContributions?.length || stream.payrollWithholding?.length) {
-              const payroll = payrollContributionCandidate(state, { id: `tx:${recognition.id}`, incomeId: stream.id, ownerId: stream.ownerId, occurrenceId: occurrence.occurrenceId, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions ?? [], ...(stream.payrollWithholding === undefined ? {} : { withholding: stream.payrollWithholding }), ...(stream.payrollTaxCreditAccountId === undefined ? {} : { taxCreditAccountId: stream.payrollTaxCreditAccountId }) });
+              const payroll = payrollContributionCandidate(state, { id: `tx:${recognition.id}`, incomeId: stream.id, ownerId: stream.ownerId, occurrenceId: occurrence.occurrenceId, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions ?? [], ...(householdWage === undefined ? {} : { householdWage }), ...(stream.payrollWithholding === undefined ? {} : { withholding: stream.payrollWithholding }), ...(stream.payrollTaxCreditAccountId === undefined ? {} : { taxCreditAccountId: stream.payrollTaxCreditAccountId }) });
               state = payroll.state;
               if (payroll.withholdingEvidence !== undefined) withholdingEvidence.push(payroll.withholdingEvidence);
               diagnostics.push(...payroll.diagnostics);
               for (const posted of payroll.transactions) transactions.push(posted);
-            } else applyTransaction(transaction(`tx:${recognition.id}`, occurrence.scheduledAt, "income", [{ posting: "debit", type: "cash", amount, accountId: stream.depositAccountId, cashFlowClass: "operating" }, { posting: "credit", type: "income", amount }], traceRefs));
+            } else {
+              const posted = transaction(`tx:${recognition.id}`, occurrence.scheduledAt, "income", [{ posting: "debit", type: "cash", amount, accountId: stream.depositAccountId, cashFlowClass: "operating" }, { posting: "credit", type: "income", amount }], traceRefs);
+              if (householdWage === undefined) applyTransaction(posted);
+              else {
+                const evidence = qualifyHouseholdWage(householdWage.source, householdWage.context,
+                  { stream: householdWage.stream, incomeId: stream.id, occurrenceId: occurrence.occurrenceId, period: targetPeriod, gross: amount, transaction: posted });
+                applyHouseholdDomainTransactionAtomically(state, posted, evidence);
+                transactions.push(posted);
+              }
+            }
             recognizedIncome = recognizedIncome.plus(amount);
             incomeOccurrences.push(Object.freeze({ streamId: stream.id, occurrenceId: occurrence.occurrenceId, scheduledAt: occurrence.scheduledAt, amount, provenance, traceRefs }));
             periodTraces.push(...traceRefs);
