@@ -14,9 +14,13 @@ import { composeMedicareObligations, type MedicareCoordinationRequest, type Medi
 import type { EffectivePeriod, PremiumSource } from "../../health/premiums/index.js";
 import type { PremiumRepresentation } from "../aftertaxPremiums/index.js";
 import type { SsaMedicareInput } from "../ssaMedicare/index.js";
+import type { HouseholdExpenseSourceRef } from "../householdBank/expenses.js";
+import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
 
 /** Confirmation is not posting authority: the raw C1/C2 request is re-derived. */
 export interface ConfirmedMedicareBankPremium {
+  /** Independent CMS/enrollment/IRMAA original consumed by actual VS2. */
+  readonly householdExpenseSource?: HouseholdExpenseSourceRef;
   readonly obligation: MedicareObligation;
   readonly expenseId: RecurringExpenseStream["id"];
   readonly primitiveIds: RecurringExpenseStream["primitiveIds"];
@@ -88,6 +92,9 @@ function qualify(binding: SourceBinding) {
     if (![o.memberBase, o.surcharge, o.memberObligation].every(exact)
       || !o.memberBase.plus(o.surcharge).equals(o.memberObligation)) fail("MEDICARE_CENTS_REQUIRED", "Exact USD member base plus Part-specific monthly IRMAA once");
     const p = b.payable, bank = b.bank;
+    if (b.householdExpenseSource && (b.householdExpenseSource.original.family !== "medicare"
+      || b.householdExpenseSource.beneficiary !== o.personId))
+      fail("MEDICARE_SOURCE_INCOMPLETE", "Household premiums require the beneficiary's independently published Medicare original");
     if (o.intendedRoute.kind !== "aftertax_bank" || bank.classification !== "BANK"
       || bank.accountId !== o.intendedRoute.sourceAccountId || bank.householdId !== o.householdId || bank.payerId !== o.payerId
       || p.householdId !== o.householdId || p.payerId !== o.payerId || p.personId !== o.personId
@@ -109,9 +116,10 @@ function qualify(binding: SourceBinding) {
 }
 
 function streamFor(b: ConfirmedMedicareBankPremium): RecurringExpenseStream {
-  const o = b.obligation, trace = `${bindingPrefix}${canonicalSerialize(b)}`;
+  const o = b.obligation, trace = `${bindingPrefix}${b.householdExpenseSource ? `sha256:${sha256(canonicalSerialize(b))}` : canonicalSerialize(b)}`;
   return {
-    id: b.expenseId, ownerId: domainId("person", o.personId), paymentAccountId: b.bank.accountId,
+    id: b.expenseId, ownerId: domainId("person", b.householdExpenseSource ? o.payerId : o.personId), paymentAccountId: b.bank.accountId,
+    ...(b.householdExpenseSource ? { householdExpenseSource: b.householdExpenseSource } : {}),
     payableLiabilityId: b.payable.liabilityId, baseMonthlyAmount: o.memberObligation,
     start: at(o.period.start), end: at(o.period.endExclusive),
     recurrence: { kind: "utc_monthly", anchor: at(o.effectiveAt), invalidDayPolicy: "skip" },
@@ -160,7 +168,7 @@ function sourceGuard(configuration: SourceBinding): HouseholdKernelParticipant {
       for (const b of binding.confirmed.filter(b => at(b.obligation.effectiveAt) >= period.start && at(b.obligation.effectiveAt) < period.end)) {
         const account = opening.state.accounts[b.bank.accountId];
         if (opening.state.obligations[b.obligation.claimId]) fail("MEDICARE_DOUBLE_ROUTE", "An existing SSA premium claim already owns this member/Part/month");
-        if (!account || account.ownerId !== b.obligation.payerId || !["checking", "savings"].includes(account.kind) || !exact(account.cash)
+        if (!account || account.ownerId !== (b.householdExpenseSource ? b.obligation.householdId : b.obligation.payerId) || !["checking", "savings"].includes(account.kind) || !exact(account.cash)
           || !opening.state.liabilities[b.payable.liabilityId]
           || work.filter(w => w.id.startsWith(`cash-expense:${b.expenseId}:`) && w.sequencingInstant === at(b.obligation.effectiveAt)
             && w.primitiveInstanceId === b.primitiveIds.recurrence && w.resourceAccesses.length === 1
@@ -227,7 +235,7 @@ export function attachMedicareBank(input: MedicareBankInput) {
     const streams = binding.confirmed.map(streamFor);
     for (const b of binding.confirmed) {
       const o = b.obligation, account = opening.accounts[b.bank.accountId], liability = opening.liabilities[b.payable.liabilityId];
-      if (!account || account.id !== b.bank.accountId || account.ownerId !== o.payerId
+      if (!account || account.id !== b.bank.accountId || account.ownerId !== (b.householdExpenseSource ? o.householdId : o.payerId)
         || !["checking", "savings"].includes(account.kind) || !exact(account.cash)
         || !liability || liability.id !== b.payable.liabilityId || !exact(liability.balance))
         fail("MEDICARE_BANK_PAYABLE_REQUIRED", "Existing owned checking/savings and exact USD payable required");
