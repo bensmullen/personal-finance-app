@@ -1,5 +1,5 @@
 import { accountingTransactionId, createAccountingLeg, createAccountingTransaction, type AccountingLegDraft } from "../../../../src/accounting/index.js";
-import { generatedOccurrenceKey } from "../../../../src/identity/index.js";
+import { domainId, generatedOccurrenceKey } from "../../../../src/identity/index.js";
 import { calculationTraceId, calculationTraceRef, freezeTraceRefs } from "../../../../src/lineage/index.js";
 import { createAuthoritativeState } from "../../../../src/state/index.js";
 import { instant, utcMonthlyPeriods, type Instant } from "../../../../src/time/index.js";
@@ -11,13 +11,24 @@ import { registerHouseholdExpenseOriginalProvider, type HouseholdExpenseOriginal
 import { attachRetirementCash, registerRetirementRawSourcePort, type RetirementCashInput, type RetirementRawSource } from "../../../../src/simulation/d2/integration/retirementCash/index.js";
 import { retirementRawSourceDigest } from "../../../../src/simulation/d2/integration/retirementCash/source.js";
 import { attachMedicareBank, type ConfirmedMedicareBankPremium } from "../../../../src/simulation/d2/integration/medicareBank/index.js";
-import { fixture as retirementFixture, input as retirementInput, rmdInput, ids, source as withdrawalSource } from "../retirementCash/scenario.js";
+import { fixture as retirementFixture, input as retirementInput, rmdInput, ids, uuid, source as withdrawalSource } from "../retirementCash/scenario.js";
 import { request as medicareRequest, confirmations, person, payable } from "../medicareBank/scenario.js";
 import type { MedicareCoordinationRequest } from "../../../../src/simulation/d2/health/medicare/coordination/index.js";
 import { sha256 as digestText } from "../../../../src/rules/tax/t1b/contentIdentity.js";
 
 export { ids };
 export const bob = ids.other;
+export const legacyAccounts = { ira: domainId("account", uuid(80)), bank: domainId("account", uuid(81)) };
+export function legacyOriginal(): RetirementRawSource {
+  const cash = retirementInput(retirementFixture(), "legacy-bob", bob, legacyAccounts.ira, legacyAccounts.bank);
+  const original = rmdInput(cash), row = original.allocations[0]!;
+  const terms = { ...row.approval!.terms, allocationId: "allocation:legacy-bob" };
+  const binding = { ...original, allocations: [{ ...row, ...terms, approval: { ...row.approval!, id: "approval:legacy-bob", terms,
+    source: withdrawalSource("approval:legacy-bob", bob) } }] };
+  return { sourceId: "legacy-bob", sourceVersion: "v1", cash: { ...cash, withdrawals: binding.withdrawals }, binding,
+    priorOperationIds: [], availability: [{ operationId: cash.withdrawals.requests[0]!.operationId,
+      publishedAt: instant("2025-01-01T00:00:00.000Z"), knownAt: instant("2026-06-15T00:00:00.000Z") }] };
+}
 const originalMedicare = medicareRequest(), sourceContext = retirementFixture().context;
 export const control: { bankReads: number; retirementReads: number; expenseReads: number;
   bank?: (v: HouseholdBankOriginalInventory) => HouseholdBankOriginalInventory | undefined;
@@ -53,7 +64,7 @@ function relabel(value: unknown): unknown {
   return value;
 }
 export const request = (month = "2026-06") => relabel(medicareRequest(month)) as MedicareCoordinationRequest;
-export const premiums = (month = "2026-06"): readonly ConfirmedMedicareBankPremium[] => confirmations(request(month)).map((b, n) => ({
+export const premiums = (month = "2026-06"): readonly ConfirmedMedicareBankPremium[] => (relabel(confirmations(medicareRequest(month))) as readonly ConfirmedMedicareBankPremium[]).map((b, n) => ({
   ...b, settlementPriority: n + 1, bank: { ...b.bank, accountId: ids.bank, payerId: bob },
   payable: { ...b.payable, liabilityId: payable(n === 0 ? "part_b" : "part_d"), payerId: bob },
   householdExpenseSource: { version: "household-expense-source/v1", bank: bankAddress, beneficiary: bob,
@@ -108,8 +119,12 @@ export function fixture(cash = "200", months = 1, retirementCash = "1000", sourc
 export function attached(options: { retirement?: boolean; rmd?: boolean; medicare?: boolean; cash?: string; months?: number } = {}) {
   const f = fixture(options.cash ?? (options.retirement === false || options.medicare === false ? "200" : "400"), options.months);
   let kernel = f.kernel;
-  if (options.medicare !== false) kernel = attachMedicareBank({ kernel, request: request(), confirmed: premiums(),
-    asOf: request().premiums.period.start, representations: [] }).kernel;
+  if (options.medicare !== false) {
+    const attachment = attachMedicareBank({ kernel, request: request(), confirmed: premiums(),
+      asOf: request().premiums.period.start, representations: [] });
+    if (attachment.netCashCoverage !== "complete") throw new Error(JSON.stringify(attachment.diagnostics));
+    kernel = attachment.kernel;
+  }
   if (options.retirement !== false) kernel = attachRetirementCash(kernel, retirementPlan(options.rmd)).kernel;
   return { ...f, kernel };
 }
@@ -129,6 +144,7 @@ export function install() {
   } });
   registerRetirementRawSourcePort({ read: ref => {
     control.retirementReads++;
+    if (ref.sourceId === "legacy-bob") return legacyOriginal();
     const m = /^retirement:(\d{4}-\d{2}):(plain|rmd)$/.exec(ref.sourceId);
     if (!m) return undefined;
     const raw = retirementOriginal(m[2] === "rmd", m[1]);

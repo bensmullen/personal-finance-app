@@ -6,7 +6,7 @@ import { idempotencyKey } from "../../../../src/identity/index.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../../../../src/simulation/r3/replayArtifact.js";
 import { canonicalSerialize } from "../../../../src/simulation/run.js";
 import { attachRetirementCash, evaluateFundedRmdSatisfaction } from "../../../../src/simulation/d2/integration/retirementCash/index.js";
-import { qualifyRetirementRawSource } from "../../../../src/simulation/d2/integration/retirementCash/source.js";
+import { qualifyRetirementRawSource, retirementRawSourceDigest } from "../../../../src/simulation/d2/integration/retirementCash/source.js";
 import { attachMedicareBank } from "../../../../src/simulation/d2/integration/medicareBank/index.js";
 import { evaluateWithdrawals } from "../../../../src/simulation/d2/retirement/withdrawals/index.js";
 import { instant } from "../../../../src/time/index.js";
@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixture as personFixture, input as personInput } from "../retirementCash/scenario.js";
 import { fixture as personMedicareFixture, input as personMedicareInput } from "../medicareBank/scenario.js";
-import { attached, bob, control, expenseOriginal, fixture, ids, install, premiums, request, reset, retirementOriginal, retirementPlan } from "./scenario.js";
+import { attached, bob, control, expenseOriginal, fixture, ids, install, legacyAccounts, legacyOriginal, premiums, request, reset, retirementOriginal, retirementPlan } from "./scenario.js";
 
 beforeAll(install);
 beforeEach(reset);
@@ -26,6 +26,8 @@ const execute = (f = attached()) => runHouseholdKernel({ kernel: f.kernel, runCo
 const noCommit = (f: ReturnType<typeof attached>) => {
   const before = canonicalSerialize(f.state), result = execute(f);
   expect(result.status, JSON.stringify(result.diagnostics)).toBe("incomplete");
+  expect(result.periods).toHaveLength(0);
+  expect(result.diagnostics.some(d => d.severity === "error")).toBe(true);
   expect(canonicalSerialize(result.state)).toBe(before);
   expect(canonicalSerialize(f.state)).toBe(before);
   return result;
@@ -34,7 +36,9 @@ const noCommit = (f: ReturnType<typeof attached>) => {
 describe("source-qualified ordinary retirement transfers", () => {
   it.each([false, true])("posts exact native v2 two-cash-leg proof (RMD reference %s)", rmd => {
     const f = attached({ medicare: false, rmd }), result = execute(f);
-    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("incomplete");
+    expect(result.periods).toHaveLength(1);
+    expect(result.outputCapabilities?.retirementTax?.status).toBe("incomplete");
     expect(result.state.accounts[ids.ira]!.cash.equals(money("500"))).toBe(true);
     expect(result.state.accounts[ids.bank]!.cash.equals(money("700"))).toBe(true);
     const records = Object.values(result.state.retirementDistributionAllocations!);
@@ -100,7 +104,8 @@ describe("source-qualified ordinary retirement transfers", () => {
   });
   it("preserves the direct-person v1 cash route", () => {
     const f = personFixture(), result = runHouseholdKernel({ kernel: attachRetirementCash(f.kernel, personInput(f)).kernel, runContext: f.context, resultTier: "detail" });
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("incomplete");
+    expect(result.periods).toHaveLength(1);
     expect(result.state.accounts[ids.bank]!.cash.equals(money("700"))).toBe(true);
     expect(result.state.retirementDistributionAllocations).toBeUndefined();
     expect(result.periods[0]!.transactions[0]!.id).toBe(accountingTransactionId("withdraw:one"));
@@ -111,12 +116,39 @@ describe("source-qualified ordinary retirement transfers", () => {
     const kernel = attachRetirementCash(applyHouseholdExecutionOverlay(f.kernel, { reconciledOpeningState: f.state }), p).kernel;
     noCommit({ ...f, kernel });
   });
+  it.each([false, true])("preserves another person's posted v1 RMD credit beside an imported native household distribution (%s)", rmd => {
+    const native = execute(attached({ medicare: false, rmd }));
+    expect(native.periods).toHaveLength(1);
+    const raw = legacyOriginal(), base = personFixture();
+    const opening = createAuthoritativeState({ accounts: {
+      [legacyAccounts.ira]: { id: legacyAccounts.ira, ownerId: bob, kind: "retirement", cash: money("1000") },
+      [legacyAccounts.bank]: { id: legacyAccounts.bank, ownerId: bob, kind: "checking", cash: money("200") },
+    } });
+    const reference = { sourceId: raw.sourceId, sourceVersion: raw.sourceVersion, contentDigest: retirementRawSourceDigest(raw),
+      horizon: { start: base.context.simulationStart, end: base.context.simulationEnd } };
+    const kernel = applyHouseholdExecutionOverlay(base.kernel, { reconciledOpeningState: opening });
+    const legacy = execute({ ...base, state: opening, kernel: attachRetirementCash(kernel, { ...raw.cash, fundedRmd: reference }).kernel });
+    expect(legacy.periods).toHaveLength(1);
+    const identities = Object.fromEntries(Object.entries(native.state.identities).map(([key, values]) =>
+      [key, [...new Set([...values, ...legacy.state.identities[key as keyof typeof legacy.state.identities]])]])) as typeof native.state.identities;
+    const imported = createAuthoritativeState({ accounts: { ...native.state.accounts, ...legacy.state.accounts }, identities,
+      retirementDistributionAllocations: { ...native.state.retirementDistributionAllocations, ...legacy.state.retirementDistributionAllocations },
+      d2PostedTransactions: { ...native.state.d2PostedTransactions, ...legacy.state.d2PostedTransactions } });
+    const before = canonicalSerialize(imported);
+    const annual = evaluateFundedRmdSatisfaction(reference, imported, base.context, base.context.simulationEnd).annual!;
+    expect(annual.obligations[0]!.required.equals(money("700"))).toBe(true);
+    expect(annual.obligations[0]!.satisfied.equals(money("500"))).toBe(true);
+    expect(annual.obligations[0]!.remaining.equals(money("200"))).toBe(true);
+    expect(canonicalSerialize(imported)).toBe(before);
+    expect(Object.values(imported.retirementDistributionAllocations!).find(d => d.nativeHousehold)!.rmdSatisfaction).toBe("not_applied");
+  });
 });
 
 describe("separately sourced NON-SSA Medicare VS2 premiums", () => {
   it("recognizes 80 B and 120 D, then settles each exactly once from the one BANK", () => {
     const result = execute(attached({ retirement: false }));
-    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("incomplete");
+    expect(result.periods).toHaveLength(1);
     expect(result.state.accounts[ids.bank]!.cash.isZero()).toBe(true);
     expect(result.periods[0]!.transactions).toEqual(premiums().flatMap(b => {
       const original = expenseOriginal("2026-06", b.obligation.part);
@@ -129,7 +161,8 @@ describe("separately sourced NON-SSA Medicare VS2 premiums", () => {
   });
   it("retains full recognition and unpaid liability when unfunded, without a settlement", () => {
     const result = execute(attached({ retirement: false, cash: "0" }));
-    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("incomplete");
+    expect(result.periods).toHaveLength(1);
     expect(result.periods[0]!.transactions.map(t => t.type)).toEqual(["expense_recognition", "expense_recognition"]);
     expect(result.periods[0]!.cashFlow!.outstandingExpenseObligations.equals(money("200"))).toBe(true);
     expect(Object.values(result.state.d2PostedTransactions ?? {})).toHaveLength(0);
@@ -161,7 +194,8 @@ describe("separately sourced NON-SSA Medicare VS2 premiums", () => {
   it("preserves direct-person Medicare recognition/settlement without native metadata", () => {
     const f = personMedicareFixture(), a = attachMedicareBank(personMedicareInput(undefined, f.kernel));
     const result = runHouseholdKernel({ kernel: a.kernel, runContext: f.context, resultTier: "detail" });
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("incomplete");
+    expect(result.periods).toHaveLength(1);
     expect(result.periods[0]!.statements.expenses.equals(money("200"))).toBe(true);
     expect(Object.keys(result.state.d2PostedTransactions ?? {})).toHaveLength(0);
   });
@@ -170,7 +204,8 @@ describe("separately sourced NON-SSA Medicare VS2 premiums", () => {
 describe("two members sharing BANK, replay and references", () => {
   it.each([false, true])("combines original retirement and Medicare journals with one exact balance (%s)", rmd => {
     const f = attached({ rmd }), result = execute(f);
-    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("incomplete");
+    expect(result.periods).toHaveLength(1);
     expect(result.state.accounts[ids.bank]!.cash.equals(money("700"))).toBe(true);
     expect(result.state.accounts[ids.ira]!.cash.equals(money("500"))).toBe(true);
     expect(Object.keys(result.state.accounts)).toHaveLength(2);
@@ -214,7 +249,7 @@ describe("two members sharing BANK, replay and references", () => {
       prepare: () => ({ id: "unrelated-bank-work", operations: [{ descriptor: { id: "unrelated-bank-work", domain: "cash_flow",
         operationClass: "cash_flow:unrelated", sequencingInstant: instant(retirement ? "2026-06-15T00:00:00.000Z" : "2026-06-01T00:00:00.000Z"),
         dependsOn: [], resourceAccesses: [{ kind: "account_cash", accountId: ids.bank, mode: "consume" }], traceRefs: [] }, execute: candidate => ({ ...candidate, facts: {} }) }] }) };
-    noCommit({ ...f, kernel: applyHouseholdExecutionOverlay(f.kernel, { participants: [...f.kernel.executable.participants!, other] }) });
+    noCommit({ ...f, kernel: applyHouseholdExecutionOverlay(f.kernel, { participants: [...(f.kernel.executable.participants ?? []), other] }) });
   });
   it("rejects overlapping integrated SSA Medicare collection later in the same member month", () => {
     const f = attached({ retirement: false });
@@ -223,7 +258,7 @@ describe("two members sharing BANK, replay and references", () => {
         id: `ssa-medicare:${JSON.stringify(["d2-quoted-benefit/v1", ids.household, "synthetic-installment", bob])}`,
         domain: "cash_flow", operationClass: "cash_flow:ssa_medicare", sequencingInstant: instant("2026-06-10T00:00:00.000Z"),
         dependsOn: [], resourceAccesses: [], traceRefs: [] }, execute: candidate => ({ ...candidate, facts: {} }) }] }) };
-    noCommit({ ...f, kernel: applyHouseholdExecutionOverlay(f.kernel, { participants: [...f.kernel.executable.participants!, other] }) });
+    noCommit({ ...f, kernel: applyHouseholdExecutionOverlay(f.kernel, { participants: [...(f.kernel.executable.participants ?? []), other] }) });
   });
   it("keeps 1/12/24 actual Medicare source references, journals and reads bounded", () => {
     const sizes: number[] = [];
@@ -238,7 +273,8 @@ describe("two members sharing BANK, replay and references", () => {
         kernel = a.kernel;
       }
       const result = execute({ ...f, kernel });
-      expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+      expect(result.status, JSON.stringify(result.diagnostics)).toBe("incomplete");
+      expect(result.periods).toHaveLength(months);
       expect(Object.values(result.state.d2PostedTransactions!)).toHaveLength(months * 2);
       expect(result.state.accounts[ids.bank]!.cash.equals(money((10000n - 200n * BigInt(months)).toString()))).toBe(true);
       const encoded = JSON.stringify(result.state.d2PostedTransactions);

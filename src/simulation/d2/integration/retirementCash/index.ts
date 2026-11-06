@@ -2,7 +2,7 @@ import { accountingTransactionId, createAccountingLeg, createAccountingTransacti
 import { ValidationError } from "../../../../diagnostics/index.js";
 import { domainId, idempotencyKey } from "../../../../identity/index.js";
 import { calculationTraceId, calculationTraceRef } from "../../../../lineage/index.js";
-import { applyAccountingTransactionAtomically, applyRetirementDistributionAtomically, registerAuthoritativeIdentity } from "../../../../state/index.js";
+import { applyAccountingTransactionAtomically, applyRetirementDistributionAtomically, registerAuthoritativeIdentity, requalifyRetirementDistributionHistory } from "../../../../state/index.js";
 import { civilDate, instant, type Period } from "../../../../time/index.js";
 import { Money, USD } from "../../../../values/index.js";
 import { applyHouseholdExecutionOverlay, type CompiledHouseholdKernel, type HouseholdKernelParticipant } from "../../../householdExecution.js";
@@ -13,14 +13,74 @@ import { SummaryOperationSink } from "../../../r3/summarySink.js";
 import { canonicalSerialize, type RunContext } from "../../../run.js";
 import { evaluateWithdrawals, type WithdrawalInput, type WithdrawalSource } from "../../retirement/withdrawals/index.js";
 import { evaluateWithdrawalRmd, type AuthorizationBundle, type WithdrawalRmdInput } from "../../retirement/withdrawalRmd/index.js";
-import { readRetirementRawSource, retirementRawSourceDigest, qualifyRetirementRawSource, qualifyRetirementPriorHistory, type RetirementSourceReference } from "./source.js";
+import { readRetirementRawSource, retirementRawSourceDigest, qualifyRetirementRawSource, qualifyRetirementRecordedSource, qualifyRetirementPriorHistory, type RetirementSourceReference } from "./source.js";
+import { evaluateRmdObligations, type RmdDistribution } from "../../retirement/distributions/index.js";
 import { evaluateFundedRmdSatisfaction as evaluatePersonFundedRmdSatisfaction, type FundedRmdResult } from "./satisfaction.js";
 export { registerRetirementRawSourcePort, type RetirementRawSourcePort, type RetirementRawSource } from "./source.js";
 /** Native v2 retains allocation evidence; it cannot grant applied RMD credit. */
 export function evaluateFundedRmdSatisfaction(...args: Parameters<typeof evaluatePersonFundedRmdSatisfaction>): FundedRmdResult {
-  if (Object.values(args[1].retirementDistributionAllocations ?? {}).some(d => d.nativeHousehold))
-    return { coverage: "incomplete", reason: "source_not_qualified", annual: null };
-  return evaluatePersonFundedRmdSatisfaction(...args);
+  const [reference, state, context, through] = args;
+  const records = Object.values(state.retirementDistributionAllocations ?? {});
+  if (!records.some(d => d.nativeHousehold)) return evaluatePersonFundedRmdSatisfaction(...args);
+  // Validate the full committed history. Scope only the derived evaluation;
+  // never fabricate a partial authoritative state with orphaned posting proofs.
+  requalifyRetirementDistributionHistory(state, context);
+  try {
+    const raw = readRetirementRawSource(reference, context);
+    if (!raw) return { coverage: "incomplete", reason: "source_unavailable", annual: null };
+    const requests = raw.binding.rmd.requests;
+    if (requests.some(r => r.aggregation || r.accounts.length !== 1))
+      return { coverage: "incomplete", reason: "unsupported_group_journal", annual: null };
+    const expected = [...raw.priorOperationIds, ...raw.cash.withdrawals.requests
+      .filter(r => at(r.effectiveAt) < through).map(r => r.operationId)];
+    const scoped = records.filter(d => d.householdId === raw.cash.withdrawals.householdId
+      && (expected.includes(d.operationId) || requests.some(r => r.personId === d.personId
+        && r.accounts[0]?.id === d.sourceAccountId
+        && (r.taxYear === d.taxYear || d.allocations.some(a => a.satisfiesRmdYear === r.taxYear)))));
+    if (raw.cash.withdrawals.requests.some(r => r.bank.householdDestination) || scoped.some(d => d.nativeHousehold))
+      return { coverage: "incomplete", reason: "source_not_qualified", annual: null };
+    const lastDate = new Date(Date.parse(through) - 1).toISOString().slice(0, 10);
+    const asOf = civilDate([lastDate, raw.binding.rmd.asOf, context.dataCutoff.slice(0, 10)].sort()[0]!);
+    const baseline = evaluateRmdObligations({ ...raw.binding.rmd, asOf, distributions: [] });
+    const incomplete = (reason: NonNullable<FundedRmdResult["reason"]>): FundedRmdResult => ({ coverage: "incomplete", reason, annual: baseline });
+    if (new Set(expected).size !== expected.length || !same([...expected].sort(), scoped.map(d => d.operationId).sort()))
+      return incomplete("history_incomplete");
+    const distributions: RmdDistribution[] = [];
+    for (const d of scoped) {
+      const historical = readRetirementRawSource(d.source, context);
+      const qualified = historical && qualifyRetirementRecordedSource(historical, d.operationId, context, d.source.ruleVersion);
+      const proof = state.d2PostedTransactions?.[d.originalPostingProofId];
+      if (qualified?.status !== "qualified" || !same(qualified.distribution, d)
+        || proof?.registration.kind !== "retirement_cash_distribution" || !same(proof.registration.distribution, d)
+        || !state.identities.postedTransactionIds.includes(d.transactionId)) return incomplete("source_not_qualified");
+      for (const row of d.allocations) {
+        const o = baseline.obligations.find(o => o.id === row.obligationId);
+        const r = requests.find(r => r.personId === row.obligation.personId && r.taxYear === row.satisfiesRmdYear
+          && r.accounts[0]?.id === row.sourceAccountId);
+        if (!o || !r || !o.required.equals(row.obligation.required) || at(o.due) !== row.deadline
+          || (r.election === "defer") !== row.deferred || o.ruleSnapshotId !== row.ruleVersion
+          || (o.taxYear - Number(r.birthDate.slice(0, 4)) === r.rule!.startAge) !== row.firstYear)
+          return incomplete("source_not_qualified");
+      }
+      const source = historical!.binding.allocations.find(a => a.withdrawalId === d.withdrawalId)?.approval?.rmdSource;
+      if (d.allocations.length && !source) return incomplete("source_not_qualified");
+      if (source) distributions.push({ transactionId: d.transactionId, personId: d.personId, payerOwnerId: d.personId,
+        accountId: d.sourceAccountId, at: civilDate(d.effectiveAt.slice(0, 10)), gross: d.gross, kind: "ordinary",
+        authorized: true, funding: "posted_funded", usageRegister: "verified_complete", source,
+        allocations: d.allocations.map(a => ({ id: a.allocationId, obligationId: a.obligationId,
+          satisfiesRmdYear: a.satisfiesRmdYear, amount: a.amount, historical: true })) });
+    }
+    const owners = new Set(raw.cash.members.map(m => m.personId));
+    const finalYear = Number(new Date(Date.parse(reference.horizon.end) - 1).toISOString().slice(0, 4));
+    let horizonComplete = true;
+    for (const account of Object.values(state.accounts).filter(a => a.kind === "retirement" && typeof a.ownerId === "string" && owners.has(a.ownerId)))
+      for (let year = Number(reference.horizon.start.slice(0, 4)); year <= finalYear; year++)
+        if (!requests.some(r => r.taxYear === year && r.personId === account.ownerId && r.accounts[0]?.id === account.id))
+          horizonComplete = false;
+    const annual = evaluateRmdObligations({ ...raw.binding.rmd, asOf, distributions });
+    return immutableConfiguration({ coverage: !horizonComplete || annual.diagnostics.some(d => d.coverage === "incomplete") ? "incomplete" : "complete",
+      ...(!horizonComplete ? { reason: "source_not_qualified" as const } : {}), annual });
+  } catch { return { coverage: "incomplete", reason: "source_not_qualified", annual: null }; }
 }
 
 /** Independent event confirmations, never balances maintained by this adapter. */
