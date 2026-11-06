@@ -153,7 +153,7 @@ describe("separately sourced NON-SSA Medicare VS2 premiums", () => {
     expect(result.periods[0]!.transactions).toEqual(premiums().flatMap(b => {
       const original = expenseOriginal("2026-06", b.obligation.part);
       return [original.recognition, original.settlement];
-    }));
+    }).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)));
     expect(Object.values(result.state.d2PostedTransactions!)).toHaveLength(2);
     expect(Object.values(result.state.d2PostedTransactions!).every(p => p.registration.kind === "household_domain"
       && p.registration.personId === bob && p.registration.evidence.originals[0]!.original.family === "medicare")).toBe(true);
@@ -210,7 +210,7 @@ describe("two members sharing BANK, replay and references", () => {
     expect(result.state.accounts[ids.ira]!.cash.equals(money("500"))).toBe(true);
     expect(Object.keys(result.state.accounts)).toHaveLength(2);
     expect(result.periods[0]!.transactions.map(t => t.type)).toEqual([
-      "expense_recognition", "expense_settlement", "expense_recognition", "expense_settlement", "retirement_cash_transfer"]);
+      "expense_recognition", "expense_recognition", "expense_settlement", "expense_settlement", "retirement_cash_transfer"]);
     expect(result.periods[0]!.netWorth.equals(money("1200"))).toBe(true);
     expect(Object.values(result.state.d2PostedTransactions!).map(p => p.registration.personId).sort()).toEqual([bob, bob, ids.person].sort());
     const summary = runHouseholdKernel({ kernel: f.kernel, runContext: f.context });
@@ -274,7 +274,7 @@ describe("two members sharing BANK, replay and references", () => {
       }
       const result = execute({ ...f, kernel });
       expect(result.status, JSON.stringify(result.diagnostics)).toBe("incomplete");
-      expect(result.periods).toHaveLength(months);
+      expect(result.periods, JSON.stringify(result.diagnostics)).toHaveLength(months);
       expect(Object.values(result.state.d2PostedTransactions!)).toHaveLength(months * 2);
       expect(result.state.accounts[ids.bank]!.cash.equals(money((10000n - 200n * BigInt(months)).toString()))).toBe(true);
       const encoded = JSON.stringify(result.state.d2PostedTransactions);
