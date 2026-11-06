@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Unexpected failures must never look like a successful bootstrap.
+# Preserve explicit PR_BOOTSTRAP_FAIL diagnostics while also reporting the
+# nonzero exit when a command or pipeline fails without a message.
+trap 'status=$?; if [ "$status" -ne 0 ]; then printf "PR_BOOTSTRAP_EXIT status=%s line=%s; no PR_WORKTREE_READY; preserve existing work and receipts\n" "$status" "$LINENO" >&2; fi' EXIT
 
 usage() {
   cat >&2 <<'EOF'
@@ -84,19 +88,21 @@ fi
 origin_main="$(git rev-parse "$remote_main")"
 
 branch_owner() {
+  # Do not exit awk early: with pipefail, an upstream git worktree producer
+  # may receive SIGPIPE (141) before finishing and terminate bootstrap silently.
   git worktree list --porcelain | awk -v target="refs/heads/$branch" '
     /^worktree / { p=substr($0,10) }
-    /^branch / { if (substr($0,8)==target) { print p; exit } }
+    /^branch / { if (substr($0,8)==target && !found) { print p; found=1 } }
   '
 }
 
 registered_at_target() {
+  # Likewise consume the complete porcelain stream before returning.
   git worktree list --porcelain | awk -v target="$target_abs" '
     /^worktree / { p=substr($0,10) }
-    /^branch / { b=substr($0,8) }
     /^$/ {
-      if (p==target) { print p; found=1; exit }
-      p=""; b=""
+      if (p==target && !found) { print p; found=1 }
+      p=""
     }
     END { if (!found && p==target) print p }
   '
