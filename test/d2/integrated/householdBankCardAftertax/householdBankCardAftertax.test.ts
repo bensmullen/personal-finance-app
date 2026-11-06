@@ -5,10 +5,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 import { applyD2SettlementAtomically, applyNativeHouseholdOriginalAtomically, createAuthoritativeState,
+  applyPayrollHealthTransactionAtomically, payrollHealthPostingEvidence,
   d2SettlementPostingRegistration, requalifyD2SettlementReceiptHistory } from "../../../../src/state/index.js";
 import { civilDate, instant } from "../../../../src/time/index.js";
 import { money } from "../../../../src/values/index.js";
-import { compileHouseholdKernel, runHouseholdKernel } from "../../../../src/simulation/householdExecution.js";
+import { compileHouseholdKernel, exportHouseholdReplayCheckpointRoots, runHouseholdKernel } from "../../../../src/simulation/householdExecution.js";
 import { canonicalSerialize } from "../../../../src/simulation/run.js";
 import type { HouseholdOperationFacts } from "../../../../src/simulation/r3/domainOperations.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../../../../src/simulation/r3/replayArtifact.js";
@@ -16,14 +17,17 @@ import { qualifyCardBankSource } from "../../../../src/simulation/d2/integration
 import type { HouseholdBankOriginal } from "../../../../src/simulation/d2/integration/householdBank/index.js";
 import { attachAftertaxPremiums } from "../../../../src/simulation/d2/integration/aftertaxPremiums/index.js";
 import { fixture as legacyCardFixture } from "../cardBank/scenario.js";
-import { cardDocument, confirmation, context, control, fixture, ids, install, opening, payable, request, reset, source, sourceId } from "./scenario.js";
+import { confirmation, context, control, fixture, ids, install, opening, payable, payrollAccount, payrollOriginal,
+  request, reset, source, sourceId } from "./scenario.js";
 
 install();
 beforeEach(reset);
 const run = (options: Parameters<typeof fixture>[0] = {}) => {
   const f = fixture(options);
-  for (const admitted of f.admissions) expect(admitted.diagnostics).toEqual([]);
-  return runHouseholdKernel({ kernel: f.kernel, runContext: f.context, resultTier: "detail" });
+  for (const admitted of f.admissions) expect(admitted.diagnostics, JSON.stringify(admitted.diagnostics)).toEqual([]);
+  const result = runHouseholdKernel({ kernel: f.kernel, runContext: f.context, resultTier: "detail" });
+  expect(result.reachedThrough, JSON.stringify(result.diagnostics)).toBe(f.context.simulationEnd);
+  return result;
 };
 const receipt = () => {
   const q = qualifyCardBankSource(sourceId, context());
@@ -33,7 +37,8 @@ const receipt = () => {
 describe("#280 authentic issuer and elected aftertax premium household BANK debits", () => {
   it.each([{ card: true, premium: false }, { card: false, premium: true }, { card: true, premium: true }])("executes independent and combined routes %j", options => {
     const r = run(options);
-    expect(r.status, JSON.stringify(r.diagnostics)).toBe("completed");
+    expect(r.status, JSON.stringify(r.diagnostics)).toBe(options.card ? "incomplete" : "completed");
+    if (options.card) expect(r.diagnostics).toContainEqual(expect.objectContaining({ code: "CARD_BANK_S7_INCOMPLETE" }));
     const paid = money(options.card ? "200" : "0").plus(money(options.premium ? "300.37" : "0"));
     const expense = money(options.card ? "20" : "0").plus(money(options.premium ? "300.37" : "0"));
     expect(r.state.accounts[ids.bank]!.cash.equals(money("1000").minus(paid))).toBe(true);
@@ -51,13 +56,19 @@ describe("#280 authentic issuer and elected aftertax premium household BANK debi
       expect(q.nativeHousehold!.original.cashRole).toBe("nonbank");
       expect(q.originalTransaction.legs.some(l => l.type === "cash")).toBe(false);
       expect(q.nativeHousehold!.settlement.context.personId).toBe(ids.person);
+      expect(q.kind).toBe("card_interest_payment");
+      if (q.kind !== "card_interest_payment") throw new Error("Expected issuer card receipt");
+      expect(q.interestAllocation.equals(money("20"))).toBe(true);
+      expect(q.principalAllocation.equals(money("180"))).toBe(true);
+      expect(q.feeAllocation.isZero()).toBe(true);
       expect(r.state.liabilities[ids.card]!.balance.equals(money("820"))).toBe(true);
     }
   });
   it("matches summary and detail without turning the subsidy into household cash or pretax payroll", () => {
     const f = fixture(), detail = runHouseholdKernel({ kernel: f.kernel, runContext: f.context, resultTier: "detail" }),
       summary = runHouseholdKernel({ kernel: f.kernel, runContext: f.context });
-    expect(detail.status).toBe("completed");
+    expect(detail.status).toBe("incomplete");
+    expect(detail.diagnostics).toContainEqual(expect.objectContaining({ code: "CARD_BANK_S7_INCOMPLETE" }));
     expect(canonicalSerialize(summary.state)).toBe(canonicalSerialize(detail.state));
     expect(Object.values(detail.state.d2PostedTransactions!).some(p => p.registration.kind === "payroll_health_deduction")).toBe(false);
     expect(detail.periods.flatMap(p => p.transactions).map(t => t.type)).toEqual([
@@ -67,10 +78,15 @@ describe("#280 authentic issuer and elected aftertax premium household BANK debi
   });
   it("preserves full unfunded recognition and the issuer charge without debiting cash", () => {
     const r = run({ cash: "10" });
-    expect(r.status).toBe("completed");
+    expect(r.status).toBe("incomplete");
     expect(r.state.accounts[ids.bank]!.cash.equals(money("10"))).toBe(true);
     expect(r.state.liabilities[ids.card]!.balance.equals(money("1020"))).toBe(true);
     expect(r.state.liabilities[payable]!.balance.equals(money("300.37"))).toBe(true);
+    const unpaid = Object.values(r.state.obligations).filter(o => o.balanceEntityId === payable);
+    expect(unpaid).toHaveLength(1);
+    expect(unpaid[0]!.originalAmount.equals(money("300.37"))).toBe(true);
+    expect(unpaid[0]!.outstandingAmount.equals(money("300.37"))).toBe(true);
+    expect(r.periods.reduce((sum, p) => sum.plus(p.statements.expenses), money("0")).equals(money("320.37"))).toBe(true);
     expect(r.state.identities.settlementIds).toEqual([]);
     expect(Object.values(r.state.d2PostedTransactions!)).toHaveLength(1);
   });
@@ -105,14 +121,26 @@ describe("#280 authentic issuer and elected aftertax premium household BANK debi
   });
   it("rejects duplicate payroll premium evidence for the same plan/member/month", () => {
     const f = fixture({ card: false }), guard = f.kernel.executable.participants![0]!;
-    const source = { householdId: ids.household, ownerId: ids.other, planId: "health-plan", coverageId: "elected-coverage",
-      periodStart: instant("2026-02-01T00:00:00.000Z"), periodEnd: instant("2026-03-01T00:00:00.000Z") };
-    // An intentionally minimal observed proof isolates the guard; the payroll
-    // writer's independent financial/source acceptance belongs to its suite.
-    const facts = { cash: { payrollWithholding: [{ healthDeduction: { source } }] } } as unknown as HouseholdOperationFacts;
+    expect(f.admissions[0]!.diagnostics, JSON.stringify(f.admissions[0]!.diagnostics)).toEqual([]);
+    const original = payrollOriginal(), state = opening();
+    state.accounts[payrollAccount] = { id: payrollAccount, ownerId: ids.other, kind: "checking", cash: money("0") };
+    applyPayrollHealthTransactionAtomically(state, original.transaction, original.deduction, f.context);
+    const healthDeduction = payrollHealthPostingEvidence(state, original.transaction.id, f.context);
+    expect(healthDeduction).toEqual(original.deduction);
+    expect(Object.values(state.d2PostedTransactions!)).toHaveLength(1);
+    const before = canonicalSerialize(state);
+    const facts = { cash: { payrollWithholding: [{ healthDeduction }] } } as unknown as HouseholdOperationFacts;
     const descriptor = { id: "payroll", domain: "cash_flow", sequencingInstant: instant("2026-02-10T00:00:00.000Z"),
       dependsOn: [], resourceAccesses: [], traceRefs: [] };
     expect(() => guard.observe!(descriptor, facts, {})).toThrow("DUPLICATE_PREMIUM_PAYROLL_ROUTE");
+    const summaryFacts = { summary: { cash: { payrollWithholding: [{ healthDeduction }] } } } as unknown as HouseholdOperationFacts;
+    expect(() => guard.observe!(descriptor, summaryFacts, {})).toThrow("DUPLICATE_PREMIUM_PAYROLL_ROUTE");
+    const kernel = compileHouseholdKernel({ ...f.kernel.executable, reconciledOpeningState: state }, f.context.simulationStart);
+    const rejected = runHouseholdKernel({ kernel, runContext: f.context });
+    expect(rejected.status).toBe("incomplete");
+    expect(rejected.diagnostics).toContainEqual(expect.objectContaining({ message: "DUPLICATE_PREMIUM_PAYROLL_ROUTE" }));
+    expect(canonicalSerialize(rejected.state)).toBe(before);
+    expect(canonicalSerialize(state)).toBe(before);
     expect(canonicalSerialize(f.state)).toBe(canonicalSerialize(opening()));
   });
   it.each(["late", "issuer", "missing"])("rejects unavailable or changed card originals: %s", mode => {
@@ -154,7 +182,8 @@ describe("#280 authentic issuer and elected aftertax premium household BANK debi
     expect(legacy.schemaVersion).toBe("d2-shared/settlement-receipt/v1");
     expect("nativeHousehold" in legacy).toBe(false);
     const old = legacyCardFixture(), result = runHouseholdKernel({ kernel: old.kernel, runContext: old.context });
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("incomplete");
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "CARD_BANK_S7_INCOMPLETE" }));
     expect(result.state.d2SettlementReceipts![legacy.id]).toEqual(legacy);
     expect(c.asOf).toBe(old.context.asOf);
   });
@@ -174,14 +203,27 @@ describe("#280 authentic issuer and elected aftertax premium household BANK debi
     expect(again.diagnostics).toEqual([]);
     expect(again.kernel).toBe(f.kernel);
   });
-  it("reauthenticates cold portable replay and rejects missing or changed sources", () => {
-    const f = fixture(), r = runHouseholdKernel({ kernel: f.kernel, runContext: f.context, resultTier: "detail" }),
-      artifact = createPortableHouseholdReplayArtifact(runHouseholdKernel({ kernel: f.kernel, runContext: f.context }));
+  it.each([false, true])("reauthenticates committed cold portable replay (card=%s)", card => {
+    // The first retained checkpoint is at month 12. Both routes must have
+    // genuine posted proof there, before the selected month is replayed.
+    const f = fixture({ card, premium: !card, months: 13, cash: card ? "1000" : "10000" });
+    for (const admitted of f.admissions) expect(admitted.diagnostics, JSON.stringify(admitted.diagnostics)).toEqual([]);
+    const r = runHouseholdKernel({ kernel: f.kernel, runContext: f.context, resultTier: "detail" }),
+      summary = runHouseholdKernel({ kernel: f.kernel, runContext: f.context }),
+      artifact = createPortableHouseholdReplayArtifact(summary);
+    const checkpoints = exportHouseholdReplayCheckpointRoots(summary);
+    expect(checkpoints).toHaveLength(1);
+    expect(checkpoints[0]!.at).toBe(r.periods.at(-1)!.period.start);
+    const committed = Object.values(checkpoints[0]!.state.d2PostedTransactions ?? {});
+    expect(committed.filter(p => p.registration.kind === (card ? "card_interest_payment" : "household_domain")))
+      .toHaveLength(card ? 2 : 11);
+    if (!card) expect(committed[0]!.registration).toMatchObject({ personId: ids.other });
+    expect(r.state.accounts[ids.bank]!.cash.equals(money(card ? "800" : "6395.56"))).toBe(true);
     expect(() => restorePortableHouseholdReplayArtifact(artifact)).not.toThrow();
     const dir = mkdtempSync(join(tmpdir(), "pfm-stage-e-")), path = join(dir, "payload.json");
     try {
       for (const mode of ["valid", "missing", "changed", "revoked"] as const) {
-        writeFileSync(path, JSON.stringify({ artifact, selected: r.periods.at(-1)!.period, mode }));
+        writeFileSync(path, JSON.stringify({ artifact, selected: r.periods.at(-1)!.period, mode, card }));
         const child = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
           fileURLToPath(new URL("./portableWorker.ts", import.meta.url))], { encoding: "utf8", timeout: 15_000,
           env: { ...process.env, PFM_STAGE_E_PAYLOAD: path } });
@@ -189,7 +231,8 @@ describe("#280 authentic issuer and elected aftertax premium household BANK debi
         expect(JSON.parse(child.stdout)).toEqual(mode === "valid" ? { state: canonicalSerialize(r.state) } : { rejected: true });
       }
     } finally { rmSync(dir, { recursive: true, force: true }); }
-    control.premium = () => undefined;
+    if (card) control.card = () => undefined;
+    else control.premium = () => undefined;
     expect(() => createAuthoritativeState(r.state)).toThrow();
     expect(() => requalifyD2SettlementReceiptHistory(r.state, context())).toThrow();
   }, 30_000);

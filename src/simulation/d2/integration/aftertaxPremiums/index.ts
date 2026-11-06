@@ -1,4 +1,5 @@
 import { domainId } from "../../../../identity/index.js";
+import { ValidationError } from "../../../../diagnostics/index.js";
 import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
 import type { HouseholdBankEventContext, HouseholdEconomicOriginalReference, PayrollHealthSourceBinding } from "../../../../state/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../../../../funding/index.js";
@@ -146,19 +147,27 @@ interface PremiumGuardBinding { readonly source: HouseholdExpenseSourceRef; read
  * A conflict rolls back the period; this guard never posts money. */
 function premiumGuard(input: PremiumGuardBinding): HouseholdKernelParticipant {
   const binding = immutableConfiguration(input), id = `aftertax-source:${canonicalSerialize(binding.source.original)}`;
+  const reject = (message: string): never => {
+    throw new ValidationError({ severity: "error", code: "AFTERTAX_PREMIUM_NOT_ADMITTED",
+      entityType: "aftertax_premium", message });
+  };
+  const original = () => {
+    try { return readPremiumOriginal(binding.source.original, binding.context); }
+    catch (error) { return reject(error instanceof Error ? error.message : "PREMIUM_ORIGINAL_UNAVAILABLE"); }
+  };
   const inspect = (s: PayrollHealthSourceBinding) => {
-    const d = readPremiumOriginal(binding.source.original, binding.context), p = d.confirmation.proposal;
+    const d = original(), p = d.confirmation.proposal;
     if (s.householdId === p.householdId && (s.planId === p.planId || s.coverageId === p.coverageId)
       && (s.ownerId === p.payerId || p.memberIds.includes(s.ownerId))
       && s.periodStart < d.original.period.end && s.periodEnd > d.original.period.start)
-      throw new Error("DUPLICATE_PREMIUM_PAYROLL_ROUTE");
+      reject("DUPLICATE_PREMIUM_PAYROLL_ROUTE");
   };
   return Object.freeze({ id, version: "1", portableCodec: "d2-aftertax-source/v1", economicInputs: binding,
     prepare: (context, period, opening) => {
       if (binding.context.eventAt >= period.start && binding.context.eventAt < period.end) {
         if (context.runId !== binding.context.runId || context.asOf !== binding.context.asOf || context.dataCutoff !== binding.context.dataCutoff)
-          throw new Error("PREMIUM_RUN_CONTEXT_CHANGED");
-        readPremiumOriginal(binding.source.original, binding.context);
+          reject("PREMIUM_RUN_CONTEXT_CHANGED");
+        original();
         for (const proof of Object.values(opening.state.d2PostedTransactions ?? {}))
           if (proof.registration.kind === "payroll_health_deduction") inspect(proof.registration.deduction.source);
       }
@@ -249,7 +258,9 @@ export function attachAftertaxPremiums(input: AftertaxPremiumInput) {
           const d = readPremiumOriginal(b.householdExpenseSource.original, context);
           const { householdExpenseSource: _source, ...confirmation } = b;
           if (!same(d.request, request) || !same(d.confirmation, confirmation)) throw new Error("PREMIUM_ORIGINAL_BINDING_CHANGED");
-          qualifyHouseholdExpense(b.householdExpenseSource, context, d.original);
+          const { expenseId, occurrenceId, claimId, period, recognition, settlement } = d.original;
+          qualifyHouseholdExpense(b.householdExpenseSource, context,
+            { expenseId, occurrenceId, claimId, period, recognition, settlement });
           const guard = premiumGuard({ source: b.householdExpenseSource, context });
           const prior = participants.find(p => p.id === guard.id);
           if (prior && !same(prior.economicInputs, guard.economicInputs)) throw new Error("PREMIUM_SOURCE_BINDING_CHANGED");

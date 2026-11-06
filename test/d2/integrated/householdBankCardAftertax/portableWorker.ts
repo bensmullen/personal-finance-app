@@ -3,9 +3,12 @@ import { restorePortableHouseholdReplayArtifact } from "../../../../src/simulati
 import { replayHouseholdForecastWindow } from "../../../../src/simulation/householdExecution.js";
 import { canonicalSerialize } from "../../../../src/simulation/run.js";
 import { control, install } from "./scenario.js";
-const { artifact, selected, mode } = JSON.parse(readFileSync(process.env.PFM_STAGE_E_PAYLOAD!, "utf8"));
+const { artifact, selected, mode, card } = JSON.parse(readFileSync(process.env.PFM_STAGE_E_PAYLOAD!, "utf8"));
 if (mode !== "missing") install();
-if (mode === "changed") control.premium = d => ({ ...d, version: "amended" });
+if (mode === "changed") {
+  if (card) control.card = d => ({ ...d, version: "amended" });
+  else control.premium = d => ({ ...d, version: "amended" });
+}
 if (mode === "revoked") control.bank = () => undefined;
 try {
   const r = replayHouseholdForecastWindow(restorePortableHouseholdReplayArtifact(artifact), selected);

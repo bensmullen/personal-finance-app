@@ -27,7 +27,22 @@ exact cents, subsidy exclusion, unpaid claims, owner/member/account/permission
 rejections, revocation/cutoff/source changes, rollback, duplicate/idempotent card
 transactions, duplicate payroll premium observation, legacy card v1 receipts,
 independent cold-process portable replay and 1/12/24 premium proof growth.
+The cold-process cases independently exercise card and premium sources over
+13 months, asserting authentic committed proofs in the month-12 checkpoint
+before testing missing, amended and revoked sources. The payroll conflict
+uses an independently qualified employer original posted by the canonical
+payroll writer, including both summary/detail observation and opening-proof
+rejection without mutation.
 Historical aftertax Person streams remain covered by the existing
 `test/d2/integrated/aftertaxPremiums` suite.
+
+Card postings do not imply supported future APR, grace, tax or future-cycle
+projections: `CARD_BANK_S7_INCOMPLETE` and incomplete capability status remain
+explicit even when both authentic issuer journals commit. Financial assertions
+check full-horizon execution, cash, expense, principal/interest allocation and
+receipts independently of that projection status. Premium admission compares
+the bridge's exact occurrence/journal projection rather than the entire source
+archive. Guard source failures are structured validation errors so the executor
+can return an incomplete result while preserving the last committed state.
 
 CI, independent exact-head semantic review and PM merge approval remain required.

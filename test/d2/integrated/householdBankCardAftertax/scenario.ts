@@ -1,7 +1,8 @@
 import { accountingTransactionId, createAccountingLeg, createAccountingTransaction, type AccountingLegDraft } from "../../../../src/accounting/index.js";
 import { domainId, generatedOccurrenceKey } from "../../../../src/identity/index.js";
 import { calculationTraceId, calculationTraceRef, freezeTraceRefs } from "../../../../src/lineage/index.js";
-import { createAuthoritativeState, type HouseholdBankEventContext } from "../../../../src/state/index.js";
+import { createAuthoritativeState, registerPayrollHealthSourceAuthority, type PayrollHealthDeductionEvidence,
+  type HouseholdBankEventContext } from "../../../../src/state/index.js";
 import { civilDate, instant, utcMonthlyPeriods } from "../../../../src/time/index.js";
 import { money, USD } from "../../../../src/values/index.js";
 import { attachCardBank, registerCardBankSourcePort, type CardBankDocument } from "../../../../src/simulation/d2/integration/cardBank/index.js";
@@ -17,6 +18,27 @@ import { document, ids, sourceId, opening as cardOpening } from "../cardBank/sce
 export { ids, sourceId };
 const uuid = (n: number) => `28000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 export const payable = domainId("liability", uuid(1));
+export const payrollAccount = domainId("account", uuid(2));
+/** Independent employer original; neither guard facts nor replay supply it. */
+export function payrollOriginal() {
+  const at = instant("2026-02-10T00:00:00.000Z"), id = accountingTransactionId("stage-e-payroll");
+  const source: PayrollHealthDeductionEvidence["source"] = { version: "payroll-health-source/v1", sourceId: "stage-e-employer",
+    sourceVersion: "1", householdId: ids.household, ownerId: ids.other, incomeId: domainId("income", uuid(3)), employerId: "employer",
+    occurrenceId: "stage-e-wage", transactionId: id, bankAccountId: payrollAccount, coverageId: "elected-coverage", planId: "health-plan",
+    electionId: "stage-e-election", claimId: "stage-e-payroll-premium", dueAt: at,
+    periodStart: instant("2026-02-01T00:00:00.000Z"), periodEnd: instant("2026-03-01T00:00:00.000Z"),
+    publishedAt: instant("2026-01-01T00:00:00.000Z"), knownAt: instant("2026-01-01T00:00:00.000Z") };
+  const expenseId = domainId("health-expense", uuid(4));
+  const deduction: PayrollHealthDeductionEvidence = { version: "payroll-health-deduction/v1", source, at,
+    gross: money("1000"), employeeAmount: money("300.37"), employerAmount: money("100"), expenseId,
+    contributions: [], withholding: [], deductionInventory: [source.claimId], appliedJurisdictionWageBases: [] };
+  const transaction = createAccountingTransaction({ id, date: at, type: "payroll_income", legs: [
+    createAccountingLeg({ type: "expense", posting: "debit", entityId: expenseId, amount: deduction.employeeAmount }),
+    createAccountingLeg({ type: "cash", posting: "debit", accountId: payrollAccount, amount: money("699.63"), cashFlowClass: "operating" }),
+    createAccountingLeg({ type: "income", posting: "credit", amount: deduction.gross }),
+  ] });
+  return { deduction, transaction };
+}
 export const control: { card?: (d: CardBankDocument) => CardBankDocument | undefined;
   premium?: (d: AftertaxPremiumOriginal) => AftertaxPremiumOriginal | undefined;
   bank?: (d: HouseholdBankOriginalInventory) => HouseholdBankOriginalInventory | undefined;
@@ -84,6 +106,11 @@ export function premiumOriginal(n = 0): AftertaxPremiumOriginal {
   } };
 }
 export function install(): void {
+  registerPayrollHealthSourceAuthority({ qualify: binding => {
+    const original = payrollOriginal();
+    return canonicalSerialize(binding) === canonicalSerialize(original.deduction.source)
+      ? { status: "qualified", ...original } : { status: "incomplete", reason: "source_not_qualified" };
+  } });
   registerCardBankSourcePort({ householdPublisherId: "stage-e-issuer", read: id => id === sourceId
     ? control.card ? control.card(cardDocument()) : cardDocument() : undefined });
   registerAftertaxPremiumSourcePort({ publisherId: "stage-e-coverage", readOriginal: ref => {
