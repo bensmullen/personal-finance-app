@@ -213,7 +213,7 @@ describe("two members sharing BANK, replay and references", () => {
     const other: HouseholdKernelParticipant = { id: "unrelated-bank-work", version: "synthetic/v1", economicInputs: {},
       prepare: () => ({ id: "unrelated-bank-work", operations: [{ descriptor: { id: "unrelated-bank-work", domain: "cash_flow",
         operationClass: "cash_flow:unrelated", sequencingInstant: instant(retirement ? "2026-06-15T00:00:00.000Z" : "2026-06-01T00:00:00.000Z"),
-        dependsOn: [], resourceAccesses: [{ kind: "account_cash", accountId: ids.bank, mode: "consume" }], traceRefs: [] }, execute: candidate => candidate }] }) };
+        dependsOn: [], resourceAccesses: [{ kind: "account_cash", accountId: ids.bank, mode: "consume" }], traceRefs: [] }, execute: candidate => ({ ...candidate, facts: {} }) }] }) };
     noCommit({ ...f, kernel: applyHouseholdExecutionOverlay(f.kernel, { participants: [...f.kernel.executable.participants!, other] }) });
   });
   it("rejects overlapping integrated SSA Medicare collection later in the same member month", () => {
@@ -222,7 +222,7 @@ describe("two members sharing BANK, replay and references", () => {
       prepare: () => ({ id: "synthetic-ssa", operations: [{ descriptor: {
         id: `ssa-medicare:${JSON.stringify(["d2-quoted-benefit/v1", ids.household, "synthetic-installment", bob])}`,
         domain: "cash_flow", operationClass: "cash_flow:ssa_medicare", sequencingInstant: instant("2026-06-10T00:00:00.000Z"),
-        dependsOn: [], resourceAccesses: [], traceRefs: [] }, execute: candidate => candidate }] }) };
+        dependsOn: [], resourceAccesses: [], traceRefs: [] }, execute: candidate => ({ ...candidate, facts: {} }) }] }) };
     noCommit({ ...f, kernel: applyHouseholdExecutionOverlay(f.kernel, { participants: [...f.kernel.executable.participants!, other] }) });
   });
   it("keeps 1/12/24 actual Medicare source references, journals and reads bounded", () => {
