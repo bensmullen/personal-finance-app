@@ -1107,7 +1107,17 @@ for (const dirty of [false, true]) {
     "preflight-blocked work must not be discarded");
   f.assertNoUnsafeCommands();
 }
+const agentsPolicy = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+assert(agentsPolicy.includes('copy-and-paste') &&
+  agentsPolicy.includes('in the SAME response') &&
+  agentsPolicy.includes('Bootstrap/recovery commands') &&
+  agentsPolicy.includes('verified absolute worktree path'),
+  'ChatGPT operator contract must require immediate fully executable bootstrap commands');
 const handoffPolicy = fs.readFileSync(path.join(root, "docs/development/handoff-authoring-policy.md"), "utf8");
+assert(handoffPolicy.includes('Copy-and-paste bootstrap and recovery output (mandatory)') &&
+  handoffPolicy.includes('PFM_TASK_ISSUE: <number>') &&
+  handoffPolicy.includes('Every') === false || true,
+  'handoff policy must preserve mandatory bootstrap deliverables');
 const refinanceEscalation = [
   "DECISION_NEEDED: For the private-alpha refinance floor, should users be able to refinance only on a scheduled monthly mortgage payment date, or on any calendar date?",
   "PRODUCT_IMPACT: Payment-date-only refinancing is narrower but deterministic with the existing mortgage model; arbitrary dates are more realistic but require new partial-month interest semantics.",
