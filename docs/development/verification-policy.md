@@ -14,13 +14,27 @@ It runs the complete package typecheck API (`tsc --noEmit` then
 `tsc -p tsconfig.next.json`) within 60 seconds total, then that unit file within
 30 seconds. It invokes local binaries directly, avoiding npm lifecycle hooks.
 One simple tool call per coherent patch; at most one correction retry after
-FAIL, requiring changed content and the same test. PASS/SKIP cannot authorize
-retry. Reservations count even if interrupted; logs and compact PASS/FAIL/SKIP
-receipts live in ignored `.codex/logs`. No flags, wrappers, shell chaining,
-arbitrary test selection, installers or alternate runners. The helper must
-match merged `origin/main`; it is prohibited in its own implementation turn.
-Missing Node/npm/node_modules causes a clear SKIP (no startup requirement).
-PASS is feedback only and never sets acceptance status.
+an explicit, persisted FAIL, requiring changed content and the same test.
+An interrupted/unrecorded invocation (including sandbox .codex/logs EPERM)
+may be retried once on the same patch. PASS or recorded SKIP does not authorize
+another attempt. Receipts stay compact in ignored `.codex/logs`. No flags,
+wrappers, shell chaining, arbitrary test selection, installers or alternate
+runners. The helper must match merged `origin/main`; it is prohibited in its
+own implementation turn.
+
+**Execution truth:** A nonzero exit from an executed bounded typecheck or
+selected unit test is FAIL, and a matching persisted FAIL blocks ordinary
+Codex push/COMPLETE until an authorized correction retry yields PASS or a
+genuine environment SKIP. Do not deliberately skip a known failure. A missing
+result, missing Node/npm/node_modules, unwritable .codex/logs, spawn error,
+helper/API incompatibility or bounded timeout is SKIP/unverified rather than an
+invented assertion failure, and cannot by itself prevent publication.
+A BLOCKED task may still checkpoint authorized WIP to the task branch with
+explicit disclosure; that is preservation, **not** a successful completion.
+This rule does not grant Codex permission to install tools or run unbounded
+commands. GitHub CI remains authoritative. No local preflight is required as
+a condition of starting or publishing a task. PASS is feedback only and does
+not establish acceptance.
 
 All other local tests, builds, validators, benchmarks, dev servers,
 stochastic/convergence runs, onboarding dry runs and package installation remain
