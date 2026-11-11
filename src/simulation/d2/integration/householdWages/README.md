@@ -35,6 +35,29 @@ Combined household payroll-health is capability-gated with
 posting remains under its original authority. No additional wage proof is
 generated for a combined household payroll-health candidate in this stage.
 
+## Canonical modeled salary
+
+Canonical cash-flow compilation can issue `modeled-payroll/v1` references for
+authored Person salary routed to a shared in-scope cash account. This includes
+the historical two-spouse family-HSA forecast using the first spouse's checking
+account. The reference binds the complete compiled salary, recipient, actual
+bank owner/kind, scenario and effective compiler horizon to a private compiler
+inventory. A hash, trace label or copied reference on different economics grants
+no authority. VS2 rechecks each reference and evaluated occurrence before either
+the original direct `income` journal or `payroll_income` candidate can post.
+These forecasts never create D2 originals or satisfy SSA wage exclusivity.
+
+Household compilation reissues the binding after annual-policy/tax-account
+reconstruction; the forecast boundary reissues it after scenario application.
+Immutable kernel copies carry only typed references. A single bounded v3 replay
+extension holds the effective request, model/context fingerprints and an ordered
+source manifest, without copying the model or monthly source histories.
+Application restore requires a separately supplied canonical model and invokes
+the registered application recompiler before kernel/checkpoint admission.
+Missing, changed or unsupported model evidence fails closed. Warm/retained
+artifacts and cached explanations still check that independent source; legacy
+non-model v1/v2/v3 and independent wage/SSA publisher qualification are unchanged.
+
 The synthetic `test/d2/integrated/householdBankIncome` suite covers both wage
 branches, legacy person routes, multiple members, independent SSA coexistence,
 source failures/races, original mismatches, compact multi-period references,

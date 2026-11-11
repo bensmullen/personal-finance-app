@@ -7,11 +7,12 @@ import { supportsD1SpouseHsaScope, durablePayrollAllocations } from "./payrollAu
 import { createWorkplaceEventParticipant } from "../../simulation/workplaceEvents.js";
 import { createPerformanceSession, type PerformanceObserver, type PerformanceSession } from "../../diagnostics/performance.js";
 import { canonicalSerialize } from "../../simulation/run.js";
-import { compileHouseholdKernel, type CompiledHouseholdKernel } from "../../simulation/r3/compiledHousehold.js";
+import { compileHouseholdKernel, immutableConfiguration, type CompiledHouseholdKernel } from "../../simulation/r3/compiledHousehold.js";
 import { instant } from "../../time/index.js";
 import { reconcileHouseholdOpeningState, reconcileHouseholdPrimitiveState } from "../../simulation/householdProjection.js";
 import { buildHouseholdScheduledPlan, type HouseholdContentionPolicy } from "../../simulation/intraperiodScheduler.js";
 import { compileHouseholdCashFlow, type CashFlowCompilerRequest, type CashFlowScenarioBindings, type CompiledCashFlow } from "./cashFlow.js";
+import { registerModeledPayrollCompiler, modeledPayrollKey, withoutModeledPayroll, type ModeledPayrollBinding } from "../../simulation/d2/integration/householdWages/modeledPayroll.js";
 import { compileInvestments, type InvestmentCompilerRequest, type CompiledInvestments } from "./investments.js";
 import { compileLiabilities, type LiabilityCompilerRequest, type CompiledLiabilities } from "./liabilities.js";
 import type { CapabilityDiagnostic, CompileResult } from "./types.js";
@@ -31,6 +32,13 @@ export interface HouseholdProjectionCompilerRequest {
   /** Required only when runtime execution discovers material contention. */
   readonly contentionPolicy?: HouseholdContentionPolicy;
 }
+const issuedHouseholdSalaries = new Map<string, ModeledPayrollBinding>();
+registerModeledPayrollCompiler("canonical-household/v1", key => issuedHouseholdSalaries.get(key));
+const issueHouseholdSalary = (binding: ModeledPayrollBinding): CompiledCashFlow["input"]["incomes"][number] => {
+  const snapshot = immutableConfiguration(binding), key = modeledPayrollKey(snapshot);
+  issuedHouseholdSalaries.set(key, snapshot);
+  return { ...snapshot.stream, modeledPayroll: { version: "modeled-payroll/v1", issuer: "canonical-household/v1", key } };
+};
 
 export interface CompiledStandaloneAsset {
   readonly id: string;
@@ -236,9 +244,17 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
       ...(domains?.status === "compiled" ? [domains.value.participant] : []),
       ...(mortgages.value ? [mortgages.value] : []),
       ...(durablePayrollAllocations(model).some(item => item.events.length > 0) ? [createWorkplaceEventParticipant(durablePayrollAllocations(model).flatMap(item => item.events))] : [])]),
-    ...(cash === undefined ? {} : { cashFlowInput: { ...cash.value.input, incomes: cash.value.input.incomes.map(income => ({ ...income,
+    ...(cash === undefined ? {} : { cashFlowInput: { ...cash.value.input, incomes: cash.value.input.incomes.map(income => {
+      const reconstructed = { ...income,
       ...(income.payrollWithholding === undefined ? {} : { payrollTaxCreditAccountId: tax.value.refundAccountId ?? tax.value.fundingPolicy?.orderedSources[0]?.accountId ?? income.payrollTaxCreditAccountId ?? cash.value.input.cashAccountId }),
-      ...(income.payrollContributions === undefined ? {} : { payrollContributions: income.payrollContributions.map(allocation => ({ ...allocation, policy: annualPolicy(allocation.policy) })) }) })) } }),
+      ...(income.payrollContributions === undefined ? {} : { payrollContributions: income.payrollContributions.map(allocation => ({ ...allocation, policy: annualPolicy(allocation.policy) })) }) };
+      if (income.modeledPayroll === undefined) return reconstructed;
+      const bank = opening.value.accounts[income.depositAccountId]!;
+      return issueHouseholdSalary({ stream: withoutModeledPayroll(reconstructed), householdId: cash.value.input.householdId,
+        bank: { id: bank.id, ownerId: bank.ownerId, kind: bank.kind }, start: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`),
+        end: instant(`${firstBoundary.simulationEnd}T00:00:00.000Z`), asOf: instant(`${firstBoundary.asOf ?? firstBoundary.simulationStart}T00:00:00.000Z`),
+        scenarioId: cash.value.scenarioIdentity, sourceFingerprint: modeledPayrollKey({ model, request }) });
+    }) } }),
     ...(investments === undefined ? {} : { investmentInput: { ...investments.value.input, purchases: investments.value.input.purchases.map(purchase => ({ ...purchase, ...(purchase.contribution === undefined ? {} : { contribution: annualPolicy(purchase.contribution) }) })) } }),
     ...(liabilities === undefined ? {} : { liabilityInput: liabilities.value.input }),
     reconciledOpeningState: opening.value,

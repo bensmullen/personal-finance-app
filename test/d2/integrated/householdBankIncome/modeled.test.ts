@@ -1,0 +1,184 @@
+import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { compileCashFlow } from "../../../../src/application/compiler/cashFlow.js";
+import { compileHouseholdProjection } from "../../../../src/application/compiler/householdProjection.js";
+import { runPersonalHouseholdForecast, restoreHouseholdForecastEvidence, resolveHouseholdExplanation, comparePersonalHouseholdScenarios } from "../../../../src/application/householdProjection.js";
+import { GOLDEN_HOUSEHOLD_IDS as ids } from "../../../../src/application/goldenHousehold.js";
+import { patchPersonalObject } from "../../../../src/application/personalMvp.js";
+import { inspectMonthlyMoney } from "../../../../src/application/monthlyMoney.js";
+import { householdEvidenceProof, inspectMortgageWindow, boundedEvidencePoints, restoreHouseholdEvidencePoints } from "../../../../src/application/mortgageChartData.js";
+import { runVerticalSlice2, executeVerticalSlice2PeriodCandidate } from "../../../../src/simulation/verticalSlice2.js";
+import { runHouseholdKernel, replayHouseholdForecastWindow, householdReplayCheckpointSelection } from "../../../../src/simulation/householdExecution.js";
+import { canonicalSerialize, createInputFingerprint, scenarioId } from "../../../../src/simulation/run.js";
+import { assumptionId } from "../../../../src/model/index.js";
+import type { ExecutableScenario } from "../../../../src/simulation/scenario.js";
+import { Rate, rateConvention } from "../../../../src/values/index.js";
+import type { PortableHouseholdReplayArtifact } from "../../../../src/simulation/r3/replayArtifact.js";
+import { deriveStatements } from "../../../../src/statements/index.js";
+import { money, USD } from "../../../../src/values/index.js";
+import { modeledContext, modeledId, modeledRequest, modeledSource, rebindModeledBank } from "./modeledScenario.js";
+
+function standalone(model = modeledSource()) {
+  const request = modeledRequest();
+  const compiled = compileCashFlow(model, request.compiler.cashFlow);
+  if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled));
+  return compiled.value;
+}
+function forecast(model = modeledSource(), months = 1) {
+  const result = runPersonalHouseholdForecast(model, modeledRequest(months));
+  if (result.status === "unavailable") throw new Error(JSON.stringify(result));
+  return result;
+}
+describe("authenticated modeled salary at a shared bank", () => {
+  it.each([false, true])("retains standalone compiler journals with election=%s", elected => {
+    const compiled = standalone(modeledSource(elected));
+    const result = runVerticalSlice2({ ...compiled, runContext: modeledContext(), months: 1 });
+    expect(result.status).toBe("completed");
+    const income = result.periods[0]!.transactions.filter(tx => ["income", "payroll_income"].includes(tx.type));
+    expect(income).toHaveLength(1);
+    expect(income[0]!.type).toBe(elected ? "payroll_income" : "income");
+    expect(income[0]!.legs.find(leg => leg.type === "income")!.amount.equals(money("9000"))).toBe(true);
+    expect(Object.values(result.state.d2PostedTransactions ?? {})).toHaveLength(0);
+  });
+  it("retains both spouses' original HSA signed economics without editing the D1 regression", () => {
+    const compiled = standalone(modeledSource(true, true));
+    const result = runVerticalSlice2({ ...compiled, runContext: modeledContext(), months: 1 });
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.state.accounts[ids.checking]!.cash.amount.toString()).toBe("22450");
+    expect(Object.values(result.state.contributions!).reduce((sum, entry) => sum.plus(entry.amount), money("0")).amount.toString()).toBe("10750");
+    const statements = deriveStatements(result.state, result.periods[0]!.transactions, USD);
+    expect(statements.income.amount.toString()).toBe("18000");
+    expect(statements.expenses.amount.toString()).toBe("4800");
+  });
+  it.each(["amount", "schedule", "member", "bank", "marker", "missing"])("rejects changed %s before committing anything", kind => {
+    const compiled = standalone(), stream = compiled.input.incomes[0]!, before = canonicalSerialize(compiled.openingState);
+    const changed = kind === "amount" ? { ...stream, baseMonthlyAmount: money("1") }
+      : kind === "schedule" ? { ...stream, recurrence: { ...stream.recurrence, anchor: modeledContext().simulationStart } }
+      : kind === "member" ? { ...stream, ownerId: modeledId(90) as typeof stream.ownerId }
+      : kind === "bank" ? { ...stream, depositAccountId: ids.savings as typeof stream.depositAccountId }
+      : kind === "marker" ? { ...stream, modeledPayroll: { ...stream.modeledPayroll!, key: "sha256:forged" } }
+      : { ...stream, modeledPayroll: undefined };
+    const { modeledPayroll: removed, ...without } = changed;
+    const input = { ...compiled.input, incomes: [kind === "missing" ? without : changed as typeof stream] };
+    expect(() => executeVerticalSlice2PeriodCandidate({ input, openingState: compiled.openingState, runContext: modeledContext() },
+      { start: modeledContext().simulationStart, end: modeledContext().simulationEnd }, compiled.openingState, {})).toThrow();
+    expect(canonicalSerialize(compiled.openingState)).toBe(before);
+  });
+  it.each([false, true])("requalifies compiler reconstruction, exported detail and app readers with election=%s", elected => {
+    const model = modeledSource(elected), request = modeledRequest(), compiled = compileHouseholdProjection(model, request.compiler);
+    expect(compiled.status).toBe("compiled");
+    if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled));
+    const summary = runHouseholdKernel({ kernel: compiled.value.executionKernel!, runContext: modeledContext() });
+    expect(summary.status).toBe("completed");
+    const read = forecast(model), artifact = structuredClone(householdEvidenceProof(read.points)!);
+    const restored = restoreHouseholdForecastEvidence(artifact, model);
+    const detail = replayHouseholdForecastWindow(restored, restored.periods[0]!.period);
+    expect(detail.periods[0]!.cash.amount.toString()).toBe(read.points[0]!.cash.amount);
+    expect(() => inspectMonthlyMoney(read.points[0]!, model)).not.toThrow();
+    expect(() => inspectMortgageWindow(read.points, ids.mortgage, undefined, model)).not.toThrow();
+    expect(() => resolveHouseholdExplanation(model, read.points[0]!.traceRefs)).not.toThrow();
+    const selection = { operation: "monthly_evidence" as const, startIndex: 0, liabilityId: ids.mortgage };
+    const bounded = boundedEvidencePoints(read, selection);
+    expect(restoreHouseholdEvidencePoints(bounded.basis, selection, bounded.points, read.diagnosticCatalogs!.source.inputFingerprint, read.diagnosticCatalogs, undefined, model)).toHaveLength(1);
+    for (const proof of [householdEvidenceProof(read.points)!, artifact]) {
+      expect(() => restoreHouseholdForecastEvidence(proof)).toThrow(/BASIS_MISMATCH/);
+      expect(() => restoreHouseholdForecastEvidence(proof, patchPersonalObject(model, "Income", ids.income, { amount: "9001" }))).toThrow(/BASIS_MISMATCH/);
+      expect(() => restoreHouseholdForecastEvidence(proof, rebindModeledBank(model, ids.person))).toThrow(/BASIS_MISMATCH/);
+    }
+    for (const [from, to] of [["canonical-forecast/v1", "forged-forecast/v1"],
+      ["modeled-payroll-replay/v1", "modeled-payroll-replay/v2"], [request.runIdentity, modeledId(99)]]) {
+      const encoded = artifact.encoded.replaceAll(from!, to!);
+      const forged = { ...artifact, encoded, integrity: createInputFingerprint({ runContext: restored.replay.runContext, openingState: encoded }) };
+      expect(() => restoreHouseholdForecastEvidence(forged, model)).toThrow(/BASIS_MISMATCH/);
+    }
+    const changed = patchPersonalObject(model, "Income", ids.income, { amount: "9001" });
+    expect(() => inspectMonthlyMoney(read.points[0]!, changed)).toThrow(/BASIS_MISMATCH/);
+    expect(() => inspectMortgageWindow(read.points, ids.mortgage, undefined, changed)).toThrow(/BASIS_MISMATCH/);
+    expect(() => resolveHouseholdExplanation(changed, read.points[0]!.traceRefs)).toThrow(/BASIS_MISMATCH/);
+  });
+  it("requires independent model requalification in a fresh process", () => {
+    const model = modeledSource(true), read = forecast(model), artifact = householdEvidenceProof(read.points)!;
+    const directory = mkdtempSync(join(tmpdir(), "pfm-modeled-wage-")), path = join(directory, "synthetic.json");
+    try {
+      writeFileSync(path, JSON.stringify({ artifact, model }));
+      const child = spawnSync(process.execPath, [fileURLToPath(new URL("../../../../node_modules/vite-node/vite-node.mjs", import.meta.url)),
+        fileURLToPath(new URL("./modeledWorker.ts", import.meta.url))], { encoding: "utf8", timeout: 10_000,
+        env: { ...process.env, PFM_MODELED_PAYROLL_PAYLOAD: path } });
+      expect(child.status, child.stderr).toBe(0);
+      expect(JSON.parse(child.stdout)).toEqual({ cash: read.points[0]!.cash.amount, missingRejected: true, changedRejected: true });
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+  it("requalifies actual scenario growth and projected annual-policy reconstruction", () => {
+    const model = modeledSource(true), base = modeledRequest(2), context = modeledContext(2);
+    const request = { ...base, compiler: { ...base.compiler, forecastLawPolicy: "projected_current_law" as const } };
+    const root = scenarioId(ids.rootScenario), leaf = scenarioId(modeledId(70));
+    const common = { horizon: { start: context.simulationStart, end: context.simulationEnd }, timestep: "monthly" as const,
+      enabled: true, stochastic: false, simulationCount: 1 };
+    const scenarios: readonly ExecutableScenario[] = [
+      { ...common, scenarioId: root, name: "Root", changes: [] },
+      { ...common, scenarioId: leaf, baseScenarioId: root, name: "Growth", changes: [{ kind: "income_growth",
+        incomeId: ids.income as never, rate: Rate.fromDecimal("0.1", rateConvention.effectiveAnnual()), assumptionId: assumptionId(modeledId(71)) }] },
+    ];
+    const read = comparePersonalHouseholdScenarios({ scenarios, baselineScenarioId: root,
+      baseline: { name: "Root", model, request }, alternatives: [{ name: "Growth", model,
+        request: { ...request, runIdentity: modeledId(72) }, scenarioId: leaf }] });
+    expect(read.status, JSON.stringify(read)).not.toBe("unavailable");
+    const points = read.alternatives[0]!.points.map(row => row.alternative);
+    expect(points).toHaveLength(2);
+    const restored = restoreHouseholdForecastEvidence(structuredClone(householdEvidenceProof(points)!), model);
+    expect(replayHouseholdForecastWindow(restored, restored.periods[1]!.period).periods[0]!.cash.amount.toString()).toBe(points[1]!.cash.amount);
+    expect(() => inspectMonthlyMoney(points[1]!, model)).not.toThrow();
+  });
+  it("rejects reordered or duplicated manifests after independently compiling both spouses", () => {
+    const model = rebindModeledBank(modeledSource(true, true), ids.household), read = forecast(model);
+    const original = householdEvidenceProof(read.points)!, context = modeledContext();
+    const restored = restoreHouseholdForecastEvidence(structuredClone(original), model);
+    expect(restored.replay.kernel.cash!.input.incomes.every(stream => stream.modeledPayroll !== undefined)).toBe(true);
+    for (const duplicate of [false, true]) {
+      const root: unknown = JSON.parse(original.encoded), definitions = new Map<number, unknown>();
+      const visit = (value: unknown, action: (wire: { kind: string; value: unknown }) => void): void => {
+        if (Array.isArray(value)) { for (const item of value) visit(item, action); return; }
+        if (value === null || typeof value !== "object") return;
+        const wire = value as { kind: string; value: unknown }; action(wire); visit(wire.value, action);
+      };
+      visit(root, wire => { if (wire.kind === "definition") { const pair = wire.value as [number, unknown]; definitions.set(pair[0], pair[1]); } });
+      const unwrap = (value: unknown): { kind: string; value: unknown } => {
+        const wire = value as { kind: string; value: unknown };
+        return wire.kind === "definition" ? unwrap((wire.value as [number, unknown])[1])
+          : wire.kind === "reference" ? unwrap(definitions.get(wire.value as number)) : wire;
+      };
+      let changed = false;
+      visit(root, wire => {
+        if (wire.kind !== "record") return;
+        const entries = wire.value as [string, unknown][];
+        const entry = entries.find(([key]) => key === "manifest");
+        if (!entry) return;
+        const manifest = unwrap(entry[1]).value as unknown[];
+        expect(manifest).toHaveLength(2);
+        if (duplicate) manifest.push(manifest[1]); else manifest.reverse();
+        changed = true;
+      });
+      expect(changed).toBe(true);
+      const encoded = JSON.stringify(root), artifact: PortableHouseholdReplayArtifact = { ...original, encoded,
+        integrity: createInputFingerprint({ runContext: context, openingState: encoded }) };
+      expect(() => restoreHouseholdForecastEvidence(artifact, model)).toThrow(/BASIS_MISMATCH/);
+    }
+  });
+  it("keeps 1/12/24-month reference inventory constant and restores sparse checkpoints", () => {
+    const model = modeledSource();
+    const rows = [1, 12, 24].map(months => {
+      const read = forecast(model, months), artifact = householdEvidenceProof(read.points)!;
+      const restored = restoreHouseholdForecastEvidence(structuredClone(artifact), model);
+      expect(restored.periods).toHaveLength(months);
+      expect(householdReplayCheckpointSelection(restored).checkpointCount).toBe(months === 24 ? 1 : 0);
+      expect((artifact.encoded.match(/canonical-forecast\/v1/g) ?? [])).toHaveLength(1);
+      expect(artifact.encoded).not.toContain("Everyday checking");
+      return artifact.encoded.length;
+    });
+    expect(rows[2]!).toBeLessThan(rows[1]! * 3);
+  });
+});

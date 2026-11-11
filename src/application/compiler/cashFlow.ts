@@ -17,6 +17,8 @@ import {
 import { utcMonthlyHorizonMonths, type Instant } from "../../time/index.js";
 import { Currency, Rate, money, rateConvention } from "../../values/index.js";
 import type { VerticalSlice2Input } from "../../simulation/verticalSlice2.js";
+import { registerModeledPayrollCompiler, modeledPayrollKey, type ModeledPayrollBinding } from "../../simulation/d2/integration/householdWages/modeledPayroll.js";
+import { immutableConfiguration } from "../../simulation/r3/compiledHousehold.js";
 import {
   assertGeometricGrowthRate,
   isPrimitiveId,
@@ -48,6 +50,14 @@ import { selectScenario, type SelectedScenario } from "./scenarioSelection.js";
 export type SameInstantCashFlowOrder =
   | "income_before_expense"
   | "expense_before_income";
+
+const issuedSalaries = new Map<string, ModeledPayrollBinding>();
+registerModeledPayrollCompiler("canonical-cash-flow/v1", key => issuedSalaries.get(key));
+const issueModeledSalary = (binding: ModeledPayrollBinding): VerticalSlice2Input["incomes"][number] => {
+  const snapshot = immutableConfiguration(binding), key = modeledPayrollKey(snapshot);
+  issuedSalaries.set(key, snapshot);
+  return Object.freeze({ ...snapshot.stream, modeledPayroll: Object.freeze({ version: "modeled-payroll/v1", issuer: "canonical-cash-flow/v1", key }) });
+};
 
 export interface CashFlowCompilerRequest {
   readonly baseCurrency: string;
@@ -1949,7 +1959,17 @@ const compileCashFlowSources = (
       baseCurrency: currency,
       sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
       events: Object.freeze(retirementEvents),
-      incomes: Object.freeze(compiledIncomes),
+      incomes: Object.freeze(compiledIncomes.map(income => {
+        const authored = incomes.find(item => item.income_id === income.id);
+        const bank = eligibleAccounts.find(item => item.account_id === income.depositAccountId);
+        if (authored?.income_type !== "salary" || !scope.memberIds.includes(String(income.ownerId)) || !bank ||
+          bank.owner_id === income.ownerId) return income;
+        return issueModeledSalary({ stream: income, householdId: scope.householdId,
+          bank: { id: income.depositAccountId, ownerId: domainId(bank.owner_id === scope.householdId ? "household" : "person", String(bank.owner_id)), kind: String(bank.account_type) as "cash" | "checking" | "savings" },
+          start: utcDate(request.simulationStart)!, end: utcDate(request.simulationEnd)!,
+          asOf: utcDate(request.asOf ?? request.simulationStart)!, scenarioId: selected.id,
+          sourceFingerprint: modeledPayrollKey({ model, request }) });
+      })),
       expenses: Object.freeze(compiledExpenses),
     });
     const openingState = createAuthoritativeState({

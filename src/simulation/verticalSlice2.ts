@@ -80,6 +80,7 @@ import { payrollContributionCandidate, type PayrollContributionAllocation } from
 import type { PayrollWithholdingElection, PayrollWithholdingEvidence } from "./tax/contracts.js";
 import { qualifyHouseholdExpense, type HouseholdExpenseSourceRef } from "./d2/integration/householdBank/expenses.js";
 import { qualifyHouseholdWage, wageStreamOriginal, type HouseholdWageSourceRef } from "./d2/integration/householdWages/index.js";
+import { modeledPayrollOccurrence, type ModeledPayrollReference } from "./d2/integration/householdWages/modeledPayroll.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -116,6 +117,7 @@ interface MonthlyStreamBase<Id extends IncomeId | ExpenseId> {
 
 export interface RecurringIncomeStream extends MonthlyStreamBase<IncomeId> {
   readonly householdWageSource?: HouseholdWageSourceRef;
+  readonly modeledPayroll?: ModeledPayrollReference;
   readonly payrollTaxCreditAccountId?: AccountId;
   readonly payrollWithholding?: readonly PayrollWithholdingElection[];
   readonly payrollContributions?: readonly PayrollContributionAllocation[];
@@ -684,7 +686,11 @@ function executeCashFlowPeriodCandidate(
           const provenance = generatedProvenance(stream.primitiveIds.recurrence, occurrence.scheduledAt, occurrence.occurrenceId);
           actions.push({ scheduledAt: occurrence.scheduledAt, kind: "income", priority: payrollPriority(stream) ?? Number.MAX_SAFE_INTEGER, id: `${stream.id}:${occurrence.occurrenceId}`, execute: () => {
             const wageSource = stream.householdWageSource;
-            if (state.accounts[stream.depositAccountId]?.ownerId === request.input.householdId && wageSource === undefined)
+            const modeledPayroll = stream.modeledPayroll === undefined ? undefined : modeledPayrollOccurrence({
+              householdId: request.input.householdId, stream, context: request.runContext,
+              at: occurrence.scheduledAt, period: targetPeriod, occurrenceId: occurrence.occurrenceId, gross: amount,
+            }, state.accounts[stream.depositAccountId]);
+            if (state.accounts[stream.depositAccountId]?.ownerId === request.input.householdId && wageSource === undefined && modeledPayroll === undefined)
               invalidInput("HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL: unsupported income without an independent wage source", `incomes.${stream.id}.householdWageSource`);
             if (wageSource !== undefined && (stream.ownerId === request.input.householdId || state.accounts[stream.depositAccountId]?.ownerId !== request.input.householdId))
               invalidInput("Household wages require a Person recipient and household BANK", `incomes.${stream.id}.householdWageSource`);
@@ -699,7 +705,7 @@ function executeCashFlowPeriodCandidate(
             recognitions.push(recognition);
             effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "recurring_income", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, provenance, traceRefs }));
             if (stream.payrollContributions?.length || stream.payrollWithholding?.length) {
-              const payroll = payrollContributionCandidate(state, { id: `tx:${recognition.id}`, incomeId: stream.id, ownerId: stream.ownerId, occurrenceId: occurrence.occurrenceId, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions ?? [], ...(householdWage === undefined ? {} : { householdWage }), ...(stream.payrollWithholding === undefined ? {} : { withholding: stream.payrollWithholding }), ...(stream.payrollTaxCreditAccountId === undefined ? {} : { taxCreditAccountId: stream.payrollTaxCreditAccountId }) });
+              const payroll = payrollContributionCandidate(state, { id: `tx:${recognition.id}`, incomeId: stream.id, ownerId: stream.ownerId, occurrenceId: occurrence.occurrenceId, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions ?? [], ...(householdWage === undefined ? {} : { householdWage }), ...(modeledPayroll === undefined ? {} : { modeledPayroll }), ...(stream.payrollWithholding === undefined ? {} : { withholding: stream.payrollWithholding }), ...(stream.payrollTaxCreditAccountId === undefined ? {} : { taxCreditAccountId: stream.payrollTaxCreditAccountId }) });
               state = payroll.state;
               if (payroll.withholdingEvidence !== undefined) withholdingEvidence.push(payroll.withholdingEvidence);
               diagnostics.push(...payroll.diagnostics);

@@ -5,7 +5,7 @@ import { assertD2PostedTransactionHistoryPreserved, assertD2SettlementReceiptHis
   assertSsaMedicarePaymentHistoryPreserved,
   assertRetirementDistributionHistoryPreserved, requalifyRetirementDistributionHistory,
   type AuthoritativeCheckpointDelta, type AuthoritativeState } from "../../state/index.js";
-import { createInputFingerprint } from "../run.js";
+import { canonicalSerialize, createInputFingerprint } from "../run.js";
 import { TaxEconomicLedger } from "../tax/economics.js";
 import { TaxDiagnosticLedger } from "../tax/diagnostics.js";
 import type { RecognizedTaxEconomics, TaxCapabilityDiagnostic } from "../tax/contracts.js";
@@ -19,6 +19,31 @@ import "../workplaceEvents.js";
 import "../domainMechanics.js";
 import "../mortgageLifecycle.js";
 import { validateSsaMedicareSourceHistory } from "../d2/integration/ssaMedicare/index.js";
+
+/** One bounded application proposal per run. Its encoded digest is not trust. */
+export interface ModeledPayrollReplayBasis {
+  readonly version: "modeled-payroll-replay/v1";
+  readonly issuer: string;
+  readonly payload: unknown;
+}
+type ModelRequalifier = (basis: ModeledPayrollReplayBasis, executable: ExecutableHouseholdProjection,
+  context: RunContext, independentSource: unknown) => void;
+const modelRequalifiers = new Map<string, ModelRequalifier>();
+export function registerModeledPayrollReplayAuthority(issuer: "application-household/v1", requalify: ModelRequalifier): void {
+  if (issuer !== "application-household/v1" || modelRequalifiers.has(issuer)) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: duplicate or unsupported model issuer");
+  modelRequalifiers.set(issuer, requalify);
+}
+function qualifyModelBasis(basis: ModeledPayrollReplayBasis | undefined, executable: ExecutableHouseholdProjection,
+  context: RunContext, independentSource: unknown): void {
+  const modeled = executable.cashFlowInput?.incomes.some(stream => stream.modeledPayroll !== undefined);
+  if (!basis && !modeled) return;
+  const authority = basis?.version === "modeled-payroll-replay/v1" ? modelRequalifiers.get(basis.issuer) : undefined;
+  if (!basis || !modeled || !authority || independentSource === undefined)
+    throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: independent authored model is required");
+  if (canonicalSerialize(basis).length > 262144)
+    throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: model proposal exceeds bounded replay extension");
+  authority(basis, executable, context, independentSource);
+}
 
 type Wire = null | boolean | number | string | { readonly kind: string; readonly value: unknown };
 interface EncodingGraph { readonly identities: Map<object, Wire>; readonly content: Map<string, Wire>; readonly active: Set<object>; encodedValues: number }
@@ -194,7 +219,9 @@ const elapsed = (before: number | undefined, after: number | undefined): number 
   before !== undefined && after !== undefined && after >= before ? after - before : undefined;
 /** One shared opening/configuration artifact per forecast; never a detailed history warehouse. */
 export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecastSummaryResult, retainPrivateBasis = false,
-  observe?: (measurement: ReplayExportMeasurement) => void): PortableHouseholdReplayArtifact => {
+  observe?: (measurement: ReplayExportMeasurement) => void, modeledPayroll?: ModeledPayrollReplayBasis,
+  independentSource?: unknown): PortableHouseholdReplayArtifact => {
+  qualifyModelBasis(modeledPayroll, forecast.replay.kernel.executable, forecast.replay.runContext, independentSource);
   const { executionKernel: _kernel, participants, ...base } = forecast.replay.kernel.executable;
   const executable = { ...base, ...(participants === undefined ? {} : { participants: participants.map(portableHouseholdParticipant) }) };
   const graph: EncodingGraph = { identities: new Map<object, Wire>(), content: new Map<string, Wire>(), active: new Set<object>(), encodedValues: 0 };
@@ -203,7 +230,7 @@ export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecas
   const checkpoints = checkpointDeltas(exportHouseholdReplayCheckpointRoots(forecast, work, () => { materialized++; }), work, () => { comparisons++; });
   const encoded = JSON.stringify(encode({ executable, runContext: forecast.replay.runContext,
     runMetadata: forecast.runMetadata, periods: forecast.periods,
-    checkpoints }, graph));
+    checkpoints, ...(modeledPayroll === undefined ? {} : { modeledPayroll }) }, graph));
   // Change detection, like the run fingerprint; this is not authentication.
   const integrity = createInputFingerprint({ runContext: forecast.replay.runContext, openingState: encoded });
   const artifact = Object.freeze({ version: "household-replay/v3" as const, encoded, integrity });
@@ -212,13 +239,15 @@ export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecas
   // merely to inspect twelve. Transported artifacts still take the full verifier.
   // Only the application reader may retain its private, unexposed execution.
   // Ordinary exported artifacts continue to restore the serialized snapshot.
-  if (retainPrivateBasis) restoredArtifacts.set(artifact, { version: artifact.version, encoded, integrity, forecast });
+  if (retainPrivateBasis) restoredArtifacts.set(artifact, { version: artifact.version, encoded, integrity, forecast, modeledPayroll });
   try { observe?.({ checkpointCount: checkpoints.length, checkpointIndexNodesVisited: visited, checkpointRecordChanges: changed,
     checkpointEqualityComparisons: comparisons, encodedValues: graph.encodedValues, encodedBytes: new TextEncoder().encode(encoded).byteLength,
     materializedCheckpointStates: materialized }); } catch { /* Measurement only. */ }
   return artifact;
 };
-const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, timings: RestoreTimings = {}, sample: () => void = () => {}): Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods"> => {
+const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, timings: RestoreTimings = {}, sample: () => void = () => {}, independentSource?: unknown): {
+  forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">; modeledPayroll?: ModeledPayrollReplayBasis;
+} => {
   const supplied = artifact as PortableHouseholdReplayArtifact | undefined;
   if ((supplied?.version !== "household-replay/v1" && supplied?.version !== "household-replay/v2" && supplied?.version !== "household-replay/v3") || typeof supplied.encoded !== "string")
     throw new Error("HOUSEHOLD_REPLAY_ARTIFACT_UNAVAILABLE: original execution artifacts are required");
@@ -233,7 +262,7 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   const wire = measure("decodeMs", () => JSON.parse(supplied.encoded) as Wire);
   const decodeStarted = safeNow(observer);
   const restored = decode(wire) as {
-    executable: Omit<ExecutableHouseholdProjection, "participants"> & { readonly participants?: readonly PortableHouseholdParticipant[] }; runContext: RunContext; runMetadata: RunMetadata; periods: readonly HouseholdForecastSummaryPeriod[]; checkpoints?: readonly CheckpointDelta[];
+    executable: Omit<ExecutableHouseholdProjection, "participants"> & { readonly participants?: readonly PortableHouseholdParticipant[] }; runContext: RunContext; runMetadata: RunMetadata; periods: readonly HouseholdForecastSummaryPeriod[]; checkpoints?: readonly CheckpointDelta[]; modeledPayroll?: ModeledPayrollReplayBasis;
   };
   try { observer?.phase?.("decoded"); } catch { /* Observation is optional. */ }
   const decodeDuration = elapsed(decodeStarted, safeNow(observer));
@@ -246,6 +275,11 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
   try { observer?.phase?.("integrity_validated"); } catch { /* Observation is optional. */ }
   const { participants, ...base } = restored.executable;
   const executable = measure("participantRestoreMs", () => ({ ...base, ...(participants === undefined ? {} : { participants: participants.map(restoreHouseholdParticipant) }) }));
+  if (restored.modeledPayroll !== undefined && supplied.version !== "household-replay/v3")
+    throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: modeled payroll requires the v3 extension");
+  // Recompile against the separately supplied model before kernel activation or
+  // checkpoint registration, even when a matching issuer is already warm.
+  qualifyModelBasis(restored.modeledPayroll, executable, restored.runContext, independentSource);
   try { observer?.phase?.("participants_restored"); } catch { /* Observation is optional. */ }
   const qualify = (state: AuthoritativeState) => {
     measure("sourceRequalificationMs", () => {
@@ -286,7 +320,7 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
       }
     } catch { /* Measurement is optional. */ } });
   }
-  return forecast;
+  return { forecast, ...(restored.modeledPayroll === undefined ? {} : { modeledPayroll: restored.modeledPayroll }) };
 };
 
 // A transported result shares one attachment across all months. Revalidating
@@ -298,8 +332,9 @@ const restoredArtifacts = new WeakMap<object, {
   readonly encoded: string;
   readonly integrity: string | undefined;
   readonly forecast: Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods">;
+  readonly modeledPayroll?: ModeledPayrollReplayBasis | undefined;
 }>();
-export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observer?: ReplayRestoreObserver): Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods"> => {
+export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, independentSource?: unknown): Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods"> => {
   try { observer?.phase?.("restore_started"); } catch { /* Observation is optional. */ }
   const before = safeNow(observer), heapBefore = observer ? heapSample() : undefined;
   let peak = heapBefore;
@@ -319,13 +354,14 @@ export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observ
     const supplied = artifact as PortableHouseholdReplayArtifact | undefined;
     const cached = typeof artifact === "object" && artifact !== null ? restoredArtifacts.get(artifact) : undefined;
     if (cached && supplied?.version === cached.version && supplied.encoded === cached.encoded && supplied.integrity === cached.integrity) {
+      qualifyModelBasis(cached.modeledPayroll, cached.forecast.replay.kernel.executable, cached.forecast.replay.runContext, independentSource);
       try { observer?.phase?.("restore_warm"); } catch { /* Observation is optional. */ }
       report("warm", cached.forecast); return cached.forecast;
     }
     const timings: RestoreTimings = {};
-    const forecast = restorePortableArtifact(artifact, observer, timings, sample);
+    const { forecast, modeledPayroll } = restorePortableArtifact(artifact, observer, timings, sample, independentSource);
     if (typeof artifact === "object" && artifact !== null && supplied) restoredArtifacts.set(artifact, {
-      version: supplied.version, encoded: supplied.encoded, integrity: supplied.integrity, forecast,
+      version: supplied.version, encoded: supplied.encoded, integrity: supplied.integrity, forecast, modeledPayroll,
     });
     report("cold", forecast, timings);
     return forecast;
