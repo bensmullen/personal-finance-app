@@ -13,7 +13,7 @@ export function rebindModeledBank(model: ReturnType<typeof createGoldenHousehold
       ? { ...value, owner_id: ownerId } : value) } };
 }
 export function modeledSource(elected = false, family = false) {
-  let model = createGoldenHouseholdDraft();
+  let model = patchPersonalObject(createGoldenHouseholdDraft(), "Income", ids.income, { income_type: "salary" });
   if (family) {
     model = patchPersonalObject(model, "Household", ids.household, { members: [ids.person, modeledId(1)], filing_status: "married_joint", household_type: "couple" });
     model = patchPersonalObject(model, "Person", ids.person, { date_of_birth: "1971-01-01" });
@@ -42,7 +42,8 @@ export function modeledRequest(months = 1) {
   const end = new Date(Date.UTC(2026, months, 1)).toISOString().slice(0, 10);
   return { ...full, compiler: { ...full.compiler,
     cashFlow: { ...full.compiler.cashFlow!, simulationEnd: end, months },
-    investments: { ...full.compiler.investments!, simulationEnd: end, months },
+    // This wage/provenance fixture is not a test of VS3 cross-owner investment purchases.
+    investments: { ...full.compiler.investments!, simulationEnd: end, months, purchaseInstructions: [] },
     liabilities: { ...full.compiler.liabilities!, simulationEnd: end, months },
   } };
 }
