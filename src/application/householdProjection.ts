@@ -252,7 +252,8 @@ registerModeledPayrollReplayAuthority("application-household/v1", (basis, execut
     ...executable.cashFlowInput!, incomes: executable.cashFlowInput!.incomes.map(stream => {
       if (stream.modeledPayroll === undefined) return stream;
       const reference = canonical.get(stream.id);
-      if (reference === undefined || canonicalSerialize(reference) !== canonicalSerialize(stream.modeledPayroll)) mismatch();
+      if (reference === undefined) return mismatch();
+      if (canonicalSerialize(reference) !== canonicalSerialize(stream.modeledPayroll)) return mismatch();
       return { ...stream, modeledPayroll: reference };
     }),
   } };
