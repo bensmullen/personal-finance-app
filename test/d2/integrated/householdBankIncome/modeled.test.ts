@@ -37,7 +37,7 @@ describe("authenticated modeled salary at a shared bank", () => {
   it.each([false, true])("retains standalone compiler journals with election=%s", elected => {
     const compiled = standalone(modeledSource(elected));
     const result = runVerticalSlice2({ ...compiled, runContext: modeledContext(), months: 1 });
-    expect(result.status).toBe("completed");
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
     const income = result.periods[0]!.transactions.filter(tx => ["income", "payroll_income"].includes(tx.type));
     expect(income).toHaveLength(1);
     expect(income[0]!.type).toBe(elected ? "payroll_income" : "income");
@@ -73,7 +73,7 @@ describe("authenticated modeled salary at a shared bank", () => {
     expect(compiled.status).toBe("compiled");
     if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled));
     const summary = runHouseholdKernel({ kernel: compiled.value.executionKernel!, runContext: modeledContext() });
-    expect(summary.status).toBe("completed");
+    expect(summary.status, JSON.stringify(summary.diagnostics)).toBe("completed");
     const read = forecast(model), artifact = structuredClone(householdEvidenceProof(read.points)!);
     const restored = restoreHouseholdForecastEvidence(artifact, model);
     const detail = replayHouseholdForecastWindow(restored, restored.periods[0]!.period);
