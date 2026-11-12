@@ -12,7 +12,7 @@ import { instant } from "../../time/index.js";
 import { reconcileHouseholdOpeningState, reconcileHouseholdPrimitiveState } from "../../simulation/householdProjection.js";
 import { buildHouseholdScheduledPlan, type HouseholdContentionPolicy } from "../../simulation/intraperiodScheduler.js";
 import { compileHouseholdCashFlow, type CashFlowCompilerRequest, type CashFlowScenarioBindings, type CompiledCashFlow } from "./cashFlow.js";
-import { registerModeledPayrollCompiler, modeledPayrollKey, withoutModeledPayroll, type ModeledPayrollBinding } from "../../simulation/d2/integration/householdWages/modeledPayroll.js";
+import { registerModeledPayrollCompiler, modeledPayrollKey, withoutModeledPayroll, type ModeledPayrollBinding, type ModeledPayrollReference } from "../../simulation/d2/integration/householdWages/modeledPayroll.js";
 import { compileInvestments, type InvestmentCompilerRequest, type CompiledInvestments } from "./investments.js";
 import { compileLiabilities, type LiabilityCompilerRequest, type CompiledLiabilities } from "./liabilities.js";
 import type { CapabilityDiagnostic, CompileResult } from "./types.js";
@@ -32,12 +32,13 @@ export interface HouseholdProjectionCompilerRequest {
   /** Required only when runtime execution discovers material contention. */
   readonly contentionPolicy?: HouseholdContentionPolicy;
 }
-const issuedHouseholdSalaries = new Map<string, ModeledPayrollBinding>();
-registerModeledPayrollCompiler("canonical-household/v1", key => issuedHouseholdSalaries.get(key));
+const issuedHouseholdSalaries = new WeakMap<ModeledPayrollReference, ModeledPayrollBinding>();
+registerModeledPayrollCompiler("canonical-household/v1", reference => issuedHouseholdSalaries.get(reference));
 const issueHouseholdSalary = (binding: ModeledPayrollBinding): CompiledCashFlow["input"]["incomes"][number] => {
   const snapshot = immutableConfiguration(binding), key = modeledPayrollKey(snapshot);
-  issuedHouseholdSalaries.set(key, snapshot);
-  return { ...snapshot.stream, modeledPayroll: { version: "modeled-payroll/v1", issuer: "canonical-household/v1", key } };
+  const reference = immutableConfiguration<ModeledPayrollReference>({ version: "modeled-payroll/v1", issuer: "canonical-household/v1", key });
+  issuedHouseholdSalaries.set(reference, snapshot);
+  return { ...snapshot.stream, modeledPayroll: reference };
 };
 
 export interface CompiledStandaloneAsset {
