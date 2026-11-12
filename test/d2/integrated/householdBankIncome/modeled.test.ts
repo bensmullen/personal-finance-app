@@ -101,7 +101,11 @@ describe("authenticated modeled salary at a shared bank", () => {
     expect(compiled.status).toBe("compiled");
     if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled));
     const summary = runHouseholdKernel({ kernel: compiled.value.executionKernel!, runContext: modeledContext() });
-    expect(summary.status, JSON.stringify(summary.diagnostics)).toBe("completed");
+    // The Golden Household deliberately lacks verified tax residence, full
+    // withholding and settlement facts. Do not convert this into an invented
+    // tax-complete forecast merely to satisfy the modeled salary test.
+    expect(summary.status, JSON.stringify(summary.diagnostics)).toBe("incomplete");
+    expect(summary.diagnostics.some(d => "category" in d && d.category === "wage_gross_to_net_withholding")).toBe(true);
     const read = forecast(model), artifact = structuredClone(householdEvidenceProof(read.points)!);
     const restored = restoreHouseholdForecastEvidence(artifact, model);
     const detail = replayHouseholdForecastWindow(restored, restored.periods[0]!.period);
@@ -163,7 +167,8 @@ describe("authenticated modeled salary at a shared bank", () => {
   });
   it("rejects reordered or duplicated manifests after independently compiling both spouses", () => {
     const model = rebindModeledBank(modeledSource(true, true), ids.household), read = forecast(model);
-    const original = householdEvidenceProof(read.points)!, context = modeledContext();
+    const original = householdEvidenceProof(read.points), context = modeledContext();
+    expect(original, JSON.stringify({ status: read.status, points: read.points.length, diagnostics: read.diagnostics })).toBeDefined();
     const restored = restoreHouseholdForecastEvidence(structuredClone(original), model);
     expect(restored.replay.kernel.cash!.input.incomes.every(stream => stream.modeledPayroll !== undefined)).toBe(true);
     for (const duplicate of [false, true]) {
