@@ -1962,8 +1962,11 @@ const compileCashFlowSources = (
       incomes: Object.freeze(compiledIncomes.map(income => {
         const authored = incomes.find(item => item.income_id === income.id);
         const bank = eligibleAccounts.find(item => item.account_id === income.depositAccountId);
+        // Model-only shared-bank authority is restricted to a Person member's
+        // authored salary deposited into a Household-owned BANK, never a bank
+        // belonging to a different Person.
         if (authored?.income_type !== "salary" || !scope.memberIds.includes(String(income.ownerId)) || !bank ||
-          bank.owner_id === income.ownerId) return income;
+          bank.owner_id !== scope.householdId) return income;
         return issueModeledSalary({ stream: income, householdId: scope.householdId,
           bank: { id: income.depositAccountId, ownerId: domainId(bank.owner_id === scope.householdId ? "household" : "person", String(bank.owner_id)), kind: String(bank.account_type) as "cash" | "checking" | "savings" },
           start: utcDate(request.simulationStart)!, end: utcDate(request.simulationEnd)!,
