@@ -115,7 +115,10 @@ describe("authenticated modeled salary at a shared bank", () => {
     expect(() => resolveHouseholdExplanation(model, read.points[0]!.traceRefs)).not.toThrow();
     const selection = { operation: "monthly_evidence" as const, startIndex: 0, liabilityId: ids.mortgage };
     const bounded = boundedEvidencePoints(read, selection);
-    expect(restoreHouseholdEvidencePoints(bounded.basis, selection, bounded.points, read.diagnosticCatalogs!.source.inputFingerprint, read.diagnosticCatalogs, undefined, model)).toHaveLength(1);
+    // This API expects the *selected replay trace anchor*, not the raw run
+    // inputFingerprint (the latter is independently checked inside restore).
+    const traceId = bounded.points[0]!.traceRefs.find(ref => ref.replayArtifact !== undefined)!.traceId;
+    expect(restoreHouseholdEvidencePoints(bounded.basis, selection, bounded.points, traceId, read.diagnosticCatalogs, undefined, model)).toHaveLength(1);
     for (const proof of [householdEvidenceProof(read.points)!, artifact]) {
       expect(() => restoreHouseholdForecastEvidence(proof)).toThrow(/BASIS_MISMATCH/);
       expect(() => restoreHouseholdForecastEvidence(proof, patchPersonalObject(model, "Income", ids.income, { amount: "9001" }))).toThrow(/BASIS_MISMATCH/);
@@ -166,7 +169,12 @@ describe("authenticated modeled salary at a shared bank", () => {
     expect(() => inspectMonthlyMoney(points[1]!, model)).not.toThrow();
   });
   it("rejects reordered or duplicated manifests after independently compiling both spouses", () => {
-    const model = rebindModeledBank(modeledSource(true, true), ids.household), read = forecast(model);
+    // No unapproved spouse-owned VS3 return stream may be relabeled as the
+    // primary execution Person. Preserve the two real HSA positions/payroll
+    // allocations but omit a return model not under test in this manifest case.
+    const source = rebindModeledBank(modeledSource(true, true), ids.household);
+    const model = patchPersonalObject(source, "Investment", ids.brokerageInvestment, { return_model_id: null });
+    const read = forecast(model);
     const original = householdEvidenceProof(read.points)!, context = modeledContext();
     expect(original, JSON.stringify({ status: read.status, points: read.points.length, diagnostics: read.diagnostics })).toBeDefined();
     const restored = restoreHouseholdForecastEvidence(structuredClone(original), model);
