@@ -54,6 +54,34 @@ describe("authenticated modeled salary at a shared bank", () => {
     expect(statements.income.amount.toString()).toBe("18000");
     expect(statements.expenses.amount.toString()).toBe("4800");
   });
+  it("does not issue Household authority for Person-to-Person family HSA salary", () => {
+    const personal = standalone(modeledSource(true, true));
+    expect(personal.input.incomes.every(stream => stream.modeledPayroll === undefined)).toBe(true);
+    const household = standalone(rebindModeledBank(modeledSource(true, true), ids.household));
+    expect(household.input.incomes.every(stream => stream.modeledPayroll !== undefined)).toBe(true);
+  });
+  it("requires the exact issued reference object and household-owned bank", () => {
+    const compiled = standalone(), stream = compiled.input.incomes[0]!;
+    const clone = { ...stream, modeledPayroll: { ...stream.modeledPayroll! } };
+    const forgery = runVerticalSlice2({ ...compiled, input: { ...compiled.input, incomes: [clone] }, runContext: modeledContext(), months: 1 });
+    expect(forgery.status).toBe("incomplete");
+    expect(forgery.diagnostics.some(d => d.message.includes("MODELED_PAYROLL_NOT_ADMITTED"))).toBe(true);
+    const bank = compiled.openingState.accounts[ids.checking]!;
+    const changedState = { ...compiled.openingState, accounts: { ...compiled.openingState.accounts,
+      [ids.checking]: { ...bank, ownerId: compiled.input.ownerId } } };
+    const changedBank = runVerticalSlice2({ input: compiled.input, openingState: changedState, runContext: modeledContext(), months: 1 });
+    expect(changedBank.status).toBe("incomplete");
+    expect(changedBank.diagnostics.some(d => d.message.includes("MODELED_PAYROLL_NOT_ADMITTED"))).toBe(true);
+  });
+  it("keeps an independently owned salary reference live across many compiles", () => {
+    const original = standalone();
+    for (let n = 0; n < 32; n++) {
+      const changed = patchPersonalObject(modeledSource(), "Income", ids.income, { amount: String(9001 + n) });
+      expect(standalone(changed).input.incomes[0]!.modeledPayroll).toBeDefined();
+    }
+    const result = runVerticalSlice2({ ...original, runContext: modeledContext(), months: 1 });
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+  });
   it.each(["amount", "schedule", "member", "bank", "marker", "missing"])("rejects changed %s before committing anything", kind => {
     const compiled = standalone(), stream = compiled.input.incomes[0]!, before = canonicalSerialize(compiled.openingState);
     const changed = kind === "amount" ? { ...stream, baseMonthlyAmount: money("1") }
