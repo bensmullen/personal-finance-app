@@ -37,12 +37,14 @@ generated for a combined household payroll-health candidate in this stage.
 
 ## Canonical modeled salary
 
-Canonical cash-flow compilation can issue `modeled-payroll/v1` references for
-authored Person salary routed to a shared in-scope cash account. This includes
-the historical two-spouse family-HSA forecast using the first spouse's checking
-account. The reference binds the complete compiled salary, recipient, actual
-bank owner/kind, scenario and effective compiler horizon to a private compiler
-inventory. A hash, trace label or copied reference on different economics grants
+Canonical cash-flow compilation can issue `modeled-payroll/v1` references only
+for an authored Person member's salary deposited into a Household-owned
+cash/checking/savings BANK. The historical two-spouse family-HSA forecast that
+deposits one spouse's wages into the other spouse's Person-owned checking
+account remains on the original D1 path **without** this Household-only
+reference. The reference binds the complete compiled salary, recipient, actual
+bank owner/kind, scenario and effective compiler horizon to the issuer's
+reference-identity-scoped, weakly owned inventory (not a process-lifetime Map). A hash, trace label or copied reference on different economics grants
 no authority. VS2 rechecks each reference and evaluated occurrence before either
 the original direct `income` journal or `payroll_income` candidate can post.
 These forecasts never create D2 originals or satisfy SSA wage exclusivity.
