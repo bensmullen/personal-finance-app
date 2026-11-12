@@ -17,7 +17,7 @@ import {
 import { utcMonthlyHorizonMonths, type Instant } from "../../time/index.js";
 import { Currency, Rate, money, rateConvention } from "../../values/index.js";
 import type { VerticalSlice2Input } from "../../simulation/verticalSlice2.js";
-import { registerModeledPayrollCompiler, modeledPayrollKey, type ModeledPayrollBinding } from "../../simulation/d2/integration/householdWages/modeledPayroll.js";
+import { registerModeledPayrollCompiler, modeledPayrollKey, type ModeledPayrollBinding, type ModeledPayrollReference } from "../../simulation/d2/integration/householdWages/modeledPayroll.js";
 import { immutableConfiguration } from "../../simulation/r3/compiledHousehold.js";
 import {
   assertGeometricGrowthRate,
@@ -51,12 +51,13 @@ export type SameInstantCashFlowOrder =
   | "income_before_expense"
   | "expense_before_income";
 
-const issuedSalaries = new Map<string, ModeledPayrollBinding>();
-registerModeledPayrollCompiler("canonical-cash-flow/v1", key => issuedSalaries.get(key));
+const issuedSalaries = new WeakMap<ModeledPayrollReference, ModeledPayrollBinding>();
+registerModeledPayrollCompiler("canonical-cash-flow/v1", reference => issuedSalaries.get(reference));
 const issueModeledSalary = (binding: ModeledPayrollBinding): VerticalSlice2Input["incomes"][number] => {
   const snapshot = immutableConfiguration(binding), key = modeledPayrollKey(snapshot);
-  issuedSalaries.set(key, snapshot);
-  return Object.freeze({ ...snapshot.stream, modeledPayroll: Object.freeze({ version: "modeled-payroll/v1", issuer: "canonical-cash-flow/v1", key }) });
+  const reference = immutableConfiguration<ModeledPayrollReference>({ version: "modeled-payroll/v1", issuer: "canonical-cash-flow/v1", key });
+  issuedSalaries.set(reference, snapshot);
+  return Object.freeze({ ...snapshot.stream, modeledPayroll: reference });
 };
 
 export interface CashFlowCompilerRequest {
