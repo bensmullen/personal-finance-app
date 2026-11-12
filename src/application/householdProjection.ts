@@ -248,8 +248,8 @@ registerModeledPayrollReplayAuthority("application-household/v1", (basis, execut
   // The portable address is never independent authority. Only a token freshly
   // issued by recompiling the separately supplied model can enter the restored
   // immutable kernel. This shallow replacement does not duplicate economic data.
-  const restored = { ...executable, cashFlowInput: executable.cashFlowInput === undefined ? undefined : {
-    ...executable.cashFlowInput, incomes: executable.cashFlowInput.incomes.map(stream => {
+  const restored = { ...executable, cashFlowInput: {
+    ...executable.cashFlowInput!, incomes: executable.cashFlowInput!.incomes.map(stream => {
       if (stream.modeledPayroll === undefined) return stream;
       const reference = canonical.get(stream.id);
       if (reference === undefined || canonicalSerialize(reference) !== canonicalSerialize(stream.modeledPayroll)) mismatch();
