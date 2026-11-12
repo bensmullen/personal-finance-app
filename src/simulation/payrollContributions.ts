@@ -53,7 +53,7 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   // Only Household-owned BANK income requires independently qualified D2 wage
   // or a compiler-issued modeled payroll witness.
   const householdId = input.householdId ?? input.householdWage?.context.householdId ??
-    input.modeledPayroll?.householdId ?? input.healthPremium?.context.householdId;
+    input.modeledPayroll?.householdId;
   if (input.householdWage === undefined && input.modeledPayroll === undefined &&
     householdId !== undefined && opening.accounts[input.depositAccountId]?.ownerId === householdId)
     return invalid(input.healthPremium === undefined ? "HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL" : "HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
