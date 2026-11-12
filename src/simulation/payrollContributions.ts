@@ -54,8 +54,11 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
   // or a compiler-issued modeled payroll witness.
   const householdId = input.householdId ?? input.householdWage?.context.householdId ??
     input.modeledPayroll?.householdId;
-  if (input.householdWage === undefined && input.modeledPayroll === undefined &&
-    householdId !== undefined && opening.accounts[input.depositAccountId]?.ownerId === householdId)
+  const receivingOwner = opening.accounts[input.depositAccountId]?.ownerId;
+  if (input.householdWage === undefined && input.modeledPayroll === undefined && input.ownerId !== undefined &&
+    // Direct callers with no authenticated Household context must not infer
+    // whether a mismatched bank belongs to another Person or the Household.
+    (householdId === undefined ? receivingOwner !== input.ownerId : receivingOwner === householdId))
     return invalid(input.healthPremium === undefined ? "HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL" : "HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
   if (input.householdWage !== undefined && (input.healthPremium !== undefined ||
     opening.d2PostedTransactions?.[accountingTransactionId(input.id)]?.registration.kind === "payroll_health_deduction")) return invalid("HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
