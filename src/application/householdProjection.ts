@@ -159,12 +159,13 @@ export interface HouseholdForecastRequest {
   readonly runIdentity: string;
 }
 
-const issuedForecastSalaries = new Map<string, ModeledPayrollBinding>();
-registerModeledPayrollCompiler("canonical-forecast/v1", key => issuedForecastSalaries.get(key));
+const issuedForecastSalaries = new WeakMap<ModeledPayrollReference, ModeledPayrollBinding>();
+registerModeledPayrollCompiler("canonical-forecast/v1", reference => issuedForecastSalaries.get(reference));
 const issueForecastSalary = (binding: ModeledPayrollBinding): NonNullable<ExecutableHouseholdProjection["cashFlowInput"]>["incomes"][number] => {
   const snapshot = immutableConfiguration(binding), key = modeledPayrollKey(snapshot);
-  issuedForecastSalaries.set(key, snapshot);
-  return { ...snapshot.stream, modeledPayroll: { version: "modeled-payroll/v1", issuer: "canonical-forecast/v1", key } };
+  const reference = immutableConfiguration<ModeledPayrollReference>({ version: "modeled-payroll/v1", issuer: "canonical-forecast/v1", key });
+  issuedForecastSalaries.set(reference, snapshot);
+  return { ...snapshot.stream, modeledPayroll: reference };
 };
 type ForecastTemplate = Pick<import("../simulation/run.js").RunContext, "asOf" | "dataCutoff" | "simulationStart" | "simulationEnd" | "baseCurrency">;
 function forecastExecutable(compiled: CompiledHouseholdProjection, model: PortableModelEnvelope,
@@ -227,21 +228,37 @@ registerModeledPayrollReplayAuthority("application-household/v1", (basis, execut
     context.runId !== payload.request.runIdentity || context.asOf !== `${payload.request.asOf}T00:00:00.000Z` ||
     context.dataCutoff !== `${payload.request.dataCutoff}T00:00:00.000Z`) mismatch();
   const key = modeledPayrollKey({ payload, context });
-  let expected = requalifiedModels.get(key);
-  if (expected === undefined) {
-    if (payload.resolved !== undefined && canonicalSerialize(resolveScenario(payload.resolved.layers, payload.resolved.scenario.scenarioId)) !== canonicalSerialize(payload.resolved)) mismatch();
-    const compiled = compileHouseholdProjection(model, payload.request.compiler);
-    if (compiled.status !== "compiled") return mismatch();
-    const selected = boundary(payload.request.compiler);
-    if (!selected || context.simulationStart !== `${selected.simulationStart}T00:00:00.000Z` ||
-      context.simulationEnd !== `${selected.simulationEnd}T00:00:00.000Z` || context.baseCurrency.code !== selected.baseCurrency) mismatch();
-    const reconstructed = forecastExecutable(compiled.value, model, payload.request.compiler, context, payload.request.runIdentity, payload.resolved);
-    if (reconstructed.scenarioIdentity !== context.scenarioId || canonicalSerialize(payrollManifest(reconstructed)) !== canonicalSerialize(payload.manifest)) mismatch();
-    expected = replayModelSignature(reconstructed);
-    if (requalifiedModels.size >= 16) requalifiedModels.delete(requalifiedModels.keys().next().value!);
-    requalifiedModels.set(key, expected);
-  }
-  if (expected !== replayModelSignature(executable)) mismatch();
+  const signature = replayModelSignature(executable);
+  // A warm, still-owned kernel retains its exact compiler-issued object tokens.
+  // Only cold transports require a fresh independent model reconstruction.
+  const alreadyIssued = (executable.cashFlowInput?.incomes ?? []).every(stream =>
+    stream.modeledPayroll === undefined || issuedForecastSalaries.has(stream.modeledPayroll));
+  if (alreadyIssued && requalifiedModels.get(key) === signature) return executable;
+  if (payload.resolved !== undefined && canonicalSerialize(resolveScenario(payload.resolved.layers, payload.resolved.scenario.scenarioId)) !== canonicalSerialize(payload.resolved)) mismatch();
+  const compiled = compileHouseholdProjection(model, payload.request.compiler);
+  if (compiled.status !== "compiled") return mismatch();
+  const selected = boundary(payload.request.compiler);
+  if (!selected || context.simulationStart !== `${selected.simulationStart}T00:00:00.000Z` ||
+    context.simulationEnd !== `${selected.simulationEnd}T00:00:00.000Z` || context.baseCurrency.code !== selected.baseCurrency) mismatch();
+  const reconstructed = forecastExecutable(compiled.value, model, payload.request.compiler, context, payload.request.runIdentity, payload.resolved);
+  if (reconstructed.scenarioIdentity !== context.scenarioId || canonicalSerialize(payrollManifest(reconstructed)) !== canonicalSerialize(payload.manifest) ||
+    replayModelSignature(reconstructed) !== signature) mismatch();
+  const canonical = new Map((reconstructed.cashFlowInput?.incomes ?? []).filter(stream => stream.modeledPayroll !== undefined)
+    .map(stream => [stream.id, stream.modeledPayroll!] as const));
+  // The portable address is never independent authority. Only a token freshly
+  // issued by recompiling the separately supplied model can enter the restored
+  // immutable kernel. This shallow replacement does not duplicate economic data.
+  const restored = { ...executable, cashFlowInput: executable.cashFlowInput === undefined ? undefined : {
+    ...executable.cashFlowInput, incomes: executable.cashFlowInput.incomes.map(stream => {
+      if (stream.modeledPayroll === undefined) return stream;
+      const reference = canonical.get(stream.id);
+      if (reference === undefined || canonicalSerialize(reference) !== canonicalSerialize(stream.modeledPayroll)) mismatch();
+      return { ...stream, modeledPayroll: reference };
+    }),
+  } };
+  if (requalifiedModels.size >= 16) requalifiedModels.delete(requalifiedModels.keys().next().value!);
+  requalifiedModels.set(key, signature);
+  return restored;
 });
 
 /** Application-owned restore entry: the model is supplied independently of the
