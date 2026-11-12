@@ -612,7 +612,11 @@ export function executePreparedVerticalSlice2Occurrence(
   const events = {
     closingState: state, primitiveState, effects: [], transactions: [], diagnostics: [], primitiveOutputs: [],
   };
-  const request = { runContext, openingState: state, primitiveState, input: filtered };
+  // Prepared occurrences remove event mechanics after event eligibility was evaluated.
+  // The source binding must still be qualified against the exact original stream,
+  // not its event-free execution projection.
+  const request = { runContext, openingState: state, primitiveState, input: filtered,
+    ...(income === undefined ? {} : { modeledSourceIncome: income }) };
   return summary === undefined ? executeCashFlowPeriodCandidate(request, prepared.period, events)
     : executeCashFlowPeriodCandidate(request, prepared.period, events, summary);
 }
@@ -628,10 +632,11 @@ interface VerticalSlice2InternalRunInput extends VerticalSlice2RunInput {
 }
 
 /** Shared financial evaluator; a prepared occurrence passes no event work or run wrapper. */
-function executeCashFlowPeriodCandidate(request: VerticalSlice2RunInput, targetPeriod: Period, eventResult: PeriodWorkCandidate): CashCandidate & { readonly period: VerticalSlice2PeriodResult };
-function executeCashFlowPeriodCandidate(request: VerticalSlice2RunInput, targetPeriod: Period, eventResult: PeriodWorkCandidate, summary: SummaryOperationSink): CashCandidate & { readonly summary: CashOperationSummary };
+type CashFlowEvaluatorRequest = VerticalSlice2RunInput & { readonly modeledSourceIncome?: RecurringIncomeStream };
+function executeCashFlowPeriodCandidate(request: CashFlowEvaluatorRequest, targetPeriod: Period, eventResult: PeriodWorkCandidate): CashCandidate & { readonly period: VerticalSlice2PeriodResult };
+function executeCashFlowPeriodCandidate(request: CashFlowEvaluatorRequest, targetPeriod: Period, eventResult: PeriodWorkCandidate, summary: SummaryOperationSink): CashCandidate & { readonly summary: CashOperationSummary };
 function executeCashFlowPeriodCandidate(
-  request: VerticalSlice2RunInput,
+  request: CashFlowEvaluatorRequest,
   targetPeriod: Period,
   eventResult: PeriodWorkCandidate,
   summary?: SummaryOperationSink,
@@ -687,7 +692,7 @@ function executeCashFlowPeriodCandidate(
           actions.push({ scheduledAt: occurrence.scheduledAt, kind: "income", priority: payrollPriority(stream) ?? Number.MAX_SAFE_INTEGER, id: `${stream.id}:${occurrence.occurrenceId}`, execute: () => {
             const wageSource = stream.householdWageSource;
             const modeledPayroll = stream.modeledPayroll === undefined ? undefined : modeledPayrollOccurrence({
-              householdId: request.input.householdId, stream, context: request.runContext,
+              householdId: request.input.householdId, stream: request.modeledSourceIncome ?? stream, context: request.runContext,
               at: occurrence.scheduledAt, period: targetPeriod, occurrenceId: occurrence.occurrenceId, gross: amount,
             }, state.accounts[stream.depositAccountId]);
             if (state.accounts[stream.depositAccountId]?.ownerId === request.input.householdId && wageSource === undefined && modeledPayroll === undefined)
@@ -705,7 +710,7 @@ function executeCashFlowPeriodCandidate(
             recognitions.push(recognition);
             effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "recurring_income", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, provenance, traceRefs }));
             if (stream.payrollContributions?.length || stream.payrollWithholding?.length) {
-              const payroll = payrollContributionCandidate(state, { id: `tx:${recognition.id}`, incomeId: stream.id, ownerId: stream.ownerId, occurrenceId: occurrence.occurrenceId, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions ?? [], ...(householdWage === undefined ? {} : { householdWage }), ...(modeledPayroll === undefined ? {} : { modeledPayroll }), ...(stream.payrollWithholding === undefined ? {} : { withholding: stream.payrollWithholding }), ...(stream.payrollTaxCreditAccountId === undefined ? {} : { taxCreditAccountId: stream.payrollTaxCreditAccountId }) });
+              const payroll = payrollContributionCandidate(state, { id: `tx:${recognition.id}`, householdId: request.input.householdId, incomeId: stream.id, ownerId: stream.ownerId, occurrenceId: occurrence.occurrenceId, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions ?? [], ...(householdWage === undefined ? {} : { householdWage }), ...(modeledPayroll === undefined ? {} : { modeledPayroll }), ...(stream.payrollWithholding === undefined ? {} : { withholding: stream.payrollWithholding }), ...(stream.payrollTaxCreditAccountId === undefined ? {} : { taxCreditAccountId: stream.payrollTaxCreditAccountId }) });
               state = payroll.state;
               if (payroll.withholdingEvidence !== undefined) withholdingEvidence.push(payroll.withholdingEvidence);
               diagnostics.push(...payroll.diagnostics);
