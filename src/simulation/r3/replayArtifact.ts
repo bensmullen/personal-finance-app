@@ -27,22 +27,22 @@ export interface ModeledPayrollReplayBasis {
   readonly payload: unknown;
 }
 type ModelRequalifier = (basis: ModeledPayrollReplayBasis, executable: ExecutableHouseholdProjection,
-  context: RunContext, independentSource: unknown) => void;
+  context: RunContext, independentSource: unknown) => ExecutableHouseholdProjection;
 const modelRequalifiers = new Map<string, ModelRequalifier>();
 export function registerModeledPayrollReplayAuthority(issuer: "application-household/v1", requalify: ModelRequalifier): void {
   if (issuer !== "application-household/v1" || modelRequalifiers.has(issuer)) throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: duplicate or unsupported model issuer");
   modelRequalifiers.set(issuer, requalify);
 }
 function qualifyModelBasis(basis: ModeledPayrollReplayBasis | undefined, executable: ExecutableHouseholdProjection,
-  context: RunContext, independentSource: unknown): void {
+  context: RunContext, independentSource: unknown): ExecutableHouseholdProjection {
   const modeled = executable.cashFlowInput?.incomes.some(stream => stream.modeledPayroll !== undefined);
-  if (!basis && !modeled) return;
+  if (!basis && !modeled) return executable;
   const authority = basis?.version === "modeled-payroll-replay/v1" ? modelRequalifiers.get(basis.issuer) : undefined;
   if (!basis || !modeled || !authority || independentSource === undefined)
     throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: independent authored model is required");
   if (canonicalSerialize(basis).length > 262144)
     throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: model proposal exceeds bounded replay extension");
-  authority(basis, executable, context, independentSource);
+  return authority(basis, executable, context, independentSource);
 }
 
 type Wire = null | boolean | number | string | { readonly kind: string; readonly value: unknown };
@@ -279,7 +279,9 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
     throw new Error("HOUSEHOLD_REPLAY_BASIS_MISMATCH: modeled payroll requires the v3 extension");
   // Recompile against the separately supplied model before kernel activation or
   // checkpoint registration, even when a matching issuer is already warm.
-  qualifyModelBasis(restored.modeledPayroll, executable, restored.runContext, independentSource);
+  // Decoded objects are immutable; attach only independently recompiled model
+  // payroll references to a fresh executable before kernel/checkpoint admission.
+  const admittedExecutable = qualifyModelBasis(restored.modeledPayroll, executable, restored.runContext, independentSource);
   try { observer?.phase?.("participants_restored"); } catch { /* Observation is optional. */ }
   const qualify = (state: AuthoritativeState) => {
     measure("sourceRequalificationMs", () => {
@@ -289,19 +291,19 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
     });
     try { observer?.phase?.("source_requalified"); } catch { /* Observation is optional. */ }
   };
-  if (supplied.version !== "household-replay/v3") qualify(executable.reconciledOpeningState);
-  const kernel = measure("kernelCompileMs", () => compileHouseholdKernel(executable, restored.runContext.simulationStart));
+  if (supplied.version !== "household-replay/v3") qualify(admittedExecutable.reconciledOpeningState);
+  const kernel = measure("kernelCompileMs", () => compileHouseholdKernel(admittedExecutable, restored.runContext.simulationStart));
   try { observer?.phase?.("kernel_compiled"); } catch { /* Observation is optional. */ }
   const forecast = Object.freeze({ runMetadata: restored.runMetadata, periods: restored.periods,
     replay: Object.freeze({ kernel, runContext: restored.runContext }) });
   if (supplied.version === "household-replay/v3") {
-    const checkpoints = measure("checkpointRestoreValidationMs", () => restoreCheckpointDeltas(restored.checkpoints!, executable.reconciledOpeningState, (nodes, rows) => {
+    const checkpoints = measure("checkpointRestoreValidationMs", () => restoreCheckpointDeltas(restored.checkpoints!, admittedExecutable.reconciledOpeningState, (nodes, rows) => {
       timings.checkpointIndexNodesVisited = (timings.checkpointIndexNodesVisited ?? 0) + nodes;
       timings.checkpointRecordChanges = (timings.checkpointRecordChanges ?? 0) + rows;
     }));
     // Append-only admission proves that this union contains every inherited
     // and new proof. Independently requalify it once before registration.
-    qualify(checkpoints.at(-1)?.state ?? executable.reconciledOpeningState);
+    qualify(checkpoints.at(-1)?.state ?? admittedExecutable.reconciledOpeningState);
     measure("checkpointRestoreValidationMs", () => registerHouseholdReplayCheckpoints(forecast, checkpoints, counts => {
       timings.checkpointDiagnosticKeysComputed = counts.diagnosticKeysComputed;
       timings.checkpointDiagnosticOccurrencesCompared = counts.diagnosticOccurrencesCompared;
