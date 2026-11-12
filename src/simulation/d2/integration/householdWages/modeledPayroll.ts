@@ -26,7 +26,9 @@ export interface ModeledPayrollBinding {
   readonly runId?: string;
   readonly dataCutoff?: string;
 }
-const issuers = new Map<string, (key: string) => ModeledPayrollBinding | undefined>();
+// The issuer owns a reference-identity-scoped weak inventory. A digest is a
+// portable address, never proof that an independently supplied object was issued.
+const issuers = new Map<string, (reference: ModeledPayrollReference) => ModeledPayrollBinding | undefined>();
 export const modeledPayrollKey = (binding: unknown): string => `sha256:${sha256(canonicalSerialize(binding))}`;
 export const withoutModeledPayroll = ({ modeledPayroll: _ref, ...stream }: RecurringIncomeStream) => stream;
 const reject = (): never => failValidation({ severity: "error", code: issueCodes.verticalSlice2InputInvalid,
@@ -35,7 +37,7 @@ const reject = (): never => failValidation({ severity: "error", code: issueCodes
 /** Internal compiler composition seam, deliberately absent from public barrels.
  * Only the compiler closure can add bindings to its registered inventory. */
 export function registerModeledPayrollCompiler(issuer: "canonical-cash-flow/v1" | "canonical-household/v1" | "canonical-forecast/v1",
-  read: (key: string) => ModeledPayrollBinding | undefined): void {
+  read: (reference: ModeledPayrollReference) => ModeledPayrollBinding | undefined): void {
   if (!["canonical-cash-flow/v1", "canonical-household/v1", "canonical-forecast/v1"].includes(issuer) || issuers.has(issuer)) return reject();
   issuers.set(issuer, read);
 }
@@ -43,7 +45,7 @@ export function registerModeledPayrollCompiler(issuer: "canonical-cash-flow/v1" 
 export function qualifyModeledPayroll(stream: RecurringIncomeStream, householdId: string,
   bank: AccountState | undefined, context: RunContext): void {
   const ref = stream.modeledPayroll;
-  const binding = ref?.version === "modeled-payroll/v1" ? issuers.get(ref.issuer)?.(ref.key) : undefined;
+  const binding = ref?.version === "modeled-payroll/v1" ? issuers.get(ref.issuer)?.(ref) : undefined;
   if (!binding || !bank || stream.householdWageSource !== undefined ||
     binding.householdId !== householdId || stream.ownerId === householdId ||
     bank.ownerId !== householdId || binding.bank.ownerId !== householdId ||
