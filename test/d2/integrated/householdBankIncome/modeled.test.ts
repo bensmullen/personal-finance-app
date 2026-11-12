@@ -167,7 +167,7 @@ describe("authenticated modeled salary at a shared bank", () => {
   });
   it("rejects reordered or duplicated manifests after independently compiling both spouses", () => {
     const model = rebindModeledBank(modeledSource(true, true), ids.household), read = forecast(model);
-    const original = householdEvidenceProof(read.points), context = modeledContext();
+    const original = householdEvidenceProof(read.points)!, context = modeledContext();
     expect(original, JSON.stringify({ status: read.status, points: read.points.length, diagnostics: read.diagnostics })).toBeDefined();
     const restored = restoreHouseholdForecastEvidence(structuredClone(original), model);
     expect(restored.replay.kernel.cash!.input.incomes.every(stream => stream.modeledPayroll !== undefined)).toBe(true);
