@@ -35,6 +35,7 @@ const percent = (rate: string) => {
 export const payrollContributionCandidate = (opening: AuthoritativeState, input: {
   readonly id: string; readonly incomeId: string; readonly at: Instant; readonly gross: Money; readonly depositAccountId: AccountId;
   readonly allocations: readonly PayrollContributionAllocation[];
+  readonly householdId?: string;
   readonly ownerId?: string;
   readonly occurrenceId?: string;
   readonly withholding?: readonly PayrollWithholdingElection[];
@@ -48,8 +49,13 @@ export const payrollContributionCandidate = (opening: AuthoritativeState, input:
     assertModeledPayrollOccurrence(input.modeledPayroll, opening.accounts[input.depositAccountId], input);
     if (input.healthPremium !== undefined || input.householdWage !== undefined) return invalid("HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
   }
-  if (input.householdWage === undefined && input.modeledPayroll === undefined && input.ownerId !== undefined &&
-    opening.accounts[input.depositAccountId]?.ownerId !== input.ownerId)
+  // Person-to-Person salary deposits remain supported for existing D1 family HSA.
+  // Only Household-owned BANK income requires independently qualified D2 wage
+  // or a compiler-issued modeled payroll witness.
+  const householdId = input.householdId ?? input.householdWage?.context.householdId ??
+    input.modeledPayroll?.householdId ?? input.healthPremium?.context.householdId;
+  if (input.householdWage === undefined && input.modeledPayroll === undefined &&
+    householdId !== undefined && opening.accounts[input.depositAccountId]?.ownerId === householdId)
     return invalid(input.healthPremium === undefined ? "HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL" : "HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
   if (input.householdWage !== undefined && (input.healthPremium !== undefined ||
     opening.d2PostedTransactions?.[accountingTransactionId(input.id)]?.registration.kind === "payroll_health_deduction")) return invalid("HOUSEHOLD_PAYROLL_HEALTH_REQUIRES_S4");
