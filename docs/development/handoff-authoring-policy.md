@@ -253,6 +253,19 @@ Specifically resolve:
   compiler-time runId, relax a protected regression or demand an unavailable
   context from the caller. Distinguish eager authenticated issuance when the
   real context already exists from deferred, revalidated per-run activation.
+- **Positive fixture closure after source-contract changes:** inventory all
+  direct, prepared, reference, integrated, scenario, benchmark and E2E fixture
+  families that can actually post, including positive streams copied/modified
+  after source issuance. Reissue from verified canonical originals for the
+  *final* effective model and run, not from unsigned test-only credential
+  factories; leave intentionally adversarial negatives negative and protected
+  economic assertions unchanged. Reject partial fixture migrations that merely
+  move the first failing caller.
+- **Sparse replay terminal source frontier:** retained checkpoints may end
+  before terminal execution. Source history after the last retained checkpoint
+  is still required for independent cold-restore admission, not only in a warm
+  in-memory cache. Preserve bounded lossless source-only tail evidence without
+  duplicating full model, tax catalog or authoritative state per month.
 - Warm-cache **early returns** as well as cold decode and checkpoint restore;
   inspect the independent observed provider/source rechecks on both routes.
 
