@@ -12,6 +12,7 @@ import type { ExecutableHouseholdProjection } from "../../src/simulation/househo
 import { instant, utcMonthlyPeriods } from "../../src/time/index.js";
 import { money, Ratio, USD } from "../../src/values/index.js";
 import { taxRule } from "./t1aTaxRules.js";
+import { employerWage } from "./employerWage.js";
 
 export const taxHouseholdIds = {
   household: domainId("household", "86000000-0000-4000-8000-000000000001"),
@@ -20,7 +21,7 @@ export const taxHouseholdIds = {
   income: domainId("income", "86000000-0000-4000-8000-000000000004"),
   payable: domainId("liability", "86000000-0000-4000-8000-000000000005"),
 };
-export const taxHouseholdFixture = (options: { readonly months?: number; readonly amount?: string; readonly openingCash?: string; readonly withholding?: string; readonly input?: Partial<HouseholdTaxInput>; readonly incomeType?: string; readonly taxCharacter?: string; readonly simulationStart?: string; readonly incomeStart?: string; readonly payrollElection?: PayrollWithholdingPlan } = {}) => {
+export const taxHouseholdFixture = (options: { readonly months?: number; readonly amount?: string; readonly openingCash?: string; readonly withholding?: string; readonly input?: Partial<HouseholdTaxInput>; readonly incomeType?: string; readonly taxCharacter?: string; readonly simulationStart?: string; readonly incomeStart?: string; readonly payrollElection?: PayrollWithholdingPlan; readonly employerOriginal?: boolean } = {}) => {
   const ids = taxHouseholdIds, months = options.months ?? 1;
   const start = instant(`${options.simulationStart ?? "2024-01-01"}T00:00:00.000Z`), end = utcMonthlyPeriods(start, months).at(-1)!.end;
   const incomeStart = options.incomeStart ?? `${start.slice(0, 7)}-15`;
@@ -64,11 +65,30 @@ export const taxHouseholdFixture = (options: { readonly months?: number; readonl
     sameInstantCashFlowOrder: "income_before_expense",
   });
   if (cash.status !== "compiled") throw new Error(JSON.stringify(cash.diagnostics));
+  const plan = options.payrollElection;
+  if (options.employerOriginal && ((options.incomeType ?? "salary") !== "salary" ||
+      (plan !== undefined && plan.calculation.kind !== "fixed")))
+    throw new Error("Employer archive fixture supports salary with fixed withholding");
+  const original = options.employerOriginal ? employerWage(context, {
+    householdId: ids.household, personId: ids.person, incomeId: ids.income, bankAccountId: ids.cash,
+    employerId: options.payrollElection?.employerId ?? "Synthetic employer archive",
+    firstPayday: incomeStart, gross: options.amount ?? "1000",
+    ...(plan?.calculation.kind !== "fixed" ? {} : { withholding: {
+      id: plan.id, version: "payroll-withholding/v1", incomeId: ids.income, ownerId: ids.person,
+      employerId: plan.employerId, depositAccountId: ids.cash, jurisdiction: plan.jurisdiction,
+      start: instant(`${plan.effectiveDate}T00:00:00.000Z`),
+      ...(plan.expirationDate === undefined ? {} : { end: instant(`${plan.expirationDate}T00:00:00.000Z`) }),
+      provenance: plan.provenance, userConfirmed: true, calculation: { kind: "fixed", amount: money(plan.calculation.amount) },
+    } }),
+  }) : undefined;
   const compiled: ExecutableHouseholdProjection = {
-    reconciledOpeningState: createAuthoritativeState({ accounts: { [ids.cash]: { id: ids.cash, kind: "cash", ownerId: ids.person, cash: money(options.openingCash ?? "0") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } }),
+    reconciledOpeningState: createAuthoritativeState({ accounts: { [ids.cash]: { id: ids.cash,
+      kind: original ? "checking" : "cash", ownerId: original ? ids.household : ids.person,
+      cash: money(options.openingCash ?? "0") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } }),
     reconciledPrimitiveState: createPrimitiveRuntimeStateStore(), executionMonths: months, scenarioIdentity: context.scenarioId, scenarioBindings: {}, standaloneAssets: [],
     participants: [createHouseholdTaxParticipant(input)], nonInvestmentPositionIds: taxCreditPositionIds(input),
-    cashFlowInput: { ...cash.value.input, expensePayableLiabilityId: ids.payable },
+    cashFlowInput: { ...cash.value.input, expensePayableLiabilityId: ids.payable,
+      ...(original === undefined ? {} : { incomes: [original.income] }) },
   };
-  return { input, context, compiled, kernel: compileHouseholdKernel(compiled, start) };
+  return { input, context, compiled, kernel: compileHouseholdKernel(compiled, start), original };
 };

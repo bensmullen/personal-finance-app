@@ -15,7 +15,7 @@ import { exportPersonalModelJson, importPersonalModelJson } from "../src/applica
 import { payrollContributionCandidate, type PayrollContributionAllocation } from "../src/simulation/payrollContributions.js";
 import { stableContributionRuleId } from "../src/application/compiler/contributionAuthoring.js";
 import { contributionCharacters } from "../src/rules/contribution2026.js";
-import { runHouseholdKernel } from "../src/simulation/householdExecution.js";
+import { replayHouseholdForecastWindow, runHouseholdKernel } from "../src/simulation/householdExecution.js";
 import { compileHouseholdKernel } from "../src/simulation/r3/compiledHousehold.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
 import { createHouseholdTaxParticipant, taxBalanceIds, taxCreditPositionIds } from "../src/simulation/tax/participant.js";
@@ -379,9 +379,10 @@ describe("durable Income authoring and compilation", () => {
   });
 });
 
-const integrated = (amount: string, options: { readonly months?: number; readonly noPayroll?: boolean; readonly cash?: string; readonly settlementAt?: string } = {}) => {
+const integrated = (amount: string, options: { readonly months?: number; readonly noPayroll?: boolean; readonly cash?: string; readonly settlementAt?: string; readonly employerOriginal?: boolean } = {}) => {
   const withholding = election({ calculation: { kind: "fixed", amount: money(amount) } });
   const fixture = taxHouseholdFixture({ months: options.months ?? 12, openingCash: options.cash ?? "0",
+    ...(options.employerOriginal ? { employerOriginal: true } : {}),
     ...(options.noPayroll ? {} : { payrollElection: {
       id: withholding.id, incomeId: withholding.incomeId, ownerId: withholding.ownerId,
       depositAccountId: withholding.depositAccountId, employerId: withholding.employerId,
@@ -392,12 +393,12 @@ const integrated = (amount: string, options: { readonly months?: number; readonl
   const input: HouseholdTaxInput = { ...fixture.input, payrollWithholding: options.noPayroll ? [] : [withholding], incomes: fixture.input.incomes.map(item => ({ ...item, grossOrNet: "gross", employerId: "synthetic-job-A" })),
     ...(options.settlementAt === undefined ? {} : { settlements: [{ ...fixture.input.settlements![0]!, at: instant(options.settlementAt) }] }) };
   const compiled = { ...fixture.compiled, participants: [createHouseholdTaxParticipant(input)], nonInvestmentPositionIds: taxCreditPositionIds(input) };
-  return { input, context: fixture.context, runContext: fixture.context, kernel: compileHouseholdKernel(compiled, fixture.context.simulationStart) };
+  return { input, context: fixture.context, runContext: fixture.context, original: fixture.original, kernel: compileHouseholdKernel(compiled, fixture.context.simulationStart) };
 };
 
 describe("payroll credits, tax accrual and net final settlement", () => {
   it.each([false, true])("keeps open-ended payroll credits out of investable value beyond catalog years (supported law: %s)", supported => {
-    const fixture = integrated("100", { months: 13 });
+    const fixture = integrated("100", { months: 13, employerOriginal: true });
     const input = { ...fixture.input, catalog: supported ? [...fixture.input.catalog, { ...fixture.input.catalog[0]!, id: domainId("tax-rule", uuid(301)), version: "synthetic-2025", effectiveFrom: instant("2025-01-01T00:00:00.000Z"), effectiveUntil: instant("2026-01-01T00:00:00.000Z") }] : fixture.input.catalog,
       settlements: [...fixture.input.settlements!, { id: "final-2025", jurisdiction: "US:FEDERAL", taxYear: "2025", at: instant("2025-12-31T23:59:59.999Z") }] };
     // No payment, catalog rule or settlement enumerates this year in the
@@ -419,7 +420,10 @@ describe("payroll credits, tax accrual and net final settlement", () => {
     expect(summary.state).toEqual(detail.state);
     expect(summary.outputCapabilities).toEqual(detail.outputCapabilities);
     if (!supported) expect(summary.outputCapabilities?.cash?.diagnostics).toContainEqual(expect.objectContaining({ category: "rule_selection", jurisdiction: "US:FEDERAL" }));
+    const beforeRestore = { ...fixture.original!.reads };
     const restored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(summary)));
+    expect(fixture.original!.reads.employer).toBeGreaterThan(beforeRestore.employer);
+    expect(fixture.original!.reads.bank).toBeGreaterThan(beforeRestore.bank);
     const replay = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
     expect(replay.periods).toEqual(summary.periods);
     expect(replay.state).toEqual(summary.state);
@@ -494,10 +498,19 @@ describe("payroll credits, tax accrual and net final settlement", () => {
     expect(detail.periods[0]!.cashFlow!.recurringIncomeRecognized.equals(money("1000"))).toBe(true);
   });
   it("summary/detail/portable replay retain the same state, identity, per-period cash and diagnostics", () => {
-    const fixture = integrated("120"), summary = runHouseholdKernel(fixture), detail = runHouseholdKernel({ ...fixture, resultTier: "detail" });
+    const fixture = integrated("120", { employerOriginal: true });
+    const beforePosting = { ...fixture.original!.reads };
+    const summary = runHouseholdKernel(fixture), detail = runHouseholdKernel({ ...fixture, resultTier: "detail" });
+    expect(detail.status).toBe("completed");
+    expect(Object.values(detail.state.d2PostedTransactions ?? {}).filter(proof => proof.registration.kind === "household_domain")).toHaveLength(12);
+    expect(fixture.original!.reads.employer).toBeGreaterThan(beforePosting.employer);
+    expect(fixture.original!.reads.bank).toBeGreaterThan(beforePosting.bank);
     const artifact = createPortableHouseholdReplayArtifact(summary);
     const restored = restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(artifact)));
+    const beforeReplay = { ...fixture.original!.reads };
     const replay = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext, resultTier: "detail" });
+    expect(fixture.original!.reads.employer).toBeGreaterThan(beforeReplay.employer);
+    expect(fixture.original!.reads.bank).toBeGreaterThan(beforeReplay.bank);
     expect(summary.status).toBe(detail.status);
     expect(summary.runMetadata).toEqual(detail.runMetadata);
     expect(replay.runMetadata).toEqual(detail.runMetadata);
@@ -505,6 +518,22 @@ describe("payroll credits, tax accrual and net final settlement", () => {
     expect(summary.outputCapabilities).toEqual(detail.outputCapabilities);
     expect(summary.periods.map(period => period.cash)).toEqual(detail.periods.map(period => period.cash));
     expect(replay.periods).toEqual(detail.periods);
+    const terminal = detail.periods.at(-1)!.period;
+    expect(replayHouseholdForecastWindow(restored, terminal)).toEqual(replayHouseholdForecastWindow(summary, terminal));
+    const source = fixture.original!.source;
+    for (const mode of ["missing", "withdrawn", "changed", "duplicate", "late", "bank_owner", "bank_permission"] as const) {
+      source.mode = mode;
+      try {
+        const rejected = runHouseholdKernel(fixture);
+        expect(rejected.periods).toHaveLength(0);
+        expect(rejected.state).toEqual(fixture.kernel.executable.reconciledOpeningState);
+        expect(() => restorePortableHouseholdReplayArtifact(artifact)).toThrow(/BASIS_MISMATCH/);
+        expect(() => restorePortableHouseholdReplayArtifact(JSON.parse(JSON.stringify(artifact)))).toThrow(/BASIS_MISMATCH/);
+        expect(() => replayHouseholdForecastWindow(restored, terminal)).toThrow();
+      } finally {
+        source.mode = "available";
+      }
+    }
   });
   it("keeps estimated cash payments distinct from employer-remitted paycheck credit", () => {
     const fixture = integrated("80");

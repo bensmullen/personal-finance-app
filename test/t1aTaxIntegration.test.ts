@@ -488,11 +488,16 @@ describe("T1A household tax integration", () => {
   });
 
   it("restores portable tax participants and reproduces sparse replay, diagnostics and basis", () => {
-    const fixture = taxHouseholdFixture({ months: 13 });
+    const fixture = taxHouseholdFixture({ months: 13, employerOriginal: true });
     const forecast = runHouseholdKernel({ kernel: fixture.kernel, runContext: fixture.context });
     expect(forecast.periods, JSON.stringify(forecast.diagnostics)).toHaveLength(13);
+    expect(Object.keys(forecast.state.d2PostedTransactions ?? {})).toHaveLength(13);
+    expect(forecast.periods.every(period => period.statements.income.equals(money("1000")))).toBe(true);
     const artifact = structuredClone(createPortableHouseholdReplayArtifact(forecast));
+    const beforeRestore = { ...fixture.original!.reads };
     const restored = restorePortableHouseholdReplayArtifact(artifact);
+    expect(fixture.original!.reads.employer).toBeGreaterThan(beforeRestore.employer);
+    expect(fixture.original!.reads.bank).toBeGreaterThan(beforeRestore.bank);
     const rerun = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
     expect(rerun.runMetadata).toEqual(forecast.runMetadata);
     expect(canonicalSerialize(rerun.state)).toBe(canonicalSerialize(forecast.state));
@@ -506,7 +511,7 @@ describe("T1A household tax integration", () => {
   });
 
   it("keeps participant-free execution and portable replay free of capability metadata", () => {
-    const fixture = taxHouseholdFixture();
+    const fixture = taxHouseholdFixture({ employerOriginal: true });
     const { participants: _participants, nonInvestmentPositionIds: _positions, ...executable } = fixture.compiled;
     const kernel = compileHouseholdKernel(executable, fixture.context.simulationStart);
     const summary = runHouseholdKernel({ kernel, runContext: fixture.context });
