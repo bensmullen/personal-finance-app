@@ -111,6 +111,7 @@ export interface HouseholdProjectionPeriodResult {
 
 /** Household aggregates are deliberately distinct from standalone slice results. */
 export interface HouseholdCashFlowPeriodSummary {
+  readonly payrollWithholding?: NonNullable<VerticalSlice2PeriodResult["payrollWithholding"]>;
   readonly recurringIncomeRecognized: Money;
   readonly recurringExpenseRecognized: Money;
   readonly expenseCashSettlement: Money;
@@ -991,6 +992,9 @@ const runCompiledHouseholdProjectionInternal = (
         cashPeriods.length === 0
           ? undefined
           : Object.freeze({
+              ...(cashPeriods.some(item => item.payrollWithholding?.length) ? {
+                payrollWithholding: Object.freeze(cashPeriods.flatMap(item => item.payrollWithholding ?? [])),
+              } : {}),
               recurringIncomeRecognized: cashPeriods.reduce(
                 (total, item) => total.plus(item.recurringIncomeRecognized),
                 Money.zero(runContext.baseCurrency),

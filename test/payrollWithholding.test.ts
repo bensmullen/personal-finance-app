@@ -22,6 +22,11 @@ import { taxHouseholdFixture, taxHouseholdIds as ids } from "./fixtures/t1aTaxHo
 import { deriveStatements } from "../src/statements/index.js";
 import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { runVerticalSlice2 } from "../src/simulation/verticalSlice2.js";
+import {
+  executeVerticalSlice2PeriodCandidate as executeReferenceCashPeriod,
+  runVerticalSlice2 as runReferenceVerticalSlice2,
+} from "../src/simulation/r3/referenceVerticalSlice2.js";
+import { createPrimitiveRuntimeStateStore } from "../src/simulation/period.js";
 import { taxRule } from "./fixtures/t1aTaxRules.js";
 import { paycheckFixture as healthPaycheckFixture } from "./d2/health/premiums/payrollPort/scenario.js";
 
@@ -154,7 +159,10 @@ describe("durable Income authoring and compilation", () => {
           ? { ...item, ...fields } : item) },
     });
     model = withBankFields(model, { owner_id: bankOwner });
-    const electionPlan = plan({ incomeId, ownerId: earner, employerId: "synthetic-job-B" });
+    const electionPlan = plan({
+      incomeId, ownerId: earner, employerId: "synthetic-job-B",
+      ...(role === "household" ? { calculation: { kind: "fixed", amount: "150" } } : {}),
+    });
     const authored = authorPayrollWithholding(model, electionPlan);
     const decoded = durablePayrollWithholding(authored);
     expect(decoded).toEqual([expect.objectContaining({ incomeId, ownerId: earner, employerId: "synthetic-job-B", depositAccountId: golden.checking })]);
@@ -184,6 +192,38 @@ describe("durable Income authoring and compilation", () => {
       gross: money("1000"), takeHomeCash: money("850"), depositAccountId: golden.checking,
       credits: [expect.objectContaining({ electionId: electionPlan.id, jurisdiction: "US:FEDERAL", taxYear: "2026", amount: money("150") })],
     })]);
+    // The schedules, recognition and period accounting are compared independently.
+    // Gross-to-net payroll and tax credits share the payroll domain primitive.
+    const reference = runReferenceVerticalSlice2({ ...compiled.value, months: 1, runContext });
+    expect(reference.status, JSON.stringify(reference.diagnostics)).toBe("completed");
+    expect(reference.periods[0]!.incomeOccurrences).toEqual(period.incomeOccurrences);
+    expect(reference.periods[0]!.recognitions).toEqual(period.recognitions);
+    expect(reference.periods[0]!.transactions).toEqual(period.transactions);
+    expect(reference.periods[0]!.payrollWithholding).toEqual(period.payrollWithholding);
+    expect(reference.state.positions[taxBalanceIds("US:FEDERAL", "2026").creditPositionId]).toEqual(
+      result.state.positions[taxBalanceIds("US:FEDERAL", "2026").creditPositionId],
+    );
+    const directReference = executeReferenceCashPeriod(
+      { ...compiled.value, months: 1, runContext },
+      period.period, compiled.value.openingState, createPrimitiveRuntimeStateStore(),
+    );
+    expect(directReference.period.payrollWithholding).toEqual(period.payrollWithholding);
+    expect(directReference.period.transactions.map(item => item.legs)).toEqual(period.transactions.map(item => item.legs));
+    const withoutSalaryOriginal = {
+      ...compiled.value.input,
+      incomes: compiled.value.input.incomes.map(stream => {
+        if (stream.id !== incomeId) return stream;
+        const { modeledPayroll: _source, ...unsigned } = stream;
+        return unsigned;
+      }),
+    };
+    const openingBefore = canonicalSerialize(compiled.value.openingState);
+    const unsigned = runReferenceVerticalSlice2({ ...compiled.value, input: withoutSalaryOriginal, months: 1, runContext });
+    expect(unsigned.status).toBe("incomplete");
+    expect(unsigned.diagnostics.some(issue => issue.message.includes(
+      role === "household" ? "HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL" : "Elected payroll requires an authenticated salary source",
+    ))).toBe(true);
+    expect(canonicalSerialize(unsigned.state)).toBe(openingBefore);
     const bank = compiled.value.openingState.accounts[golden.checking]!;
     const changedOwner = role === "household" ? domainId("person", earner) : domainId("household", golden.household);
     const changedOpening = createAuthoritativeState({
@@ -196,6 +236,10 @@ describe("durable Income authoring and compilation", () => {
     expect(changed.diagnostics.some(issue => issue.message.includes("MODELED_PAYROLL_NOT_ADMITTED"))).toBe(true);
     expect(canonicalSerialize(changed.state)).toBe(before);
     expect(canonicalSerialize(changedOpening)).toBe(before);
+    const referenceChanged = runReferenceVerticalSlice2({ ...compiled.value, openingState: changedOpening, months: 1, runContext });
+    expect(referenceChanged.status).toBe("incomplete");
+    expect(referenceChanged.diagnostics).toEqual(changed.diagnostics);
+    expect(canonicalSerialize(referenceChanged.state)).toBe(before);
     const unelected = compileCashFlow(model, request);
     if (unelected.status !== "compiled") throw new Error(JSON.stringify(unelected.diagnostics));
     const noElection = runVerticalSlice2({ ...unelected.value, months: 1, runContext });
