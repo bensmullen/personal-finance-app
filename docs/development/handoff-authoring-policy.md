@@ -219,6 +219,12 @@ relevant workflow invocations. Inspect direct imports, aliases and exported
 barrels; a symbol search is a starting point, not dynamic-call proof.
 Specifically resolve:
 
+- **Pre-issuer acceptance gates** shared by authored-model decoding, election
+  authoring, tax compilation, forecast readiness and execution. Follow each
+  canonical owner/member/account validation predicate and its reverse callers,
+  even when it is not named like a salary issuer or posting evaluator. Challenge
+  a prior read-only/out-of-scope disposition whenever that gate rejects a newly
+  approved cross-owner/account route; never relax unrelated validators.
 - Direct/compiled/embedded and no-election/elected routes, **independent
   frozen reference evaluators**, scenario alternatives, actual posting and
   rollback, and positive/negative fixtures; do not accidentally make the
