@@ -600,17 +600,21 @@ describe("R3 reusable deterministic household kernel", () => {
 
   it("preserves event eligibility and primitive commit frontiers", () => {
     const event = domainId("event", "93000000-0000-4000-8000-000000000070");
+    const issued = compileModeledIncomeFixture(context(), 1, {
+      householdId: ids.household, personId: ids.owner, accountId: ids.cash, accountType: "checking",
+      retirementBindings: [{ incomeId: ids.income, terminationEventId: event, baselineDate: "2026-01-10" }],
+      incomes: [{ id: ids.income, type: "salary", amount: "100", startDate: "2025-12-15" }],
+    });
     const input = { ...compiled(), cashFlowInput: {
       ...cashFlow,
-      incomes: [{ ...cashFlow.incomes[0]!, terminationEventId: event,
-        primitiveIds: { ...cashFlow.incomes[0]!.primitiveIds, termination: primitive("70") } }],
-      events: [{ id: event, targetId: ids.income, kind: "termination" as const, effectiveAt: instant("2026-01-10T00:00:00.000Z") }],
+      incomes: issued.incomes,
+      events: issued.events,
     } };
     const result = runCompiledHouseholdProjection({ compiled: input, runContext: context() });
     expect(result).toEqual(referenceRun({ compiled: input, runContext: context() }));
     expect(result.status).toBe("completed");
     expect(result.state.accounts[ids.cash]!.cash.equals(money("10"))).toBe(true);
-    expect(result.primitiveState[primitive("70")]).toBeDefined();
+    expect(result.primitiveState[issued.incomes[0]!.primitiveIds.termination!]?.primitiveId).toBe("P30");
   });
 
   it("matches required-service and dependent extra-principal semantics over two bounded periods", () => {
@@ -810,14 +814,19 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(buildHouseholdScheduledPlan([b, a], { id: "extensions", version: "1",
       rules: [{ before: "beta:adjust", after: "alpha:adjust" }] }).status).toBe("invalid_model");
     const original = integrated("100");
-    const income = original.cashFlowInput!.incomes[0]!;
-    const extra = { ...income, id: domainId("income", "93000000-0000-4000-8000-000000000088"),
-      recurrence: { ...income.recurrence, anchor: instant("2026-01-10T00:00:00.000Z") },
-      growthBaseAt: instant("2026-01-10T00:00:00.000Z"),
-      primitiveIds: { growth: primitive("80"), recurrence: primitive("81") } };
+    const issued = compileModeledIncomeFixture(context(), 1, {
+      householdId: ids.household, personId: ids.owner, accountId: ids.cash, accountType: "checking",
+      incomes: [
+        { id: ids.income, type: "salary", amount: "100", startDate: "2026-01-15" },
+        { id: "93000000-0000-4000-8000-000000000088", type: "salary", amount: "100", startDate: "2026-01-10" },
+      ],
+    });
+    const [income, extra] = [issued.incomes[0]!, issued.incomes[1]!];
     const left = { ...original, cashFlowInput: { ...original.cashFlowInput!, incomes: [income, extra] } };
     const right = { ...original, cashFlowInput: { ...original.cashFlowInput!, incomes: [extra, income] } };
     const result = runCompiledHouseholdProjection({ compiled: left, runContext: context() });
+    expect(result.status).toBe("completed");
+    expect(result.periods[0]!.statements.income).toEqual(money("200"));
     expect(runCompiledHouseholdProjection({ compiled: right, runContext: context() })).toEqual(result);
     expect(result).toEqual(referenceRun({ compiled: left, runContext: context() }));
   });

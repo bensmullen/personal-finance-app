@@ -19,6 +19,7 @@ import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayAr
 import { createHouseholdTaxParticipant, taxBalanceIds, taxCreditPositionIds } from "../src/simulation/tax/participant.js";
 import type { HouseholdTaxInput, PayrollWithholdingElection } from "../src/simulation/tax/contracts.js";
 import { taxHouseholdFixture, taxHouseholdIds as ids } from "./fixtures/t1aTaxHouseholds.js";
+import { compileModeledIncomeFixture } from "./fixtures/modeledIncome.js";
 import { deriveStatements } from "../src/statements/index.js";
 import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
 import { runVerticalSlice2 } from "../src/simulation/verticalSlice2.js";
@@ -424,9 +425,25 @@ describe("payroll credits, tax accrual and net final settlement", () => {
     const rules = ["US:GA", "US:NY", "US:NY:NYC"].map((jurisdiction, index) => taxRule(10 + index, { jurisdiction, income: { ...taxRule().income!, standardDeduction: money("0") } }));
     const input = { ...fixture.input, catalog: [...fixture.input.catalog, ...rules], incomes: [sourceA, sourceB], payrollWithholding: elections };
     const cash = fixture.kernel.executable.cashFlowInput!;
+    const qualified = (entries: readonly PayrollWithholdingElection[]) => compileModeledIncomeFixture(fixture.context, 1, {
+      householdId: ids.household, personId: ids.person, accountId: ids.cash, accountType: "cash",
+      additionalBank: { personId: ownerB, accountId: bankB },
+      incomes: [
+        { id: ids.income, type: "salary", amount: "1000", employer: "synthetic-job-A", startDate: "2024-01-15" },
+        { id: incomeB, type: "salary", amount: "1000", employer: "synthetic-job-B", personId: ownerB, startDate: "2024-01-15" },
+      ],
+      withholding: entries.map(item => ({
+        id: item.id, incomeId: item.incomeId, ownerId: item.ownerId, employerId: item.employerId,
+        depositAccountId: item.depositAccountId, jurisdiction: item.jurisdiction,
+        effectiveDate: item.start.slice(0, 10), provenance: item.provenance, userConfirmed: true,
+        calculation: item.calculation.kind === "fixed"
+          ? { kind: "fixed", amount: item.calculation.amount.amount.toString() }
+          : { kind: "percent_gross", rate: item.calculation.rate },
+      })),
+    }).incomes;
     const compiled = { ...fixture.kernel.executable, participants: [createHouseholdTaxParticipant(input)], nonInvestmentPositionIds: taxCreditPositionIds(input),
       reconciledOpeningState: createAuthoritativeState({ ...fixture.kernel.executable.reconciledOpeningState, accounts: { ...fixture.kernel.executable.reconciledOpeningState.accounts, [bankB]: { id: bankB, ownerId: ownerB, kind: "checking" as const, cash: money("0") } } }),
-      cashFlowInput: { ...cash, incomes: [{ ...cash.incomes[0]!, payrollTaxCreditAccountId: ids.cash, payrollWithholding: elections.filter(item => item.incomeId === ids.income) }, { ...cash.incomes[0]!, id: incomeB, ownerId: ownerB, depositAccountId: bankB, payrollTaxCreditAccountId: ids.cash, payrollWithholding: elections.filter(item => item.incomeId === incomeB), primitiveIds: { growth: domainId("primitive-instance", uuid(104)), recurrence: domainId("primitive-instance", uuid(105)) } }] } };
+      cashFlowInput: { ...cash, incomes: qualified(elections) } };
     const kernel = compileHouseholdKernel(compiled, fixture.context.simulationStart);
     const detail = runHouseholdKernel({ kernel, runContext: fixture.context, resultTier: "detail" });
     expect(detail.state.accounts[ids.cash]!.cash.equals(money("880"))).toBe(true);
@@ -445,7 +462,7 @@ describe("payroll credits, tax accrual and net final settlement", () => {
     }
     expect(reversed.runMetadata).toEqual(detail.runMetadata);
     const missing = { ...input, payrollWithholding: elections.filter(item => item.incomeId === ids.income) };
-    const uncoveredKernel = compileHouseholdKernel({ ...compiled, participants: [createHouseholdTaxParticipant(missing)], cashFlowInput: { ...compiled.cashFlowInput, incomes: [compiled.cashFlowInput.incomes[0]!, { ...compiled.cashFlowInput.incomes[1]!, payrollWithholding: [] }] } }, fixture.context.simulationStart);
+    const uncoveredKernel = compileHouseholdKernel({ ...compiled, participants: [createHouseholdTaxParticipant(missing)], cashFlowInput: { ...compiled.cashFlowInput, incomes: qualified(missing.payrollWithholding) } }, fixture.context.simulationStart);
     const uncovered = runHouseholdKernel({ kernel: uncoveredKernel, runContext: fixture.context });
     expect(uncovered.status).toBe("incomplete");
     expect(uncovered.outputCapabilities?.netWorth?.diagnostics).toContainEqual(expect.objectContaining({ category: "wage_gross_to_net_withholding", entityId: incomeB }));

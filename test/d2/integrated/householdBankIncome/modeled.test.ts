@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileCashFlow } from "../../../../src/application/compiler/cashFlow.js";
+import { authorPayrollWithholding } from "../../../../src/application/compiler/payrollWithholding.js";
 import { compileHouseholdProjection } from "../../../../src/application/compiler/householdProjection.js";
 import { compileHouseholdKernelForRun, runPersonalHouseholdForecast, restoreHouseholdForecastEvidence, resolveHouseholdExplanation, comparePersonalHouseholdScenarios } from "../../../../src/application/householdProjection.js";
 import { GOLDEN_HOUSEHOLD_IDS as ids } from "../../../../src/application/goldenHousehold.js";
@@ -93,6 +94,28 @@ describe("authenticated modeled salary at a shared bank", () => {
     const statements = deriveStatements(result.state, result.periods[0]!.transactions, USD);
     expect(statements.income.amount.toString()).toBe("18000");
     expect(statements.expenses.amount.toString()).toBe("4800");
+  });
+  it.each([
+    { kind: "fixed" as const, amount: "900" },
+    { kind: "percent_gross" as const, rate: "0.1" },
+  ])("posts matching paid-tax credits for %j withholding", calculation => {
+    const model = authorPayrollWithholding(modeledSource(), {
+      id: modeledId(880), incomeId: ids.income, ownerId: ids.person,
+      employerId: "Example salary", depositAccountId: ids.checking,
+      jurisdiction: "US:FEDERAL", effectiveDate: "2026-01-01",
+      provenance: "Explicit synthetic employer election", userConfirmed: true, calculation,
+    });
+    const request = { ...standalone(model), runContext: modeledContext(), months: 1 };
+    const actual = runVerticalSlice2(request);
+    const reference = runReferenceCashFlow(request);
+    expect(actual.status).toBe("completed");
+    expect(reference.status).toBe("completed");
+    const paycheck = reference.periods[0]!.transactions.find(tx => tx.type === "payroll_income");
+    expect(paycheck?.legs.find(leg => leg.type === "asset")?.amount).toEqual(money("900"));
+    expect(paycheck?.legs.find(leg => leg.type === "cash")?.amount).toEqual(money("8100"));
+    expect(reference.periods[0]!.transactions).toEqual(actual.periods[0]!.transactions);
+    expect(reference.periods[0]!.payrollWithholding).toEqual(actual.periods[0]!.payrollWithholding);
+    expect(canonicalSerialize(reference.state)).toBe(canonicalSerialize(actual.state));
   });
   it("qualifies Person and Household bank routes for family HSA salary", () => {
     const personal = standalone(modeledSource(true, true));

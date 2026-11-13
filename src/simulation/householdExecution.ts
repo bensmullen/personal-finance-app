@@ -1167,6 +1167,12 @@ export interface HouseholdReplayCheckpoint {
 // forecasts without these optional roots can still replay from the opening basis.
 const forecastCheckpoints = new WeakMap<object, readonly HouseholdReplayCheckpoint[]>();
 const forecastTerminalRoots = new WeakMap<object, AuthoritativeState>();
+const restoredReplayAdmission = new WeakMap<object, () => void>();
+
+/** Recheck independently supplied originals when a restored basis is actually used. */
+export const registerRestoredReplayAdmission = (replay: HouseholdForecastSummaryResult["replay"], admit: () => void): void => {
+  restoredReplayAdmission.set(replay, admit);
+};
 
 /** Private committed root for encoding a delta against the last checkpoint. */
 export const householdReplayTerminalRoot = (forecast: HouseholdForecastSummaryResult): AuthoritativeState =>
@@ -1409,6 +1415,7 @@ export const replayHouseholdForecastWindow = (
       message: "Replay requires an aligned window of successfully committed forecast periods.", entityType: "household_projection" });
   const performance = createPerformanceSession(observer);
   try {
+    restoredReplayAdmission.get(forecast.replay)?.();
     const checkpoint = (forecastCheckpoints.get(forecast) ?? []).filter(value => value.at <= selectedWindow.start).at(-1);
     report("replay_started");
     const replay = runCompiledHouseholdProjectionInternal({

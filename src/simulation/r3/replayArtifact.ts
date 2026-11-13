@@ -1,5 +1,5 @@
 import { Currency, DecimalAmount, Money, Percentage, Quantity, Rate, Ratio, RoundingPolicy, Unit, type RateConvention, type RoundingMode } from "../../values/index.js";
-import { exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, householdReplayCheckpointSelection, householdReplayTerminalRoot, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
+import { exportHouseholdReplayCheckpointRoots, registerHouseholdReplayCheckpoints, registerRestoredReplayAdmission, householdReplayCheckpointSelection, householdReplayTerminalRoot, type HouseholdReplayCheckpoint, type HouseholdForecastSummaryResult, type ExecutableHouseholdProjection } from "../householdExecution.js";
 import { assertD2PostedTransactionHistoryPreserved, assertD2SettlementReceiptHistoryPreserved, createAuthoritativeState,
   authoritativeCheckpointDelta, restoreAuthoritativeCheckpointDelta, requalifyD2SettlementReceiptHistory,
   assertSsaMedicarePaymentHistoryPreserved,
@@ -353,6 +353,7 @@ const restorePortableArtifact = (artifact: unknown, observer?: ReplayRestoreObse
       }
     } catch { /* Measurement is optional. */ } });
   }
+  bindReplayAdmission(forecast.replay, restored.modeledPayroll, sourceHistoryState, independentSource);
   return { forecast, sourceHistoryState, ...(restored.modeledPayroll === undefined ? {} : { modeledPayroll: restored.modeledPayroll }) };
 };
 
@@ -368,6 +369,13 @@ const restoredArtifacts = new WeakMap<object, {
   readonly sourceHistoryState: AuthoritativeState;
   readonly modeledPayroll?: ModeledPayrollReplayBasis | undefined;
 }>();
+function bindReplayAdmission(replay: HouseholdForecastSummaryResult["replay"], basis: ModeledPayrollReplayBasis | undefined,
+  sourceHistoryState: AuthoritativeState, independentSource: unknown): void {
+  registerRestoredReplayAdmission(replay, () => {
+    qualifyModelBasis(basis, replay.kernel.executable, replay.runContext, independentSource);
+    requalifyReplaySources(sourceHistoryState, replay.runContext);
+  });
+}
 export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observer?: ReplayRestoreObserver, independentSource?: unknown): Pick<HouseholdForecastSummaryResult, "replay" | "runMetadata" | "periods"> => {
   try { observer?.phase?.("restore_started"); } catch { /* Observation is optional. */ }
   const before = safeNow(observer), heapBefore = observer ? heapSample() : undefined;
@@ -391,6 +399,7 @@ export const restorePortableHouseholdReplayArtifact = (artifact: unknown, observ
       qualifyModelBasis(cached.modeledPayroll, cached.forecast.replay.kernel.executable, cached.forecast.replay.runContext, independentSource);
       const sourceStarted = safeNow(observer);
       requalifyReplaySources(cached.sourceHistoryState, cached.forecast.replay.runContext);
+      bindReplayAdmission(cached.forecast.replay, cached.modeledPayroll, cached.sourceHistoryState, independentSource);
       const sourceRequalificationMs = elapsed(sourceStarted, safeNow(observer));
       try { observer?.phase?.("restore_warm"); } catch { /* Observation is optional. */ }
       report("warm", cached.forecast, sourceRequalificationMs === undefined ? {} : { sourceRequalificationMs });

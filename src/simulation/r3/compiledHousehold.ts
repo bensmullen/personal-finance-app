@@ -54,7 +54,9 @@ const cashDomain = (
     occurrenceInput: (id: string) => occurrenceInputs.get(id),
     schedules: Object.freeze([...snapshot.incomes, ...snapshot.expenses].map(stream => {
       const prior = priorSchedules.get(stream.id);
-      return prior !== undefined && prior.recurrence === stream.recurrence && prior.primitiveIds === stream.primitiveIds
+      return prior !== undefined &&
+        (prior.recurrence === stream.recurrence && prior.primitiveIds === stream.primitiveIds ||
+          canonicalSerialize([prior.recurrence, prior.primitiveIds]) === canonicalSerialize([stream.recurrence, stream.primitiveIds]))
         ? prior : Object.freeze({ id: stream.id, recurrence: stream.recurrence, primitiveIds: stream.primitiveIds });
     })),
     canonical: Object.freeze({

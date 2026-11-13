@@ -73,8 +73,8 @@ const differenceContext = (actual: unknown, expected: unknown): string => {
 const isJsonObject = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const localFixture = (year: string, months: number, state: string, source: Partial<CompiledTaxIncome>, inputOverrides: Partial<HouseholdTaxInput> = {}, startMonth = "01") => {
-  const fixture = taxHouseholdFixture({ months, simulationStart: `${year}-01-01`, incomeStart: `${year}-${startMonth}-15`,
+const localFixture = (year: string, months: number, state: string, source: Partial<CompiledTaxIncome>, inputOverrides: Partial<HouseholdTaxInput> = {}, startMonth = "01", amount = "1000") => {
+  const fixture = taxHouseholdFixture({ months, amount, simulationStart: `${year}-01-01`, incomeStart: `${year}-${startMonth}-15`,
     ...(source.incomeType === undefined ? {} : { incomeType: source.incomeType }) });
   const from = instant(`${year}-01-01T00:00:00.000Z`), until = instant(`${Number(year) + 1}-01-01T00:00:00.000Z`);
   const federal = { ...fixture.input.catalog[0]!, effectiveFrom: from, effectiveUntil: until };
@@ -602,8 +602,7 @@ describe("T1A household tax integration", () => {
   it("replays deterministically and reuses bindings while recomputing altered salary economics", () => {
     const fixture = taxHouseholdFixture();
     expect(applyHouseholdExecutionOverlay(fixture.kernel, {})).toBe(fixture.kernel);
-    const input = fixture.compiled.cashFlowInput!;
-    const altered = applyHouseholdExecutionOverlay(fixture.kernel, { cashFlowInput: { ...input, incomes: [{ ...input.incomes[0]!, baseMonthlyAmount: money("2000") }] } });
+    const altered = applyHouseholdExecutionOverlay(fixture.kernel, { cashFlowInput: taxHouseholdFixture({ amount: "2000" }).compiled.cashFlowInput! });
     expect(altered.executable.participants).toBe(fixture.kernel.executable.participants);
     const base = runHouseholdKernel({ kernel: fixture.kernel, runContext: fixture.context });
     const next = runHouseholdKernel({ kernel: altered, runContext: fixture.context });
@@ -692,9 +691,8 @@ describe("allocated state/local household execution", () => {
     const tax = applyTaxCoreRule(selected, { income: base, ...recognizeTaxLegalBases(nyc, base, facts), withholding: money("0"), estimatedPayments: money("0"), priorPaymentCredit: money("0") });
     expect(tax.result.totalLiability.isPositive()).toBe(true);
     expect(() => resolveTaxCoreRule([nyc], "US:NY:NYC", "single", instant("2025-07-01T00:00:00.000Z"), { ...facts, residenceJurisdictions: ["US:NY"], workJurisdictions: ["US:NY:NYC"] })).toThrow(ValidationError);
-    const fixture = localFixture("2025", 1, "US:NY", { residence: [{ state_jurisdiction: "US:NY", local_jurisdiction: "US:NY:NYC", effective_date: "2025-01-01" }], work: [{ state_jurisdiction: "US:NY", local_jurisdiction: "TEST:NY:SERVICE", allocation: "1", effective_date: "2025-01-01" }], eligibility: Object.entries(facts.eligibility).map(([key, value]) => ({ key, value, effective_date: "2025-01-01" })) });
-    const cash = fixture.kernel.executable.cashFlowInput!;
-    const kernel = applyHouseholdExecutionOverlay(fixture.kernel, { cashFlowInput: { ...cash, incomes: [{ ...cash.incomes[0]!, baseMonthlyAmount: money("70000") }] }, participants: [createHouseholdTaxParticipant({ ...fixture.input, catalog: [...fixture.input.catalog, nyc] })] });
+    const fixture = localFixture("2025", 1, "US:NY", { residence: [{ state_jurisdiction: "US:NY", local_jurisdiction: "US:NY:NYC", effective_date: "2025-01-01" }], work: [{ state_jurisdiction: "US:NY", local_jurisdiction: "TEST:NY:SERVICE", allocation: "1", effective_date: "2025-01-01" }], eligibility: Object.entries(facts.eligibility).map(([key, value]) => ({ key, value, effective_date: "2025-01-01" })) }, {}, "01", "70000");
+    const kernel = applyHouseholdExecutionOverlay(fixture.kernel, { participants: [createHouseholdTaxParticipant({ ...fixture.input, catalog: [...fixture.input.catalog, nyc] })] });
     expect(runHouseholdKernel({ kernel, runContext: fixture.context, resultTier: "detail" }).periods[0]!.transactions.some(transaction => transaction.traceRefs?.some(ref => ref.ruleIds?.includes(nyc.id)))).toBe(true);
     const outside = applyHouseholdExecutionOverlay(kernel, { participants: [createHouseholdTaxParticipant({ ...fixture.input, catalog: [...fixture.input.catalog, nyc], incomes: [{ ...fixture.input.incomes[0]!, residence: [{ state_jurisdiction: "US:NY", local_jurisdiction: "TEST:NY:RESIDENCE", effective_date: "2025-01-01" }] }] })] });
     expect(runHouseholdKernel({ kernel: outside, runContext: fixture.context, resultTier: "detail" }).periods[0]!.transactions.some(transaction => transaction.traceRefs?.some(ref => ref.ruleIds?.includes(nyc.id)))).toBe(false);

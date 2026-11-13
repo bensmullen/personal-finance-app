@@ -48,13 +48,19 @@ describe("mixed P1/P2 cold sparse checkpoint work", () => {
       ...artifact, encoded, integrity: createInputFingerprint({ runContext: fixture.context, openingState: encoded }),
     })).toThrow("BASIS_MISMATCH");
     const warmTransport = { ...artifact };
-    restorePortableHouseholdReplayArtifact(warmTransport);
+    const admitted = restorePortableHouseholdReplayArtifact(warmTransport);
     const original = payrollOriginals.get(sourceId)!;
     payrollOriginals.delete(sourceId);
     try {
       for (const candidate of [artifact, warmTransport, { ...artifact }]) {
-        expect(() => restorePortableHouseholdReplayArtifact(candidate)).toThrow("PAYROLL_HEALTH_SOURCE_INCOMPLETE");
+        try {
+          restorePortableHouseholdReplayArtifact(candidate);
+          throw new Error("Expected retracted original to reject restore");
+        } catch (error) {
+          expect(error).toMatchObject({ cause: expect.objectContaining({ message: expect.stringContaining("PAYROLL_HEALTH_SOURCE_INCOMPLETE") }) });
+        }
       }
+      expect(() => replayHouseholdForecastWindow(admitted, admitted.periods[0]!.period)).toThrow("PAYROLL_HEALTH_SOURCE_INCOMPLETE");
     } finally {
       payrollOriginals.set(sourceId, original);
     }
