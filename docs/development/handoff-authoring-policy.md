@@ -244,6 +244,15 @@ Specifically resolve:
   authority**, including standalone application entry points, worker
   delegation, manual feasibility scripts, benchmark runners and E2E direct
   compiler invocations.
+- **Immutable/legacy consumer ordering:** verify whether existing tests and
+  supported API consumers compile canonical sources *before* the actual run
+  context is constructed. If an immutable protected test cannot be edited,
+  decide explicitly whether an authenticated, non-postable pending compiler
+  binding can be activated by the genuine execution context before any
+  mutation. Do not silently treat an optional runId as authorization, forge a
+  compiler-time runId, relax a protected regression or demand an unavailable
+  context from the caller. Distinguish eager authenticated issuance when the
+  real context already exists from deferred, revalidated per-run activation.
 - Warm-cache **early returns** as well as cold decode and checkpoint restore;
   inspect the independent observed provider/source rechecks on both routes.
 
