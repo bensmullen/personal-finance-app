@@ -21,6 +21,7 @@ import { authoritativeStateChangesSince, registerAuthoritativeIdentity } from ".
 import { createObligation, executionSettlementHistory, appendSettlementIdentity, settlementIdentityAppendsSince, normalizeExecutionClaim, materializeClaimLifecycle, assertClaimInvariant } from "../src/semantics/claim.js";
 import { instant } from "../src/time/index.js";
 import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
+import { compileModeledIncomeFixture } from "./fixtures/modeledIncome.js";
 
 const ids = {
   household: domainId("household", "93000000-0000-4000-8000-000000000001"), owner: domainId("person", "93000000-0000-4000-8000-000000000002"),
@@ -36,9 +37,16 @@ const scenario = "93000000-0000-4000-8000-000000000007";
 const start = instant("2026-01-01T00:00:00.000Z"); const end = instant("2026-02-01T00:00:00.000Z");
 const primitive = (suffix: string) => domainId("primitive-instance", `93000000-0000-4000-8001-${suffix.padStart(12, "0")}`);
 const cashFlow: VerticalSlice2Input = { householdId: ids.household, ownerId: ids.owner, cashAccountId: ids.cash, expensePayableLiabilityId: ids.payable, baseCurrency: USD, sameInstantCashFlowOrder: "income_before_expense", expenses: [], events: [], incomes: [{ id: ids.income, ownerId: ids.owner, depositAccountId: ids.cash, baseMonthlyAmount: money("100"), start, recurrence: { kind: "utc_monthly", anchor: instant("2026-01-15T00:00:00.000Z"), invalidDayPolicy: "skip" }, growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()), growthBaseAt: instant("2026-01-15T00:00:00.000Z"), primitiveIds: { growth: primitive("1"), recurrence: primitive("2") } }] };
-const opening = () => createAuthoritativeState({ accounts: { [ids.cash]: { id: ids.cash, kind: "brokerage", ownerId: ids.owner, cash: money("10") } }, positions: { [ids.position]: { id: ids.position, accountId: ids.cash, quantity: Quantity.parse("5", SHARE), price: money("10"), carryingValue: money("50") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } });
+const opening = () => createAuthoritativeState({ accounts: { [ids.cash]: { id: ids.cash, kind: "checking", ownerId: ids.owner, cash: money("10") } }, positions: { [ids.position]: { id: ids.position, accountId: ids.cash, quantity: Quantity.parse("5", SHARE), price: money("10"), carryingValue: money("50") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } });
 const context = (months = 1) => createRunContext({ runId: runId("93000000-0000-4000-8000-000000000008"), scenarioId: scenarioId(scenario), asOf: instant("2025-12-31T00:00:00.000Z"), dataCutoff: instant("2025-12-31T00:00:00.000Z"), simulationStart: start, simulationEnd: months === 1 ? end : instant("2026-03-01T00:00:00.000Z"), baseCurrency: USD });
-const compiled = (lateFailure = false, withAsset = false): CompiledHouseholdProjection => ({ cashFlowInput: cashFlow, ...(lateFailure ? { liabilityInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [{ id: ids.loan, principalLiabilityId: ids.missingPrincipal, interestPayableLiabilityId: ids.missingInterest, primitiveIds: { schedule: primitive("20"), amortization: primitive("21"), accrual: primitive("22") } } as never] } } : {}), reconciledOpeningState: opening(), reconciledPrimitiveState: createPrimitiveRuntimeStateStore(), standaloneAssets: withAsset ? [{ id: ids.standaloneAsset, value: money("7") }] : [], scenarioIdentity: scenario, executionMonths: 1, contentionPolicy: { id: "pr20-order", version: "1", rules: [] }, diagnostics: [], scenarioBindings: { cashFlow: { incomeIds: {}, expenseIds: {}, accountIds: {}, retirementEvents: {} } } });
+const qualifiedCashFlow = (amount: string, runContext = context(), months = 1): VerticalSlice2Input => {
+  const issued = compileModeledIncomeFixture(runContext, months, {
+    householdId: ids.household, personId: ids.owner, accountId: ids.cash, accountType: "checking",
+    incomes: [{ id: ids.income, type: "salary", amount, startDate: "2026-01-15" }],
+  });
+  return { ...cashFlow, incomes: issued.incomes.map(stream => ({ ...stream })), events: issued.events };
+};
+const compiled = (lateFailure = false, withAsset = false, runContext = context(), months = 1): CompiledHouseholdProjection => ({ cashFlowInput: qualifiedCashFlow("100", runContext, months), ...(lateFailure ? { liabilityInput: { householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, loans: [{ id: ids.loan, principalLiabilityId: ids.missingPrincipal, interestPayableLiabilityId: ids.missingInterest, primitiveIds: { schedule: primitive("20"), amortization: primitive("21"), accrual: primitive("22") } } as never] } } : {}), reconciledOpeningState: opening(), reconciledPrimitiveState: createPrimitiveRuntimeStateStore(), standaloneAssets: withAsset ? [{ id: ids.standaloneAsset, value: money("7") }] : [], scenarioIdentity: scenario, executionMonths: months, contentionPolicy: { id: "pr20-order", version: "1", rules: [] }, diagnostics: [], scenarioBindings: { cashFlow: { incomeIds: {}, expenseIds: {}, accountIds: {}, retirementEvents: {} } } });
 
 import { ValidationError } from "../src/diagnostics/index.js";
 import { compileHouseholdKernel, applyHouseholdExecutionOverlay } from "../src/simulation/r3/compiledHousehold.js";
@@ -58,7 +66,7 @@ const descriptor = (id: string, dependsOn: readonly string[] = []): HouseholdWor
   dependsOn, resourceAccesses: [], traceRefs: [],
 });
 
-const integrated = (incomeAmount: string, withPolicy = true): CompiledHouseholdProjection => {
+const integrated = (incomeAmount: string, withPolicy = true, runContext = context(), months = 1): CompiledHouseholdProjection => {
   const funding = createFundingPolicy({ id: fundingPolicyId("r3:cash"), orderedSources: [{ kind: "cash_account", accountId: ids.cash }],
     allowPartial: false, insufficientFundsBehavior: "unfunded" });
   const loan: FixedAmortizingLoan = {
@@ -73,7 +81,7 @@ const integrated = (incomeAmount: string, withPolicy = true): CompiledHouseholdP
     primitiveIds: { schedule: primitive("42"), amortization: primitive("43"), accrual: primitive("44") },
   };
   return {
-    ...compiled(), cashFlowInput: { ...cashFlow, incomes: [{ ...cashFlow.incomes[0]!, baseMonthlyAmount: money(incomeAmount) }] },
+    ...compiled(false, false, runContext, months), cashFlowInput: qualifiedCashFlow(incomeAmount, runContext, months),
     investmentInput: {
       householdId: ids.household, ownerId: ids.owner, baseCurrency: USD, valuationAccountingPolicy: "economic_only",
       ruleCatalog: [], transfers: [], purchases: [], fees: [],
@@ -437,8 +445,8 @@ describe("R3 reusable deterministic household kernel", () => {
   });
 
   it("retains compact metrics and regenerates selected evidence from the same immutable basis", () => {
-    const input = { ...integrated("120"), executionMonths: 2 };
     const runContext = context(2);
+    const input = integrated("120", true, runContext, 2);
     const reference = referenceRun({ compiled: input, runContext });
     const registry = new PerformanceRegistry(); let tick = 0;
     const summary = runHouseholdKernel({ kernel: compileHouseholdKernel(input, start), runContext }, {
@@ -490,8 +498,8 @@ describe("R3 reusable deterministic household kernel", () => {
   });
 
   it("reconstructs exact detail from portable opening artifacts without transporting a warehouse", () => {
-    const input = { ...integrated("120"), executionMonths: 2 };
     const runContext = context(2);
+    const input = integrated("120", true, runContext, 2);
     const forecast = runHouseholdForecastSummary({ kernel: compileHouseholdKernel(input, start), runContext });
     const artifact = structuredClone(createPortableHouseholdReplayArtifact(forecast));
     const basis = restorePortableHouseholdReplayArtifact(artifact);
@@ -525,8 +533,8 @@ describe("R3 reusable deterministic household kernel", () => {
   });
 
   it("replays a bounded late window from a sparse shared checkpoint", () => {
-    const input = { ...compiled(), executionMonths: 13 };
     const runContext = createRunContext({ ...context(), simulationEnd: instant("2027-02-01T00:00:00.000Z") });
+    const input = compiled(false, false, runContext, 13);
     const reference = referenceRun({ compiled: input, runContext });
     const summary = runHouseholdForecastSummary({ kernel: compileHouseholdKernel(input, start), runContext });
     expect(summary.status).toBe("completed");
@@ -606,7 +614,7 @@ describe("R3 reusable deterministic household kernel", () => {
   });
 
   it("matches required-service and dependent extra-principal semantics over two bounded periods", () => {
-    const input = integrated("120");
+    const input = integrated("120", true, context(2), 2);
     const loan = input.liabilityInput!.loans[0]!;
     const selected = { ...input, executionMonths: 2,
       liabilityInput: { ...input.liabilityInput!, loans: [{ ...loan, extraPrincipalPayments: [{
@@ -641,9 +649,10 @@ describe("R3 reusable deterministic household kernel", () => {
     const again = runHouseholdKernel({ kernel, runContext: context() });
     expect(again).toEqual(first);
     const otherContext = createRunContext({ ...context(), runId: runId("93000000-0000-4000-8000-000000000099") });
-    expect(runHouseholdKernel({ kernel, runContext: otherContext }).runMetadata.inputFingerprint).toBe(first.runMetadata.inputFingerprint);
+    const rebound = applyHouseholdExecutionOverlay(kernel, { cashFlowInput: qualifiedCashFlow("100", otherContext) });
+    expect(runHouseholdKernel({ kernel: rebound, runContext: otherContext }).runMetadata.inputFingerprint).toBe(first.runMetadata.inputFingerprint);
     const overlay = applyHouseholdExecutionOverlay(kernel, {
-      cashFlowInput: { ...kernel.cash!.input, incomes: [{ ...kernel.cash!.input.incomes[0]!, baseMonthlyAmount: money("75") }] },
+      cashFlowInput: qualifiedCashFlow("75"),
     });
     expect(overlay.cash).not.toBe(kernel.cash);
     expect(overlay.investments).toBe(kernel.investments);
@@ -705,7 +714,7 @@ describe("R3 reusable deterministic household kernel", () => {
       },
     };
     const oneMonth = runCompiledHouseholdProjection({ compiled: compiled(), runContext: context(), participants: [participant] });
-    const result = runCompiledHouseholdProjection({ compiled: { ...compiled(), executionMonths: 2 },
+    const result = runCompiledHouseholdProjection({ compiled: compiled(false, false, context(2), 2),
       runContext: context(2), participants: [participant] });
     expect(result.status).toBe("incomplete");
     expect(result.reachedThrough).toBe(end);

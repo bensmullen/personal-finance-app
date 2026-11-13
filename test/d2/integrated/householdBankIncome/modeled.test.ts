@@ -12,6 +12,7 @@ import { patchPersonalObject } from "../../../../src/application/personalMvp.js"
 import { inspectMonthlyMoney } from "../../../../src/application/monthlyMoney.js";
 import { householdEvidenceProof, inspectMortgageWindow, boundedEvidencePoints, restoreHouseholdEvidencePoints } from "../../../../src/application/mortgageChartData.js";
 import { runVerticalSlice2, executeVerticalSlice2PeriodCandidate } from "../../../../src/simulation/verticalSlice2.js";
+import { runVerticalSlice2 as runReferenceCashFlow } from "../../../../src/simulation/r3/referenceVerticalSlice2.js";
 import { runHouseholdKernel, replayHouseholdForecastWindow, householdReplayCheckpointSelection } from "../../../../src/simulation/householdExecution.js";
 import { canonicalSerialize, createInputFingerprint, runId, scenarioId } from "../../../../src/simulation/run.js";
 import { assumptionId } from "../../../../src/model/index.js";
@@ -60,6 +61,28 @@ describe("authenticated modeled salary at a shared bank", () => {
     expect(income[0]!.type).toBe(elected ? "payroll_income" : "income");
     expect(income[0]!.legs.find(leg => leg.type === "income")!.amount.equals(money("9000"))).toBe(true);
     expect(Object.values(result.state.d2PostedTransactions ?? {})).toHaveLength(0);
+  });
+  it.each([
+    { elected: false, family: false, householdBank: false },
+    { elected: true, family: false, householdBank: true },
+    { elected: true, family: true, householdBank: false },
+    { elected: true, family: true, householdBank: true },
+  ])("posts matching canonical journals in the independent reference for %j", ({ elected, family, householdBank }) => {
+    const original = modeledSource(elected, family);
+    const compiled = standalone(householdBank ? rebindModeledBank(original, ids.household) : original);
+    const request = { ...compiled, runContext: modeledContext(), months: 1 };
+    const actual = runVerticalSlice2(request);
+    const reference = runReferenceCashFlow(request);
+    expect(actual.status, JSON.stringify(actual.diagnostics)).toBe("completed");
+    expect(reference.status, JSON.stringify(reference.diagnostics)).toBe("completed");
+    const income = reference.periods[0]!.transactions.filter(tx => tx.type === (elected ? "payroll_income" : "income"));
+    expect(income).toHaveLength(family ? 2 : 1);
+    expect(reference.periods[0]!.recurringIncomeRecognized).toEqual(money(family ? "18000" : "9000"));
+    expect(reference.periods[0]!.transactions).toEqual(actual.periods[0]!.transactions);
+    expect(reference.periods[0]!.recognitions).toEqual(actual.periods[0]!.recognitions);
+    expect(reference.periods[0]!.payrollWithholding).toEqual(actual.periods[0]!.payrollWithholding);
+    expect(canonicalSerialize(reference.state)).toBe(canonicalSerialize(actual.state));
+    expect(reference.primitiveState).toEqual(actual.primitiveState);
   });
   it("retains both spouses' original HSA signed economics without editing the D1 regression", () => {
     const compiled = standalone(modeledSource(true, true));

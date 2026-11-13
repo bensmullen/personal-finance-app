@@ -48,6 +48,15 @@ export function readModeledIncomeBinding(ref: ModeledPayrollReference | undefine
   return ref?.version === "modeled-payroll/v1" ? issuers.get(ref.issuer)?.(ref) : undefined;
 }
 
+/** Run-bound tokens authenticate posting. Economic fingerprints describe the admitted stream and source class. */
+export function modeledIncomeFingerprintInput(input: VerticalSlice2Input): unknown {
+  return { ...input, incomes: input.incomes.map(stream => {
+    const binding = readModeledIncomeBinding(stream.modeledPayroll);
+    if (binding === undefined) return stream;
+    return { ...withoutModeledPayroll(stream), modeledIncomeType: binding.nonSalaryType ?? "salary" };
+  }) };
+}
+
 export function qualifyModeledPayroll(stream: RecurringIncomeStream, householdId: string,
   bank: AccountState | undefined, context: RunContext): ModeledPayrollBinding {
   assertRunContext(context);

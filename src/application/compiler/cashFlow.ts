@@ -178,6 +178,38 @@ export interface GrowthBinding {
   readonly assumptionId?: string;
 }
 
+/** Validate the authored relation without issuing any execution authority. */
+export function validateSalaryActivation(
+  model: PortableModelEnvelope,
+  income: CanonicalObject,
+  event: CanonicalObject,
+  selected: SelectedScenario,
+  memberIds: readonly string[],
+): CompileResult<true> {
+  const incomeId = canonicalId(income, "income_id");
+  const eventId = canonicalId(event, "event_id");
+  const references = Array.isArray(selected.object?.event_ids) ? selected.object.event_ids : [];
+  if (eventId === undefined || event.event_type !== "job_change" ||
+      canonicalId(income, "related_event_id") !== eventId ||
+      income.income_type !== "salary" || !memberIds.includes(String(income.owner_id).toLowerCase()) ||
+      event.enabled !== true || event.trigger_type !== "scheduled" ||
+      canonicalId(event, "scenario_id") !== selected.id || selected.object?.base_scenario_id != null ||
+      references.filter(value => typeof value === "string" && value.toLowerCase() === eventId).length !== 1 ||
+      objects(model, "Event").filter(candidate => canonicalId(candidate, "event_id") === eventId).length !== 1 ||
+      objects(model, "Income").filter(candidate => canonicalId(candidate, "related_event_id") === eventId).length !== 1 ||
+      utcDate(event.start_date) === undefined || event.start_date !== income.start_date)
+    return invalidResult("SALARY_ACTIVATION_BINDING_INVALID",
+      `Income ${incomeId} requires an exclusive enabled scheduled job-change Event ${eventId} listed once in its root Scenario on the salary start date.`,
+      "Income", incomeId, "related_event_id", eventId === undefined ? undefined : [eventId]);
+  if (event.probability_model_id != null || event.trigger_condition != null ||
+      !Array.isArray(event.effect_ids) || event.effect_ids.length !== 0 ||
+      (event.dependencies != null && (!Array.isArray(event.dependencies) || event.dependencies.length !== 0)) ||
+      event.duration_days != null || event.end_date != null || (event.precedence != null && event.precedence !== 0))
+    return unsupportedResult("SALARY_ACTIVATION_SEMANTICS_UNSUPPORTED",
+      `Job-change Event ${eventId} must contain only the scheduled salary activation.`, "Event", eventId);
+  return { status: "compiled", value: true, diagnostics: [] };
+}
+
 export const resolveGrowth = (
   model: PortableModelEnvelope,
   stream: CanonicalObject,
@@ -1183,29 +1215,14 @@ const compileCashFlowSources = (
   const retirementByIncome = new Map<string, RetirementTerminationBinding>();
   const retirementEventIds = new Set<string>();
   const activationByIncome = new Map<string, string>();
-  const activationTargets = new Set<string>();
   const canonicalEvents = new Map(objects(model, "Event").map(event => [canonicalId(event, "event_id"), event]));
   for (const income of objects(model, "Income")) {
     const incomeId = canonicalId(income, "income_id")!;
     const eventId = canonicalId(income, "related_event_id");
     const event = canonicalEvents.get(eventId);
     if (eventId === undefined || event?.event_type !== "job_change") continue;
-    const references = Array.isArray(selected.object?.event_ids) ? selected.object.event_ids : [];
-    if (income.income_type !== "salary" || !scope.memberIds.includes(String(income.owner_id).toLowerCase()) ||
-        event.enabled !== true || event.trigger_type !== "scheduled" ||
-        canonicalId(event, "scenario_id") !== selected.id || selected.object?.base_scenario_id != null ||
-        references.filter(value => typeof value === "string" && value.toLowerCase() === eventId).length !== 1 ||
-        utcDate(event.start_date) === undefined || event.start_date !== income.start_date || activationTargets.has(eventId))
-      return invalidResult("SALARY_ACTIVATION_BINDING_INVALID",
-        `Income ${incomeId} requires an exclusive enabled scheduled job-change Event ${eventId} listed once in its root Scenario on the salary start date.`,
-        "Income", incomeId, "related_event_id", [eventId]);
-    if (event.probability_model_id != null || event.trigger_condition != null ||
-        !Array.isArray(event.effect_ids) || event.effect_ids.length !== 0 ||
-        (event.dependencies != null && (!Array.isArray(event.dependencies) || event.dependencies.length !== 0)) ||
-        event.duration_days != null || event.end_date != null || (event.precedence != null && event.precedence !== 0))
-      return unsupportedResult("SALARY_ACTIVATION_SEMANTICS_UNSUPPORTED",
-        `Job-change Event ${eventId} must contain only the scheduled salary activation.`, "Event", eventId);
-    activationTargets.add(eventId);
+    const activation = validateSalaryActivation(model, income, event, selected, scope.memberIds);
+    if (activation.status !== "compiled") return activation;
     activationByIncome.set(incomeId, eventId);
   }
   const authoredIdentityIds = new Set(

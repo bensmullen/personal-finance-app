@@ -80,7 +80,7 @@ import { payrollContributionCandidate, type PayrollContributionAllocation } from
 import type { PayrollWithholdingElection, PayrollWithholdingEvidence } from "./tax/contracts.js";
 import { qualifyHouseholdExpense, type HouseholdExpenseSourceRef } from "./d2/integration/householdBank/expenses.js";
 import { qualifyHouseholdWage, wageStreamOriginal, type HouseholdWageSourceRef } from "./d2/integration/householdWages/index.js";
-import { assertModeledSalaryActivation, modeledPayrollOccurrence, type ModeledPayrollReference } from "./d2/integration/householdWages/modeledPayroll.js";
+import { assertModeledSalaryActivation, modeledIncomeFingerprintInput, modeledPayrollOccurrence, type ModeledPayrollReference } from "./d2/integration/householdWages/modeledPayroll.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -445,6 +445,10 @@ export interface PreparedVerticalSlice2Period {
 }
 
 const preparedContexts = new WeakMap<PreparedVerticalSlice2Period, RunContext>();
+const preparedIncomeSources = new WeakMap<PreparedVerticalSlice2Period, ReadonlyMap<string, {
+  readonly reference: RecurringIncomeStream["modeledPayroll"];
+  readonly signature: string;
+}>>();
 
 const householdDescriptor = (value: Omit<HouseholdWorkDescriptor, "dependsOn" | "traceRefs"> & { readonly dependsOn?: readonly string[] }): HouseholdWorkDescriptor =>
   Object.freeze({ ...value, dependsOn: Object.freeze([...(value.dependsOn ?? [])].sort()), traceRefs: Object.freeze([]) });
@@ -573,6 +577,10 @@ export const prepareVerticalSlice2Period = (
     if (output.effects.length > 0) summary.traces(output.traceRefs ?? []);
   const prepared = Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), eventPrimitiveTransition, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: summary !== undefined ? Object.freeze([]) : mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
   preparedContexts.set(prepared, Object.freeze({ ...runContext }));
+  preparedIncomeSources.set(prepared, new Map(input.incomes.map(stream => [stream.id, {
+    reference: stream.modeledPayroll,
+    signature: canonicalSerialize({ stream, events: input.events.filter(event => event.targetId === stream.id) }),
+  }])));
   return prepared;
 };
 
@@ -601,6 +609,14 @@ export function executePreparedVerticalSlice2Occurrence(
       canonicalSerialize({ ...preparedContext, simulationStart: prepared.period.start, simulationEnd: prepared.period.end }) !== canonicalSerialize(runContext)))
     return invalidInput("Prepared VS2 occurrence or context changed", "runContext");
   const income = input.incomes.find((stream) => stream.id === occurrence.streamId);
+  const sourceIncome = preparedIncomeSources.get(prepared)!.get(occurrence.streamId);
+  if (sourceIncome !== undefined || income !== undefined) {
+    if (sourceIncome?.reference !== income?.modeledPayroll ||
+        sourceIncome?.signature !== canonicalSerialize({
+          stream: income, events: input.events.filter(event => event.targetId === occurrence.streamId),
+        }))
+      return invalidInput("Prepared VS2 income or event source changed", "input");
+  }
   const expense = input.expenses.find((stream) => stream.id === occurrence.streamId);
   if (income === undefined && expense === undefined) invalidInput(`Prepared VS2 occurrence ${occurrence.streamId} is not present in the fingerprinted input`, "input");
   const selected = income ?? expense!;
@@ -900,7 +916,7 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
   validateInput(request, periods, request.targetPeriods !== undefined);
   const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end });
   const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({
-    runContext: request.runContext, openingState: request.openingState, model: request.input, assumptions: { months },
+    runContext: request.runContext, openingState: request.openingState, model: modeledIncomeFingerprintInput(request.input), assumptions: { months },
   }));
   // Standalone long horizons use the same indexed immutable candidate state
   // as household execution. Otherwise each posting recopies the growing claim
@@ -970,7 +986,7 @@ const runVerticalSlice2Prepared = (request: VerticalSlice2RunInput): VerticalSli
   const periods = utcMonthlyPeriods(request.runContext.simulationStart, months);
   validateInput(request, periods);
   const requestedHorizon = Object.freeze({ start: periods[0]!.start, end: periods[periods.length - 1]!.end });
-  const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({ runContext: request.runContext, openingState: request.openingState, model: request.input, assumptions: { months } }));
+  const runMetadata = createRunMetadata(request.runContext, createInputFingerprint({ runContext: request.runContext, openingState: request.openingState, model: modeledIncomeFingerprintInput(request.input), assumptions: { months } }));
   // Keep S1 source/identity archive ancestry indexed across short prepared
   // horizons too; reindexing every month would reread every older original
   // and turn an O(events) source admission into O(events²).

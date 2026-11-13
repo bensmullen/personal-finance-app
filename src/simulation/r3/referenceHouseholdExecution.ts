@@ -6,6 +6,7 @@ import type {
   ConstraintOutcome,
   LiquidityShortfall,
 } from "../../funding/index.js";
+import { modeledIncomeFingerprintInput } from "../d2/integration/householdWages/modeledPayroll.js";
 import {
   calculationTraceId,
   calculationTraceRef,
@@ -453,12 +454,12 @@ const runCompiledHouseholdProjectionInternal = (
     cashFlowInput:
       compiled.cashFlowInput === undefined
         ? undefined
-        : {
+        : modeledIncomeFingerprintInput({
             ...compiled.cashFlowInput,
             incomes: byId(compiled.cashFlowInput.incomes),
             expenses: byId(compiled.cashFlowInput.expenses),
             events: byId(compiled.cashFlowInput.events),
-          },
+          }),
     investmentInput:
       compiled.investmentInput === undefined
         ? undefined

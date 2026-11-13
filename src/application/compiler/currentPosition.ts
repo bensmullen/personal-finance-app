@@ -35,7 +35,7 @@ import {
   utcDate,
   type CanonicalObject,
 } from "./shared.js";
-import { resolveGrowth } from "./cashFlow.js";
+import { resolveGrowth, validateSalaryActivation } from "./cashFlow.js";
 import { openingUnvestedQuantity } from "./workplaceOpening.js";
 import { selectScenario } from "./scenarioSelection.js";
 import type { CapabilityDiagnostic, CompileResult } from "./types.js";
@@ -643,14 +643,21 @@ export const compileCurrentPosition = (
   let monthlyIncome: Money | undefined;
   let monthlySpending: Money | undefined;
   let selectedScenario: ReturnType<typeof selectScenario> | undefined;
+  const incomeEventFailure = (
+    code: string, message: string, incomeId: string,
+  ): Extract<CompileResult<never>, { status: "unsupported" }> => ({
+    status: "unsupported",
+    diagnostics: [diagnostic(code, message, "monthly_income", "Income", incomeId, "related_event_id")],
+  });
   /** Validate every in-scope stream before a valid capability gate can return. */
   const validateCurrentStreams = (type: "Income" | "Expense"): CompileResult<true> => {
     for (const stream of objects(model, type)) {
       const id = canonicalId(stream, `${type.toLowerCase()}_id`)!;
       const owner = resolveOwnerScope(model, stream.owner_id, scope, type, id);
+      if (type === "Income" && stream.related_event_id != null && owner.status !== "compiled") continue;
       if (owner.status !== "compiled") return owner;
       if (owner.value === "out_of_scope") continue;
-      for (const field of type === "Income" ? ["probability_model_id", "related_event_id"] as const : ["event_trigger_id"] as const) {
+      for (const field of type === "Income" ? ["probability_model_id"] as const : ["event_trigger_id"] as const) {
         const raw = stream[field];
         if (raw === undefined || raw === null) continue;
         if (typeof raw !== "string" || !UUID.test(raw)) return invalidResult("EVENT_BINDING_INVALID", `${type} ${id} ${field} must be a UUID.`, type, id, field);
@@ -699,6 +706,11 @@ export const compileCurrentPosition = (
           `${type.toLowerCase()}_id`,
         );
       const owner = resolveOwnerScope(model, stream.owner_id, scope, type, id);
+      if (type === "Income" && stream.related_event_id != null &&
+          (owner.status !== "compiled" || (owner.value === "out_of_scope" &&
+            objects(model, "Event").some(event => event.event_type === "job_change" &&
+              canonicalId(event, "event_id") === canonicalId(stream, "related_event_id")))))
+        return incomeEventFailure("SALARY_ACTIVATION_BINDING_INVALID", `Income ${id} requires an owner in the selected household.`, id);
       if (owner.status !== "compiled") return owner;
       if (owner.value === "out_of_scope") continue;
       for (const field of type === "Income"
@@ -706,7 +718,9 @@ export const compileCurrentPosition = (
         : (["event_trigger_id"] as const)) {
         const raw = stream[field];
         if (raw === undefined || raw === null) continue;
-        if (typeof raw !== "string" || !UUID.test(raw))
+        if (typeof raw !== "string" || !UUID.test(raw)) {
+          if (field === "related_event_id")
+            return incomeEventFailure("EVENT_BINDING_INVALID", `Income ${id} related_event_id must be a UUID.`, id);
           return invalidResult(
             "EVENT_BINDING_INVALID",
             `${type} ${id} ${field} must be a UUID.`,
@@ -714,6 +728,7 @@ export const compileCurrentPosition = (
             id,
             field,
           );
+        }
         const collection =
           field === "probability_model_id" ? "PrimitiveInstance" : "Event";
         const idField =
@@ -723,14 +738,19 @@ export const compileCurrentPosition = (
         const referencePreflight = preflightCanonicalCollections(model, [
           collection,
         ]);
-        if (referencePreflight.status !== "compiled")
+        if (referencePreflight.status !== "compiled") {
+          if (field === "related_event_id")
+            return incomeEventFailure("EVENT_BINDING_INVALID", `Income ${id} requires an unambiguous Event collection.`, id);
           return referencePreflight;
+        }
         if (
           !objects(model, collection).some(
             (candidate) =>
               canonicalId(candidate, idField) === raw.toLowerCase(),
           )
-        )
+        ) {
+          if (field === "related_event_id")
+            return incomeEventFailure("EVENT_BINDING_REFERENCE_NOT_FOUND", `Income ${id} related_event_id does not resolve.`, id);
           return invalidResult(
             "EVENT_BINDING_REFERENCE_NOT_FOUND",
             `${type} ${id} ${field} does not resolve.`,
@@ -738,9 +758,18 @@ export const compileCurrentPosition = (
             id,
             field,
           );
+        }
         if (type === "Income" && field === "related_event_id") {
           const event = objects(model, "Event").find(candidate => canonicalId(candidate, "event_id") === raw.toLowerCase())!;
           selectedScenario ??= selectScenario(model);
+          if (event.event_type === "job_change") {
+            if (selectedScenario.status !== "compiled")
+              return incomeEventFailure("SALARY_ACTIVATION_BINDING_INVALID", `Income ${id} requires a valid root Scenario for job-change activation.`, id);
+            const activation = validateSalaryActivation(model, stream, event, selectedScenario.value, scope.memberIds);
+            if (activation.status === "compiled") continue;
+            const failure = activation.diagnostics[0]!;
+            return incomeEventFailure(failure.code, failure.message, id);
+          }
           if (selectedScenario.status === "invalid_model") return selectedScenario;
           const eventDate = utcDate(event.start_date);
           const supportedFutureRetirement = selectedScenario.status === "compiled" &&
