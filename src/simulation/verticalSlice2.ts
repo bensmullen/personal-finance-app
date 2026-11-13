@@ -695,7 +695,17 @@ function executeCashFlowPeriodCandidate(
               householdId: request.input.householdId, stream: request.modeledSourceIncome ?? stream, context: request.runContext,
               at: occurrence.scheduledAt, period: targetPeriod, occurrenceId: occurrence.occurrenceId, gross: amount,
             }, state.accounts[stream.depositAccountId]);
-            if (state.accounts[stream.depositAccountId]?.ownerId === request.input.householdId && wageSource === undefined && modeledPayroll === undefined)
+            // A caller-supplied householdId cannot reclassify an ambiguous
+            // cross-owner bank as a legacy Person receiving account. The two
+            // established Person routes are the stream owner's bank and the
+            // explicit VS2 execution Person's bank (family-HSA sharing).
+            // Household-owned BANK income always needs publisher or compiler
+            // provenance; fail closed for any other unsupported owner route.
+            const receivingOwner = state.accounts[stream.depositAccountId]?.ownerId;
+            const legacyPersonBank = receivingOwner !== undefined &&
+              (receivingOwner === stream.ownerId || receivingOwner === request.input.ownerId);
+            if (wageSource === undefined && modeledPayroll === undefined &&
+              (receivingOwner === request.input.householdId || !legacyPersonBank))
               invalidInput("HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL: unsupported income without an independent wage source", `incomes.${stream.id}.householdWageSource`);
             if (wageSource !== undefined && (stream.ownerId === request.input.householdId || state.accounts[stream.depositAccountId]?.ownerId !== request.input.householdId))
               invalidInput("Household wages require a Person recipient and household BANK", `incomes.${stream.id}.householdWageSource`);
@@ -710,7 +720,7 @@ function executeCashFlowPeriodCandidate(
             recognitions.push(recognition);
             effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "recurring_income", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, provenance, traceRefs }));
             if (stream.payrollContributions?.length || stream.payrollWithholding?.length) {
-              const payroll = payrollContributionCandidate(state, { id: `tx:${recognition.id}`, householdId: request.input.householdId, incomeId: stream.id, ownerId: stream.ownerId, occurrenceId: occurrence.occurrenceId, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions ?? [], ...(householdWage === undefined ? {} : { householdWage }), ...(modeledPayroll === undefined ? {} : { modeledPayroll }), ...(stream.payrollWithholding === undefined ? {} : { withholding: stream.payrollWithholding }), ...(stream.payrollTaxCreditAccountId === undefined ? {} : { taxCreditAccountId: stream.payrollTaxCreditAccountId }) });
+              const payroll = payrollContributionCandidate(state, { id: `tx:${recognition.id}`, householdId: request.input.householdId, executionPersonId: request.input.ownerId, incomeId: stream.id, ownerId: stream.ownerId, occurrenceId: occurrence.occurrenceId, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions ?? [], ...(householdWage === undefined ? {} : { householdWage }), ...(modeledPayroll === undefined ? {} : { modeledPayroll }), ...(stream.payrollWithholding === undefined ? {} : { withholding: stream.payrollWithholding }), ...(stream.payrollTaxCreditAccountId === undefined ? {} : { taxCreditAccountId: stream.payrollTaxCreditAccountId }) });
               state = payroll.state;
               if (payroll.withholdingEvidence !== undefined) withholdingEvidence.push(payroll.withholdingEvidence);
               diagnostics.push(...payroll.diagnostics);
