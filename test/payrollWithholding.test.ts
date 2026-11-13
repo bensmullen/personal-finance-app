@@ -7,7 +7,7 @@ import { instant } from "../src/time/index.js";
 import { authorPayrollWithholding, durablePayrollWithholding, type PayrollWithholdingPlan } from "../src/application/compiler/payrollWithholding.js";
 import { compileCashFlow } from "../src/application/compiler/cashFlow.js";
 import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
-import { createGoldenHouseholdDraft, patchPersonalObject } from "../src/application/personalMvp.js";
+import { addPersonalObject, createGoldenHouseholdDraft, patchPersonalObject } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS as golden } from "../src/application/goldenHousehold.js";
 import { exportPersonalModelJson, importPersonalModelJson } from "../src/application/modelPortability.js";
 import { payrollContributionCandidate, type PayrollContributionAllocation } from "../src/simulation/payrollContributions.js";
@@ -20,7 +20,8 @@ import { createHouseholdTaxParticipant, taxBalanceIds, taxCreditPositionIds } fr
 import type { HouseholdTaxInput, PayrollWithholdingElection } from "../src/simulation/tax/contracts.js";
 import { taxHouseholdFixture, taxHouseholdIds as ids } from "./fixtures/t1aTaxHouseholds.js";
 import { deriveStatements } from "../src/statements/index.js";
-import { canonicalSerialize } from "../src/simulation/run.js";
+import { canonicalSerialize, createRunContext, runId, scenarioId } from "../src/simulation/run.js";
+import { runVerticalSlice2 } from "../src/simulation/verticalSlice2.js";
 import { taxRule } from "./fixtures/t1aTaxRules.js";
 import { paycheckFixture as healthPaycheckFixture } from "./d2/health/premiums/payrollPort/scenario.js";
 
@@ -132,6 +133,91 @@ const plan = (changes: Partial<PayrollWithholdingPlan> = {}): PayrollWithholding
   jurisdiction: "US:FEDERAL", effectiveDate: "2026-01-01", provenance: "explicit synthetic scenario election", userConfirmed: true, calculation: { kind: "percent_gross", rate: "0.15" }, ...changes });
 
 describe("durable Income authoring and compilation", () => {
+  it.each(["earner", "other_member", "household"] as const)("keeps the earner on the election when the receiving bank belongs to %s", role => {
+    const earner = uuid(91), otherMember = uuid(92);
+    let model = patchPersonalObject(authoredSource(), "Household", golden.household, { members: [golden.person, earner, otherMember] });
+    for (const person of [earner, otherMember]) {
+      model = addPersonalObject(model, "Person", person, {
+        household_id: golden.household, first_name: "Synthetic", last_name: "Member",
+        date_of_birth: "1971-01-01", residence_jurisdiction: "US-NY",
+      });
+    }
+    const incomeId = uuid(93);
+    model = addPersonalObject(model, "Income", incomeId, {
+      owner_id: earner, income_type: "salary", source: "synthetic-job-B", amount: "1000",
+      frequency: "monthly", start_date: "2026-01-02", gross_or_net: "gross",
+    });
+    const bankOwner = { earner, other_member: otherMember, household: golden.household }[role];
+    const withBankFields = (source: typeof model, fields: { owner_id?: string; currency?: string; account_type?: string }) => ({
+      ...source, objects: { ...source.objects, Account: source.objects.Account!.map(item =>
+        typeof item === "object" && item !== null && !Array.isArray(item) && "account_id" in item && item.account_id === golden.checking
+          ? { ...item, ...fields } : item) },
+    });
+    model = withBankFields(model, { owner_id: bankOwner });
+    const electionPlan = plan({ incomeId, ownerId: earner, employerId: "synthetic-job-B" });
+    const authored = authorPayrollWithholding(model, electionPlan);
+    const decoded = durablePayrollWithholding(authored);
+    expect(decoded).toEqual([expect.objectContaining({ incomeId, ownerId: earner, employerId: "synthetic-job-B", depositAccountId: golden.checking })]);
+    const runContext = createRunContext({
+      runId: runId(uuid(96)), scenarioId: scenarioId(golden.rootScenario),
+      asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"),
+      simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z"),
+      baseCurrency: USD,
+    });
+    const request = {
+      baseCurrency: "USD", simulationStart: "2026-01-01", simulationEnd: "2026-02-01", months: 1,
+      sameInstantCashFlowOrder: "income_before_expense", executionAccountId: golden.checking, runContext,
+    } as const;
+    const compiled = compileCashFlow(authored, request);
+    if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled.diagnostics));
+    const result = runVerticalSlice2({ ...compiled.value, months: 1, runContext });
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    const period = result.periods[0]!;
+    const paycheck = period.transactions.find(item => item.id === `tx:recognition:income:${incomeId}:2026-01-02T00:00:00.000Z`)!;
+    expect(paycheck.type).toBe("payroll_income");
+    expect(paycheck.legs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "income", posting: "credit", amount: money("1000") }),
+      expect.objectContaining({ type: "cash", posting: "debit", accountId: golden.checking, amount: money("850") }),
+    ]));
+    expect(period.payrollWithholding).toEqual([expect.objectContaining({
+      incomeId, ownerId: earner, employerId: "synthetic-job-B", transactionId: paycheck.id,
+      gross: money("1000"), takeHomeCash: money("850"), depositAccountId: golden.checking,
+      credits: [expect.objectContaining({ electionId: electionPlan.id, jurisdiction: "US:FEDERAL", taxYear: "2026", amount: money("150") })],
+    })]);
+    const bank = compiled.value.openingState.accounts[golden.checking]!;
+    const changedOwner = role === "household" ? domainId("person", earner) : domainId("household", golden.household);
+    const changedOpening = createAuthoritativeState({
+      ...compiled.value.openingState,
+      accounts: { ...compiled.value.openingState.accounts, [golden.checking]: { ...bank, ownerId: changedOwner } },
+    });
+    const before = canonicalSerialize(changedOpening);
+    const changed = runVerticalSlice2({ ...compiled.value, openingState: changedOpening, months: 1, runContext });
+    expect(changed.status).toBe("incomplete");
+    expect(changed.diagnostics.some(issue => issue.message.includes("MODELED_PAYROLL_NOT_ADMITTED"))).toBe(true);
+    expect(canonicalSerialize(changed.state)).toBe(before);
+    expect(canonicalSerialize(changedOpening)).toBe(before);
+    const unelected = compileCashFlow(model, request);
+    if (unelected.status !== "compiled") throw new Error(JSON.stringify(unelected.diagnostics));
+    const noElection = runVerticalSlice2({ ...unelected.value, months: 1, runContext });
+    expect(noElection.status, JSON.stringify(noElection.diagnostics)).toBe("completed");
+    expect(noElection.periods[0]!.payrollWithholding).toBeUndefined();
+    expect(noElection.periods[0]!.transactions.find(item => item.id === paycheck.id)).toMatchObject({
+      type: "income",
+      legs: [
+        expect.objectContaining({ type: "cash", posting: "debit", accountId: golden.checking, amount: money("1000") }),
+        expect.objectContaining({ type: "income", posting: "credit", amount: money("1000") }),
+      ],
+    });
+    expect(() => authorPayrollWithholding(model, plan({ incomeId, ownerId: otherMember, employerId: "synthetic-job-B" }))).toThrow("salary's person owner");
+    expect(() => authorPayrollWithholding({ ...model, objects: { ...model.objects, Account: [...model.objects.Account!, ...model.objects.Account!] } },
+      electionPlan)).toThrow("unique USD");
+    expect(() => durablePayrollWithholding(withBankFields(authored, { owner_id: uuid(94) }))).toThrow("destination owner");
+    expect(() => durablePayrollWithholding(withBankFields(authored, { owner_id: "invalid" }))).toThrow("destination owner");
+    expect(() => durablePayrollWithholding(withBankFields(authored, { currency: "EUR" }))).toThrow("unique USD");
+    expect(() => durablePayrollWithholding(withBankFields(authored, { account_type: "brokerage" }))).toThrow("unique USD");
+    expect(() => authorPayrollWithholding(authored, { ...electionPlan, id: uuid(95) })).toThrow("Overlapping withholding");
+  });
+
   it("survives save/import/reload and leaves the original canonical source untouched", () => {
     const original = authoredSource(), before = canonicalSerialize(original);
     const authored = authorPayrollWithholding(original, plan());

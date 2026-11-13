@@ -715,18 +715,23 @@ function executeCashFlowPeriodCandidate(
                 stream: householdWage.stream, incomeId: stream.id, occurrenceId: occurrence.occurrenceId,
                 period: targetPeriod, gross: amount, transaction: directPosting,
               });
+            // Elected payroll qualifies its full journal on an isolated candidate
+            // before the period registers the income occurrence and recognition.
+            const recognitionKey = `recognition:income:${stream.id}:${occurrence.scheduledAt}`;
+            const payroll = hasElections
+              ? payrollContributionCandidate(state, { id: transactionId, householdId: request.input.householdId, incomeId: stream.id, ownerId: stream.ownerId, occurrenceId: occurrence.occurrenceId, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions ?? [], ...(householdWage === undefined ? {} : { householdWage }), ...(modeledPayroll === undefined ? {} : { modeledPayroll }), ...(stream.payrollWithholding === undefined ? {} : { withholding: stream.payrollWithholding }), ...(stream.payrollTaxCreditAccountId === undefined ? {} : { taxCreditAccountId: stream.payrollTaxCreditAccountId }) })
+              : undefined;
+            if (payroll !== undefined) state = payroll.state;
             registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", occurrence.occurrenceId);
-            const recognition = createRecognitionFact({ id: recognitionId(`recognition:income:${stream.id}:${occurrence.scheduledAt}`), category: "recurring_income", amount, recognizedAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, provenance, traceRefs }, state.identities.recognitionIds);
+            const recognition = createRecognitionFact({ id: recognitionId(recognitionKey), category: "recurring_income", amount, recognizedAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, provenance, traceRefs }, state.identities.recognitionIds);
             registerAuthoritativeIdentity(state.identities, "recognitionIds", recognition.id);
             recognitions.push(recognition);
             effects.push(createSemanticEffect({ id: semanticEffectId(`effect:${recognition.id}`), kind: "recognition", category: "recurring_income", amount, occurredAt: occurrence.scheduledAt, sourceOccurrenceKey: occurrence.occurrenceId, recognitionId: recognition.id, provenance, traceRefs }));
-            if (directPosting === undefined) {
-              const payroll = payrollContributionCandidate(state, { id: `tx:${recognition.id}`, householdId: request.input.householdId, incomeId: stream.id, ownerId: stream.ownerId, occurrenceId: occurrence.occurrenceId, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions ?? [], ...(householdWage === undefined ? {} : { householdWage }), ...(modeledPayroll === undefined ? {} : { modeledPayroll }), ...(stream.payrollWithholding === undefined ? {} : { withholding: stream.payrollWithholding }), ...(stream.payrollTaxCreditAccountId === undefined ? {} : { taxCreditAccountId: stream.payrollTaxCreditAccountId }) });
-              state = payroll.state;
+            if (payroll !== undefined) {
               if (payroll.withholdingEvidence !== undefined) withholdingEvidence.push(payroll.withholdingEvidence);
               diagnostics.push(...payroll.diagnostics);
               for (const posted of payroll.transactions) transactions.push(posted);
-            } else {
+            } else if (directPosting !== undefined) {
               if (directEvidence === undefined) applyTransaction(directPosting);
               else {
                 applyHouseholdDomainTransactionAtomically(state, directPosting, directEvidence);
