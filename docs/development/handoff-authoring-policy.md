@@ -207,6 +207,50 @@ and the already approved product scope; no separate user request is needed.
    the PM for a fresh Codex turn. New blockers trigger another delta audit
    plus reassessment of why the previous review missed them.
 
+### Source-qualified caller inventory before reauthorization (required for cross-cutting financial provenance)
+
+A source-authentication or run-context change is **not** fully scoped by finding
+the production evaluator alone. The ChatGPT reviewer must enumerate reverse
+callers **upstream of each issuer/compiler and downstream through each actual
+writer**, using the exact current GitHub tree and tracked-source search (or
+`git grep` in a verified read-only checkout). Search the relevant symbols in
+`src/`, `ui/`, `test/`, `e2e/`, `benchmarks/`, `tools/ci/`, and
+relevant workflow invocations. Inspect direct imports, aliases and exported
+barrels; a symbol search is a starting point, not dynamic-call proof.
+Specifically resolve:
+
+- Direct/compiled/embedded and no-election/elected routes, **independent
+  frozen reference evaluators**, scenario alternatives, actual posting and
+  rollback, and positive/negative fixtures; do not accidentally make the
+  reference reuse the optimized financial calculation.
+- Every point where `runId`, `asOf`, `dataCutoff`, scenario identity and
+  original publisher evidence become available **relative to issuing
+  authority**, including standalone application entry points, worker
+  delegation, manual feasibility scripts, benchmark runners and E2E direct
+  compiler invocations.
+- Warm-cache **early returns** as well as cold decode and checkpoint restore;
+  inspect the independent observed provider/source rechecks on both routes.
+
+Before declaring the **same issue** Codex-ready after an immediate no-change
+BLOCKED, retain a compact **entry → issuer/context → producer → posting →
+archive/replay → test** matrix and **file-by-file write disposition**:
+required product edit, conditional pass-through, bounded test migration,
+separate framework prerequisite, or read-only/excluded (with reason).
+For two or more no-progress STOPs, link the inventory/second-pass evidence in
+the existing task issue or PR discussion; keep the issue body itself compact.
+Check every `ALLOWED_PATHS` against the real hook's protected paths.
+**Never** include `tools/ci/`, `tools/codex/`, agent controls or protected
+workflow files in a product V3 just to unblock a shared workflow. When genuinely
+required, plan a **separate framework-owned patch and merge order**, give the
+product task a publishable bounded scope, and do not declare integration
+merge-ready until the combined evidence is reviewed.
+
+The reviewer owns this census and the second independent pass. It must be
+selective to the task's actual producers/consumers, not a mandatory
+repository-wide parser for ordinary small work. It reduces preventable
+scope misses; it does **not** guarantee future runtime, provider, or CI success
+and does not add new Codex hooks, schema fields, tests or PM ceremony.
+
 **Repeated no-progress STOP escalation:** If the same task has **two or more
 immediate BLOCKED returns without code changes after a claimed full closure
 review**, do not recommend another one-line scope amendment or Codex restart.
