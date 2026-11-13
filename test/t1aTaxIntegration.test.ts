@@ -12,7 +12,7 @@ import { authorMortgageExtra, createFlagshipHouseholdDraft, createGoldenHousehol
 import { replaceCurrentPlanHorizon } from "../src/application/forecastSetup.js";
 import { createHouseholdTaxParticipant, emptyTaxIncome, taxCreditPositionIds, type HouseholdTaxInput, type CompiledTaxIncome } from "../src/simulation/tax.js";
 import { alphaStateTaxCatalog, alphaLocalTaxCatalog, resolveTaxCoreRule, fullYearResidentEligibilityKey, recognizeTaxLegalBases, recognizedGrossTaxableBaseEligibilityKey, applyTaxCoreRule } from "../src/rules/index.js";
-import { instant, utcMonthlyPeriods } from "../src/time/index.js";
+import { instant } from "../src/time/index.js";
 import { money, Ratio, USD } from "../src/values/index.js";
 import { CURRENT_RUN_VERSIONS } from "../src/model/version.js";
 import { ValidationError } from "../src/diagnostics/index.js";
@@ -74,15 +74,15 @@ const isJsonObject = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const localFixture = (year: string, months: number, state: string, source: Partial<CompiledTaxIncome>, inputOverrides: Partial<HouseholdTaxInput> = {}, startMonth = "01") => {
-  const fixture = taxHouseholdFixture({ months });
+  const fixture = taxHouseholdFixture({ months, simulationStart: `${year}-01-01`, incomeStart: `${year}-${startMonth}-15`,
+    ...(source.incomeType === undefined ? {} : { incomeType: source.incomeType }) });
   const from = instant(`${year}-01-01T00:00:00.000Z`), until = instant(`${Number(year) + 1}-01-01T00:00:00.000Z`);
   const federal = { ...fixture.input.catalog[0]!, effectiveFrom: from, effectiveUntil: until };
   const stateRule = taxRule(10, { jurisdiction: state, effectiveFrom: from, effectiveUntil: until, income: { ...federal.income!, ordinaryBrackets: [{ lower: money("0"), rate: federal.income!.preferentialBrackets![0]!.rate }] } });
   const input: HouseholdTaxInput = { ...fixture.input, simulationStart: from, catalog: [federal, stateRule], incomes: [{ ...fixture.input.incomes[0]!, start: `${year}-${startMonth}-01`, ...source }],
     settlements: [{ id: "final-federal", jurisdiction: "US:FEDERAL", taxYear: year, at: instant(`${year}-12-31T23:59:59.999Z`), priority: 0 }, { id: "final-state", jurisdiction: state, taxYear: year, at: instant(`${year}-12-31T23:59:59.999Z`), priority: 1 }], ...inputOverrides };
-  const context = { ...fixture.context, simulationStart: from, simulationEnd: utcMonthlyPeriods(from, months).at(-1)!.end };
-  const cash = fixture.compiled.cashFlowInput!;
-  const compiled = { ...fixture.compiled, participants: [createHouseholdTaxParticipant(input)], nonInvestmentPositionIds: taxCreditPositionIds(input), cashFlowInput: { ...cash, incomes: [{ ...cash.incomes[0]!, start: instant(`${year}-${startMonth}-01T00:00:00.000Z`), growthBaseAt: instant(`${year}-${startMonth}-15T00:00:00.000Z`), recurrence: { ...cash.incomes[0]!.recurrence, anchor: instant(`${year}-${startMonth}-15T00:00:00.000Z`) } }] } };
+  const context = fixture.context;
+  const compiled = { ...fixture.compiled, participants: [createHouseholdTaxParticipant(input)], nonInvestmentPositionIds: taxCreditPositionIds(input) };
   return { input, context, kernel: compileHouseholdKernel(compiled, from) };
 };
 

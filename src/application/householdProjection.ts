@@ -40,7 +40,7 @@ import {
 import type { CalculationTraceRef } from "../lineage/index.js";
 import { mergeTraceRefs, createReplayTraceAnchor, resolveReplayTraceAnchors } from "../lineage/index.js";
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact, registerModeledPayrollReplayAuthority, type ModeledPayrollReplayBasis } from "../simulation/r3/replayArtifact.js";
-import { registerModeledPayrollCompiler, modeledPayrollKey, withoutModeledPayroll, type ModeledPayrollBinding, type ModeledPayrollReference } from "../simulation/d2/integration/householdWages/modeledPayroll.js";
+import { registerModeledPayrollCompiler, readModeledIncomeBinding, modeledPayrollKey, withoutModeledPayroll, type ModeledPayrollBinding, type ModeledPayrollReference } from "../simulation/d2/integration/householdWages/modeledPayroll.js";
 import { immutableConfiguration } from "../simulation/r3/compiledHousehold.js";
 import { instant } from "../time/index.js";
 import { Currency, Money } from "../values/index.js";
@@ -188,9 +188,11 @@ function forecastExecutable(compiled: CompiledHouseholdProjection, model: Portab
     simulationEnd: template.simulationEnd, baseCurrency: template.baseCurrency,
   } });
   return { ...executable, cashFlowInput: { ...executable.cashFlowInput, incomes: executable.cashFlowInput.incomes.map(stream => {
-    if (stream.modeledPayroll === undefined) return stream;
+    const binding = readModeledIncomeBinding(stream.modeledPayroll);
+    if (binding === undefined) return stream;
     const bank = executable.reconciledOpeningState.accounts[stream.depositAccountId]!;
-    return issueForecastSalary({ stream: withoutModeledPayroll(stream), householdId: executable.cashFlowInput!.householdId,
+    return issueForecastSalary({ ...binding, stream: withoutModeledPayroll(stream), householdId: executable.cashFlowInput!.householdId,
+      events: executable.cashFlowInput!.events.filter(event => event.targetId === stream.id),
       bank: { id: bank.id, kind: bank.kind, ownerId: bank.ownerId }, start: template.simulationStart, end: template.simulationEnd,
       asOf: template.asOf, scenarioId: executable.scenarioIdentity, sourceFingerprint, runId: runIdentity, dataCutoff: template.dataCutoff });
   }) } };

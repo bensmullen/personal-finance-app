@@ -589,7 +589,7 @@ const runCompiledHouseholdProjectionInternal = (
               nextState,
               nextPrimitiveState,
               compiled.cashFlowInput!,
-              periodContext,
+              runContext,
             );
             nextState = result.state;
             nextPrimitiveState = result.primitiveState;

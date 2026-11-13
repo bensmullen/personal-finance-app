@@ -53,13 +53,19 @@ export type SameInstantCashFlowOrder =
   | "income_before_expense"
   | "expense_before_income";
 
-const issuedSalaries = new WeakMap<ModeledPayrollReference, ModeledPayrollBinding>();
+const modeledIncomeTypes = new Set([
+  "salary", "bonus", "commission", "overtime", "equity_compensation", "business",
+  "rental", "interest", "dividend", "capital_gain", "pension", "unemployment",
+  "severance", "gift", "inheritance", "other",
+]);
+
+const issuedIncomes = new WeakMap<ModeledPayrollReference, ModeledPayrollBinding>();
 const authoredCashFlows = new WeakSet<VerticalSlice2Input>();
-registerModeledPayrollCompiler("canonical-cash-flow/v1", reference => issuedSalaries.get(reference));
-const issueModeledSalary = (binding: ModeledPayrollBinding): VerticalSlice2Input["incomes"][number] => {
+registerModeledPayrollCompiler("canonical-cash-flow/v1", reference => issuedIncomes.get(reference));
+const issueModeledIncome = (binding: ModeledPayrollBinding): VerticalSlice2Input["incomes"][number] => {
   const snapshot = immutableConfiguration(binding), key = modeledPayrollKey(snapshot);
   const reference = immutableConfiguration<ModeledPayrollReference>({ version: "modeled-payroll/v1", issuer: "canonical-cash-flow/v1", key });
-  issuedSalaries.set(reference, snapshot);
+  issuedIncomes.set(reference, snapshot);
   return Object.freeze({ ...snapshot.stream, modeledPayroll: reference });
 };
 
@@ -74,12 +80,13 @@ export function qualifyCashFlowScenario(input: VerticalSlice2Input, resolved: Re
   return Object.freeze({ ...effective, incomes: Object.freeze(effective.incomes.map(stream => {
     const ref = sources.get(stream.id);
     if (ref === undefined) return stream;
-    const binding = issuedSalaries.get(ref)!;
+    const binding = issuedIncomes.get(ref)!;
     if (resolved.rootScenarioId !== binding.scenarioId || context.simulationStart !== binding.start || context.simulationEnd !== binding.end ||
         context.asOf !== binding.asOf || !stream.baseMonthlyAmount.currency.equals(context.baseCurrency))
       throw new Error("CASH_FLOW_SCENARIO_CONTEXT_MISMATCH");
-    return issueModeledSalary({
+    return issueModeledIncome({
       ...binding, stream: withoutModeledPayroll(stream), scenarioId: context.scenarioId,
+      events: effective.events.filter(event => event.targetId === stream.id),
       runId: context.runId, dataCutoff: context.dataCutoff,
       sourceFingerprint: modeledPayrollKey({ source: binding.sourceFingerprint, resolved, context }),
     });
@@ -1645,6 +1652,11 @@ const compileCashFlowSources = (
         request.retirementBindings ?? [],
       );
       if (event) return event;
+      if (type === "Income" && !modeledIncomeTypes.has(String(stream.income_type)) &&
+          money(String(stream.amount), currency).isPositive())
+        return unsupportedResult("INCOME_SOURCE_UNSUPPORTED",
+          `Income ${id} requires a supported canonical modeled source or an independently published benefit.`,
+          "Income", id, "income_type");
       // Structural validation above still covers omitted sources. Do not invent
       // a gross monthly schedule for legitimate unsupported salary facts.
       if (type === "Income" && unsupportedSalary(stream)) {
@@ -1989,12 +2001,17 @@ const compileCashFlowSources = (
       sameInstantCashFlowOrder: request.sameInstantCashFlowOrder,
       events: Object.freeze(retirementEvents),
       incomes: Object.freeze(compiledIncomes.map(income => {
-        const authored = incomes.find(item => item.income_id === income.id);
-        const bank = eligibleAccounts.find(item => item.account_id === income.depositAccountId);
-        if (authored?.income_type !== "salary" || !scope.memberIds.includes(String(income.ownerId)) || !bank ||
-          (bank.owner_id !== scope.householdId && !scope.memberIds.includes(String(bank.owner_id)))) return income;
-        return issueModeledSalary({ stream: income, householdId: scope.householdId,
-          bank: { id: income.depositAccountId, ownerId: domainId(bank.owner_id === scope.householdId ? "household" : "person", String(bank.owner_id)), kind: String(bank.account_type) as "cash" | "checking" | "savings" },
+        const authored = incomes.find(item => canonicalId(item, "income_id") === income.id);
+        const bank = eligibleAccounts.find(item => canonicalId(item, "account_id") === income.depositAccountId);
+        const classification = authored?.income_type;
+        const bankOwner = typeof bank?.owner_id === "string" ? bank.owner_id.toLowerCase() : undefined;
+        if (typeof classification !== "string" || !modeledIncomeTypes.has(classification) ||
+          (!scope.memberIds.includes(String(income.ownerId)) && (classification === "salary" || income.ownerId !== scope.householdId)) ||
+          !bank || bankOwner === undefined || (bankOwner !== scope.householdId && !scope.memberIds.includes(bankOwner))) return income;
+        return issueModeledIncome({ stream: income, householdId: scope.householdId,
+          events: retirementEvents.filter(event => event.targetId === income.id),
+          bank: { id: income.depositAccountId, ownerId: domainId(bankOwner === scope.householdId ? "household" : "person", bankOwner), kind: String(bank.account_type) as "cash" | "checking" | "savings" },
+          ...(classification === "salary" ? {} : { nonSalaryType: classification }),
           start: utcDate(request.simulationStart)!, end: utcDate(request.simulationEnd)!,
           asOf: utcDate(request.asOf ?? request.simulationStart)!, scenarioId: selected.id,
           ...(context === undefined ? {} : { runId: context.runId, dataCutoff: context.dataCutoff }),

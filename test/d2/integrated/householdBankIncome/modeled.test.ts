@@ -34,6 +34,23 @@ function forecast(model = modeledSource(), months = 1) {
   return result;
 }
 describe("authenticated modeled salary at a shared bank", () => {
+  it("admits a canonical pension without granting elected payroll authority", () => {
+    const model = patchPersonalObject(modeledSource(), "Income", ids.income, { income_type: "pension" });
+    const compiled = standalone(model);
+    const context = modeledContext();
+    const result = runVerticalSlice2({ ...compiled, runContext: context, months: 1 });
+    expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(result.periods[0]!.recurringIncomeRecognized).toEqual(money("9000"));
+    expect(result.periods[0]!.transactions.filter(tx => tx.type === "income")).toHaveLength(1);
+    expect(result.periods[0]!.transactions.some(tx => tx.type === "payroll_income")).toBe(false);
+
+    const { modeledPayroll: _source, ...unsigned } = compiled.input.incomes[0]!;
+    const input = { ...compiled.input, incomes: [{ ...unsigned, incomeType: "pension" }] };
+    const rejected = runVerticalSlice2({ ...compiled, input, runContext: context, months: 1 });
+    expect(rejected.status).toBe("incomplete");
+    expect(rejected.diagnostics.some(issue => issue.message.includes("INCOME_REQUIRES_QUALIFIED_ORIGINAL"))).toBe(true);
+    expect(rejected.state.accounts).toEqual(compiled.openingState.accounts);
+  });
   it.each([false, true])("retains standalone compiler journals with election=%s", elected => {
     const compiled = standalone(modeledSource(elected));
     const result = runVerticalSlice2({ ...compiled, runContext: modeledContext(), months: 1 });
@@ -85,6 +102,25 @@ describe("authenticated modeled salary at a shared bank", () => {
     const changedBank = runVerticalSlice2({ input: compiled.input, openingState: changedState, runContext: modeledContext(), months: 1 });
     expect(changedBank.status).toBe("incomplete");
     expect(changedBank.diagnostics.some(d => d.message.includes("MODELED_PAYROLL_NOT_ADMITTED"))).toBe(true);
+  });
+  it("qualifies a context-free compilation only within its authored boundaries", () => {
+    const compiled = standalone();
+    const context = modeledContext();
+    for (const changed of [
+      { ...context, scenarioId: scenarioId(modeledId(99)) },
+      { ...context, simulationEnd: modeledContext(2).simulationEnd },
+      { ...context, asOf: "2026-01-02T00:00:00.000Z" as typeof context.asOf },
+    ]) {
+      expect(() => executeVerticalSlice2PeriodCandidate(
+        { ...compiled, runContext: changed },
+        { start: context.simulationStart, end: context.simulationEnd }, compiled.openingState, {},
+      )).toThrow("MODELED_PAYROLL_NOT_ADMITTED");
+    }
+    for (const actual of [context, { ...context, runId: runId(modeledId(99)) }]) {
+      const result = runVerticalSlice2({ ...compiled, runContext: actual, months: 1 });
+      expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+      expect(result.periods[0]!.recurringIncomeRecognized).toEqual(money("9000"));
+    }
   });
   it("keeps an independently owned salary reference live across many compiles", () => {
     const original = standalone();

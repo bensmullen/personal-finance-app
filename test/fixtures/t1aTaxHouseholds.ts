@@ -1,4 +1,7 @@
 import { domainId } from "../../src/identity/index.js";
+import { compileCashFlow } from "../../src/application/compiler/cashFlow.js";
+import { addPersonalObject, createEmptyPersonalDraft } from "../../src/application/personalMvp.js";
+import { authorPayrollWithholding, type PayrollWithholdingPlan } from "../../src/application/compiler/payrollWithholding.js";
 import { createAuthoritativeState } from "../../src/state/index.js";
 import { createFundingPolicy, fundingPolicyId } from "../../src/funding/index.js";
 import { createRunContext, runId, scenarioId } from "../../src/simulation/run.js";
@@ -7,7 +10,7 @@ import { createHouseholdTaxParticipant, taxCreditPositionIds, type HouseholdTaxI
 import { compileHouseholdKernel } from "../../src/simulation/r3/compiledHousehold.js";
 import type { ExecutableHouseholdProjection } from "../../src/simulation/householdExecution.js";
 import { instant, utcMonthlyPeriods } from "../../src/time/index.js";
-import { money, Rate, rateConvention, Ratio, USD } from "../../src/values/index.js";
+import { money, Ratio, USD } from "../../src/values/index.js";
 import { taxRule } from "./t1aTaxRules.js";
 
 export const taxHouseholdIds = {
@@ -17,9 +20,10 @@ export const taxHouseholdIds = {
   income: domainId("income", "86000000-0000-4000-8000-000000000004"),
   payable: domainId("liability", "86000000-0000-4000-8000-000000000005"),
 };
-export const taxHouseholdFixture = (options: { readonly months?: number; readonly amount?: string; readonly openingCash?: string; readonly withholding?: string; readonly input?: Partial<HouseholdTaxInput>; readonly incomeType?: string; readonly taxCharacter?: string } = {}) => {
+export const taxHouseholdFixture = (options: { readonly months?: number; readonly amount?: string; readonly openingCash?: string; readonly withholding?: string; readonly input?: Partial<HouseholdTaxInput>; readonly incomeType?: string; readonly taxCharacter?: string; readonly simulationStart?: string; readonly incomeStart?: string; readonly payrollElection?: PayrollWithholdingPlan } = {}) => {
   const ids = taxHouseholdIds, months = options.months ?? 1;
-  const start = instant("2024-01-01T00:00:00.000Z"), end = utcMonthlyPeriods(start, months).at(-1)!.end;
+  const start = instant(`${options.simulationStart ?? "2024-01-01"}T00:00:00.000Z`), end = utcMonthlyPeriods(start, months).at(-1)!.end;
+  const incomeStart = options.incomeStart ?? `${start.slice(0, 7)}-15`;
   const input: HouseholdTaxInput = {
     catalog: [taxRule(1, { jurisdiction: "US:FEDERAL", income: { ...taxRule().income!, ordinaryBrackets: [{ lower: money("0"), rate: Ratio.parse("0.1") }], standardDeduction: money("0") } })],
     filingStatus: "single", simulationStart: start, ownerId: ids.household,
@@ -32,11 +36,39 @@ export const taxHouseholdFixture = (options: { readonly months?: number; readonl
     diagnostics: [], ...options.input,
   };
   const context = createRunContext({ runId: runId("86000000-0000-4000-8000-000000000007"), scenarioId: scenarioId("86000000-0000-4000-8000-000000000008"), asOf: instant("2023-12-31T00:00:00.000Z"), dataCutoff: instant("2023-12-31T00:00:00.000Z"), simulationStart: start, simulationEnd: end, baseCurrency: USD });
+  let model = createEmptyPersonalDraft("86000000-0000-4000-8000-000000000006");
+  model = addPersonalObject(model, "Household", ids.household, {
+    name: "Synthetic tax household", household_type: "individual", formation_date: "2020-01-01",
+    members: [ids.person], primary_jurisdiction: "US-NY",
+  });
+  model = addPersonalObject(model, "Person", ids.person, {
+    first_name: "Synthetic", last_name: "Taxpayer", date_of_birth: "1980-01-01",
+    household_id: ids.household, residence_jurisdiction: "US-NY",
+  });
+  model = addPersonalObject(model, "Account", ids.cash, {
+    name: "Synthetic cash account", account_type: "cash", owner_id: ids.person,
+    opening_date: "2020-01-01", opening_balance: options.openingCash ?? "0",
+  });
+  model = addPersonalObject(model, "Income", ids.income, {
+    owner_id: ids.person, income_type: options.incomeType ?? "salary", source: options.payrollElection?.employerId ?? "Synthetic income source",
+    amount: options.amount ?? "1000", frequency: "monthly", start_date: incomeStart, gross_or_net: "gross",
+  });
+  model = addPersonalObject(model, "Scenario", context.scenarioId, {
+    name: "Synthetic tax forecast", start_date: start.slice(0, 10), end_date: end.slice(0, 10),
+    timestep: "monthly", enabled: true, stochastic: false, simulation_count: 1, assumption_ids: [], event_ids: [],
+  });
+  if (options.payrollElection !== undefined) model = authorPayrollWithholding(model, options.payrollElection);
+  const cash = compileCashFlow(model, {
+    baseCurrency: "USD", asOf: context.asOf.slice(0, 10), simulationStart: start.slice(0, 10),
+    simulationEnd: end.slice(0, 10), months, executionAccountId: ids.cash,
+    sameInstantCashFlowOrder: "income_before_expense",
+  });
+  if (cash.status !== "compiled") throw new Error(JSON.stringify(cash.diagnostics));
   const compiled: ExecutableHouseholdProjection = {
     reconciledOpeningState: createAuthoritativeState({ accounts: { [ids.cash]: { id: ids.cash, kind: "cash", ownerId: ids.person, cash: money(options.openingCash ?? "0") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } }),
     reconciledPrimitiveState: createPrimitiveRuntimeStateStore(), executionMonths: months, scenarioIdentity: context.scenarioId, scenarioBindings: {}, standaloneAssets: [],
     participants: [createHouseholdTaxParticipant(input)], nonInvestmentPositionIds: taxCreditPositionIds(input),
-    cashFlowInput: { householdId: ids.household, ownerId: ids.person, cashAccountId: ids.cash, expensePayableLiabilityId: ids.payable, baseCurrency: USD, sameInstantCashFlowOrder: "income_before_expense", expenses: [], events: [], incomes: [{ id: ids.income, ownerId: ids.person, depositAccountId: ids.cash, baseMonthlyAmount: money(options.amount ?? "1000"), start, recurrence: { kind: "utc_monthly", anchor: instant("2024-01-15T00:00:00.000Z"), invalidDayPolicy: "skip" }, growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()), growthBaseAt: instant("2024-01-15T00:00:00.000Z"), primitiveIds: { growth: domainId("primitive-instance", "86000000-0000-4000-8001-000000000001"), recurrence: domainId("primitive-instance", "86000000-0000-4000-8001-000000000002") } }] },
+    cashFlowInput: { ...cash.value.input, expensePayableLiabilityId: ids.payable },
   };
   return { input, context, compiled, kernel: compileHouseholdKernel(compiled, start) };
 };

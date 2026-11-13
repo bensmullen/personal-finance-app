@@ -220,9 +220,7 @@ describe("durable Income authoring and compilation", () => {
     const openingBefore = canonicalSerialize(compiled.value.openingState);
     const unsigned = runReferenceVerticalSlice2({ ...compiled.value, input: withoutSalaryOriginal, months: 1, runContext });
     expect(unsigned.status).toBe("incomplete");
-    expect(unsigned.diagnostics.some(issue => issue.message.includes(
-      role === "household" ? "HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL" : "Elected payroll requires an authenticated salary source",
-    ))).toBe(true);
+    expect(unsigned.diagnostics.some(issue => issue.message.includes("INCOME_REQUIRES_QUALIFIED_ORIGINAL"))).toBe(true);
     expect(canonicalSerialize(unsigned.state)).toBe(openingBefore);
     const bank = compiled.value.openingState.accounts[golden.checking]!;
     const changedOwner = role === "household" ? domainId("person", earner) : domainId("household", golden.household);
@@ -365,12 +363,18 @@ describe("durable Income authoring and compilation", () => {
 });
 
 const integrated = (amount: string, options: { readonly months?: number; readonly noPayroll?: boolean; readonly cash?: string; readonly settlementAt?: string } = {}) => {
-  const fixture = taxHouseholdFixture({ months: options.months ?? 12, openingCash: options.cash ?? "0" });
   const withholding = election({ calculation: { kind: "fixed", amount: money(amount) } });
+  const fixture = taxHouseholdFixture({ months: options.months ?? 12, openingCash: options.cash ?? "0",
+    ...(options.noPayroll ? {} : { payrollElection: {
+      id: withholding.id, incomeId: withholding.incomeId, ownerId: withholding.ownerId,
+      depositAccountId: withholding.depositAccountId, employerId: withholding.employerId,
+      effectiveDate: withholding.start.slice(0, 10), jurisdiction: withholding.jurisdiction,
+      provenance: withholding.provenance, userConfirmed: true,
+      calculation: { kind: "fixed", amount },
+    } }) });
   const input: HouseholdTaxInput = { ...fixture.input, payrollWithholding: options.noPayroll ? [] : [withholding], incomes: fixture.input.incomes.map(item => ({ ...item, grossOrNet: "gross", employerId: "synthetic-job-A" })),
     ...(options.settlementAt === undefined ? {} : { settlements: [{ ...fixture.input.settlements![0]!, at: instant(options.settlementAt) }] }) };
-  const compiled = { ...fixture.compiled, participants: [createHouseholdTaxParticipant(input)], nonInvestmentPositionIds: taxCreditPositionIds(input),
-    cashFlowInput: { ...fixture.compiled.cashFlowInput!, incomes: fixture.compiled.cashFlowInput!.incomes.map(item => ({ ...item, ...(options.noPayroll ? {} : { payrollWithholding: [withholding] }) })) } };
+  const compiled = { ...fixture.compiled, participants: [createHouseholdTaxParticipant(input)], nonInvestmentPositionIds: taxCreditPositionIds(input) };
   return { input, context: fixture.context, runContext: fixture.context, kernel: compileHouseholdKernel(compiled, fixture.context.simulationStart) };
 };
 

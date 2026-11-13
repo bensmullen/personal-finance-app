@@ -444,6 +444,8 @@ export interface PreparedVerticalSlice2Period {
   readonly traceRefs: readonly CalculationTraceRef[];
 }
 
+const preparedContexts = new WeakMap<PreparedVerticalSlice2Period, RunContext>();
+
 const householdDescriptor = (value: Omit<HouseholdWorkDescriptor, "dependsOn" | "traceRefs"> & { readonly dependsOn?: readonly string[] }): HouseholdWorkDescriptor =>
   Object.freeze({ ...value, dependsOn: Object.freeze([...(value.dependsOn ?? [])].sort()), traceRefs: Object.freeze([]) });
 
@@ -568,7 +570,9 @@ export const prepareVerticalSlice2Period = (
   const eventPrimitiveTransition = createPrimitiveRuntimeStateStore(Object.fromEntries(eventResult.primitiveOutputs.filter((output) => output.primitiveId === "P27" || output.primitiveId === "P30").map((output) => [output.primitiveInstanceId, eventResult.primitiveState[output.primitiveInstanceId]!])));
   if (summary !== undefined) for (const output of eventResult.primitiveOutputs)
     if (output.effects.length > 0) summary.traces(output.traceRefs ?? []);
-  return Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), eventPrimitiveTransition, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: summary !== undefined ? Object.freeze([]) : mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
+  const prepared = Object.freeze({ period: Object.freeze({ ...period }), state: eventResult.closingState, primitiveState: eventResult.primitiveState, primitiveStateFrontier: subtractMilliseconds(period.end, 1), eventPrimitiveTransition, descriptors: Object.freeze(ordered.map((item) => item.descriptor)), occurrences: ordered, diagnostics: Object.freeze([...eventResult.diagnostics]), traceRefs: summary !== undefined ? Object.freeze([]) : mergeTraceRefs(...eventResult.primitiveOutputs.filter((output) => output.effects.length > 0).map((output) => output.traceRefs)) ?? Object.freeze([]) });
+  preparedContexts.set(prepared, Object.freeze({ ...runContext }));
+  return prepared;
 };
 
 /**
@@ -590,6 +594,11 @@ export function executePreparedVerticalSlice2Occurrence(
   runContext: RunContext,
   summary?: SummaryOperationSink,
 ): CashCandidate & { readonly period?: VerticalSlice2PeriodResult; readonly summary?: CashOperationSummary } {
+  const preparedContext = preparedContexts.get(prepared);
+  if (preparedContext === undefined || !prepared.occurrences.includes(occurrence) ||
+      (canonicalSerialize(preparedContext) !== canonicalSerialize(runContext) &&
+      canonicalSerialize({ ...preparedContext, simulationStart: prepared.period.start, simulationEnd: prepared.period.end }) !== canonicalSerialize(runContext)))
+    return invalidInput("Prepared VS2 occurrence or context changed", "runContext");
   const income = input.incomes.find((stream) => stream.id === occurrence.streamId);
   const expense = input.expenses.find((stream) => stream.id === occurrence.streamId);
   if (income === undefined && expense === undefined) invalidInput(`Prepared VS2 occurrence ${occurrence.streamId} is not present in the fingerprinted input`, "input");
@@ -615,8 +624,8 @@ export function executePreparedVerticalSlice2Occurrence(
   // Prepared occurrences remove event mechanics after event eligibility was evaluated.
   // The source binding must still be qualified against the exact original stream,
   // not its event-free execution projection.
-  const request = { runContext, openingState: state, primitiveState, input: filtered,
-    ...(income === undefined ? {} : { modeledSourceIncome: income }) };
+  const request = { runContext: preparedContext, openingState: state, primitiveState, input: filtered,
+    ...(income === undefined ? {} : { modeledSourceIncome: income, modeledSourceEvents: input.events }) };
   return summary === undefined ? executeCashFlowPeriodCandidate(request, prepared.period, events)
     : executeCashFlowPeriodCandidate(request, prepared.period, events, summary);
 }
@@ -632,7 +641,10 @@ interface VerticalSlice2InternalRunInput extends VerticalSlice2RunInput {
 }
 
 /** Shared financial evaluator; a prepared occurrence passes no event work or run wrapper. */
-type CashFlowEvaluatorRequest = VerticalSlice2RunInput & { readonly modeledSourceIncome?: RecurringIncomeStream };
+type CashFlowEvaluatorRequest = VerticalSlice2RunInput & {
+  readonly modeledSourceIncome?: RecurringIncomeStream;
+  readonly modeledSourceEvents?: VerticalSlice2Input["events"];
+};
 function executeCashFlowPeriodCandidate(request: CashFlowEvaluatorRequest, targetPeriod: Period, eventResult: PeriodWorkCandidate): CashCandidate & { readonly period: VerticalSlice2PeriodResult };
 function executeCashFlowPeriodCandidate(request: CashFlowEvaluatorRequest, targetPeriod: Period, eventResult: PeriodWorkCandidate, summary: SummaryOperationSink): CashCandidate & { readonly summary: CashOperationSummary };
 function executeCashFlowPeriodCandidate(
@@ -694,9 +706,9 @@ function executeCashFlowPeriodCandidate(
             const modeledPayroll = stream.modeledPayroll === undefined ? undefined : modeledPayrollOccurrence({
               householdId: request.input.householdId, stream: request.modeledSourceIncome ?? stream, context: request.runContext,
               at: occurrence.scheduledAt, period: targetPeriod, occurrenceId: occurrence.occurrenceId, gross: amount,
-            }, state.accounts[stream.depositAccountId]);
-            if (state.accounts[stream.depositAccountId]?.ownerId === request.input.householdId && wageSource === undefined && modeledPayroll === undefined)
-              invalidInput("HOUSEHOLD_BANK_INCOME_REQUIRES_QUALIFIED_ORIGINAL: unsupported income without an independent wage source", `incomes.${stream.id}.householdWageSource`);
+            }, state.accounts[stream.depositAccountId], request.modeledSourceEvents ?? request.input.events);
+            if (wageSource === undefined && stream.modeledPayroll === undefined)
+              invalidInput("INCOME_REQUIRES_QUALIFIED_ORIGINAL", `incomes.${stream.id}`);
             if (wageSource !== undefined && (stream.ownerId === request.input.householdId || state.accounts[stream.depositAccountId]?.ownerId !== request.input.householdId))
               invalidInput("Household wages require a Person recipient and household BANK", `incomes.${stream.id}.householdWageSource`);
             const householdWage = wageSource === undefined ? undefined : { source: wageSource, stream: wageStreamOriginal(request.modeledSourceIncome ?? stream), period: targetPeriod, context: {
@@ -719,7 +731,7 @@ function executeCashFlowPeriodCandidate(
             // before the period registers the income occurrence and recognition.
             const recognitionKey = `recognition:income:${stream.id}:${occurrence.scheduledAt}`;
             const payroll = hasElections
-              ? payrollContributionCandidate(state, { id: transactionId, householdId: request.input.householdId, incomeId: stream.id, ownerId: stream.ownerId, occurrenceId: occurrence.occurrenceId, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions ?? [], ...(householdWage === undefined ? {} : { householdWage }), ...(modeledPayroll === undefined ? {} : { modeledPayroll }), ...(stream.payrollWithholding === undefined ? {} : { withholding: stream.payrollWithholding }), ...(stream.payrollTaxCreditAccountId === undefined ? {} : { taxCreditAccountId: stream.payrollTaxCreditAccountId }) })
+              ? payrollContributionCandidate(state, { id: transactionId, householdId: request.input.householdId, runContext: request.runContext, incomeId: stream.id, ownerId: stream.ownerId, occurrenceId: occurrence.occurrenceId, at: occurrence.scheduledAt, gross: amount, depositAccountId: stream.depositAccountId, allocations: stream.payrollContributions ?? [], ...(householdWage === undefined ? {} : { householdWage }), ...(modeledPayroll === undefined ? {} : { modeledPayroll }), ...(stream.payrollWithholding === undefined ? {} : { withholding: stream.payrollWithholding }), ...(stream.payrollTaxCreditAccountId === undefined ? {} : { taxCreditAccountId: stream.payrollTaxCreditAccountId }) })
               : undefined;
             if (payroll !== undefined) state = payroll.state;
             registerAuthoritativeIdentity(state.identities, "generatedOccurrenceKeys", occurrence.occurrenceId);
@@ -943,7 +955,7 @@ export const executeVerticalSlice2PeriodCandidate = (
   openingState: AuthoritativeState,
   primitiveState: PrimitiveRuntimeStateStore,
 ): { readonly state: AuthoritativeState; readonly primitiveState: PrimitiveRuntimeStateStore; readonly period: VerticalSlice2PeriodResult } => {
-  const result = runVerticalSlice2Internal({ ...request, openingState, primitiveState, months: 1, targetPeriods: Object.freeze([period]) });
+  const result = runVerticalSlice2Internal({ runContext: request.runContext, input: request.input, openingState, primitiveState, months: 1, targetPeriods: Object.freeze([period]) });
   if (result.status !== "completed" || result.periods[0] === undefined) {
     throw new ValidationError(result.diagnostics);
   }
@@ -1023,6 +1035,10 @@ const runVerticalSlice2Prepared = (request: VerticalSlice2RunInput): VerticalSli
 
 /** Runs a deterministic monthly household cash-flow projection (360 months by default). */
 export const runVerticalSlice2 = (request: VerticalSlice2RunInput): VerticalSlice2RunResult =>
-  (request.months ?? 360) > 24 ? runVerticalSlice2Internal(request) : runVerticalSlice2Prepared(request);
+  (request.months ?? 360) > 24 ? runVerticalSlice2Internal({
+    runContext: request.runContext, openingState: request.openingState, input: request.input,
+    ...(request.months === undefined ? {} : { months: request.months }),
+    ...(request.primitiveState === undefined ? {} : { primitiveState: request.primitiveState }),
+  }) : runVerticalSlice2Prepared(request);
 
 export const createVerticalSlice2PrimitiveId = (value: string): PrimitiveInstanceId => domainId("primitive-instance", value);

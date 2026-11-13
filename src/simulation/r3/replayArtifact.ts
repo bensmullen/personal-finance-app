@@ -237,12 +237,13 @@ export const createPortableHouseholdReplayArtifact = (forecast: HouseholdForecas
   const artifact = Object.freeze({ version: "household-replay/v3" as const, encoded, integrity });
   // The creating worker already owns the exact committed kernel/checkpoints.
   // Retaining that immutable basis avoids decoding all 649 months merely to
-  // inspect twelve. The last root contains the source history for requalification.
+  // inspect twelve. The committed terminal state also covers publications
+  // consumed after the last retained replay checkpoint.
   // Only the application reader may retain its private, unexposed execution.
   // Ordinary exported artifacts continue to restore the serialized snapshot.
   if (retainPrivateBasis) restoredArtifacts.set(artifact, {
     version: artifact.version, encoded, integrity, forecast, modeledPayroll,
-    sourceHistoryState: roots.at(-1)?.state ?? forecast.replay.kernel.executable.reconciledOpeningState,
+    sourceHistoryState: forecast.state,
   });
   try { observe?.({ checkpointCount: checkpoints.length, checkpointIndexNodesVisited: visited, checkpointRecordChanges: changed,
     checkpointEqualityComparisons: comparisons, encodedValues: graph.encodedValues, encodedBytes: new TextEncoder().encode(encoded).byteLength,

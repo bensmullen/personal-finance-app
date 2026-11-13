@@ -1,10 +1,10 @@
-import type { RecurringIncomeStream } from "../../../verticalSlice2.js";
+import type { RecurringIncomeStream, VerticalSlice2Input } from "../../../verticalSlice2.js";
 import type { AccountState } from "../../../../state/index.js";
-import { canonicalSerialize, type RunContext } from "../../../run.js";
+import { assertRunContext, canonicalSerialize, runId, type RunContext } from "../../../run.js";
 import { sha256 } from "../../../../rules/tax/t1b/contentIdentity.js";
 import { evaluatePrimitive, primitiveEvaluationContext } from "../../../../primitives/index.js";
 import { generatedOccurrenceKey } from "../../../../identity/index.js";
-import { utcCalendarMonthDifference, type Instant, type Period } from "../../../../time/index.js";
+import { instant, utcCalendarMonthDifference, utcMonthlyOccurrences, type Instant, type Period } from "../../../../time/index.js";
 import { Money, RateBasis, RoundingPolicy } from "../../../../values/index.js";
 import { failValidation, issueCodes } from "../../../../diagnostics/index.js";
 
@@ -23,6 +23,8 @@ export interface ModeledPayrollBinding {
   readonly asOf: string;
   readonly scenarioId: string;
   readonly sourceFingerprint: string;
+  readonly nonSalaryType?: string;
+  readonly events?: VerticalSlice2Input["events"];
   readonly runId?: string;
   readonly dataCutoff?: string;
 }
@@ -42,12 +44,24 @@ export function registerModeledPayrollCompiler(issuer: "canonical-cash-flow/v1" 
   issuers.set(issuer, read);
 }
 
+export function readModeledIncomeBinding(ref: ModeledPayrollReference | undefined): ModeledPayrollBinding | undefined {
+  return ref?.version === "modeled-payroll/v1" ? issuers.get(ref.issuer)?.(ref) : undefined;
+}
+
 export function qualifyModeledPayroll(stream: RecurringIncomeStream, householdId: string,
-  bank: AccountState | undefined, context: RunContext): void {
-  const ref = stream.modeledPayroll;
-  const binding = ref?.version === "modeled-payroll/v1" ? issuers.get(ref.issuer)?.(ref) : undefined;
+  bank: AccountState | undefined, context: RunContext): ModeledPayrollBinding {
+  assertRunContext(context);
+  try {
+    runId(context.runId);
+    instant(context.dataCutoff);
+  } catch {
+    return reject();
+  }
+  const binding = readModeledIncomeBinding(stream.modeledPayroll);
   if (!binding || !bank || stream.householdWageSource !== undefined ||
-    binding.householdId !== householdId || stream.ownerId === householdId ||
+    binding.householdId !== householdId ||
+    binding.nonSalaryType === undefined && (stream.ownerId === householdId || context.baseCurrency.code !== "USD") ||
+    binding.nonSalaryType !== undefined && Boolean(stream.payrollContributions?.length || stream.payrollWithholding?.length) ||
     !stream.baseMonthlyAmount.currency.equals(context.baseCurrency) || !bank.cash.currency.equals(context.baseCurrency) ||
     !["cash", "checking", "savings"].includes(bank.kind) ||
     canonicalSerialize(binding.bank) !== canonicalSerialize({ id: bank.id, kind: bank.kind, ownerId: bank.ownerId }) ||
@@ -55,8 +69,10 @@ export function qualifyModeledPayroll(stream: RecurringIncomeStream, householdId
     binding.asOf !== context.asOf || binding.scenarioId !== context.scenarioId ||
     binding.runId !== undefined && binding.runId !== context.runId ||
     binding.dataCutoff !== undefined && binding.dataCutoff !== context.dataCutoff ||
-    context.dataCutoff > context.asOf || context.simulationStart < binding.start || context.simulationEnd > binding.end)
-    reject();
+    (binding.runId === undefined) !== (binding.dataCutoff === undefined) ||
+    context.simulationStart !== binding.start || context.simulationEnd !== binding.end)
+    return reject();
+  return binding;
 }
 
 export interface ModeledPayrollOccurrence {
@@ -71,12 +87,16 @@ export interface ModeledPayrollOccurrence {
 // Tokens are local to one evaluated occurrence. References survive snapshots;
 // VS2 must qualify them again before evaluating and admitting another paycheck.
 const occurrences = new WeakSet<object>();
-export function modeledPayrollOccurrence(binding: ModeledPayrollOccurrence, bank: AccountState | undefined): ModeledPayrollOccurrence {
-  qualifyModeledPayroll(binding.stream, binding.householdId, bank, binding.context);
+export function modeledPayrollOccurrence(binding: ModeledPayrollOccurrence, bank: AccountState | undefined,
+  events: VerticalSlice2Input["events"]): ModeledPayrollOccurrence | undefined {
+  const source = qualifyModeledPayroll(binding.stream, binding.householdId, bank, binding.context);
   const { stream, context, at, period } = binding;
-  if (at < stream.start || stream.end !== undefined && at >= stream.end || at < stream.recurrence.anchor ||
-    at.slice(8) !== stream.recurrence.anchor.slice(8) || period.start > at || period.end <= at ||
-    period.start < context.simulationStart || period.end > context.simulationEnd) reject();
+  const incomeEvents = events.filter(event => event.targetId === stream.id);
+  if (canonicalSerialize(source.events ?? []) !== canonicalSerialize(incomeEvents) ||
+      incomeEvents.some(event => event.kind === "activation" ? at < event.effectiveAt : at >= event.effectiveAt)) reject();
+  if (at < stream.start || stream.end !== undefined && at >= stream.end ||
+    period.start < context.simulationStart || period.end > context.simulationEnd ||
+    !utcMonthlyOccurrences(stream.recurrence.anchor, period, stream.recurrence.invalidDayPolicy).includes(at)) reject();
   const months = utcCalendarMonthDifference(stream.growthBaseAt, at);
   const evaluated = evaluatePrimitive({ primitiveId: "P08", input: { initial: stream.baseMonthlyAmount, rate: stream.growthRate },
     parameters: { category: "recurring_occurrence_amount", timeBasis: stream.growthRate.convention.basis === RateBasis.Periodic
@@ -88,16 +108,22 @@ export function modeledPayrollOccurrence(binding: ModeledPayrollOccurrence, bank
   const gross = new Money(evaluated.output.value.amount.round(RoundingPolicy.currency(context.baseCurrency.minorUnitScale, "half_up")), context.baseCurrency);
   if (!gross.equals(binding.gross) || binding.occurrenceId !== generatedOccurrenceKey({ scenarioId: context.scenarioId,
     primitiveInstanceId: stream.primitiveIds.recurrence, scheduledAt: at, semanticEffectType: "income-recognition", economicTargetId: stream.id })) reject();
-  const token = Object.freeze(binding); occurrences.add(token); return token;
+  if (source.nonSalaryType !== undefined) return undefined;
+  const token = Object.freeze({ ...binding, period: Object.freeze({ ...period }),
+    context: Object.freeze({ ...context, versions: Object.freeze({ ...context.versions }) }) });
+  occurrences.add(token);
+  return token;
 }
 export function assertModeledPayrollOccurrence(token: ModeledPayrollOccurrence, bank: AccountState | undefined,
   expected: { id: string; incomeId: string; ownerId?: string; depositAccountId: string; at: string; occurrenceId?: string; gross: import("../../../../values/index.js").Money;
-    allocations: unknown; withholding?: unknown; taxCreditAccountId?: string }): void {
+    runContext?: RunContext; householdId?: string; allocations: unknown; withholding?: unknown; taxCreditAccountId?: string }): void {
   if (!occurrences.has(token)) reject();
   qualifyModeledPayroll(token.stream, token.householdId, bank, token.context);
-  if (expected.id !== `tx:recognition:income:${token.stream.id}:${token.at}` || token.stream.id !== expected.incomeId || token.stream.ownerId !== expected.ownerId || token.stream.depositAccountId !== expected.depositAccountId ||
+  if (expected.householdId !== token.householdId || canonicalSerialize(expected.runContext ?? null) !== canonicalSerialize(token.context) ||
+    expected.id !== `tx:recognition:income:${token.stream.id}:${token.at}` || token.stream.id !== expected.incomeId || token.stream.ownerId !== expected.ownerId || token.stream.depositAccountId !== expected.depositAccountId ||
     token.at !== expected.at || token.occurrenceId !== expected.occurrenceId || !token.gross.equals(expected.gross) ||
     canonicalSerialize(token.stream.payrollContributions ?? []) !== canonicalSerialize(expected.allocations) ||
     canonicalSerialize(token.stream.payrollWithholding ?? null) !== canonicalSerialize(expected.withholding ?? null) ||
     token.stream.payrollTaxCreditAccountId !== expected.taxCreditAccountId) reject();
+  occurrences.delete(token);
 }

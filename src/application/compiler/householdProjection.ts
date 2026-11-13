@@ -12,7 +12,7 @@ import { instant } from "../../time/index.js";
 import { reconcileHouseholdOpeningState, reconcileHouseholdPrimitiveState } from "../../simulation/householdProjection.js";
 import { buildHouseholdScheduledPlan, type HouseholdContentionPolicy } from "../../simulation/intraperiodScheduler.js";
 import { compileHouseholdCashFlow, type CashFlowCompilerRequest, type CashFlowScenarioBindings, type CompiledCashFlow } from "./cashFlow.js";
-import { registerModeledPayrollCompiler, modeledPayrollKey, withoutModeledPayroll, type ModeledPayrollBinding, type ModeledPayrollReference } from "../../simulation/d2/integration/householdWages/modeledPayroll.js";
+import { registerModeledPayrollCompiler, readModeledIncomeBinding, modeledPayrollKey, withoutModeledPayroll, type ModeledPayrollBinding, type ModeledPayrollReference } from "../../simulation/d2/integration/householdWages/modeledPayroll.js";
 import { compileInvestments, type InvestmentCompilerRequest, type CompiledInvestments } from "./investments.js";
 import { compileLiabilities, type LiabilityCompilerRequest, type CompiledLiabilities } from "./liabilities.js";
 import type { CapabilityDiagnostic, CompileResult } from "./types.js";
@@ -251,9 +251,10 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
       const reconstructed = { ...income,
       ...(income.payrollWithholding === undefined ? {} : { payrollTaxCreditAccountId: tax.value.refundAccountId ?? tax.value.fundingPolicy?.orderedSources[0]?.accountId ?? income.payrollTaxCreditAccountId ?? cash.value.input.cashAccountId }),
       ...(income.payrollContributions === undefined ? {} : { payrollContributions: income.payrollContributions.map(allocation => ({ ...allocation, policy: annualPolicy(allocation.policy) })) }) };
-      if (income.modeledPayroll === undefined) return reconstructed;
+      const binding = readModeledIncomeBinding(income.modeledPayroll);
+      if (binding === undefined) return reconstructed;
       const bank = opening.value.accounts[income.depositAccountId]!;
-      return issueHouseholdSalary({ stream: withoutModeledPayroll(reconstructed), householdId: cash.value.input.householdId,
+      return issueHouseholdSalary({ ...binding, stream: withoutModeledPayroll(reconstructed), householdId: cash.value.input.householdId,
         bank: { id: bank.id, ownerId: bank.ownerId, kind: bank.kind }, start: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`),
         end: instant(`${firstBoundary.simulationEnd}T00:00:00.000Z`), asOf: instant(`${firstBoundary.asOf ?? firstBoundary.simulationStart}T00:00:00.000Z`),
         scenarioId: cash.value.scenarioIdentity, sourceFingerprint: salarySourceFingerprint! });
