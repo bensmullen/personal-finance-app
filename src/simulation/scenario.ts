@@ -1442,6 +1442,7 @@ const compare = <Input, PeriodResult extends AnyPeriodResult>(
     primitiveState?: PrimitiveRuntimeStateStore;
   }) => AnyRunResult,
   metric: Metrics<PeriodResult>,
+  prepareForRun?: (resolved: ResolvedScenario, context: RunContext) => Input,
 ): ScenarioComparisonResult => {
   const requested = request.realizationCount ?? 1;
   const baselineResolved = resolveScenario(
@@ -1507,7 +1508,7 @@ const compare = <Input, PeriodResult extends AnyPeriodResult>(
       run({
         runContext,
         openingState: request.openingState,
-        input,
+        input: prepareForRun === undefined ? input : prepareForRun(resolved, runContext),
         ...(request.months === undefined ? {} : { months: request.months }),
         ...(request.primitiveState === undefined
           ? {}
@@ -1601,8 +1602,9 @@ const vs4Metrics = (
 
 export const compareVerticalSlice2Scenarios = (
   request: ScenarioComparisonRequest<VerticalSlice2Input>,
+  prepareForRun?: (resolved: ResolvedScenario, context: RunContext) => VerticalSlice2Input,
 ): ScenarioComparisonResult =>
-  compare(request, applyVerticalSlice2Scenario, runVerticalSlice2, vs2Metrics);
+  compare(request, applyVerticalSlice2Scenario, runVerticalSlice2, vs2Metrics, prepareForRun);
 export const compareVerticalSlice3Scenarios = (
   request: ScenarioComparisonRequest<VerticalSlice3Input>,
 ): ScenarioComparisonResult =>

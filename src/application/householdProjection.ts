@@ -26,6 +26,7 @@ import {
   runHouseholdForecastSummary,
   replayHouseholdForecastWindow,
   compileHouseholdKernel,
+  applyHouseholdExecutionOverlay,
   type HouseholdForecastSummaryResult,
   type ExecutableHouseholdProjection,
 } from "../simulation/householdExecution.js";
@@ -34,6 +35,7 @@ import {
   createRunContext,
   runId,
   scenarioId,
+  type RunContext,
 } from "../simulation/run.js";
 import type { CalculationTraceRef } from "../lineage/index.js";
 import { mergeTraceRefs, createReplayTraceAnchor, resolveReplayTraceAnchors } from "../lineage/index.js";
@@ -53,7 +55,7 @@ import type {
 } from "./compiler/investments.js";
 import type { LiabilityExecutionProfile } from "./compiler/liabilities.js";
 import type { RetirementTerminationBinding } from "./compiler/cashFlow.js";
-import type { CapabilityDiagnostic } from "./compiler/types.js";
+import type { CapabilityDiagnostic, CompileResult } from "./compiler/types.js";
 import {
   compileExecutableScenario,
   type ExecutableScenarioIntent,
@@ -584,6 +586,38 @@ export const resolveHouseholdExplanation = (
 };
 const boundary = (request: HouseholdProjectionCompilerRequest) =>
   request.investments ?? request.liabilities ?? request.cashFlow;
+
+export function compileHouseholdKernelForRun(
+  model: PortableModelEnvelope,
+  compiler: HouseholdProjectionCompilerRequest,
+  runContext: RunContext,
+): CompileResult<{ readonly executable: ExecutableHouseholdProjection; readonly kernel: ReturnType<typeof compileHouseholdKernel> }> {
+  const result = compileHouseholdProjection(model, compiler);
+  if (result.status !== "compiled") return result;
+  const selected = boundary(compiler)!;
+  try {
+    const context = createRunContext({ ...runContext, runId: runId(runContext.runId), scenarioId: scenarioId(runContext.scenarioId) });
+    if (result.value.scenarioIdentity !== context.scenarioId ||
+        context.simulationStart !== `${selected.simulationStart}T00:00:00.000Z` ||
+        context.simulationEnd !== `${selected.simulationEnd}T00:00:00.000Z` ||
+        context.baseCurrency.code !== selected.baseCurrency ||
+        [compiler.cashFlow?.asOf, compiler.investments?.asOf, compiler.liabilities?.asOf]
+          .some(asOf => asOf !== undefined && `${asOf}T00:00:00.000Z` !== context.asOf)) {
+      throw new ValidationError({
+        severity: "error", code: "HOUSEHOLD_RUN_CONTEXT_MISMATCH", entityType: "household_projection",
+        message: "Run context must match the compiled scenario, horizon, currency and asOf.",
+      });
+    }
+    const executable = forecastExecutable(result.value, model, compiler, context, context.runId);
+    const kernel = result.value.executionKernel === undefined
+      ? compileHouseholdKernel(executable, context.simulationStart)
+      : applyHouseholdExecutionOverlay(result.value.executionKernel, executable);
+    return { ...result, value: Object.freeze({ executable: kernel.executable, kernel }) };
+  } catch (error) {
+    if (error instanceof ValidationError) return { status: "invalid_model", diagnostics: error.issues };
+    throw error;
+  }
+}
 const shortfallDto = (
   value:
     | LiquidityShortfall
@@ -948,7 +982,6 @@ const executeInternal = (
       simulationEnd: instant(`${selected.simulationEnd}T00:00:00.000Z`),
       baseCurrency: Currency.of(selected.baseCurrency),
     };
-    const executable = forecastExecutable(compiled, model, compiler, template, request.runIdentity, resolved);
     const compilerAsOf = [
       request.compiler.cashFlow?.asOf,
       request.compiler.investments?.asOf,
@@ -964,9 +997,10 @@ const executeInternal = (
       });
     const context = createRunContext({
       runId: runId(request.runIdentity),
-      scenarioId: scenarioId(executable.scenarioIdentity),
+      scenarioId: resolved?.scenario.scenarioId ?? scenarioId(compiled.scenarioIdentity),
       ...template,
     });
+    const executable = forecastExecutable(compiled, model, compiler, context, context.runId, resolved);
     const kernel = executable.executionKernel === undefined
       ? compileHouseholdKernel(executable, context.simulationStart)
       : executable.executionKernel;

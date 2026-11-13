@@ -6,14 +6,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileCashFlow } from "../../../../src/application/compiler/cashFlow.js";
 import { compileHouseholdProjection } from "../../../../src/application/compiler/householdProjection.js";
-import { runPersonalHouseholdForecast, restoreHouseholdForecastEvidence, resolveHouseholdExplanation, comparePersonalHouseholdScenarios } from "../../../../src/application/householdProjection.js";
+import { compileHouseholdKernelForRun, runPersonalHouseholdForecast, restoreHouseholdForecastEvidence, resolveHouseholdExplanation, comparePersonalHouseholdScenarios } from "../../../../src/application/householdProjection.js";
 import { GOLDEN_HOUSEHOLD_IDS as ids } from "../../../../src/application/goldenHousehold.js";
 import { patchPersonalObject } from "../../../../src/application/personalMvp.js";
 import { inspectMonthlyMoney } from "../../../../src/application/monthlyMoney.js";
 import { householdEvidenceProof, inspectMortgageWindow, boundedEvidencePoints, restoreHouseholdEvidencePoints } from "../../../../src/application/mortgageChartData.js";
 import { runVerticalSlice2, executeVerticalSlice2PeriodCandidate } from "../../../../src/simulation/verticalSlice2.js";
 import { runHouseholdKernel, replayHouseholdForecastWindow, householdReplayCheckpointSelection } from "../../../../src/simulation/householdExecution.js";
-import { canonicalSerialize, createInputFingerprint, scenarioId } from "../../../../src/simulation/run.js";
+import { canonicalSerialize, createInputFingerprint, runId, scenarioId } from "../../../../src/simulation/run.js";
 import { assumptionId } from "../../../../src/model/index.js";
 import type { ExecutableScenario } from "../../../../src/simulation/scenario.js";
 import { Rate, rateConvention } from "../../../../src/values/index.js";
@@ -54,11 +54,24 @@ describe("authenticated modeled salary at a shared bank", () => {
     expect(statements.income.amount.toString()).toBe("18000");
     expect(statements.expenses.amount.toString()).toBe("4800");
   });
-  it("does not issue Household authority for Person-to-Person family HSA salary", () => {
+  it("qualifies Person and Household bank routes for family HSA salary", () => {
     const personal = standalone(modeledSource(true, true));
-    expect(personal.input.incomes.every(stream => stream.modeledPayroll === undefined)).toBe(true);
+    expect(personal.input.incomes.every(stream => stream.modeledPayroll !== undefined)).toBe(true);
     const household = standalone(rebindModeledBank(modeledSource(true, true), ids.household));
     expect(household.input.incomes.every(stream => stream.modeledPayroll !== undefined)).toBe(true);
+  });
+  it("rejects a different run at the cash posting boundary", () => {
+    const model = rebindModeledBank(modeledSource(), ids.person);
+    const context = modeledContext();
+    const compiled = compileHouseholdKernelForRun(model, modeledRequest().compiler, context);
+    if (compiled.status !== "compiled") throw new Error(JSON.stringify(compiled.diagnostics));
+    const { kernel } = compiled.value;
+    const original = runHouseholdKernel({ kernel, runContext: context, resultTier: "detail" });
+    expect(original.periods.flatMap(period => period.transactions).find(tx => tx.type === "income")
+      ?.legs.find(leg => leg.type === "income")?.amount.equals(money("9000"))).toBe(true);
+    const changed = runHouseholdKernel({ kernel, runContext: { ...context, runId: runId(modeledId(99)) }, resultTier: "detail" });
+    expect(changed.diagnostics.some(issue => issue.message.includes("MODELED_PAYROLL_NOT_ADMITTED"))).toBe(true);
+    expect(changed.periods).toHaveLength(0);
   });
   it("requires the exact issued reference object and household-owned bank", () => {
     const compiled = standalone(), stream = compiled.input.incomes[0]!;

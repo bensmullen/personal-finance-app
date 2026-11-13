@@ -7,7 +7,7 @@ import {
 } from "../../lineage/index.js";
 import type { PortableModelEnvelope } from "../../model/modelVersion.js";
 import { deriveCanonicalRetirementBindings } from "./retirementAuthoring.js";
-import { durablePayrollAllocations, payrollOpeningBalances, supportsD1SpouseHsaScope } from "./payrollAuthoring.js";
+import { durablePayrollAllocations, payrollOpeningBalances } from "./payrollAuthoring.js";
 import { durablePayrollWithholding } from "./payrollWithholding.js";
 import { compileOpeningContributionUsage } from "./contributionOpening.js";
 import {
@@ -17,7 +17,9 @@ import {
 import { utcMonthlyHorizonMonths, type Instant } from "../../time/index.js";
 import { Currency, Rate, money, rateConvention } from "../../values/index.js";
 import type { VerticalSlice2Input } from "../../simulation/verticalSlice2.js";
-import { registerModeledPayrollCompiler, modeledPayrollKey, type ModeledPayrollBinding, type ModeledPayrollReference } from "../../simulation/d2/integration/householdWages/modeledPayroll.js";
+import { assertRunContext, canonicalSerialize, type RunContext } from "../../simulation/run.js";
+import { applyVerticalSlice2Scenario, resolveScenario, type ResolvedScenario } from "../../simulation/scenario.js";
+import { registerModeledPayrollCompiler, modeledPayrollKey, withoutModeledPayroll, type ModeledPayrollBinding, type ModeledPayrollReference } from "../../simulation/d2/integration/householdWages/modeledPayroll.js";
 import { immutableConfiguration } from "../../simulation/r3/compiledHousehold.js";
 import {
   assertGeometricGrowthRate,
@@ -52,6 +54,7 @@ export type SameInstantCashFlowOrder =
   | "expense_before_income";
 
 const issuedSalaries = new WeakMap<ModeledPayrollReference, ModeledPayrollBinding>();
+const authoredCashFlows = new WeakSet<VerticalSlice2Input>();
 registerModeledPayrollCompiler("canonical-cash-flow/v1", reference => issuedSalaries.get(reference));
 const issueModeledSalary = (binding: ModeledPayrollBinding): VerticalSlice2Input["incomes"][number] => {
   const snapshot = immutableConfiguration(binding), key = modeledPayrollKey(snapshot);
@@ -60,7 +63,31 @@ const issueModeledSalary = (binding: ModeledPayrollBinding): VerticalSlice2Input
   return Object.freeze({ ...snapshot.stream, modeledPayroll: reference });
 };
 
+/** Apply an application-resolved scenario to compiler-owned source streams. */
+export function qualifyCashFlowScenario(input: VerticalSlice2Input, resolved: ResolvedScenario, context: RunContext): VerticalSlice2Input {
+  assertRunContext(context);
+  if (!authoredCashFlows.has(input) || context.scenarioId !== resolved.scenario.scenarioId ||
+      canonicalSerialize(resolveScenario(resolved.layers, context.scenarioId)) !== canonicalSerialize(resolved))
+    throw new Error("CASH_FLOW_SCENARIO_SOURCE_NOT_ADMITTED");
+  const effective = applyVerticalSlice2Scenario(input, resolved, context);
+  const sources = new Map(input.incomes.map(stream => [stream.id, stream.modeledPayroll]));
+  return Object.freeze({ ...effective, incomes: Object.freeze(effective.incomes.map(stream => {
+    const ref = sources.get(stream.id);
+    if (ref === undefined) return stream;
+    const binding = issuedSalaries.get(ref)!;
+    if (resolved.rootScenarioId !== binding.scenarioId || context.simulationStart !== binding.start || context.simulationEnd !== binding.end ||
+        context.asOf !== binding.asOf || !stream.baseMonthlyAmount.currency.equals(context.baseCurrency))
+      throw new Error("CASH_FLOW_SCENARIO_CONTEXT_MISMATCH");
+    return issueModeledSalary({
+      ...binding, stream: withoutModeledPayroll(stream), scenarioId: context.scenarioId,
+      runId: context.runId, dataCutoff: context.dataCutoff,
+      sourceFingerprint: modeledPayrollKey({ source: binding.sourceFingerprint, resolved, context }),
+    });
+  })) });
+}
+
 export interface CashFlowCompilerRequest {
+  readonly runContext?: RunContext;
   readonly baseCurrency: string;
   readonly asOf?: string;
   readonly simulationStart: string;
@@ -1132,6 +1159,16 @@ const compileCashFlowSources = (
   });
   if (scenarioResult.status !== "compiled") return scenarioResult;
   const selected = scenarioResult.value;
+  const context = request.runContext;
+  if (context !== undefined) {
+    try { assertRunContext(context); }
+    catch (error) { if (error instanceof ValidationError) return { status: "invalid_model", diagnostics: error.issues }; throw error; }
+    if (context.scenarioId !== selected.id || context.simulationStart !== simulationStart ||
+        context.simulationEnd !== simulationEnd || !context.baseCurrency.equals(currency) ||
+        context.asOf !== utcDate(request.asOf ?? request.simulationStart)) {
+      return invalidResult("CASH_FLOW_RUN_CONTEXT_MISMATCH", "Cash-flow compiler boundary differs from the execution context.", "run_context");
+    }
+  }
   request = { ...request, retirementBindings: deriveCanonicalRetirementBindings(model, selected.id, request.retirementBindings) };
   const retirementByIncome = new Map<string, RetirementTerminationBinding>();
   const retirementEventIds = new Set<string>();
@@ -1245,16 +1282,6 @@ const compileCashFlowSources = (
     );
     retirementEventIds.add(eventId);
   }
-  let spouseHsaScope = false;
-  try { spouseHsaScope = supportsD1SpouseHsaScope(model, scope.memberIds); } catch (error) { return unsupportedResult("PAYROLL_CONTRIBUTION_UNSUPPORTED", error instanceof Error ? error.message : "Unsupported payroll policy", "Investment"); }
-  if (scope.memberIds.length !== 1 && !spouseHsaScope)
-    return unsupportedResult(
-      "CASH_FLOW_OWNER_AMBIGUOUS",
-      `VS2 cash-flow compilation requires exactly one Household member Person; found ${scope.memberIds.length}.`,
-      "Household",
-      scope.householdId,
-      "members",
-    );
   for (const expense of objects(model, "Expense")) {
     const expenseId = canonicalId(expense, "expense_id")!;
     const expenseOwner = resolveOwnerScope(
@@ -1952,6 +1979,7 @@ const compileCashFlowSources = (
         ]),
       }),
     );
+    const sourceFingerprint = modeledPayrollKey({ model, request });
     const input: VerticalSlice2Input = Object.freeze({
       householdId: domainId("household", scope.householdId),
       ownerId,
@@ -1963,16 +1991,14 @@ const compileCashFlowSources = (
       incomes: Object.freeze(compiledIncomes.map(income => {
         const authored = incomes.find(item => item.income_id === income.id);
         const bank = eligibleAccounts.find(item => item.account_id === income.depositAccountId);
-        // Model-only shared-bank authority is restricted to a Person member's
-        // authored salary deposited into a Household-owned BANK, never a bank
-        // belonging to a different Person.
         if (authored?.income_type !== "salary" || !scope.memberIds.includes(String(income.ownerId)) || !bank ||
-          bank.owner_id !== scope.householdId) return income;
+          (bank.owner_id !== scope.householdId && !scope.memberIds.includes(String(bank.owner_id)))) return income;
         return issueModeledSalary({ stream: income, householdId: scope.householdId,
           bank: { id: income.depositAccountId, ownerId: domainId(bank.owner_id === scope.householdId ? "household" : "person", String(bank.owner_id)), kind: String(bank.account_type) as "cash" | "checking" | "savings" },
           start: utcDate(request.simulationStart)!, end: utcDate(request.simulationEnd)!,
           asOf: utcDate(request.asOf ?? request.simulationStart)!, scenarioId: selected.id,
-          sourceFingerprint: modeledPayrollKey({ model, request }) });
+          ...(context === undefined ? {} : { runId: context.runId, dataCutoff: context.dataCutoff }),
+          sourceFingerprint });
       })),
       expenses: Object.freeze(compiledExpenses),
     });
@@ -2008,6 +2034,7 @@ const compileCashFlowSources = (
         [payableId]: { id: payableId, balance: money("0", currency) },
       },
     });
+    authoredCashFlows.add(input);
     return {
       status: "compiled",
       value: Object.freeze({

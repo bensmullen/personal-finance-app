@@ -237,6 +237,8 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
     ...(investments === undefined ? {} : { investments: investments.value.scenarioBindings }),
     ...(liabilities === undefined ? {} : { liabilities: liabilities.value.scenarioBindings }),
   });
+  const salarySourceFingerprint = cash?.value.input.incomes.some(income => income.modeledPayroll !== undefined)
+    ? modeledPayrollKey({ model, request }) : undefined;
   const value: CompiledHouseholdProjection = Object.freeze({
     ...(request.forecastLawPolicy === undefined ? {} : { projectedLaw: tax.value.catalog.flatMap(rule => rule.provenance.type === "projected_current_law" && (Object.values(tax.value.filingStatuses ?? {}).some(fact => fact.status === "known" && fact.value === rule.filingStatus && `${fact.taxYear}-01-01` < rule.effectiveUntil && `${Number(fact.taxYear) + 1}-01-01` > rule.effectiveFrom) || rule.filingStatus === "all") && (rule.jurisdiction === "US:FEDERAL" || taxJurisdictions.has(rule.jurisdiction) || taxJurisdictions.has(rule.jurisdiction.replace(/:(WAGE|OPT)$/, ""))) ? [{ jurisdiction: rule.jurisdiction, baseYear: rule.provenance.baseYear, baseRuleId: String(rule.provenance.baseRuleId), from: rule.effectiveFrom, until: rule.effectiveUntil }] : []) }),
     nonInvestmentPositionIds: taxCreditPositionIds(tax.value, firstBoundary.simulationEnd),
@@ -254,7 +256,7 @@ const compileHouseholdProjectionInternal = (model: PortableModelEnvelope, reques
       return issueHouseholdSalary({ stream: withoutModeledPayroll(reconstructed), householdId: cash.value.input.householdId,
         bank: { id: bank.id, ownerId: bank.ownerId, kind: bank.kind }, start: instant(`${firstBoundary.simulationStart}T00:00:00.000Z`),
         end: instant(`${firstBoundary.simulationEnd}T00:00:00.000Z`), asOf: instant(`${firstBoundary.asOf ?? firstBoundary.simulationStart}T00:00:00.000Z`),
-        scenarioId: cash.value.scenarioIdentity, sourceFingerprint: modeledPayrollKey({ model, request }) });
+        scenarioId: cash.value.scenarioIdentity, sourceFingerprint: salarySourceFingerprint! });
     }) } }),
     ...(investments === undefined ? {} : { investmentInput: { ...investments.value.input, purchases: investments.value.input.purchases.map(purchase => ({ ...purchase, ...(purchase.contribution === undefined ? {} : { contribution: annualPolicy(purchase.contribution) }) })) } }),
     ...(liabilities === undefined ? {} : { liabilityInput: liabilities.value.input }),

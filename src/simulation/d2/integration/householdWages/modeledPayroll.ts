@@ -48,7 +48,7 @@ export function qualifyModeledPayroll(stream: RecurringIncomeStream, householdId
   const binding = ref?.version === "modeled-payroll/v1" ? issuers.get(ref.issuer)?.(ref) : undefined;
   if (!binding || !bank || stream.householdWageSource !== undefined ||
     binding.householdId !== householdId || stream.ownerId === householdId ||
-    bank.ownerId !== householdId || binding.bank.ownerId !== householdId ||
+    !stream.baseMonthlyAmount.currency.equals(context.baseCurrency) || !bank.cash.currency.equals(context.baseCurrency) ||
     !["cash", "checking", "savings"].includes(bank.kind) ||
     canonicalSerialize(binding.bank) !== canonicalSerialize({ id: bank.id, kind: bank.kind, ownerId: bank.ownerId }) ||
     canonicalSerialize(binding.stream) !== canonicalSerialize(withoutModeledPayroll(stream)) ||
