@@ -18,6 +18,7 @@ import { CURRENT_RUN_VERSIONS } from "../src/model/version.js";
 import { ValidationError } from "../src/diagnostics/index.js";
 import { domainId } from "../src/identity/index.js";
 import { taxHouseholdFixture } from "./fixtures/t1aTaxHouseholds.js";
+import { compileModeledIncomeFixture } from "./fixtures/modeledIncome.js";
 import { taxRule, syntheticPayroll } from "./fixtures/t1aTaxRules.js";
 import { federal2026TaxCatalog } from "../src/rules/tax/lawCatalog.js";
 import type { PayrollWithholdingElection } from "../src/simulation/tax/contracts.js";
@@ -360,7 +361,19 @@ describe("T1A household tax integration", () => {
     const wage = { ...source, employerId: "synthetic-future-job", incomeType: "salary", grossOrNet: "gross", work: [{ state_jurisdiction: "US:GA", allocation: "1", effective_date: `${year}-01-01` }] };
     const input = { ...interest.input, incomes: [wage], payrollWithholding: elections };
     const cash = interest.kernel.executable.cashFlowInput!;
-    const executable = { ...interest.kernel.executable, participants: [createHouseholdTaxParticipant(input)], cashFlowInput: { ...cash, incomes: cash.incomes.map(item => ({ ...item, payrollWithholding: elections })) } };
+    const qualified = (entries: readonly PayrollWithholdingElection[]) => compileModeledIncomeFixture(interest.context, 2, {
+      householdId: cash.householdId, personId: source.ownerId, accountId: cash.cashAccountId, accountType: "cash",
+      incomes: [{ id: source.id, type: "salary", amount: "1000", startDate: `${year}-01-15`, employer: wage.employerId }],
+      withholding: entries.map(item => ({
+        id: item.id, incomeId: item.incomeId, ownerId: item.ownerId, employerId: item.employerId,
+        depositAccountId: item.depositAccountId, jurisdiction: item.jurisdiction,
+        effectiveDate: item.start.slice(0, 10),
+        ...(item.end === undefined ? {} : { expirationDate: new Date(Date.parse(item.end) - 86_400_000).toISOString().slice(0, 10) }),
+        provenance: item.provenance, userConfirmed: true,
+        calculation: { kind: "fixed", amount: "0" },
+      })),
+    }).incomes;
+    const executable = { ...interest.kernel.executable, participants: [createHouseholdTaxParticipant(input)], cashFlowInput: { ...cash, incomes: qualified(elections) } };
     const kernel = compileHouseholdKernel(executable, interest.context.simulationStart);
     const summary = runHouseholdKernel({ kernel, runContext: interest.context });
     const detail = runHouseholdKernel({ kernel, runContext: interest.context, resultTier: "detail" });
@@ -373,16 +386,16 @@ describe("T1A household tax integration", () => {
     expect(summary.runMetadata).toEqual(detail.runMetadata);
     expect(summary.state).toEqual(detail.state);
     expect(summary.periods.map(period => period.cash)).toEqual(detail.periods.map(period => period.cash));
-    const restored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(summary)));
-    const replay = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
+    expect(() => createPortableHouseholdReplayArtifact(summary)).toThrow(/BASIS_MISMATCH/);
+    const replay = replayHouseholdForecastWindow(summary, { start: interest.context.simulationStart, end: interest.context.simulationEnd });
     expect(replay.runMetadata).toEqual(summary.runMetadata);
     expect(replay.state).toEqual(summary.state);
-    expect(replay.periods).toEqual(summary.periods);
+    expect(replay.periods).toEqual(detail.periods);
     expect(replay.outputCapabilities).toEqual(summary.outputCapabilities);
 
     for (const withheld of [[], elections.slice(0, 1), elections.map(item => ({ ...item, end: instant(`${year}-02-01T00:00:00.000Z`) }))]) {
       const limitedInput = { ...input, payrollWithholding: withheld };
-      const limitedKernel = compileHouseholdKernel({ ...executable, participants: [createHouseholdTaxParticipant(limitedInput)], cashFlowInput: { ...cash, incomes: cash.incomes.map(item => ({ ...item, payrollWithholding: withheld })) } }, interest.context.simulationStart);
+      const limitedKernel = compileHouseholdKernel({ ...executable, participants: [createHouseholdTaxParticipant(limitedInput)], cashFlowInput: { ...cash, incomes: qualified(withheld) } }, interest.context.simulationStart);
       const limited = runHouseholdKernel({ kernel: limitedKernel, runContext: interest.context });
       expect(limited.status).toBe("incomplete");
       expect(limited.outputCapabilities?.netWorth?.diagnostics).toContainEqual(expect.objectContaining({ category: "wage_gross_to_net_withholding", entityId: source.id, taxYear: year }));

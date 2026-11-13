@@ -129,10 +129,8 @@ describe("#149 S8-2 canonical cross-domain truth table", () => {
   it("fails an unfunded actual medical payment atomically without using a later deposit", () => {
     const raw = medicalSource(), fsa = { ...raw, original: { ...raw.original, bankCashBefore: money("0") } };
     publishers.fsa = () => fsa;
-    const s = combinedScenario({ cash: "0", fsa }), payday = at("2026-01-20");
-    const out = run(s, applyHouseholdExecutionOverlay(s.kernel, { cashFlowInput: { ...s.kernel.cash!.input,
-      incomes: s.kernel.cash!.input.incomes.map(w => ({ ...w, start: payday,
-        recurrence: { kind: "utc_monthly" as const, anchor: payday, invalidDayPolicy: "skip" as const } })) } }));
+    const s = combinedScenario({ cash: "0", fsa, wageDay: "20" });
+    const out = run(s, s.kernel);
     expect(out.status).toBe("incomplete");
     expect(out.periods).toEqual([]);
     expect(out.state).toEqual(s.opening);
@@ -142,14 +140,15 @@ describe("#149 S8-2 canonical cross-domain truth table", () => {
   });
 
   it("rejects actual VS2 payday at an unrelated FSA BANK instant in both participant permutations", () => {
-    const s = combinedScenario(), payday = at("2026-01-10");
-    const cashFlowInput = { ...s.kernel.cash!.input, incomes: s.kernel.cash!.input.incomes.map(w => ({ ...w,
-      start: payday, recurrence: { kind: "utc_monthly" as const, anchor: payday, invalidDayPolicy: "skip" as const } })) };
+    const raw = medicalSource(), payday = instant("2026-01-10T00:00:00.000Z");
+    const fsa = { ...raw, original: { ...raw.original, incurredAt: payday, paidAt: payday, publishedAt: payday, knownAt: payday } };
+    publishers.fsa = () => fsa;
+    const s = combinedScenario({ fsa, wageDay: "10" });
     const participants = s.kernel.executable.participants!;
     for (const order of [participants, [...participants].reverse()]) {
-      const out = run(s, applyHouseholdExecutionOverlay(s.kernel, { cashFlowInput, participants: order }));
+      const out = run(s, applyHouseholdExecutionOverlay(s.kernel, { participants: order }));
       expect(out.status).toBe("incomplete"); expect(out.periods).toEqual([]); expect(out.state).toEqual(s.opening);
-      expect(out.diagnostics.some(d => d.severity === "error"), JSON.stringify(out.diagnostics)).toBe(true);
+      expect(out.diagnostics.map(d => d.code), JSON.stringify(out.diagnostics)).toContain("HOUSEHOLD_CONTENTION_UNRESOLVED");
       expect(out.state.identities.postedTransactionIds).toEqual([]);
       expect(out.state.d2PostedTransactions).toBeUndefined();
     }

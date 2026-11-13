@@ -5,12 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { executeVerticalSlice2PeriodCandidate } from "../../../../src/simulation/verticalSlice2.js";
+import { executeVerticalSlice2PeriodCandidate as executeReferenceCashFlow } from "../../../../src/simulation/r3/referenceVerticalSlice2.js";
 import { payrollContributionCandidate } from "../../../../src/simulation/payrollContributions.js";
+import { compileHouseholdKernel, replayHouseholdForecastWindow, runHouseholdKernel } from "../../../../src/simulation/householdExecution.js";
+import { createPrimitiveRuntimeStateStore } from "../../../../src/simulation/period.js";
+import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../../../../src/simulation/r3/replayArtifact.js";
 import { canonicalSerialize } from "../../../../src/simulation/run.js";
 import { createAuthoritativeState, authoritativeCheckpointDelta, restoreAuthoritativeCheckpointDelta, requalifyD2SettlementReceiptHistory } from "../../../../src/state/index.js";
 import { decimal, money } from "../../../../src/values/index.js";
 import { utcMonthlyPeriods } from "../../../../src/time/index.js";
 import { bareStream, context, control, document, ids, input, install, opening, reset, start, stream } from "./scenario.js";
+import { compileModeledIncomeFixture } from "../../../fixtures/modeledIncome.js";
 
 beforeAll(install);
 beforeEach(reset);
@@ -54,12 +59,23 @@ describe("source-owned household wage posting", () => {
     expect(Object.values(result.state.positions)[0]!.carryingValue.equals(money("10"))).toBe(true);
   });
   it.each([false, true])("preserves the person-owned route with elections=%s", payroll => {
-    control.payroll = payroll;
-    const { householdWageSource: _source, ...personStream } = stream();
+    const runContext = context(), original = bareStream();
+    const authored = compileModeledIncomeFixture(runContext, 1, {
+      householdId: ids.household, personId: ids.alice, accountId: ids.bank, accountType: "checking",
+      incomes: [{ id: original.id, type: "salary", amount: "125.37", startDate: "2026-01-15", employer: "Synthetic employer" }],
+      withholding: payroll ? [{ id: "27700000-0000-4000-8000-000000000040", incomeId: original.id,
+        ownerId: ids.alice, employerId: "Synthetic employer", depositAccountId: ids.bank, jurisdiction: "US:FEDERAL",
+        effectiveDate: "2026-01-01", provenance: "Synthetic employer election", userConfirmed: true,
+        calculation: { kind: "fixed", amount: "10" } }] : [],
+    });
     const state = opening(ids.alice);
-    const result = executeVerticalSlice2PeriodCandidate({ runContext: context(), openingState: state, input: input([personStream]) },
-      utcMonthlyPeriods(start, 1)[0]!, state, {});
-    expect(result.period.transactions).toEqual([document().transaction]);
+    const request = { runContext, openingState: state, input: input([...authored.incomes]) };
+    const period = utcMonthlyPeriods(start, 1)[0]!;
+    const result = executeVerticalSlice2PeriodCandidate(request, period, state, {});
+    const reference = executeReferenceCashFlow(request, period, state, {});
+    expect(result.period.transactions).toEqual(reference.period.transactions);
+    expect(result.period.transactions.map(tx => tx.type)).toEqual([payroll ? "payroll_income" : "income"]);
+    expect(result.period.transactions[0]!.legs.find(leg => leg.type === "income")!.amount).toEqual(money("125.37"));
     expect(result.state.accounts[ids.bank]!.cash.equals(money(payroll ? "215.37" : "225.37"))).toBe(true);
     expect(Object.values(result.state.d2PostedTransactions ?? {})).toHaveLength(0);
   });
@@ -72,6 +88,26 @@ describe("source-owned household wage posting", () => {
     expect(proofs[0]!.transaction).toEqual(original.transaction);
     expect(proofs[0]!.registration.personId).toBe(ids.alice);
     expect(canonicalSerialize(proofs)).not.toContain("installments");
+  });
+  it.each([false, true])("matches native BANK journal and proof in the reference, elected=%s", payroll => {
+    control.payroll = payroll;
+    const runContext = context(), state = opening();
+    const request = { runContext, openingState: state, input: input([stream(1), stream(0)]) };
+    const period = utcMonthlyPeriods(start, 1)[0]!;
+    const actual = executeVerticalSlice2PeriodCandidate(request, period, state, {});
+    const reference = executeReferenceCashFlow(request, period, state, {});
+    expect(actual.period.transactions).toHaveLength(2);
+    expect(actual.period.transactions).toEqual(reference.period.transactions);
+    expect(actual.period.recognitions).toEqual(reference.period.recognitions);
+    expect(actual.period.payrollWithholding).toEqual(reference.period.payrollWithholding);
+    expect(actual.state.d2PostedTransactions).toEqual(reference.state.d2PostedTransactions);
+    expect(canonicalSerialize(actual.state)).toBe(canonicalSerialize(reference.state));
+    control.missing = true;
+    for (const execute of [executeVerticalSlice2PeriodCandidate, executeReferenceCashFlow]) {
+      expect(() => execute(request, period, state, {})).toThrow();
+      expect(state.accounts[ids.bank]!.cash).toEqual(money("100"));
+      expect(state.d2PostedTransactions).toBeUndefined();
+    }
   });
   it("authenticates two Person recipients against one household balance", () => {
     const result = execute([stream(1), stream(0)]);
@@ -118,5 +154,29 @@ describe("source-owned household wage posting", () => {
     expect(bytes).toBeLessThan(months * 7000);
     expect(canonicalSerialize(proofs)).not.toContain("installments");
     expect(state.accounts[ids.bank]!.cash.equals(money("100").plus(money("125.37").times(decimal(String(months)))))).toBe(true);
+  });
+  it.each([false, true])("requalifies the native wage tail before warm replay, elected=%s", payroll => {
+    control.payroll = payroll;
+    const runContext = context(25);
+    const kernel = compileHouseholdKernel({
+      cashFlowInput: input(), executionMonths: 25, scenarioIdentity: runContext.scenarioId, scenarioBindings: {},
+      reconciledOpeningState: opening(), reconciledPrimitiveState: createPrimitiveRuntimeStateStore(),
+    }, start);
+    const summary = runHouseholdKernel({ kernel, runContext });
+    const detail = runHouseholdKernel({ kernel, runContext, resultTier: "detail" });
+    expect(summary.status, JSON.stringify(summary.diagnostics)).toBe("completed");
+    expect(summary.periods).toHaveLength(25);
+    expect(Object.keys(detail.state.d2PostedTransactions ?? {})).toHaveLength(25);
+    const artifact = structuredClone(createPortableHouseholdReplayArtifact(summary));
+    const restored = restorePortableHouseholdReplayArtifact(artifact);
+    const terminal = detail.periods[24]!;
+    expect(replayHouseholdForecastWindow(restored, terminal.period).periods).toEqual([terminal]);
+    expect(replayHouseholdForecastWindow(restored, terminal.period).state).toEqual(detail.state);
+    control.missingMonth = "2028-01";
+    const phases: string[] = [];
+    expect(() => replayHouseholdForecastWindow(restored, terminal.period, undefined, phase => phases.push(phase))).toThrow();
+    expect(phases).not.toContain("replay_started");
+    expect(() => restorePortableHouseholdReplayArtifact(artifact)).toThrow(/BASIS_MISMATCH/);
+    expect(() => restorePortableHouseholdReplayArtifact({ ...artifact })).toThrow(/BASIS_MISMATCH/);
   });
 });

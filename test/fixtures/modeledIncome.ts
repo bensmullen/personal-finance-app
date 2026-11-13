@@ -4,7 +4,7 @@ import { authorPayrollWithholding, type PayrollWithholdingPlan } from "../../src
 import type { RunContext } from "../../src/simulation/run.js";
 import type { VerticalSlice2Input } from "../../src/simulation/verticalSlice2.js";
 
-export function compileModeledIncomeFixture(context: RunContext, months: number, fixture: {
+export function authorModeledIncomeFixture(context: RunContext, months: number, fixture: {
   readonly householdId: string;
   readonly personId: string;
   readonly accountId: string;
@@ -28,7 +28,7 @@ export function compileModeledIncomeFixture(context: RunContext, months: number,
       readonly unit: "effective annual rate" | "monthly periodic rate";
     };
   }[];
-}): VerticalSlice2Input {
+}) {
   let model = createEmptyPersonalDraft("87200000-0000-4000-8000-000000000001");
   model = addPersonalObject(model, "Household", fixture.householdId, {
     name: "Synthetic household", household_type: "individual", formation_date: "1900-01-01",
@@ -96,5 +96,10 @@ export function compileModeledIncomeFixture(context: RunContext, months: number,
     ...(fixture.retirementBindings === undefined ? {} : { retirementBindings: fixture.retirementBindings }),
   });
   if (result.status !== "compiled") throw new Error(JSON.stringify(result.diagnostics));
-  return result.value.input;
+  return { model, input: result.value.input };
+}
+
+export function compileModeledIncomeFixture(context: RunContext, months: number,
+  fixture: Parameters<typeof authorModeledIncomeFixture>[2]): VerticalSlice2Input {
+  return authorModeledIncomeFixture(context, months, fixture).input;
 }

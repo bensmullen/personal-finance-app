@@ -7,6 +7,8 @@ import { instant } from "../src/time/index.js";
 import { authorPayrollWithholding, durablePayrollWithholding, type PayrollWithholdingPlan } from "../src/application/compiler/payrollWithholding.js";
 import { compileCashFlow } from "../src/application/compiler/cashFlow.js";
 import { compileHouseholdProjection } from "../src/application/compiler/householdProjection.js";
+import { runPersonalHouseholdForecast, restoreHouseholdForecastEvidence } from "../src/application/householdProjection.js";
+import { householdEvidenceProof } from "../src/application/mortgageChartData.js";
 import { addPersonalObject, createGoldenHouseholdDraft, patchPersonalObject } from "../src/application/personalMvp.js";
 import { GOLDEN_HOUSEHOLD_IDS as golden } from "../src/application/goldenHousehold.js";
 import { exportPersonalModelJson, importPersonalModelJson } from "../src/application/modelPortability.js";
@@ -312,11 +314,14 @@ describe("durable Income authoring and compilation", () => {
     const model = { ...authored, objects: { ...authored.objects, Asset: [], Investment: [], Liability: [], Expense: [],
       Income: [salary, { ...salary, income_id: uuid(90), income_type: "interest", source: "synthetic bank interest", amount: "100", frequency: "monthly", gross_or_net: "gross", growth_model_id: null, related_event_id: null }] } };
     const before = canonicalSerialize(model);
-    const compiled = compileHouseholdProjection(model, { cashFlow: { baseCurrency: "USD", simulationStart: "2026-01-01", simulationEnd: "2026-02-01", months: 1, sameInstantCashFlowOrder: "income_before_expense", executionAccountId: golden.checking } });
+    const compiler = { cashFlow: { baseCurrency: "USD", simulationStart: "2026-01-01", simulationEnd: "2026-02-01", months: 1, sameInstantCashFlowOrder: "income_before_expense" as const, executionAccountId: golden.checking } };
+    const compiled = compileHouseholdProjection(model, compiler);
     expect(compiled.status, JSON.stringify(compiled.diagnostics)).toBe("compiled");
     if (compiled.status !== "compiled") throw new Error("Expected partial household compilation");
     expect(compiled.value.cashFlowInput!.incomes.map(item => item.id)).toEqual([uuid(90)]);
-    const context = { ...taxHouseholdFixture().context, scenarioId: domainId("scenario", golden.rootScenario), simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z") };
+    const context = createRunContext({ ...taxHouseholdFixture().context, scenarioId: scenarioId(golden.rootScenario),
+      asOf: instant("2026-01-01T00:00:00.000Z"), dataCutoff: instant("2026-01-01T00:00:00.000Z"),
+      simulationStart: instant("2026-01-01T00:00:00.000Z"), simulationEnd: instant("2026-02-01T00:00:00.000Z") });
     const request = { kernel: compiled.value.executionKernel!, runContext: context };
     const summary = runHouseholdKernel(request), detail = runHouseholdKernel({ ...request, resultTier: "detail" });
     const gap = expect.objectContaining({ category: "payroll_source_unsupported", entityId: golden.income });
@@ -329,7 +334,11 @@ describe("durable Income authoring and compilation", () => {
     expect(detail.periods.flatMap(period => period.transactions).some(tx => tx.type === "payroll_income")).toBe(false);
     expect(summary.state).toEqual(detail.state);
     expect(summary.outputCapabilities).toEqual(detail.outputCapabilities);
-    const restored = restorePortableHouseholdReplayArtifact(structuredClone(createPortableHouseholdReplayArtifact(summary)));
+    const read = runPersonalHouseholdForecast(model, {
+      compiler, runIdentity: context.runId, asOf: "2026-01-01", dataCutoff: "2026-01-01",
+    });
+    if (read.status === "unavailable") throw new Error(JSON.stringify(read.diagnostics));
+    const restored = restoreHouseholdForecastEvidence(structuredClone(householdEvidenceProof(read.points)), model);
     const replay = runHouseholdKernel({ kernel: restored.replay.kernel, runContext: restored.replay.runContext });
     expect(replay.state).toEqual(summary.state);
     expect(replay.outputCapabilities).toEqual(summary.outputCapabilities);

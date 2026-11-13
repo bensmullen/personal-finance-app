@@ -232,12 +232,9 @@ describe("#149 S8-3 funded account-scoped RMD in the real joint household", () =
   });
 
   it.each([false, true])("rejects independent real VS2 BANK contention (reversed=%s)", reversed => {
-    const s = fundedHousehold(), payday = instant("2026-01-22T00:00:00.000Z");
+    const s = fundedHousehold({ wageDay: "22" });
     const participants = [...s.kernel.executable.participants!];
-    const kernel = applyHouseholdExecutionOverlay(s.kernel, { participants: reversed ? participants.reverse() : participants,
-      cashFlowInput: { ...s.kernel.cash!.input, incomes: s.kernel.cash!.input.incomes.map(w => ({ ...w, start: payday,
-        growthBaseAt: payday,
-        recurrence: { kind: "utc_monthly" as const, anchor: payday, invalidDayPolicy: "skip" as const } })) } });
+    const kernel = applyHouseholdExecutionOverlay(s.kernel, { participants: reversed ? participants.reverse() : participants });
     const out = runHouseholdKernel({ kernel, runContext: s.context, resultTier: "detail" });
     expect(out.periods).toEqual([]); expect(out.state).toEqual(s.opening);
     expect(out.diagnostics.map(d => d.code)).toContain("HOUSEHOLD_CONTENTION_UNRESOLVED");

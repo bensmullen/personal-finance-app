@@ -191,6 +191,22 @@ describe("authenticated modeled salary at a shared bank", () => {
       { start: modeledContext().simulationStart, end: modeledContext().simulationEnd }, compiled.openingState, {})).toThrow();
     expect(canonicalSerialize(compiled.openingState)).toBe(before);
   });
+  it.each([false, true])("rejects a copied modeled source before an inactive period can commit, elected=%s", elected => {
+    const compiled = standalone(patchPersonalObject(modeledSource(elected), "Income", ids.income, {
+      start_date: "2026-02-01", related_event_id: null,
+    }));
+    const input = { ...compiled.input, incomes: compiled.input.incomes.map(stream => ({
+      ...stream, modeledPayroll: { ...stream.modeledPayroll! },
+    })) };
+    const request = { ...compiled, input, runContext: modeledContext(), months: 1 };
+    for (const execute of [runVerticalSlice2, runReferenceCashFlow]) {
+      const result = execute(request);
+      expect(result.status).toBe("incomplete");
+      expect(result.periods).toEqual([]);
+      expect(result.diagnostics.some(issue => issue.message.includes("MODELED_PAYROLL_NOT_ADMITTED"))).toBe(true);
+      expect(result.state).toEqual(compiled.openingState);
+    }
+  });
   it.each([false, true])("requalifies compiler reconstruction, exported detail and app readers with election=%s", elected => {
     const model = modeledSource(elected), request = modeledRequest(), compiled = compileHouseholdProjection(model, request.compiler);
     expect(compiled.status).toBe("compiled");
@@ -304,13 +320,18 @@ describe("authenticated modeled salary at a shared bank", () => {
       expect(() => restoreHouseholdForecastEvidence(artifact, model)).toThrow(/BASIS_MISMATCH/);
     }
   });
-  it("keeps 1/12/24-month reference inventory constant and restores sparse checkpoints", () => {
+  it("keeps the model basis bounded and reproduces the terminal month beyond sparse checkpoints", () => {
     const model = modeledSource();
-    const rows = [1, 12, 24].map(months => {
-      const read = forecast(model, months), artifact = householdEvidenceProof(read.points)!;
-      const restored = restoreHouseholdForecastEvidence(structuredClone(artifact), model);
+    const rows = [1, 12, 24, 25].map(months => {
+      const read = forecast(model, months), proof = householdEvidenceProof(read.points)!;
+      const artifact = structuredClone(proof);
+      const restored = restoreHouseholdForecastEvidence(artifact, model);
       expect(restored.periods).toHaveLength(months);
-      expect(householdReplayCheckpointSelection(restored).checkpointCount).toBe(months === 24 ? 1 : 0);
+      expect(householdReplayCheckpointSelection(restored).checkpointCount).toBe(months < 24 ? 0 : months === 24 ? 1 : 2);
+      const selected = restored.periods.at(-1)!.period;
+      const expected = replayHouseholdForecastWindow(restoreHouseholdForecastEvidence(proof, model), selected);
+      expect(replayHouseholdForecastWindow(restored, selected)).toEqual(expected);
+      expect(replayHouseholdForecastWindow(restoreHouseholdForecastEvidence(artifact, model), selected)).toEqual(expected);
       expect((artifact.encoded.match(/canonical-forecast\/v1/g) ?? [])).toHaveLength(1);
       expect(artifact.encoded).not.toContain("Everyday checking");
       return artifact.encoded.length;

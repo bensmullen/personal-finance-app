@@ -21,6 +21,7 @@ import { applyHouseholdExecutionOverlay, exportHouseholdReplayCheckpoints, repla
 import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../../../../src/simulation/r3/replayArtifact.js";
 import { canonicalSerialize, createInputFingerprint } from "../../../../src/simulation/run.js";
 import { fixture, ids, input, payment, uuid } from "./scenario.js";
+import { compileModeledIncomeFixture } from "../../../fixtures/modeledIncome.js";
 
 const execute = (q = payment(), f = fixture()) => runSsaMedicare({ kernel: f.kernel, input: input([q]), runContext: f.context });
 const bound = (q = payment()) => qualifySsaMedicarePayment(q, ids.household, ids.person);
@@ -362,15 +363,19 @@ describe("#149 opt-in atomic same-event SSA/Medicare household settlement", () =
     expect(result.diagnostics.map(d => d.code)).toContain("HOUSEHOLD_CONTENTION_UNRESOLVED");
   });
 
-  it("rejects overlapping generic income even when it has another source and payment day", () => {
+  it.each([false, true])("rejects overlapping generic income on another payment day, compiler-issued=%s", qualified => {
     const f = fixture(), start = f.context.simulationStart;
+    const authored = compileModeledIncomeFixture(f.context, 1, {
+      householdId: ids.household, personId: ids.person, accountId: ids.bank, accountType: "checking",
+      incomes: [{ id: uuid(91), type: "salary", amount: "1500", startDate: start.slice(0, 10) }],
+    });
     const kernel = applyHouseholdExecutionOverlay(f.kernel, { cashFlowInput: { householdId: ids.household, ownerId: ids.person,
       cashAccountId: ids.bank, expensePayableLiabilityId: domainId("liability", uuid(90)), baseCurrency: USD, expenses: [], events: [],
-      incomes: [{ id: domainId("income", uuid(91)), ownerId: ids.person, baseMonthlyAmount: money("1500"), start,
+      incomes: qualified ? authored.incomes : [{ id: domainId("income", uuid(91)), ownerId: ids.person, baseMonthlyAmount: money("1500"), start,
         recurrence: { kind: "utc_monthly", anchor: start, invalidDayPolicy: "skip" }, depositAccountId: ids.bank,
         growthRate: Rate.fromDecimal("0", rateConvention.effectiveAnnual()), growthBaseAt: start,
         primitiveIds: { growth: domainId("primitive-instance", uuid(92)), recurrence: domainId("primitive-instance", uuid(93)) } }] } });
-    expect(() => attachSsaMedicare(kernel, input())).toThrow();
+    expect(() => attachSsaMedicare(kernel, input())).toThrow(/Overlapping generic income/);
     expect(f.state.ssaMedicarePayments).toBeUndefined();
   });
 

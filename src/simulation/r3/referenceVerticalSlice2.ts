@@ -75,7 +75,7 @@ import {
 } from "./referencePeriod.js";
 import type { HouseholdWorkDescriptor } from "../intraperiodScheduler.js";
 import { qualifyHouseholdWage, wageStreamOriginal } from "../d2/integration/householdWages/index.js";
-import { assertModeledSalaryActivation, modeledIncomeFingerprintInput, modeledPayrollOccurrence } from "../d2/integration/householdWages/modeledPayroll.js";
+import { assertModeledIncomeSources, modeledIncomeFingerprintInput, modeledPayrollOccurrence } from "../d2/integration/householdWages/modeledPayroll.js";
 import { payrollContributionCandidate } from "../payrollContributions.js";
 import { taxBalanceIds } from "../tax/participant.js";
 import type { PayrollWithholdingEvidence } from "../tax/contracts.js";
@@ -540,7 +540,7 @@ export const prepareVerticalSlice2Period = (
 ): PreparedVerticalSlice2Period => {
   const request: VerticalSlice2RunInput = { runContext, openingState: currentState, input, months: 1, primitiveState: currentPrimitiveState };
   validateInput(request, [period], true);
-  assertModeledSalaryActivation(input, currentState, runContext);
+  assertModeledIncomeSources(input, currentState, runContext);
   const eventResult = runPeriod({ period, runContext, openingState: currentState, primitiveState: currentPrimitiveState, work: eventWork(request, period) });
   const eventOutputs = new Map(eventResult.primitiveOutputs.map((output) => [output.workId, output.output]));
   const occurrences: PreparedVerticalSlice2Occurrence[] = [];
@@ -643,7 +643,8 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
 
   for (const targetPeriod of periods) {
     try {
-      assertModeledSalaryActivation(request.input, committedState, request.runContext);
+      if (request.modeledSourceIncome === undefined)
+        assertModeledIncomeSources(request.input, committedState, request.runContext);
       const eventResult = runPeriod({
         period: targetPeriod,
         runContext: request.runContext,

@@ -7,8 +7,9 @@ import { createFundingPolicy, fundingPolicyId } from "../src/funding/index.js";
 import { runHouseholdKernel, type HouseholdKernelParticipant, runCompiledHouseholdProjection,
   runHouseholdForecastSummary, replayHouseholdForecastWindow } from "../src/simulation/householdExecution.js";
 import { summarizeHouseholdPeriod } from "../src/simulation/r3/forecastSummary.js";
-import { createPortableHouseholdReplayArtifact, restorePortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
-import { runPersonalHouseholdForecast, resolveHouseholdExplanation } from "../src/application/householdProjection.js";
+import { createPortableHouseholdReplayArtifact } from "../src/simulation/r3/replayArtifact.js";
+import { compileHouseholdKernelForRun, runPersonalHouseholdForecast, resolveHouseholdExplanation, restoreHouseholdForecastEvidence } from "../src/application/householdProjection.js";
+import { householdEvidenceProof } from "../src/application/mortgageChartData.js";
 import { createStatementFlowAccumulator, deriveVerticalSliceStatements } from "../src/statements/index.js";
 import { createPrimitiveRuntimeStateStore, executePeriodWorkCandidate, updatePrimitiveRuntimeStateStore, type RunPeriodInput } from "../src/simulation/period.js";
 import { runPeriod as referencePeriod } from "../src/simulation/r3/referencePeriod.js";
@@ -21,7 +22,8 @@ import { authoritativeStateChangesSince, registerAuthoritativeIdentity } from ".
 import { createObligation, executionSettlementHistory, appendSettlementIdentity, settlementIdentityAppendsSince, normalizeExecutionClaim, materializeClaimLifecycle, assertClaimInvariant } from "../src/semantics/claim.js";
 import { instant } from "../src/time/index.js";
 import { Quantity, Rate, RoundingPolicy, SHARE, USD, money, rateConvention, ratePeriod } from "../src/values/index.js";
-import { compileModeledIncomeFixture } from "./fixtures/modeledIncome.js";
+import { authorModeledIncomeFixture, compileModeledIncomeFixture } from "./fixtures/modeledIncome.js";
+import { patchPersonalObject } from "../src/application/personalMvp.js";
 
 const ids = {
   household: domainId("household", "93000000-0000-4000-8000-000000000001"), owner: domainId("person", "93000000-0000-4000-8000-000000000002"),
@@ -497,21 +499,65 @@ describe("R3 reusable deterministic household kernel", () => {
     expect(Object.keys(accumulator).sort()).toEqual(["add", "merge", "snapshot"]);
   });
 
-  it("reconstructs exact detail from portable opening artifacts without transporting a warehouse", () => {
+  it("preserves exact synthetic kernel detail and rejects portable export without an application basis", () => {
     const runContext = context(2);
     const input = integrated("120", true, runContext, 2);
     const forecast = runHouseholdForecastSummary({ kernel: compileHouseholdKernel(input, start), runContext });
-    const artifact = structuredClone(createPortableHouseholdReplayArtifact(forecast));
-    const basis = restorePortableHouseholdReplayArtifact(artifact);
     const reference = referenceRun({ compiled: input, runContext });
     const selected = reference.periods[1]!.period;
-    expect(replayHouseholdForecastWindow(basis, selected).periods).toEqual([reference.periods[1]]);
-    expect(basis.runMetadata).toEqual(forecast.runMetadata);
-    expect(basis.periods).toEqual(forecast.periods);
+    expect(replayHouseholdForecastWindow(forecast, selected).periods).toEqual([reference.periods[1]]);
+    expect(forecast.runMetadata).toEqual(reference.runMetadata);
+    expect(forecast.periods).toEqual(reference.periods.map(summarizeHouseholdPeriod));
+    expect(() => createPortableHouseholdReplayArtifact(forecast)).toThrow(/BASIS_MISMATCH/);
+  });
+
+  it("cold-restores the application-issued salary artifact and its selected journal", () => {
+    const runContext = context(2), months = 2;
+    const { model } = authorModeledIncomeFixture(runContext, months, {
+      householdId: ids.household, personId: ids.owner, accountId: ids.cash, accountType: "checking",
+      incomes: [{ id: ids.income, type: "salary", amount: "120", startDate: "2026-01-15" }],
+    });
+    const asOf = runContext.asOf.slice(0, 10);
+    const compiler = { cashFlow: {
+      scenarioId: runContext.scenarioId, baseCurrency: "USD", asOf, months,
+      simulationStart: runContext.simulationStart.slice(0, 10), simulationEnd: runContext.simulationEnd.slice(0, 10),
+      executionAccountId: ids.cash, sameInstantCashFlowOrder: "income_before_expense" as const,
+    } };
+    const read = runPersonalHouseholdForecast(model, {
+      compiler, asOf, dataCutoff: runContext.dataCutoff.slice(0, 10), runIdentity: runContext.runId,
+    });
+    if (read.status === "unavailable") throw new Error(JSON.stringify(read.diagnostics));
+    const proof = householdEvidenceProof(read.points);
+    if (!proof) throw new Error("Expected application-issued replay evidence");
+    const artifact = structuredClone(proof);
+    const independentModel = structuredClone(model);
+    const basis = restoreHouseholdForecastEvidence(artifact, independentModel);
+    const direct = compileHouseholdKernelForRun(model, compiler, runContext);
+    if (direct.status !== "compiled") throw new Error(JSON.stringify(direct.diagnostics));
+    const detail = runHouseholdKernel({ kernel: direct.value.kernel, runContext, resultTier: "detail" });
+    const summary = runHouseholdKernel({ kernel: direct.value.kernel, runContext });
+    expect(basis.replay.runContext).toEqual(runContext);
+    expect(basis.runMetadata).toEqual(detail.runMetadata);
+    expect(basis.periods).toEqual(summary.periods);
+    const selected = detail.periods[1]!;
+    expect(selected.transactions.some(tx => tx.type === "income")).toBe(true);
+    expect(replayHouseholdForecastWindow(basis, selected.period).periods).toEqual([selected]);
+    const altered = patchPersonalObject(model, "Income", ids.income, { amount: "121" });
+    for (const transport of [artifact, { ...artifact }]) {
+      expect(() => restoreHouseholdForecastEvidence(transport)).toThrow(/BASIS_MISMATCH/);
+      expect(() => restoreHouseholdForecastEvidence(transport, altered)).toThrow(/BASIS_MISMATCH/);
+    }
+    Object.assign(independentModel.objects, { Income: altered.objects.Income });
+    const phases: string[] = [];
+    expect(() => replayHouseholdForecastWindow(basis, selected.period, undefined, phase => phases.push(phase))).toThrow(/BASIS_MISMATCH/);
+    expect(phases).not.toContain("replay_started");
     expect(artifact.encoded).not.toContain('"transactions"');
     expect(artifact.encoded).not.toContain('"recognitions"');
     expect(artifact.encoded).not.toContain('"settlements"');
     expect(artifact.encoded).not.toContain('"effects"');
+  });
+
+  it("resolves transported Golden Household explanations with the independent model", () => {
     const model = createGoldenHouseholdDraft();
     const golden = createGoldenHouseholdForecastRequest();
     const read = runPersonalHouseholdForecast(model, { ...golden, compiler: { ...golden.compiler,

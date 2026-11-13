@@ -81,7 +81,11 @@ export function qualifyModeledPayroll(stream: RecurringIncomeStream, householdId
     (binding.runId === undefined) !== (binding.dataCutoff === undefined) ||
     context.simulationStart !== binding.start || context.simulationEnd !== binding.end)
     return reject();
-  return binding;
+  // Context-free compiler references describe pending economics. Admission
+  // binds those economics to this execution without upgrading the reference.
+  return binding.runId === undefined
+    ? Object.freeze({ ...binding, runId: context.runId, dataCutoff: context.dataCutoff })
+    : binding;
 }
 
 export interface ModeledPayrollOccurrence {
@@ -94,17 +98,17 @@ export interface ModeledPayrollOccurrence {
   readonly gross: import("../../../../values/index.js").Money;
 }
 
-/** Validate the original before a salary activation can stage P27 runtime. */
-export function assertModeledSalaryActivation(input: VerticalSlice2Input,
+/** Validate issued income and event economics before period preparation. */
+export function assertModeledIncomeSources(input: VerticalSlice2Input,
   state: AuthoritativeState, context: RunContext): void {
-  for (const event of input.events) {
-    if (event.kind !== "activation") continue;
-    const stream = input.incomes.find(income => income.id === event.targetId);
-    if (stream === undefined) continue;
+  for (const stream of input.incomes) {
+    if (stream.modeledPayroll === undefined && stream.activationEventId === undefined &&
+        !input.events.some(event => event.kind === "activation" && event.targetId === stream.id)) continue;
+    const events = input.events.filter(event => event.targetId === stream.id);
+    const activation = events.find(event => event.kind === "activation");
     const source = qualifyModeledPayroll(stream, input.householdId, state.accounts[stream.depositAccountId], context);
-    if (source.nonSalaryType !== undefined || stream.activationEventId !== event.id ||
-        canonicalSerialize(source.events ?? []) !== canonicalSerialize(input.events.filter(item => item.targetId === stream.id)))
-      reject();
+    if (canonicalSerialize(source.events ?? []) !== canonicalSerialize(events) ||
+        activation !== undefined && (source.nonSalaryType !== undefined || stream.activationEventId !== activation.id)) reject();
   }
 }
 

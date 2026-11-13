@@ -407,14 +407,20 @@ describe("compiled household execution", () => {
     ]);
     const terminationPrimitive = input.incomes[0]!.primitiveIds.termination!;
     const unrelated = primitive("23");
-    const result = runCompiledHouseholdProjection({ runContext: context(), compiled: {
+    const request = { runContext: context(), compiled: {
       ...compiled(),
       cashFlowInput: input,
       reconciledPrimitiveState: createPrimitiveRuntimeStateStore({
         [unrelated]: { primitiveId: "P23", state: { evaluations: 1, lastClosingValue: money("1") } },
       }),
-    } });
+    } };
+    const result = runCompiledHouseholdProjection(request);
+    const reference = runReferenceHouseholdProjection(request);
     expect(result.status, JSON.stringify(result.diagnostics)).toBe("completed");
+    expect(reference.status, JSON.stringify(reference.diagnostics)).toBe("completed");
+    expect(reference.periods[0]!.transactions).toEqual(result.periods[0]!.transactions);
+    expect(reference.state).toEqual(result.state);
+    expect(reference.primitiveState).toEqual(result.primitiveState);
     expect(result.periods[0]!.transactions).toHaveLength(0);
     expect(result.primitiveState[terminationPrimitive]?.primitiveId).toBe("P30");
     expect(result.primitiveState[unrelated]?.primitiveId).toBe("P23");

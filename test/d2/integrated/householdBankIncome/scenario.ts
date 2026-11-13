@@ -42,7 +42,7 @@ export function document(n = 0, month = 0): HouseholdWageOriginal {
           createAccountingLeg({ posting: "credit", type: "income", amount, traceRefs })] }) };
   });
   return { stream: { ...s, ...(control.payroll ? withholding(n) : {}) }, sourceId: `employer-contract:${n}`, revisionId: "original/1", publishedAt: cutoff, knownAt: cutoff,
-    effectiveFrom: cutoff, effectiveUntil: instant("2028-01-01T00:00:00.000Z"), status: "active", employerId: `employer:${n}`,
+    effectiveFrom: cutoff, effectiveUntil: instant("2028-02-01T00:00:00.000Z"), status: "active", employerId: `employer:${n}`,
     householdId: ids.household, personId: s.ownerId, incomeId: s.id, bankAccountId: ids.bank, ...rows[0]! };
 }
 export const source = (n = 0): HouseholdWageSourceRef => ({ version: "household-wage-source/v1",
@@ -57,14 +57,14 @@ export const input = (incomes = [stream()]): VerticalSlice2Input => ({ household
   cashAccountId: ids.bank, expensePayableLiabilityId: ids.payable, baseCurrency: USD, incomes, expenses: [], events: [] });
 export const opening = (owner: DomainId<string> = ids.household) => createAuthoritativeState({ accounts: { [ids.bank]: {
   id: ids.bank, ownerId: owner, kind: "checking", cash: money("100") } }, liabilities: { [ids.payable]: { id: ids.payable, balance: money("0") } } });
-export const control = { reads: 0, missing: false, withdrawAt: 0, rebound: false, payroll: false, revision: "" };
-export const reset = () => Object.assign(control, { reads: 0, missing: false, withdrawAt: 0, rebound: false, payroll: false, revision: "" });
+export const control = { reads: 0, missing: false, withdrawAt: 0, rebound: false, payroll: false, revision: "", missingMonth: "" };
+export const reset = () => Object.assign(control, { reads: 0, missing: false, withdrawAt: 0, rebound: false, payroll: false, revision: "", missingMonth: "" });
 export function install() {
   registerHouseholdBankOriginalProvider({ publisherId: "wage-bank", readOriginals: query => {
     const c = query.context;
     if (query.sourceId !== "shared-bank" || ![ids.alice, ids.bob].includes(c.personId)) return undefined;
     const base = { revisionId: "original/1", publishedAt: cutoff, knownAt: cutoff, effectiveFrom: cutoff,
-      effectiveUntil: instant("2028-01-01T00:00:00.000Z"), status: "active" as const };
+      effectiveUntil: instant("2028-02-01T00:00:00.000Z"), status: "active" as const };
     return { version: "household-bank-original-inventory/v1", publisherId: "wage-bank", query, checkedAt: c.asOf,
       completeThrough: c.dataCutoff, completeness: "complete", originals: [
         { ...base, kind: "account", sourceId: "deed", bankAccountId: ids.bank, owner: { kind: "household", id: control.rebound ? "different-household" : ids.household }, accountKind: "checking" },
@@ -74,7 +74,8 @@ export function install() {
   } });
   registerHouseholdWageOriginalProvider({ publisherId: "employer-archive", readOriginals: query => {
     control.reads++;
-    if (control.missing || control.withdrawAt > 0 && control.reads >= control.withdrawAt) return undefined;
+    if (control.missing || query.context.eventAt.slice(0, 7) === control.missingMonth ||
+        control.withdrawAt > 0 && control.reads >= control.withdrawAt) return undefined;
     const n = query.sourceId === "employer-contract:0" ? 0 : query.sourceId === "employer-contract:1" ? 1 : undefined;
     if (n === undefined) return undefined;
     const doc = document(n, utcCalendarMonthDifference(start, query.context.eventAt));

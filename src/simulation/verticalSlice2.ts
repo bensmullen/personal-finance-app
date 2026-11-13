@@ -80,7 +80,7 @@ import { payrollContributionCandidate, type PayrollContributionAllocation } from
 import type { PayrollWithholdingElection, PayrollWithholdingEvidence } from "./tax/contracts.js";
 import { qualifyHouseholdExpense, type HouseholdExpenseSourceRef } from "./d2/integration/householdBank/expenses.js";
 import { qualifyHouseholdWage, wageStreamOriginal, type HouseholdWageSourceRef } from "./d2/integration/householdWages/index.js";
-import { assertModeledSalaryActivation, modeledIncomeFingerprintInput, modeledPayrollOccurrence, type ModeledPayrollReference } from "./d2/integration/householdWages/modeledPayroll.js";
+import { assertModeledIncomeSources, modeledIncomeFingerprintInput, modeledPayrollOccurrence, type ModeledPayrollReference } from "./d2/integration/householdWages/modeledPayroll.js";
 
 export type HouseholdId = DomainId<"household">;
 export type PersonId = DomainId<"person">;
@@ -556,7 +556,7 @@ export const prepareVerticalSlice2Period = (
 ): PreparedVerticalSlice2Period => {
   const request: VerticalSlice2RunInput = { runContext, openingState: currentState, input, months: 1, primitiveState: currentPrimitiveState };
   validateInput(request, [period], true);
-  assertModeledSalaryActivation(input, currentState, runContext);
+  assertModeledIncomeSources(input, currentState, runContext);
   const eventResult = executePeriodWorkCandidate({ period, runContext, openingState: currentState, primitiveState: currentPrimitiveState, work: eventWork(request, period) });
   const eventOutputs = new Map(eventResult.primitiveOutputs.map((output) => [output.workId, output.output]));
   const occurrences: PreparedVerticalSlice2Occurrence[] = [];
@@ -927,7 +927,7 @@ const runVerticalSlice2Internal = (request: VerticalSlice2InternalRunInput): Ver
   const runDiagnostics: ValidationIssue[] = [];
   for (const targetPeriod of periods) {
     try {
-      assertModeledSalaryActivation(request.input, committedState, request.runContext);
+      assertModeledIncomeSources(request.input, committedState, request.runContext);
       const events = executePeriodWorkCandidate({ period: targetPeriod, runContext: request.runContext,
         openingState: committedState, primitiveState: committedPrimitiveState, work: eventWork(request, targetPeriod) });
       const candidate = executeCashFlowPeriodCandidate(request, targetPeriod, events);
